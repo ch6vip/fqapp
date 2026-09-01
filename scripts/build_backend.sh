@@ -8,17 +8,20 @@
 #   ./scripts/build_backend.sh                  # 默认把 ../ 当作源码目录
 #   ./scripts/build_backend.sh /path/to/   # 手动指定源码目录
 #   ./scripts/build_backend.sh --force-config   # 连已有的 config 也拉回上游默认值
+#   ./scripts/build_backend.sh --jni            # 额外编译 liblegacy.so（c-shared, 真 JNI）
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 
 FORCE_CONFIG=0
+BUILD_JNI=0
 SRC_ARG=""
 for arg in "$@"; do
   case "$arg" in
     --force-config) FORCE_CONFIG=1 ;;
-    *)              SRC_ARG="$arg" ;;
+    --jni)         BUILD_JNI=1 ;;
+    *)             SRC_ARG="$arg" ;;
   esac
 done
 LEGACY_DIR="${SRC_ARG:-$(dirname "$APP_DIR")/}"
@@ -99,7 +102,81 @@ echo "    覆盖 filters/ web/ plugins/"
 
 echo "==> 完成。"
 ls -l "$OUT_BIN"
-echo
-echo "注意：android/app/src/main/jniLibs/ 下的 liblegacy.so 不在本仓库内。"
-echo "      它是 JNI 方案的占位文件（当前并不包含 JNI 导出符号），"
-echo "      且 jniLibs 尚未被 MainActivity 加载，不生成也不影响 debug 构建。"
+
+if [ "$BUILD_JNI" -eq 1 ]; then
+  echo
+  echo "==> 编译 liblegacy.so (c-shared, android/arm64, CGO_ENABLED=1)..."
+
+  JNI_DIR="$APP_DIR/android/app/src/main/jniLibs/arm64-v8a"
+  mkdir -p "$JNI_DIR"
+  SO_OUT="$JNI_DIR/liblegacy.so"
+
+  # c-shared 需要 cgo + NDK clang。用 CGO_CFLAGS 指向 NDK sysroot 找 jni.h。
+  # NDK 版本可能不同机器不一样，这里用环境变量或自动探测。
+  if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+    # 尝试从 SDK 推断
+    for d in "$ANDROID_HOME"/ndk/* "$ANDROID_SDK_ROOT"/ndk/* /c/android-sdk/ndk/*; do
+      if [ -d "$d" ]; then ANDROID_NDK_HOME="$d"; break; fi
+    done
+  fi
+  if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+    echo "错误：找不到 NDK。请设 ANDROID_NDK_HOME 环境变量。" >&2
+    exit 1
+  fi
+  echo "    NDK: $ANDROID_NDK_HOME"
+
+  TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/windows-x86_64/bin"
+  if [ ! -f "$TOOLCHAIN/aarch64-linux-android21-clang.cmd" ]; then
+    # macOS / Linux 的工具链没有 .cmd 后缀
+    TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+  fi
+  CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang"
+  if [ ! -f "$CC_PATH" ]; then CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang.cmd"; fi
+  if [ ! -f "$CC_PATH" ]; then
+    echo "错误：在 $TOOLCHAIN 下找不到 aarch64 clang。" >&2
+    exit 1
+  fi
+
+  SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt"
+  SYSROOT="$SYSROOT/$(basename "$TOOLCHAIN")/../../sysroot"
+  # 直接用 NDK 的 sysroot 路径
+  SYSROOT=$(cd "$TOOLCHAIN/.." && pwd)/sysroot
+  if [ ! -d "$SYSROOT" ]; then
+    SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/windows-x86_64/sysroot"
+  fi
+
+  GO_SO="$SO_OUT"
+  if command -v cygpath >/dev/null 2>&1; then
+    GO_SO="$(cygpath -w "$SO_OUT")"
+  fi
+  CC_WIN="$CC_PATH"
+  if command -v cygpath >/dev/null 2>&1; then
+    CC_WIN="$(cygpath -w "$CC_PATH")"
+  fi
+  SYSROOT_WIN="$SYSROOT"
+  if command -v cygpath >/dev/null 2>&1; then
+    SYSROOT_WIN="$(cygpath -w "$SYSROOT")"
+  fi
+
+  echo "    CC: $CC_WIN"
+  echo "    sysroot: $SYSROOT_WIN"
+
+  ( cd "$LEGACY_DIR" && \
+    CC="$CC_WIN" \
+    CGO_CFLAGS="-I \"$SYSROOT_WIN/usr/include\"" \
+    GOOS=android GOARCH=arm64 CGO_ENABLED=1 \
+    go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o "$GO_SO" . )
+
+  if [ ! -s "$SO_OUT" ]; then
+    echo "错误：liblegacy.so 未产出。" >&2
+    exit 1
+  fi
+
+  echo "    产出:"
+  ls -l "$SO_OUT"
+  echo
+  echo "注意：c-shared 编译（含 cgo）首次会很慢（10-20 分钟），后续有缓存会快。"
+else
+  echo
+  echo "提示：加 --jni 可同时编译 liblegacy.so（JNI 模式，解决 SELinux 阻塞）。"
+fi

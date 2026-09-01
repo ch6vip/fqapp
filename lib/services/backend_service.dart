@@ -2,15 +2,18 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// Manages the local Go  backend process.
+/// Manages the local Go  backend.
 ///
-/// On Android, the  binary ships as a Flutter asset. On first launch we
-/// copy it (plus config/filters/web runtime files) into the app's files
-/// directory, chmod +x, and start it as a child process listening on
-/// 127.0.0.1:8080. The Flutter UI talks to it over plain HTTP.
+/// On Android the backend ships as liblegacy.so (a real c-shared library with
+/// JNI exports) and is started via a MethodChannel → Kotlin → JNI path, which
+/// avoids the SELinux untrusted_app restriction that blocks Process.start on
+/// app_data_file. If the .so is missing or has no exports (old placeholder),
+/// or if we are running on desktop, we fall back to spawning the standalone
+/// binary via Process.start.
 class BackendService {
   BackendService._();
 
@@ -18,8 +21,10 @@ class BackendService {
 
   static const int _port = 8080;
   static const String _host = '127.0.0.1';
+  static const MethodChannel _channel = MethodChannel('fqapp/backend');
 
   Process? _proc;
+  bool _viaJni = false;
   bool _starting = false;
   final List<StreamSubscription<String>> _logSubs = [];
   final List<String> _logLines = [];
@@ -28,8 +33,8 @@ class BackendService {
   /// Base URL of the local backend.
   String get baseUrl => 'http://$_host:$_port';
 
-  /// Whether the backend process is currently running.
-  bool get isRunning => _proc != null && _proc!.pid > 0;
+  /// Whether the backend is currently running (via JNI or as a subprocess).
+  bool get isRunning => _viaJni || (_proc != null && _proc!.pid > 0);
 
   /// Recent backend log lines (for diagnostics).
   List<String> get logLines => List.unmodifiable(_logLines);
@@ -104,14 +109,18 @@ class BackendService {
   }
 
   /// Starts the backend if not already running.
+  ///
+  /// On Android we first try the JNI path (liblegacy.so → MethodChannel →
+  /// Kotlin → Go c-shared). If that fails — .so missing, no JNI exports, or
+  /// running on desktop — we fall back to Process.start with the standalone
+  /// binary.
   Future<void> start() async {
-    if (_proc != null) return;
+    if (_viaJni || _proc != null) return;
     if (_starting) return;
     _starting = true;
     try {
       await _deploy();
       final dir = await _backendDir();
-      final bin = '${dir.path}/';
 
       // Reset log file each start.
       final logPath = '${dir.path}/backend.log';
@@ -119,7 +128,38 @@ class BackendService {
         File(logPath).deleteSync();
       } catch (_) {}
       _logFile = File(logPath);
-      _log('starting backend: $bin');
+
+      // --- JNI path (Android only) ---
+      if (!kIsWeb && Platform.isAndroid) {
+        try {
+          _log('trying JNI backend (liblegacy.so)...');
+          final result = await _channel.invokeMethod<String>('startBackend', {
+            'config': '${dir.path}/config/config.json',
+            'pool': '${dir.path}/config/device_pool.json',
+            'filter': '${dir.path}/config/filter.json',
+          });
+          _log('JNI startBackend returned: $result');
+          if (result == 'running') {
+            _viaJni = true;
+            final ok = await _waitHealthy(const Duration(seconds: 15));
+            if (!ok) {
+              await _channel.invokeMethod('stopBackend');
+              _viaJni = false;
+              throw StateError('JNI backend started but /health did not come up');
+            }
+            _log('JNI backend healthy');
+            return;
+          } else {
+            _log('JNI backend failed: $result, falling back to Process.start');
+          }
+        } catch (e) {
+          _log('JNI path failed: $e, falling back to Process.start');
+        }
+      }
+
+      // --- Process.start fallback (desktop / JNI unavailable) ---
+      final bin = '${dir.path}/';
+      _log('starting backend via Process.start: $bin');
       _log('workdir: ${dir.path}');
 
       _proc = await Process.start(
@@ -168,8 +208,8 @@ class BackendService {
   Future<bool> _waitHealthy(Duration timeout) async {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
-      // If the process died, give up immediately.
-      if (_proc == null) return false;
+      // If the process died and we're not on the JNI path, give up.
+      if (!_viaJni && _proc == null) return false;
       try {
         final client = HttpClient()
           ..connectionTimeout = const Duration(seconds: 2);
@@ -187,8 +227,19 @@ class BackendService {
     return false;
   }
 
-  /// Stops the backend process.
+  /// Stops the backend (JNI or subprocess).
   Future<void> stop() async {
+    // JNI path
+    if (_viaJni) {
+      try {
+        await _channel.invokeMethod('stopBackend');
+      } catch (e) {
+        _log('stopBackend via JNI failed: $e');
+      }
+      _viaJni = false;
+      return;
+    }
+    // Subprocess path
     if (_proc == null) return;
     try {
       _proc?.kill();
