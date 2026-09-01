@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="./assets/css/all.min.css">
+    <title>听书</title>
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --card: rgba(255, 255, 255, 0.94);
+            --card-soft: rgba(255, 255, 255, 0.56);
+            --text: #1a2330;
+            --sub: #617081;
+            --line: rgba(26, 35, 48, 0.1);
+            --accent: #2f6fed;
+            --accent-soft: rgba(47, 111, 237, 0.12);
+            --shadow: 0 18px 40px rgba(18, 28, 45, 0.08);
+        }
+
+        body.theme-dark {
+            --bg: #10161d;
+            --card: rgba(21, 29, 39, 0.94);
+            --card-soft: rgba(255, 255, 255, 0.03);
+            --text: #f3f6fb;
+            --sub: #9fb0c2;
+            --line: rgba(255, 255, 255, 0.08);
+            --accent: #84b5ff;
+            --accent-soft: rgba(132, 181, 255, 0.16);
+            --shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: linear-gradient(180deg, var(--bg), #f7f9fc);
+            color: var(--text);
+            font-family: "MiSans", "HarmonyOS Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        body.theme-dark {
+            background: linear-gradient(180deg, var(--bg), #151d26);
+        }
+
+        button,
+        input,
+        select,
+        audio {
+            font: inherit;
+        }
+
+        .wrap {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 16px 16px 20px;
+        }
+
+        .topbar,
+        .card,
+        .panel {
+            border: 1px solid var(--line);
+            background: var(--card);
+            backdrop-filter: blur(18px);
+            box-shadow: var(--shadow);
+        }
+
+        .topbar,
+        .card {
+            border-radius: 24px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            position: sticky;
+            top: 8px;
+            z-index: 10;
+            border-radius: 18px;
+        }
+
+        .topbar .left,
+        .topbar .right,
+        .controls,
+        .speed-group,
+        .switches {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .topbar .left {
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+
+        .topbar .right {
+            flex-shrink: 0;
+        }
+
+        .title h1 {
+            margin: 0;
+            font-size: 17px;
+        }
+
+        .title p,
+        .muted,
+        .status,
+        .setting label {
+            margin: 4px 0 0;
+            color: var(--sub);
+            font-size: 13px;
+        }
+
+        .icon-btn,
+        .btn,
+        .chip {
+            border: 1px solid var(--line);
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .icon-btn {
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+        }
+
+        .btn {
+            min-height: 40px;
+            padding: 0 14px;
+            border-radius: 14px;
+        }
+
+        .btn.primary {
+            background: var(--accent);
+            border-color: transparent;
+            color: #fff;
+        }
+
+        .chip {
+            padding: 8px 12px;
+            border-radius: 999px;
+        }
+
+        .chip.active {
+            background: var(--accent-soft);
+            border-color: rgba(47, 111, 237, 0.28);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .card {
+            padding: 16px;
+        }
+
+        .cover {
+            width: min(240px, 100%);
+            aspect-ratio: 1;
+            border-radius: 24px;
+            object-fit: cover;
+            background: #dfe6ee;
+            display: block;
+            margin: 0 auto 14px;
+            box-shadow: 0 18px 32px rgba(18, 28, 45, 0.12);
+        }
+
+        .player {
+            text-align: center;
+        }
+
+        .player h2 {
+            margin: 0 0 8px;
+            font-size: 24px;
+            line-height: 1.35;
+        }
+
+        .player audio {
+            width: 100%;
+            margin: 14px 0 12px;
+        }
+
+        .controls {
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .controls .btn {
+            min-width: 118px;
+        }
+
+        .panel {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            z-index: 40;
+            width: min(340px, calc(100vw - 32px));
+            padding: 18px;
+            border-radius: 0;
+            overflow: auto;
+            transform: translateX(-108%);
+            transition: transform 0.2s ease;
+        }
+
+        .panel-right {
+            right: 0;
+            left: auto;
+            transform: translateX(108%);
+        }
+
+        .panel-left {
+            left: 0;
+        }
+
+        .panel.is-open {
+            transform: translateX(0);
+        }
+
+        .panel h2 {
+            margin: 0 0 14px;
+            font-size: 20px;
+        }
+
+        .panel-section + .panel-section {
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px solid var(--line);
+        }
+
+        .list {
+            display: grid;
+            gap: 8px;
+            max-height: calc(100vh - 180px);
+            overflow: auto;
+            padding-right: 4px;
+        }
+
+        .item {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid transparent;
+            border-radius: 16px;
+            background: transparent;
+            color: var(--text);
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .item small {
+            display: block;
+            margin-top: 4px;
+            color: var(--sub);
+        }
+
+        .item.active {
+            background: var(--accent-soft);
+            border-color: rgba(47, 111, 237, 0.28);
+            color: var(--accent);
+        }
+
+        .setting {
+            display: grid;
+            gap: 8px;
+        }
+
+        .setting select {
+            min-height: 42px;
+            padding: 0 12px;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            background: var(--card-soft);
+            color: var(--text);
+        }
+
+        .switches {
+            display: grid;
+            gap: 10px;
+        }
+
+        .switch {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            min-height: 52px;
+            padding: 0 14px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: var(--card-soft);
+        }
+
+        .overlay {
+            display: none;
+        }
+
+        .overlay.is-open {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 35;
+            background: rgba(9, 14, 20, 0.46);
+        }
+
+        @media (max-width: 900px) {
+            .wrap {
+                padding: 10px 10px 16px;
+            }
+
+            .topbar {
+                position: static;
+                flex-wrap: wrap;
+                align-items: flex-start;
+            }
+
+            .card {
+                padding: 16px;
+            }
+
+            .player h2 {
+                font-size: 23px;
+            }
+
+            .controls .btn {
+                flex: 1 1 calc(50% - 10px);
+                min-width: 0;
+            }
+        }
+
+        @media (max-width: 560px) {
+            .topbar .right {
+                width: 100%;
+                justify-content: flex-end;
+            }
+
+            .title h1 {
+                font-size: 18px;
+                line-height: 1.35;
+            }
+
+            .panel {
+                width: min(292px, calc(100vw - 20px));
+                padding: 14px;
+            }
+
+            .controls .btn {
+                flex-basis: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="overlay" id="overlay" onclick="closePanels()"></div>
+    <div class="wrap">
+        <header class="topbar">
+            <div class="left">
+                <button class="icon-btn" type="button" onclick="history.back()" aria-label="返回"><i class="fas fa-arrow-left"></i></button>
+                <div class="title">
+                    <h1 id="pageTitle">听书</h1>
+                    <p id="pageMeta">正在准备播放器...</p>
+                </div>
+            </div>
+            <div class="right">
+                <button class="icon-btn" type="button" id="themeToggle" aria-label="切换主题"><i class="fas fa-moon"></i></button>
+                <button class="icon-btn" type="button" id="settingsToggle" aria-label="设置"><i class="fas fa-sliders-h"></i></button>
+                <button class="icon-btn" type="button" id="catalogToggle" aria-label="目录"><i class="fas fa-list-ul"></i></button>
+            </div>
+        </header>
+
+        <main class="card player">
+            <img class="cover" id="bookCover" alt="封面">
+            <h2 id="chapterTitle">加载中...</h2>
+            <p class="muted" id="bookInfo">正在读取书籍信息</p>
+            <audio id="audioPlayer" controls preload="none"></audio>
+            <div class="controls">
+                <button class="btn" type="button" id="prevBtn"><i class="fas fa-backward-step"></i> 上一章</button>
+                <button class="btn primary" type="button" id="playBtn"><i class="fas fa-play"></i> 播放</button>
+                <button class="btn" type="button" id="nextBtn">下一章 <i class="fas fa-forward-step"></i></button>
+            </div>
+            <p class="status" id="playerStatus">准备就绪</p>
+        </main>
+    </div>
+
+    <aside class="panel panel-left" id="catalogPanel">
+        <h2>章节目录</h2>
+        <p class="muted" id="catalogMeta">正在加载章节...</p>
+        <div class="panel-section">
+            <div class="list" id="chapterList"></div>
+        </div>
+    </aside>
+
+    <aside class="panel panel-right" id="settingsPanel">
+        <h2>播放设置</h2>
+        <div class="panel-section setting">
+            <label for="toneSelect">音色</label>
+            <select id="toneSelect"><option value="1">默认音色</option></select>
+        </div>
+        <div class="panel-section">
+            <p class="muted" style="margin:0 0 10px">播放速度</p>
+            <div class="speed-group" id="speedGroup">
+                <button class="chip" type="button" data-speed="1">1.0x</button>
+                <button class="chip" type="button" data-speed="1.25">1.25x</button>
+                <button class="chip" type="button" data-speed="1.5">1.5x</button>
+                <button class="chip" type="button" data-speed="2">2.0x</button>
+            </div>
+        </div>
+        <div class="panel-section switches">
+            <label class="switch"><span>播完自动下一章</span><input id="autoNextInput" type="checkbox" checked></label>
+            <label class="switch"><span>记住播放进度</span><input id="rememberInput" type="checkbox" checked></label>
+        </div>
+    </aside>
+
+    <script>
+        const params = new URLSearchParams(location.search);
+        const source = params.get("source") || "";
+        const bookId = params.get("book_id") || "";
+        let itemId = params.get("item_id") || "";
+        let toneId = params.get("tone_id") || "1";
+
+        const THEME_KEY = "novelapi_theme_v4";
+        const SPEED_KEY = "novelapi_audio_speed_v3";
+        const AUTO_KEY = "novelapi_audio_autonext_v3";
+        const REMEMBER_KEY = "novelapi_audio_remember_v3";
+        const LAST_KEY = `novelapi_audio_last:${source}:${bookId}`;
+
+        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
+        let autoNext = localStorage.getItem(AUTO_KEY) !== "false";
+        let rememberProgress = localStorage.getItem(REMEMBER_KEY) !== "false";
+        let chapters = [];
+        let currentIndex = 0;
+
+        const audio = document.getElementById("audioPlayer");
+        const playBtn = document.getElementById("playBtn");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+        const toneSelect = document.getElementById("toneSelect");
+        const autoNextInput = document.getElementById("autoNextInput");
+        const rememberInput = document.getElementById("rememberInput");
+        const chapterListEl = document.getElementById("chapterList");
+        const chapterTitleEl = document.getElementById("chapterTitle");
+        const pageTitleEl = document.getElementById("pageTitle");
+        const pageMetaEl = document.getElementById("pageMeta");
+        const bookInfoEl = document.getElementById("bookInfo");
+        const bookCoverEl = document.getElementById("bookCover");
+        const catalogMetaEl = document.getElementById("catalogMeta");
+        const playerStatusEl = document.getElementById("playerStatus");
+        const themeToggle = document.getElementById("themeToggle");
+        const settingsToggle = document.getElementById("settingsToggle");
+        const catalogToggle = document.getElementById("catalogToggle");
+        const overlay = document.getElementById("overlay");
+        const catalogPanel = document.getElementById("catalogPanel");
+        const settingsPanel = document.getElementById("settingsPanel");
+
+        function applyTheme() {
+            document.body.classList.toggle("theme-dark", currentTheme === "dark");
+            themeToggle.innerHTML = currentTheme === "dark" ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        }
+
+        function progressKey(id) {
+            return `novelapi_audio_progress:${source}:${bookId}:${id}`;
+        }
+
+        function setStatus(text) {
+            playerStatusEl.textContent = text;
+        }
+
+        function closePanels() {
+            catalogPanel.classList.remove("is-open");
+            settingsPanel.classList.remove("is-open");
+            overlay.classList.remove("is-open");
+        }
+
+        function scrollCurrentIntoView() {
+            const active = chapterListEl.querySelector(".item.active");
+            if (active) {
+                active.scrollIntoView({ block: "center", behavior: "smooth" });
+            }
+        }
+
+        function openPanel(panel) {
+            closePanels();
+            panel.classList.add("is-open");
+            overlay.classList.add("is-open");
+            if (panel === catalogPanel) {
+                requestAnimationFrame(scrollCurrentIntoView);
+            }
+        }
+
+        async function fetchJSON(url) {
+            const response = await fetch(url, { cache: "no-store" });
+            const text = await response.text();
+            const payload = JSON.parse(text);
+            if (!response.ok || payload.code !== 200) {
+                throw new Error(payload.message || "请求失败");
+            }
+            return payload;
+        }
+
+        function renderSpeed() {
+            const speed = Number(localStorage.getItem(SPEED_KEY) || "1");
+            audio.playbackRate = speed;
+            document.querySelectorAll("#speedGroup .chip").forEach(button => {
+                button.classList.toggle("active", Number(button.dataset.speed) === speed);
+            });
+        }
+
+        function renderList() {
+            chapterListEl.innerHTML = "";
+            chapters.forEach((chapter, index) => {
+                const button = document.createElement("button");
+                button.className = "item" + (index === currentIndex ? " active" : "");
+                button.type = "button";
+                button.innerHTML = `${chapter.title}<small>第 ${index + 1} 章</small>`;
+                button.onclick = () => goToIndex(index);
+                chapterListEl.appendChild(button);
+            });
+            prevBtn.disabled = currentIndex <= 0;
+            nextBtn.disabled = currentIndex >= chapters.length - 1;
+            catalogMetaEl.textContent = `共 ${chapters.length} 章`;
+        }
+
+        async function loadBookDetail() {
+            try {
+                const payload = await fetchJSON(`/api/detail?book_id=${encodeURIComponent(bookId)}&source=${encodeURIComponent(source)}`);
+                const book = payload.data || {};
+                pageTitleEl.textContent = book.book_name || "听书";
+                pageMetaEl.textContent = `${source} · 听书`;
+                bookInfoEl.textContent = [book.book_name, book.author].filter(Boolean).join(" · ") || "暂无书籍信息";
+                if (book.thumb_url) bookCoverEl.src = book.thumb_url;
+                const tones = String(book.tones || "").split(",").map(v => v.trim()).filter(Boolean);
+                if (tones.length) {
+                    toneSelect.innerHTML = tones.map((value, index) => `<option value="${value}">音色 ${index + 1}</option>`).join("");
+                    if (!tones.includes(toneId)) toneId = tones[0];
+                    toneSelect.value = toneId;
+                }
+            } catch (_) {
+                pageMetaEl.textContent = `${source} · 听书`;
+            }
+        }
+
+        async function loadDirectory() {
+            const payload = await fetchJSON(`/api/directory?book_id=${encodeURIComponent(bookId)}&source=${encodeURIComponent(source)}&cmd=2`);
+            chapters = (payload.data?.data?.chapterListWithVolume || []).flat().map(item => ({
+                id: String(item.itemId || ""),
+                title: item.title || "未命名章节"
+            })).filter(item => item.id);
+            if (!chapters.length) throw new Error("当前作品没有可播放章节");
+            const last = localStorage.getItem(LAST_KEY);
+            const targetId = itemId || last || chapters[0].id;
+            currentIndex = chapters.findIndex(item => item.id === targetId);
+            if (currentIndex < 0) currentIndex = 0;
+            itemId = chapters[currentIndex].id;
+            renderList();
+        }
+
+        function updateURL() {
+            const url = new URL(location.href);
+            url.searchParams.set("item_id", itemId);
+            url.searchParams.set("tone_id", toneId);
+            history.replaceState({}, "", url);
+        }
+
+        function saveProgress() {
+            if (!rememberProgress || !itemId || !audio.currentTime) return;
+            localStorage.setItem(progressKey(itemId), String(audio.currentTime));
+        }
+
+        async function loadChapter(autoplay = true) {
+            const current = chapters[currentIndex];
+            if (!current) return;
+            itemId = current.id;
+            chapterTitleEl.textContent = current.title;
+            setStatus("正在加载音频...");
+            localStorage.setItem(LAST_KEY, itemId);
+            updateURL();
+            renderList();
+
+            try {
+                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent("听书")}&tone_id=${encodeURIComponent(toneId)}&source=${encodeURIComponent(source)}`);
+                const url = payload.data?.audio_url;
+                if (!url) throw new Error("未获取到音频地址");
+                audio.src = url;
+                audio.load();
+                const saved = Number(localStorage.getItem(progressKey(itemId)) || "0");
+                audio.addEventListener("loadedmetadata", () => {
+                    if (rememberProgress && saved > 0 && saved < audio.duration) {
+                        audio.currentTime = saved;
+                    }
+                }, { once: true });
+                renderSpeed();
+                setStatus("音频已加载");
+                if (autoplay) {
+                    audio.play().catch(() => setStatus("浏览器阻止了自动播放，请手动点击播放"));
+                }
+            } catch (error) {
+                setStatus(error.message || "音频加载失败");
+            }
+        }
+
+        async function goToIndex(index) {
+            if (index < 0 || index >= chapters.length) return;
+            saveProgress();
+            currentIndex = index;
+            closePanels();
+            await loadChapter(true);
+        }
+
+        playBtn.addEventListener("click", () => {
+            if (audio.paused) audio.play().catch(() => setStatus("播放失败，请重试"));
+            else audio.pause();
+        });
+        prevBtn.addEventListener("click", () => goToIndex(currentIndex - 1));
+        nextBtn.addEventListener("click", () => goToIndex(currentIndex + 1));
+        catalogToggle.addEventListener("click", () => openPanel(catalogPanel));
+        settingsToggle.addEventListener("click", () => openPanel(settingsPanel));
+        themeToggle.addEventListener("click", () => {
+            currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
+            localStorage.setItem(THEME_KEY, currentTheme);
+            applyTheme();
+        });
+        document.getElementById("speedGroup").addEventListener("click", event => {
+            const button = event.target.closest(".chip");
+            if (!button) return;
+            localStorage.setItem(SPEED_KEY, button.dataset.speed);
+            renderSpeed();
+        });
+        toneSelect.addEventListener("change", async event => {
+            toneId = event.target.value;
+            await loadChapter(true);
+        });
+
+        autoNextInput.checked = autoNext;
+        rememberInput.checked = rememberProgress;
+        autoNextInput.addEventListener("change", event => {
+            autoNext = event.target.checked;
+            localStorage.setItem(AUTO_KEY, String(autoNext));
+        });
+        rememberInput.addEventListener("change", event => {
+            rememberProgress = event.target.checked;
+            localStorage.setItem(REMEMBER_KEY, String(rememberProgress));
+        });
+
+        audio.addEventListener("play", () => {
+            playBtn.innerHTML = '<i class="fas fa-pause"></i> 暂停';
+            setStatus("正在播放");
+        });
+        audio.addEventListener("pause", () => {
+            playBtn.innerHTML = '<i class="fas fa-play"></i> 播放';
+            saveProgress();
+            if (audio.currentTime && audio.currentTime < audio.duration) setStatus("已暂停");
+        });
+        audio.addEventListener("timeupdate", () => {
+            if (Math.floor(audio.currentTime) % 5 === 0) saveProgress();
+        });
+        audio.addEventListener("ended", () => {
+            localStorage.removeItem(progressKey(itemId));
+            if (autoNext && currentIndex < chapters.length - 1) goToIndex(currentIndex + 1);
+            else setStatus("当前章节播放完成");
+        });
+        audio.addEventListener("error", () => setStatus("音频播放失败"));
+
+        document.addEventListener("keydown", event => {
+            if (event.target && ["INPUT", "SELECT"].includes(event.target.tagName)) return;
+            if (event.key === "Escape") closePanels();
+            if (event.key === "ArrowLeft") goToIndex(currentIndex - 1);
+            if (event.key === "ArrowRight") goToIndex(currentIndex + 1);
+            if (event.key === " ") {
+                event.preventDefault();
+                playBtn.click();
+            }
+        });
+
+        applyTheme();
+        renderSpeed();
+        Promise.all([loadBookDetail(), loadDirectory()])
+            .then(() => loadChapter(false))
+            .catch(error => setStatus(error.message || "页面初始化失败"));
+    </script>
+</body>
+</html>

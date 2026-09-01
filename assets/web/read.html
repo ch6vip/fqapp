@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="./assets/css/all.min.css">
+    <title>章节阅读</title>
+    <style>
+        :root {
+            --bg: #eff2f6;
+            --bg-soft: #f7f9fc;
+            --card: rgba(255, 255, 255, 0.92);
+            --card-strong: #ffffff;
+            --text: #18212f;
+            --text-soft: #5f6b7a;
+            --line: rgba(24, 33, 47, 0.1);
+            --accent: #2f6fed;
+            --accent-soft: rgba(47, 111, 237, 0.12);
+            --shadow: 0 18px 40px rgba(18, 28, 45, 0.08);
+            --reader-bg: #ffffff;
+            --reader-text: #1f2937;
+            --reader-muted: #6b7280;
+            --reader-font-family: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "STSong", serif;
+        }
+
+        body.theme-dark {
+            --bg: #0f141b;
+            --bg-soft: #151d26;
+            --card: rgba(20, 28, 38, 0.94);
+            --card-strong: rgba(27, 36, 48, 0.98);
+            --text: #f4f7fb;
+            --text-soft: #a4b2c4;
+            --line: rgba(255, 255, 255, 0.08);
+            --accent: #84b5ff;
+            --accent-soft: rgba(132, 181, 255, 0.16);
+            --shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+            --reader-bg: #161d27;
+            --reader-text: #edf2f9;
+            --reader-muted: rgba(237, 242, 249, 0.72);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at top left, rgba(47, 111, 237, 0.08), transparent 26%),
+                linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%);
+            color: var(--text);
+            font-family: "MiSans", "HarmonyOS Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        .app-shell {
+            max-width: 1380px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+
+        .topbar {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            width: min(1120px, calc(100vw - 20px));
+            transform: translateX(-50%);
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: var(--card);
+            backdrop-filter: blur(18px);
+            box-shadow: var(--shadow);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .topbar-left,
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .topbar-left {
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+
+        .topbar-right {
+            flex-shrink: 0;
+        }
+
+        .icon-btn,
+        .nav-btn,
+        .choice-btn {
+            border: 1px solid var(--line);
+            background: var(--card-strong);
+            color: var(--text);
+            transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+        }
+
+        .icon-btn {
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+            cursor: pointer;
+        }
+
+        .icon-btn:hover,
+        .nav-btn:hover,
+        .choice-btn:hover {
+            transform: translateY(-1px);
+            border-color: rgba(47, 111, 237, 0.35);
+            background: var(--accent-soft);
+        }
+
+        .title-group {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .title-group h1 {
+            margin: 0;
+            font-size: 17px;
+            line-height: 1.35;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .title-group p,
+        .status,
+        .reader-meta,
+        .bottom-info span,
+        .setting-row label {
+            color: var(--text-soft);
+            font-size: 13px;
+        }
+
+        .title-group p {
+            margin: 4px 0 0;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 12px;
+        }
+
+        .panel,
+        .reader-card,
+        .bottom-bar {
+            border: 1px solid var(--line);
+            border-radius: 24px;
+            background: var(--card);
+            backdrop-filter: blur(18px);
+            box-shadow: var(--shadow);
+        }
+
+        .panel {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            z-index: 40;
+            width: min(340px, calc(100vw - 32px));
+            padding: 18px;
+            border-radius: 0;
+            overflow: auto;
+            transform: translateX(-108%);
+            transition: transform 0.2s ease;
+        }
+
+        .panel h2 {
+            margin: 0 0 14px;
+            font-size: 18px;
+        }
+
+        .panel-right {
+            right: 0;
+            left: auto;
+            transform: translateX(108%);
+        }
+
+        .panel-left {
+            left: 0;
+        }
+
+        .panel.is-open {
+            transform: translateX(0);
+        }
+
+        .panel-section + .panel-section {
+            margin-top: 20px;
+            padding-top: 18px;
+            border-top: 1px solid var(--line);
+        }
+
+        .toc-list {
+            display: grid;
+            gap: 8px;
+            max-height: calc(100vh - 180px);
+            overflow: auto;
+            padding-right: 4px;
+        }
+
+        .toc-item {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 14px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-soft);
+            text-align: left;
+            line-height: 1.5;
+            cursor: pointer;
+        }
+
+        .toc-item.active {
+            border-color: rgba(47, 111, 237, 0.28);
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .reader-card {
+            padding: 16px;
+        }
+
+        .reader-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .reader-surface {
+            min-height: calc(100vh - 190px);
+            padding: 24px clamp(16px, 4vw, 42px) 32px;
+            border-radius: 18px;
+            background: var(--reader-bg);
+            color: var(--reader-text);
+        }
+
+        .reader-surface.is-loading,
+        .reader-surface.is-error {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .reader-content {
+            width: min(100%, var(--reader-width, 860px));
+            margin: 0 auto;
+            font-size: var(--reader-font-size, 20px);
+            line-height: var(--reader-line-height, 1.95);
+            color: var(--reader-text);
+            font-family: var(--reader-font-family);
+        }
+
+        .reader-content p {
+            margin: 0 0 1.15em;
+            text-indent: 2em;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .reader-content img {
+            max-width: 100%;
+        }
+
+        .reader-empty {
+            color: var(--reader-muted);
+            font-size: 15px;
+        }
+
+        .settings-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .setting-row {
+            display: grid;
+            gap: 10px;
+        }
+
+        .palette-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .palette-item {
+            display: grid;
+            gap: 8px;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.28);
+        }
+
+        body.theme-dark .palette-item {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .palette-item span {
+            color: var(--text-soft);
+            font-size: 12px;
+        }
+
+        .color-input {
+            width: 100%;
+            min-height: 44px;
+            padding: 6px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: transparent;
+            cursor: pointer;
+        }
+
+        label[for="darkBackgroundInput"],
+        label[for="darkTextInput"] {
+            display: none !important;
+        }
+
+        .range-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .range-row input[type="range"] {
+            flex: 1;
+        }
+
+        .range-value {
+            min-width: 56px;
+            text-align: right;
+            font-size: 13px;
+        }
+
+        .choice-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .choice-btn {
+            padding: 9px 12px;
+            border-radius: 12px;
+            cursor: pointer;
+        }
+
+        .choice-btn.active {
+            border-color: rgba(47, 111, 237, 0.3);
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .secondary-btn {
+            min-height: 42px;
+            padding: 0 14px;
+            border-radius: 14px;
+            border: 1px solid var(--line);
+            background: transparent;
+            color: var(--text-soft);
+            cursor: pointer;
+        }
+
+        .bottom-bar {
+            position: fixed;
+            left: 50%;
+            bottom: 10px;
+            transform: translateX(-50%);
+            width: min(760px, calc(100vw - 24px));
+            padding: 10px;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+            z-index: 25;
+            border-radius: 18px;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .nav-btn {
+            min-height: 40px;
+            min-width: 108px;
+            padding: 0 14px;
+            border-radius: 14px;
+            cursor: pointer;
+        }
+
+        .nav-btn.primary {
+            border-color: transparent;
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .nav-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .bottom-info {
+            min-width: 0;
+            text-align: center;
+        }
+
+        .bottom-info strong {
+            display: block;
+            font-size: 13px;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .overlay {
+            display: none;
+        }
+
+        .overlay.is-open {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 35;
+            background: rgba(9, 14, 20, 0.46);
+        }
+
+        body.chrome-hidden .topbar {
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(-50%, -14px);
+        }
+
+        body.chrome-hidden .bottom-bar {
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(-50%, 14px);
+        }
+
+        @media (max-width: 720px) {
+            .app-shell {
+                padding: 10px;
+            }
+
+            .topbar {
+                top: 8px;
+                width: calc(100vw - 16px);
+                padding: 12px;
+                margin-bottom: 10px;
+                border-radius: 16px;
+                flex-wrap: wrap;
+                align-items: flex-start;
+            }
+
+            .reader-card {
+                padding: 12px;
+                border-radius: 16px;
+            }
+
+            .reader-surface {
+                min-height: auto;
+                padding: 18px 12px 22px;
+                border-radius: 16px;
+            }
+
+            .reader-meta {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .bottom-bar {
+                width: calc(100vw - 16px);
+                padding: 10px;
+                border-radius: 18px;
+            }
+
+            .nav-btn {
+                min-width: 0;
+                padding: 0 14px;
+            }
+
+            .palette-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 560px) {
+            .topbar-right {
+                width: 100%;
+                justify-content: flex-end;
+            }
+
+            .title-group h1 {
+                white-space: normal;
+                overflow: visible;
+                text-overflow: clip;
+            }
+
+            .bottom-bar {
+                grid-template-columns: 1fr 1fr;
+                width: calc(100vw - 16px);
+            }
+
+            .bottom-info {
+                grid-column: 1 / -1;
+                order: -1;
+            }
+
+            .bottom-info strong {
+                white-space: normal;
+            }
+
+            .panel {
+                width: min(292px, calc(100vw - 20px));
+                padding: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="overlay" id="overlay" onclick="closePanels()"></div>
+    <div class="app-shell">
+        <header class="topbar" id="chromeTopbar">
+            <div class="topbar-left">
+                <button class="icon-btn" type="button" onclick="history.back()" aria-label="返回">
+                    <i class="fas fa-arrow-left"></i>
+                </button>
+                <div class="title-group">
+                    <h1 id="chapterTitle">正在加载章节...</h1>
+                    <p id="bookMeta">准备读取目录...</p>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <button class="icon-btn" type="button" id="themeToggle" aria-label="切换主题">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <button class="icon-btn" type="button" onclick="togglePanel('tocPanel')" aria-label="目录">
+                    <i class="fas fa-list-ul"></i>
+                </button>
+                <button class="icon-btn" type="button" onclick="togglePanel('settingsPanel')" aria-label="设置">
+                    <i class="fas fa-sliders-h"></i>
+                </button>
+            </div>
+        </header>
+
+        <div class="layout">
+            <aside class="panel panel-left" id="tocPanel">
+                <h2>章节目录</h2>
+                <p class="status" id="tocSummary">正在加载目录...</p>
+                <div class="panel-section">
+                    <div class="toc-list" id="tocList"></div>
+                </div>
+            </aside>
+
+            <section class="reader-card">
+                <div class="reader-meta">
+                    <span id="readerSource">数据源：-</span>
+                    <span id="readerProgress">第 0 章 / 共 0 章</span>
+                </div>
+                <div class="reader-surface is-loading" id="readerSurface">
+                    <article class="reader-content" id="content">
+                        <p class="reader-empty">章节内容加载中...</p>
+                    </article>
+                </div>
+            </section>
+
+            <aside class="panel panel-right" id="settingsPanel">
+                <h2>阅读设置</h2>
+                <div class="settings-grid">
+                    <div class="setting-row">
+                        <label for="fontSizeInput">字号</label>
+                        <div class="range-row">
+                            <input id="fontSizeInput" type="range" min="16" max="32" step="1">
+                            <span class="range-value" id="fontSizeValue">20 px</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <label for="lineHeightInput">行距</label>
+                        <div class="range-row">
+                            <input id="lineHeightInput" type="range" min="1.5" max="2.4" step="0.05">
+                            <span class="range-value" id="lineHeightValue">1.95</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <label for="readerWidthInput">正文宽度</label>
+                        <div class="range-row">
+                            <input id="readerWidthInput" type="range" min="280" max="960" step="20">
+                            <span class="range-value" id="readerWidthValue">720 px</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <label>阅读颜色</label>
+                        <div class="palette-grid">
+                            <label class="palette-item" for="lightBackgroundInput">
+                                <span>日间背景</span>
+                                <input class="color-input" id="lightBackgroundInput" type="color">
+                            </label>
+                            <label class="palette-item" for="lightTextInput">
+                                <span>日间文字</span>
+                                <input class="color-input" id="lightTextInput" type="color">
+                            </label>
+                            <label class="palette-item" for="darkBackgroundInput">
+                                <span>夜间背景</span>
+                                <input class="color-input" id="darkBackgroundInput" type="color">
+                            </label>
+                            <label class="palette-item" for="darkTextInput">
+                                <span>夜间文字</span>
+                                <input class="color-input" id="darkTextInput" type="color">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <label>正文字体</label>
+                        <div class="choice-group" id="fontFamilyChoiceGroup">
+                            <button class="choice-btn" type="button" data-font-family="serif">思源宋体</button>
+                            <button class="choice-btn" type="button" data-font-family="song">宋体</button>
+                            <button class="choice-btn" type="button" data-font-family="sans">思源黑体</button>
+                            <button class="choice-btn" type="button" data-font-family="yahei">雅黑</button>
+                            <button class="choice-btn" type="button" data-font-family="hei">黑体</button>
+                            <button class="choice-btn" type="button" data-font-family="kai">楷体</button>
+                            <button class="choice-btn" type="button" data-font-family="fang">仿宋</button>
+                            <button class="choice-btn" type="button" data-font-family="yuan">幼圆</button>
+                            <button class="choice-btn" type="button" data-font-family="mono">等宽</button>
+                            <button class="choice-btn" type="button" data-font-family="system">系统</button>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <label>快捷操作</label>
+                        <button class="secondary-btn" type="button" id="resetSettingsBtn">恢复默认设置</button>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <div class="bottom-bar" id="chromeBottomBar">
+        <button class="nav-btn" type="button" id="prevBtn">
+            <i class="fas fa-chevron-left"></i>
+            上一章
+        </button>
+        <div class="bottom-info">
+            <strong id="bottomTitle">正在准备阅读器</strong>
+            <span id="bottomHint">可使用左右方向键切换章节</span>
+        </div>
+        <button class="nav-btn primary" type="button" id="nextBtn">
+            下一章
+            <i class="fas fa-chevron-right"></i>
+        </button>
+    </div>
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const source = params.get("source") || "";
+        const sourceKey = source.toLowerCase();
+        const bookId = params.get("book_id") || "";
+        const tab = params.get("tab") || "正文";
+        let itemId = params.get("item_id") || "";
+
+        const SETTINGS_KEY = "novelapi_reader_settings_v5";
+        const THEME_KEY = "novelapi_theme_v4";
+        const LAST_KEY = `novelapi_reader_last:${source}:${bookId}:${tab}`;
+        const chapterMemoryCache = new Map();
+        const READER_DEFAULT_COLORS = {
+            lightBackground: "#ffffff",
+            lightText: "#1f2937",
+            darkBackground: "#161d27",
+            darkText: "#edf2f9"
+        };
+        const READER_FONTS = {
+            serif: '"Source Han Serif SC", "Noto Serif SC", "Songti SC", "STSong", serif',
+            song: '"STSong", "Songti SC", "SimSun", serif',
+            sans: '"Source Han Sans SC", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", sans-serif',
+            yahei: '"Microsoft YaHei UI", "Microsoft YaHei", sans-serif',
+            hei: '"SimHei", "Heiti SC", "PingFang SC", sans-serif',
+            kai: '"Kaiti SC", "STKaiti", "KaiTi", serif',
+            fang: '"FangSong", "STFangsong", serif',
+            yuan: '"YouYuan", "Microsoft YaHei UI", sans-serif',
+            mono: '"Sarasa Mono SC", "Cascadia Mono", "Consolas", monospace',
+            system: 'system-ui, "MiSans", "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif'
+        };
+
+        let chapterList = [];
+        let currentIndex = 0;
+        let chromeHideTimer = null;
+        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
+        let readerSettings = loadReaderSettings();
+
+        const readerSurface = document.getElementById("readerSurface");
+        const contentEl = document.getElementById("content");
+        const chapterTitleEl = document.getElementById("chapterTitle");
+        const bookMetaEl = document.getElementById("bookMeta");
+        const readerSourceEl = document.getElementById("readerSource");
+        const readerProgressEl = document.getElementById("readerProgress");
+        const tocSummaryEl = document.getElementById("tocSummary");
+        const tocListEl = document.getElementById("tocList");
+        const bottomTitleEl = document.getElementById("bottomTitle");
+        const overlayEl = document.getElementById("overlay");
+        const chromeTopbar = document.getElementById("chromeTopbar");
+        const chromeBottomBar = document.getElementById("chromeBottomBar");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+        const topbarRight = document.querySelector(".topbar-right");
+        const themeToggleBtn = document.getElementById("themeToggle");
+        const tocToggleBtn = document.querySelector("[onclick=\"togglePanel('tocPanel')\"]");
+        const settingsToggleBtn = document.querySelector("[onclick=\"togglePanel('settingsPanel')\"]");
+        const fontSizeInput = document.getElementById("fontSizeInput");
+        const lineHeightInput = document.getElementById("lineHeightInput");
+        const readerWidthInput = document.getElementById("readerWidthInput");
+        const fontSizeValue = document.getElementById("fontSizeValue");
+        const lineHeightValue = document.getElementById("lineHeightValue");
+        const readerWidthValue = document.getElementById("readerWidthValue");
+        const fontFamilyChoiceGroup = document.getElementById("fontFamilyChoiceGroup");
+        const lightBackgroundInput = document.getElementById("lightBackgroundInput");
+        const lightTextInput = document.getElementById("lightTextInput");
+        const darkBackgroundInput = document.getElementById("darkBackgroundInput");
+        const darkTextInput = document.getElementById("darkTextInput");
+
+        function loadReaderSettings() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+                return {
+                    fontSize: Number(saved.fontSize) || 20,
+                    lineHeight: Number(saved.lineHeight) || 1.95,
+                    readerWidth: Number(saved.readerWidth) || 720,
+                    fontFamily: saved.fontFamily || "serif",
+                    lightBackground: saved.lightBackground || READER_DEFAULT_COLORS.lightBackground,
+                    lightText: saved.lightText || READER_DEFAULT_COLORS.lightText,
+                    darkBackground: saved.darkBackground && saved.darkBackground !== "#ffffff"
+                        ? saved.darkBackground
+                        : READER_DEFAULT_COLORS.darkBackground,
+                    darkText: saved.darkText && saved.darkText !== "#1f2937"
+                        ? saved.darkText
+                        : READER_DEFAULT_COLORS.darkText
+                };
+            } catch (_) {
+                return {
+                    fontSize: 20,
+                    lineHeight: 1.95,
+                    readerWidth: 720,
+                    fontFamily: "serif",
+                    lightBackground: READER_DEFAULT_COLORS.lightBackground,
+                    lightText: READER_DEFAULT_COLORS.lightText,
+                    darkBackground: READER_DEFAULT_COLORS.darkBackground,
+                    darkText: READER_DEFAULT_COLORS.darkText
+                };
+            }
+        }
+
+        function saveReaderSettings() {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(readerSettings));
+        }
+
+        function cleanupLegacyReaderCaches() {
+            const prefixes = ["chapter_cache_", "novelapi_reader_cache:", "reader_cache:"];
+            const keys = [];
+            for (let index = 0; index < localStorage.length; index += 1) {
+                const key = localStorage.key(index);
+                if (key && prefixes.some(prefix => key.startsWith(prefix))) {
+                    keys.push(key);
+                }
+            }
+            keys.forEach(key => localStorage.removeItem(key));
+        }
+
+        function applyTheme() {
+            const resolved = currentTheme === "dark" ? "dark" : "light";
+            document.body.classList.toggle("theme-dark", resolved === "dark");
+            themeToggleBtn.innerHTML = resolved === "dark" ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        }
+
+        function showChrome() {
+            document.body.classList.remove("chrome-hidden");
+            window.clearTimeout(chromeHideTimer);
+        }
+
+        function hideChrome() {
+            window.clearTimeout(chromeHideTimer);
+            if (document.querySelector(".panel.is-open")) {
+                return;
+            }
+            document.body.classList.add("chrome-hidden");
+        }
+
+        function scheduleChromeHide(delay = 1800) {
+            window.clearTimeout(chromeHideTimer);
+            chromeHideTimer = window.setTimeout(() => {
+                hideChrome();
+            }, delay);
+        }
+
+        function handleReaderChromeToggle(event) {
+            if (event.target.closest("a, button, input, label, select, textarea")) {
+                return;
+            }
+            if (window.getSelection && window.getSelection().toString()) {
+                return;
+            }
+            if (document.body.classList.contains("chrome-hidden")) {
+                showChrome();
+                scheduleChromeHide(1800);
+                return;
+            }
+            hideChrome();
+        }
+
+        function normalizeColor(value, fallback) {
+            return /^#[0-9a-fA-F]{6}$/.test(value || "") ? value : fallback;
+        }
+
+        function colorToRGBA(hex, alpha) {
+            const value = normalizeColor(hex, "#000000").slice(1);
+            const r = Number.parseInt(value.slice(0, 2), 16);
+            const g = Number.parseInt(value.slice(2, 4), 16);
+            const b = Number.parseInt(value.slice(4, 6), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        function applyReaderSettings() {
+            const mode = document.body.classList.contains("theme-dark") ? "dark" : "light";
+            const fontFamily = READER_FONTS[readerSettings.fontFamily] || READER_FONTS.serif;
+            const background = mode === "dark"
+                ? normalizeColor(readerSettings.darkBackground, READER_DEFAULT_COLORS.darkBackground)
+                : normalizeColor(readerSettings.lightBackground, READER_DEFAULT_COLORS.lightBackground);
+            const textColor = mode === "dark"
+                ? normalizeColor(readerSettings.darkText, READER_DEFAULT_COLORS.darkText)
+                : normalizeColor(readerSettings.lightText, READER_DEFAULT_COLORS.lightText);
+            const width = Math.max(280, Number(readerSettings.readerWidth) || 720);
+            document.documentElement.style.setProperty("--reader-font-size", `${readerSettings.fontSize}px`);
+            document.documentElement.style.setProperty("--reader-line-height", String(readerSettings.lineHeight));
+            document.documentElement.style.setProperty("--reader-width", `${width}px`);
+            document.documentElement.style.setProperty("--reader-bg", background);
+            document.documentElement.style.setProperty("--reader-text", textColor);
+            document.documentElement.style.setProperty("--reader-muted", colorToRGBA(textColor, mode === "dark" ? 0.7 : 0.62));
+            document.documentElement.style.setProperty("--reader-font-family", fontFamily);
+            fontSizeInput.value = String(readerSettings.fontSize);
+            lineHeightInput.value = String(readerSettings.lineHeight);
+            readerWidthInput.value = String(width);
+            fontSizeValue.textContent = `${readerSettings.fontSize} px`;
+            lineHeightValue.textContent = readerSettings.lineHeight.toFixed(2);
+            readerWidthValue.textContent = `${width} px`;
+            fontFamilyChoiceGroup.querySelectorAll(".choice-btn").forEach(button => {
+                button.classList.toggle("active", button.dataset.fontFamily === readerSettings.fontFamily);
+            });
+            lightBackgroundInput.value = normalizeColor(readerSettings.lightBackground, READER_DEFAULT_COLORS.lightBackground);
+            lightTextInput.value = normalizeColor(readerSettings.lightText, READER_DEFAULT_COLORS.lightText);
+            darkBackgroundInput.value = normalizeColor(readerSettings.darkBackground, READER_DEFAULT_COLORS.darkBackground);
+            darkTextInput.value = normalizeColor(readerSettings.darkText, READER_DEFAULT_COLORS.darkText);
+        }
+
+        function setLoading(message) {
+            readerSurface.classList.add("is-loading");
+            readerSurface.classList.remove("is-error");
+            contentEl.innerHTML = `<p class="reader-empty">${message}</p>`;
+        }
+
+        function setError(message) {
+            readerSurface.classList.remove("is-loading");
+            readerSurface.classList.add("is-error");
+            contentEl.innerHTML = `<p class="reader-empty">${message}</p>`;
+        }
+
+        function setReady() {
+            readerSurface.classList.remove("is-loading", "is-error");
+        }
+
+        async function fetchJSON(url) {
+            const response = await fetch(url, { cache: "no-store" });
+            const raw = await response.text();
+            let payload;
+            try {
+                payload = JSON.parse(raw);
+            } catch (_) {
+                throw new Error("服务端返回了无法解析的数据");
+            }
+            if (!response.ok) {
+                throw new Error(payload.message || "请求失败");
+            }
+            return payload;
+        }
+
+        function flattenVolumes(list) {
+            if (!Array.isArray(list)) {
+                return [];
+            }
+            return list.flatMap(item => {
+                if (Array.isArray(item)) {
+                    return item;
+                }
+                if (Array.isArray(item?.volumeList)) {
+                    return item.volumeList;
+                }
+                return item ? [item] : [];
+            });
+        }
+
+        function normalizeDirectory(payload) {
+            if (sourceKey === "番茄") return flattenVolumes(payload?.data?.data?.chapterListWithVolume).map(item => ({
+                id: String(item.itemId ?? item.id ?? ""),
+                title: item.title || item.chapterName || "未命名章节"
+            })).filter(item => item.id);
+            return [];
+        }
+
+        function decodeBase64Maybe(value) {
+            if (typeof value !== "string" || !value || /[<>]/.test(value)) {
+                return value;
+            }
+            try {
+                return decodeURIComponent(escape(atob(value.replace(/-/g, "+").replace(/_/g, "/"))));
+            } catch (_) {
+                return value;
+            }
+        }
+
+        function normalizeContent(payload) {
+            if (!payload || typeof payload !== "object") {
+                throw new Error("章节数据无效");
+            }
+            if (payload.code !== 200) {
+                throw new Error(payload.message || "章节加载失败");
+            }
+            let rawContent = payload.data?.content ?? payload.data?.text ?? "";
+            if (Array.isArray(rawContent)) {
+                rawContent = rawContent.join("\n");
+            }
+            return {
+                title: chapterList[currentIndex]?.title || "未命名章节",
+                content: decodeBase64Maybe(String(rawContent || ""))
+            };
+        }
+
+        function cleanParagraphBySource(text) {
+            const line = String(text || "")
+                .replace(/[\u200b-\u200d\ufeff]/g, "")
+                .replace(/\u00a0/g, " ")
+                .trim();
+            if (!line) {
+                return "";
+            }
+            return line;
+        }
+
+        function normalizeTextParagraphs(text, title) {
+            const paragraphs = String(text || "")
+                .replace(/\r/g, "")
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/<\/p>/gi, "\n")
+                .replace(/<[^>]+>/g, "")
+                .split(/\n+/)
+                .map(cleanParagraphBySource)
+                .filter(Boolean);
+
+            const normalizedTitle = String(title || "").replace(/\s+/g, "");
+            while (paragraphs.length) {
+                const first = paragraphs[0].replace(/\s+/g, "");
+                if (!first || !normalizedTitle) {
+                    break;
+                }
+                if (
+                    first === normalizedTitle ||
+                    first.startsWith(normalizedTitle) ||
+                    normalizedTitle.startsWith(first)
+                ) {
+                    paragraphs.shift();
+                    continue;
+                }
+                break;
+            }
+            return paragraphs;
+        }
+
+        function renderHTMLContent(html, title) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
+            const root = doc.querySelector("body") || doc;
+            const fragment = document.createDocumentFragment();
+            let appended = 0;
+
+            root.childNodes.forEach(node => {
+                if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) {
+                    return;
+                }
+                if (node.nodeType === Node.ELEMENT_NODE && /^h1$/i.test(node.nodeName)) {
+                    const heading = node.textContent.replace(/\s+/g, "");
+                    if (heading && heading === title.replace(/\s+/g, "")) {
+                        return;
+                    }
+                }
+                fragment.appendChild(node.cloneNode(true));
+                appended += 1;
+            });
+
+            contentEl.innerHTML = "";
+            if (!appended) {
+                renderTextContent(html, title);
+                return;
+            }
+            contentEl.appendChild(fragment);
+        }
+
+        function renderTextContent(text, title) {
+            const paragraphs = normalizeTextParagraphs(text, title);
+            contentEl.innerHTML = "";
+            if (!paragraphs.length) {
+                contentEl.innerHTML = '<p class="reader-empty">这一章暂时没有可显示的正文内容。</p>';
+                return;
+            }
+            paragraphs.forEach(paragraph => {
+                const p = document.createElement("p");
+                p.textContent = paragraph;
+                contentEl.appendChild(p);
+            });
+        }
+
+        function renderChapter(chapter) {
+            const content = chapter.content || "";
+            const looksLikeHTML = sourceKey === "番茄" || /<(?!br\s*\/?>)[a-z][\w-]*[\s\S]*?>/i.test(content);
+            setReady();
+            if (looksLikeHTML) {
+                renderHTMLContent(content, chapter.title);
+            } else {
+                renderTextContent(content, chapter.title);
+            }
+            chapterTitleEl.textContent = chapter.title;
+            bottomTitleEl.textContent = chapter.title;
+            readerProgressEl.textContent = `第 ${currentIndex + 1} 章 / 共 ${chapterList.length} 章`;
+            document.title = `${chapter.title} - 章节阅读`;
+        }
+
+        function updateNavigationState() {
+            prevBtn.disabled = currentIndex <= 0;
+            nextBtn.disabled = currentIndex >= chapterList.length - 1;
+            tocSummaryEl.textContent = `共 ${chapterList.length} 章，当前第 ${currentIndex + 1} 章`;
+            document.querySelectorAll(".toc-item").forEach((button, index) => {
+                button.classList.toggle("active", index === currentIndex);
+            });
+        }
+
+        function setMemoryCache(key, value) {
+            if (chapterMemoryCache.has(key)) {
+                chapterMemoryCache.delete(key);
+            }
+            chapterMemoryCache.set(key, value);
+            while (chapterMemoryCache.size > 8) {
+                const oldestKey = chapterMemoryCache.keys().next().value;
+                chapterMemoryCache.delete(oldestKey);
+            }
+        }
+
+        function updateURL() {
+            const url = new URL(window.location.href);
+            url.searchParams.set("item_id", itemId);
+            window.history.replaceState({}, "", url);
+        }
+
+        function rememberLastChapter() {
+            localStorage.setItem(LAST_KEY, itemId);
+        }
+
+        function renderTOC() {
+            tocListEl.innerHTML = "";
+            chapterList.forEach((chapter, index) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "toc-item";
+                button.textContent = chapter.title;
+                button.onclick = () => {
+                    closePanels();
+                    goToIndex(index);
+                };
+                tocListEl.appendChild(button);
+            });
+            updateNavigationState();
+        }
+
+        async function loadDirectory() {
+            if (!bookId) {
+                throw new Error("缺少 book_id 参数");
+            }
+            const payload = await fetchJSON(`/api/directory?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&tab=${encodeURIComponent(tab)}`);
+            chapterList = normalizeDirectory(payload);
+            if (!chapterList.length) {
+                throw new Error("当前作品没有可读取的章节");
+            }
+            const lastItemId = localStorage.getItem(LAST_KEY);
+            const targetItemId = itemId || lastItemId || chapterList[0].id;
+            currentIndex = chapterList.findIndex(chapter => chapter.id === targetItemId);
+            if (currentIndex < 0) {
+                currentIndex = 0;
+            }
+            itemId = chapterList[currentIndex].id;
+            bookMetaEl.textContent = `${source} · ${tab} · 共 ${chapterList.length} 章`;
+            readerSourceEl.textContent = `数据源：${source || "-"}`;
+            renderTOC();
+        }
+
+        async function loadChapter() {
+            if (!itemId) {
+                return;
+            }
+            const cacheKey = `${source}:${bookId}:${itemId}`;
+            setLoading("章节内容加载中...");
+            try {
+                let chapter = chapterMemoryCache.get(cacheKey);
+                if (!chapter) {
+                    const payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
+                    chapter = normalizeContent(payload);
+                    setMemoryCache(cacheKey, chapter);
+                }
+                renderChapter(chapter);
+                rememberLastChapter();
+                updateNavigationState();
+                updateURL();
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            } catch (error) {
+                setError(error.message || "章节加载失败，请稍后重试");
+            }
+        }
+
+        async function goToIndex(index) {
+            if (index < 0 || index >= chapterList.length) {
+                return;
+            }
+            currentIndex = index;
+            itemId = chapterList[index].id;
+            await loadChapter();
+        }
+
+        function togglePanel(panelId) {
+            showChrome();
+            const panel = document.getElementById(panelId);
+            const willOpen = !panel.classList.contains("is-open");
+            document.querySelectorAll(".panel").forEach(item => item.classList.remove("is-open"));
+            if (willOpen) {
+                panel.classList.add("is-open");
+                if (panelId === "tocPanel") {
+                    requestAnimationFrame(() => {
+                        const active = panel.querySelector(".toc-item.active");
+                        if (active) {
+                            active.scrollIntoView({ block: "center", behavior: "smooth" });
+                        }
+                    });
+                }
+            }
+            overlayEl.classList.toggle("is-open", willOpen);
+            if (!willOpen) {
+                scheduleChromeHide();
+            }
+        }
+
+        function closePanels() {
+            document.querySelectorAll(".panel").forEach(item => item.classList.remove("is-open"));
+            overlayEl.classList.remove("is-open");
+            scheduleChromeHide();
+        }
+
+        function resetSettings() {
+            readerSettings = {
+                fontSize: 20,
+                lineHeight: 1.95,
+                readerWidth: 720,
+                fontFamily: "serif",
+                lightBackground: READER_DEFAULT_COLORS.lightBackground,
+                lightText: READER_DEFAULT_COLORS.lightText,
+                darkBackground: READER_DEFAULT_COLORS.darkBackground,
+                darkText: READER_DEFAULT_COLORS.darkText
+            };
+            saveReaderSettings();
+            applyReaderSettings();
+        }
+
+        fontSizeInput.addEventListener("input", event => {
+            readerSettings.fontSize = Number(event.target.value);
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+        lineHeightInput.addEventListener("input", event => {
+            readerSettings.lineHeight = Number(event.target.value);
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+        readerWidthInput.addEventListener("input", event => {
+            readerSettings.readerWidth = Number(event.target.value);
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+
+        fontFamilyChoiceGroup.addEventListener("click", event => {
+            const button = event.target.closest(".choice-btn");
+            if (!button) {
+                return;
+            }
+            readerSettings.fontFamily = button.dataset.fontFamily;
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+
+        lightBackgroundInput.addEventListener("input", event => {
+            readerSettings.lightBackground = event.target.value;
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+
+        lightTextInput.addEventListener("input", event => {
+            readerSettings.lightText = event.target.value;
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+
+        darkBackgroundInput.addEventListener("input", event => {
+            readerSettings.darkBackground = event.target.value;
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+
+        darkTextInput.addEventListener("input", event => {
+            readerSettings.darkText = event.target.value;
+            saveReaderSettings();
+            applyReaderSettings();
+        });
+
+        themeToggleBtn.addEventListener("click", () => {
+            currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
+            localStorage.setItem(THEME_KEY, currentTheme);
+            applyTheme();
+            applyReaderSettings();
+        });
+
+        document.getElementById("resetSettingsBtn").addEventListener("click", resetSettings);
+        prevBtn.addEventListener("click", () => goToIndex(currentIndex - 1));
+        nextBtn.addEventListener("click", () => goToIndex(currentIndex + 1));
+
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape") {
+                closePanels();
+                scheduleChromeHide(300);
+                return;
+            }
+            if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) {
+                return;
+            }
+            if (event.key === "ArrowLeft") {
+                goToIndex(currentIndex - 1);
+            }
+            if (event.key === "ArrowRight") {
+                goToIndex(currentIndex + 1);
+            }
+        });
+
+        chromeTopbar.addEventListener("click", event => event.stopPropagation());
+        chromeBottomBar.addEventListener("click", event => event.stopPropagation());
+        readerSurface.addEventListener("click", handleReaderChromeToggle);
+        if (topbarRight && themeToggleBtn && settingsToggleBtn && tocToggleBtn) {
+            topbarRight.append(themeToggleBtn, settingsToggleBtn, tocToggleBtn);
+        }
+        cleanupLegacyReaderCaches();
+        applyTheme();
+        applyReaderSettings();
+        showChrome();
+        scheduleChromeHide();
+        loadDirectory()
+            .then(loadChapter)
+            .catch(error => {
+                setError(error.message || "目录加载失败");
+                bookMetaEl.textContent = "无法读取目录";
+                tocSummaryEl.textContent = "目录加载失败";
+            });
+    </script>
+</body>
+</html>

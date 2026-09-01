@@ -1,0 +1,263 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="referrer" content="no-referrer">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Manga Reader</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; height: 100%; width: 100%; }
+        :-webkit-full-screen { width: 100%; height: 100%; }
+        :-webkit-full-screen #reader-container { width: 100%; height: 100%; }
+        #reader-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 0; }
+        .image-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow-y: auto; overflow-x: hidden; background: #000; -webkit-overflow-scrolling: touch; }
+        .image-scroll-area { width: 100%; display: flex; flex-direction: column; align-items: center; }
+        .image-scroll-area img { width: 100%; height: auto; display: block; background-color: #fff; }
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 1s ease-in-out infinite; z-index: 10; }
+        @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+        .controls-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; transition: opacity 0.3s; }
+        .controls-layer.hidden { opacity: 0; }
+        .top-bar { padding: 15px; background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent); pointer-events: auto; display: flex; justify-content: space-between; align-items: center; }
+        .title { font-size: 16px; font-weight: 500; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .btn-select-chapter { font-size: 14px; padding: 6px 14px; border-radius: 14px; background: rgba(255,255,255,0.2); cursor: pointer; }
+        .toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); padding: 12px 24px; border-radius: 8px; font-size: 16px; pointer-events: none; opacity: 0; transition: opacity 0.3s; z-index: 20; white-space: nowrap; }
+        .chapter-selection-layer { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(20, 20, 20, 0.95); border-top-left-radius: 12px; border-top-right-radius: 12px; height: 60vh; z-index: 30; display: flex; flex-direction: column; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); color: #fff; backdrop-filter: blur(10px); }
+        .chapter-selection-layer.visible { transform: translateY(0); }
+        .chapter-selection-content { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+        .chapter-selection-header { padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 16px; font-weight: bold; flex-shrink: 0; }
+        .close-btn { font-size: 24px; padding: 0 10px; cursor: pointer; opacity: 0.7; }
+        .chapter-grid { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; align-content: start; }
+        .chapter-item { background: rgba(255,255,255,0.1); border-radius: 6px; padding: 10px 8px; text-align: center; font-size: 13px; cursor: pointer; color: rgba(255,255,255,0.8); transition: all 0.2s; line-height: 1.4; }
+        .chapter-item.active { color: #fff; background: rgba(255, 42, 81, 0.8); }
+    </style>
+</head>
+<body>
+
+<div id="reader-container">
+    <div class="image-container" id="image-container">
+        <div class="image-scroll-area" id="image-scroll-area"></div>
+    </div>
+    <div class="loading" id="loading"></div>
+    <div class="toast" id="toast"></div>
+    <div class="controls-layer" id="controls-layer">
+        <div class="top-bar">
+            <span class="title" id="chapter-title">Loading...</span>
+            <div class="btn-select-chapter" onclick="reader.toggleChapterList()">Episodes</div>
+        </div>
+    </div>
+    <div class="chapter-selection-layer" id="chapter-selection-layer">
+        <div class="chapter-selection-content">
+            <div class="chapter-selection-header">
+                <span>Select Chapter</span>
+                <span class="close-btn" onclick="reader.toggleChapterList()">x</span>
+            </div>
+            <div class="chapter-grid" id="chapter-grid"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+class MangaReader {
+    constructor() {
+        this.bookId = window.PLUGIN_PARAMS.book_id || window.PLUGIN_PARAMS.fq_id || "";
+        this.currentItemId = window.PLUGIN_PARAMS.item_id || window.PLUGIN_PARAMS.item_ids || "";
+        this.chapters = [];
+        this.currentChapterIndex = -1;
+        this.images = [];
+        this.currentImageIndex = 0;
+        this.imageContainer = document.getElementById('image-container');
+        this.imageScrollArea = document.getElementById('image-scroll-area');
+        this.loading = document.getElementById('loading');
+        this.titleEl = document.getElementById('chapter-title');
+        this.toastEl = document.getElementById('toast');
+        this.controlsLayer = document.getElementById('controls-layer');
+        this.chapterSelectionLayer = document.getElementById('chapter-selection-layer');
+        this.chapterGrid = document.getElementById('chapter-grid');
+        this.controlsVisible = true;
+        this.singleTapTimer = null;
+        this.lastTapTime = 0;
+        this.changingChapter = false;
+        this.scrollTimeout = null;
+        this.ignoreScrollBoundary = false;
+        this.baseUrl = window.BASE_URL || "";
+        this.init();
+    }
+
+    async init() {
+        this.bindEvents();
+        this.bindChapterListEvents();
+        if (this.bookId) { this.loadChapters(); }
+        if (this.currentItemId) { this.loadChapter(this.currentItemId); }
+    }
+
+    bindChapterListEvents() {
+        const selectionLayer = document.getElementById('chapter-selection-layer');
+        const preventBubble = (e) => e.stopPropagation();
+        selectionLayer.addEventListener('touchstart', preventBubble, { passive: true });
+        selectionLayer.addEventListener('touchmove', preventBubble, { passive: true });
+        selectionLayer.addEventListener('touchend', preventBubble);
+    }
+
+    bindEvents() {
+        let startX = 0, startY = 0, initialScrollTop = 0;
+        this.imageContainer.addEventListener('touchstart', (e) => {
+            startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+            initialScrollTop = this.imageContainer.scrollTop;
+        }, { passive: true });
+        this.imageContainer.addEventListener('touchend', (e) => {
+            const endY = e.changedTouches[0].clientY;
+            const diffY = startY - endY;
+            const scrollTop = this.imageContainer.scrollTop;
+            const scrollDiff = Math.abs(scrollTop - initialScrollTop);
+            if (scrollDiff < 10) {
+                this.requestFullscreen();
+                const now = Date.now();
+                if (now - this.lastTapTime < 300) { clearTimeout(this.singleTapTimer); this.lastTapTime = 0; }
+                else { this.lastTapTime = now; this.singleTapTimer = setTimeout(() => { this.toggleControls(); }, 300); }
+                return;
+            }
+        }, { passive: true });
+        this.imageContainer.addEventListener('scroll', () => {
+            const scrollTop = this.imageContainer.scrollTop;
+            const clientHeight = this.imageContainer.clientHeight;
+            const scrollHeight = this.imageContainer.scrollHeight;
+            if (this.ignoreScrollBoundary && scrollTop > 50) { this.ignoreScrollBoundary = false; }
+            if (scrollHeight > clientHeight && scrollTop >= scrollHeight - clientHeight - 30) {
+                if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
+                if (!this.changingChapter) { this.scrollTimeout = setTimeout(() => { this.readChapter(this.currentChapterIndex + 1); }, 300); }
+            }
+            else if (scrollTop <= 30 && !this.ignoreScrollBoundary) {
+                if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
+                if (!this.changingChapter) { this.scrollTimeout = setTimeout(() => { this.readChapter(this.currentChapterIndex - 1); }, 300); }
+            }
+        });
+    }
+
+    toggleControls() {
+        this.controlsVisible = !this.controlsVisible;
+        if (this.controlsVisible) { this.controlsLayer.classList.remove('hidden'); }
+        else { this.controlsLayer.classList.add('hidden'); }
+    }
+
+    toggleChapterList() {
+        if (this.chapterSelectionLayer.classList.contains('visible')) { this.chapterSelectionLayer.classList.remove('visible'); }
+        else { this.chapterSelectionLayer.classList.add('visible'); const activeBtn = this.chapterGrid.querySelector('.active'); if (activeBtn) { setTimeout(() => { activeBtn.scrollIntoView({ block: 'center', behavior: 'auto' }); }, 100); } }
+    }
+
+    renderChapterList() {
+        this.chapterGrid.innerHTML = '';
+        this.chapters.forEach((chapter, index) => {
+            const btn = document.createElement('div');
+            btn.className = 'chapter-item';
+            if (index === this.currentChapterIndex) { btn.classList.add('active'); }
+            btn.innerText = chapter.title;
+            btn.onclick = (e) => { e.stopPropagation(); if (this.currentChapterIndex !== index) { this.readChapter(index); } this.toggleChapterList(); };
+            this.chapterGrid.appendChild(btn);
+        });
+    }
+
+    async loadChapters(retries = 1) {
+        if (!this.bookId) { return; }
+        try {
+            const url = this.baseUrl + "/api/v1/books/" + this.bookId + "/directory";
+            const res = await fetch(url); const json = await res.json();
+            // Handle raw API response or filtered format
+            var items = (json.data && json.data.item_data_list) ? json.data.item_data_list : (json.data && json.data.lists) ? json.data.lists : null;
+            if (items) {
+                this.chapters = items; this.renderChapterList();
+                if (this.currentItemId) { this.updateIndexByItemId(this.currentItemId); }
+                else if (this.chapters.length > 0) { this.readChapter(0); }
+            } else { throw new Error("Invalid chapter data"); }
+        } catch (e) {
+            if (retries > 0) { const delay = 1000 * (6 - retries); setTimeout(() => this.loadChapters(retries - 1), delay); }
+            else { this.showToast("Chapter list load failed"); }
+        }
+    }
+
+    updateIndexByItemId(itemId) { this.currentChapterIndex = this.chapters.findIndex(chapter => chapter.item_id == itemId); this.updateUI(); }
+    updateUI() {
+        if (this.currentChapterIndex >= 0 && this.chapters[this.currentChapterIndex]) {
+            const chapter = this.chapters[this.currentChapterIndex]; this.titleEl.innerText = chapter.title;
+            const buttons = this.chapterGrid.querySelectorAll('.chapter-item');
+            buttons.forEach((btn, idx) => { if (idx === this.currentChapterIndex) btn.classList.add('active'); else btn.classList.remove('active'); });
+        }
+    }
+
+    async loadChapter(itemId) {
+        if (!itemId) return;
+        this.showLoading(true); this.currentItemId = window.PLUGIN_PARAMS.item_id || window.PLUGIN_PARAMS.item_ids || "";
+        try {
+            const url = this.baseUrl + "/api/v1/manga/" + itemId;
+            const res = await fetch(url); const json = await res.json();
+            if (json.success && json.data.images && json.data.images.length > 0) {
+                this.images = json.data.images; this.renderImages();
+                if (this.chapters.length > 0) { this.updateIndexByItemId(itemId); }
+            } else { throw new Error(json.error || "Failed to get manga images"); }
+        } catch (e) { this.showToast("Error: " + e.message); }
+        finally { this.changingChapter = false; this.showLoading(false); }
+    }
+
+    renderImages() {
+        this.imageScrollArea.innerHTML = '';
+        this.images.forEach((imgUrl, index) => {
+            const img = document.createElement('img');
+            img.src = imgUrl; img.alt = 'Image ' + (index + 1);
+            img.onload = () => { this.showLoading(false); };
+            img.onerror = () => { console.error('Image load failed: ' + imgUrl); };
+            this.imageScrollArea.appendChild(img);
+        });
+        this.imageContainer.scrollTop = 0;
+    }
+
+    readChapter(index) {
+        if (this.changingChapter) return;
+        if (index < 0 || index >= this.chapters.length) { this.showToast(index < 0 ? "Already at first chapter" : "Already at last chapter"); return; }
+        this.changingChapter = true; this.ignoreScrollBoundary = true;
+        this.currentChapterIndex = index; const chapter = this.chapters[index]; this.loadChapter(chapter.item_id);
+    }
+
+    nextChapter() {
+        if (this.chapters.length === 0) { this.showToast("Chapter list not loaded"); return; }
+        const scrollTop = this.imageContainer.scrollTop;
+        const scrollHeight = this.imageContainer.scrollHeight - this.imageContainer.clientHeight;
+        if (scrollTop >= scrollHeight - 50) { this.readChapter(this.currentChapterIndex + 1); }
+    }
+    prevChapter() {
+        if (this.chapters.length === 0) { this.showToast("Chapter list not loaded"); return; }
+        if (this.imageContainer.scrollTop <= 50) { this.readChapter(this.currentChapterIndex - 1); }
+    }
+
+    showLoading(show) { this.loading.style.display = show ? 'block' : 'none'; }
+    showToast(msg) { this.toastEl.innerText = msg; this.toastEl.style.opacity = 1; setTimeout(() => { this.toastEl.style.opacity = 0; }, 2000); }
+    requestFullscreen() {
+        const doc = document.documentElement;
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            if (doc.requestFullscreen) { doc.requestFullscreen(); }
+            else if (doc.webkitRequestFullscreen) { doc.webkitRequestFullscreen(); }
+            else if (doc.mozRequestFullScreen) { doc.mozRequestFullScreen(); }
+            else if (doc.msRequestFullscreen) { doc.msRequestFullscreen(); }
+        }
+    }
+}
+
+const reader = new MangaReader();
+
+function requestFullscreen() {
+    const doc = document.documentElement;
+    if (doc.requestFullscreen) { doc.requestFullscreen(); }
+    else if (doc.webkitRequestFullscreen) { doc.webkitRequestFullscreen(); }
+    else if (doc.mozRequestFullScreen) { doc.mozRequestFullScreen(); }
+    else if (doc.msRequestFullscreen) { doc.msRequestFullscreen(); }
+}
+
+let fullscreenRequested = false;
+document.addEventListener('click', () => {
+    if (!fullscreenRequested) { fullscreenRequested = true; if (!document.fullscreenElement && !document.webkitFullscreenElement) { requestFullscreen(); } }
+}, { once: true });
+document.addEventListener('touchstart', () => {
+    if (!fullscreenRequested) { fullscreenRequested = true; if (!document.fullscreenElement && !document.webkitFullscreenElement) { requestFullscreen(); } }
+}, { once: true });
+</script>
+</body>

@@ -1,0 +1,15 @@
+{
+  "android": [
+    {
+      "device_id": "0000000000000000",
+      "install_id": "0000000000000000",
+      "secret_key": "",
+      "platform": "android",
+      "status": "active",
+      "created_time": "1970-01-01 00:00:00",
+      "last_used": "1970-01-01 00:00:00",
+      "use_count": 0
+    }
+  ],
+  "last_update": "1970-01-01 00:00:00"
+}

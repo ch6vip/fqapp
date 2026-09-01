@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="./assets/css/all.min.css">
+    <title>视频播放</title>
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --card: rgba(255, 255, 255, 0.94);
+            --text: #18212f;
+            --sub: #617081;
+            --line: rgba(24, 33, 47, 0.1);
+            --accent: #2f6fed;
+            --accent-soft: rgba(47, 111, 237, 0.12);
+            --shadow: 0 18px 40px rgba(18, 28, 45, 0.08);
+        }
+
+        body.theme-dark {
+            --bg: #0f141b;
+            --card: rgba(20, 28, 38, 0.94);
+            --text: #f4f7fb;
+            --sub: #a4b2c4;
+            --line: rgba(255, 255, 255, 0.08);
+            --accent: #84b5ff;
+            --accent-soft: rgba(132, 181, 255, 0.16);
+            --shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: linear-gradient(180deg, var(--bg), #f7f9fc);
+            color: var(--text);
+            font-family: "MiSans", "HarmonyOS Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        body.theme-dark {
+            background: linear-gradient(180deg, var(--bg), #151d26);
+        }
+
+        button,
+        video {
+            font: inherit;
+        }
+
+        .wrap {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+
+        .topbar,
+        .card,
+        .panel {
+            border: 1px solid var(--line);
+            background: var(--card);
+            backdrop-filter: blur(18px);
+            box-shadow: var(--shadow);
+        }
+
+        .topbar,
+        .card {
+            border-radius: 24px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            position: relative;
+            top: 0;
+            z-index: 1;
+            border-radius: 18px;
+        }
+
+        .topbar .left,
+        .topbar .right,
+        .controls,
+        .speed-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .topbar .left {
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+
+        .topbar .right {
+            flex-shrink: 0;
+        }
+
+        .title h1 { margin: 0; font-size: 17px; }
+        .title p, .muted, .status { margin: 4px 0 0; color: var(--sub); font-size: 13px; }
+
+        .icon-btn,
+        .btn,
+        .chip {
+            border: 1px solid var(--line);
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .icon-btn { width: 38px; height: 38px; border-radius: 12px; }
+        .btn { min-height: 40px; padding: 0 14px; border-radius: 14px; }
+        .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+        .chip { padding: 8px 12px; border-radius: 999px; }
+        .chip.active { background: var(--accent-soft); border-color: rgba(47,111,237,.28); color: var(--accent); font-weight: 700; }
+
+        .card { padding: 14px; }
+        .card video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 18px; object-fit: contain; }
+        .card video.is-portrait { width: min(100%, 520px); aspect-ratio: 9 / 16; max-height: min(78vh, 980px); display: block; margin: 0 auto; }
+        .card h2 { margin: 10px 0 4px; font-size: 22px; }
+        .controls { justify-content: space-between; flex-wrap: wrap; margin-top: 10px; }
+        .speed-row { flex-wrap: wrap; }
+
+        .panel {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            z-index: 40;
+            width: min(340px, calc(100vw - 32px));
+            padding: 18px;
+            border-radius: 0;
+            overflow: auto;
+            transform: translateX(-108%);
+            transition: transform .2s ease;
+        }
+
+        .panel.is-open {
+            transform: translateX(0);
+        }
+
+        .panel h2 {
+            margin: 0 0 14px;
+            font-size: 20px;
+        }
+
+        .list {
+            display: grid;
+            gap: 8px;
+            max-height: calc(100vh - 170px);
+            overflow: auto;
+            padding-right: 4px;
+        }
+
+        .item {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid transparent;
+            border-radius: 14px;
+            background: transparent;
+            color: var(--text);
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .item small {
+            display: block;
+            color: var(--sub);
+            margin-top: 4px;
+        }
+
+        .item.active {
+            background: var(--accent-soft);
+            border-color: rgba(47,111,237,.28);
+            color: var(--accent);
+        }
+
+        .overlay { display: none; }
+        .overlay.is-open { display: block; position: fixed; inset: 0; z-index: 35; background: rgba(9,14,20,.46); }
+
+        @media (max-width: 900px) {
+            .wrap { padding: 10px; }
+            .topbar { flex-wrap: wrap; align-items: flex-start; }
+            .controls { gap: 12px; }
+        }
+
+        @media (max-width: 560px) {
+            .topbar .right {
+                width: 100%;
+                justify-content: flex-end;
+            }
+
+            .title h1 {
+                font-size: 18px;
+                line-height: 1.35;
+            }
+
+            .controls,
+            .speed-row {
+                width: 100%;
+            }
+
+            .controls .btn {
+                flex: 1 1 calc(50% - 10px);
+                min-width: 0;
+            }
+
+            .panel {
+                width: min(292px, calc(100vw - 20px));
+                padding: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="overlay" id="overlay" onclick="closeCatalog()"></div>
+    <div class="wrap">
+        <header class="topbar" id="chromeTopbar">
+            <div class="left">
+                <button class="icon-btn" type="button" onclick="history.back()" aria-label="返回"><i class="fas fa-arrow-left"></i></button>
+                <div class="title">
+                    <h1 id="pageTitle">视频播放</h1>
+                    <p id="pageMeta">正在准备播放器...</p>
+                </div>
+            </div>
+            <div class="right">
+                <button class="icon-btn" type="button" id="themeToggle" aria-label="切换主题"><i class="fas fa-moon"></i></button>
+                <button class="icon-btn" type="button" id="catalogToggle" aria-label="目录"><i class="fas fa-list-ul"></i></button>
+            </div>
+        </header>
+
+        <main class="card">
+            <video id="videoPlayer" controls playsinline webkit-playsinline preload="metadata"></video>
+            <h2 id="episodeTitle">加载中...</h2>
+            <p class="muted" id="episodeMeta">正在读取剧集信息</p>
+            <div class="controls">
+                <div class="speed-row">
+                    <button class="btn" type="button" id="prevBtn"><i class="fas fa-chevron-left"></i> 上一集</button>
+                    <button class="btn primary" type="button" id="nextBtn">下一集 <i class="fas fa-chevron-right"></i></button>
+                </div>
+                <div class="speed-row" id="speedGroup">
+                    <button class="chip" type="button" data-speed="1">1.0x</button>
+                    <button class="chip" type="button" data-speed="1.25">1.25x</button>
+                    <button class="chip" type="button" data-speed="1.5">1.5x</button>
+                    <button class="chip" type="button" data-speed="2">2.0x</button>
+                </div>
+            </div>
+            <p class="status" id="playerStatus">准备就绪</p>
+        </main>
+    </div>
+
+    <aside class="panel" id="catalogPanel">
+        <h2>剧集目录</h2>
+        <p class="muted" id="catalogMeta">正在加载目录...</p>
+        <div class="list" id="episodeList"></div>
+    </aside>
+
+    <script>
+        const params = new URLSearchParams(location.search);
+        const source = params.get("source") || "";
+        const bookId = params.get("book_id") || "";
+        const tab = params.get("tab") || "短剧";
+        const cmd = params.get("cmd") || "1";
+        let itemId = params.get("item_id") || "";
+
+        const THEME_KEY = "novelapi_theme_v4";
+        const SPEED_KEY = "novelapi_video_speed_v3";
+        const LAST_KEY = `novelapi_video_last:${source}:${bookId}`;
+
+        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
+        let episodes = [];
+        let currentIndex = 0;
+
+        const video = document.getElementById("videoPlayer");
+        const pageTitleEl = document.getElementById("pageTitle");
+        const pageMetaEl = document.getElementById("pageMeta");
+        const episodeTitleEl = document.getElementById("episodeTitle");
+        const episodeMetaEl = document.getElementById("episodeMeta");
+        const playerStatusEl = document.getElementById("playerStatus");
+        const catalogMetaEl = document.getElementById("catalogMeta");
+        const episodeListEl = document.getElementById("episodeList");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+        const themeToggle = document.getElementById("themeToggle");
+        const catalogToggle = document.getElementById("catalogToggle");
+        const overlay = document.getElementById("overlay");
+        const catalogPanel = document.getElementById("catalogPanel");
+
+        function applyTheme() {
+            document.body.classList.toggle("theme-dark", currentTheme === "dark");
+            themeToggle.innerHTML = currentTheme === "dark" ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        }
+
+        function progressKey(id) {
+            return `novelapi_video_progress:${source}:${bookId}:${id}`;
+        }
+
+        function setStatus(text) {
+            playerStatusEl.textContent = text;
+        }
+
+        function closeCatalog() {
+            catalogPanel.classList.remove("is-open");
+            overlay.classList.remove("is-open");
+        }
+
+        function openCatalog() {
+            const shouldOpen = !catalogPanel.classList.contains("is-open");
+            closeCatalog();
+            if (!shouldOpen) return;
+            catalogPanel.classList.add("is-open");
+            overlay.classList.add("is-open");
+            requestAnimationFrame(() => {
+                const active = episodeListEl.querySelector(".item.active");
+                if (active) active.scrollIntoView({ block: "center", behavior: "smooth" });
+            });
+        }
+
+        async function fetchJSON(url) {
+            const response = await fetch(url, { cache: "no-store" });
+            const text = await response.text();
+            const payload = JSON.parse(text);
+            if (!response.ok || payload.code !== 200) throw new Error(payload.message || "请求失败");
+            return payload;
+        }
+
+        function renderSpeed() {
+            const speed = Number(localStorage.getItem(SPEED_KEY) || "1");
+            video.playbackRate = speed;
+            document.querySelectorAll("#speedGroup .chip").forEach(button => {
+                button.classList.toggle("active", Number(button.dataset.speed) === speed);
+            });
+        }
+
+        function renderList() {
+            episodeListEl.innerHTML = "";
+            episodes.forEach((episode, index) => {
+                const button = document.createElement("button");
+                button.className = "item" + (index === currentIndex ? " active" : "");
+                button.type = "button";
+                button.innerHTML = `${episode.title}<small>第 ${index + 1} 集</small>`;
+                button.onclick = () => goToIndex(index, true);
+                episodeListEl.appendChild(button);
+            });
+            catalogMetaEl.textContent = `共 ${episodes.length} 集`;
+            prevBtn.disabled = currentIndex <= 0;
+            nextBtn.disabled = currentIndex >= episodes.length - 1;
+        }
+
+        function updateURL() {
+            const url = new URL(location.href);
+            url.searchParams.set("item_id", itemId);
+            history.replaceState({}, "", url);
+        }
+
+        function saveProgress() {
+            if (!itemId || !video.currentTime || !video.duration) return;
+            localStorage.setItem(progressKey(itemId), String(video.currentTime));
+        }
+
+        async function loadDirectory() {
+            const payload = await fetchJSON(`/api/directory?book_id=${encodeURIComponent(bookId)}&source=${encodeURIComponent(source)}`);
+            episodes = (payload.data?.data?.chapterListWithVolume || []).flat().map(item => ({
+                id: String(item.itemId || ""),
+                title: item.title || "未命名剧集"
+            })).filter(item => item.id);
+            if (!episodes.length) throw new Error("没有可播放的剧集");
+            const last = localStorage.getItem(LAST_KEY);
+            const targetId = itemId || last || episodes[0].id;
+            currentIndex = episodes.findIndex(item => item.id === targetId);
+            if (currentIndex < 0) currentIndex = 0;
+            itemId = episodes[currentIndex].id;
+            renderList();
+        }
+
+        async function loadEpisode(autoPlay = false) {
+            const current = episodes[currentIndex];
+            if (!current) return;
+            itemId = current.id;
+            episodeTitleEl.textContent = current.title;
+            pageTitleEl.textContent = current.title;
+            pageMetaEl.textContent = `${source} · ${tab}`;
+            episodeMetaEl.textContent = `第 ${currentIndex + 1} 集 / 共 ${episodes.length} 集`;
+            setStatus("正在加载视频...");
+            localStorage.setItem(LAST_KEY, itemId);
+            updateURL();
+            renderList();
+
+            try {
+                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}&source=${encodeURIComponent(source)}&cmd=${encodeURIComponent(cmd)}`);
+                const url = payload.data?.video_url;
+                if (!url) throw new Error("未获取到视频地址");
+                video.classList.remove("is-portrait");
+                video.src = url;
+                video.load();
+                const saved = Number(localStorage.getItem(progressKey(itemId)) || "0");
+                video.addEventListener("loadedmetadata", () => {
+                    video.classList.toggle("is-portrait", video.videoHeight > video.videoWidth);
+                    if (saved > 0 && saved < video.duration) video.currentTime = saved;
+                    renderSpeed();
+                    if (autoPlay) video.play().catch(() => setStatus("浏览器阻止了自动播放，请手动点击播放"));
+                }, { once: true });
+                setStatus("视频已加载");
+            } catch (error) {
+                setStatus(error.message || "视频加载失败");
+            }
+        }
+
+        async function goToIndex(index, autoPlay = true) {
+            if (index < 0 || index >= episodes.length) return;
+            saveProgress();
+            currentIndex = index;
+            closeCatalog();
+            await loadEpisode(autoPlay);
+        }
+
+        prevBtn.addEventListener("click", () => goToIndex(currentIndex - 1, true));
+        nextBtn.addEventListener("click", () => goToIndex(currentIndex + 1, true));
+        catalogToggle.addEventListener("click", openCatalog);
+        themeToggle.addEventListener("click", () => {
+            currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
+            localStorage.setItem(THEME_KEY, currentTheme);
+            applyTheme();
+        });
+        document.getElementById("speedGroup").addEventListener("click", event => {
+            const button = event.target.closest(".chip");
+            if (!button) return;
+            localStorage.setItem(SPEED_KEY, button.dataset.speed);
+            renderSpeed();
+        });
+
+        video.addEventListener("play", () => setStatus("正在播放"));
+        video.addEventListener("pause", () => {
+            saveProgress();
+            if (video.currentTime && video.currentTime < video.duration) setStatus("已暂停");
+        });
+        video.addEventListener("timeupdate", () => {
+            if (Math.floor(video.currentTime) % 5 === 0) saveProgress();
+        });
+        video.addEventListener("ended", () => {
+            localStorage.removeItem(progressKey(itemId));
+            if (currentIndex < episodes.length - 1) goToIndex(currentIndex + 1, true);
+            else setStatus("当前剧集播放完成");
+        });
+        video.addEventListener("error", () => setStatus("视频播放失败"));
+
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape") {
+                closeCatalog();
+            }
+            if (event.target && ["INPUT", "SELECT"].includes(event.target.tagName)) return;
+            if (event.key === "ArrowLeft") goToIndex(currentIndex - 1, true);
+            if (event.key === "ArrowRight") goToIndex(currentIndex + 1, true);
+        });
+
+        applyTheme();
+        renderSpeed();
+        loadDirectory().then(() => loadEpisode(false)).catch(error => setStatus(error.message || "页面初始化失败"));
+    </script>
+</body>
+</html>

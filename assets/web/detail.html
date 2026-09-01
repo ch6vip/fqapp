@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>作品详情</title>
+    <link rel="stylesheet" href="./assets/css/all.min.css">
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --card: rgba(255, 255, 255, 0.92);
+            --text: #18212f;
+            --sub: #637284;
+            --primary: #2f6fed;
+            --line: rgba(24, 33, 47, 0.1);
+            --shadow: 0 18px 40px rgba(18, 28, 45, 0.08);
+        }
+
+        body.dark {
+            --bg: #0f141b;
+            --card: rgba(20, 28, 38, 0.94);
+            --text: #f4f7fb;
+            --sub: #9fb0c2;
+            --primary: #84b5ff;
+            --line: rgba(255, 255, 255, 0.08);
+            --shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: "MiSans", "HarmonyOS Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        .wrap {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 24px 16px 40px;
+        }
+
+        .topbar,
+        .detail,
+        .section {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(18px);
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 14px;
+            margin-bottom: 16px;
+        }
+
+        .topbar button,
+        .action-btn,
+        .pager button,
+        .chapter {
+            font: inherit;
+            cursor: pointer;
+        }
+
+        .topbar button {
+            min-height: 40px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 0 14px;
+            background: transparent;
+            color: var(--text);
+        }
+
+        #backBtn {
+            width: 38px;
+            min-width: 38px;
+            height: 38px;
+            min-height: 38px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0;
+        }
+
+        #backBtn::before {
+            content: "\f060";
+            font-family: "Font Awesome 6 Free";
+            font-weight: 900;
+            font-size: 16px;
+            line-height: 1;
+        }
+
+        .detail {
+            display: grid;
+            grid-template-columns: 200px minmax(0, 1fr);
+            gap: 18px;
+            padding: 18px;
+            margin-bottom: 16px;
+        }
+
+        .detail img {
+            width: 200px;
+            height: 276px;
+            object-fit: cover;
+            border-radius: 16px;
+            background: #eceff4;
+        }
+
+        .detail h1 {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.2;
+        }
+
+        .meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            color: var(--sub);
+            font-size: 13px;
+            margin: 12px 0;
+        }
+
+        .meta span,
+        .tags span {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: rgba(47, 111, 237, 0.10);
+            color: var(--primary);
+        }
+
+        .desc {
+            margin: 0;
+            color: var(--sub);
+            line-height: 1.75;
+            white-space: pre-wrap;
+        }
+
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 12px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .action-btn,
+        .pager button {
+            min-height: 42px;
+            border: 0;
+            border-radius: 12px;
+            padding: 0 16px;
+        }
+
+        .action-btn.primary,
+        .pager button {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .action-btn.secondary {
+            background: rgba(47, 111, 237, 0.10);
+            color: var(--primary);
+        }
+
+        .action-btn[disabled] {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .progress-box {
+            display: none;
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 14px;
+            background: rgba(99, 114, 132, 0.1);
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 8px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(112, 120, 134, 0.18);
+        }
+
+        .progress-bar {
+            width: 0;
+            height: 100%;
+            background: var(--primary);
+        }
+
+        .progress-text {
+            margin-top: 8px;
+            color: var(--sub);
+            font-size: 13px;
+        }
+
+        #cancelDownloadBtn {
+            min-height: 40px;
+            margin-top: 12px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 0 16px;
+            background: transparent;
+            color: var(--text);
+        }
+
+        .section {
+            padding: 18px;
+        }
+
+        .section-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .section-head h2 {
+            margin: 0;
+            font-size: 22px;
+        }
+
+        .status {
+            min-height: 24px;
+            color: var(--sub);
+            font-size: 13px;
+        }
+
+        .volume + .volume {
+            margin-top: 20px;
+        }
+
+        .volume h3 {
+            margin: 0 0 10px;
+            font-size: 17px;
+        }
+
+        .chapters {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 10px;
+        }
+
+        .chapter {
+            min-height: 44px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px 12px;
+            background: transparent;
+            color: var(--text);
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .pager {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .pager span {
+            color: var(--sub);
+            font-size: 13px;
+        }
+
+        @media (max-width: 760px) {
+            .wrap {
+                padding: 16px 12px 30px;
+            }
+
+            .topbar {
+                padding: 10px 12px;
+            }
+
+            .topbar button {
+                width: auto;
+                min-width: 44px;
+                flex-shrink: 0;
+            }
+
+            .detail {
+                grid-template-columns: 1fr;
+                padding: 14px;
+            }
+
+            .detail img {
+                width: 150px;
+                height: 210px;
+            }
+
+            .detail h1 {
+                font-size: 24px;
+            }
+
+            .actions {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+
+            .action-btn,
+            .pager button {
+                width: 100%;
+            }
+
+            .chapters {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="topbar">
+            <button id="backBtn" type="button" >返回搜索</button>
+            <button id="themeToggle" type="button" aria-label="切换主题"><i class="fas fa-moon"></i></button>
+        </div>
+
+        <div class="detail">
+            <img id="cover" alt="作品封面">
+            <div>
+                <h1 id="title">正在加载作品信息…</h1>
+                <div class="meta" id="meta"></div>
+                <p class="desc" id="desc">请稍候，正在获取详情。</p>
+                <div class="tags" id="tags"></div>
+
+                <div class="actions">
+                    <button class="action-btn primary" id="frontendDownloadBtn" type="button">前端极速下载</button>
+                    <button class="action-btn secondary" id="backendDownloadBtn" type="button">后端打包下载</button>
+                    <button class="action-btn secondary" id="clearCacheBtn" type="button">清理缓存</button>
+                </div>
+
+                <div class="progress-box" id="progressBox">
+                    <div class="progress-track">
+                        <div class="progress-bar" id="progressBar"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">准备下载…</div>
+                    <button id="cancelDownloadBtn" type="button">取消下载</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-head">
+                <h2>章节目录</h2>
+                <div class="status" id="statusBar"></div>
+            </div>
+            <div id="chapterList"></div>
+        </div>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(location.search);
+        const source = params.get("source") || "";
+        const bookId = params.get("book_id") || "";
+        const tab = params.get("tab") || "小说";
+
+        const THEME_KEY = "novelapi_theme_v4";
+        const CACHE_PREFIX = "novelapi_cache_v2:";
+        const CACHE_META_KEY = CACHE_PREFIX + "meta";
+        const CACHE_TTL = 1000 * 60 * 20;
+        const CACHE_MAX_ITEMS = 80;
+        const PAGE_SIZE = 50;
+
+        const titleEl = document.getElementById("title");
+        const coverEl = document.getElementById("cover");
+        const metaEl = document.getElementById("meta");
+        const descEl = document.getElementById("desc");
+        const tagsEl = document.getElementById("tags");
+        const chapterList = document.getElementById("chapterList");
+        const statusBar = document.getElementById("statusBar");
+        const progressBox = document.getElementById("progressBox");
+        const progressBar = document.getElementById("progressBar");
+        const progressText = document.getElementById("progressText");
+
+        let chapterData = [];
+        let currentPage = 1;
+        let downloadAbort = false;
+        const chapterMemoryCache = new Map();
+
+        function readMeta() {
+            try { return JSON.parse(localStorage.getItem(CACHE_META_KEY) || "{}"); } catch { return {}; }
+        }
+
+        function writeMeta(meta) {
+            localStorage.setItem(CACHE_META_KEY, JSON.stringify(meta));
+        }
+
+        function pruneCache() {
+            const meta = readMeta();
+            const now = Date.now();
+            Object.keys(meta).forEach(key => {
+                if (now - meta[key] > CACHE_TTL) {
+                    localStorage.removeItem(key);
+                    delete meta[key];
+                }
+            });
+            const keys = Object.keys(meta).sort((a, b) => meta[a] - meta[b]);
+            while (keys.length > CACHE_MAX_ITEMS) {
+                const oldest = keys.shift();
+                localStorage.removeItem(oldest);
+                delete meta[oldest];
+            }
+            writeMeta(meta);
+        }
+
+        function clearManagedCache() {
+            const meta = readMeta();
+            Object.keys(meta).forEach(key => localStorage.removeItem(key));
+            localStorage.removeItem(CACHE_META_KEY);
+            statusBar.textContent = "缓存已清理";
+        }
+
+        function cleanupLegacyCache() {
+            const legacyPrefixes = ["detail:", "directory:", "chapter:", "novelapi_cache:", "novelapi:v1:"];
+            Object.keys(localStorage).forEach(key => {
+                if (legacyPrefixes.some(prefix => key.startsWith(prefix))) {
+                    localStorage.removeItem(key);
+                }
+            });
+        }
+
+        function readCache(type, value) {
+            pruneCache();
+            const key = `${CACHE_PREFIX}${type}:${value}`;
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return null;
+                const payload = JSON.parse(raw);
+                if (!payload || Date.now() - payload.time > CACHE_TTL) {
+                    localStorage.removeItem(key);
+                    return null;
+                }
+                return payload.data;
+            } catch {
+                return null;
+            }
+        }
+
+        function writeCache(type, value, data) {
+            pruneCache();
+            const key = `${CACHE_PREFIX}${type}:${value}`;
+            const payload = { time: Date.now(), data };
+            if (JSON.stringify(payload).length > 50000) return;
+            try {
+                localStorage.setItem(key, JSON.stringify(payload));
+                const meta = readMeta();
+                meta[key] = payload.time;
+                writeMeta(meta);
+            } catch {
+                clearManagedCache();
+            }
+        }
+
+        function applyTheme(theme) {
+            document.body.classList.toggle("dark", theme === "dark");
+            document.getElementById("themeToggle").innerHTML = theme === "dark"
+                ? '<i class="fas fa-sun"></i>'
+                : '<i class="fas fa-moon"></i>';
+            localStorage.setItem(THEME_KEY, theme);
+        }
+
+        const backBtnEl = document.getElementById("backBtn");
+        if (backBtnEl) {
+            backBtnEl.setAttribute("aria-label", "返回搜索");
+            backBtnEl.innerHTML = '<i class="fas fa-arrow-left"></i>';
+        }
+
+        async function fetchJSON(url) {
+            const response = await fetch(url);
+            const payload = await response.json();
+            if (!response.ok || (payload.code !== undefined && payload.code !== 200)) {
+                throw new Error(payload.message || "请求失败");
+            }
+            return payload;
+        }
+
+        function formatDetail(payload) {
+            if (source === "番茄") return { title: payload?.data?.book_name || "未知作品", author: payload?.data?.author || "未知作者", desc: payload?.data?.abstract || "", cover: payload?.data?.expand_thumb_url || "", tags: payload?.data?.tags ? payload.data.tags.split(",") : [] };
+        }
+
+        function formatDirectory(payload) {
+            if (source === "番茄") return (payload?.data?.data?.chapterListWithVolume || []).map(volume => ({ volume: volume?.[0]?.volume_name || "正文", chapters: (volume || []).map(item => ({ id: item.itemId, title: item.title })) }));
+        }
+        function renderDetail(detail) {
+            titleEl.textContent = detail.title;
+            coverEl.src = detail.cover || `https://picsum.photos/320/460?random=${Math.random()}`;
+            coverEl.referrerPolicy = "no-referrer";
+            descEl.textContent = detail.desc || "暂无简介";
+
+            metaEl.innerHTML = "";
+            [`作者：${detail.author || "未知作者"}`, `来源：${source}`, `模式：${tab}`].forEach(text => {
+                const span = document.createElement("span");
+                span.textContent = text;
+                metaEl.appendChild(span);
+            });
+
+            tagsEl.innerHTML = "";
+            (detail.tags || []).filter(Boolean).forEach(tag => {
+                const span = document.createElement("span");
+                span.textContent = tag;
+                tagsEl.appendChild(span);
+            });
+        }
+
+        function renderPager(totalPages) {
+            const pager = document.createElement("div");
+            pager.className = "pager";
+            const prev = document.createElement("button");
+            prev.textContent = "上一页";
+            prev.disabled = currentPage === 1;
+            prev.addEventListener("click", () => renderPage(currentPage - 1));
+            const info = document.createElement("span");
+            info.textContent = `第 ${currentPage} / ${totalPages} 页`;
+            const next = document.createElement("button");
+            next.textContent = "下一页";
+            next.disabled = currentPage === totalPages;
+            next.addEventListener("click", () => renderPage(currentPage + 1));
+            pager.append(prev, info, next);
+            chapterList.appendChild(pager);
+        }
+
+        function renderPage(page) {
+            currentPage = page;
+            chapterList.innerHTML = "";
+            const list = [];
+            chapterData.forEach(volume => volume.chapters.forEach(chapter => list.push({ volume: volume.volume, chapter })));
+            if (!list.length) {
+                chapterList.innerHTML = '<div class="status">暂无章节目录</div>';
+                return;
+            }
+
+            const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+            const pageItems = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+            const grouped = new Map();
+            pageItems.forEach(item => {
+                if (!grouped.has(item.volume)) grouped.set(item.volume, []);
+                grouped.get(item.volume).push(item.chapter);
+            });
+
+            grouped.forEach((chapters, volume) => {
+                const block = document.createElement("div");
+                block.className = "volume";
+                block.innerHTML = `<h3>${volume}</h3>`;
+                const grid = document.createElement("div");
+                grid.className = "chapters";
+                chapters.forEach(chapter => {
+                    const button = document.createElement("button");
+                    button.className = "chapter";
+                    button.type = "button";
+                    button.textContent = chapter.title;
+                    button.addEventListener("click", () => {
+                        let target = "read.html";
+                        if (tab === "漫画") target = "comic.html";
+                        if (tab === "听书") target = "listen.html";
+                        if (tab === "短剧") target = "video.html";
+                        location.href = `/${target}?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(chapter.id)}&tab=${encodeURIComponent(tab)}`;
+                    });
+                    grid.appendChild(button);
+                });
+                block.appendChild(grid);
+                chapterList.appendChild(block);
+            });
+            renderPager(totalPages);
+        }
+
+        async function loadDetail() {
+            const cacheKey = `${source}:${bookId}:${tab}`;
+            let payload = readCache("detail", cacheKey);
+            if (!payload) {
+                payload = await fetchJSON(`/api/detail?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&tab=${encodeURIComponent(tab)}`);
+                writeCache("detail", cacheKey, payload);
+            }
+            renderDetail(formatDetail(payload));
+        }
+
+        async function loadDirectory() {
+            statusBar.textContent = "正在加载目录…";
+            const cacheKey = `${source}:${bookId}:${tab}`;
+            let payload = readCache("directory", cacheKey);
+            if (!payload) {
+                payload = await fetchJSON(`/api/directory?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&tab=${encodeURIComponent(tab)}`);
+                writeCache("directory", cacheKey, payload);
+            }
+            chapterData = formatDirectory(payload);
+            renderPage(1);
+            statusBar.textContent = "";
+        }
+
+        function safeFileName(name) {
+            return String(name || "未命名作品").replace(/[\/\\:*?"<>|]/g, "_");
+        }
+
+        function rememberChapterCache(key, value) {
+            chapterMemoryCache.set(key, value);
+            if (chapterMemoryCache.size <= 20) return;
+            const oldestKey = chapterMemoryCache.keys().next().value;
+            chapterMemoryCache.delete(oldestKey);
+        }
+
+        function normalizeDownloadParagraphs(content, chapterTitle) {
+            const raw = String(content || "");
+            const temp = document.createElement("div");
+            temp.innerHTML = raw;
+            let paragraphs = [];
+
+            temp.querySelectorAll("p, div").forEach(node => {
+                const text = node.textContent
+                    .replace(/[\u200b-\u200d\ufeff]/g, "")
+                    .replace(/\u00a0/g, " ")
+                    .trim();
+                if (text) paragraphs.push(text);
+            });
+
+            if (!paragraphs.length) {
+                paragraphs = raw
+                    .replace(/\r/g, "")
+                    .replace(/<br\s*\/?>/gi, "\n")
+                    .replace(/<\/p>/gi, "\n")
+                    .replace(/<[^>]+>/g, "")
+                    .split(/\n+/)
+                    .map(text => text.replace(/[\u200b-\u200d\ufeff]/g, "").replace(/\u00a0/g, " ").trim())
+                    .filter(Boolean);
+            }
+
+            const normalizedTitle = String(chapterTitle || "").replace(/\s+/g, "");
+            while (paragraphs.length) {
+                const first = paragraphs[0].replace(/\s+/g, "");
+                if (!first || !normalizedTitle) break;
+                if (
+                    first === normalizedTitle ||
+                    first.startsWith(normalizedTitle) ||
+                    normalizedTitle.startsWith(first)
+                ) {
+                    paragraphs.shift();
+                    continue;
+                }
+                break;
+            }
+
+            return paragraphs.join("\n");
+        }
+
+        async function fetchChapterText(itemId, chapterTitle) {
+            const cacheKey = `${source}:${bookId}:${itemId}`;
+            let payload = chapterMemoryCache.get(cacheKey);
+            if (!payload) {
+                payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
+                rememberChapterCache(cacheKey, payload);
+            }
+            let content = payload?.data?.content || "";
+            if (Array.isArray(content)) content = content.join("\n");
+            const temp = document.createElement("div");
+            temp.innerHTML = String(content);
+            const lines = [];
+            temp.querySelectorAll("p, div").forEach(node => {
+                const text = node.textContent.trim();
+                if (text) lines.push(text);
+            });
+            if (!lines.length) {
+                return String(content).replaceAll("　", "").split(/\r?\n|<br\s*\/?>/i).map(text => text.trim()).filter(Boolean).join("\n");
+            }
+            return lines.join("
+");
+        }
+
+        async function frontendDownload() {
+            if (tab !== "小说") return;
+            const allChapters = chapterData.flatMap(item => item.chapters);
+            if (!allChapters.length) {
+                statusBar.textContent = "没有可下载的章节";
+                return;
+            }
+
+            downloadAbort = false;
+            progressBox.style.display = "block";
+            progressBar.style.width = "0%";
+            progressText.textContent = "正在准备下载…";
+
+            try {
+                let output = `书名：${titleEl.textContent}\n简介：\n${descEl.textContent}\n\n`;
+                for (let i = 0; i < allChapters.length; i += 1) {
+                    if (downloadAbort) {
+                        progressText.textContent = "下载已取消";
+                        progressBar.style.width = "0%";
+                        return;
+                    }
+                    const chapter = allChapters[i];
+                    const text = await fetchChapterText(chapter.id);
+                    output += `${chapter.title}\n    ${text.replace(/\n/g, "\n    ")}\n\n`;
+                    const percent = Math.floor(((i + 1) / allChapters.length) * 100);
+                    progressBar.style.width = `${percent}%`;
+                    progressText.textContent = `正在下载：${i + 1} / ${allChapters.length}`;
+                }
+
+                const blob = new Blob([output], { type: "text/plain;charset=utf-8" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `${safeFileName(titleEl.textContent)}.txt`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                progressText.textContent = "下载完成";
+                progressBar.style.width = "100%";
+            } catch (error) {
+                progressText.textContent = error.message || "下载失败";
+            } finally {
+                setTimeout(() => {
+                    progressBox.style.display = "none";
+                }, 1000);
+            }
+        }
+
+        async function fetchChapterText(itemId, chapterTitle) {
+            const cacheKey = `${source}:${bookId}:${itemId}`;
+            let payload = chapterMemoryCache.get(cacheKey);
+            if (!payload) {
+                payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
+                rememberChapterCache(cacheKey, payload);
+            }
+            let content = payload?.data?.content || "";
+            if (Array.isArray(content)) content = content.join("\n");
+            return normalizeDownloadParagraphs(content, chapterTitle);
+        }
+
+        async function frontendDownload() {
+            if (tab !== "灏忚") return;
+            const allChapters = chapterData.flatMap(item => item.chapters);
+            if (!allChapters.length) {
+                statusBar.textContent = "娌℃湁鍙笅杞界殑绔犺妭";
+                return;
+            }
+
+            downloadAbort = false;
+            progressBox.style.display = "block";
+            progressBar.style.width = "0%";
+            progressText.textContent = "姝ｅ湪鍑嗗涓嬭浇鈥?";
+
+            try {
+                const chapterOutputs = new Array(allChapters.length);
+                const concurrency = Math.min(6, allChapters.length);
+                let nextIndex = 0;
+                let finished = 0;
+
+                async function worker() {
+                    while (nextIndex < allChapters.length) {
+                        if (downloadAbort) return;
+                        const index = nextIndex;
+                        nextIndex += 1;
+                        const chapter = allChapters[index];
+                        const text = await fetchChapterText(chapter.id, chapter.title);
+                        chapterOutputs[index] = `${chapter.title}\n    ${text.replace(/\n/g, "\n    ")}\n\n`;
+                        finished += 1;
+                        const percent = Math.floor((finished / allChapters.length) * 100);
+                        progressBar.style.width = `${percent}%`;
+                        progressText.textContent = `姝ｅ湪涓嬭浇锛?${finished} / ${allChapters.length}`;
+                    }
+                }
+
+                await Promise.all(Array.from({ length: concurrency }, () => worker()));
+                if (downloadAbort) {
+                    progressText.textContent = "涓嬭浇宸插彇娑?";
+                    progressBar.style.width = "0%";
+                    return;
+                }
+
+                const output = `涔﹀悕锛?{titleEl.textContent}\n绠€浠嬶細\n${descEl.textContent}\n\n${chapterOutputs.join("")}`;
+                const blob = new Blob([output], { type: "text/plain;charset=utf-8" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `${safeFileName(titleEl.textContent)}.txt`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                progressText.textContent = "涓嬭浇瀹屾垚";
+                progressBar.style.width = "100%";
+            } catch (error) {
+                progressText.textContent = error.message || "涓嬭浇澶辫触";
+            } finally {
+                setTimeout(() => {
+                    progressBox.style.display = "none";
+                }, 1000);
+            }
+        }
+
+        async function fetchChapterText(itemId, chapterTitle) {
+            const cacheKey = `${source}:${bookId}:${itemId}`;
+            let payload = chapterMemoryCache.get(cacheKey);
+            if (!payload) {
+                payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
+                rememberChapterCache(cacheKey, payload);
+            }
+            let content = payload?.data?.content || "";
+            if (Array.isArray(content)) content = content.join("\n");
+            return normalizeDownloadParagraphs(content, chapterTitle);
+        }
+
+        async function frontendDownload() {
+            if (tab !== "\u5c0f\u8bf4") return;
+            const allChapters = chapterData.flatMap(item => item.chapters);
+            if (!allChapters.length) {
+                statusBar.textContent = "\u6ca1\u6709\u53ef\u4e0b\u8f7d\u7684\u7ae0\u8282";
+                return;
+            }
+
+            downloadAbort = false;
+            progressBox.style.display = "block";
+            progressBar.style.width = "0%";
+            progressText.textContent = "\u6b63\u5728\u51c6\u5907\u4e0b\u8f7d...";
+
+            try {
+                const chapterOutputs = new Array(allChapters.length);
+                const concurrency = Math.min(6, allChapters.length);
+                let nextIndex = 0;
+                let finished = 0;
+
+                async function worker() {
+                    while (nextIndex < allChapters.length) {
+                        if (downloadAbort) return;
+                        const index = nextIndex;
+                        nextIndex += 1;
+                        const chapter = allChapters[index];
+                        const text = await fetchChapterText(chapter.id, chapter.title);
+                        chapterOutputs[index] = `${chapter.title}\n    ${text.replace(/\n/g, "\n    ")}\n\n`;
+                        finished += 1;
+                        const percent = Math.floor((finished / allChapters.length) * 100);
+                        progressBar.style.width = `${percent}%`;
+                        progressText.textContent = `\u6b63\u5728\u4e0b\u8f7d\uff1a${finished} / ${allChapters.length}`;
+                    }
+                }
+
+                await Promise.all(Array.from({ length: concurrency }, () => worker()));
+                if (downloadAbort) {
+                    progressText.textContent = "\u4e0b\u8f7d\u5df2\u53d6\u6d88";
+                    progressBar.style.width = "0%";
+                    return;
+                }
+
+                const output = `\u4e66\u540d\uff1a${titleEl.textContent}\n\u7b80\u4ecb\uff1a\n${descEl.textContent}\n\n${chapterOutputs.join("")}`;
+                const blob = new Blob([output], { type: "text/plain;charset=utf-8" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `${safeFileName(titleEl.textContent)}.txt`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                progressText.textContent = "\u4e0b\u8f7d\u5b8c\u6210";
+                progressBar.style.width = "100%";
+            } catch (error) {
+                progressText.textContent = error.message || "\u4e0b\u8f7d\u5931\u8d25";
+            } finally {
+                setTimeout(() => {
+                    progressBox.style.display = "none";
+                }, 1000);
+            }
+        }
+
+        function backendDownload() {
+            if (tab !== "小说") return;
+            location.href = `/api/download?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&tab=${encodeURIComponent(tab)}`;
+        }
+
+        document.getElementById("themeToggle").addEventListener("click", () => applyTheme(document.body.classList.contains("dark") ? "light" : "dark"));
+        backBtnEl.addEventListener("click", () => location.href = "/");
+        document.getElementById("frontendDownloadBtn").addEventListener("click", frontendDownload);
+        document.getElementById("backendDownloadBtn").addEventListener("click", backendDownload);
+        document.getElementById("clearCacheBtn").addEventListener("click", clearManagedCache);
+        document.getElementById("cancelDownloadBtn").addEventListener("click", () => { downloadAbort = true; });
+
+        if (tab !== "小说") {
+            document.getElementById("frontendDownloadBtn").disabled = true;
+            document.getElementById("backendDownloadBtn").disabled = true;
+        }
+
+        async function init() {
+            if (!source || !bookId) {
+                titleEl.textContent = "缺少必要参数";
+                descEl.textContent = "请返回搜索页重新进入。";
+                return;
+            }
+            try {
+                await Promise.all([loadDetail(), loadDirectory()]);
+            } catch (error) {
+                titleEl.textContent = "加载失败";
+                descEl.textContent = error.message || "页面加载失败";
+                statusBar.textContent = "目录加载失败";
+            }
+        }
+
+        applyTheme(localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
+        cleanupLegacyCache();
+        pruneCache();
+        init();
+    </script>
+</body>
+</html>

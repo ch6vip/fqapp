@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聚合搜索</title>
+    <link rel="stylesheet" href="./assets/css/all.min.css">
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --card: rgba(255, 255, 255, 0.92);
+            --text: #18212f;
+            --sub: #637284;
+            --primary: #2f6fed;
+            --line: rgba(24, 33, 47, 0.1);
+            --shadow: 0 18px 40px rgba(18, 28, 45, 0.08);
+        }
+
+        body.dark {
+            --bg: #0f141b;
+            --card: rgba(20, 28, 38, 0.94);
+            --text: #f4f7fb;
+            --sub: #9fb0c2;
+            --primary: #84b5ff;
+            --line: rgba(255, 255, 255, 0.08);
+            --shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: "MiSans", "HarmonyOS Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        .wrap {
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 24px 16px 48px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: var(--card);
+            backdrop-filter: blur(18px);
+            box-shadow: var(--shadow);
+        }
+
+        .toggle {
+            width: 38px;
+            height: 38px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        /* .brand {
+            display: none;
+        } */
+        .brand h1 {
+                font-size: 18px;
+        }
+
+        .brand p {
+            margin: 0 0 6px;
+            font-size: 20px;
+           
+        }
+
+        .search-panel {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            padding: 18px;
+            box-shadow: var(--shadow);
+            margin-bottom: 18px;
+            backdrop-filter: blur(18px);
+        }
+
+        .search-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .search-row input {
+            min-width: 0;
+            min-height: 50px;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 0 14px;
+            font: inherit;
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text);
+        }
+
+        .search-row button {
+            min-width: 132px;
+            min-height: 50px;
+            border: 1px solid transparent;
+            border-radius: 14px;
+            background: var(--primary);
+            color: #fff;
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .groups {
+            display: grid;
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        .group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .group span {
+            color: var(--sub);
+            font-size: 13px;
+            /* min-width: 44px; */
+        }
+
+        .chip {
+            min-height: 34px;
+            padding: 0 12px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            background: transparent;
+            color: var(--sub);
+            cursor: pointer;
+            /* font: inherit; */
+        }
+
+        .chip.active {
+            background: rgba(47, 111, 237, 0.12);
+            border-color: rgba(47, 111, 237, 0.22);
+            color: var(--primary);
+            font-weight: 700;
+        }
+
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .toolbar .hint {
+            color: var(--sub);
+            font-size: 13px;
+        }
+
+        .toolbar .clear-cache {
+            border: 0;
+            background: transparent;
+            color: var(--sub);
+            cursor: pointer;
+            /* font: inherit; */
+        }
+
+        .results {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 16px;
+        }
+
+        .card {
+            display: flex;
+            gap: 14px;
+            padding: 14px;
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            cursor: pointer;
+            transition: transform .16s ease;
+            backdrop-filter: blur(18px);
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+        }
+
+        .card img {
+            width: 104px;
+            height: 144px;
+            object-fit: cover;
+            border-radius: 14px;
+            background: #eceff4;
+            flex-shrink: 0;
+        }
+
+        .card-body {
+            min-width: 0;
+            flex: 1 1 auto;
+            overflow: hidden;
+        }
+
+        .card h3 {
+            margin: 0 0 8px;
+            font-size: 17px;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            color: var(--sub);
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+
+        .meta span,
+        .tags span {
+            min-width: 0;
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .desc {
+            margin: 0;
+            color: var(--sub);
+            font-size: 13px;
+            line-height: 1.6;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .tags span {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: rgba(47, 111, 237, 0.10);
+            color: var(--primary);
+            font-size: 11px;
+        }
+
+        .status {
+            min-height: 28px;
+            padding: 16px 0 0;
+            text-align: center;
+            color: var(--sub);
+            font-size: 14px;
+        }
+
+        .empty {
+            padding: 38px 16px;
+            text-align: center;
+            color: var(--sub);
+            background: var(--card);
+            border: 1px dashed var(--line);
+            border-radius: 18px;
+            backdrop-filter: blur(18px);
+        }
+
+        @media (max-width: 768px) {
+            .wrap {
+                padding: 16px 12px 32px;
+            }
+
+            .topbar {
+                gap: 12px;
+                /* align-items: flex-start; */
+                flex-wrap: wrap;
+            }
+
+            .toggle {
+                flex-shrink: 0;
+            }
+
+            .search-row input,
+            .search-row button {
+                width: 100%;
+            }
+
+            .search-row {
+                grid-template-columns: 1fr;
+            }
+
+            .results {
+                grid-template-columns: 1fr;
+            }
+
+            .brand h1 {
+                font-size: 20px;
+            }
+
+            .card img {
+                width: 90px;
+                height: 126px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="topbar">
+            <div class="brand">
+            </div>
+            <button class="toggle" id="themeToggle" type="button" aria-label="切换主题">☀</button>
+        </div>
+
+        <div class="search-panel">
+            <div class="search-row">
+                <input id="queryInput" placeholder="输入书名、作者，或直接粘贴分享链接">
+                <button id="searchBtn" type="button">搜索</button>
+            </div>
+            <div class="groups">
+                <div class="group" id="sourceGroup"></div>
+                <div class="group" id="modeGroup"></div>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <div class="hint">缓存已限制数量与有效期，旧缓存会自动清理。</div>
+            <button class="clear-cache" id="clearCacheBtn" type="button">清理缓存</button>
+        </div>
+
+        <div class="results" id="results"></div>
+        <div class="status" id="statusBar"></div>
+    </div>
+
+    <script>
+        const THEME_KEY = "novelapi_theme_v4";
+        const CACHE_PREFIX = "novelapi_cache_v2:";
+        const CACHE_META_KEY = CACHE_PREFIX + "meta";
+        const CACHE_TTL = 1000 * 60 * 20;
+        const CACHE_MAX_ITEMS = 80;
+
+        const sources = ["番茄"];
+        const fanqieTabs = ["小说", "漫画", "听书", "短剧"];
+        const defaultTabs = ["小说"];
+        const pageSizeMap = { "番茄": 9 };
+
+        const state = { source: "番茄", tab: "小说", page: 1, hasMore: true, loading: false };
+
+        const queryInput = document.getElementById("queryInput");
+        const searchBtn = document.getElementById("searchBtn");
+        const sourceGroup = document.getElementById("sourceGroup");
+        const modeGroup = document.getElementById("modeGroup");
+        const resultsEl = document.getElementById("results");
+        const statusBar = document.getElementById("statusBar");
+
+        function readMeta() {
+            try { return JSON.parse(localStorage.getItem(CACHE_META_KEY) || "{}"); } catch { return {}; }
+        }
+
+        function writeMeta(meta) {
+            localStorage.setItem(CACHE_META_KEY, JSON.stringify(meta));
+        }
+
+        function pruneCache() {
+            const meta = readMeta();
+            const now = Date.now();
+            Object.keys(meta).forEach(key => {
+                if (now - meta[key] > CACHE_TTL) {
+                    localStorage.removeItem(key);
+                    delete meta[key];
+                }
+            });
+            const keys = Object.keys(meta).sort((a, b) => meta[a] - meta[b]);
+            while (keys.length > CACHE_MAX_ITEMS) {
+                const oldest = keys.shift();
+                localStorage.removeItem(oldest);
+                delete meta[oldest];
+            }
+            writeMeta(meta);
+        }
+
+        function clearManagedCache() {
+            const meta = readMeta();
+            Object.keys(meta).forEach(key => localStorage.removeItem(key));
+            localStorage.removeItem(CACHE_META_KEY);
+            statusBar.textContent = "缓存已清理";
+        }
+
+        function cleanupLegacyCache() {
+            const legacyPrefixes = ["detail:", "directory:", "chapter:", "novelapi_cache:", "novelapi:v1:"];
+            Object.keys(localStorage).forEach(key => {
+                if (legacyPrefixes.some(prefix => key.startsWith(prefix))) {
+                    localStorage.removeItem(key);
+                }
+            });
+        }
+
+        function readCache(type, value) {
+            pruneCache();
+            const key = `${CACHE_PREFIX}${type}:${value}`;
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return null;
+                const payload = JSON.parse(raw);
+                if (!payload || Date.now() - payload.time > CACHE_TTL) {
+                    localStorage.removeItem(key);
+                    return null;
+                }
+                return payload.data;
+            } catch {
+                return null;
+            }
+        }
+
+        function writeCache(type, value, data) {
+            pruneCache();
+            const key = `${CACHE_PREFIX}${type}:${value}`;
+            const payload = { time: Date.now(), data };
+            try {
+                localStorage.setItem(key, JSON.stringify(payload));
+                const meta = readMeta();
+                meta[key] = payload.time;
+                writeMeta(meta);
+            } catch {
+                clearManagedCache();
+            }
+        }
+
+        const brandEl = document.querySelector(".brand");
+        const themeToggleEl = document.getElementById("themeToggle");
+        // if (brandEl) {
+        //     brandEl.innerHTML = "";
+        // }
+
+        function applyTheme(theme) {
+            document.body.classList.toggle("dark", theme === "dark");
+            document.getElementById("themeToggle").textContent = theme === "dark" ? "☾" : "☀";
+            localStorage.setItem(THEME_KEY, theme);
+        }
+
+        function renderThemeToggle() {
+            if (!themeToggleEl) return;
+            themeToggleEl.innerHTML = document.body.classList.contains("dark")
+                ? '<i class="fas fa-sun"></i>'
+                : '<i class="fas fa-moon"></i>';
+        }
+
+        function renderSourceChips() {
+            sourceGroup.innerHTML = '<span>来源</span>' + sources.map(source => `<button class="chip ${source === state.source ? "active" : ""}" data-source="${source}" type="button">${source}</button>`).join("");
+            sourceGroup.querySelectorAll("[data-source]").forEach(button => {
+                button.addEventListener("click", () => {
+                    state.source = button.dataset.source;
+                    if (state.source !== "番茄") state.tab = "小说";
+                    renderSourceChips();
+                    renderModeChips();
+                    resetResults();
+                });
+            });
+        }
+
+        function renderModeChips() {
+            const tabs = state.source === "番茄" ? fanqieTabs : defaultTabs;
+            modeGroup.innerHTML = '<span>模式</span>' + tabs.map(tab => `<button class="chip ${tab === state.tab ? "active" : ""}" data-tab="${tab}" type="button">${tab}</button>`).join("");
+            modeGroup.querySelectorAll("[data-tab]").forEach(button => {
+                button.addEventListener("click", () => {
+                    state.tab = button.dataset.tab;
+                    renderModeChips();
+                    resetResults();
+                });
+            });
+        }
+
+        function resetResults() {
+            state.page = 1;
+            state.hasMore = true;
+            resultsEl.innerHTML = "";
+            statusBar.textContent = "";
+        }
+
+        function showEmpty(message) {
+            resultsEl.innerHTML = `<div class="hint">${message}</div>`;
+        }
+
+        function extractItemsBySource(source, tab, payload) {
+            const list = [];
+            if (source === "番茄") {
+                const tabs = payload?.data?.search_tabs || [];
+                const target = tabs.find(item => item.title === (tab === "小说" ? "书籍" : tab));
+                if (!target) return [];
+                (target.data || []).forEach(item => {
+                    if (tab === "短剧") {
+                        const detail = item?.video_data?.[0]?.video_detail || {};
+                        list.push({ title: detail.series_title, author: item?.video_data?.[0]?.copyright || "未知作者", desc: detail.series_intro || "", cover: detail.series_cover || "", tags: detail.role ? detail.role.split(",") : [], id: item.book_id, source, tab });
+                        return;
+                    }
+                    const book = item?.book_data?.[0] || {};
+                    list.push({ title: book.book_name, author: book.author || "未知作者", desc: book.abstract || "", cover: book.thumb_url || "", tags: book.pure_category_tags ? book.pure_category_tags.split(",") : [], id: book.book_id, source, tab });
+                });
+                return list;
+            }
+        }
+
+        function renderResults(items, append) {
+            if (!append) resultsEl.innerHTML = "";
+            if (!items.length) {
+                if (!append) showEmpty("没有找到相关结果，换个关键词试试。");
+                state.hasMore = false;
+                statusBar.textContent = "没有更多内容了";
+                return;
+            }
+            const fragment = document.createDocumentFragment();
+            items.forEach(item => {
+                const card = document.createElement("div");
+                card.className = "card";
+                card.innerHTML = `
+                    <img src="${item.cover || `https://picsum.photos/240/320?random=${Math.random()}`}" alt="${item.title}" loading="lazy" referrerpolicy="no-referrer">
+                    <div class="card-body">
+                        <h3>${item.title || "未命名作品"}</h3>
+                        <div class="meta"><span>${item.author || "未知作者"}</span><span>${item.source}</span><span>${item.tab}</span></div>
+                        <p class="desc">${item.desc || "暂无简介"}</p>
+                        <div class="tags">${(item.tags || []).slice(0, 4).map(tag => `<span>${tag}</span>`).join("")}</div>
+                    </div>
+                `;
+                card.addEventListener("click", () => {
+                    location.href = `/detail.html?source=${encodeURIComponent(item.source)}&book_id=${encodeURIComponent(item.id)}&tab=${encodeURIComponent(item.tab)}`;
+                });
+                fragment.appendChild(card);
+            });
+            resultsEl.appendChild(fragment);
+        }
+
+        async function resolveURL(url) {
+            const parsed = new URL(url);
+            if (!(parsed.hostname.includes("changdunovel.com") && parsed.pathname.startsWith("/t/"))) return url;
+            const response = await fetch(`/api/resolve?url=${encodeURIComponent(url)}`);
+            const payload = await response.json();
+            if (!response.ok || payload.code !== 200 || !payload.data?.redirect_url) {
+                throw new Error(payload.message || "短链解析失败");
+            }
+            return payload.data.redirect_url;
+        }
+
+        function extractNumber(text) {
+            const match = String(text || "").match(/(\d+)/);
+            return match ? match[1] : "";
+        }
+
+        function getVideoSeriesId(url) {
+            try {
+                const zlink = new URL(url).searchParams.get("zlink");
+                if (!zlink) return "";
+                const encoded = new URL(zlink).searchParams.get("schemeParams");
+                if (!encoded) return "";
+                return JSON.parse(decodeURIComponent(decodeURIComponent(encoded))).video_series_id || "";
+            } catch {
+                return "";
+            }
+        }
+
+        async function jumpByURL(input) {
+            try {
+                const finalURL = await resolveURL(input);
+                const parsed = new URL(finalURL);
+                const host = parsed.hostname;
+                const path = parsed.pathname;
+                const params = parsed.searchParams;
+
+                if (host.includes("changdunovel.com")) {
+                    if (path === "/wap/share-v2.html" || path === "/ug/pages/book-share") {
+                        const bookID = params.get("book_id");
+                        const shareType = params.get("share_type");
+                        const tab = shareType === "6" ? "漫画" : shareType === "1" ? "听书" : "小说";
+                        if (bookID) location.href = `/detail.html?source=${encodeURIComponent("番茄")}&book_id=${encodeURIComponent(bookID)}&tab=${encodeURIComponent(tab)}`;
+                        return;
+                    }
+                    if (path === "/ug/pages/video-list-share-novel") {
+                        const seriesID = getVideoSeriesId(finalURL);
+                        if (seriesID) location.href = `/detail.html?source=${encodeURIComponent("番茄")}&book_id=${encodeURIComponent(seriesID)}&tab=${encodeURIComponent("短剧")}`;
+                        return;
+                    }
+                }
+
+                if (host.includes("fanqienovel.com")) {
+                    const bookID = extractNumber(path.split("/").pop());
+                    if (bookID) location.href = `/detail.html?source=${encodeURIComponent("番茄")}&book_id=${encodeURIComponent(bookID)}&tab=${encodeURIComponent("小说")}`;
+                    return;
+                }
+                throw new Error("暂不支持识别这个链接");
+            } catch (error) {
+                statusBar.textContent = error.message || "链接识别失败";
+            }
+        }
+
+        async function runSearch(append) {
+            if (state.loading || (append && !state.hasMore)) return;
+            const query = queryInput.value.trim();
+            if (!query) {
+                showEmpty("");
+                return;
+            }
+            if (/^https?:\/\//i.test(query) && !append) {
+                statusBar.textContent = "正在识别链接…";
+                await jumpByURL(query);
+                return;
+            }
+
+            state.loading = true;
+            statusBar.textContent = "正在加载…";
+            try {
+                const cacheKey = `${state.source}:${state.tab}:${state.page}:${query}`;
+                let payload = readCache("search", cacheKey);
+                if (!payload) {
+                    const response = await fetch(`/api/search?source=${encodeURIComponent(state.source)}&page=${state.page}&query=${encodeURIComponent(query)}&tab=${encodeURIComponent(state.tab)}`);
+                    payload = await response.json();
+                    if (!response.ok || (payload.code && payload.code !== 200)) throw new Error(payload.message || "搜索失败");
+                    writeCache("search", cacheKey, payload);
+                }
+                const items = extractItemsBySource(state.source, state.tab, payload);
+                renderResults(items, append);
+                state.hasMore = items.length >= (pageSizeMap[state.source] || 10);
+                statusBar.textContent = state.hasMore ? "" : "没有更多内容了";
+            } catch (error) {
+                if (!append) showEmpty(error.message || "请求失败");
+                state.hasMore = false;
+                statusBar.textContent = error.message || "搜索失败";
+            } finally {
+                state.loading = false;
+                maybeFillViewport();
+            }
+        }
+
+        function maybeFillViewport() {
+            if (state.loading || !state.hasMore) {
+                return;
+            }
+            const docHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+            if (docHeight <= window.innerHeight + 120) {
+                state.page += 1;
+                runSearch(true);
+            }
+        }
+
+        let scrollTimer = null;
+        window.addEventListener("scroll", () => {
+            if (scrollTimer) return;
+            scrollTimer = setTimeout(() => {
+                scrollTimer = null;
+                if (window.scrollY + window.innerHeight >= document.body.scrollHeight - 120 && !state.loading && state.hasMore) {
+                    state.page += 1;
+                    runSearch(true);
+                }
+            }, 120);
+        });
+
+        themeToggleEl.addEventListener("click", () => {
+            applyTheme(document.body.classList.contains("dark") ? "light" : "dark");
+            renderThemeToggle();
+        });
+        document.getElementById("clearCacheBtn").addEventListener("click", clearManagedCache);
+        searchBtn.addEventListener("click", () => { resetResults(); runSearch(false); });
+        queryInput.addEventListener("keydown", event => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                resetResults();
+                runSearch(false);
+            }
+        });
+
+        applyTheme(localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
+        renderThemeToggle();
+        cleanupLegacyCache();
+        pruneCache();
+        renderSourceChips();
+        renderModeChips();
+        showEmpty("");
+    </script>
+</body>
+</html>

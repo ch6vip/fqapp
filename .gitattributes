@@ -1,0 +1,27 @@
+# Shell scripts must keep LF endings: a CRLF shebang becomes
+# "#!/usr/bin/env bash\r" and the script fails to execute.
+*.sh text eol=lf
+
+# PowerShell is line-ending agnostic; normalize to CRLF for Windows editors.
+*.ps1 text eol=crlf
+
+# Flutter/Dart sources: normalize on checkin, native endings on checkout.
+*.dart text
+*.kts text
+*.kt text
+*.java text
+*.js text
+*.html text
+*.json text
+*.md text
+*.yaml text
+*.yml text
+*.xml text
+
+# Binary assets: never mangle these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.woff2 binary
+*.jar binary
+*.so binary

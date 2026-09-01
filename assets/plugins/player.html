@@ -1,0 +1,322 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="referrer" content="no-referrer">
+    <title>Short Drama Player</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; height: 100vh; width: 100vw; }
+        #player-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background: #000; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 1s ease-in-out infinite; display: none; z-index: 10; }
+        @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+        .controls-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; transition: opacity 0.3s; }
+        .controls-layer.hidden { opacity: 0; }
+        .top-bar { padding: 15px; background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent); pointer-events: auto; display: flex; justify-content: space-between; align-items: center; }
+        .title { font-size: 16px; font-weight: 500; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+        .bottom-bar { padding: 0 15px 20px; background: linear-gradient(to top, rgba(0,0,0,0.8), transparent); pointer-events: auto; }
+        .episode-info { font-size: 16px; margin-bottom: 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+        .progress-container { width: 100%; height: 20px; display: flex; align-items: center; margin-bottom: 5px; cursor: pointer; touch-action: none; }
+        .progress-bg { width: 100%; height: 4px; background: rgba(255,255,255,0.3); border-radius: 2px; position: relative; }
+        .progress-bar { height: 100%; background: #fff; width: 0; border-radius: 2px; position: relative; }
+        .progress-bar::after { content: ''; position: absolute; right: -6px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; background: #fff; border-radius: 50%; box-shadow: 0 0 5px rgba(0,0,0,0.5); }
+        .time-info { font-size: 12px; opacity: 0.8; margin-bottom: 10px; display: flex; justify-content: space-between; }
+        .controls-row { display: flex; justify-content: space-between; align-items: center; }
+        .episode-nav { display: flex; gap: 15px; }
+        .btn-icon { background: none; border: none; color: #fff; font-size: 24px; cursor: pointer; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+        .btn-speed { font-size: 14px; padding: 4px 8px; border-radius: 4px; background: rgba(255,255,255,0.2); font-weight: bold; }
+        .toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); padding: 10px 20px; border-radius: 8px; font-size: 14px; pointer-events: none; opacity: 0; transition: opacity 0.3s; z-index: 20; white-space: nowrap; }
+        .speed-toast { position: absolute; top: 20%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 5px 15px; border-radius: 20px; font-size: 14px; color: #fff; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 15; }
+        .play-icon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 60px; height: 60px; background: rgba(0,0,0,0.4); border-radius: 50%; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
+        .play-icon::after { content: ''; width: 0; height: 0; border-style: solid; border-width: 15px 0 15px 26px; border-color: transparent transparent transparent #fff; margin-left: 5px; }
+        .interaction-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; }
+        .episode-selection-layer { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(20, 20, 20, 0.98); border-top-left-radius: 12px; border-top-right-radius: 12px; max-height: 60vh; z-index: 100; display: flex; flex-direction: column; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); color: #fff; }
+        .episode-selection-layer.visible { transform: translateY(0); }
+        .episode-selection-content { display: flex; flex-direction: column; height: auto; max-height: 60vh; overflow: hidden; }
+        .episode-selection-header { padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 16px; font-weight: bold; flex-shrink: 0; }
+        .close-btn { font-size: 24px; padding: 0 10px; cursor: pointer; opacity: 0.7; }
+        .episode-grid { flex: 1; max-height: 45vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 15px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; align-content: start; }
+        .episode-item { background: rgba(255,255,255,0.1); border-radius: 4px; padding: 12px 0; text-align: center; font-size: 14px; cursor: pointer; color: rgba(255,255,255,0.8); transition: all 0.2s; }
+        .episode-item.active { color: #fff; background: rgba(255, 42, 81, 0.8); }
+        .btn-select-episode { font-size: 14px; padding: 6px 14px; border-radius: 16px; background: rgba(255, 42, 81, 0.8); color: #fff; margin-left: 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; min-width: 40px; }
+    </style>
+</head>
+<body>
+
+<div id="player-container">
+    <video id="video-player" playsinline webkit-playsinline preload="auto" autoplay></video>
+    <div class="loading" id="loading"></div>
+    <div class="play-icon" id="play-icon"></div>
+    <div class="toast" id="toast"></div>
+    <div class="speed-toast" id="speed-toast">2.0X Speed</div>
+    <div class="interaction-layer" id="interaction-layer"></div>
+    <div class="controls-layer" id="controls-layer">
+        <div class="top-bar">
+            <span class="title" id="video-title">Loading...</span>
+            <div class="btn-select-episode" onclick="player.toggleEpisodeList()">Episodes</div>
+        </div>
+        <div class="bottom-bar">
+            <div class="time-info">
+                <span id="current-time">00:00</span>
+                <span id="total-time">00:00</span>
+            </div>
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bg">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+            </div>
+            <div class="episode-info">
+                <div style="display:flex; align-items:center;">
+                    <span id="current-episode">Ep ?</span>
+                    <span style="font-size: 14px; opacity: 0.8; font-weight: normal;"> / <span id="total-episodes">?</span></span>
+                </div>
+                <div class="btn-speed" id="speed-btn" onclick="player.toggleSpeed()">1.0x</div>
+            </div>
+            <div class="controls-row">
+                <div class="episode-nav">
+                    <button class="btn-icon" onclick="player.prev()">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                    </button>
+                    <button class="btn-icon" id="play-pause-btn" onclick="player.togglePlay()">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
+                    <button class="btn-icon" onclick="player.next()">
+                         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                    </button>
+                </div>
+                <div style="font-size:12px; opacity:0.6;">Swipe to switch</div>
+            </div>
+        </div>
+    </div>
+    <div class="episode-selection-layer" id="episode-selection-layer">
+        <div class="episode-selection-content">
+            <div class="episode-selection-header">
+                <span>Episodes</span>
+                <span class="close-btn" onclick="player.toggleEpisodeList()">x</span>
+            </div>
+            <div class="episode-grid" id="episode-grid"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+class ShortVideoPlayer {
+    constructor() {
+        this.bookId = window.PLUGIN_PARAMS.book_id || window.PLUGIN_PARAMS.fq_id || "";
+        this.currentItemId = window.PLUGIN_PARAMS.item_id || window.PLUGIN_PARAMS.item_ids || "";
+        this.playlist = [];
+        this.currentIndex = -1;
+        this.video = document.getElementById('video-player');
+        this.loading = document.getElementById('loading');
+        this.titleEl = document.getElementById('video-title');
+        this.episodeEl = document.getElementById('current-episode');
+        this.totalEl = document.getElementById('total-episodes');
+        this.toastEl = document.getElementById('toast');
+        this.playIcon = document.getElementById('play-icon');
+        this.progressContainer = document.getElementById('progress-container');
+        this.progressBar = document.getElementById('progress-bar');
+        this.currentTimeEl = document.getElementById('current-time');
+        this.totalTimeEl = document.getElementById('total-time');
+        this.speedBtn = document.getElementById('speed-btn');
+        this.playPauseBtn = document.getElementById('play-pause-btn');
+        this.controlsLayer = document.getElementById('controls-layer');
+        this.speedToast = document.getElementById('speed-toast');
+        this.episodeSelectionLayer = document.getElementById('episode-selection-layer');
+        this.episodeGrid = document.getElementById('episode-grid');
+        this.speeds = [1.0, 1.25, 1.5, 2.0];
+        this.currentSpeedIndex = 0;
+        this.controlsVisible = true;
+        this.singleTapTimer = null;
+        this.lastTapTime = 0;
+        this.longPressTimer = null;
+        this.isLongPressing = false;
+        this.originalSpeed = 1.0;
+        this.baseUrl = window.BASE_URL || "";
+        this.init();
+    }
+
+    async init() {
+        this.bindEvents();
+        this.bindControlEvents();
+        if (this.bookId) { this.loadPlaylist(); }
+        if (this.currentItemId) { this.loadVideo(this.currentItemId); }
+    }
+
+    bindControlEvents() {
+        const updateProgressFromEvent = (e) => {
+            const rect = this.progressContainer.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const pos = (clientX - rect.left) / rect.width;
+            const percent = Math.max(0, Math.min(1, pos));
+            this.progressBar.style.width = (percent * 100) + '%';
+            if (this.video.duration) { this.video.currentTime = percent * this.video.duration; }
+        };
+        this.progressContainer.addEventListener('click', updateProgressFromEvent);
+        this.progressContainer.addEventListener('touchmove', (e) => { e.preventDefault(); updateProgressFromEvent(e); });
+        const stopProp = (e) => e.stopPropagation();
+        document.querySelector('.bottom-bar').addEventListener('touchstart', stopProp);
+        document.querySelector('.bottom-bar').addEventListener('touchmove', stopProp);
+        document.querySelector('.bottom-bar').addEventListener('touchend', stopProp);
+        document.querySelector('.top-bar').addEventListener('touchstart', stopProp);
+        document.querySelector('.top-bar').addEventListener('touchmove', stopProp);
+        document.querySelector('.top-bar').addEventListener('touchend', stopProp);
+        const selectionLayer = document.getElementById('episode-selection-layer');
+        const preventBubble = (e) => e.stopPropagation();
+        selectionLayer.addEventListener('touchstart', preventBubble, { passive: true });
+        selectionLayer.addEventListener('touchmove', preventBubble, { passive: true });
+        selectionLayer.addEventListener('touchend', preventBubble);
+    }
+
+    bindEvents() {
+        let startX = 0, startY = 0, isSwipe = false;
+        const threshold = 50;
+        const interactionLayer = document.getElementById('interaction-layer');
+        interactionLayer.addEventListener('touchstart', (e) => {
+            startX = e.touches[0].clientX; startY = e.touches[0].clientY; isSwipe = false;
+            this.longPressTimer = setTimeout(() => { this.isLongPressing = true; this.startFastForward(); }, 500);
+        }, { passive: true });
+        interactionLayer.addEventListener('touchmove', (e) => {
+            const diffX = e.touches[0].clientX - startX;
+            const diffY = e.touches[0].clientY - startY;
+            if (Math.abs(diffX) > 10 || Math.abs(diffY) > 10) { clearTimeout(this.longPressTimer); if (!this.isLongPressing) { isSwipe = true; } }
+        }, { passive: false });
+        interactionLayer.addEventListener('touchend', (e) => {
+            clearTimeout(this.longPressTimer);
+            if (this.isLongPressing) { this.stopFastForward(); this.isLongPressing = false; return; }
+            if (isSwipe) {
+                const endY = e.changedTouches[0].clientY;
+                const diffY = startY - endY;
+                if (Math.abs(diffY) > threshold) { if (diffY > 0) this.next(); else this.prev(); }
+                return;
+            }
+            const now = Date.now();
+            if (now - this.lastTapTime < 300) { clearTimeout(this.singleTapTimer); this.togglePlay(); this.lastTapTime = 0; }
+            else { this.lastTapTime = now; this.singleTapTimer = setTimeout(() => { this.toggleControls(); }, 300); }
+        });
+        this.video.addEventListener('timeupdate', () => this.updateProgress());
+        this.video.addEventListener('loadedmetadata', () => { this.updateProgress(); this.video.playbackRate = this.speeds[this.currentSpeedIndex]; });
+        this.video.addEventListener('play', () => this.updatePlayState(true));
+        this.video.addEventListener('pause', () => this.updatePlayState(false));
+        this.video.addEventListener('waiting', () => this.loading.style.display = 'block');
+        this.video.addEventListener('playing', () => this.loading.style.display = 'none');
+        this.video.addEventListener('canplay', () => this.loading.style.display = 'none');
+        this.video.addEventListener('ended', () => this.next());
+        this.video.addEventListener('error', (e) => {
+            this.loading.style.display = 'none';
+            var errorMsg = "Video load failed";
+            if (this.video.error) {
+                switch (this.video.error.code) {
+                    case 1: errorMsg = "Video loading aborted"; break;
+                    case 2: errorMsg = "Network error"; break;
+                    case 3: errorMsg = "Video decode failed"; break;
+                    case 4: errorMsg = "Format not supported or source invalid"; break;
+                }
+            }
+            this.showToast(errorMsg);
+        });
+    }
+
+    startFastForward() { this.originalSpeed = this.video.playbackRate; this.video.playbackRate = 2.0; this.speedToast.style.opacity = 1; this.speedToast.innerText = "2.0X Speed"; }
+    stopFastForward() { this.video.playbackRate = this.speeds[this.currentSpeedIndex]; this.speedToast.style.opacity = 0; }
+    toggleControls() { this.controlsVisible = !this.controlsVisible; if (this.controlsVisible) { this.controlsLayer.classList.remove('hidden'); } else { this.controlsLayer.classList.add('hidden'); } }
+    toggleEpisodeList() {
+        if (this.episodeSelectionLayer.classList.contains('visible')) { this.episodeSelectionLayer.classList.remove('visible'); }
+        else { this.episodeSelectionLayer.classList.add('visible'); const activeBtn = this.episodeGrid.querySelector('.active'); if (activeBtn) { setTimeout(() => { activeBtn.scrollIntoView({ block: 'center', behavior: 'auto' }); }, 100); } }
+    }
+
+    renderEpisodeList() {
+        this.episodeGrid.innerHTML = '';
+        this.playlist.forEach((item, index) => {
+            const btn = document.createElement('div');
+            btn.className = 'episode-item';
+            if (index === this.currentIndex) { btn.classList.add('active'); }
+            btn.innerText = (index + 1);
+            btn.onclick = (e) => { e.stopPropagation(); if (this.currentIndex !== index) { this.playIndex(index); } this.toggleEpisodeList(); };
+            this.episodeGrid.appendChild(btn);
+        });
+    }
+
+    async loadPlaylist(retries = 1) {
+        if (!this.bookId) { return; }
+        try {
+            const url = this.baseUrl + "/api/v1/books/" + this.bookId + "/directory";
+            const res = await fetch(url); const json = await res.json();
+            var items = (json.data && json.data.item_data_list) ? json.data.item_data_list : (json.data && json.data.lists) ? json.data.lists : null;
+            if (items) {
+                this.playlist = items; this.totalEl.innerText = this.playlist.length; this.renderEpisodeList();
+                if (this.currentItemId) { this.updateIndexByItemId(this.currentItemId); }
+                else if (this.playlist.length > 0) { this.playIndex(0); }
+            } else { throw new Error("Invalid playlist data"); }
+        } catch (e) {
+            if (retries > 0) { const delay = 1000 * (6 - retries); setTimeout(() => this.loadPlaylist(retries - 1), delay); }
+            else { this.showToast("Playlist not loaded"); }
+        }
+    }
+
+    updateIndexByItemId(itemId) { this.currentIndex = this.playlist.findIndex(item => item.item_id == itemId); this.updateUI(); }
+    updateUI() {
+        if (this.currentIndex >= 0 && this.playlist[this.currentIndex]) {
+            const item = this.playlist[this.currentIndex]; this.titleEl.innerText = item.title; this.episodeEl.innerText = item.title;
+            if (this.episodeGrid) { const buttons = this.episodeGrid.querySelectorAll('.episode-item'); buttons.forEach((btn, idx) => { if (idx === this.currentIndex) btn.classList.add('active'); else btn.classList.remove('active'); }); }
+        }
+    }
+
+    extractVideoUrl(data) {
+        // Response format: {video_info: {data: {video_list: {video_5: {main_url: "..."}}}}}
+        const videoList = data?.video_info?.data?.video_list;
+        if (!videoList) return null;
+        // Only one best quality entry, take the first
+        const first = Object.values(videoList)[0];
+        return first?.main_url ?? null;
+    }
+
+    async loadVideo(itemId) {
+        if (!itemId) return;
+        this.showLoading(true); this.currentItemId = window.PLUGIN_PARAMS.item_id || window.PLUGIN_PARAMS.item_ids || "";
+        try {
+            const url = this.baseUrl + "/api/v1/videos/" + itemId;
+            const res = await fetch(url); const json = await res.json();
+            const videoUrl = this.extractVideoUrl(json);
+            if (videoUrl) {
+                this.video.src = videoUrl; this.video.muted = false; this.video.autoplay = true;
+                const attemptPlay = async () => {
+                    try { await this.video.play(); this.playIcon.style.opacity = 0; }
+                    catch (error) {
+                        const retryOnInteraction = () => { this.video.play().catch(e => {}); ['touchstart', 'click', 'keydown'].forEach(evt => document.removeEventListener(evt, retryOnInteraction)); };
+                        ['touchstart', 'click', 'keydown'].forEach(evt => document.addEventListener(evt, retryOnInteraction, { once: true }));
+                    }
+                };
+                attemptPlay();
+                if (this.playlist.length > 0) { this.updateIndexByItemId(itemId); }
+            } else { throw new Error("Failed to get video URL"); }
+        } catch (e) { this.showToast("Error: " + e.message); }
+        finally { this.showLoading(false); }
+    }
+
+    playIndex(index) {
+        if (index < 0 || index >= this.playlist.length) { this.showToast(index < 0 ? "Already at first episode" : "Already at last episode"); return; }
+        this.currentIndex = index; const item = this.playlist[index]; this.loadVideo(item.item_id);
+    }
+    next() { if (this.playlist.length === 0) { this.showToast("Playlist not loaded"); return; } this.playIndex(this.currentIndex + 1); }
+    prev() { if (this.playlist.length === 0) { this.showToast("Playlist not loaded"); return; } this.playIndex(this.currentIndex - 1); }
+
+    updateProgress() {
+        const current = this.video.currentTime || 0; const duration = this.video.duration || 0;
+        const percent = duration > 0 ? (current / duration) * 100 : 0; this.progressBar.style.width = percent + '%';
+        this.currentTimeEl.innerText = this.formatTime(current); this.totalTimeEl.innerText = this.formatTime(duration);
+    }
+    formatTime(seconds) { const m = Math.floor(seconds / 60); const s = Math.floor(seconds % 60); return m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0'); }
+    updatePlayState(isPlaying) {
+        if (isPlaying) { this.playIcon.style.opacity = 0; this.playPauseBtn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'; }
+        else { this.playIcon.style.opacity = 1; this.playPauseBtn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'; }
+    }
+    toggleSpeed() { this.currentSpeedIndex = (this.currentSpeedIndex + 1) % this.speeds.length; const speed = this.speeds[this.currentSpeedIndex]; this.video.playbackRate = speed; this.speedBtn.innerText = speed.toFixed(1) + 'x'; this.showToast("Speed: " + speed + "x"); }
+    togglePlay() { if (this.video.paused) { this.video.play(); } else { this.video.pause(); } }
+    showLoading(show) { this.loading.style.display = show ? 'block' : 'none'; }
+    showToast(msg) { this.toastEl.innerText = msg; this.toastEl.style.opacity = 1; setTimeout(() => { this.toastEl.style.opacity = 0; }, 2000); }
+}
+
+const player = new ShortVideoPlayer();
+</script>
+</body>

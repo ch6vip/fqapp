@@ -1,0 +1,64 @@
+{
+  "routes": {
+    "/api/v1/chapters": {
+      "enabled": false,
+      "js": "filters/chapter.js"
+    },
+    "/api/v1/books": {
+      "enabled": false,
+      "js": "filters/book.js"
+    },
+    "/api/v1/search": {
+      "enabled": false,
+      "js": "filters/search.js"
+    },
+    "/api/v1/audio": {
+      "enabled": false,
+      "js": "filters/audio.js"
+    },
+    "/api/v1/manga": {
+      "enabled": false,
+      "js": "filters/manga.js"
+    },
+    "/api/v1/novels": {
+      "enabled": false,
+      "js": "filters/novel.js"
+    },
+    "/api/v1/authors": {
+      "enabled": false,
+      "js": "filters/author.js"
+    },
+    "/api/v1/recommend": {
+      "enabled": false,
+      "js": "filters/recommend.js"
+    },
+    "/api/v1/rank": {
+      "enabled": false,
+      "js": "filters/rank.js"
+    },
+    "/api/v1/articles": {
+      "enabled": false,
+      "js": "filters/article.js"
+    },
+    "/api/v1/items": {
+      "enabled": false,
+      "js": "filters/item.js"
+    },
+    "/api/v1/videos": {
+      "enabled": false,
+      "js": "filters/video.js"
+    },
+    "/api/v1/viewer": {
+      "enabled": false,
+      "js": "filters/viewer.js"
+    },
+    "/api/v1/forum-id": {
+      "enabled": false,
+      "js": "filters/forum_id.js"
+    },
+    "/api/v1/comments": {
+      "enabled": false,
+      "js": "filters/comment.js"
+    }
+  }
+}

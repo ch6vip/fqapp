@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="./assets/css/all.min.css">
+    <title>漫画阅读</title>
+    <style>
+        :root { --bg:#eef2f6; --card:rgba(255,255,255,.94); --text:#18212f; --sub:#627182; --line:rgba(24,33,47,.1); --accent:#2f6fed; --accent-soft:rgba(47,111,237,.12); --shadow:0 18px 40px rgba(18,28,45,.08); }
+        body.theme-dark { --bg:#0f141b; --card:rgba(20,28,38,.94); --text:#f4f7fb; --sub:#a2b1c3; --line:rgba(255,255,255,.08); --accent:#84b5ff; --accent-soft:rgba(132,181,255,.16); --shadow:0 18px 40px rgba(0,0,0,.32); }
+        *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,var(--bg),#f7f9fc);color:var(--text);font-family:"MiSans","HarmonyOS Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif}
+        body.theme-dark{background:linear-gradient(180deg,var(--bg),#151d26)}
+        button,input{font:inherit}
+        .wrap{max-width:1380px;margin:0 auto;padding:16px}
+        .topbar,.card,.bottom-bar{border:1px solid var(--line);background:var(--card);backdrop-filter:blur(18px);box-shadow:var(--shadow);border-radius:24px}
+        .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;margin-bottom:12px;position:fixed;top:10px;left:50%;width:min(1120px,calc(100vw - 20px));transform:translateX(-50%);z-index:20;border-radius:18px;transition:opacity .18s ease,transform .18s ease}
+        .topbar .left,.topbar .right{display:flex;align-items:center;gap:10px}
+        .topbar .left{min-width:0;flex:1 1 auto}
+        .topbar .right{flex-shrink:0}
+        .icon-btn,.btn{border:1px solid var(--line);background:#fff0;color:var(--text);cursor:pointer}
+        .icon-btn{width:38px;height:38px;border-radius:12px}
+        .btn{min-height:40px;padding:0 14px;border-radius:14px}
+        .btn.primary{background:var(--accent);border-color:transparent;color:#fff}
+        .title h1{margin:0;font-size:17px}.title p,.muted,.status{margin:4px 0 0;color:var(--sub);font-size:13px}
+        .layout{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+        .card{padding:14px}
+        .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:40;width:min(340px,calc(100vw - 32px));border-radius:0;transform:translateX(-110%);transition:transform .2s ease;overflow:auto}
+        .sidebar.is-open{transform:translateX(0)}
+        .sidebar-right{left:auto;right:0;transform:translateX(110%)}
+        .side-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+        .list{display:grid;gap:8px;max-height:calc(100vh - 210px);overflow:auto;padding-right:4px}
+        .item{width:100%;padding:12px 14px;border:1px solid transparent;border-radius:14px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+        .item.active{background:var(--accent-soft);border-color:rgba(47,111,237,.28);color:var(--accent);font-weight:700}
+        .setting{display:grid;gap:8px;margin-top:16px}
+        .setting label{color:var(--sub);font-size:13px}
+        .viewer{padding:12px}
+        .viewer-box{background:rgba(12,18,28,.04);border-radius:18px;padding:12px;min-height:40vh}
+        body.theme-dark .viewer-box{background:rgba(255,255,255,.03)}
+        .images{display:grid;gap:var(--comic-gap,8px);justify-items:center}
+        .images img{width:100%;max-width:var(--comic-width,920px);display:block;border-radius:16px;background:#dfe6ee}
+        .empty{color:var(--sub);text-align:center;padding:48px 20px}
+        .bottom-bar{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);width:min(760px,calc(100vw - 20px));padding:10px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;border-radius:18px;transition:opacity .18s ease,transform .18s ease}
+        .bottom-info{min-width:0;text-align:center}.bottom-info strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .overlay{display:none}
+        .overlay.is-open{display:block;position:fixed;inset:0;background:rgba(9,14,20,.46);z-index:35}
+        body.chrome-hidden .topbar{opacity:0;pointer-events:none;transform:translate(-50%,-14px)}
+        body.chrome-hidden .bottom-bar{opacity:0;pointer-events:none;transform:translate(-50%,14px)}
+        @media (max-width:960px){.wrap{padding:10px}.topbar{top:8px;width:calc(100vw - 16px);flex-wrap:wrap;align-items:flex-start}.list{max-height:none}.viewer{padding:8px}.viewer-box{padding:8px}.bottom-bar{width:calc(100vw - 16px)}}
+        @media (max-width:560px){.topbar .right{width:100%;justify-content:flex-end}.title h1{font-size:18px;line-height:1.35}.sidebar{width:min(292px,calc(100vw - 20px))}.bottom-bar{grid-template-columns:1fr 1fr;width:calc(100vw - 16px);padding:10px;border-radius:18px}.bottom-info{grid-column:1/-1;order:-1}.bottom-info strong{white-space:normal}.btn{min-width:0}}
+    </style>
+</head>
+<body>
+    <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
+    <div class="wrap">
+        <header class="topbar" id="chromeTopbar">
+            <div class="left">
+                <button class="icon-btn" type="button" onclick="history.back()" aria-label="返回"><i class="fas fa-arrow-left"></i></button>
+                <div class="title">
+                    <h1 id="chapterTitle">漫画阅读</h1>
+                    <p id="pageMeta">正在读取章节...</p>
+                </div>
+            </div>
+            <div class="right">
+                <button class="icon-btn" type="button" id="settingsToggle" aria-label="设置"><i class="fas fa-sliders-h"></i></button>
+                <button class="icon-btn" type="button" id="catalogToggle" aria-label="目录"><i class="fas fa-list-ul"></i></button>
+                <button class="icon-btn" type="button" id="themeToggle" aria-label="切换主题"><i class="fas fa-moon"></i></button>
+            </div>
+        </header>
+
+        <main class="layout">
+            <aside class="card sidebar" id="sidebar">
+                <div class="side-head">
+                    <div>
+                        <h2 style="margin:0;font-size:20px">目录</h2>
+                        <p class="muted" id="catalogMeta">正在加载目录...</p>
+                    </div>
+                </div>
+                <div class="list" id="catalogList"></div>
+            </aside>
+
+            <section class="card viewer">
+                <div class="viewer-box">
+                    <div class="images" id="imageList">
+                        <p class="empty">漫画内容加载中...</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <aside class="card sidebar sidebar-right" id="settingsPanel">
+        <div class="side-head">
+            <div>
+                <h2 style="margin:0;font-size:20px">阅读设置</h2>
+                <p class="muted" id="settingStatus">阅读设置已加载</p>
+            </div>
+        </div>
+        <div class="setting">
+            <label for="widthInput">图片宽度</label>
+            <input id="widthInput" type="range" min="720" max="1200" step="20">
+        </div>
+        <div class="setting">
+            <label for="gapInput">图片间距</label>
+            <input id="gapInput" type="range" min="0" max="24" step="2">
+        </div>
+    </aside>
+
+    <div class="bottom-bar" id="chromeBottomBar">
+        <button class="btn" type="button" id="prevBtn"><i class="fas fa-chevron-left"></i> 上一话</button>
+        <div class="bottom-info">
+            <strong id="bottomTitle">正在准备阅读器</strong>
+            <span class="muted" id="bottomMeta">支持方向键切换章节</span>
+        </div>
+        <button class="btn primary" type="button" id="nextBtn">下一话 <i class="fas fa-chevron-right"></i></button>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(location.search);
+        const source = params.get("source") || "";
+        const bookId = params.get("book_id") || "";
+        const tab = params.get("tab") || "漫画";
+        const cmd = params.get("cmd") || "1";
+        let itemId = params.get("item_id") || "";
+
+        const THEME_KEY = "novelapi_theme_v4";
+        const SETTINGS_KEY = "novelapi_comic_settings_v3";
+        const LAST_KEY = `novelapi_comic_last:${source}:${bookId}`;
+        const sourceKey = source.toLowerCase();
+
+        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
+        let chapters = [];
+        let currentIndex = 0;
+        let chromeHideTimer = null;
+        const comicSettings = (() => {
+            try { return { ...{ width: 920, gap: 8 }, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; }
+            catch (_) { return { width: 920, gap: 8 }; }
+        })();
+
+        const chapterTitleEl = document.getElementById("chapterTitle");
+        const pageMetaEl = document.getElementById("pageMeta");
+        const catalogMetaEl = document.getElementById("catalogMeta");
+        const catalogListEl = document.getElementById("catalogList");
+        const imageListEl = document.getElementById("imageList");
+        const bottomTitleEl = document.getElementById("bottomTitle");
+        const settingStatusEl = document.getElementById("settingStatus");
+        const widthInput = document.getElementById("widthInput");
+        const gapInput = document.getElementById("gapInput");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+        const themeToggle = document.getElementById("themeToggle");
+        const settingsToggle = document.getElementById("settingsToggle");
+        const catalogToggle = document.getElementById("catalogToggle");
+        const topbarActions = document.querySelector(".topbar .right");
+        const sidebar = document.getElementById("sidebar");
+        const settingsPanel = document.getElementById("settingsPanel");
+        const overlay = document.getElementById("overlay");
+        const chromeTopbar = document.getElementById("chromeTopbar");
+        const chromeBottomBar = document.getElementById("chromeBottomBar");
+        const viewerBox = document.querySelector(".viewer-box");
+
+        function applyTheme() {
+            const resolved = currentTheme === "dark" ? "dark" : "light";
+            document.body.classList.toggle("theme-dark", resolved === "dark");
+            themeToggle.innerHTML = resolved === "dark" ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        }
+
+        function showChrome() {
+            document.body.classList.remove("chrome-hidden");
+            window.clearTimeout(chromeHideTimer);
+        }
+
+        function hideChrome() {
+            window.clearTimeout(chromeHideTimer);
+            if (sidebar.classList.contains("is-open") || settingsPanel.classList.contains("is-open")) {
+                return;
+            }
+            document.body.classList.add("chrome-hidden");
+        }
+
+        function scheduleChromeHide(delay = 1800) {
+            window.clearTimeout(chromeHideTimer);
+            chromeHideTimer = window.setTimeout(() => {
+                hideChrome();
+            }, delay);
+        }
+
+        function handleViewerChromeToggle(event) {
+            if (event.target.closest("a, button, input, label, select, textarea")) {
+                return;
+            }
+            if (document.body.classList.contains("chrome-hidden")) {
+                showChrome();
+                scheduleChromeHide(1800);
+                return;
+            }
+            hideChrome();
+        }
+
+        function applySettings() {
+            document.documentElement.style.setProperty("--comic-width", `${comicSettings.width}px`);
+            document.documentElement.style.setProperty("--comic-gap", `${comicSettings.gap}px`);
+            widthInput.value = String(comicSettings.width);
+            gapInput.value = String(comicSettings.gap);
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(comicSettings));
+            settingStatusEl.textContent = `图片宽度 ${comicSettings.width}px，间距 ${comicSettings.gap}px`;
+        }
+
+        async function fetchJSON(url) {
+            const response = await fetch(url, { cache: "no-store" });
+            const text = await response.text();
+            const payload = JSON.parse(text);
+            if (!response.ok || payload.code !== 200) {
+                throw new Error(payload.message || "请求失败");
+            }
+            return payload;
+        }
+
+        function decodeBase64Maybe(value) {
+            if (!value || /<img/i.test(value)) return value;
+            try { return decodeURIComponent(escape(atob(value.replace(/-/g, "+").replace(/_/g, "/")))); }
+            catch (_) { return value; }
+        }
+
+        function extractImages(html) {
+            const doc = new DOMParser().parseFromString(html, "text/html");
+            return Array.from(doc.querySelectorAll("img")).map(img => img.src).filter(Boolean);
+        }
+
+        function renderCatalog() {
+            catalogListEl.innerHTML = "";
+            chapters.forEach((chapter, index) => {
+                const button = document.createElement("button");
+                button.className = "item" + (index === currentIndex ? " active" : "");
+                button.type = "button";
+                button.textContent = chapter.title;
+                button.onclick = () => goToIndex(index);
+                catalogListEl.appendChild(button);
+            });
+            catalogMetaEl.textContent = `共 ${chapters.length} 话`;
+            prevBtn.disabled = currentIndex <= 0;
+            nextBtn.disabled = currentIndex >= chapters.length - 1;
+        }
+
+        function updateURL() {
+            const url = new URL(location.href);
+            url.searchParams.set("item_id", itemId);
+            history.replaceState({}, "", url);
+        }
+
+        async function loadDirectory() {
+            const payload = await fetchJSON(`/api/directory?book_id=${encodeURIComponent(bookId)}&source=${encodeURIComponent(source)}`);
+            chapters = (payload.data?.data?.chapterListWithVolume || []).flat().map(item => ({
+                id: String(item.itemId || ""),
+                title: item.title || "未命名章节"
+            })).filter(item => item.id);
+            if (!chapters.length) throw new Error("没有可读取的漫画章节");
+            const last = localStorage.getItem(LAST_KEY);
+            const targetId = itemId || last || chapters[0].id;
+            currentIndex = chapters.findIndex(item => item.id === targetId);
+            if (currentIndex < 0) currentIndex = 0;
+            itemId = chapters[currentIndex].id;
+            renderCatalog();
+        }
+
+        async function loadChapter() {
+            const current = chapters[currentIndex];
+            if (!current) return;
+            itemId = current.id;
+            chapterTitleEl.textContent = current.title;
+            bottomTitleEl.textContent = current.title;
+            pageMetaEl.textContent = `${source} · ${tab} · 第 ${currentIndex + 1} 话`;
+            imageListEl.innerHTML = '<p class="empty">图片加载中...</p>';
+            localStorage.setItem(LAST_KEY, itemId);
+            updateURL();
+            renderCatalog();
+
+            try {
+                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}&source=${encodeURIComponent(source)}&cmd=${encodeURIComponent(cmd)}`);
+                const html = decodeBase64Maybe(String(payload.data?.images || ""));
+                const images = extractImages(html);
+                if (!images.length) throw new Error("没有获取到漫画图片");
+                imageListEl.innerHTML = "";
+                images.forEach((src, index) => {
+                    const img = document.createElement("img");
+                    img.src = src;
+                    img.alt = `${current.title} - 第 ${index + 1} 张`;
+                    img.loading = index < 2 ? "eager" : "lazy";
+                    imageListEl.appendChild(img);
+                });
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            } catch (error) {
+                imageListEl.innerHTML = `<p class="empty">${error.message || "漫画加载失败"}</p>`;
+            }
+        }
+
+        async function goToIndex(index) {
+            if (index < 0 || index >= chapters.length) return;
+            currentIndex = index;
+            closeSidebar();
+            await loadChapter();
+        }
+
+        function closeSidebar() {
+            sidebar.classList.remove("is-open");
+            settingsPanel.classList.remove("is-open");
+            overlay.classList.remove("is-open");
+            scheduleChromeHide();
+        }
+
+        function openSidebar(target) {
+            showChrome();
+            const shouldOpen = !target.classList.contains("is-open");
+            closeSidebar();
+            target.classList.toggle("is-open", shouldOpen);
+            overlay.classList.toggle("is-open", shouldOpen);
+            if (shouldOpen && target === sidebar) {
+                requestAnimationFrame(() => {
+                    const active = sidebar.querySelector(".item.active");
+                    if (active) active.scrollIntoView({ block: "center", behavior: "smooth" });
+                });
+            }
+            if (!shouldOpen) {
+                scheduleChromeHide();
+            }
+        }
+
+        widthInput.addEventListener("input", event => { comicSettings.width = Number(event.target.value); applySettings(); });
+        gapInput.addEventListener("input", event => { comicSettings.gap = Number(event.target.value); applySettings(); });
+        prevBtn.addEventListener("click", () => goToIndex(currentIndex - 1));
+        nextBtn.addEventListener("click", () => goToIndex(currentIndex + 1));
+        settingsToggle.addEventListener("click", () => openSidebar(settingsPanel));
+        catalogToggle.addEventListener("click", () => openSidebar(sidebar));
+        themeToggle.addEventListener("click", () => {
+            showChrome();
+            currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
+            localStorage.setItem(THEME_KEY, currentTheme);
+            applyTheme();
+        });
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape") {
+                closeSidebar();
+                scheduleChromeHide(300);
+            }
+            if (event.key === "ArrowLeft") goToIndex(currentIndex - 1);
+            if (event.key === "ArrowRight") goToIndex(currentIndex + 1);
+        });
+
+        chromeTopbar.addEventListener("click", event => event.stopPropagation());
+        chromeBottomBar.addEventListener("click", event => event.stopPropagation());
+        viewerBox.addEventListener("click", handleViewerChromeToggle);
+        if (topbarActions && themeToggle && settingsToggle && catalogToggle) {
+            topbarActions.append(themeToggle, settingsToggle, catalogToggle);
+        }
+        applyTheme();
+        applySettings();
+        showChrome();
+        scheduleChromeHide();
+        loadDirectory().then(loadChapter).catch(error => {
+            imageListEl.innerHTML = `<p class="empty">${error.message || "页面初始化失败"}</p>`;
+            pageMetaEl.textContent = "目录加载失败";
+        });
+    </script>
+</body>
+</html>
