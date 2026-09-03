@@ -17,10 +17,18 @@ class LibraryStore {
     final sp = await SharedPreferences.getInstance();
     final raw = sp.getString(_favsKey);
     if (raw == null) return [];
-    final list = jsonDecode(raw) as List;
-    return list
-        .map((e) => MediaItem.fromRaw(Map<String, dynamic>.from(e as Map)))
-        .toList();
+    try {
+      final list = jsonDecode(raw) as List;
+      return list
+          .whereType<Map>()
+          .map((e) => MediaItem.fromRaw(Map<String, dynamic>.from(e)))
+          .where((item) => item.id.isNotEmpty)
+          .toList();
+    } catch (_) {
+      // A partially written preference should not prevent the app from
+      // starting. The next favorite write will replace it with valid JSON.
+      return [];
+    }
   }
 
   Future<void> toggleFavorite(MediaItem item) async {
@@ -33,7 +41,9 @@ class LibraryStore {
       favs.insert(0, item);
     }
     await sp.setString(
-        _favsKey, jsonEncode(favs.map((f) => f.toJson()).toList()));
+      _favsKey,
+      jsonEncode(favs.map((f) => f.toJson()).toList()),
+    );
   }
 
   Future<bool> isFavorite(String id) async {
@@ -51,26 +61,52 @@ class LibraryStore {
     final sp = await SharedPreferences.getInstance();
     final raw = sp.getString(_histKey);
     if (raw == null) return [];
-    final list = jsonDecode(raw) as List;
-    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    try {
+      final list = jsonDecode(raw) as List;
+      return list
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>?> historyEntry(String id) async {
+    final entries = await history();
+    for (final entry in entries) {
+      if (entry['id']?.toString() == id) return entry;
+    }
+    return null;
   }
 
   Future<void> addHistory(Map<String, dynamic> entry) async {
     final sp = await SharedPreferences.getInstance();
     final h = await history();
-    h.removeWhere((e) => e['id'] == entry['id']);
+    final entryId = entry['id']?.toString();
+    h.removeWhere((e) => e['id']?.toString() == entryId);
     h.insert(0, entry);
     if (h.length > 50) h.removeRange(50, h.length);
     await sp.setString(_histKey, jsonEncode(h));
   }
 
-  Future<void> updateProgress(String id, int episode, double progress) async {
+  Future<void> updateProgress(
+    String id,
+    int episode,
+    double progress, {
+    String? chapterId,
+    double? position,
+    double? maxScroll,
+  }) async {
     final sp = await SharedPreferences.getInstance();
     final h = await history();
-    final i = h.indexWhere((e) => e['id'] == id);
+    final i = h.indexWhere((e) => e['id']?.toString() == id);
     if (i >= 0) {
       h[i]['episode'] = episode;
       h[i]['progress'] = progress;
+      if (chapterId != null) h[i]['chapterId'] = chapterId;
+      if (position != null) h[i]['position'] = position;
+      if (maxScroll != null) h[i]['maxScroll'] = maxScroll;
       h[i]['time'] = DateTime.now().millisecondsSinceEpoch;
       await sp.setString(_histKey, jsonEncode(h));
     }
@@ -80,16 +116,4 @@ class LibraryStore {
     final sp = await SharedPreferences.getInstance();
     await sp.remove(_histKey);
   }
-}
-
-extension MediaItemJson on MediaItem {
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'title': title,
-        'cover': cover,
-        'author': author,
-        'badge': badge,
-        'ep': ep,
-        'kind': kind,
-      };
 }

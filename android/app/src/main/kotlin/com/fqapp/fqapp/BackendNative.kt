@@ -15,7 +15,13 @@ import android.util.Log
  * HTTP server in a goroutine and returns immediately. Poll status() (or hit
  * the /health endpoint) to learn whether startup succeeded.
  */
-class BackendNative {
+interface BackendNativeApi {
+    fun startBackend(configPath: String, poolPath: String, filterPath: String)
+    fun stopBackend()
+    fun status(): String
+}
+
+class BackendNative : BackendNativeApi {
     companion object {
         private const val TAG = "BackendNative"
 
@@ -31,12 +37,11 @@ class BackendNative {
     }
 
     /** Start the backend with the given runtime file paths. Returns immediately. */
-    external fun startBackend(configPath: String, poolPath: String, filterPath: String)
+    override external fun startBackend(configPath: String, poolPath: String, filterPath: String)
 
     /** Stop the backend (closes the HTTP server). */
-    external fun stopBackend()
+    override external fun stopBackend()
 
     /** One of "starting", "running", "failed: <message>", or "unavailable" if no .so. */
-    external fun status(): String
+    override external fun status(): String
 }
-

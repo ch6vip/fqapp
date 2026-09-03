@@ -36,19 +36,30 @@ class MediaCard extends StatelessWidget {
                           fit: BoxFit.cover,
                           errorBuilder: (_, _, _) => Container(
                             color: Colors.grey.shade200,
-                            child: const Icon(Icons.book, size: 40, color: Colors.grey),
+                            child: const Icon(
+                              Icons.book,
+                              size: 40,
+                              color: Colors.grey,
+                            ),
                           ),
                         )
                       : Container(
                           color: Colors.grey.shade200,
-                          child: const Icon(Icons.book, size: 40, color: Colors.grey),
+                          child: const Icon(
+                            Icons.book,
+                            size: 40,
+                            color: Colors.grey,
+                          ),
                         ),
                 ),
                 Positioned(
                   top: 6,
                   right: 6,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: kindColors[item.kind] ?? Colors.grey,
                       borderRadius: BorderRadius.circular(4),

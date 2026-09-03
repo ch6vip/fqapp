@@ -10,17 +10,19 @@ Usage:
   .\scripts\build_backend.ps1                     # defaults to ..\
   .\scripts\build_backend.ps1 C:\path\to\
   .\scripts\build_backend.ps1 -ForceConfig        # also reset existing config
+  .\scripts\build_backend.ps1 -Jni                # also build arm64 liblegacy.so
 
 Comments are kept in ASCII on purpose so the file parses cleanly on
 Windows PowerShell 5.1 without a UTF-8 BOM.
 #>
 
-$ErrorActionPreference = 'Stop'
-
 param(
     [string]$SourceDir = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) ''),
-    [switch]$ForceConfig
+    [switch]$ForceConfig,
+    [switch]$Jni
 )
+
+$ErrorActionPreference = 'Stop'
 
 $AppDir = Split-Path -Parent $PSScriptRoot
 
@@ -106,10 +108,68 @@ Copy-Item (Join-Path $SourceDir 'web\*')     $webDir     -Recurse -Force
 Copy-Item (Join-Path $SourceDir 'plugins\*') $pluginsDir -Recurse -Force
 Write-Host '    overwrite filters\ web\ plugins\'
 
-Write-Host '==> done.'
+Write-Host '==> backend binary and runtime files done.'
 Get-Item $outBin | Select-Object FullName, Length | Format-List
-Write-Host ''
-Write-Host 'Note: liblegacy.so under android/app/src/main/jniLibs/ is not in this repo.'
-Write-Host '      It is only a placeholder for the planned JNI approach (it contains no'
-Write-Host '      JNI export symbols), and MainActivity never loads it, so skipping it'
-Write-Host '      does not break debug builds.'
+
+if ($Jni) {
+    Write-Host ''
+    Write-Host '==> building JNI shared library (android/arm64, c-shared)...'
+
+    # Prefer an explicitly configured NDK, then the SDK path from
+    # ANDROID_HOME/ANDROID_SDK_ROOT, then the standard local.properties file.
+    $ndkRoot = $env:ANDROID_NDK_HOME
+    if (-not $ndkRoot) { $ndkRoot = $env:ANDROID_NDK_ROOT }
+    $sdkRoot = $env:ANDROID_HOME
+    if (-not $sdkRoot) { $sdkRoot = $env:ANDROID_SDK_ROOT }
+    if (-not $sdkRoot) {
+        $localProps = Join-Path $AppDir 'android\local.properties'
+        if (Test-Path $localProps) {
+            $line = Get-Content $localProps | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
+            if ($line) { $sdkRoot = ($line -replace '^sdk\.dir=', '').Replace('\\', '\') }
+        }
+    }
+    if (-not $ndkRoot -and $sdkRoot) {
+        $ndkRoot = Get-ChildItem (Join-Path $sdkRoot 'ndk') -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $ndkRoot -or -not (Test-Path $ndkRoot)) {
+        throw 'Android NDK not found. Set ANDROID_NDK_HOME or install an NDK under the Android SDK.'
+    }
+
+    $prebuilt = Join-Path $ndkRoot 'toolchains\llvm\prebuilt\windows-x86_64'
+    $cc = Join-Path $prebuilt 'bin\aarch64-linux-android21-clang.cmd'
+    if (-not (Test-Path $cc)) { $cc = Join-Path $prebuilt 'bin\aarch64-linux-android21-clang' }
+    if (-not (Test-Path $cc)) { throw "Android clang not found under $prebuilt" }
+    $sysroot = Join-Path $prebuilt 'sysroot'
+    $jniDir = Join-Path $AppDir 'android\app\src\main\jniLibs\arm64-v8a'
+    New-Item -ItemType Directory -Force -Path $jniDir | Out-Null
+    $outSo = Join-Path $jniDir 'liblegacy.so'
+    $outHeader = [System.IO.Path]::ChangeExtension($outSo, '.h')
+
+    $oldGoOS = $env:GOOS; $oldGoArch = $env:GOARCH; $oldCgo = $env:CGO_ENABLED; $oldCC = $env:CC; $oldCgoFlags = $env:CGO_CFLAGS
+    try {
+        $env:GOOS = 'android'
+        $env:GOARCH = 'arm64'
+        $env:CGO_ENABLED = '1'
+        $env:CC = $cc
+        $env:CGO_CFLAGS = "-I$($sysroot)\usr\include"
+        Push-Location $SourceDir
+        try {
+            go build -buildmode=c-shared -trimpath -ldflags '-s -w' -o $outSo .
+            if (-not $?) { throw 'go c-shared build failed' }
+        }
+        finally { Pop-Location }
+    }
+    finally {
+        $env:GOOS = $oldGoOS; $env:GOARCH = $oldGoArch; $env:CGO_ENABLED = $oldCgo; $env:CC = $oldCC; $env:CGO_CFLAGS = $oldCgoFlags
+    }
+    if (-not (Test-Path $outSo) -or (Get-Item $outSo).Length -eq 0) { throw "JNI build produced no output at $outSo" }
+    # The generated C header is useful during development but is not needed
+    # by the Android app and should not be packaged as an asset.
+    if (Test-Path $outHeader) { Remove-Item -LiteralPath $outHeader -Force }
+    Get-Item $outSo | Select-Object FullName, Length | Format-List
+}
+else {
+    Write-Host ''
+    Write-Host 'Tip: pass -Jni to build liblegacy.so for Android SELinux-safe startup.'
+}

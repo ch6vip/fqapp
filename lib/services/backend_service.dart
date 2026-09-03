@@ -66,13 +66,25 @@ class BackendService {
     final bin = File('${dir.path}/');
     await _copyAsset('assets/bin/', bin);
     // Make it executable.
-    await Process.run('chmod', ['755', bin.path]);
+    try {
+      await Process.run('chmod', ['755', bin.path]);
+    } catch (_) {
+      // Windows has no chmod; executable permissions are not needed there.
+    }
 
     // Config
-    await _copyAsset('assets/config/config.json', File('${dir.path}/config/config.json'));
     await _copyAsset(
-        'assets/config/device_pool.example.json', File('${dir.path}/config/device_pool.example.json'));
-    await _copyAsset('assets/config/filter.json', File('${dir.path}/config/filter.json'));
+      'assets/config/config.json',
+      File('${dir.path}/config/config.json'),
+    );
+    await _copyAsset(
+      'assets/config/device_pool.example.json',
+      File('${dir.path}/config/device_pool.example.json'),
+    );
+    await _copyAsset(
+      'assets/config/filter.json',
+      File('${dir.path}/config/filter.json'),
+    );
     // Seed the device pool from the example on first launch (the backend
     // registers a real device on demand and persists it here).
     final poolFile = File('${dir.path}/config/device_pool.json');
@@ -82,9 +94,21 @@ class BackendService {
 
     // Filters
     final filterNames = [
-      'article.js', 'audio.js', 'author.js', 'book.js', 'chapter.js',
-      'comment.js', 'forum_id.js', 'item.js', 'manga.js', 'novel.js',
-      'rank.js', 'recommend.js', 'search.js', 'video.js', 'viewer.js',
+      'article.js',
+      'audio.js',
+      'author.js',
+      'book.js',
+      'chapter.js',
+      'comment.js',
+      'forum_id.js',
+      'item.js',
+      'manga.js',
+      'novel.js',
+      'rank.js',
+      'recommend.js',
+      'search.js',
+      'video.js',
+      'viewer.js',
     ];
     for (final n in filterNames) {
       await _copyAsset('assets/filters/$n', File('${dir.path}/filters/$n'));
@@ -92,7 +116,12 @@ class BackendService {
 
     // Web UI (used by browser; Flutter uses the API directly but keep parity)
     final webNames = [
-      'index.html', 'detail.html', 'read.html', 'listen.html', 'comic.html', 'video.html',
+      'index.html',
+      'detail.html',
+      'read.html',
+      'listen.html',
+      'comic.html',
+      'video.html',
     ];
     for (final n in webNames) {
       await _copyAsset('assets/web/$n', File('${dir.path}/web/$n'));
@@ -104,7 +133,7 @@ class BackendService {
     if (_logLines.length > 500) _logLines.removeAt(0);
     // Also append to a file for offline diagnosis.
     try {
-      _logFile?.writeAsStringSync(line + '\n', mode: FileMode.append);
+      _logFile?.writeAsStringSync('$line\n', mode: FileMode.append);
     } catch (_) {}
   }
 
@@ -145,12 +174,22 @@ class BackendService {
             if (!ok) {
               await _channel.invokeMethod('stopBackend');
               _viaJni = false;
-              throw StateError('JNI backend started but /health did not come up');
+              throw StateError(
+                'JNI backend started but /health did not come up',
+              );
             }
             _log('JNI backend healthy');
             return;
           } else {
             _log('JNI backend failed: $result, falling back to Process.start');
+            // A timed-out JNI call may still have a build/listen goroutine in
+            // flight. Stop it before starting the subprocess fallback, or the
+            // two paths can race for port 8080.
+            try {
+              await _channel.invokeMethod('stopBackend');
+            } catch (stopError) {
+              _log('stop timed-out JNI backend failed: $stopError');
+            }
           }
         } catch (e) {
           _log('JNI path failed: $e, falling back to Process.start');
@@ -162,24 +201,33 @@ class BackendService {
       _log('starting backend via Process.start: $bin');
       _log('workdir: ${dir.path}');
 
+      final processEnvironment = Map<String, String>.from(Platform.environment)
+        ..['HOME'] = dir.path;
       _proc = await Process.start(
         bin,
         [
-          '-config', '${dir.path}/config/config.json',
-          '-pool', '${dir.path}/config/device_pool.json',
-          '-filter', '${dir.path}/config/filter.json',
+          '-config',
+          '${dir.path}/config/config.json',
+          '-pool',
+          '${dir.path}/config/device_pool.json',
+          '-filter',
+          '${dir.path}/config/filter.json',
+          '-runtime-dir',
+          dir.path,
         ],
         workingDirectory: dir.path,
-        environment: {'HOME': dir.path},
+        environment: processEnvironment,
       );
       _log('backend pid: ${_proc!.pid}');
 
       // Drain stdout/stderr so the child never blocks on a full pipe.
-      final stdoutLines =
-          _proc!.stdout.transform(SystemEncoding().decoder).transform(const LineSplitter());
+      final stdoutLines = _proc!.stdout
+          .transform(SystemEncoding().decoder)
+          .transform(const LineSplitter());
       _logSubs.add(stdoutLines.listen((String l) => _log(l)));
-      final stderrLines =
-          _proc!.stderr.transform(SystemEncoding().decoder).transform(const LineSplitter());
+      final stderrLines = _proc!.stderr
+          .transform(SystemEncoding().decoder)
+          .transform(const LineSplitter());
       _logSubs.add(stderrLines.listen((String l) => _log(l)));
       _proc!.exitCode.then((code) {
         _log('backend exited with code $code');
@@ -192,8 +240,10 @@ class BackendService {
         // Kill and report failure.
         _proc?.kill();
         _proc = null;
-        throw StateError(' backend failed to start (health check timeout)\n'
-            'logs: ${_logLines.join('\n')}');
+        throw StateError(
+          ' backend failed to start (health check timeout)\n'
+          'logs: ${_logLines.join('\n')}',
+        );
       }
       _log('backend healthy');
     } catch (e) {
@@ -213,12 +263,15 @@ class BackendService {
       try {
         final client = HttpClient()
           ..connectionTimeout = const Duration(seconds: 2);
-        final req = await client.getUrl(Uri.parse('$baseUrl/health'));
-        final resp = await req.close();
-        await resp.drain<void>();
-        client.close();
-        if (resp.statusCode == 200) return true;
-        _log('health check: HTTP ${resp.statusCode}');
+        try {
+          final req = await client.getUrl(Uri.parse('$baseUrl/health'));
+          final resp = await req.close();
+          await resp.drain<void>();
+          if (resp.statusCode == 200) return true;
+          _log('health check: HTTP ${resp.statusCode}');
+        } finally {
+          client.close(force: true);
+        }
       } catch (e) {
         // Not up yet.
       }
@@ -243,7 +296,10 @@ class BackendService {
     if (_proc == null) return;
     try {
       _proc?.kill();
-      await _proc?.exitCode.timeout(const Duration(seconds: 3), onTimeout: () => -1);
+      await _proc?.exitCode.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => -1,
+      );
     } finally {
       _proc = null;
       for (final s in _logSubs) {

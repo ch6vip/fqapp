@@ -40,9 +40,19 @@ class _MinePageState extends State<MinePage> {
             child: Icon(Icons.person, size: 40, color: Colors.white),
           ),
           const SizedBox(height: 8),
-          const Center(child: Text('番茄小铺', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+          const Center(
+            child: Text(
+              '番茄小铺',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
           const SizedBox(height: 4),
-          Center(child: Text('本地服务: $_status', style: const TextStyle(color: Colors.grey))),
+          Center(
+            child: Text(
+              '本地服务: $_status',
+              style: const TextStyle(color: Colors.grey),
+            ),
+          ),
           const SizedBox(height: 24),
           ListTile(
             leading: const Icon(Icons.memory),
@@ -57,7 +67,9 @@ class _MinePageState extends State<MinePage> {
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('关于'),
-            subtitle: const Text('番茄小说 / 短剧 / 漫画 / 听书聚合客户端\n后端:  (Go) 本地运行'),
+            subtitle: const Text(
+              '番茄小说 / 短剧 / 漫画 / 听书聚合客户端\n后端:  (Go) 本地运行',
+            ),
           ),
         ],
       ),

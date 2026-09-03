@@ -9,7 +9,7 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL = "fqapp/backend"
     }
 
-    private lateinit var native: BackendNative
+    private lateinit var native: BackendNativeApi
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -24,7 +24,7 @@ class MainActivity : FlutterActivity() {
             android.util.Log.w("MainActivity", "JNI backend unavailable, will use Process.start fallback", e)
             // A no-op stub so the channel handler still has a receiver; the
             // Flutter side detects the failure via status() returning "unavailable".
-            object : BackendNative() {
+            object : BackendNativeApi {
                 override fun startBackend(configPath: String, poolPath: String, filterPath: String) {}
                 override fun stopBackend() {}
                 override fun status(): String = "unavailable"
@@ -49,9 +49,15 @@ class MainActivity : FlutterActivity() {
                                 st = native.status()
                                 if (st == "starting") Thread.sleep(200)
                             }
-                            result.success(st)
+                            if (st == "starting") {
+                                native.stopBackend()
+                                st = "failed: JNI startup timeout"
+                            }
+                            runOnUiThread { result.success(st) }
                         } catch (e: Exception) {
-                            result.error("JNI_ERROR", e.message, null)
+                            runOnUiThread {
+                                result.error("JNI_ERROR", e.message, null)
+                            }
                         }
                     }.start()
                 }

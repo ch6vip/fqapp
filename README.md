@@ -2,7 +2,7 @@
 
 一个运行在 **Android 手机本地** 的番茄小说聚合客户端：内置 Go 版 `` 后端（签名、解密全在手机本地完成），Flutter 原生 UI 提供小说阅读、短剧播放、漫画、听书、搜索、收藏、历史等完整功能。
 
-> **核心设计**：后端跑在 `127.0.0.1:8080`，UI 通过 HTTP 调用本地后端。不需要服务器，不需要 root，数据不出手机。
+> **核心设计**：后端跑在 `127.0.0.1:8080`，UI 通过 HTTP 调用本地后端。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问番茄上游。
 
 ---
 
@@ -28,8 +28,8 @@
 |---|---|
 | 📖 小说阅读 | 目录浏览、章节正文（后端解密）、字号调节、点击翻页 |
 | 🎬 短剧播放 | 集数列表、自动连播、播放/暂停、上/下一集 |
-| 🖼 漫画 | 内容类型识别（开发中，目录结构已支持） |
-| 🎧 听书 | 内容类型识别（开发中） |
+| 🖼 漫画 | 内容类型识别（阅读器暂未开放） |
+| 🎧 听书 | 内容类型识别（播放器暂未开放） |
 | 🔍 搜索 | 跨类型搜索，按 小说/漫画/听书/短剧 分 tab |
 | ❤️ 收藏 | 本地持久化（SharedPreferences） |
 | 🕘 历史 | 阅读/播放进度记录，续看 |
@@ -144,6 +144,7 @@ Windows PowerShell：
 ```powershell
 .\scripts\build_backend.ps1                 # 默认 ..\
 .\scripts\build_backend.ps1 C:\path\to\
+.\scripts\build_backend.ps1 -Jni            # 同时编译 Android JNI 库
 ```
 
 脚本内部做的事等价于下面这段（想手动执行也可以）：
@@ -167,9 +168,13 @@ Copy-Item \plugins\*  fqapp\assets\plugins\ -Recurse
 ```powershell
 cd fqapp
 flutter pub get
-flutter build apk --debug        # 调试版(169MB, 含全部 ABI)
-flutter build apk --release     # 发布版(更小)
+# 当前 JNI 后端只提供 arm64-v8a，构建时显式指定目标 ABI
+flutter build apk --debug --target-platform android-arm64
+flutter build apk --release --target-platform android-arm64
 ```
+
+生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
+对应 ABI 编译并打包 `liblegacy.so`。
 
 ### 3. 安装运行
 
@@ -204,6 +209,7 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 | 问题 | 解决 |
 |---|---|
 | `Could not close incremental caches` | 已在 `gradle.properties` 关闭 Kotlin 增量编译 |
+| 构建偶发 `IllegalStateException: The settings are not yet available for build` | Gradle 9.1.0 配置缓存推广处理器（`ConfigurationCachePromoHandler`）的偶发 bug，重跑即可恢复，无需修改配置（详见下方「已知问题与调试」） |
 | `Unable to locate Android SDK` | `flutter config --android-sdk C:\android-sdk` |
 | `Flutter requires Android SDK 36` | `sdkmanager "platforms;android-36"` |
 | maven.google.com 超时 | 已配置阿里云镜像 |
@@ -224,8 +230,11 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 ### 启动流程（`BackendService.start`）
 
 ```dart
-_proc = await Process.start(bin, ['-config', ..., '-pool', ..., '-filter', ...],
-    workingDirectory: dir.path, environment: {'HOME': dir.path});
+// Android: MethodChannel → Kotlin → liblegacy.so (JNI)
+// Desktop / JNI 不可用时：
+_proc = await Process.start(bin, [
+    '-config', ..., '-pool', ..., '-filter', ..., '-runtime-dir', dir.path,
+  ], workingDirectory: dir.path);
 ```
 
 - stdout/stderr 实时写入 `backend.log`（诊断用）
@@ -247,21 +256,15 @@ _proc = await Process.start(bin, ['-config', ..., '-pool', ..., '-filter', ...],
 2. **Termux 思路**：把二进制放到 Termux 环境（`~/.termux` 域）——不适用本项目（无 Termux 依赖）。
 3. **Root 设备**：`su -c` 提权执行——不推荐，违背"免 root"设计。
 
-> **当前状态**：`Process.start` 方案在真机上报 `Permission denied`，JNI 方案是下一步改造方向（见[开发计划](#开发计划)）。
+> **当前状态**：JNI 路径已经实现。`BackendService` 在 Android 上先加载
+> `liblegacy.so`，桌面或 JNI 不可用时才回退 `Process.start`。由于 Android
+> SELinux 限制，真机发布包应使用 arm64 JNI 构建：
 
-#### JNI 方案的实际进度：0（尚未开始）
+```powershell
+.\scripts\build_backend.ps1 -Jni
+```
 
-别被 `android/app/src/main/jniLibs/arm64-v8a/liblegacy.so` 误导。实测结论：
-
-- 该文件与 `assets/bin/` **md5 完全相同**，只是可执行文件的字节级拷贝，**不是真正的 shared library**；
-- 二进制内搜不到 `JNI_OnLoad`，也搜不到任何 `Java_com_fqapp_*` 导出符号；
-- `MainActivity.kt` 至今只有 `class MainActivity : FlutterActivity()`，**没有** `System.loadLibrary("")`。
-
-两者都已加入 `.gitignore`，不随仓库分发。要真正落地 JNI，需要同时补上三件事：
-
-1. Go 侧用 `-buildmode=c-shared` 重新编译，导出 `JNI_OnLoad` / `Java_com_fqapp_fqapp_MainActivity_startBackend`，在后台 goroutine 里起 HTTP server（注意不能再走 `flag.Parse()`，参数要改成从 JNI 传入）；
-2. Kotlin 侧 `System.loadLibrary("")` 并调用导出的启动函数；
-3. `BackendService` 改为先尝试 JNI 启动，失败再回退 `Process.start`（桌面/调试环境仍可用）。
+Go JNI 入口会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；HTTP 服务只绑定 `127.0.0.1`。
 
 ---
 
@@ -293,8 +296,8 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 
 | 字段 | 来源优先级 |
 |---|---|
-| `id` | `book_id` → `video_id`/`vid`/`series_id`/`id`/`item_id` |
-| `kind` | 检测 `video_id`/`vid`/`video_platform` → 短剧；`manga_id`/`comic_id` → 漫画；`album_id`/`audio_book_id` → 听书；否则小说 |
+| `id` | 小说/漫画/听书使用内容 ID；短剧优先使用系列 `pseries_id`/`series_id`，单集结果保留 `episodeId` |
+| `kind` | 检测显式 `kind` 及 `video_id`/`vid`/`video_platform` → 短剧；`manga_id`/`comic_id` → 漫画；`album_id`/`audio_book_id` → 听书；否则小说 |
 | `title` | `cell_name` → 高亮 → `book_name` → `title`/`name` |
 | `cover` | `thumb_url` → `cover`/`cover_url`/`poster` |
 | `author` | `author`/`author_name` |
@@ -305,6 +308,8 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 
 `chapterListWithVolume` 格式 → `itemId`/`title`/`volume_name`，按卷分组。
 
+短剧上游的 `data.episodes`、`item_data_list` 和 `lists` 也会统一转换为同一模型，客户端因此可以兼容新旧后端二进制。
+
 ### `SearchTab`（搜索 tab）
 
 `title` + `items[]`，支持嵌套 `video_data` 展开。
@@ -314,7 +319,7 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 ## 页面说明
 
 ### 首页（`home_page.dart`）
-- 搜索"推荐"关键词取结果流（后端归一化后取全部 tab 条目）
+- 优先调用真实 `/api/v1/recommend/homepage`，旧后端不可用时回退搜索结果
 - 3 列封面网格，下拉刷新
 
 ### 搜索（`search_page.dart`）
@@ -324,20 +329,20 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 ### 详情（`detail_page.dart`）
 - 封面 + 标题 + 作者 + 简介
 - 目录网格（4 列），卷名分组
-- 底部：收藏按钮 + 开始阅读/播放
-- 短剧类型 → 播放器；其他 → 阅读器
+- 底部：收藏按钮 + 阅读/播放/续看
+- 短剧类型 → 播放器；小说 → 阅读器；漫画/听书明确提示开发中
 
 ### 阅读器（`reader_page.dart`）
 - 加载章节正文（后端解密后返回纯文本）
 - 点左 1/3 上一章、右 1/3 下一章
 - 字号调节（16-24）
-- 进度写入历史
+- 章节、滚动位置和封面写入历史，重新进入可续读
 
 ### 播放器（`player_page.dart`）
-- `video_player` 播放后端返回的直链
+- `video_player` 播放后端返回的本地相对路径或直链（客户端自动补全 URL）
 - 自动连播（播完自动下一集）
 - 上/下一集按钮 + 集数指示
-- 播放进度定时写入历史
+- 播放秒数、集数和封面定时写入历史，支持续看
 
 ### 书架（`library_page.dart`）
 - 收藏 tab：封面网格
@@ -352,10 +357,11 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 
 ## 已知问题与调试
 
-### 1. SELinux 阻止后端进程启动（当前主阻塞）
+### 1. JNI 构建与真机验证
 - **现象**：`ProcessException: Permission denied`
 - **验证**：`adb shell run-as com.fqapp.fqapp ./files/backend/ -h` 可执行 → 确认是 app 进程域限制
-- **方案**：JNI 化（见上文）
+- **方案**：执行 `scripts/build_backend.ps1 -Jni`，安装 arm64 APK 后验证 `/health`。
+- `liblegacy.so` 和 `assets/bin/` 均为可重建产物，默认不入库；发布构建机必须先执行脚本。
 
 ### 2. 调试技巧
 
@@ -377,16 +383,43 @@ adb logcat -s flutter
 ### 3. 设备池过期
 若 content/full 解密乱码，删除 `files/backend/config/device_pool.json` 重启 App 即可自动重注册。
 
+### 4. 构建偶发 `The settings are not yet available for build`
+
+**现象**：`flutter build` / `gradlew` 偶发报
+`IllegalStateException: The settings are not yet available for build`，
+但重跑即恢复（daemon 日志显示失败后紧接着的 daemon 几秒内成功）。
+
+**根因**（已定位到 Gradle 9.1.0 字节码）：调用链为
+`ConfigurationCachePromoHandler.beforeComplete()` →
+`runWithoutBuildDefinition()` → `ResolvedBuildLayout.isBuildDefinitionMissing()` →
+`DefaultGradle.getSettings()`。`getSettings()` 在 settings 尚未 attach 时直接抛异常；
+该处理器是 Gradle 9.1.0 新增的「配置缓存推广」功能（构建结束时打印
+`Consider enabling configuration cache`），在复合构建（`settings.gradle.kts` 中
+`includeBuild(flutter_tools)` + 子工程 `:gradle`）首次初始化的时序里偶发踩中此状态。
+
+**结论**：这是 Gradle 9.1.0 自身缺陷，非项目代码问题，且无法稳定复现。
+
+**处理**：无需修改代码/配置；偶发时重跑即可。若想彻底规避，可升级 Gradle
+补丁版本（9.1.x / 9.2，需先确认与 AGP 9.0.1 兼容）。
+
+> 注意：`Daemon compilation failed`（Kotlin 2.3.20，见
+> `android/.kotlin/errors/*.log`）是另一独立问题 —— Kotlin 编译守护进程崩溃，
+> 已通过 `gradle.properties` 的 `kotlin.incremental=false` 与
+> `kotlin.compiler.execution.strategy=in-process` 规避，勿因 AGP 9 弃用警告而删除这些配置。
+
 ---
 
 ## 开发计划
 
-- [ ] **JNI 集成后端**：Go c-shared → `liblegacy.so` → `System.loadLibrary` 启动（解决 SELinux）
+- [x] **JNI 集成后端**：Go c-shared → `liblegacy.so` → `System.loadLibrary` 启动（解决 SELinux）
+- [x] 小说搜索、目录、正文、章节/滚动位置续读
+- [x] 短剧目录归一化、自动连播、播放进度续看
+- [x] 首页真实推荐接口（`/api/v1/recommend/homepage`）
+- [ ] Android arm64 真机 smoke test（启动、搜索、阅读、播放）
+- [ ] 短剧流式播放（当前加密视频仍需先下载解密；已支持本地 Range）
 - [ ] 漫画阅读页（图片平铺/翻页）
 - [ ] 听书播放页（音频播放器）
-- [ ] 短剧流式播放（后端 `/stream` 路由）
 - [ ] 下载/离线缓存
-- [ ] 首页真实推荐接口（`/api/v1/recommend/homepage`）
 - [ ] Release 签名配置
 - [ ] 整本 TXT 导出
 

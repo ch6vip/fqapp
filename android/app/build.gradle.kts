@@ -23,6 +23,12 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // The bundled Go JNI backend is currently built for arm64 only. An
+        // explicit filter prevents installing an APK on an ABI where the
+        // native backend cannot start and Process.start is blocked by SELinux.
+        ndk {
+            abiFilters += setOf("arm64-v8a")
+        }
     }
 
     buildTypes {

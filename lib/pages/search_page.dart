@@ -6,7 +6,9 @@ import '../widgets/media_card.dart';
 import 'detail_page.dart';
 
 class SearchPage extends StatefulWidget {
-  const SearchPage({super.key});
+  final String? initialQuery;
+
+  const SearchPage({super.key, this.initialQuery});
 
   @override
   State<SearchPage> createState() => _SearchPageState();
@@ -19,6 +21,16 @@ class _SearchPageState extends State<SearchPage> {
   bool _loading = false;
   String? _error;
   int _tabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialQuery?.trim() ?? '';
+    if (initial.isNotEmpty) {
+      _ctrl.text = initial;
+      _search(initial);
+    }
+  }
 
   Future<void> _search(String q) async {
     if (q.trim().isEmpty) return;
@@ -45,7 +57,9 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final activeTab = _tabs.isNotEmpty ? _tabs[_tabIndex.clamp(0, _tabs.length - 1)] : null;
+    final activeTab = _tabs.isNotEmpty
+        ? _tabs[_tabIndex.clamp(0, _tabs.length - 1)]
+        : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -89,25 +103,31 @@ class _SearchPageState extends State<SearchPage> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
-                    ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
-                    : activeTab == null
-                        ? const Center(child: Text('输入关键词搜索'))
-                        : activeTab.items.isEmpty
-                            ? const Center(child: Text('无结果'))
-                            : GridView.builder(
-                                padding: const EdgeInsets.all(12),
-                                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 3,
-                                  childAspectRatio: 0.52,
-                                  crossAxisSpacing: 10,
-                                  mainAxisSpacing: 10,
-                                ),
-                                itemCount: activeTab.items.length,
-                                itemBuilder: (context, i) => MediaCard(
-                                  item: activeTab.items[i],
-                                  onTap: () => _openItem(activeTab.items[i]),
-                                ),
-                              ),
+                ? Center(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  )
+                : activeTab == null
+                ? const Center(child: Text('输入关键词搜索'))
+                : activeTab.items.isEmpty
+                ? const Center(child: Text('无结果'))
+                : GridView.builder(
+                    padding: const EdgeInsets.all(12),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          childAspectRatio: 0.52,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                        ),
+                    itemCount: activeTab.items.length,
+                    itemBuilder: (context, i) => MediaCard(
+                      item: activeTab.items[i],
+                      onTap: () => _openItem(activeTab.items[i]),
+                    ),
+                  ),
           ),
         ],
       ),

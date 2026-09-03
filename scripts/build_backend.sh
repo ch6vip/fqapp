@@ -115,7 +115,7 @@ if [ "$BUILD_JNI" -eq 1 ]; then
   # NDK 版本可能不同机器不一样，这里用环境变量或自动探测。
   if [ -z "${ANDROID_NDK_HOME:-}" ]; then
     # 尝试从 SDK 推断
-    for d in "$ANDROID_HOME"/ndk/* "$ANDROID_SDK_ROOT"/ndk/* /c/android-sdk/ndk/*; do
+    for d in "${ANDROID_HOME:-}"/ndk/* "${ANDROID_SDK_ROOT:-}"/ndk/* /c/android-sdk/ndk/*; do
       if [ -d "$d" ]; then ANDROID_NDK_HOME="$d"; break; fi
     done
   fi
@@ -163,7 +163,7 @@ if [ "$BUILD_JNI" -eq 1 ]; then
 
   ( cd "$LEGACY_DIR" && \
     CC="$CC_WIN" \
-    CGO_CFLAGS="-I \"$SYSROOT_WIN/usr/include\"" \
+    CGO_CFLAGS="-I$SYSROOT_WIN/usr/include" \
     GOOS=android GOARCH=arm64 CGO_ENABLED=1 \
     go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o "$GO_SO" . )
 
@@ -171,6 +171,10 @@ if [ "$BUILD_JNI" -eq 1 ]; then
     echo "错误：liblegacy.so 未产出。" >&2
     exit 1
   fi
+
+  # Go emits a companion C header next to a c-shared output. Kotlin does not
+  # consume it, so keep the Android source tree focused on the .so itself.
+  rm -f "${SO_OUT%.so}.h"
 
   echo "    产出:"
   ls -l "$SO_OUT"
