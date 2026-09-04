@@ -126,6 +126,61 @@ void main() {
     expect(item.title, '官场之绝对权力');
   });
 
+  test('directory fallback episodes parse as video chapters', () {
+    // The pseries player endpoint is dead for recommend series ids; the
+    // backend now answers with the reading directory shape. The directory
+    // parser must surface those rows as playable episodes (itemId = vid).
+    final payload = {
+      'code': 0,
+      'data': {
+        'book_info': {'book_name': '我家后山藏真龙'},
+        'item_data_list': [
+          {'item_id': '7678039365922065433', 'title': '第81集'},
+          {'item_id': '7678039314705419289', 'title': '第82集'},
+        ],
+        'item_list': [{'item_id': 'x', 'title': 'x'}],
+      },
+    };
+    final volumes = parseDirectory(payload);
+    final flat = volumes.expand((v) => v).toList();
+    expect(flat.length, 2);
+    expect(flat[0].itemId, '7678039365922065433');
+    expect(flat[0].title, '第81集');
+    expect(flat[1].itemId, '7678039314705419289');
+  });
+
+  test('directory fallback via bridge chapterListWithVolume', () {
+    // The /api/directory?tab=短剧 bridge nests the normalized episodes under
+    // payload.data.data.chapterListWithVolume — same shape novels use.
+    final payload = {
+      'code': 200,
+      'data': {
+        'data': {
+          'chapterListWithVolume': [
+            [
+              {
+                'itemId': '7678039365922065433',
+                'item_id': '7678039365922065433',
+                'title': '第81集',
+                'volume_name': '剧集',
+              },
+              {
+                'itemId': '7678039314705419289',
+                'item_id': '7678039314705419289',
+                'title': '第82集',
+              },
+            ],
+          ],
+        },
+      },
+    };
+    final volumes = parseDirectory(payload);
+    final flat = volumes.expand((v) => v).toList();
+    expect(flat.length, 2);
+    expect(flat.first.itemId, '7678039365922065433');
+    expect(flat.first.title, '第81集');
+  });
+
   test('extracts nested recommendation cards', () {
     final items = parseMediaItems({
       'code': 0,

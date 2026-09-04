@@ -33,6 +33,7 @@ class _HomePageState extends State<HomePage> {
   bool _hasMore = true;
   bool _recommendExhausted = false;
   int _offset = 0;
+  String? _sessionId;
   final Set<String> _seen = {};
   String? _error;
   final ScrollController _scroll = ScrollController();
@@ -59,7 +60,8 @@ class _HomePageState extends State<HomePage> {
     if (pos.pixels >= pos.maxScrollExtent - 400) {
       final now = DateTime.now();
       if (_lastLoadMoreAt == null ||
-          now.difference(_lastLoadMoreAt!) >= const Duration(milliseconds: 500)) {
+          now.difference(_lastLoadMoreAt!) >=
+              const Duration(milliseconds: 500)) {
         _lastLoadMoreAt = now;
         _loadMore();
       }
@@ -73,6 +75,7 @@ class _HomePageState extends State<HomePage> {
       _offset = 0;
       _hasMore = true;
       _recommendExhausted = false;
+      _sessionId = null;
       _seen.clear();
     });
     try {
@@ -109,6 +112,11 @@ class _HomePageState extends State<HomePage> {
   /// tab name if the recommend route is unavailable or empty. Items are
   /// forced to the tab's kind because the dedicated feeds carry no reliable
   /// type field (e.g. audio cards look like book cards).
+  ///
+  /// The recommend feed is not marked exhausted on a non-empty first page:
+  /// tab_type=8 reports has_more=false but still serves page 2 (with
+  /// next_offset=1 + session_id), so load-more keeps paging the real feed and
+  /// only switches to search once a page comes back empty.
   Future<List<MediaItem>> _loadTabRecommend({
     required int tabType,
     required int page,
@@ -121,11 +129,7 @@ class _HomePageState extends State<HomePage> {
         offset: 0,
       );
       items = _parseHomepage(d);
-      if (items.isNotEmpty) {
-        // The dedicated feed returns at most one page (e.g. 看剧 has 6
-        // cards); mark it exhausted so load-more goes straight to search.
-        _recommendExhausted = true;
-      } else {
+      if (items.isEmpty) {
         items = await _loadTabSearch(tabType: tabType, page: page);
       }
     } catch (_) {
@@ -177,7 +181,9 @@ class _HomePageState extends State<HomePage> {
 
   /// Parses a homepage recommend payload, dedupes items and updates the
   /// pagination cursor. The upstream `has_more` flag is unreliable, so we
-  /// keep paging while a page still yields new items.
+  /// keep paging while a page still yields new items. The session_id must be
+  /// echoed back on the next page: the upstream binds it to the device that
+  /// opened it, and the backend pins that device so paging works.
   List<MediaItem> _parseHomepage(Map<String, dynamic> d) {
     final items = parseMediaItems(d);
     final fresh = <MediaItem>[];
@@ -189,13 +195,16 @@ class _HomePageState extends State<HomePage> {
     if (data is Map) {
       final tabItem = data['tab_item'];
       // Scan every tab for a usable next_offset. The first tab_item is often
-      // an empty "推荐" shell with no cursor, while the real content tab (e.g.
-      // 看剧) carries it — reading only the first would wrongly stop paging.
+      // an empty "推荐" shell with no cursor, while the real content tab
+      // (e.g. 看剧) carries it — reading only the first would wrongly stop
+      // paging. The session_id lives on the content tab too.
       if (tabItem is List) {
         var advanced = false;
         for (final t in tabItem) {
           if (t is! Map) continue;
           final no = t['next_offset'];
+          final s = t['session_id'];
+          if (s is String && s.isNotEmpty) _sessionId = s;
           if (no is num && no.toInt() > _offset) {
             _offset = no.toInt();
             advanced = true;
@@ -229,6 +238,7 @@ class _HomePageState extends State<HomePage> {
           final d = await ApiClient.instance.homepageRecommend(
             tabType: tabType,
             offset: _offset,
+            sessionId: _sessionId,
           );
           fresh = _parseHomepage(d);
           if (fresh.isEmpty) {
@@ -242,7 +252,10 @@ class _HomePageState extends State<HomePage> {
           }
         }
       } else {
-        final d = await ApiClient.instance.homepageRecommend(offset: _offset);
+        final d = await ApiClient.instance.homepageRecommend(
+          offset: _offset,
+          sessionId: _sessionId,
+        );
         fresh = _parseHomepage(d);
       }
       if (!mounted) return;
@@ -406,10 +419,7 @@ class _HomePageState extends State<HomePage> {
               ),
             );
           }
-          return MediaCard(
-            item: items[i],
-            onTap: () => _openItem(items[i]),
-          );
+          return MediaCard(item: items[i], onTap: () => _openItem(items[i]));
         },
       ),
     );

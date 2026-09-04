@@ -522,7 +522,9 @@ List<MediaItem> parseMediaItems(Map<String, dynamic> payload) {
   }
 
   void visit(dynamic value, [int depth = 0]) {
-    if (depth > 8 || value == null) return;
+    // The audio recommend feed (tab_type=5) nests book_data four cell_data
+    // levels deep, so keep the recursion generous enough to reach it.
+    if (depth > 14 || value == null) return;
     if (value is Iterable) {
       for (final child in value) {
         visit(child, depth + 1);

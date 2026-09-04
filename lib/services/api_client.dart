@@ -109,13 +109,21 @@ class ApiClient {
 
   /// Real homepage recommendations (the Flutter home page previously used a
   /// search for the literal word "推荐", which is not a recommendation API).
+  ///
+  /// [sessionId] must be echoed back when paging a tab (e.g. tab_type=8 看剧):
+  /// the upstream binds the session to the device that opened it, and the
+  /// backend pins that device across pages so pagination does not 101116.
   Future<Map<String, dynamic>> homepageRecommend({
     int tabType = 2,
     int offset = 0,
+    String? sessionId,
   }) async {
+    final session = sessionId == null || sessionId.isEmpty
+        ? ''
+        : '&session_id=${Uri.encodeQueryComponent(sessionId)}';
     final r = await http.get(
       Uri.parse(
-        '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset',
+        '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset$session',
       ),
     );
     if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
