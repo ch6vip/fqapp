@@ -35,6 +35,10 @@ class _ReaderPageState extends State<ReaderPage> {
   String? _error;
   double _fontSize = 18;
   int _loadGeneration = 0;
+  // Legado-style reading time: deltas are settled at scroll stops, chapter
+  // switches and dispose, so no background timer is needed.
+  DateTime _readStart = DateTime.now();
+  bool _sessionActive = false;
 
   Chapter get _chapter => widget.chapters[_index];
 
@@ -56,6 +60,7 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void dispose() {
     _saveTimer?.cancel();
+    _settleReadTime();
     _persistProgress();
     _scrollController.dispose();
     super.dispose();
@@ -69,6 +74,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _loading = true;
       _error = null;
       _content = '';
+      _sessionActive = false;
     });
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
 
@@ -90,6 +96,8 @@ class _ReaderPageState extends State<ReaderPage> {
         _content = text;
         _loading = false;
       });
+      _sessionActive = true;
+      _readStart = DateTime.now();
 
       await LibraryStore.instance.addHistory({
         'id': widget.bookId,
@@ -145,7 +153,22 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _onScroll() {
     _saveTimer?.cancel();
-    _saveTimer = Timer(const Duration(milliseconds: 500), _persistProgress);
+    _saveTimer = Timer(const Duration(milliseconds: 500), () {
+      _settleReadTime();
+      _persistProgress();
+    });
+  }
+
+  /// Settles the reading-time delta since the last event, legado-style:
+  /// the time between this event and the previous one counts as reading.
+  void _settleReadTime() {
+    if (!_sessionActive || _content.isEmpty) return;
+    final now = DateTime.now();
+    final delta = now.difference(_readStart).inMilliseconds / 1000;
+    if (delta >= 1) {
+      LibraryStore.instance.accumulateReadTime(widget.bookId, 'book', delta);
+    }
+    _readStart = now;
   }
 
   Future<void> _persistProgress() async {
@@ -188,6 +211,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _prev() {
     if (_index <= 0) return;
+    _settleReadTime();
     _persistProgress();
     setState(() => _index--);
     _load();
@@ -200,6 +224,7 @@ class _ReaderPageState extends State<ReaderPage> {
       ).showSnackBar(const SnackBar(content: Text('已是最后一章')));
       return;
     }
+    _settleReadTime();
     _persistProgress();
     setState(() => _index++);
     _load();

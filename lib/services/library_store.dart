@@ -12,6 +12,7 @@ class LibraryStore {
 
   static const _favsKey = 'favs';
   static const _histKey = 'hist';
+  static const _readTimeKey = 'read_time_map';
 
   Future<List<MediaItem>> favorites() async {
     final sp = await SharedPreferences.getInstance();
@@ -116,4 +117,50 @@ class LibraryStore {
     final sp = await SharedPreferences.getInstance();
     await sp.remove(_histKey);
   }
+
+  // ---- reading time (legado-style event-delta accumulation) ----
+  //
+  // Stores a nested map {bookId: {"2026-9-4": seconds}} under _readTimeKey.
+  // Reader/player accumulate deltas at page changes / playback ticks and the
+  // stats page aggregates by day (heatmap, daily records) or by book (rank).
+
+  /// All recorded reading time: bookId → dayKey → seconds.
+  Future<Map<String, Map<String, double>>> readTimeMap() async {
+    final sp = await SharedPreferences.getInstance();
+    final raw = sp.getString(_readTimeKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final out = <String, Map<String, double>>{};
+      decoded.forEach((bookId, value) {
+        if (value is Map) {
+          out[bookId] = value.map(
+            (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
+          );
+        }
+      });
+      return out;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Adds [seconds] of reading time to [bookId] on the day of [at].
+  Future<void> accumulateReadTime(
+    String bookId,
+    String kind,
+    double seconds, {
+    DateTime? at,
+  }) async {
+    if (seconds <= 0 || bookId.isEmpty) return;
+    final sp = await SharedPreferences.getInstance();
+    final map = await readTimeMap();
+    final day = _dayKey(at ?? DateTime.now());
+    final perBook = map[bookId] ?? {};
+    perBook[day] = (perBook[day] ?? 0) + seconds;
+    map[bookId] = perBook;
+    await sp.setString(_readTimeKey, jsonEncode(map));
+  }
+
+  static String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
 }

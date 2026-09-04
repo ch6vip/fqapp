@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'pages/home_page.dart';
-import 'pages/search_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
+import 'services/app_theme.dart';
 import 'services/backend_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final sp = await SharedPreferences.getInstance();
+  themeModeNotifier.value = themeModeFromName(sp.getString(themeModeKey));
   runApp(const FqApp());
 }
 
@@ -16,15 +19,33 @@ class FqApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '番茄小铺',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFE8532D)),
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF5F5F7),
-      ),
-      home: const RootShell(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (context, mode, _) {
+        return MaterialApp(
+          title: '番茄小铺',
+          debugShowCheckedModeBanner: false,
+          theme: _theme(Brightness.light),
+          darkTheme: _theme(Brightness.dark),
+          themeMode: mode,
+          home: const RootShell(),
+        );
+      },
+    );
+  }
+
+  ThemeData _theme(Brightness brightness) {
+    final seed = const Color(0xFFE8532D);
+    final scheme = ColorScheme.fromSeed(
+      seedColor: seed,
+      brightness: brightness,
+    );
+    return ThemeData(
+      colorScheme: scheme,
+      useMaterial3: true,
+      scaffoldBackgroundColor: brightness == Brightness.dark
+          ? const Color(0xFF121212)
+          : const Color(0xFFF5F5F7),
     );
   }
 }
@@ -100,7 +121,6 @@ class _RootShellState extends State<RootShell> {
 
     final pages = [
       const HomePage(),
-      const SearchPage(),
       const LibraryPage(),
       const MinePage(),
     ];
@@ -116,7 +136,6 @@ class _RootShellState extends State<RootShell> {
             selectedIcon: Icon(Icons.home),
             label: '首页',
           ),
-          NavigationDestination(icon: Icon(Icons.search), label: '搜索'),
           NavigationDestination(
             icon: Icon(Icons.collections_bookmark_outlined),
             selectedIcon: Icon(Icons.collections_bookmark),
