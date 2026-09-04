@@ -42,7 +42,7 @@ class _SearchPageState extends State<SearchPage> {
     });
     try {
       final d = await ApiClient.instance.search(_query);
-      final tabs = parseSearchTabs(d);
+      final tabs = await parseSearchTabsAsync(d);
       setState(() {
         _tabs = tabs;
         _loading = false;

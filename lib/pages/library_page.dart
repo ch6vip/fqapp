@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/library_store.dart';
@@ -124,12 +125,12 @@ class _LibraryPageState extends State<LibraryPage> {
                                 (h['cover'] as String).isNotEmpty
                             ? ClipRRect(
                                 borderRadius: BorderRadius.circular(6),
-                                child: Image.network(
-                                  h['cover'],
+                                child: CachedNetworkImage(
+                                  imageUrl: h['cover'],
                                   width: 44,
                                   height: 58,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) =>
+                                  errorWidget: (_, _, _) =>
                                       const Icon(Icons.broken_image),
                                 ),
                               )

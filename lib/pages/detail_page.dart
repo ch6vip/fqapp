@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
@@ -77,7 +78,7 @@ class _DetailPageState extends State<DetailPage> {
         _contentId,
         tab: _tab,
       );
-      volumes = parseDirectory(directory);
+      volumes = await parseDirectoryAsync(directory);
     } catch (e) {
       directoryError = e;
     }
@@ -292,12 +293,12 @@ class _DetailPageState extends State<DetailPage> {
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
-      child: Image.network(
-        widget.item.cover,
+      child: CachedNetworkImage(
+        imageUrl: widget.item.cover,
         width: 100,
         height: 140,
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => fallback,
+        errorWidget: (_, _, _) => fallback,
       ),
     );
   }

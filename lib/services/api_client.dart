@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:http/http.dart' as http;
 
@@ -26,20 +27,29 @@ class ApiClient {
     return '$_base/$raw';
   }
 
-  Map<String, dynamic> _decode(http.Response r) {
-    final j = jsonDecode(utf8.decode(r.bodyBytes));
-    if (j is Map<String, dynamic>) {
-      // The web bridge uses code=200; REST upstream-compatible endpoints use
-      // code=0. Both are successful envelopes.
-      if (j['code'] != null && j['code'] != 200 && j['code'] != 0) {
-        throw ApiException('${j['message'] ?? '请求失败'}');
+  /// Decodes and envelope-checks a response body on a background isolate so
+  /// large JSON payloads never jank the UI thread.
+  Future<Map<String, dynamic>> _decodeAsync(http.Response r) async {
+    final statusCode = r.statusCode;
+    final bodyBytes = r.bodyBytes;
+    return Isolate.run(() {
+      if (statusCode != 200) {
+        throw ApiException('HTTP $statusCode');
       }
-      if (j['success'] == false) {
-        throw ApiException('${j['error'] ?? j['message'] ?? '请求失败'}');
+      final j = jsonDecode(utf8.decode(bodyBytes));
+      if (j is Map<String, dynamic>) {
+        // The web bridge uses code=200; REST upstream-compatible endpoints use
+        // code=0. Both are successful envelopes.
+        if (j['code'] != null && j['code'] != 200 && j['code'] != 0) {
+          throw ApiException('${j['message'] ?? '请求失败'}');
+        }
+        if (j['success'] == false) {
+          throw ApiException('${j['error'] ?? j['message'] ?? '请求失败'}');
+        }
+        return j;
       }
-      return j;
-    }
-    throw ApiException('响应格式错误');
+      throw ApiException('响应格式错误');
+    });
   }
 
   /// Search across content types.
@@ -50,8 +60,7 @@ class ApiClient {
         '$_base/api/search?source=${Uri.encodeQueryComponent('番茄')}&query=${Uri.encodeQueryComponent(query)}&page=$page',
       ),
     );
-    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
-    return _decode(r);
+    return _decodeAsync(r);
   }
 
   /// Book detail.
@@ -64,8 +73,7 @@ class ApiClient {
         '$_base/api/detail?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
       ),
     );
-    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
-    return _decode(r);
+    return _decodeAsync(r);
   }
 
   /// Book directory — returns data.data.chapterListWithVolume.
@@ -78,8 +86,7 @@ class ApiClient {
         '$_base/api/directory?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
       ),
     );
-    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
-    return _decode(r);
+    return _decodeAsync(r);
   }
 
   /// Chapter content (decrypted by backend).
@@ -94,8 +101,7 @@ class ApiClient {
         '$_base/api/content?source=${Uri.encodeQueryComponent('番茄')}&item_id=$itemId&tab=${Uri.encodeQueryComponent(tab)}${toneId != null ? '&tone_id=$toneId' : ''}${mode != null ? '&mode=$mode' : ''}',
       ),
     );
-    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
-    return _decode(r);
+    return _decodeAsync(r);
   }
 
   /// Resolve a share URL to a book id.
@@ -103,8 +109,7 @@ class ApiClient {
     final r = await http.get(
       Uri.parse('$_base/api/resolve?url=${Uri.encodeQueryComponent(url)}'),
     );
-    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
-    return _decode(r);
+    return _decodeAsync(r);
   }
 
   /// Real homepage recommendations (the Flutter home page previously used a
@@ -126,8 +131,7 @@ class ApiClient {
         '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset$session',
       ),
     );
-    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
-    return _decode(r);
+    return _decodeAsync(r);
   }
 
   /// Health check.

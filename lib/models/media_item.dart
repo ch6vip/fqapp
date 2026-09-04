@@ -3,6 +3,25 @@
 /// The upstream service returns different field names for novels, short
 /// dramas, comics and audio books.  Keep that compatibility code here so the
 /// pages only deal with stable, typed values.
+library;
+
+import 'dart:isolate';
+
+/// Runs [parseMediaItems] on a background isolate so deep recursive payload
+/// traversal never janks the UI thread.
+Future<List<MediaItem>> parseMediaItemsAsync(Map<String, dynamic> payload) =>
+    Isolate.run(() => parseMediaItems(payload));
+
+/// Runs [parseSearchTabs] on a background isolate.
+Future<List<SearchTab>> parseSearchTabsAsync(Map<String, dynamic> payload) =>
+    Isolate.run(() => parseSearchTabs(payload));
+
+/// Runs [parseDirectory] on a background isolate (large chapter lists).
+Future<List<List<Chapter>>> parseDirectoryAsync(
+  Map<String, dynamic> payload,
+) =>
+    Isolate.run(() => parseDirectory(payload));
+
 class MediaItem {
   final String id;
   final String title;

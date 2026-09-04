@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 
@@ -31,10 +32,13 @@ class MediaCard extends StatelessWidget {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: item.cover.isNotEmpty
-                      ? Image.network(
-                          item.cover,
+                      ? CachedNetworkImage(
+                          imageUrl: item.cover,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => Container(
+                          placeholder: (context, url) => Container(
+                            color: Colors.grey.shade200,
+                          ),
+                          errorWidget: (context, url, error) => Container(
                             color: Colors.grey.shade200,
                             child: const Icon(
                               Icons.book,

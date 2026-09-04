@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 import 'pages/home_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_theme.dart';
 import 'services/backend_service.dart';
+import 'services/library_store.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await LibraryStore.instance.init();
   final sp = await SharedPreferences.getInstance();
   themeModeNotifier.value = themeModeFromName(sp.getString(themeModeKey));
-  runApp(const FqApp());
+  runApp(const ProviderScope(child: FqApp()));
 }
 
 class FqApp extends StatelessWidget {

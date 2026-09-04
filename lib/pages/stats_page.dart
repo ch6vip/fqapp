@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/library_store.dart';
@@ -723,12 +724,12 @@ class _RecentBooksCard extends StatelessWidget {
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
-      child: Image.network(
-        url,
+      child: CachedNetworkImage(
+        imageUrl: url,
         width: w,
         height: h,
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => Container(
+        errorWidget: (_, _, _) => Container(
           width: w,
           height: h,
           color: Colors.grey.shade200,
@@ -838,12 +839,12 @@ class _RecentCoversCard extends StatelessWidget {
                                 color: Colors.grey,
                               ),
                             )
-                          : Image.network(
-                              url,
+                          : CachedNetworkImage(
+                              imageUrl: url,
                               width: 74,
                               height: 110,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => Container(
+                              errorWidget: (_, _, _) => Container(
                                 width: 74,
                                 height: 110,
                                 color: Colors.grey.shade200,
