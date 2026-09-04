@@ -87,10 +87,11 @@ class ApiClient {
     String itemId, {
     String tab = '小说',
     String? toneId,
+    String? mode,
   }) async {
     final r = await http.get(
       Uri.parse(
-        '$_base/api/content?source=${Uri.encodeQueryComponent('番茄')}&item_id=$itemId&tab=${Uri.encodeQueryComponent(tab)}${toneId != null ? '&tone_id=$toneId' : ''}',
+        '$_base/api/content?source=${Uri.encodeQueryComponent('番茄')}&item_id=$itemId&tab=${Uri.encodeQueryComponent(tab)}${toneId != null ? '&tone_id=$toneId' : ''}${mode != null ? '&mode=$mode' : ''}',
       ),
     );
     if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
@@ -108,9 +109,14 @@ class ApiClient {
 
   /// Real homepage recommendations (the Flutter home page previously used a
   /// search for the literal word "推荐", which is not a recommendation API).
-  Future<Map<String, dynamic>> homepageRecommend({int tabType = 2}) async {
+  Future<Map<String, dynamic>> homepageRecommend({
+    int tabType = 2,
+    int offset = 0,
+  }) async {
     final r = await http.get(
-      Uri.parse('$_base/api/v1/recommend/homepage?tab_type=$tabType'),
+      Uri.parse(
+        '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset',
+      ),
     );
     if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}');
     return _decode(r);

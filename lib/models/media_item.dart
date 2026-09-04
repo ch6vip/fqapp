@@ -109,10 +109,11 @@ class MediaItem {
       seriesId: seriesId,
       episodeId: episodeId,
       title:
-          _firstString(item, ['cell_name']) ??
           highlightTitle ??
-          _firstString(bd, ['book_name', 'title', 'name']) ??
-          _firstString(item, ['book_name', 'title', 'name']) ??
+          _firstString(item, ['title', 'name', 'raw_book_name']) ??
+          _firstString(bd, ['title', 'name', 'raw_book_name', 'book_name']) ??
+          _firstString(item, ['book_name']) ??
+          _firstString(item, ['cell_name']) ??
           '未知',
       cover:
           _firstString(item, ['thumb_url', 'cover', 'cover_url', 'poster']) ??

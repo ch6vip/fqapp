@@ -71,9 +71,11 @@ void main() {
             'data': [
               {
                 'series_id': 's1',
-                'cell_name': '系列标题',
+                // cell_name is the category label; the real title lives in
+                // the nested video_data entry.
+                'cell_name': '番茄短剧',
                 'video_data': [
-                  {'video_id': 'v1', 'title': '第一集'},
+                  {'video_id': 'v1', 'title': '初次沦陷'},
                 ],
               },
             ],
@@ -84,7 +86,7 @@ void main() {
     expect(tabs.single.items.single.id, 's1');
     expect(tabs.single.items.single.seriesId, 's1');
     expect(tabs.single.items.single.kind, 'video');
-    expect(tabs.single.items.single.title, '系列标题');
+    expect(tabs.single.items.single.title, '初次沦陷');
   });
 
   test('keeps explicit kind when restoring a saved favorite', () {
@@ -108,6 +110,20 @@ void main() {
     });
     expect(item.kind, 'video');
     expect(item.id, 'series-2');
+  });
+
+  test('novel cards with audio_thumb_uri stay books', () {
+    // The audio recommend tab marks cards via the audio cover field, but
+    // ordinary novel cards in the default feed have that field too — it must
+    // NOT be treated as an audio signal.
+    final item = MediaItem.fromRaw({
+      'book_id': '7212512693792541734',
+      'book_name': '官场之绝对权力',
+      'audio_thumb_uri': 'https://p3-novel.byteimg.com/origin/novel-static/xxx',
+      'category': '都市日常',
+    });
+    expect(item.kind, 'book');
+    expect(item.title, '官场之绝对权力');
   });
 
   test('extracts nested recommendation cards', () {
