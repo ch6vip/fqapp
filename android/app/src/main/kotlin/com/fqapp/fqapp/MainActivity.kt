@@ -14,6 +14,9 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // Native ExoPlayer host for DRM short dramas (CENC streaming decrypt).
+        flutterEngine.plugins.add(NativePlayerPlugin())
+
         // BackendNative loads liblegacy.so in its init block. If the .so is
         // missing or has no JNI exports (e.g. the old placeholder copy), this
         // throws UnsatisfiedLinkError and we catch it so the Flutter side can
