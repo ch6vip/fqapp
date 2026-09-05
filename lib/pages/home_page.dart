@@ -47,13 +47,19 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (!_scroll.hasClients) return;
     final pos = _scroll.position;
     if (pos.pixels >= pos.maxScrollExtent - 400) {
-      final now = DateTime.now();
-      if (_lastLoadMoreAt == null ||
-          now.difference(_lastLoadMoreAt!) >=
-              const Duration(milliseconds: 500)) {
-        _lastLoadMoreAt = now;
-        ref.read(homeProvider.notifier).loadMore();
-      }
+      _maybeLoadMore();
+    }
+  }
+
+  /// Throttled load-more trigger. Shared by the scroll listener and the
+  /// "last item built" path, so short feeds (fewer cards than fill a screen)
+  /// still paginate even though they never scroll.
+  void _maybeLoadMore() {
+    final now = DateTime.now();
+    if (_lastLoadMoreAt == null ||
+        now.difference(_lastLoadMoreAt!) >= const Duration(milliseconds: 500)) {
+      _lastLoadMoreAt = now;
+      ref.read(homeProvider.notifier).loadMore();
     }
   }
 
@@ -187,31 +193,44 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     return RefreshIndicator(
       onRefresh: notifier.load,
-      child: GridView.builder(
+      child: CustomScrollView(
         controller: _scroll,
-        padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          childAspectRatio: 0.52,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-        ),
-        itemCount: items.length + (state.isLoadMore ? 1 : 0),
-        itemBuilder: (context, i) {
-          if (i >= items.length) {
-            return const Center(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.all(12),
+            sliver: SliverGrid(
+              gridDelegate: mediaGridDelegateFor(context),
+              delegate: SliverChildBuilderDelegate((context, i) {
+                // When the last card is built, nudge pagination. Post-frame
+                // so we don't mutate state mid-build; loadMore() self-guards.
+                if (i == items.length - 1) {
+                  WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => _maybeLoadMore(),
+                  );
+                }
+                return MediaCard(
+                  item: items[i],
+                  onTap: () => _openItem(items[i]),
+                );
+              }, childCount: items.length),
+            ),
+          ),
+          // Full-width footer spinner instead of an extra grid cell, so the
+          // loader never occupies a lone 7th card slot.
+          if (state.isLoadMore)
+            const SliverToBoxAdapter(
               child: Padding(
-                padding: EdgeInsets.all(12),
-                child: SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 ),
               ),
-            );
-          }
-          return MediaCard(item: items[i], onTap: () => _openItem(items[i]));
-        },
+            ),
+        ],
       ),
     );
   }

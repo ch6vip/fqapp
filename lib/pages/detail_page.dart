@@ -3,10 +3,27 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/app_theme.dart';
 import '../services/library_store.dart';
 import '../widgets/media_card.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
+
+class _Captured<T> {
+  final T? value;
+  final Object? error;
+
+  const _Captured.value(T this.value) : error = null;
+  const _Captured.error(this.error) : value = null;
+}
+
+Future<_Captured<T>> _capture<T>(Future<T> future) async {
+  try {
+    return _Captured<T>.value(await future);
+  } catch (error) {
+    return _Captured<T>.error(error);
+  }
+}
 
 class DetailPage extends StatefulWidget {
   final MediaItem item;
@@ -20,16 +37,16 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   Map<String, dynamic>? _detail;
   List<List<Chapter>> _volumes = [];
+  List<Chapter> _allChapters = [];
   bool _loading = true;
   String? _error;
-  bool _isFav = false;
   late final String _tab;
+  int _loadGeneration = 0;
 
   bool get _supported =>
       widget.item.kind == 'book' || widget.item.kind == 'video';
   bool get _isVideo => widget.item.kind == 'video';
   String get _contentId => widget.item.seriesId ?? widget.item.id;
-  List<Chapter> get _allChapters => _volumes.expand((v) => v).toList();
 
   @override
   void initState() {
@@ -39,49 +56,42 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     if (mounted) {
       setState(() {
         _loading = true;
         _error = null;
+        _detail = null;
+        _volumes = const [];
+        _allChapters = const [];
       });
-    }
-
-    try {
-      _isFav = await LibraryStore.instance.isFavorite(_contentId);
-    } catch (_) {
-      _isFav = false;
     }
 
     // Manga/audio readers are intentionally not advertised in V0.1. Do not
     // call incompatible detail endpoints and then show a misleading novel
     // reader when the user taps them.
     if (!_supported) {
-      if (mounted) setState(() => _loading = false);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loading = false);
       return;
     }
 
-    Map<String, dynamic>? detail;
-    List<List<Chapter>> volumes = [];
-    Object? detailError;
-    Object? directoryError;
-
     // Detail and directory are independent. Short-drama IDs sometimes do
     // not have a legacy book-detail record, but their episode list is still
-    // perfectly playable.
-    try {
-      detail = await ApiClient.instance.detail(_contentId, tab: _tab);
-    } catch (e) {
-      detailError = e;
-    }
-    try {
-      final directory = await ApiClient.instance.directory(
-        _contentId,
-        tab: _tab,
-      );
-      volumes = await parseDirectoryAsync(directory);
-    } catch (e) {
-      directoryError = e;
-    }
+    // perfectly playable. Start both before awaiting either so the page waits
+    // for the slower request, not the sum of both request times.
+    final detailFuture = _capture(
+      ApiClient.instance.detail(_contentId, tab: _tab),
+    );
+    final directoryFuture = _capture(
+      ApiClient.instance.directoryChapters(_contentId, tab: _tab),
+    );
+    final detailResult = await detailFuture;
+    final directoryResult = await directoryFuture;
+    if (!mounted || generation != _loadGeneration) return;
+
+    final detail = detailResult.value;
+    var volumes = directoryResult.value ?? <List<Chapter>>[];
 
     // A search result can represent a single episode rather than a series.
     // Keep it playable even when the pseries directory endpoint rejects that
@@ -98,10 +108,9 @@ class _DetailPageState extends State<DetailPage> {
       ];
     }
 
-    if (!mounted) return;
-    if (detail == null && volumes.isEmpty && directoryError != null) {
+    if (detail == null && volumes.isEmpty && directoryResult.error != null) {
       setState(() {
-        _error = '$directoryError';
+        _error = '${directoryResult.error}';
         _loading = false;
       });
       return;
@@ -109,9 +118,10 @@ class _DetailPageState extends State<DetailPage> {
     setState(() {
       _detail = detail;
       _volumes = volumes;
+      _allChapters = volumes.expand((volume) => volume).toList(growable: false);
       // A missing optional detail response should not hide a usable list.
-      _error = detail == null && detailError != null && volumes.isEmpty
-          ? '$detailError'
+      _error = detail == null && detailResult.error != null && volumes.isEmpty
+          ? '${detailResult.error}'
           : null;
       _loading = false;
     });
@@ -149,7 +159,7 @@ class _DetailPageState extends State<DetailPage> {
           Text(
             _error!,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.red),
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
           const SizedBox(height: 12),
           OutlinedButton(onPressed: _load, child: const Text('重试')),
@@ -173,15 +183,6 @@ class _DetailPageState extends State<DetailPage> {
           Text('${kindLabels[widget.item.kind] ?? '该类型'}阅读器正在开发中'),
           const SizedBox(height: 8),
           const Text('当前版本先提供小说阅读和短剧播放。', style: TextStyle(color: Colors.grey)),
-          const SizedBox(height: 16),
-          OutlinedButton.icon(
-            onPressed: () async {
-              await LibraryStore.instance.toggleFavorite(widget.item);
-              if (mounted) setState(() => _isFav = !_isFav);
-            },
-            icon: Icon(_isFav ? Icons.favorite : Icons.favorite_border),
-            label: Text(_isFav ? '已收藏' : '收藏'),
-          ),
         ],
       ),
     ),
@@ -190,102 +191,155 @@ class _DetailPageState extends State<DetailPage> {
   Widget _buildContent() {
     final desc = _description(_detail);
     final countLabel = _isVideo ? '集' : '章';
+    final gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: 4,
+      childAspectRatio: 2.2,
+      crossAxisSpacing: 6,
+      mainAxisSpacing: 6,
+    );
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _cover(),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.item.title,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  if (widget.item.author.isNotEmpty)
-                    Text(
-                      widget.item.author,
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                  if (widget.item.badge.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      widget.item.badge,
-                      style: TextStyle(color: Colors.grey.shade600),
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _cover(),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.item.title,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          if (widget.item.author.isNotEmpty)
+                            Text(
+                              widget.item.author,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          if (widget.item.badge.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.item.badge,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          Text(
+                            '共 ${_allChapters.length} $countLabel',
+                            style: const TextStyle(
+                              color: appSeedColor,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
-                  const SizedBox(height: 8),
+                ),
+                if (desc.isNotEmpty) ...[
+                  const SizedBox(height: 16),
                   Text(
-                    '共 ${_allChapters.length} $countLabel',
-                    style: const TextStyle(
-                      color: Color(0xFFE8532D),
-                      fontSize: 13,
+                    desc,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      height: 1.5,
+                      fontSize: 14,
                     ),
                   ),
                 ],
-              ),
-            ),
-          ],
-        ),
-        if (desc.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            desc,
-            style: TextStyle(
-              color: Colors.grey.shade800,
-              height: 1.5,
-              fontSize: 14,
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text(
+                      '目录',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '共 ${_allChapters.length} $countLabel',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
             ),
           ),
-        ],
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Text(
-              '目录',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-            const Spacer(),
-            Text(
-              '共 ${_allChapters.length} $countLabel',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
-            ),
-          ],
         ),
-        const SizedBox(height: 8),
         if (_volumes.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: Text('暂无目录')),
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: Text('暂无目录')),
+            ),
           )
         else
-          for (final volume in _volumes) _volumeGrid(volume),
-        const SizedBox(height: 24),
+          for (final volume in _volumes) ...[
+            if (volume.isNotEmpty && volume.first.volumeName.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    volume.first.volumeName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverGrid(
+                gridDelegate: gridDelegate,
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) => _chapterCell(volume[i]),
+                  childCount: volume.length,
+                ),
+              ),
+            ),
+          ],
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
       ],
     );
   }
 
   Widget _cover() {
+    final scheme = Theme.of(context).colorScheme;
     final fallback = Container(
       width: 100,
       height: 140,
-      color: Colors.grey.shade200,
+      color: scheme.surfaceContainerHighest,
       child: Icon(
         _isVideo ? Icons.movie_outlined : Icons.book,
-        color: Colors.grey,
+        color: scheme.onSurfaceVariant,
       ),
     );
     if (widget.item.cover.isEmpty) {
@@ -298,79 +352,43 @@ class _DetailPageState extends State<DetailPage> {
         width: 100,
         height: 140,
         fit: BoxFit.cover,
+        memCacheWidth: 300,
+        memCacheHeight: 420,
         errorWidget: (_, _, _) => fallback,
       ),
     );
   }
 
-  Widget _volumeGrid(List<Chapter> volume) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      if (volume.isNotEmpty && volume.first.volumeName.isNotEmpty)
-        Padding(
-          padding: const EdgeInsets.only(top: 8, bottom: 4),
-          child: Text(
-            volume.first.volumeName,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-          ),
-        ),
-      GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 4,
-          childAspectRatio: 2.2,
-          crossAxisSpacing: 6,
-          mainAxisSpacing: 6,
-        ),
-        itemCount: volume.length,
-        itemBuilder: (context, i) => InkWell(
-          borderRadius: BorderRadius.circular(4),
-          onTap: () => _openChapter(volume[i]),
-          child: Container(
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              volume[i].title.length > 8
-                  ? '${volume[i].title.substring(0, 8)}…'
-                  : volume[i].title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        ),
+  Widget _chapterCell(Chapter chapter) => InkWell(
+    borderRadius: BorderRadius.circular(4),
+    onTap: () => _openChapter(chapter),
+    child: Container(
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(4),
       ),
-    ],
+      child: Text(
+        chapter.title.length > 8
+            ? '${chapter.title.substring(0, 8)}…'
+            : chapter.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12),
+      ),
+    ),
   );
 
   Widget _buildBottomBar() => SafeArea(
     child: Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(
-              _isFav ? Icons.favorite : Icons.favorite_border,
-              color: _isFav ? Colors.red : null,
-            ),
-            onPressed: () async {
-              await LibraryStore.instance.toggleFavorite(widget.item);
-              if (mounted) setState(() => _isFav = !_isFav);
-            },
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: FilledButton.icon(
-              icon: Icon(_isVideo ? Icons.play_arrow : Icons.menu_book),
-              label: Text(_isVideo ? '播放 / 续看' : '阅读 / 续读'),
-              onPressed: _openLastPosition,
-            ),
-          ),
-        ],
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          icon: Icon(_isVideo ? Icons.play_arrow : Icons.menu_book),
+          label: Text(_isVideo ? '播放 / 续看' : '阅读 / 续读'),
+          onPressed: _openLastPosition,
+        ),
       ),
     ),
   );

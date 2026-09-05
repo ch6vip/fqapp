@@ -17,12 +17,17 @@ Future<List<SearchTab>> parseSearchTabsAsync(Map<String, dynamic> payload) =>
     Isolate.run(() => parseSearchTabs(payload));
 
 /// Runs [parseDirectory] on a background isolate (large chapter lists).
-Future<List<List<Chapter>>> parseDirectoryAsync(
-  Map<String, dynamic> payload,
-) =>
+Future<List<List<Chapter>>> parseDirectoryAsync(Map<String, dynamic> payload) =>
     Isolate.run(() => parseDirectory(payload));
 
 class MediaItem {
+  static final _videoRe = RegExp(r'短剧|短片|剧集|video|drama', caseSensitive: false);
+  static final _mangaRe = RegExp(r'漫画|轻漫|条漫|comic|manga', caseSensitive: false);
+  static final _audioRe = RegExp(
+    r'有声|听书|音频|朗读|audio|novelfm',
+    caseSensitive: false,
+  );
+
   final String id;
   final String title;
   final String cover;
@@ -121,8 +126,8 @@ class MediaItem {
     return MediaItem(
       id:
           seriesId ??
-          _firstString(item, idKeys) ??
           _firstString(bd, idKeys) ??
+          _firstString(item, idKeys) ??
           '',
       kind: kind,
       seriesId: seriesId,
@@ -203,7 +208,7 @@ class MediaItem {
           'video_platform',
           'use_video_model',
         ]) ||
-        RegExp(r'短剧|短片|剧集|video|drama', caseSensitive: false).hasMatch(text);
+        _videoRe.hasMatch(text);
   }
 
   static String _normalizeKind(dynamic value) {
@@ -263,7 +268,7 @@ class MediaItem {
           'is_manga',
           'is_comic',
         ]) ||
-        RegExp(r'漫画|轻漫|条漫|comic|manga', caseSensitive: false).hasMatch(text);
+        _mangaRe.hasMatch(text);
   }
 
   static bool _isAudioItem(Map<String, dynamic> item, Map<String, dynamic> bd) {
@@ -296,10 +301,7 @@ class MediaItem {
           'is_audio',
           'is_listen',
         ]) ||
-        RegExp(
-          r'有声|听书|音频|朗读|audio|novelfm',
-          caseSensitive: false,
-        ).hasMatch(text);
+        _audioRe.hasMatch(text);
   }
 
   static bool _truthyAny(Map<String, dynamic> map, List<String> keys) {
@@ -492,7 +494,9 @@ List<Map<String, dynamic>>? _findDirectoryEntries(
 }
 
 /// Parses search payload into tabs and preserves parent metadata when video
-/// results are nested in a `video_data` array.
+/// results are nested in a `video_data` array. Search responses also contain
+/// profile cards, related-query prompts and other UI-only cells; only nodes
+/// with a real media identity belong in the media grid.
 List<SearchTab> parseSearchTabs(Map<String, dynamic> payload) {
   final data = payload['data'];
   if (data is! Map) return [];
@@ -514,15 +518,76 @@ List<SearchTab> parseSearchTabs(Map<String, dynamic> payload) {
             if (child is! Map) continue;
             final merged = Map<String, dynamic>.from(item);
             merged.addAll(Map<String, dynamic>.from(child));
-            items.add(MediaItem.fromRaw(merged));
+            final media = MediaItem.fromRaw(merged);
+            if (media.id.isNotEmpty) items.add(media);
           }
-        } else {
-          items.add(MediaItem.fromRaw(item));
+        } else if (_isSearchMediaNode(item)) {
+          final media = MediaItem.fromRaw(item);
+          if (media.id.isNotEmpty) items.add(media);
         }
       }
     }
     return SearchTab(title: title, items: items);
   }).toList();
+}
+
+const _searchMediaIdKeys = <String>[
+  'book_id',
+  'video_id',
+  'vid',
+  'series_id',
+  'pseries_id',
+  'manga_id',
+  'comic_id',
+  'audio_book_id',
+  'audio_id',
+  'album_id',
+  'item_id',
+  'id',
+];
+
+const _searchMediaContentKeys = <String>[
+  'title',
+  'name',
+  'raw_book_name',
+  'book_name',
+  'thumb_url',
+  'cover',
+  'cover_url',
+  'poster',
+  'author',
+  'author_name',
+];
+
+bool _isSearchMediaNode(Map<String, dynamic> item) {
+  bool hasValue(Map<dynamic, dynamic> candidate, String key) {
+    final value = candidate[key];
+    return value != null && value.toString().trim().isNotEmpty;
+  }
+
+  bool hasMediaId(Map<dynamic, dynamic> candidate) {
+    return _searchMediaIdKeys.any((key) {
+      if (!hasValue(candidate, key)) return false;
+      final id = candidate[key].toString().trim();
+      return id.isNotEmpty && id != '0';
+    });
+  }
+
+  // A nested book_data container is an explicit media shape. UI-only cells
+  // can carry misleading book_id values (for example the "社区" entry uses
+  // book_id=104), so a top-level ID alone is not sufficient.
+  final bookData = item['book_data'];
+  if (bookData is Map && hasMediaId(bookData)) return true;
+  if (bookData is Iterable) {
+    if (bookData.any((value) => value is Map && hasMediaId(value))) {
+      return true;
+    }
+  }
+
+  // Keep compatibility with already-normalized/legacy flat search results,
+  // but require actual media metadata as well as an ID.
+  return hasMediaId(item) &&
+      _searchMediaContentKeys.any((key) => hasValue(item, key));
 }
 
 /// Extracts media cards from recommendation and legacy endpoint responses.

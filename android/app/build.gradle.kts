@@ -61,3 +61,27 @@ dependencies {
 flutter {
     source = "../.."
 }
+
+// Flutter's generated asset directory bypasses androidResources' ignore
+// pattern. Strip the desktop-only executable from the generated Android
+// bundle before Flutter copies it into AGP's merged-assets directory. The
+// source asset remains available to Windows/Linux/macOS builds.
+listOf("Debug", "Profile", "Release").forEach { variant ->
+    val variantDirectory = variant.lowercase()
+    val stripTask = tasks.register("strip${variant}StandaloneBackend") {
+        dependsOn("compileFlutterBuild$variant")
+        outputs.upToDateWhen { false }
+        doLast {
+            delete(
+                layout.buildDirectory.file(
+                    "intermediates/flutter/$variantDirectory/flutter_assets/assets/bin/"
+                )
+            )
+        }
+    }
+    tasks.configureEach {
+        if (name == "copyFlutterAssets$variant") {
+            dependsOn(stripTask)
+        }
+    }
+}

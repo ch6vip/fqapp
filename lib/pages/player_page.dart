@@ -7,6 +7,7 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
+import '../widgets/video_player_chrome.dart';
 
 class PlayerPage extends StatefulWidget {
   final String bookId;
@@ -14,6 +15,9 @@ class PlayerPage extends StatefulWidget {
   final String cover;
   final List<Chapter> eps;
   final int startIndex;
+  final Future<Map<String, dynamic>> Function(Chapter)? contentLoader;
+  final NativePlayer Function()? playerFactory;
+  final ReaderStore? historyStore;
 
   const PlayerPage({
     super.key,
@@ -22,6 +26,9 @@ class PlayerPage extends StatefulWidget {
     this.cover = '',
     required this.eps,
     required this.startIndex,
+    this.contentLoader,
+    this.playerFactory,
+    this.historyStore,
   });
 
   @override
@@ -31,14 +38,15 @@ class PlayerPage extends StatefulWidget {
 class _PlayerPageState extends State<PlayerPage> {
   late int _index;
   NativePlayer? _player;
+  NativePlayer? _displayPlayer;
   Timer? _progressTimer;
   bool _initVideo = false;
   bool _advancing = false;
   String? _error;
   int _loadGeneration = 0;
-  // Playback position (seconds) of the previous tick; used to accumulate
-  // watched time from position deltas (seek-backs are ignored).
-  double _lastPos = 0;
+  final Stopwatch _watchTime = Stopwatch();
+  bool _changingEpisode = false;
+  ReaderStore get _historyStore => widget.historyStore ?? LibraryStore.instance;
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -49,7 +57,7 @@ class _PlayerPageState extends State<PlayerPage> {
   @override
   void initState() {
     super.initState();
-    NativePlayer.setKeepScreenOn(true);
+    unawaited(NativePlayer.setKeepScreenOn(true).catchError((_) {}));
     _index = widget.eps.isEmpty
         ? 0
         : widget.startIndex.clamp(0, widget.eps.length - 1);
@@ -62,21 +70,25 @@ class _PlayerPageState extends State<PlayerPage> {
 
   @override
   void dispose() {
-    NativePlayer.setKeepScreenOn(false);
+    unawaited(NativePlayer.setKeepScreenOn(false).catchError((_) {}));
     _progressTimer?.cancel();
-    _persistProgress();
-    _teardownPlayer();
+    ++_loadGeneration;
+    _watchTime.stop();
+    unawaited(_persistProgress());
+    unawaited(_teardownPlayer());
     super.dispose();
   }
 
-  void _teardownPlayer() {
+  Future<void> _teardownPlayer() async {
+    final cancellations = <Future<void>>[];
     for (final s in _subs) {
-      s.cancel();
+      cancellations.add(s.cancel());
     }
     _subs.clear();
     final old = _player;
     _player = null;
-    old?.dispose();
+    await Future.wait(cancellations);
+    await old?.dispose();
   }
 
   Future<void> _loadVideo() async {
@@ -91,32 +103,37 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     _progressTimer?.cancel();
-    _lastPos = 0;
+    _watchTime
+      ..stop()
+      ..reset();
     _position = Duration.zero;
     _duration = Duration.zero;
     _playing = false;
-    _teardownPlayer();
+    await _teardownPlayer();
+    if (!mounted || generation != _loadGeneration) return;
 
     try {
-      final response = await ApiClient.instance.content(
-        episode.itemId,
-        tab: '短剧',
-        mode: 'stream',
-      );
+      final response =
+          await (widget.contentLoader?.call(episode) ??
+              ApiClient.instance.content(
+                episode.itemId,
+                tab: '短剧',
+                mode: 'stream',
+              ));
+      if (!mounted || generation != _loadGeneration) return;
       final data = response['data'] is Map
           ? Map<String, dynamic>.from(response['data'] as Map)
           : response;
-      var rawUrl =
-          (data['video_url'] ?? data['main_url'] ?? '').toString().trim();
+      var rawUrl = (data['video_url'] ?? data['main_url'] ?? '')
+          .toString()
+          .trim();
       final keyHex = (data['key_hex'] ?? '').toString().trim();
       if (rawUrl.isEmpty) {
         // Old backends may not expose the stream route; fall back to the
         // deep video URL extraction used previously.
         rawUrl = _extractVideoUrl(response);
       }
-      final url = rawUrl.isEmpty
-          ? ''
-          : ApiClient.instance.absoluteUrl(rawUrl);
+      final url = rawUrl.isEmpty ? '' : ApiClient.instance.absoluteUrl(rawUrl);
       if (url.isEmpty) throw ApiException('获取播放地址失败');
       await _startWith(url, keyHex, generation, episode);
     } catch (e) {
@@ -134,15 +151,20 @@ class _PlayerPageState extends State<PlayerPage> {
     int generation,
     Chapter episode,
   ) async {
-    final player = NativePlayer();
+    final player = widget.playerFactory?.call() ?? NativePlayer();
     try {
       await player.create(url, keyHex);
+      if (player.lastError case final Object error) throw error;
       if (!mounted || generation != _loadGeneration) {
         await player.dispose();
         return;
       }
       setState(() {
         _player = player;
+        _displayPlayer = player;
+        _position = player.position;
+        _duration = player.duration;
+        _playing = player.playing;
         _initVideo = false;
       });
       _subscribe(player, generation);
@@ -157,7 +179,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     // Restore saved progress for the same episode.
-    final saved = await LibraryStore.instance.historyEntry(widget.bookId);
+    final saved = await _historyStore.historyEntry(widget.bookId);
     if (!mounted || generation != _loadGeneration) {
       await player.dispose();
       return;
@@ -168,15 +190,28 @@ class _PlayerPageState extends State<PlayerPage> {
     if (savedEpisode == _index && saved?['position'] is num) {
       final savedSeconds = (saved!['position'] as num).toDouble();
       if (savedSeconds > 0) {
-        await player.seek(Duration(milliseconds: (savedSeconds * 1000).round()));
+        await player.seek(
+          Duration(milliseconds: (savedSeconds * 1000).round()),
+        );
+        if (!mounted || generation != _loadGeneration) return;
+        setState(
+          () =>
+              _position = Duration(milliseconds: (savedSeconds * 1000).round()),
+        );
       }
     }
-    await player.play();
+    if (!mounted || generation != _loadGeneration) return;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+      await player.play();
+    }
+    if (!mounted || generation != _loadGeneration) return;
+    _syncWatchClock();
     _progressTimer = Timer.periodic(
       const Duration(seconds: 2),
-      (_) => _persistProgress(),
+      (_) => unawaited(_persistProgress()),
     );
-    await LibraryStore.instance.addHistory({
+    await _historyStore.addHistory({
       'id': widget.bookId,
       'kind': 'video',
       'title': widget.title,
@@ -197,28 +232,64 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _subscribe(NativePlayer player, int generation) {
-    _subs.add(player.positionStream.listen((pos) {
-      if (!mounted || generation != _loadGeneration) return;
-      setState(() => _position = pos);
-    }));
-    _subs.add(player.durationStream.listen((dur) {
-      if (!mounted || generation != _loadGeneration) return;
-      setState(() => _duration = dur);
-    }));
-    _subs.add(player.playingStream.listen((playing) {
-      if (!mounted || generation != _loadGeneration) return;
-      setState(() => _playing = playing);
-    }));
-    _subs.add(player.completedStream.listen((completed) {
-      if (!mounted ||
-          generation != _loadGeneration ||
-          !completed ||
-          _advancing) {
-        return;
-      }
-      _advancing = true;
-      unawaited(_next(auto: true).whenComplete(() => _advancing = false));
-    }));
+    _subs.add(
+      player.bufferingStream.listen((_) {
+        if (mounted && generation == _loadGeneration) _syncWatchClock();
+      }),
+    );
+    _subs.add(
+      player.positionStream.listen((pos) {
+        if (!mounted || generation != _loadGeneration) return;
+        setState(() => _position = pos);
+      }),
+    );
+    _subs.add(
+      player.durationStream.listen((dur) {
+        if (!mounted || generation != _loadGeneration) return;
+        setState(() => _duration = dur);
+      }),
+    );
+    _subs.add(
+      player.playingStream.listen((playing) {
+        if (!mounted || generation != _loadGeneration) return;
+        setState(() => _playing = playing);
+        _syncWatchClock();
+      }),
+    );
+    _subs.add(
+      player.completedStream.listen((completed) {
+        if (!mounted ||
+            generation != _loadGeneration ||
+            !completed ||
+            _advancing) {
+          return;
+        }
+        _advancing = true;
+        unawaited(_next(auto: true).whenComplete(() => _advancing = false));
+      }),
+    );
+    _subs.add(
+      player.errorStream.listen((error) {
+        if (!mounted || generation != _loadGeneration) return;
+        _progressTimer?.cancel();
+        _watchTime.stop();
+        setState(() {
+          _error = '$error';
+          _initVideo = false;
+          _playing = false;
+        });
+      }),
+    );
+  }
+
+  void _syncWatchClock() {
+    final state = WidgetsBinding.instance.lifecycleState;
+    final active = state == null || state == AppLifecycleState.resumed;
+    if (active && _playing && !(_player?.buffering ?? true) && _error == null) {
+      _watchTime.start();
+    } else {
+      _watchTime.stop();
+    }
   }
 
   Future<void> _persistProgress() async {
@@ -229,49 +300,48 @@ class _PlayerPageState extends State<PlayerPage> {
     final durationMs = player.duration.inMilliseconds;
     final positionMs = player.position.inMilliseconds.clamp(0, durationMs);
     final progress = durationMs > 0 ? positionMs / durationMs : 0.0;
-    // Accumulate watched time from position deltas. A seek-back adds
-    // nothing, so scrubbing cannot double-count.
-    final posSeconds = positionMs / 1000;
-    if (player.playing && posSeconds > _lastPos + 0.5) {
-      final delta = posSeconds - _lastPos;
-      await LibraryStore.instance.accumulateReadTime(
+    // Actual active time is independent of seeking and playback speed.
+    final seconds =
+        _watchTime.elapsedMicroseconds / Duration.microsecondsPerSecond;
+    _watchTime.reset();
+    try {
+      if (seconds > 0) {
+        await _historyStore.accumulateReadTime(widget.bookId, 'video', seconds);
+      }
+      await _historyStore.updateProgress(
         widget.bookId,
-        'video',
-        delta,
+        index,
+        progress.clamp(0.0, 1.0),
+        chapterId: episodeId,
+        position: positionMs / 1000,
+        maxScroll: durationMs / 1000,
       );
+    } catch (_) {
+      // Playback continues if history storage is temporarily unavailable.
     }
-    _lastPos = posSeconds;
-    await LibraryStore.instance.updateProgress(
-      widget.bookId,
-      index,
-      progress.clamp(0.0, 1.0),
-      chapterId: episodeId,
-      position: positionMs / 1000,
-      maxScroll: durationMs / 1000,
-    );
   }
 
-  Future<void> _prev() async {
-    if (_index <= 0) return;
-    await _persistProgress();
-    if (!mounted) return;
-    setState(() => _index--);
-    await _loadVideo();
+  Future<void> _selectEpisode(int index) async {
+    if (_changingEpisode ||
+        index < 0 ||
+        index >= widget.eps.length ||
+        index == _index) {
+      return;
+    }
+    _changingEpisode = true;
+    try {
+      await _persistProgress();
+      if (!mounted) return;
+      setState(() => _index = index);
+      await _loadVideo();
+    } finally {
+      _changingEpisode = false;
+    }
   }
 
   Future<void> _next({bool auto = false}) async {
-    if (_index >= widget.eps.length - 1) {
-      if (!auto && mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('已是最后一集')));
-      }
-      return;
-    }
-    await _persistProgress();
-    if (!mounted) return;
-    setState(() => _index++);
-    await _loadVideo();
+    if (_index >= widget.eps.length - 1) return;
+    await _selectEpisode(_index + 1);
   }
 
   @override
@@ -294,6 +364,26 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     final episode = widget.eps[_index];
+    final player = _displayPlayer;
+    if (player != null && _error == null) {
+      return VideoPlayerChrome(
+        player: player,
+        episodes: widget.eps,
+        currentIndex: _index,
+        position: _position,
+        duration: _duration,
+        playing: _playing,
+        enabled: identical(player, _player) && player.isCreated && !_initVideo,
+        onSelectEpisode: _selectEpisode,
+        onError: (error) {
+          _watchTime.stop();
+          _progressTimer?.cancel();
+          setState(() => _error = '$error');
+          unawaited(_teardownPlayer());
+        },
+        child: _videoArea(),
+      );
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -316,10 +406,7 @@ class _PlayerPageState extends State<PlayerPage> {
       ),
       body: SafeArea(
         child: Column(
-          children: [
-            Expanded(child: Center(child: _videoArea())),
-            if (_player != null && _player!.isCreated) _controls(),
-          ],
+          children: [Expanded(child: Center(child: _videoArea()))],
         ),
       ),
     );
@@ -370,105 +457,21 @@ class _PlayerPageState extends State<PlayerPage> {
       );
     }
 
-    return GestureDetector(
-      onTap: () {
-        if (_playing) {
-          player.pause();
-        } else {
-          player.play();
-        }
-      },
-      child: Stack(
-        fit: StackFit.expand,
-        alignment: Alignment.center,
-        children: [
-          display,
-          if (!_playing)
-            const Center(
-              child: Icon(
-                Icons.play_circle_outline,
-                size: 72,
-                color: Colors.white70,
-              ),
-            ),
-        ],
-      ),
-    );
+    return display;
   }
+}
 
-  Widget _controls() {
-    final player = _player!;
-    final durationMs = _duration.inMilliseconds;
-    final positionMs = _position.inMilliseconds.clamp(0, durationMs);
-    final value = durationMs > 0 ? positionMs / durationMs : 0.0;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-      child: Column(
-        children: [
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: const Color(0xFFE8532D),
-              inactiveTrackColor: Colors.white24,
-              thumbColor: const Color(0xFFE8532D),
-              overlayColor: const Color(0xFFE8532D).withValues(alpha: 0.2),
-              trackHeight: 3,
-            ),
-            child: Slider(
-              value: value.clamp(0.0, 1.0),
-              onChangeStart: (_) => player.pause(),
-              onChanged: (v) {
-                setState(() {
-                  _position = Duration(milliseconds: (durationMs * v).round());
-                });
-              },
-              onChangeEnd: (v) {
-                player.seek(Duration(milliseconds: (durationMs * v).round()));
-                player.play();
-              },
-            ),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                icon: const Icon(
-                  Icons.skip_previous,
-                  color: Colors.white,
-                  size: 36,
-                ),
-                onPressed: _index > 0 ? _prev : null,
-              ),
-              const SizedBox(width: 22),
-              IconButton(
-                icon: Icon(
-                  _playing ? Icons.pause_circle : Icons.play_circle,
-                  color: Colors.white,
-                  size: 48,
-                ),
-                onPressed: () {
-                  if (_playing) {
-                    player.pause();
-                  } else {
-                    player.play();
-                  }
-                },
-              ),
-              const SizedBox(width: 22),
-              IconButton(
-                icon: const Icon(
-                  Icons.skip_next,
-                  color: Colors.white,
-                  size: 36,
-                ),
-                onPressed: _index < widget.eps.length - 1 ? _next : null,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+/// Returns only a normal playback-position delta. Restore/seek/app-resume
+/// jumps are deliberately rejected so historical progress is never counted
+/// as newly watched time.
+double countablePlaybackDelta({
+  required bool playing,
+  required double previousSeconds,
+  required double currentSeconds,
+}) {
+  if (!playing) return 0;
+  final delta = currentSeconds - previousSeconds;
+  return delta > 0.5 && delta <= 10 ? delta : 0;
 }
 
 // Deep video URL extraction fallback for old backends that do not expose

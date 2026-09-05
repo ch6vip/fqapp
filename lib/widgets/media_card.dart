@@ -11,6 +11,35 @@ const kindColors = {
   'audio': Color(0xFF9C6ADE),
 };
 
+/// Baseline grid used by tests and callers without a BuildContext. A maximum
+/// tile width makes it naturally expand from two columns on narrow windows to
+/// more columns on tablets/desktop.
+const mediaGridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
+  maxCrossAxisExtent: 140,
+  // 5:7 cover plus two title lines and one author line.
+  childAspectRatio: 0.50,
+  crossAxisSpacing: 10,
+  mainAxisSpacing: 10,
+);
+
+/// Adaptive production grid. The extra height tracks accessibility text
+/// scaling so card metadata cannot overflow while cover proportions remain
+/// fixed.
+SliverGridDelegate mediaGridDelegateFor(BuildContext context) {
+  final scaled = MediaQuery.textScalerOf(context).scale(13) / 13;
+  final textScale = scaled.clamp(1.0, 3.0);
+  return SliverGridDelegateWithMaxCrossAxisExtent(
+    maxCrossAxisExtent: 140,
+    childAspectRatio: 0.50 / (1 + (textScale - 1) * 0.19),
+    crossAxisSpacing: 10,
+    mainAxisSpacing: 10,
+  );
+}
+
+const _coverAspectRatio = 5 / 7;
+const _titleHeight = 32.0;
+const _authorHeight = 14.0;
+
 class MediaCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
@@ -19,13 +48,27 @@ class MediaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final scaler = MediaQuery.textScalerOf(context);
+    final scaledTitleHeight = scaler.scale(13) * 1.2 * 2 + 1;
+    final scaledAuthorHeight = scaler.scale(11) * 1.2 + 1;
+    final titleHeight = scaledTitleHeight > _titleHeight
+        ? scaledTitleHeight
+        : _titleHeight;
+    final authorHeight = scaledAuthorHeight > _authorHeight
+        ? scaledAuthorHeight
+        : _authorHeight;
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final cacheWidth = (140 * pixelRatio).round();
+    final cacheHeight = (196 * pixelRatio).round();
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
+          AspectRatio(
+            aspectRatio: _coverAspectRatio,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -35,24 +78,25 @@ class MediaCard extends StatelessWidget {
                       ? CachedNetworkImage(
                           imageUrl: item.cover,
                           fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            color: Colors.grey.shade200,
-                          ),
+                          memCacheWidth: cacheWidth,
+                          memCacheHeight: cacheHeight,
+                          placeholder: (context, url) =>
+                              ColoredBox(color: scheme.surfaceContainerHighest),
                           errorWidget: (context, url, error) => Container(
-                            color: Colors.grey.shade200,
-                            child: const Icon(
+                            color: scheme.surfaceContainerHighest,
+                            child: Icon(
                               Icons.book,
                               size: 40,
-                              color: Colors.grey,
+                              color: scheme.onSurfaceVariant,
                             ),
                           ),
                         )
                       : Container(
-                          color: Colors.grey.shade200,
-                          child: const Icon(
+                          color: scheme.surfaceContainerHighest,
+                          child: Icon(
                             Icons.book,
                             size: 40,
-                            color: Colors.grey,
+                            color: scheme.onSurfaceVariant,
                           ),
                         ),
                 ),
@@ -78,21 +122,33 @@ class MediaCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          SizedBox(
+            height: titleHeight,
+            child: Text(
+              item.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.2,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
-          if (item.author.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
+          const SizedBox(height: 2),
+          SizedBox(
+            height: authorHeight,
+            child: Text(
               item.author,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.2,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
-          ],
+          ),
         ],
       ),
     );

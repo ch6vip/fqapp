@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -10,9 +12,8 @@ import 'detail_page.dart';
 /// overview cards, a 16-week heatmap, recent books, daily records, recent
 /// covers, a reading rank and a daily goal card.
 ///
-/// fqapp has no real reading-duration tracking yet, so per-entry minutes are
-/// estimated: video history uses its stored duration, book history counts a
-/// flat 10 minutes per entry. The layout follows the legado stats screen.
+/// New sessions use measured reading/playback time. Old history entries that
+/// predate tracking retain a small fallback estimate.
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
 
@@ -27,22 +28,31 @@ class _StatsPageState extends State<StatsPage> {
   DateTime _selected = DateTime.now();
   List<Map<String, dynamic>> _history = [];
   Map<String, Map<String, double>> _readTimeMap = {};
-  int _favCount = 0;
   int _goalMinutes = 30;
   bool _loading = true;
+  // Derived aggregates, computed once per load so build() (which may be
+  // called several times per frame for different cards) doesn't rebuild them.
+  Map<String, double> _dayMinutes = const {};
+  List<_RankItem> _rankItems = const [];
+  late final Listenable _historyChanges;
+  late final Listenable _readTimeChanges;
+  Timer? _reloadTimer;
 
-  Map<String, double> get _dayMinutes {
+  Map<String, double> _computeDayMinutes(
+    List<Map<String, dynamic>> history,
+    Map<String, Map<String, double>> readTimeMap,
+  ) {
     final map = <String, double>{};
     void add(String day, double minutes) =>
         map[day] = (map[day] ?? 0) + minutes;
     // Real recorded reading time (seconds → minutes).
-    for (final days in _readTimeMap.values) {
+    for (final days in readTimeMap.values) {
       days.forEach((day, secs) => add(day, secs / 60));
     }
     // Fallback estimates for books without real data yet, so older history
     // still shows up during the transition. Drops out once real data exists.
-    final withRealData = _readTimeMap.keys.toSet();
-    for (final entry in _history) {
+    final withRealData = readTimeMap.keys.toSet();
+    for (final entry in history) {
       final id = '${entry['bookId'] ?? entry['id']}';
       if (withRealData.contains(id)) continue;
       final day = _dayKey(
@@ -57,41 +67,58 @@ class _StatsPageState extends State<StatsPage> {
 
   double get _totalMinutes => _dayMinutes.values.fold(0, (a, b) => a + b);
 
-  double _todayMinutes() =>
-      _dayMinutes[_dayKey(_selected)] ?? 0;
+  double _todayMinutes() => _dayMinutes[_dayKey(_selected)] ?? 0;
 
   double _monthMinutes() {
-    var sum = 0.0;
-    _dayMinutes.forEach((key, value) {
-      if (key.startsWith(_monthPrefix(_selected))) sum += value;
-    });
-    return sum;
+    return sumMinutesForMonth(_dayMinutes, _selected);
   }
 
-  int get _activeDays =>
-      _dayMinutes.values.where((m) => m > 0).length;
+  int get _activeDays => _dayMinutes.values.where((m) => m > 0).length;
 
   bool get _hasStats => _dayMinutes.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
+    _historyChanges = LibraryStore.instance.historyListenable
+      ..addListener(_scheduleStoreReload);
+    _readTimeChanges = LibraryStore.instance.readTimeListenable
+      ..addListener(_scheduleStoreReload);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _reloadTimer?.cancel();
+    _historyChanges.removeListener(_scheduleStoreReload);
+    _readTimeChanges.removeListener(_scheduleStoreReload);
+    super.dispose();
+  }
+
+  void _scheduleStoreReload() {
+    _reloadTimer?.cancel();
+    _reloadTimer = Timer(const Duration(milliseconds: 250), _reloadFromStore);
+  }
+
+  void _reloadFromStore() {
+    if (!mounted) return;
+    final store = LibraryStore.instance;
+    final history = store.historySnapshot();
+    final timeMap = store.readTimeSnapshot();
+    setState(() {
+      _history = history;
+      _readTimeMap = timeMap;
+      _dayMinutes = _computeDayMinutes(history, timeMap);
+      _rankItems = _computeRankItems(history, timeMap);
+      _loading = false;
+    });
   }
 
   Future<void> _load() async {
     final sp = await SharedPreferences.getInstance();
-    final history = await LibraryStore.instance.history();
-    final favs = await LibraryStore.instance.favorites();
-    final timeMap = await LibraryStore.instance.readTimeMap();
     if (!mounted) return;
-    setState(() {
-      _history = history;
-      _readTimeMap = timeMap;
-      _favCount = favs.length;
-      _goalMinutes = sp.getInt(_goalKey) ?? 30;
-      _loading = false;
-    });
+    _goalMinutes = sp.getInt(_goalKey) ?? 30;
+    _reloadFromStore();
   }
 
   Future<void> _pickDate() async {
@@ -148,6 +175,7 @@ class _StatsPageState extends State<StatsPage> {
         ],
       ),
     );
+    ctrl.dispose();
     if (value != null) {
       final sp = await SharedPreferences.getInstance();
       await sp.setInt(_goalKey, value);
@@ -156,7 +184,7 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   void _showRank() {
-    final rank = _rankItems();
+    final rank = _rankItems;
     showDialog<void>(
       context: context,
       builder: (c) => SimpleDialog(
@@ -201,13 +229,16 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-  List<_RankItem> _rankItems() {
+  List<_RankItem> _computeRankItems(
+    List<Map<String, dynamic>> history,
+    Map<String, Map<String, double>> readTimeMap,
+  ) {
     final byBook = <String, _RankItem>{};
     // Real recorded reading time.
-    _readTimeMap.forEach((bookId, days) {
+    readTimeMap.forEach((bookId, days) {
       final totalMin = days.values.fold<double>(0, (a, b) => a + b) / 60;
       if (totalMin <= 0) return;
-      final entry = _history.firstWhere(
+      final entry = history.firstWhere(
         (e) => '${e['bookId'] ?? e['id']}' == bookId,
         orElse: () => <String, dynamic>{
           'title': bookId,
@@ -218,8 +249,8 @@ class _StatsPageState extends State<StatsPage> {
       byBook[bookId] = _RankItem(entry: entry, minutes: totalMin, index: 0);
     });
     // Fallback for history books without real data yet.
-    final withRealData = _readTimeMap.keys.toSet();
-    for (final entry in _history) {
+    final withRealData = readTimeMap.keys.toSet();
+    for (final entry in history) {
       final id = '${entry['bookId'] ?? entry['id']}';
       if (withRealData.contains(id)) continue;
       final existing = byBook[id];
@@ -280,7 +311,6 @@ class _StatsPageState extends State<StatsPage> {
             month: _monthMinutes(),
             total: _totalMinutes,
             activeDays: _activeDays,
-            favCount: _favCount,
           ),
           const SizedBox(height: 12),
           _Card(
@@ -303,12 +333,12 @@ class _StatsPageState extends State<StatsPage> {
           const SizedBox(height: 12),
           _RecentCoversCard(history: _history, onTap: _openHistory),
           const SizedBox(height: 12),
-          _RankCard(items: _rankItems().take(5).toList(), onMore: _showRank),
+          _RankCard(items: _rankItems.take(5).toList(), onMore: _showRank),
           const SizedBox(height: 12),
           _GoalCard(
             today: _todayMinutes(),
             total: _totalMinutes,
-            readBookCount: _rankItems().length,
+            readBookCount: _rankItems.length,
             goalMinutes: _goalMinutes,
             onEdit: _editGoal,
           ),
@@ -318,9 +348,9 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Widget _dateHeader() {
-    final textStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
-      fontWeight: FontWeight.bold,
-    );
+    final textStyle = Theme.of(
+      context,
+    ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -330,10 +360,7 @@ class _StatsPageState extends State<StatsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  _formatDate(_selected),
-                  style: textStyle,
-                ),
+                Text(_formatDate(_selected), style: textStyle),
                 const SizedBox(height: 4),
                 Text(
                   _hasStats ? '每日阅读时长持续统计中' : '继续阅读后会开始生成日统计和热力图',
@@ -364,7 +391,18 @@ class _StatsPageState extends State<StatsPage> {
 
 String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
 
-String _monthPrefix(DateTime d) => '${d.year}-${d.month}';
+String _monthPrefix(DateTime d) => '${d.year}-${d.month}-';
+
+/// Sums the unpadded Hive day keys for exactly one calendar month. The
+/// trailing separator is significant: `2026-1-` must not match October.
+double sumMinutesForMonth(Map<String, double> dayMinutes, DateTime month) {
+  final prefix = _monthPrefix(month);
+  var sum = 0.0;
+  dayMinutes.forEach((key, value) {
+    if (key.startsWith(prefix)) sum += value;
+  });
+  return sum;
+}
 
 String _formatDate(DateTime d) => '${d.year}年${d.month}月${d.day}日';
 
@@ -438,10 +476,7 @@ class _Card extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 subtitle!,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurfaceVariant,
-                ),
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ],
             const SizedBox(height: 12),
@@ -460,14 +495,12 @@ class _OverviewCard extends StatelessWidget {
   final double month;
   final double total;
   final int activeDays;
-  final int favCount;
 
   const _OverviewCard({
     required this.today,
     required this.month,
     required this.total,
     required this.activeDays,
-    required this.favCount,
   });
 
   @override
@@ -668,7 +701,9 @@ class _RecentBooksCard extends StatelessWidget {
     );
     final meta = [
       if (chapter.isNotEmpty)
-        (isVideo ? '看到第${((entry['episode'] as num?)?.toInt() ?? 0) + 1}集' : '读到第${((entry['episode'] as num?)?.toInt() ?? 0) + 1}章'),
+        (isVideo
+            ? '看到第${((entry['episode'] as num?)?.toInt() ?? 0) + 1}集'
+            : '读到第${((entry['episode'] as num?)?.toInt() ?? 0) + 1}章'),
       '最近打开 ${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
     ].join(' · ');
 
@@ -678,7 +713,7 @@ class _RecentBooksCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(
           children: [
-            _cover(entry['cover']?.toString() ?? '', 40, 52),
+            _cover(context, entry['cover']?.toString() ?? '', 40, 52),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -713,13 +748,14 @@ class _RecentBooksCard extends StatelessWidget {
     );
   }
 
-  Widget _cover(String url, double w, double h) {
+  Widget _cover(BuildContext context, String url, double w, double h) {
+    final scheme = Theme.of(context).colorScheme;
     if (url.isEmpty) {
       return Container(
         width: w,
         height: h,
-        color: Colors.grey.shade200,
-        child: const Icon(Icons.book, color: Colors.grey, size: 20),
+        color: scheme.surfaceContainerHighest,
+        child: Icon(Icons.book, color: scheme.onSurfaceVariant, size: 20),
       );
     }
     return ClipRRect(
@@ -729,11 +765,13 @@ class _RecentBooksCard extends StatelessWidget {
         width: w,
         height: h,
         fit: BoxFit.cover,
+        memCacheWidth: 160,
+        memCacheHeight: 208,
         errorWidget: (_, _, _) => Container(
           width: w,
           height: h,
-          color: Colors.grey.shade200,
-          child: const Icon(Icons.book, color: Colors.grey, size: 20),
+          color: scheme.surfaceContainerHighest,
+          child: Icon(Icons.book, color: scheme.onSurfaceVariant, size: 20),
         ),
       ),
     );
@@ -825,6 +863,7 @@ class _RecentCoversCard extends StatelessWidget {
                 itemBuilder: (context, i) {
                   final entry = items[i];
                   final url = entry['cover']?.toString() ?? '';
+                  final scheme = Theme.of(context).colorScheme;
                   return GestureDetector(
                     onTap: () => onTap(entry),
                     child: ClipRRect(
@@ -833,10 +872,10 @@ class _RecentCoversCard extends StatelessWidget {
                           ? Container(
                               width: 74,
                               height: 110,
-                              color: Colors.grey.shade200,
-                              child: const Icon(
+                              color: scheme.surfaceContainerHighest,
+                              child: Icon(
                                 Icons.book,
-                                color: Colors.grey,
+                                color: scheme.onSurfaceVariant,
                               ),
                             )
                           : CachedNetworkImage(
@@ -844,13 +883,15 @@ class _RecentCoversCard extends StatelessWidget {
                               width: 74,
                               height: 110,
                               fit: BoxFit.cover,
+                              memCacheWidth: 222,
+                              memCacheHeight: 330,
                               errorWidget: (_, _, _) => Container(
                                 width: 74,
                                 height: 110,
-                                color: Colors.grey.shade200,
-                                child: const Icon(
+                                color: scheme.surfaceContainerHighest,
+                                child: Icon(
                                   Icons.book,
-                                  color: Colors.grey,
+                                  color: scheme.onSurfaceVariant,
                                 ),
                               ),
                             ),
@@ -959,10 +1000,10 @@ class _GoalCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final goalMs = goalMinutes * 60.0;
+    final goalMinutesValue = goalMinutes.toDouble();
     final percent = goalMinutes <= 0
         ? 0
-        : ((today / goalMs) * 100).round().clamp(0, 100);
+        : ((today / goalMinutesValue) * 100).round().clamp(0, 100);
     return _Card(
       title: '阅读目标',
       child: Column(

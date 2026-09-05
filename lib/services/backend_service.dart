@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -9,11 +10,9 @@ import 'package:path_provider/path_provider.dart';
 /// Manages the local Go  backend.
 ///
 /// On Android the backend ships as liblegacy.so (a real c-shared library with
-/// JNI exports) and is started via a MethodChannel → Kotlin → JNI path, which
-/// avoids the SELinux untrusted_app restriction that blocks Process.start on
-/// app_data_file. If the .so is missing or has no exports (old placeholder),
-/// or if we are running on desktop, we fall back to spawning the standalone
-/// binary via Process.start.
+/// JNI exports) and is started via a MethodChannel → Kotlin → JNI path. The
+/// standalone executable is deployed only on desktop; Android cannot execute
+/// app-data binaries under SELinux and therefore uses the JNI backend only.
 class BackendService {
   BackendService._();
 
@@ -25,10 +24,12 @@ class BackendService {
 
   Process? _proc;
   bool _viaJni = false;
-  bool _starting = false;
+  Future<void>? _startFuture;
   final List<StreamSubscription<String>> _logSubs = [];
   final List<String> _logLines = [];
   File? _logFile;
+  // Serializes async log-file writes so concurrent appends don't interleave.
+  Future<void> _logWriteQueue = Future.value();
 
   /// Base URL of the local backend.
   String get baseUrl => 'http://$_host:$_port';
@@ -52,24 +53,48 @@ class BackendService {
   /// Copies an asset bundle entry to [dest] if missing or stale.
   Future<void> _copyAsset(String assetPath, File dest) async {
     final data = await rootBundle.load(assetPath);
-    if (!await dest.exists() || await dest.length() != data.lengthInBytes) {
-      await dest.parent.create(recursive: true);
-      await dest.writeAsBytes(data.buffer.asUint8List(), flush: true);
+    final bytes = data.buffer.asUint8List(
+      data.offsetInBytes,
+      data.lengthInBytes,
+    );
+    if (await _hasSameBytes(dest, bytes)) return;
+
+    await dest.parent.create(recursive: true);
+    final temporary = File('${dest.path}.asset-tmp');
+    if (await temporary.exists()) await temporary.delete();
+    await temporary.writeAsBytes(bytes, flush: true);
+    try {
+      // rename() replaces an existing regular file atomically on Android and
+      // the supported desktop filesystems.
+      await temporary.rename(dest.path);
+    } on FileSystemException {
+      // Some Windows filesystems do not replace an existing destination.
+      if (await dest.exists()) await dest.delete();
+      await temporary.rename(dest.path);
     }
   }
 
+  Future<bool> _hasSameBytes(File file, Uint8List bundled) async {
+    if (!await file.exists() || await file.length() != bundled.length) {
+      return false;
+    }
+    final existing = await file.readAsBytes();
+    if (bundled.length < 256 * 1024) return _bytesEqual(existing, bundled);
+    return Isolate.run(() => _bytesEqual(existing, bundled));
+  }
+
   /// Deploys the backend binary + runtime files from assets to disk.
-  Future<void> _deploy() async {
+  Future<void> _deploy({required bool includeExecutable}) async {
     final dir = await _backendDir();
 
-    // Binary
-    final bin = File('${dir.path}/');
-    await _copyAsset('assets/bin/', bin);
-    // Make it executable.
-    try {
-      await Process.run('chmod', ['755', bin.path]);
-    } catch (_) {
-      // Windows has no chmod; executable permissions are not needed there.
+    if (includeExecutable) {
+      final bin = File('${dir.path}/');
+      await _copyAsset('assets/bin/', bin);
+      try {
+        await Process.run('chmod', ['755', bin.path]);
+      } catch (_) {
+        // Windows has no chmod; executable permissions are not needed there.
+      }
     }
 
     // Config
@@ -131,24 +156,36 @@ class BackendService {
   void _log(String line) {
     _logLines.add(line);
     if (_logLines.length > 500) _logLines.removeAt(0);
-    // Also append to a file for offline diagnosis.
-    try {
-      _logFile?.writeAsStringSync('$line\n', mode: FileMode.append);
-    } catch (_) {}
+    // Append to a file for offline diagnosis without blocking the UI isolate.
+    final file = _logFile;
+    if (file == null) return;
+    _logWriteQueue = _logWriteQueue.then((_) async {
+      try {
+        await file.writeAsString('$line\n', mode: FileMode.append);
+      } catch (_) {}
+    });
   }
 
   /// Starts the backend if not already running.
   ///
-  /// On Android we first try the JNI path (liblegacy.so → MethodChannel →
-  /// Kotlin → Go c-shared). If that fails — .so missing, no JNI exports, or
-  /// running on desktop — we fall back to Process.start with the standalone
-  /// binary.
-  Future<void> start() async {
-    if (_viaJni || _proc != null) return;
-    if (_starting) return;
-    _starting = true;
+  /// Concurrent callers share the same startup future, so every caller waits
+  /// for a definitive healthy/error result.
+  Future<void> start() {
+    if (_viaJni || _proc != null) return Future<void>.value();
+    final active = _startFuture;
+    if (active != null) return active;
+    late final Future<void> tracked;
+    tracked = _startInternal().whenComplete(() {
+      if (identical(_startFuture, tracked)) _startFuture = null;
+    });
+    _startFuture = tracked;
+    return tracked;
+  }
+
+  Future<void> _startInternal() async {
     try {
-      await _deploy();
+      final android = !kIsWeb && Platform.isAndroid;
+      await _deploy(includeExecutable: !android);
       final dir = await _backendDir();
 
       // Reset log file each start.
@@ -159,20 +196,24 @@ class BackendService {
       _logFile = File(logPath);
 
       // --- JNI path (Android only) ---
-      if (!kIsWeb && Platform.isAndroid) {
+      if (android) {
         try {
           _log('trying JNI backend (liblegacy.so)...');
-          final result = await _channel.invokeMethod<String>('startBackend', {
-            'config': '${dir.path}/config/config.json',
-            'pool': '${dir.path}/config/device_pool.json',
-            'filter': '${dir.path}/config/filter.json',
-          });
+          final result = await _channel
+              .invokeMethod<String>('startBackend', {
+                'config': '${dir.path}/config/config.json',
+                'pool': '${dir.path}/config/device_pool.json',
+                'filter': '${dir.path}/config/filter.json',
+              })
+              .timeout(const Duration(seconds: 20));
           _log('JNI startBackend returned: $result');
           if (result == 'running') {
             _viaJni = true;
             final ok = await _waitHealthy(const Duration(seconds: 15));
             if (!ok) {
-              await _channel.invokeMethod('stopBackend');
+              await _channel
+                  .invokeMethod('stopBackend')
+                  .timeout(const Duration(seconds: 3));
               _viaJni = false;
               throw StateError(
                 'JNI backend started but /health did not come up',
@@ -180,58 +221,52 @@ class BackendService {
             }
             _log('JNI backend healthy');
             return;
-          } else {
-            _log('JNI backend failed: $result, falling back to Process.start');
-            // A timed-out JNI call may still have a build/listen goroutine in
-            // flight. Stop it before starting the subprocess fallback, or the
-            // two paths can race for port 8080.
-            try {
-              await _channel.invokeMethod('stopBackend');
-            } catch (stopError) {
-              _log('stop timed-out JNI backend failed: $stopError');
-            }
           }
+          throw StateError('JNI backend failed: $result');
         } catch (e) {
-          _log('JNI path failed: $e, falling back to Process.start');
+          _viaJni = false;
+          _log('JNI path failed: $e');
+          try {
+            await _channel
+                .invokeMethod('stopBackend')
+                .timeout(const Duration(seconds: 3));
+          } catch (stopError) {
+            _log('stop failed JNI backend failed: $stopError');
+          }
+          rethrow;
         }
       }
 
-      // --- Process.start fallback (desktop / JNI unavailable) ---
+      // --- Desktop Process.start path ---
       final bin = '${dir.path}/';
       _log('starting backend via Process.start: $bin');
       _log('workdir: ${dir.path}');
 
-      final processEnvironment = Map<String, String>.from(Platform.environment)
-        ..['HOME'] = dir.path;
-      _proc = await Process.start(
-        bin,
-        [
-          '-config',
-          '${dir.path}/config/config.json',
-          '-pool',
-          '${dir.path}/config/device_pool.json',
-          '-filter',
-          '${dir.path}/config/filter.json',
-          '-runtime-dir',
-          dir.path,
-        ],
-        workingDirectory: dir.path,
-        environment: processEnvironment,
-      );
-      _log('backend pid: ${_proc!.pid}');
+      _proc = await Process.start(bin, [
+        '-config',
+        '${dir.path}/config/config.json',
+        '-pool',
+        '${dir.path}/config/device_pool.json',
+        '-filter',
+        '${dir.path}/config/filter.json',
+        '-runtime-dir',
+        dir.path,
+      ], workingDirectory: dir.path);
+      final process = _proc!;
+      _log('backend pid: ${process.pid}');
 
       // Drain stdout/stderr so the child never blocks on a full pipe.
-      final stdoutLines = _proc!.stdout
+      final stdoutLines = process.stdout
           .transform(SystemEncoding().decoder)
           .transform(const LineSplitter());
       _logSubs.add(stdoutLines.listen((String l) => _log(l)));
-      final stderrLines = _proc!.stderr
+      final stderrLines = process.stderr
           .transform(SystemEncoding().decoder)
           .transform(const LineSplitter());
       _logSubs.add(stderrLines.listen((String l) => _log(l)));
-      _proc!.exitCode.then((code) {
+      process.exitCode.then((code) {
         _log('backend exited with code $code');
-        _proc = null;
+        if (identical(_proc, process)) _proc = null;
       });
 
       // Wait for the health endpoint to come up.
@@ -249,35 +284,32 @@ class BackendService {
     } catch (e) {
       _log('start error: $e');
       rethrow;
-    } finally {
-      _starting = false;
     }
   }
 
   /// Polls /health until the backend responds or [timeout] elapses.
   Future<bool> _waitHealthy(Duration timeout) async {
     final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      // If the process died and we're not on the JNI path, give up.
-      if (!_viaJni && _proc == null) return false;
-      try {
-        final client = HttpClient()
-          ..connectionTimeout = const Duration(seconds: 2);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    try {
+      while (DateTime.now().isBefore(deadline)) {
+        // If the process died and we're not on the JNI path, give up.
+        if (!_viaJni && _proc == null) return false;
         try {
           final req = await client.getUrl(Uri.parse('$baseUrl/health'));
           final resp = await req.close();
           await resp.drain<void>();
           if (resp.statusCode == 200) return true;
           _log('health check: HTTP ${resp.statusCode}');
-        } finally {
-          client.close(force: true);
+        } catch (e) {
+          // Not up yet.
         }
-      } catch (e) {
-        // Not up yet.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
       }
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      return false;
+    } finally {
+      client.close(force: true);
     }
-    return false;
   }
 
   /// Stops the backend (JNI or subprocess).
@@ -285,7 +317,9 @@ class BackendService {
     // JNI path
     if (_viaJni) {
       try {
-        await _channel.invokeMethod('stopBackend');
+        await _channel
+            .invokeMethod('stopBackend')
+            .timeout(const Duration(seconds: 3));
       } catch (e) {
         _log('stopBackend via JNI failed: $e');
       }
@@ -308,4 +342,12 @@ class BackendService {
       _logSubs.clear();
     }
   }
+}
+
+bool _bytesEqual(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }

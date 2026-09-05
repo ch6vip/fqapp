@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'pages/home_page.dart';
+import 'pages/cached_books_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_theme.dart';
@@ -40,9 +41,8 @@ class FqApp extends StatelessWidget {
   }
 
   ThemeData _theme(Brightness brightness) {
-    final seed = const Color(0xFFE8532D);
     final scheme = ColorScheme.fromSeed(
-      seedColor: seed,
+      seedColor: appSeedColor,
       brightness: brightness,
     );
     return ThemeData(
@@ -102,6 +102,14 @@ class _RootShellState extends State<RootShell> {
               const CircularProgressIndicator(),
               const SizedBox(height: 16),
               Text(_backendError == null ? '正在启动本地服务...' : '启动失败'),
+              TextButton.icon(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CachedBooksPage()),
+                ),
+                icon: const Icon(Icons.download_for_offline_outlined),
+                label: const Text('离线阅读'),
+              ),
               if (_backendError != null) ...[
                 const SizedBox(height: 8),
                 Padding(
@@ -124,11 +132,7 @@ class _RootShellState extends State<RootShell> {
       );
     }
 
-    final pages = [
-      const HomePage(),
-      const LibraryPage(),
-      const MinePage(),
-    ];
+    final pages = [const HomePage(), const LibraryPage(), const MinePage()];
 
     return Scaffold(
       body: IndexedStack(index: _index, children: pages),

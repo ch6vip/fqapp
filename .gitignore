@@ -43,6 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/build/
 
 # 旧后端二进制：体积大（每个约 16MB）且可由源码完整重建，不入库。
 # clone 后首次构建前请先运行 scripts/build_backend.sh（Windows 可用 .ps1）。

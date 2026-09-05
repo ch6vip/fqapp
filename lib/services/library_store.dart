@@ -1,22 +1,49 @@
 import 'dart:convert';
-import 'package:hive/hive.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../models/media_item.dart';
 
-class LibraryStore {
+import 'package:flutter/foundation.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+abstract interface class ReaderStore {
+  Future<Map<String, dynamic>?> historyEntry(String id);
+
+  Future<void> addHistory(Map<String, dynamic> entry);
+
+  Future<void> updateProgress(
+    String id,
+    int episode,
+    double progress, {
+    String? chapterId,
+    double? position,
+    double? maxScroll,
+  });
+
+  Future<void> accumulateReadTime(
+    String bookId,
+    String kind,
+    double seconds, {
+    DateTime? at,
+  });
+}
+
+class LibraryStore implements ReaderStore {
   LibraryStore._();
   static final LibraryStore instance = LibraryStore._();
 
-  static const _favsBoxName = 'favorites';
   static const _histBoxName = 'history';
   static const _readTimeBoxName = 'read_time';
 
-  late Box _favsBox;
-  late Box _histBox;
-  late Box _readTimeBox;
+  late Box<dynamic> _histBox;
+  late Box<dynamic> _readTimeBox;
+  Future<void> _readTimeWrites = Future<void>.value();
+
+  /// Hive-backed notifications used by pages kept alive in the root
+  /// IndexedStack. They update as soon as a reader/detail page writes data.
+  ValueListenable<Box<dynamic>> get historyListenable => _histBox.listenable();
+  ValueListenable<Box<dynamic>> get readTimeListenable =>
+      _readTimeBox.listenable();
 
   Future<void> init() async {
-    _favsBox = await Hive.openBox(_favsBoxName);
     _histBox = await Hive.openBox(_histBoxName);
     _readTimeBox = await Hive.openBox(_readTimeBoxName);
     await _migrateFromSp();
@@ -24,24 +51,6 @@ class LibraryStore {
 
   Future<void> _migrateFromSp() async {
     final sp = await SharedPreferences.getInstance();
-    
-    // Migrate favs
-    if (sp.containsKey('favs') && _favsBox.isEmpty) {
-      final raw = sp.getString('favs');
-      if (raw != null) {
-        try {
-          final list = jsonDecode(raw) as List;
-          for (final item in list) {
-            final map = Map<String, dynamic>.from(item);
-            final id = map['id']?.toString() ?? '';
-            if (id.isNotEmpty) {
-              await _favsBox.put(id, map);
-            }
-          }
-        } catch (_) {}
-      }
-      await sp.remove('favs');
-    }
 
     // Migrate history
     if (sp.containsKey('hist') && _histBox.isEmpty) {
@@ -49,7 +58,8 @@ class LibraryStore {
       if (raw != null) {
         try {
           final list = jsonDecode(raw) as List;
-          for (final item in list.reversed) { // reversed to maintain insertion order
+          for (final item in list.reversed) {
+            // reversed to maintain insertion order
             final map = Map<String, dynamic>.from(item);
             final id = map['id']?.toString() ?? '';
             if (id.isNotEmpty) {
@@ -76,38 +86,7 @@ class LibraryStore {
     }
   }
 
-  Future<List<MediaItem>> favorites() async {
-    final values = _favsBox.values.toList();
-    // Hive boxes iterate by key, not insertion order. Sort by the stored
-    // favorite timestamp so the shelf keeps "most recently added first".
-    values.sort((a, b) {
-      final ta = (a['favTime'] as num?)?.toInt() ?? 0;
-      final tb = (b['favTime'] as num?)?.toInt() ?? 0;
-      return tb.compareTo(ta);
-    });
-    return values
-        .map((e) => MediaItem.fromRaw(Map<String, dynamic>.from(e)))
-        .toList();
-  }
-
-  Future<void> toggleFavorite(MediaItem item) async {
-    if (_favsBox.containsKey(item.id)) {
-      await _favsBox.delete(item.id);
-    } else {
-      final json = item.toJson()..['favTime'] = DateTime.now().millisecondsSinceEpoch;
-      await _favsBox.put(item.id, json);
-    }
-  }
-
-  Future<bool> isFavorite(String id) async {
-    return _favsBox.containsKey(id);
-  }
-
-  Future<void> clearFavorites() async {
-    await _favsBox.clear();
-  }
-
-  Future<List<Map<String, dynamic>>> history() async {
+  List<Map<String, dynamic>> historySnapshot() {
     final values = _histBox.values.toList();
     // Sort by time descending (newest first)
     values.sort((a, b) {
@@ -118,17 +97,21 @@ class LibraryStore {
     return values.map((e) => Map<String, dynamic>.from(e)).toList();
   }
 
+  Future<List<Map<String, dynamic>>> history() async => historySnapshot();
+
+  @override
   Future<Map<String, dynamic>?> historyEntry(String id) async {
     final entry = _histBox.get(id);
     return entry != null ? Map<String, dynamic>.from(entry) : null;
   }
 
+  @override
   Future<void> addHistory(Map<String, dynamic> entry) async {
     final id = entry['id']?.toString();
     if (id == null) return;
-    
+
     await _histBox.put(id, entry);
-    
+
     // Trim history to 50 entries once it grows past 100 (leaves headroom so
     // we don't prune on every single write).
     if (_histBox.length > 100) {
@@ -138,11 +121,14 @@ class LibraryStore {
         final tb = (b['time'] as num?)?.toInt() ?? 0;
         return ta.compareTo(tb); // oldest first
       });
-      final oldestKeys = values.take(_histBox.length - 50).map((e) => e['id']?.toString());
+      final oldestKeys = values
+          .take(_histBox.length - 50)
+          .map((e) => e['id']?.toString());
       await _histBox.deleteAll(oldestKeys);
     }
   }
 
+  @override
   Future<void> updateProgress(
     String id,
     int episode,
@@ -168,7 +154,7 @@ class LibraryStore {
     await _histBox.clear();
   }
 
-  Future<Map<String, Map<String, double>>> readTimeMap() async {
+  Map<String, Map<String, double>> readTimeSnapshot() {
     final out = <String, Map<String, double>>{};
     for (final key in _readTimeBox.keys) {
       final value = _readTimeBox.get(key);
@@ -181,20 +167,30 @@ class LibraryStore {
     return out;
   }
 
+  Future<Map<String, Map<String, double>>> readTimeMap() async =>
+      readTimeSnapshot();
+
+  @override
   Future<void> accumulateReadTime(
     String bookId,
     String kind,
     double seconds, {
     DateTime? at,
-  }) async {
-    if (seconds <= 0 || bookId.isEmpty) return;
+  }) {
+    if (seconds <= 0 || bookId.isEmpty) return Future<void>.value();
     final day = _dayKey(at ?? DateTime.now());
-    
-    final existingMap = _readTimeBox.get(bookId);
-    final perBook = existingMap != null ? Map<String, dynamic>.from(existingMap) : <String, dynamic>{};
-    
-    perBook[day] = ((perBook[day] as num?)?.toDouble() ?? 0) + seconds;
-    await _readTimeBox.put(bookId, perBook);
+    final write = _readTimeWrites.then((_) async {
+      final existingMap = _readTimeBox.get(bookId);
+      final perBook = existingMap != null
+          ? Map<String, dynamic>.from(existingMap)
+          : <String, dynamic>{};
+      perBook[day] = ((perBook[day] as num?)?.toDouble() ?? 0) + seconds;
+      await _readTimeBox.put(bookId, perBook);
+    });
+    // Keep the serialization chain usable after an individual Hive error,
+    // while still returning that error to the original caller.
+    _readTimeWrites = write.catchError((_) {});
+    return write;
   }
 
   static String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';

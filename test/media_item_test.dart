@@ -89,10 +89,78 @@ void main() {
     expect(tabs.single.items.single.title, '初次沦陷');
   });
 
-  test('keeps explicit kind when restoring a saved favorite', () {
+  test('filters profile and related-query cells from search results', () {
+    final tabs = parseSearchTabs({
+      'data': {
+        'search_tabs': [
+          {
+            'title': '综合',
+            'data': [
+              {
+                'cell_id': 'profile-cell',
+                'cell_name': '萝莉',
+                'show_type': 132,
+                'search_user_data': [
+                  {'is_author': false},
+                ],
+              },
+              {
+                'book_id': '104',
+                'cell_id': 'community-cell',
+                'cell_name': '社区',
+                'show_type': 152,
+                'cell_data': const [],
+              },
+              {
+                'cell_id': 'book-cell',
+                'show_type': 110,
+                'book_data': [
+                  {'book_id': 'b1', 'book_name': '无封面作品'},
+                ],
+              },
+              {
+                'cell_id': 'related-query-cell',
+                'cell_name': '相关搜索',
+                'show_type': 300,
+                'guess_you_like_data': [
+                  {'text': '魔女'},
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(tabs.single.items, hasLength(1));
+    expect(tabs.single.items.single.id, 'b1');
+    expect(tabs.single.items.single.title, '无封面作品');
+    expect(tabs.single.items.single.cover, isEmpty);
+  });
+
+  test('keeps a legacy flat media search result', () {
+    final tabs = parseSearchTabs({
+      'data': {
+        'search_tabs': [
+          {
+            'title': '书籍',
+            'data': [
+              {'book_id': 'b1', 'book_name': '扁平结构作品', 'author': '作者'},
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(tabs.single.items, hasLength(1));
+    expect(tabs.single.items.single.id, 'b1');
+    expect(tabs.single.items.single.title, '扁平结构作品');
+  });
+
+  test('keeps explicit kind when restoring saved media', () {
     final item = MediaItem.fromRaw({
       'id': 'series-1',
-      'title': '已收藏短剧',
+      'title': '已保存短剧',
       'kind': 'video',
       'seriesId': 'series-1',
       'episodeId': 'episode-1',
@@ -138,7 +206,9 @@ void main() {
           {'item_id': '7678039365922065433', 'title': '第81集'},
           {'item_id': '7678039314705419289', 'title': '第82集'},
         ],
-        'item_list': [{'item_id': 'x', 'title': 'x'}],
+        'item_list': [
+          {'item_id': 'x', 'title': 'x'},
+        ],
       },
     };
     final volumes = parseDirectory(payload);

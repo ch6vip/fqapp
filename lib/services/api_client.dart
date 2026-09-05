@@ -3,7 +3,23 @@ import 'dart:isolate';
 
 import 'package:http/http.dart' as http;
 
+import '../models/media_item.dart';
 import 'backend_service.dart';
+
+/// A parsed homepage page. Keeping the cursor next to the parsed cards lets
+/// callers update the feed atomically after checking that the request is
+/// still current.
+class HomepagePage {
+  final List<MediaItem> items;
+  final int? nextOffset;
+  final String? sessionId;
+
+  const HomepagePage({
+    required this.items,
+    required this.nextOffset,
+    required this.sessionId,
+  });
+}
 
 /// API client talking to the local  backend.
 ///
@@ -13,6 +29,16 @@ class ApiClient {
   ApiClient._();
 
   static final ApiClient instance = ApiClient._();
+
+  // Reuse sockets for the lifetime of the app. All requests target the same
+  // loopback backend, so creating a new Client for every call only adds TCP
+  // setup and TIME_WAIT churn.
+  final http.Client _client = http.Client();
+
+  /// Timeout applied to every backend request. The backend runs locally, so a
+  /// healthy call returns in well under this; a hung child process or a stuck
+  /// upstream request must not leave a page spinning forever.
+  static const Duration _timeout = Duration(seconds: 20);
 
   String get _base => BackendService.instance.baseUrl;
 
@@ -32,35 +58,34 @@ class ApiClient {
   Future<Map<String, dynamic>> _decodeAsync(http.Response r) async {
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
-    return Isolate.run(() {
-      if (statusCode != 200) {
-        throw ApiException('HTTP $statusCode');
-      }
-      final j = jsonDecode(utf8.decode(bodyBytes));
-      if (j is Map<String, dynamic>) {
-        // The web bridge uses code=200; REST upstream-compatible endpoints use
-        // code=0. Both are successful envelopes.
-        if (j['code'] != null && j['code'] != 200 && j['code'] != 0) {
-          throw ApiException('${j['message'] ?? '请求失败'}');
-        }
-        if (j['success'] == false) {
-          throw ApiException('${j['error'] ?? j['message'] ?? '请求失败'}');
-        }
-        return j;
-      }
-      throw ApiException('响应格式错误');
-    });
+    return Isolate.run(() => _decodeEnvelope(statusCode, bodyBytes));
   }
+
+  /// Sends a GET to the local backend with a timeout.
+  Future<http.Response> _get(String url) {
+    return _client.get(Uri.parse(url)).timeout(_timeout);
+  }
+
+  String _searchUrl(String query, int page) =>
+      '$_base/api/search?source=${Uri.encodeQueryComponent('番茄')}&query=${Uri.encodeQueryComponent(query)}&page=$page';
 
   /// Search across content types.
   /// Returns normalized {tabs: [{title, data:[...]}], ...} structure.
   Future<Map<String, dynamic>> search(String query, {int page = 1}) async {
-    final r = await http.get(
-      Uri.parse(
-        '$_base/api/search?source=${Uri.encodeQueryComponent('番茄')}&query=${Uri.encodeQueryComponent(query)}&page=$page',
-      ),
-    );
+    final r = await _get(_searchUrl(query, page));
     return _decodeAsync(r);
+  }
+
+  /// Search with JSON decoding and model parsing combined into one isolate
+  /// hop. This avoids decoding a large response in one isolate and then
+  /// copying the resulting map into a second isolate for normalization.
+  Future<List<SearchTab>> searchTabs(String query, {int page = 1}) async {
+    final r = await _get(_searchUrl(query, page));
+    final statusCode = r.statusCode;
+    final bodyBytes = r.bodyBytes;
+    return Isolate.run(
+      () => parseSearchTabs(_decodeEnvelope(statusCode, bodyBytes)),
+    );
   }
 
   /// Book detail.
@@ -68,10 +93,8 @@ class ApiClient {
     String bookId, {
     String tab = '小说',
   }) async {
-    final r = await http.get(
-      Uri.parse(
-        '$_base/api/detail?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
-      ),
+    final r = await _get(
+      '$_base/api/detail?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
     );
     return _decodeAsync(r);
   }
@@ -81,33 +104,65 @@ class ApiClient {
     String bookId, {
     String tab = '小说',
   }) async {
-    final r = await http.get(
-      Uri.parse(
-        '$_base/api/directory?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
-      ),
+    final r = await _get(
+      '$_base/api/directory?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
     );
     return _decodeAsync(r);
   }
 
+  /// Directory variant that performs decode + chapter normalization in the
+  /// same background isolate.
+  Future<List<List<Chapter>>> directoryChapters(
+    String bookId, {
+    String tab = '小说',
+  }) async {
+    final r = await _get(
+      '$_base/api/directory?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
+    );
+    final statusCode = r.statusCode;
+    final bodyBytes = r.bodyBytes;
+    return Isolate.run(
+      () => parseDirectory(_decodeEnvelope(statusCode, bodyBytes)),
+    );
+  }
+
   /// Chapter content (decrypted by backend).
+  String _contentUrl(
+    String itemId, {
+    required String tab,
+    String? toneId,
+    String? mode,
+  }) =>
+      '$_base/api/content?source=${Uri.encodeQueryComponent('番茄')}&item_id=$itemId&tab=${Uri.encodeQueryComponent(tab)}${toneId != null ? '&tone_id=$toneId' : ''}${mode != null ? '&mode=$mode' : ''}';
+
   Future<Map<String, dynamic>> content(
     String itemId, {
     String tab = '小说',
     String? toneId,
     String? mode,
   }) async {
-    final r = await http.get(
-      Uri.parse(
-        '$_base/api/content?source=${Uri.encodeQueryComponent('番茄')}&item_id=$itemId&tab=${Uri.encodeQueryComponent(tab)}${toneId != null ? '&tone_id=$toneId' : ''}${mode != null ? '&mode=$mode' : ''}',
-      ),
+    final r = await _get(
+      _contentUrl(itemId, tab: tab, toneId: toneId, mode: mode),
     );
     return _decodeAsync(r);
   }
 
+  /// Text-reader variant that combines JSON decode, nested content lookup and
+  /// HTML cleanup in one background-isolate pass.
+  Future<String> contentText(String itemId, {String tab = '小说'}) async {
+    final r = await _get(_contentUrl(itemId, tab: tab));
+    final statusCode = r.statusCode;
+    final bodyBytes = r.bodyBytes;
+    return Isolate.run(() {
+      final payload = _decodeEnvelope(statusCode, bodyBytes);
+      return _extractChapterText(payload);
+    });
+  }
+
   /// Resolve a share URL to a book id.
   Future<Map<String, dynamic>> resolve(String url) async {
-    final r = await http.get(
-      Uri.parse('$_base/api/resolve?url=${Uri.encodeQueryComponent(url)}'),
+    final r = await _get(
+      '$_base/api/resolve?url=${Uri.encodeQueryComponent(url)}',
     );
     return _decodeAsync(r);
   }
@@ -126,18 +181,63 @@ class ApiClient {
     final session = sessionId == null || sessionId.isEmpty
         ? ''
         : '&session_id=${Uri.encodeQueryComponent(sessionId)}';
-    final r = await http.get(
-      Uri.parse(
-        '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset$session',
-      ),
+    final r = await _get(
+      '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset$session',
     );
     return _decodeAsync(r);
+  }
+
+  /// Homepage variant that combines envelope decoding, recursive card
+  /// extraction and cursor scanning in a single isolate hop.
+  Future<HomepagePage> homepagePage({
+    int tabType = 2,
+    int offset = 0,
+    String? sessionId,
+  }) async {
+    final session = sessionId == null || sessionId.isEmpty
+        ? ''
+        : '&session_id=${Uri.encodeQueryComponent(sessionId)}';
+    final r = await _get(
+      '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset$session',
+    );
+    final statusCode = r.statusCode;
+    final bodyBytes = r.bodyBytes;
+    return Isolate.run(() {
+      final payload = _decodeEnvelope(statusCode, bodyBytes);
+      final items = parseMediaItems(payload);
+      int? nextOffset;
+      String? nextSessionId;
+      final data = payload['data'];
+      if (data is Map) {
+        final tabItems = data['tab_item'];
+        if (tabItems is List) {
+          for (final raw in tabItems) {
+            if (raw is! Map) continue;
+            final candidate = raw['next_offset'];
+            if (candidate is num &&
+                candidate.toInt() > offset &&
+                (nextOffset == null || candidate.toInt() > nextOffset)) {
+              nextOffset = candidate.toInt();
+            }
+            final candidateSession = raw['session_id'];
+            if (candidateSession is String && candidateSession.isNotEmpty) {
+              nextSessionId = candidateSession;
+            }
+          }
+        }
+      }
+      return HomepagePage(
+        items: items,
+        nextOffset: nextOffset,
+        sessionId: nextSessionId,
+      );
+    });
   }
 
   /// Health check.
   Future<bool> health() async {
     try {
-      final r = await http
+      final r = await _client
           .get(Uri.parse('$_base/health'))
           .timeout(const Duration(seconds: 3));
       return r.statusCode == 200;
@@ -146,6 +246,64 @@ class ApiClient {
     }
   }
 }
+
+Map<String, dynamic> _decodeEnvelope(int statusCode, List<int> bodyBytes) {
+  if (statusCode != 200) {
+    throw ApiException('HTTP $statusCode');
+  }
+  final decoded = jsonDecode(utf8.decode(bodyBytes));
+  if (decoded is! Map) throw ApiException('响应格式错误');
+  final payload = Map<String, dynamic>.from(decoded);
+  // The web bridge uses code=200; REST upstream-compatible endpoints use
+  // code=0. Both are successful envelopes.
+  if (payload['code'] != null &&
+      payload['code'] != 200 &&
+      payload['code'] != 0) {
+    throw ApiException('${payload['message'] ?? '请求失败'}');
+  }
+  if (payload['success'] == false) {
+    throw ApiException('${payload['error'] ?? payload['message'] ?? '请求失败'}');
+  }
+  return payload;
+}
+
+String _extractChapterText(Map<String, dynamic> payload) {
+  String visit(dynamic value, [int depth = 0]) {
+    if (depth > 7 || value == null) return '';
+    if (value is Map) {
+      for (final key in ['content', 'text', 'article_content', 'body']) {
+        final candidate = value[key];
+        if (candidate is String && candidate.trim().isNotEmpty) {
+          return _cleanChapterText(candidate);
+        }
+      }
+      for (final nested in value.values) {
+        final result = visit(nested, depth + 1);
+        if (result.isNotEmpty) return result;
+      }
+    } else if (value is List) {
+      for (final nested in value) {
+        final result = visit(nested, depth + 1);
+        if (result.isNotEmpty) return result;
+      }
+    }
+    return '';
+  }
+
+  return visit(payload);
+}
+
+String _cleanChapterText(String text) => text
+    .replaceAll(RegExp(r'<\s*br\s*/?\s*>', caseSensitive: false), '\n')
+    .replaceAll(RegExp(r'</\s*p\s*>', caseSensitive: false), '\n')
+    .replaceAll(RegExp(r'<[^>]+>'), '')
+    .replaceAll('&nbsp;', ' ')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&')
+    .replaceAll(RegExp(r'\r\n?'), '\n')
+    .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+    .trim();
 
 class ApiException implements Exception {
   final String message;

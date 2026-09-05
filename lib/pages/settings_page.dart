@@ -6,6 +6,7 @@ import '../services/app_theme.dart';
 import '../services/backend_service.dart';
 import '../services/library_store.dart';
 import 'about_page.dart';
+import 'cached_books_page.dart';
 import 'settings_category_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
@@ -33,8 +34,19 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: Icons.storage_outlined,
         title: '数据',
-        subtitle: '清空收藏与历史',
-        items: [_clearFavItem(), _clearHistItem()],
+        subtitle: '章节缓存、阅读与播放历史',
+        items: [
+          SettingsItem(
+            icon: Icons.download_for_offline_outlined,
+            title: '章节缓存',
+            subtitle: '离线续读、查看占用和清理缓存',
+            onTap: (context, setState) => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CachedBooksPage()),
+            ),
+          ),
+          _clearHistItem(),
+        ],
       ),
       SettingsCategory(
         icon: Icons.memory,
@@ -82,14 +94,19 @@ class SettingsPage extends StatelessWidget {
                         color: outline,
                       ),
                     ),
-                    trailing: Icon(Icons.chevron_right, size: 20, color: outline),
+                    trailing: Icon(
+                      Icons.chevron_right,
+                      size: 20,
+                      color: outline,
+                    ),
                     onTap: () {
                       final cat = categories[i];
                       final pageBuilder = cat.pageBuilder;
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: pageBuilder ??
+                          builder:
+                              pageBuilder ??
                               (_) => SettingsCategoryPage(
                                 title: cat.title,
                                 items: cat.items,
@@ -158,7 +175,10 @@ class SettingsPage extends StatelessWidget {
                   ThemeMode.light,
                   ThemeMode.dark,
                 ])
-                  RadioListTile<ThemeMode>(value: m, title: Text(_modeLabel(m))),
+                  RadioListTile<ThemeMode>(
+                    value: m,
+                    title: Text(_modeLabel(m)),
+                  ),
               ],
             ),
           ),
@@ -233,18 +253,6 @@ class SettingsPage extends StatelessWidget {
   }
 
   // ── 数据 ──────────────────────────────────────────────────────────────
-
-  SettingsItem _clearFavItem() => SettingsItem(
-    icon: Icons.favorite_outline,
-    title: '清空收藏',
-    subtitle: '删除书架中全部收藏',
-    onTap: (context, setState) => _confirmClear(
-      context,
-      '清空收藏',
-      '确定清空全部收藏吗？',
-      LibraryStore.instance.clearFavorites,
-    ),
-  );
 
   SettingsItem _clearHistItem() => SettingsItem(
     icon: Icons.history,

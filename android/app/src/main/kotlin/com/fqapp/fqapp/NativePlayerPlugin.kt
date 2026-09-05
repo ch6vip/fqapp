@@ -8,9 +8,11 @@ import android.view.Surface
 import android.view.WindowManager
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -34,15 +36,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * core; events (position/playing/firstFrame/...) are pushed to Flutter over
  * an EventChannel.
  */
+@androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
 
     private lateinit var methodChannel: MethodChannel
     private lateinit var eventChannel: EventChannel
     private lateinit var textureRegistry: TextureRegistry
     private lateinit var flutterBinding: FlutterPlugin.FlutterPluginBinding
+    @Volatile private var attachedToEngine = false
 
     private var activity: Activity? = null
     private val players = ConcurrentHashMap<Int, PlayerInstance>()
+    private val cancelledPlayerIds = ConcurrentHashMap.newKeySet<Int>()
     private val nextId = AtomicInteger(1)
     private val handler = Handler(Looper.getMainLooper())
     private val backgroundExecutor = Executors.newCachedThreadPool()
@@ -53,11 +58,12 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         val id: Int,
         val player: ExoPlayer,
         val textureEntry: TextureRegistry.SurfaceTextureEntry,
-        val streamHandle: Long,
-        val surface: Surface
+        val surface: Surface,
+        var positionUpdater: Runnable? = null
     )
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        attachedToEngine = true
         flutterBinding = binding
         textureRegistry = binding.textureRegistry
         methodChannel = MethodChannel(binding.binaryMessenger, "fqapp/native_player")
@@ -83,9 +89,14 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     override fun onDetachedFromActivity() { activity = null }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        attachedToEngine = false
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         players.keys.toList().forEach { disposePlayer(it) }
+        handler.removeCallbacksAndMessages(null)
+        cancelledPlayerIds.clear()
+        eventSink = null
+        backgroundExecutor.shutdownNow()
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -147,60 +158,88 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         result.success(mapOf("playerId" to playerId, "textureId" to -1))
 
         if (keyHex.isEmpty()) {
-            handler.post { createPlayerWithUri(playerId, cdnUrl) }
-        } else {
-            CryptoNative.ensureInit()
-            backgroundExecutor.execute {
-                val streamHandle = CryptoNative.nativePlayerStreamOpen(cdnUrl, keyHex)
-                if (streamHandle == 0L) {
-                    sendEvent(playerId, "error", "sp_stream_open failed")
-                    return@execute
+            handler.post {
+                if (attachedToEngine && !cancelledPlayerIds.remove(playerId)) {
+                    createPlayerWithUri(playerId, cdnUrl)
                 }
-                handler.post { createPlayerWithCrypto(playerId, cdnUrl, keyHex, streamHandle) }
+            }
+        } else {
+            try {
+                CryptoNative.ensureInit()
+                backgroundExecutor.execute {
+                    try {
+                        if (cancelledPlayerIds.remove(playerId)) return@execute
+                        // Probe-only open: verifies the CDN + key are playable.
+                        val probeHandle = CryptoNative.nativePlayerStreamOpen(cdnUrl, keyHex)
+                        if (probeHandle == 0L) {
+                            sendEvent(playerId, "error", "sp_stream_open failed")
+                            return@execute
+                        }
+                        CryptoNative.nativePlayerStreamClose(probeHandle)
+                        handler.post {
+                            if (attachedToEngine && !cancelledPlayerIds.remove(playerId)) {
+                                createPlayerWithCrypto(playerId, cdnUrl, keyHex)
+                            }
+                        }
+                    } catch (error: Throwable) {
+                        sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
+                    }
+                }
+            } catch (error: Throwable) {
+                sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
             }
         }
     }
 
     private fun createPlayerWithUri(playerId: Int, uri: String) {
+        if (!attachedToEngine) return
+        if (cancelledPlayerIds.remove(playerId)) return
         val textureEntry = textureRegistry.createSurfaceTexture()
         val surface = Surface(textureEntry.surfaceTexture())
-
-        val player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
-        player.setVideoSurface(surface)
-
-        val mediaItem = MediaItem.fromUri(uri)
-        player.setMediaItem(mediaItem)
-        player.prepare()
-
-        setupPlayerListener(playerId, player)
-
-        val instance = PlayerInstance(playerId, player, textureEntry, 0L, surface)
-        players[playerId] = instance
-        sendEvent(playerId, "created", textureEntry.id())
+        var player: ExoPlayer? = null
+        try {
+            player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
+            player.setVideoSurface(surface)
+            setupPlayerListener(playerId, player)
+            players[playerId] = PlayerInstance(playerId, player, textureEntry, surface)
+            player.setMediaItem(MediaItem.fromUri(uri))
+            player.prepare()
+            sendEvent(playerId, "created", textureEntry.id())
+        } catch (error: Throwable) {
+            players.remove(playerId)
+            player?.release()
+            surface.release()
+            textureEntry.release()
+            sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
+        }
     }
 
-    private fun createPlayerWithCrypto(
-        playerId: Int, cdnUrl: String, keyHex: String, streamHandle: Long
-    ) {
+    private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String) {
+        if (!attachedToEngine) return
+        if (cancelledPlayerIds.remove(playerId)) return
         val textureEntry = textureRegistry.createSurfaceTexture()
         val surface = Surface(textureEntry.surfaceTexture())
-
-        val player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
-        player.setVideoSurface(surface)
-
-        val dataSourceFactory = DataSource.Factory {
-            CryptoDataSource(cdnUrl, keyHex)
+        var player: ExoPlayer? = null
+        try {
+            player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
+            player.setVideoSurface(surface)
+            setupPlayerListener(playerId, player)
+            players[playerId] = PlayerInstance(playerId, player, textureEntry, surface)
+            val dataSourceFactory = DataSource.Factory {
+                CryptoDataSource(cdnUrl, keyHex)
+            }
+            val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri("crypto://$cdnUrl"))
+            player.setMediaSource(mediaSource)
+            player.prepare()
+            sendEvent(playerId, "created", textureEntry.id())
+        } catch (error: Throwable) {
+            players.remove(playerId)
+            player?.release()
+            surface.release()
+            textureEntry.release()
+            sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
         }
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri("crypto://$cdnUrl"))
-        player.setMediaSource(mediaSource)
-        player.prepare()
-
-        setupPlayerListener(playerId, player)
-
-        val instance = PlayerInstance(playerId, player, textureEntry, streamHandle, surface)
-        players[playerId] = instance
-        sendEvent(playerId, "created", textureEntry.id())
     }
 
     private fun setupPlayerListener(playerId: Int, player: ExoPlayer) {
@@ -245,39 +284,57 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
                     sendEvent(playerId, "firstFrame", true)
                 }
             }
+
+            override fun onPlayerError(error: PlaybackException) {
+                sendEvent(
+                    playerId,
+                    "error",
+                    error.message ?: "ExoPlayer error ${error.errorCode}"
+                )
+            }
         })
     }
 
     private fun startPositionUpdates(playerId: Int) {
-        handler.post(object : Runnable {
+        val instance = players[playerId] ?: return
+        instance.positionUpdater?.let(handler::removeCallbacks)
+        val updater = object : Runnable {
             override fun run() {
-                val instance = players[playerId] ?: return
-                val player = instance.player
+                val current = players[playerId] ?: return
+                val player = current.player
                 if (player.isPlaying) {
                     sendEvent(playerId, "position", player.currentPosition)
                     handler.postDelayed(this, 200)
+                } else {
+                    current.positionUpdater = null
                 }
             }
-        })
+        }
+        instance.positionUpdater = updater
+        handler.post(updater)
     }
 
     private fun sendEvent(playerId: Int, type: String, value: Any) {
         handler.post {
-            eventSink?.success(mapOf("playerId" to playerId, "type" to type, "value" to value))
+            if (attachedToEngine) {
+                eventSink?.success(mapOf("playerId" to playerId, "type" to type, "value" to value))
+            }
         }
     }
 
     private fun disposePlayer(id: Int) {
-        val instance = players.remove(id) ?: return
+        val instance = players.remove(id)
+        if (instance == null) {
+            // Creation/probing can still be in flight. The creation path
+            // consumes this marker before allocating a texture or player.
+            cancelledPlayerIds.add(id)
+            handler.postDelayed({ cancelledPlayerIds.remove(id) }, 30_000)
+            return
+        }
+        instance.positionUpdater?.let(handler::removeCallbacks)
         instance.player.release()
         instance.surface.release()
         instance.textureEntry.release()
-        val handle = instance.streamHandle
-        if (handle != 0L) {
-            backgroundExecutor.execute {
-                CryptoNative.nativePlayerStreamClose(handle)
-            }
-        }
     }
 
     private inner class CryptoDataSource(
@@ -288,6 +345,10 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         private var streamHandle: Long = 0L
         private var uri: Uri? = null
         private var bytesRemaining: Long = C.LENGTH_UNSET.toLong()
+        private var opened = false
+        // Reused across read() calls so the hot path doesn't allocate a fresh
+        // buffer for every chunk.
+        private var readBuffer: ByteArray? = null
 
         override fun open(dataSpec: DataSpec): Long {
             uri = dataSpec.uri
@@ -307,6 +368,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
                 C.LENGTH_UNSET.toLong()
             }
             transferStarted(dataSpec)
+            opened = true
             return bytesRemaining
         }
 
@@ -318,10 +380,14 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
             } else {
                 length
             }
-            val tempBuf = ByteArray(toRead)
-            val bytesRead = CryptoNative.nativePlayerStreamRead(streamHandle, tempBuf, toRead)
+            var tmp = readBuffer
+            if (tmp == null || tmp.size < toRead) {
+                tmp = ByteArray(toRead)
+                readBuffer = tmp
+            }
+            val bytesRead = CryptoNative.nativePlayerStreamRead(streamHandle, tmp, toRead)
             if (bytesRead <= 0) return C.RESULT_END_OF_INPUT
-            System.arraycopy(tempBuf, 0, buffer, offset, bytesRead)
+            System.arraycopy(tmp, 0, buffer, offset, bytesRead)
             if (bytesRemaining != C.LENGTH_UNSET.toLong()) {
                 bytesRemaining -= bytesRead
             }
@@ -336,7 +402,10 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
                 CryptoNative.nativePlayerStreamClose(streamHandle)
                 streamHandle = 0L
             }
-            transferEnded()
+            if (opened) {
+                opened = false
+                transferEnded()
+            }
         }
     }
 }

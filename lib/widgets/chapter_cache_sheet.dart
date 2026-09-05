@@ -1,0 +1,179 @@
+import 'package:flutter/material.dart';
+
+import '../models/media_item.dart';
+import '../services/chapter_cache_store.dart';
+
+class ChapterCacheSheet extends StatefulWidget {
+  final CachedBook book;
+  final int currentIndex;
+  final ChapterCache cache;
+  final Future<String> Function(Chapter) loader;
+
+  const ChapterCacheSheet({
+    super.key,
+    required this.book,
+    required this.currentIndex,
+    required this.cache,
+    required this.loader,
+  });
+
+  @override
+  State<ChapterCacheSheet> createState() => _ChapterCacheSheetState();
+}
+
+class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
+  Set<String> _cached = {};
+  bool _running = false;
+  int _completed = 0;
+  int _total = 0;
+  int _job = 0;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    ++_job;
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final cached = await widget.cache.cachedChapterIds(widget.book.id);
+      if (mounted) setState(() => _cached = cached);
+    } catch (_) {
+      if (mounted) setState(() => _message = '无法读取缓存，请重试');
+    }
+  }
+
+  Future<void> _download(int count) async {
+    if (_running) return;
+    final job = ++_job;
+    final chapters = widget.book.chapters
+        .skip(widget.currentIndex + 1)
+        .take(count)
+        .toList(growable: false);
+    setState(() {
+      _running = true;
+      _completed = 0;
+      _total = chapters.length;
+      _message = null;
+    });
+    try {
+      await widget.cache.saveBook(widget.book);
+      final cached = await widget.cache.cachedChapterIds(widget.book.id);
+      for (final chapter in chapters) {
+        if (!mounted || job != _job) return;
+        if (!cached.contains(chapter.itemId)) {
+          final text = await widget
+              .loader(chapter)
+              .timeout(const Duration(seconds: 30));
+          if (!mounted || job != _job) return;
+          if (text.trim().isEmpty) throw StateError('章节正文为空');
+          await widget.cache.write(
+            bookId: widget.book.id,
+            chapterId: chapter.itemId,
+            title: chapter.title,
+            text: text,
+          );
+        }
+        if (!mounted || job != _job) return;
+        setState(() => _completed++);
+      }
+      if (mounted && job == _job) {
+        setState(() => _message = '缓存完成，可从书架的离线缓存入口继续阅读');
+      }
+    } catch (_) {
+      if (mounted && job == _job) {
+        setState(() => _message = '缓存未完成，已保存 $_completed/$_total 章。检查网络后可重试');
+      }
+    } finally {
+      if (mounted && job == _job) {
+        setState(() => _running = false);
+        await _refresh();
+      }
+    }
+  }
+
+  void _cancel() {
+    ++_job;
+    setState(() {
+      _running = false;
+      _message = '已停止缓存，已保存的章节会保留';
+    });
+    _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = widget.book.chapters.length - widget.currentIndex - 1;
+    final choices = <int>{
+      for (final count in [20, 50, 100])
+        if (remaining > 0) remaining < count ? remaining : count,
+    };
+    final validIds = widget.book.chapters
+        .map((chapter) => chapter.itemId)
+        .toSet();
+    final cachedCount = _cached.intersection(validIds).length;
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('章节缓存', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            Text(widget.book.title),
+            const SizedBox(height: 6),
+            Text('已缓存 $cachedCount / ${widget.book.chapters.length} 章'),
+            const SizedBox(height: 16),
+            const Text('阅读过的章节会自动保存。也可以提前缓存后续章节，已缓存的内容会跳过。'),
+            const SizedBox(height: 16),
+            if (remaining == 0)
+              const Text('当前已是最后一章')
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final count in choices)
+                    OutlinedButton(
+                      onPressed: _running ? null : () => _download(count),
+                      child: Text('缓存后 $count 章'),
+                    ),
+                ],
+              ),
+            if (_running) ...[
+              const SizedBox(height: 16),
+              LinearProgressIndicator(
+                value: _total == 0 ? 0 : _completed / _total,
+              ),
+              const SizedBox(height: 8),
+              Text('正在缓存 $_completed / $_total 章'),
+              TextButton.icon(
+                onPressed: _cancel,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('停止缓存'),
+              ),
+            ],
+            if (_message != null) ...[
+              const SizedBox(height: 12),
+              Text(_message!),
+            ],
+            const SizedBox(height: 12),
+            Text(
+              '关闭此面板会停止下载。缓存最多保留 500 章或 80 MB，超出后清理较久未读的章节。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

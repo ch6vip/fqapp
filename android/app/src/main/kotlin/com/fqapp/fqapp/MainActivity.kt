@@ -19,12 +19,12 @@ class MainActivity : FlutterActivity() {
 
         // BackendNative loads liblegacy.so in its init block. If the .so is
         // missing or has no JNI exports (e.g. the old placeholder copy), this
-        // throws UnsatisfiedLinkError and we catch it so the Flutter side can
-        // fall back to Process.start.
+        // throws a LinkageError. Complete the channel with "unavailable" so
+        // Flutter can report a bounded startup error instead of hanging.
         native = try {
             BackendNative()
-        } catch (e: UnsatisfiedLinkError) {
-            android.util.Log.w("MainActivity", "JNI backend unavailable, will use Process.start fallback", e)
+        } catch (e: Throwable) {
+            android.util.Log.w("MainActivity", "JNI backend unavailable", e)
             // A no-op stub so the channel handler still has a receiver; the
             // Flutter side detects the failure via status() returning "unavailable".
             object : BackendNativeApi {
@@ -57,19 +57,31 @@ class MainActivity : FlutterActivity() {
                                 st = "failed: JNI startup timeout"
                             }
                             runOnUiThread { result.success(st) }
-                        } catch (e: Exception) {
+                        } catch (e: Throwable) {
                             runOnUiThread {
-                                result.error("JNI_ERROR", e.message, null)
+                                result.error(
+                                    "JNI_ERROR",
+                                    e.message ?: e.javaClass.simpleName,
+                                    null
+                                )
                             }
                         }
                     }.start()
                 }
                 "stopBackend" -> {
-                    native.stopBackend()
-                    result.success(null)
+                    try {
+                        native.stopBackend()
+                        result.success(null)
+                    } catch (e: Throwable) {
+                        result.error("JNI_STOP_ERROR", e.message ?: e.javaClass.simpleName, null)
+                    }
                 }
                 "status" -> {
-                    result.success(native.status())
+                    try {
+                        result.success(native.status())
+                    } catch (e: Throwable) {
+                        result.error("JNI_STATUS_ERROR", e.message ?: e.javaClass.simpleName, null)
+                    }
                 }
                 else -> result.notImplemented()
             }
