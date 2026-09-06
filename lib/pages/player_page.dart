@@ -8,6 +8,7 @@ import '../models/media_description.dart';
 import '../services/api_client.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
+import '../services/player_history.dart';
 import '../services/player_preferences.dart';
 import '../widgets/video_player_chrome.dart';
 
@@ -48,12 +49,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Timer? _progressTimer;
   bool _initVideo = false;
   bool _paging = false;
+  Completer<void>? _pagingSettled;
+  int? _pendingCompletion;
+  NativePlayer? _pendingAutoplay;
   String? _error;
   int _loadGeneration = 0;
   final Stopwatch _watchTime = Stopwatch();
   final List<StreamSubscription<dynamic>> _subs = [];
   Future<void> _releases = Future<void>.value();
-  Future<void> _historyWrites = Future<void>.value();
 
   late String _description;
   late bool _descriptionLoaded;
@@ -61,7 +64,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   String? _descriptionError;
   int _descriptionGeneration = 0;
 
-  ReaderStore get _historyStore => widget.historyStore ?? LibraryStore.instance;
+  PlayerHistory get _history =>
+      PlayerHistory(widget.historyStore ?? LibraryStore.instance);
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _playing = false;
@@ -95,6 +99,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _progressTimer?.cancel();
     ++_loadGeneration;
     ++_descriptionGeneration;
+    _pagingSettled?.complete();
+    _pagingSettled = null;
     _watchTime.stop();
     unawaited(_persistProgress());
     unawaited(_teardownPlayer());
@@ -102,12 +108,81 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) => _syncWatchClock();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _syncWatchClock();
+    if (state == AppLifecycleState.resumed) {
+      _resumePendingAutoplay();
+    } else {
+      unawaited(_persistProgress());
+    }
+  }
+
+  void _onPagingChanged(bool paging) {
+    if (_paging == paging) return;
+    _paging = paging;
+    if (paging) {
+      _pagingSettled = Completer<void>();
+    } else {
+      _pagingSettled?.complete();
+      _pagingSettled = null;
+      final completedGeneration = _pendingCompletion;
+      _pendingCompletion = null;
+      if (completedGeneration != null &&
+          _current(completedGeneration) &&
+          _activeIndex == _index) {
+        unawaited(
+          _selectEpisode(_index + 1, expectedGeneration: completedGeneration),
+        );
+      } else {
+        _resumePendingAutoplay();
+      }
+    }
+  }
+
+  Future<bool> _waitForPaging(int generation, [NativePlayer? player]) async {
+    while (_current(generation, player) && _paging) {
+      await _pagingSettled!.future;
+    }
+    return _current(generation, player);
+  }
+
+  bool get _appActive {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
+  }
+
+  void _resumePendingAutoplay() {
+    final generation = _loadGeneration;
+    unawaited(
+      _tryAutoplay(generation).catchError((Object error) {
+        _fail(error, generation);
+      }),
+    );
+  }
+
+  Future<void> _tryAutoplay(int generation) async {
+    final player = _pendingAutoplay;
+    if (player == null ||
+        !_current(generation, player) ||
+        !_appActive ||
+        _paging) {
+      return;
+    }
+    _pendingAutoplay = null;
+    await player.play();
+    if (_current(generation, player) && !_appActive) {
+      // The lifecycle can change while the platform acknowledges play.
+      _pendingAutoplay = player;
+      await player.pause();
+    }
+  }
 
   Future<void> _teardownPlayer() {
     final old = _player;
     _player = null;
     _activeIndex = null;
+    _pendingAutoplay = null;
+    _pendingCompletion = null;
     final cancellations = [
       for (final subscription in _subs) subscription.cancel(),
     ];
@@ -172,15 +247,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
       await release;
       if (!_current(generation)) return;
-      await _historyWrites;
-      if (!_current(generation)) return;
       Map<String, dynamic>? saved;
       try {
-        saved = await _historyStore.historyEntry(widget.bookId);
+        saved = await _history.load(widget.bookId);
       } catch (_) {
         // Local storage is optional for starting a video.
       }
-      if (!_current(generation)) return;
+      if (!await _waitForPaging(generation)) return;
       final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
       _player = player;
       await player.create(url, keyHex);
@@ -198,21 +271,29 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await player.setRate(rate);
       if (!_current(generation, player)) return;
 
-      final savedIndex = (saved?['episode'] as num?)?.toInt();
-      final savedPosition = (saved?['position'] as num?)?.toDouble() ?? 0;
-      if (savedIndex == index && savedPosition.isFinite && savedPosition > 0) {
-        final requested = (savedPosition * 1000).round();
-        final durationMs = player.duration.inMilliseconds;
-        await player.seek(
-          Duration(
-            milliseconds: durationMs > 0
-                ? requested.clamp(0, durationMs)
-                : requested,
-          ),
-        );
+      final savedIndex = resumeEpisodeIndex(saved, widget.eps);
+      final rawPosition = saved?['position'];
+      final savedPosition = rawPosition is num ? rawPosition.toDouble() : 0.0;
+      final rawDuration = saved?['duration'];
+      final savedDuration = rawDuration is num && rawDuration.isFinite
+          ? rawDuration.toDouble()
+          : 0.0;
+      final durationSeconds = player.duration > Duration.zero
+          ? player.duration.inMilliseconds / 1000
+          : savedDuration;
+      final requestedMs = savedPosition * 1000;
+      if (savedIndex == index &&
+          requestedMs.isFinite &&
+          requestedMs > 0 &&
+          requestedMs < 0x7fffffffffffffff &&
+          (durationSeconds <= 0 || savedPosition < durationSeconds)) {
+        // Completed/out-of-range entries restart instead of immediately
+        // reaching the end again. Unknown duration must not erase a valid seek.
+        await player.seek(Duration(milliseconds: requestedMs.round()));
         if (!_current(generation, player)) return;
       }
 
+      if (!await _waitForPaging(generation, player)) return;
       setState(() {
         _activeIndex = index;
         _position = player.position;
@@ -221,11 +302,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _initVideo = false;
       });
       final history = _historyEntry(index, player);
-      unawaited(_writeHistory(() => _historyStore.addHistory(history)));
-      final lifecycle = WidgetsBinding.instance.lifecycleState;
-      if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
-        await player.play();
-      }
+      unawaited(_history.save(history));
+      _pendingAutoplay = player;
+      await _tryAutoplay(generation);
       if (!_current(generation, player)) return;
       _syncWatchClock();
       _progressTimer = Timer.periodic(
@@ -280,10 +359,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _syncWatchClock();
       }),
       player.completedStream.listen((completed) {
-        if (!_current(generation, player) ||
-            !completed ||
-            _paging ||
-            _activeIndex != _index) {
+        if (!_current(generation, player) || _activeIndex != _index) {
+          return;
+        }
+        if (!completed) {
+          _pendingCompletion = null;
+          return;
+        }
+        if (_paging) {
+          _pendingCompletion = generation;
           return;
         }
         unawaited(_selectEpisode(_index + 1, expectedGeneration: generation));
@@ -303,11 +387,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Map<String, dynamic> _historyEntry(int index, NativePlayer player) {
-    final durationMs = player.duration.inMilliseconds;
-    final positionMs = player.position.inMilliseconds.clamp(
-      0,
-      durationMs > 0 ? durationMs : 0,
-    );
+    final durationMs = player.duration > Duration.zero
+        ? player.duration.inMilliseconds
+        : 0;
+    final rawPositionMs = player.position.inMilliseconds;
+    final positionMs = durationMs > 0
+        ? rawPositionMs.clamp(0, durationMs)
+        : rawPositionMs < 0
+        ? 0
+        : rawPositionMs;
     return {
       'id': widget.bookId,
       'kind': 'video',
@@ -326,13 +414,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     };
   }
 
-  Future<void> _writeHistory(Future<void> Function() write) {
-    _historyWrites = _historyWrites
-        .then((_) => write())
-        .catchError((Object _) {});
-    return _historyWrites;
-  }
-
   Future<void> _persistProgress() {
     final player = _player;
     final index = _activeIndex;
@@ -343,12 +424,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final seconds =
         _watchTime.elapsedMicroseconds / Duration.microsecondsPerSecond;
     _watchTime.reset();
-    return _writeHistory(() async {
-      if (seconds > 0) {
-        await _historyStore.accumulateReadTime(widget.bookId, 'video', seconds);
-      }
-      await _historyStore.addHistory(history);
-    });
+    return _history.save(history, watchedSeconds: seconds);
   }
 
   Future<void> _selectEpisode(int index, {int? expectedGeneration}) {
@@ -416,7 +492,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     descriptionError: _descriptionError,
     onRequestDescription: () => unawaited(_loadDescription()),
     onRetryDescription: () => unawaited(_loadDescription(retry: true)),
-    onPagingChanged: (paging) => _paging = paging,
+    onPagingChanged: _onPagingChanged,
     onSelectEpisode: _selectEpisode,
     onError: (error) => _fail(error, _loadGeneration),
     child: _videoArea(),

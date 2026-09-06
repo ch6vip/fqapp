@@ -85,7 +85,11 @@ class NativePlayer {
   int? _playerId;
   int? _textureId;
   bool _disposed = false;
+  bool _creationFailed = false;
   Future<int>? _createFuture;
+  Future<void>? _disposeFuture;
+  Future<void>? _nativeRelease;
+  int _seekGeneration = 0;
 
   int? get textureId => _textureId;
   bool get isCreated => _textureId != null && !_disposed;
@@ -139,22 +143,32 @@ class NativePlayer {
 
   Future<int> _create(String cdnUrl, String keyHex) async {
     _ensureGlobalListener();
+    // Disposal or an early native error can finish this future before the
+    // method reply supplies an id. Observe errors now; the await below still
+    // propagates them to create's caller.
+    _createdCompleter.future.ignore();
     try {
-      final result = await _channel
+      final reply = _channel
           .invokeMapMethod<String, dynamic>('create', {
             'cdnUrl': cdnUrl,
             'keyHex': keyHex,
           })
-          .timeout(_methodTimeout);
-      final rawPlayerId = result?['playerId'];
-      if (rawPlayerId is! num) {
-        throw StateError('Native player returned no playerId');
-      }
-      final playerId = rawPlayerId.toInt();
-      _playerId = playerId;
+          .then((result) async {
+            final rawPlayerId = result?['playerId'];
+            if (rawPlayerId is! num) {
+              throw StateError('Native player returned no playerId');
+            }
+            final playerId = _playerId = rawPlayerId.toInt();
+            // Keep observing the original reply even after timeout. Otherwise
+            // a late native allocation would never be released.
+            if (_disposed || _creationFailed) {
+              await _releaseNative();
+              throw StateError('NativePlayer was disposed during creation');
+            }
+            return playerId;
+          });
+      final playerId = await reply.timeout(_methodTimeout);
       if (_disposed) {
-        _retire(playerId);
-        await _disposeNative(playerId);
         throw StateError('NativePlayer was disposed during creation');
       }
 
@@ -173,12 +187,8 @@ class NativePlayer {
       }
       return _textureId!;
     } catch (_) {
-      final playerId = _playerId;
-      if (playerId != null) {
-        _instances.remove(playerId);
-        _retire(playerId);
-        await _disposeNative(playerId);
-      }
+      _creationFailed = true;
+      await _releaseNative();
       rethrow;
     }
   }
@@ -186,8 +196,16 @@ class NativePlayer {
   Future<void> play() => _invoke('play');
   Future<void> pause() => _invoke('pause');
 
-  Future<void> seek(Duration position) =>
-      _invoke('seek', {'positionMs': position.inMilliseconds});
+  Future<void> seek(Duration position) async {
+    final generation = ++_seekGeneration;
+    await _invoke('seek', {'positionMs': position.inMilliseconds});
+    if (_disposed || generation != _seekGeneration) return;
+    // ExoPlayer acknowledges seek before its next position tick. Preserve the
+    // accepted position for immediate exit/reentry and during initial buffering.
+    _position = position;
+    _completed = false;
+    _positionCtrl.add(position);
+  }
 
   Future<void> setVolume(double volume) =>
       _invoke('setVolume', {'volume': volume});
@@ -212,18 +230,14 @@ class NativePlayer {
         .timeout(_methodTimeout);
   }
 
-  Future<void> dispose() async {
-    if (_disposed) return;
+  Future<void> dispose() => _disposeFuture ??= _dispose();
+
+  Future<void> _dispose() async {
     _disposed = true;
-    final playerId = _playerId;
-    if (playerId != null) {
-      _instances.remove(playerId);
-      _retire(playerId);
-      await _disposeNative(playerId);
-    }
     if (_createFuture != null && !_createdCompleter.isCompleted) {
       _createdCompleter.completeError(StateError('NativePlayer disposed'));
     }
+    await _releaseNative();
     await Future.wait<void>([
       _positionCtrl.close(),
       _durationCtrl.close(),
@@ -234,6 +248,16 @@ class NativePlayer {
       _videoSizeCtrl.close(),
       _errorCtrl.close(),
     ]);
+  }
+
+  Future<void> _releaseNative() {
+    final playerId = _playerId;
+    if (playerId == null) return Future<void>.value();
+    return _nativeRelease ??= () {
+      _instances.remove(playerId);
+      _retire(playerId);
+      return _disposeNative(playerId);
+    }();
   }
 
   static Future<void> _disposeNative(int playerId) async {

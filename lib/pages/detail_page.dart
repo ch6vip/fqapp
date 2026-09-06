@@ -6,6 +6,7 @@ import '../models/media_description.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/library_store.dart';
+import '../services/player_history.dart';
 import '../widgets/media_card.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
@@ -395,9 +396,14 @@ class _DetailPageState extends State<DetailPage> {
   );
 
   Future<void> _openLastPosition() async {
-    final saved = await LibraryStore.instance.historyEntry(_contentId);
-    if (!mounted) return;
-    final savedIndex = saved?['episode'] is num
+    if (_allChapters.isEmpty) return;
+    final saved = _isVideo
+        ? await PlayerHistory(LibraryStore.instance).load(_contentId)
+        : await LibraryStore.instance.historyEntry(_contentId);
+    if (!mounted || _allChapters.isEmpty) return;
+    final savedIndex = _isVideo
+        ? resumeEpisodeIndex(saved, _allChapters) ?? 0
+        : saved?['episode'] is num
         ? (saved!['episode'] as num).toInt()
         : 0;
     final index = savedIndex.clamp(0, _allChapters.length - 1);
