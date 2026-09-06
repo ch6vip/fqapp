@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,29 +7,48 @@ import 'package:flutter/services.dart';
 import '../models/media_item.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
+import 'player/player_video_layout.dart';
+import 'player/story_player_panel.dart';
+import 'player/story_seek_bar.dart';
 
 class VideoPlayerChrome extends StatefulWidget {
-  final NativePlayer player;
+  final NativePlayer? player;
+  final String title;
   final List<Chapter> episodes;
   final int currentIndex;
+  final int? playingIndex;
   final Duration position;
   final Duration duration;
   final bool playing;
   final bool enabled;
   final Widget child;
+  final String description;
+  final bool descriptionLoading;
+  final String? descriptionError;
+  final VoidCallback? onRequestDescription;
+  final VoidCallback? onRetryDescription;
+  final ValueChanged<bool>? onPagingChanged;
   final Future<void> Function(int) onSelectEpisode;
   final void Function(Object) onError;
 
   const VideoPlayerChrome({
     super.key,
     required this.player,
+    this.title = '',
     required this.episodes,
     required this.currentIndex,
+    this.playingIndex,
     required this.position,
     required this.duration,
     required this.playing,
     this.enabled = true,
     required this.child,
+    this.description = '',
+    this.descriptionLoading = false,
+    this.descriptionError,
+    this.onRequestDescription,
+    this.onRetryDescription,
+    this.onPagingChanged,
     required this.onSelectEpisode,
     required this.onError,
   });
@@ -39,41 +59,85 @@ class VideoPlayerChrome extends StatefulWidget {
 
 class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     with WidgetsBindingObserver {
+  late final PageController _pages;
+  final _panel = DraggableScrollableController();
   Timer? _hideTimer;
   bool _visible = true;
   bool _seeking = false;
   bool _resumeAfterSeek = false;
-  bool _sheetOpen = false;
+  bool _modalOpen = false;
+  bool _panelOpen = false;
+  bool _panelAnimating = false;
+  bool _panelWasVisible = false;
+  bool _panelHeaderDragging = false;
   bool _fullScreen = false;
   bool _boosting = false;
+  bool _paging = false;
   bool _appActive = true;
   bool _resumeOnForeground = false;
+  int _panelTab = 1;
+  int _panelAnimation = 0;
+  int _interaction = 0;
+  double _panelFraction = 0;
+  double _panelRestFraction = .55;
+  double _panelMaxFraction = .55;
+  List<double> _panelSnapSizes = const [.55];
   double _rate = 1;
   int _rateGeneration = 0;
   Future<void> _systemUiUpdates = Future<void>.value();
   bool _systemUiTouched = false;
   double? _seekValue;
 
+  bool get _ready => widget.enabled && (widget.player?.isCreated ?? false);
+  Size get _videoSize => Size(
+    (widget.player?.videoWidth ?? 9).toDouble(),
+    (widget.player?.videoHeight ?? 16).toDouble(),
+  );
+  String get _episodeTitle => widget.episodes.isEmpty
+      ? '暂无剧集'
+      : widget.episodes[widget.currentIndex].title;
+  String get _seriesTitle =>
+      widget.title.isEmpty ? _episodeTitle : widget.title;
+
   @override
   void initState() {
     super.initState();
+    _pages = PageController(initialPage: widget.currentIndex);
+    _panel.addListener(_panelChanged);
     WidgetsBinding.instance.addObserver(this);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
-    _loadRate();
+    unawaited(_loadRate());
     _scheduleHide();
   }
 
   @override
   void didUpdateWidget(VideoPlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.player != widget.player) {
+    if (oldWidget.player != widget.player ||
+        oldWidget.enabled && !widget.enabled) {
+      if (_boosting && oldWidget.player != null) {
+        unawaited(oldWidget.player!.setRate(_rate).catchError((Object _) {}));
+      }
+      ++_interaction;
       _seeking = false;
       _seekValue = null;
+      _resumeAfterSeek = false;
+      _resumeOnForeground = false;
       _boosting = false;
-      _visible = true;
-      _control(widget.player.setRate(_rate));
+    }
+    if (_ready && (oldWidget.player != widget.player || !oldWidget.enabled)) {
+      unawaited(_control((player) => player.setRate(_rate)));
+      if (_fullScreen) unawaited(_applySystemUi());
+    }
+    if (oldWidget.currentIndex != widget.currentIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pages.hasClients) return;
+        if ((_pages.page ?? 0).round() != widget.currentIndex) {
+          _pages.jumpToPage(widget.currentIndex);
+        }
+      });
     }
     if (oldWidget.enabled != widget.enabled ||
         oldWidget.playing != widget.playing ||
@@ -87,6 +151,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _hideTimer?.cancel();
+    _pages.dispose();
+    _panel.dispose();
+    if (_boosting && widget.player != null) {
+      unawaited(widget.player!.setRate(_rate).catchError((Object _) {}));
+    }
     if (_systemUiTouched) {
       unawaited(_systemUiUpdates.then((_) => _restoreSystemUi()));
     }
@@ -99,9 +168,17 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       final rate = await PlayerPreferences.loadPlaybackRate();
       if (!mounted || generation != _rateGeneration) return;
       setState(() => _rate = rate);
-      await _control(widget.player.setRate(_boosting ? 2 : rate));
-    } catch (_) {
-      // Keep normal playback available if preferences cannot be read.
+      await _control((player) => player.setRate(_boosting ? 2 : rate));
+    } catch (_) {}
+  }
+
+  Future<void> _control(Future<void> Function(NativePlayer) operation) async {
+    final player = widget.player;
+    if (player == null || !_ready) return;
+    try {
+      await operation(player);
+    } catch (error) {
+      if (mounted && widget.player == player && _ready) widget.onError(error);
     }
   }
 
@@ -110,35 +187,30 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     final active = state == AppLifecycleState.resumed;
     if (!active && _appActive) {
       _appActive = false;
-      _resumeOnForeground = widget.playing && !_seeking;
+      _resumeOnForeground =
+          _ready && (widget.playing || (_seeking && _resumeAfterSeek));
+      _cancelSeek(resume: false);
       _endBoost();
       _hideTimer?.cancel();
-      _control(widget.player.pause());
+      unawaited(_control((player) => player.pause()));
     } else if (active && !_appActive) {
       _appActive = true;
-      if (_resumeOnForeground) _control(widget.player.play());
+      if (_resumeOnForeground) unawaited(_control((player) => player.play()));
       _resumeOnForeground = false;
       _scheduleHide();
     }
   }
 
-  Future<void> _control(Future<void> operation) async {
-    final player = widget.player;
-    try {
-      await operation;
-    } catch (error) {
-      if (mounted && widget.player == player) widget.onError(error);
-    }
-  }
-
   void _scheduleHide() {
     _hideTimer?.cancel();
-    if (!widget.enabled ||
+    if (!_ready ||
         !_appActive ||
         !widget.playing ||
         _seeking ||
-        _sheetOpen ||
-        _boosting) {
+        _modalOpen ||
+        _panelOpen ||
+        _boosting ||
+        _paging) {
       return;
     }
     _hideTimer = Timer(const Duration(seconds: 3), () {
@@ -147,6 +219,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _toggleControls() {
+    if (_panelOpen || _modalOpen || _seeking || _boosting || _paging) return;
     setState(() => _visible = !_visible);
     if (_visible) {
       _scheduleHide();
@@ -156,36 +229,48 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _togglePlayback() {
-    if (!widget.enabled) return;
+    if (!_ready || _panelOpen || _modalOpen || _seeking || _paging) return;
     _endBoost();
-    _control(widget.playing ? widget.player.pause() : widget.player.play());
+    unawaited(
+      _control((player) => widget.playing ? player.pause() : player.play()),
+    );
     setState(() => _visible = true);
     _scheduleHide();
   }
 
   void _startSeek(double value) {
+    if (!_ready) return;
+    _endBoost();
+    ++_interaction;
     _hideTimer?.cancel();
     _resumeAfterSeek = widget.playing;
     setState(() {
       _seeking = true;
       _seekValue = value;
     });
-    _control(widget.player.pause());
+    unawaited(_control((player) => player.pause()));
   }
 
   Future<void> _finishSeek(double value) async {
     final player = widget.player;
+    if (player == null || !_seeking) return;
+    final interaction = _interaction;
     final target = Duration(
-      milliseconds: (widget.duration.inMilliseconds * value).round(),
+      milliseconds: (widget.duration.inMilliseconds * value.clamp(0.0, 1.0))
+          .round(),
     );
     try {
       await player.seek(target);
-      if (!mounted || widget.player != player) return;
-      if (_resumeAfterSeek && _appActive) await player.play();
+      if (!mounted || widget.player != player || interaction != _interaction) {
+        return;
+      }
+      if (_resumeAfterSeek && _appActive && _ready) await player.play();
     } catch (error) {
-      if (mounted && widget.player == player) widget.onError(error);
+      if (mounted && widget.player == player && interaction == _interaction) {
+        widget.onError(error);
+      }
     } finally {
-      if (mounted && widget.player == player) {
+      if (mounted && widget.player == player && interaction == _interaction) {
         setState(() {
           _seeking = false;
           _seekValue = null;
@@ -195,37 +280,62 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
   }
 
+  void _cancelSeek({bool resume = true}) {
+    if (!_seeking) return;
+    ++_interaction;
+    final shouldResume = resume && _resumeAfterSeek && _appActive;
+    setState(() {
+      _seeking = false;
+      _seekValue = null;
+    });
+    if (shouldResume) unawaited(_control((player) => player.play()));
+    _scheduleHide();
+  }
+
   void _seekBy(int seconds) {
     final milliseconds = (widget.position.inMilliseconds + seconds * 1000)
-        .clamp(0, widget.duration.inMilliseconds);
-    _control(widget.player.seek(Duration(milliseconds: milliseconds)));
+        .clamp(0, math.max(0, widget.duration.inMilliseconds));
+    unawaited(
+      _control(
+        (player) => player.seek(Duration(milliseconds: milliseconds.toInt())),
+      ),
+    );
     _scheduleHide();
   }
 
   void _startBoost() {
-    if (!widget.enabled || !widget.playing || _seeking) return;
+    if (!_ready ||
+        !widget.playing ||
+        _seeking ||
+        _paging ||
+        _panelOpen ||
+        _modalOpen) {
+      return;
+    }
     _hideTimer?.cancel();
     setState(() => _boosting = true);
-    _control(widget.player.setRate(2));
+    unawaited(_control((player) => player.setRate(2)));
   }
 
   void _endBoost() {
     if (!_boosting) return;
-    if (mounted) setState(() => _boosting = false);
-    _control(widget.player.setRate(_rate));
+    setState(() => _boosting = false);
+    unawaited(_control((player) => player.setRate(_rate)));
     _scheduleHide();
   }
 
   Future<void> _showRates() async {
+    _endBoost();
+    _cancelSeek();
     _hideTimer?.cancel();
-    _sheetOpen = true;
+    setState(() => _modalOpen = true);
     final selected = await showModalBottomSheet<double>(
       context: context,
       useSafeArea: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
         top: false,
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -251,11 +361,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       ),
     );
     if (!mounted) return;
-    _sheetOpen = false;
+    setState(() => _modalOpen = false);
     if (selected != null) {
       ++_rateGeneration;
       setState(() => _rate = selected);
-      await _control(widget.player.setRate(selected));
+      await _control((player) => player.setRate(selected));
       try {
         await PlayerPreferences.savePlaybackRate(selected);
       } catch (_) {
@@ -269,39 +379,177 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (mounted) _scheduleHide();
   }
 
-  Future<void> _showEpisodes() async {
+  void _openPanel(int tab) {
+    _endBoost();
+    _cancelSeek();
     _hideTimer?.cancel();
-    _sheetOpen = true;
-    final selected = await showModalBottomSheet<int>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (_) => SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.72,
-        child: _EpisodeSheet(
-          episodes: widget.episodes,
-          currentIndex: widget.currentIndex,
-        ),
-      ),
-    );
-    if (!mounted) return;
-    _sheetOpen = false;
-    if (selected != null && selected != widget.currentIndex) {
-      await widget.onSelectEpisode(selected);
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _panelTab = tab;
+      _panelRestFraction = PlayerVideoLayout.panelFractionFor(_videoSize);
+      _panelMaxFraction = _panelRestFraction;
+      // Keep this list stable while the panel follows a drag. Replacing it
+      // makes DraggableScrollableSheet start a new snap on every rebuild.
+      _panelSnapSizes = [_panelRestFraction];
+      _panelOpen = true;
+      _panelWasVisible = false;
+      _panelHeaderDragging = false;
+    });
+    widget.onRequestDescription?.call();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _panelOpen) unawaited(_animatePanel(_panelRestFraction));
+    });
+  }
+
+  void _panelChanged() {
+    if (!mounted || !_panel.isAttached) return;
+    setState(() => _panelFraction = _panel.size);
+    if (_panelFraction > .01) _panelWasVisible = true;
+    if (_panelFraction <= .001 && _panelWasVisible && !_panelAnimating) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _panelFraction <= .001 && !_panelAnimating) {
+          _removePanel();
+        }
+      });
     }
+  }
+
+  Future<void> _animatePanel(double target) async {
+    if (!_panel.isAttached) return;
+    final animation = ++_panelAnimation;
+    _panelAnimating = true;
+    if (target > _panelMaxFraction) {
+      setState(() => _panelMaxFraction = 1);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || animation != _panelAnimation || !_panel.isAttached) {
+        return;
+      }
+    }
+    await _panel.animateTo(
+      target,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+    if (!mounted || animation != _panelAnimation) return;
+    _panelAnimating = false;
+    if (target == 0) {
+      _removePanel();
+    } else if (target == _panelRestFraction) {
+      setState(() => _panelMaxFraction = _panelRestFraction);
+    }
+  }
+
+  bool _onPanelScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      // A body drag can cancel the controller's animation future. Invalidate
+      // its completion so a later drag-to-close can still remove the panel.
+      ++_panelAnimation;
+      _panelAnimating = false;
+    } else if (notification is ScrollEndNotification) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            !_panelOpen ||
+            _panelAnimating ||
+            _panelHeaderDragging) {
+          return;
+        }
+        if ((_panelFraction - _panelRestFraction).abs() < .001 &&
+            _panelMaxFraction != _panelRestFraction) {
+          setState(() => _panelMaxFraction = _panelRestFraction);
+        }
+      });
+    }
+    return false;
+  }
+
+  void _removePanel() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _panelOpen = false;
+      _panelFraction = 0;
+      _panelWasVisible = false;
+      _panelHeaderDragging = false;
+      _visible = true;
+    });
+    _scheduleHide();
+  }
+
+  void _startPanelDrag(DragStartDetails details) {
+    ++_panelAnimation;
+    _panelAnimating = false;
+    _panelHeaderDragging = true;
+    // Like the reference's drag area, only the header unlocks expansion above
+    // the resting height. Scrolling the body keeps the video visible.
+    setState(() => _panelMaxFraction = 1);
+  }
+
+  void _dragPanel(DragUpdateDetails details, double height) {
+    if (!_panel.isAttached || height <= 0) return;
+    ++_panelAnimation;
+    _panelAnimating = false;
+    _panel.jumpTo((_panel.size - details.delta.dy / height).clamp(0.0, 1.0));
+  }
+
+  void _endPanelDrag(DragEndDetails details) {
+    if (!_panelHeaderDragging) return;
+    _panelHeaderDragging = false;
+    final velocity = details.primaryVelocity ?? 0;
+    final size = _panelFraction;
+    final rest = _panelRestFraction;
+    final target = velocity > 600
+        ? (size > rest + .1 ? rest : 0.0)
+        : velocity < -600
+        ? (size < rest - .1 ? rest : 1.0)
+        : size < rest / 2
+        ? 0.0
+        : size < (rest + 1) / 2
+        ? rest
+        : 1.0;
+    unawaited(_animatePanel(target));
+  }
+
+  Future<void> _selectEpisode(int index) async {
+    if (index < 0 ||
+        index >= widget.episodes.length ||
+        index == widget.currentIndex) {
+      return;
+    }
+    _endBoost();
+    _cancelSeek(resume: false);
+    await widget.onSelectEpisode(index);
     if (mounted) _scheduleHide();
   }
 
+  Future<void> _back() async {
+    if (_panelOpen) {
+      await _animatePanel(0);
+    } else if (_fullScreen) {
+      await _toggleFullScreen();
+    } else {
+      await Navigator.maybePop(context);
+    }
+  }
+
   Future<void> _toggleFullScreen() async {
-    _systemUiTouched = true;
+    _endBoost();
+    _cancelSeek();
     setState(() => _fullScreen = !_fullScreen);
+    await _applySystemUi();
+    if (mounted) _scheduleHide();
+  }
+
+  Future<void> _applySystemUi() async {
+    _systemUiTouched = true;
     final fullScreen = _fullScreen;
     final operation = _systemUiUpdates.then((_) async {
       if (!mounted || _fullScreen != fullScreen) return;
       if (fullScreen) {
         await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-        final landscape = widget.player.videoWidth > widget.player.videoHeight;
+        final landscape =
+            (widget.player?.videoWidth ?? 9) >
+            (widget.player?.videoHeight ?? 16);
         await SystemChrome.setPreferredOrientations(
           landscape
               ? [
@@ -316,7 +564,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     });
     _systemUiUpdates = operation.catchError((Object _) {});
     await _systemUiUpdates;
-    if (mounted) _scheduleHide();
   }
 
   Future<void> _restoreSystemUi() async {
@@ -327,20 +574,37 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   @override
-  Widget build(BuildContext context) {
-    final durationMs = widget.duration.inMilliseconds;
-    final positionMs = widget.position.inMilliseconds.clamp(0, durationMs);
-    final value =
-        _seekValue ?? (durationMs > 0 ? positionMs / durationMs : 0.0);
-    return PopScope(
-      canPop: !_fullScreen,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _fullScreen) _toggleFullScreen();
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: LayoutBuilder(
-          builder: (context, constraints) => Stack(
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_panelOpen && !_fullScreen,
+    onPopInvokedWithResult: (didPop, result) {
+      if (!didPop && (_panelOpen || _fullScreen)) unawaited(_back());
+    },
+    child: Scaffold(
+      backgroundColor: Colors.black,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final insets = MediaQuery.paddingOf(context);
+          final window = constraints.biggest;
+          final landscape = _fullScreen && window.width > window.height;
+          final layout = PlayerVideoLayout.calculate(
+            window: window,
+            insets: insets,
+            videoSize: _videoSize,
+            panelFraction: _panelFraction,
+            restingPanelFraction: _panelRestFraction,
+            fullScreen: _fullScreen,
+          );
+          final durationMs = math.max(0, widget.duration.inMilliseconds);
+          final positionMs = widget.position.inMilliseconds.clamp(
+            0,
+            durationMs,
+          );
+          final value =
+              _seekValue ?? (durationMs > 0 ? positionMs / durationMs : 0.0);
+          final unobstructed = !_panelOpen && !_modalOpen;
+          final controls = _visible && unobstructed && !_seeking;
+          final canPage = unobstructed && !_seeking && !_boosting && !landscape;
+          return Stack(
             fit: StackFit.expand,
             children: [
               GestureDetector(
@@ -351,49 +615,102 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 onLongPressStart: (_) => _startBoost(),
                 onLongPressEnd: (_) => _endBoost(),
                 onLongPressCancel: _endBoost,
-                child: widget.child,
-              ),
-              if (_visible) ...[
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.black87, Colors.transparent],
-                      ),
-                    ),
-                    child: SafeArea(
-                      bottom: false,
-                      child: Row(
-                        children: [
-                          BackButton(
-                            color: Colors.white,
-                            onPressed: () {
-                              if (_fullScreen) {
-                                _toggleFullScreen();
-                              } else {
-                                Navigator.maybePop(context);
-                              }
-                            },
-                          ),
-                          Expanded(
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification.depth != 0) return false;
+                    if (notification is ScrollStartNotification) {
+                      _paging = true;
+                      _hideTimer?.cancel();
+                      widget.onPagingChanged?.call(true);
+                    } else if (notification is ScrollEndNotification) {
+                      _paging = false;
+                      widget.onPagingChanged?.call(false);
+                      _scheduleHide();
+                    }
+                    return false;
+                  },
+                  child: PageView.builder(
+                    key: const ValueKey('episode-pager'),
+                    controller: _pages,
+                    scrollDirection: Axis.vertical,
+                    physics: canPage
+                        ? const ClampingScrollPhysics()
+                        : const NeverScrollableScrollPhysics(),
+                    itemCount: math.max(1, widget.episodes.length),
+                    onPageChanged: (index) => unawaited(_selectEpisode(index)),
+                    itemBuilder: (context, index) => Stack(
+                      key: ValueKey('episode-page-$index'),
+                      fit: StackFit.expand,
+                      children: [
+                        const ColoredBox(color: Colors.black),
+                        if (index == widget.currentIndex)
+                          Positioned.fromRect(
+                            rect: _ready ? layout.video : layout.viewport,
+                            child: SizedBox(
+                              key: const ValueKey('video-frame'),
+                              child: widget.child,
+                            ),
+                          )
+                        else
+                          Center(
                             child: Text(
-                              widget.episodes[widget.currentIndex].title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              widget.episodes[index].title,
                               style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 17,
+                                color: Colors.white54,
+                                fontSize: 18,
                               ),
                             ),
                           ),
-                          Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Text(
-                              '${widget.currentIndex + 1}/${widget.episodes.length}',
-                              style: const TextStyle(color: Colors.white70),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (controls) ...[
+                _topBar(insets),
+                if (!landscape) _rightBar(insets),
+                if (!landscape) _information(insets),
+                if (_ready) _transport(insets, landscape),
+              ],
+              if ((_visible || _seeking) && unobstructed && _ready)
+                Positioned(
+                  left: insets.left + 12,
+                  right: insets.right + 12,
+                  bottom: insets.bottom + 61,
+                  child: StorySeekBar(
+                    key: const ValueKey('video-seek'),
+                    value: value,
+                    enabled: durationMs > 0,
+                    seeking: _seeking,
+                    onStart: _startSeek,
+                    onChanged: (value) => setState(() => _seekValue = value),
+                    onEnd: (value) => unawaited(_finishSeek(value)),
+                    onCancel: _cancelSeek,
+                  ),
+                ),
+              if (_ready &&
+                  !widget.playing &&
+                  unobstructed &&
+                  _visible &&
+                  !_seeking)
+                Positioned.fromRect(
+                  rect: layout.viewport,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.play_arrow_rounded,
+                            size: 86,
+                            color: Colors.white.withValues(alpha: .2),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '${_time(widget.position)} / ${_time(widget.duration)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
                             ),
                           ),
                         ],
@@ -401,256 +718,373 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     ),
                   ),
                 ),
-                if (widget.enabled)
-                  Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Container(
-                      key: const ValueKey('video-controls'),
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Colors.black87],
-                        ),
-                      ),
-                      child: SafeArea(
-                        top: false,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxHeight: constraints.maxHeight * 0.65,
-                          ),
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(12, 20, 12, 8),
-                            child: Theme(
-                              data: ThemeData.dark(useMaterial3: true),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Slider(
-                                    key: const ValueKey('video-seek'),
-                                    value: value.clamp(0.0, 1.0),
-                                    onChangeStart: durationMs > 0
-                                        ? _startSeek
-                                        : null,
-                                    onChanged: durationMs > 0
-                                        ? (value) =>
-                                              setState(() => _seekValue = value)
-                                        : null,
-                                    onChangeEnd: durationMs > 0
-                                        ? _finishSeek
-                                        : null,
-                                  ),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          _time(
-                                            Duration(
-                                              milliseconds: (durationMs * value)
-                                                  .round(),
-                                            ),
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: Text(
-                                          _time(widget.duration),
-                                          textAlign: TextAlign.end,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  Wrap(
-                                    alignment: WrapAlignment.center,
-                                    spacing: 8,
-                                    children: [
-                                      IconButton(
-                                        tooltip: '上一集',
-                                        onPressed: widget.currentIndex > 0
-                                            ? () => widget.onSelectEpisode(
-                                                widget.currentIndex - 1,
-                                              )
-                                            : null,
-                                        icon: const Icon(Icons.skip_previous),
-                                      ),
-                                      IconButton(
-                                        tooltip: '快退10秒',
-                                        onPressed: durationMs > 0
-                                            ? () => _seekBy(-10)
-                                            : null,
-                                        icon: const Icon(Icons.replay_10),
-                                      ),
-                                      IconButton(
-                                        tooltip: widget.playing ? '暂停' : '播放',
-                                        onPressed: _togglePlayback,
-                                        iconSize: 40,
-                                        icon: Icon(
-                                          widget.playing
-                                              ? Icons.pause_circle
-                                              : Icons.play_circle,
-                                        ),
-                                      ),
-                                      IconButton(
-                                        tooltip: '快进10秒',
-                                        onPressed: durationMs > 0
-                                            ? () => _seekBy(10)
-                                            : null,
-                                        icon: const Icon(Icons.forward_10),
-                                      ),
-                                      IconButton(
-                                        tooltip: '下一集',
-                                        onPressed:
-                                            widget.currentIndex <
-                                                widget.episodes.length - 1
-                                            ? () => widget.onSelectEpisode(
-                                                widget.currentIndex + 1,
-                                              )
-                                            : null,
-                                        icon: const Icon(Icons.skip_next),
-                                      ),
-                                    ],
-                                  ),
-                                  Wrap(
-                                    alignment: WrapAlignment.center,
-                                    spacing: 12,
-                                    children: [
-                                      TextButton(
-                                        onPressed: _showRates,
-                                        child: Text('倍速 ${_rateLabel(_rate)}×'),
-                                      ),
-                                      TextButton.icon(
-                                        onPressed: _showEpisodes,
-                                        icon: const Icon(Icons.playlist_play),
-                                        label: const Text('选集'),
-                                      ),
-                                      IconButton(
-                                        tooltip: _fullScreen ? '退出全屏' : '全屏',
-                                        onPressed: _toggleFullScreen,
-                                        icon: Icon(
-                                          _fullScreen
-                                              ? Icons.fullscreen_exit
-                                              : Icons.fullscreen,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
+              if (_seeking)
+                Center(
+                  child: IgnorePointer(
+                    child: Text(
+                      '${_time(Duration(milliseconds: (durationMs * value).round()))} / ${_time(widget.duration)}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        shadows: [Shadow(blurRadius: 8)],
                       ),
                     ),
                   ),
-              ],
-              if (_boosting)
-                const Align(
-                  alignment: Alignment.center,
-                  child: IgnorePointer(child: Chip(label: Text('2× 加速中'))),
                 ),
+              if (_boosting)
+                Positioned(
+                  top: insets.top + 56,
+                  left: 0,
+                  right: 0,
+                  child: const Center(
+                    child: IgnorePointer(child: Chip(label: Text('2× 加速中'))),
+                  ),
+                ),
+              if (_panelOpen) ...[
+                Positioned.fill(
+                  child: GestureDetector(
+                    key: const ValueKey('story-panel-scrim'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => unawaited(_animatePanel(0)),
+                  ),
+                ),
+                Positioned(
+                  top: insets.top,
+                  left: insets.left,
+                  right: insets.right,
+                  bottom: 0,
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: _onPanelScroll,
+                    child: DraggableScrollableSheet(
+                      controller: _panel,
+                      initialChildSize: 0,
+                      minChildSize: 0,
+                      maxChildSize: _panelMaxFraction,
+                      snap: true,
+                      snapSizes: _panelSnapSizes,
+                      shouldCloseOnMinExtent: false,
+                      builder: (context, scroll) => StoryPlayerPanel(
+                        scrollController: scroll,
+                        episodes: widget.episodes,
+                        currentIndex: widget.currentIndex,
+                        playingIndex:
+                            widget.playingIndex ??
+                            (_ready ? widget.currentIndex : null),
+                        title: _seriesTitle,
+                        description: widget.description,
+                        descriptionLoading: widget.descriptionLoading,
+                        descriptionError: widget.descriptionError,
+                        onRetryDescription: widget.onRetryDescription,
+                        initialTab: _panelTab,
+                        expanded: _panelFraction > .9,
+                        playing: widget.playing,
+                        onTabChanged: (tab) => _panelTab = tab,
+                        onSelectEpisode: (index) {
+                          unawaited(_animatePanel(0));
+                          unawaited(_selectEpisode(index));
+                        },
+                        onDragStart: _startPanelDrag,
+                        onDragUpdate: (details) =>
+                            _dragPanel(details, layout.availableHeight),
+                        onDragEnd: _endPanelDrag,
+                        onDragCancel: () => _endPanelDrag(DragEndDetails()),
+                        onExpand: () => unawaited(
+                          _animatePanel(
+                            _panelFraction > .9 ? _panelRestFraction : 1,
+                          ),
+                        ),
+                        onClose: () => unawaited(_animatePanel(0)),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    ),
+  );
+
+  Widget _topBar(EdgeInsets insets) => Positioned(
+    left: insets.left,
+    right: insets.right,
+    top: 0,
+    child: Container(
+      padding: EdgeInsets.only(top: insets.top),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.black54, Colors.transparent],
+        ),
+      ),
+      child: SizedBox(
+        height: 44,
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: '返回',
+              onPressed: _back,
+              icon: const Icon(
+                Icons.arrow_back_ios_new,
+                color: Colors.white,
+                size: 22,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                _seriesTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: '播放设置',
+              onPressed: _showRates,
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _rightBar(EdgeInsets insets) {
+    final scale = MediaQuery.textScalerOf(context);
+    final width = math.min(84.0, math.max(56.0, scale.scale(28) + 24));
+    final height = math.max(58.0, scale.scale(21) + scale.scale(12) + 20);
+    Widget action(
+      String label,
+      String tooltip,
+      Widget icon,
+      VoidCallback onTap,
+    ) => SizedBox(
+      width: width,
+      height: height,
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              icon,
+              const SizedBox(height: 4),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  height: 1.2,
+                  shadows: [Shadow(color: Colors.black, blurRadius: 5)],
+                ),
+              ),
             ],
           ),
         ),
       ),
     );
+    return Positioned(
+      right: insets.right + 4,
+      bottom: insets.bottom + 163,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          action(
+            '选集',
+            '选集',
+            const Icon(
+              Icons.playlist_play_rounded,
+              color: Colors.white,
+              size: 30,
+            ),
+            () => _openPanel(1),
+          ),
+          const SizedBox(height: 10),
+          action(
+            '倍速',
+            '倍速 ${_rateLabel(_rate)}×',
+            Text(
+              '${_rateLabel(_rate)}×',
+              maxLines: 1,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 21,
+                height: 1.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            _showRates,
+          ),
+          const SizedBox(height: 10),
+          action(
+            '清屏',
+            '清屏',
+            const Icon(Icons.crop_free_rounded, color: Colors.white, size: 27),
+            _toggleControls,
+          ),
+        ],
+      ),
+    );
   }
+
+  Widget _information(EdgeInsets insets) => Positioned(
+    left: insets.left,
+    right: insets.right,
+    bottom: insets.bottom + 91,
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.transparent, Colors.black54],
+        ),
+      ),
+      child: InkWell(
+        key: const ValueKey('story-description-entry'),
+        onTap: () => _openPanel(0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.episodes.isEmpty
+                        ? '暂无剧集'
+                        : '第 ${widget.currentIndex + 1} 集 · 共 ${widget.episodes.length} 集',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _episodeTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              '简介',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const Icon(
+              Icons.keyboard_arrow_down,
+              color: Colors.white70,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _transport(EdgeInsets insets, bool landscape) => Positioned(
+    left: insets.left + 8,
+    right: insets.right + 8,
+    bottom: insets.bottom,
+    child: SizedBox(
+      key: const ValueKey('video-controls'),
+      height: 61,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _transportButton(
+            '上一集',
+            Icons.skip_previous_rounded,
+            widget.currentIndex > 0
+                ? () => _selectEpisode(widget.currentIndex - 1)
+                : null,
+          ),
+          _transportButton(
+            '快退10秒',
+            Icons.replay_10,
+            widget.duration > Duration.zero ? () => _seekBy(-10) : null,
+          ),
+          _transportButton(
+            widget.playing ? '暂停' : '播放',
+            widget.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            _togglePlayback,
+          ),
+          _transportButton(
+            '快进10秒',
+            Icons.forward_10,
+            widget.duration > Duration.zero ? () => _seekBy(10) : null,
+          ),
+          _transportButton(
+            '下一集',
+            Icons.skip_next_rounded,
+            widget.currentIndex < widget.episodes.length - 1
+                ? () => _selectEpisode(widget.currentIndex + 1)
+                : null,
+          ),
+          if (landscape) ...[
+            TextButton(
+              onPressed: _showRates,
+              child: Text(
+                '${_rateLabel(_rate)}×',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+            TextButton(
+              onPressed: () => _openPanel(1),
+              child: const Text('选集', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+          _transportButton(
+            _fullScreen ? '退出全屏' : '全屏',
+            _fullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+            _toggleFullScreen,
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _transportButton(
+    String tooltip,
+    IconData icon,
+    VoidCallback? onPressed,
+  ) => SizedBox(
+    width: 40,
+    height: 48,
+    child: IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      padding: EdgeInsets.zero,
+      color: Colors.white,
+      disabledColor: Colors.white24,
+      icon: Icon(icon, size: 25),
+    ),
+  );
 }
 
 String _rateLabel(double rate) =>
     rate == rate.roundToDouble() ? rate.toInt().toString() : rate.toString();
 
 String _time(Duration value) {
-  final seconds = value.inSeconds;
+  final seconds = math.max(0, value.inSeconds);
   final minutes = (seconds ~/ 60).toString().padLeft(2, '0');
   final rest = (seconds % 60).toString().padLeft(2, '0');
   return '$minutes:$rest';
-}
-
-class _EpisodeSheet extends StatefulWidget {
-  final List<Chapter> episodes;
-  final int currentIndex;
-
-  const _EpisodeSheet({required this.episodes, required this.currentIndex});
-
-  @override
-  State<_EpisodeSheet> createState() => _EpisodeSheetState();
-}
-
-class _EpisodeSheetState extends State<_EpisodeSheet> {
-  late final ScrollController _scroll = ScrollController(
-    initialScrollOffset: (widget.currentIndex * 64.0 - 100).clamp(
-      0,
-      double.infinity,
-    ),
-  );
-  String _query = '';
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final indexes = [
-      for (var i = 0; i < widget.episodes.length; i++)
-        if (_query.isEmpty ||
-            '${i + 1}'.contains(_query) ||
-            widget.episodes[i].title.toLowerCase().contains(
-              _query.toLowerCase(),
-            ))
-          i,
-    ];
-    return Column(
-      children: [
-        Text(
-          '选集 · ${widget.episodes.length} 集',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: TextField(
-            decoration: const InputDecoration(
-              hintText: '搜索集数或标题',
-              prefixIcon: Icon(Icons.search),
-            ),
-            onChanged: (value) {
-              setState(() => _query = value.trim());
-              if (_scroll.hasClients) _scroll.jumpTo(0);
-            },
-          ),
-        ),
-        Expanded(
-          child: indexes.isEmpty
-              ? const Center(child: Text('没有匹配的剧集'))
-              : ListView.builder(
-                  controller: _scroll,
-                  itemExtent: 64,
-                  itemCount: indexes.length,
-                  itemBuilder: (context, position) {
-                    final index = indexes[position];
-                    return ListTile(
-                      selected: index == widget.currentIndex,
-                      leading: Text('${index + 1}'),
-                      title: Text(
-                        widget.episodes[index].title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: index == widget.currentIndex
-                          ? const Icon(Icons.play_arrow)
-                          : null,
-                      onTap: () => Navigator.pop(context, index),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
 }

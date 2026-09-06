@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
+import '../models/media_description.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/library_store.dart';
@@ -189,7 +190,7 @@ class _DetailPageState extends State<DetailPage> {
   );
 
   Widget _buildContent() {
-    final desc = _description(_detail);
+    final desc = extractMediaDescription(_detail);
     final countLabel = _isVideo ? '集' : '章';
     final gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: 4,
@@ -414,6 +415,9 @@ class _DetailPageState extends State<DetailPage> {
             title: widget.item.title,
             cover: widget.item.cover,
             eps: _allChapters,
+            description: _detail == null
+                ? null
+                : extractMediaDescription(_detail),
             startIndex: index < 0 ? 0 : index,
           ),
         ),
@@ -433,22 +437,4 @@ class _DetailPageState extends State<DetailPage> {
       );
     }
   }
-}
-
-String _description(Map<String, dynamic>? payload) {
-  if (payload == null) return '';
-  dynamic data = payload['data'];
-  if (data is Map && data['data'] is Map) data = data['data'];
-  if (data is! Map) return '';
-  for (final key in [
-    'abstract',
-    'description',
-    'desc',
-    'book_desc',
-    'introduction',
-  ]) {
-    final value = data[key];
-    if (value is String && value.trim().isNotEmpty) return value.trim();
-  }
-  return '';
 }

@@ -20,12 +20,14 @@ void main() {
     await tester.pumpWidget(_app(player));
     await tester.pumpAndSettle();
     expect(player.rate, 1.5);
-    final slider = tester.widget<Slider>(
-      find.byKey(const ValueKey('video-seek')),
+    final track = tester.getRect(find.byKey(const ValueKey('video-seek')));
+    await tester.tapAt(Offset(track.left + track.width * .8, track.center.dy));
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(player.calls.where((call) => call.startsWith('seek:')), isEmpty);
+    await tester.dragFrom(
+      Offset(track.left + track.width * .1, track.center.dy),
+      Offset(track.width / 3, 0),
     );
-    slider.onChangeStart!(0.5);
-    slider.onChanged!(0.5);
-    slider.onChangeEnd!(0.5);
     await tester.pumpAndSettle();
     expect(player.calls, contains('seek:60'));
     expect(player.calls, isNot(contains('play')));
@@ -38,7 +40,7 @@ void main() {
     await tester.tap(find.byTooltip('快进10秒'));
     await tester.pumpAndSettle();
     expect(player.calls.last, 'seek:120');
-    await tester.tap(find.text('倍速 1.5×'));
+    await tester.tap(find.byTooltip('倍速 1.5×'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, '2×'));
     await tester.pumpAndSettle();
@@ -71,7 +73,7 @@ void main() {
       expect(player.rate, 1.5);
       await tester.tap(find.text('选集'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('第二集'));
+      await tester.tap(find.byKey(const ValueKey('story-episode-1')));
       await tester.pumpAndSettle();
       expect(selected, [1]);
       await tester.pumpWidget(const SizedBox.shrink());

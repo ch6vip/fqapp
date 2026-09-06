@@ -116,6 +116,7 @@ class NativePlayer {
   final _completedCtrl = StreamController<bool>.broadcast();
   final _bufferingCtrl = StreamController<bool>.broadcast();
   final _firstFrameCtrl = StreamController<bool>.broadcast();
+  final _videoSizeCtrl = StreamController<Size>.broadcast();
   final _errorCtrl = StreamController<Object>.broadcast();
 
   Stream<Duration> get positionStream => _positionCtrl.stream;
@@ -124,6 +125,7 @@ class NativePlayer {
   Stream<bool> get completedStream => _completedCtrl.stream;
   Stream<bool> get bufferingStream => _bufferingCtrl.stream;
   Stream<bool> get firstFrameStream => _firstFrameCtrl.stream;
+  Stream<Size> get videoSizeStream => _videoSizeCtrl.stream;
   Stream<Object> get errorStream => _errorCtrl.stream;
 
   final _createdCompleter = Completer<int>();
@@ -229,6 +231,7 @@ class NativePlayer {
       _completedCtrl.close(),
       _bufferingCtrl.close(),
       _firstFrameCtrl.close(),
+      _videoSizeCtrl.close(),
       _errorCtrl.close(),
     ]);
   }
@@ -303,6 +306,7 @@ class NativePlayer {
         if (width is num && height is num) {
           _videoWidth = width.toInt();
           _videoHeight = height.toInt();
+          _videoSizeCtrl.add(Size(width.toDouble(), height.toDouble()));
         }
     }
   }

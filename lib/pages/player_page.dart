@@ -4,9 +4,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../models/media_description.dart';
 import '../services/api_client.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
+import '../services/player_preferences.dart';
 import '../widgets/video_player_chrome.dart';
 
 class PlayerPage extends StatefulWidget {
@@ -15,6 +17,8 @@ class PlayerPage extends StatefulWidget {
   final String cover;
   final List<Chapter> eps;
   final int startIndex;
+  final String? description;
+  final Future<String> Function()? descriptionLoader;
   final Future<Map<String, dynamic>> Function(Chapter)? contentLoader;
   final NativePlayer Function()? playerFactory;
   final ReaderStore? historyStore;
@@ -26,6 +30,8 @@ class PlayerPage extends StatefulWidget {
     this.cover = '',
     required this.eps,
     required this.startIndex,
+    this.description,
+    this.descriptionLoader,
     this.contentLoader,
     this.playerFactory,
     this.historyStore,
@@ -35,83 +41,115 @@ class PlayerPage extends StatefulWidget {
   State<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _PlayerPageState extends State<PlayerPage> {
+class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late int _index;
+  int? _activeIndex;
   NativePlayer? _player;
-  NativePlayer? _displayPlayer;
   Timer? _progressTimer;
   bool _initVideo = false;
-  bool _advancing = false;
+  bool _paging = false;
   String? _error;
   int _loadGeneration = 0;
   final Stopwatch _watchTime = Stopwatch();
-  bool _changingEpisode = false;
-  ReaderStore get _historyStore => widget.historyStore ?? LibraryStore.instance;
+  final List<StreamSubscription<dynamic>> _subs = [];
+  Future<void> _releases = Future<void>.value();
+  Future<void> _historyWrites = Future<void>.value();
 
+  late String _description;
+  late bool _descriptionLoaded;
+  bool _descriptionLoading = false;
+  String? _descriptionError;
+  int _descriptionGeneration = 0;
+
+  ReaderStore get _historyStore => widget.historyStore ?? LibraryStore.instance;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _playing = false;
 
-  final List<StreamSubscription<dynamic>> _subs = [];
+  bool _current(int generation, [NativePlayer? player]) =>
+      mounted &&
+      generation == _loadGeneration &&
+      (player == null || identical(player, _player));
 
   @override
   void initState() {
     super.initState();
-    unawaited(NativePlayer.setKeepScreenOn(true).catchError((_) {}));
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(NativePlayer.setKeepScreenOn(true).catchError((Object _) {}));
     _index = widget.eps.isEmpty
         ? 0
         : widget.startIndex.clamp(0, widget.eps.length - 1);
+    _description = widget.description ?? '';
+    _descriptionLoaded = widget.description != null;
     if (widget.eps.isEmpty) {
       _error = '暂无可播放剧集';
     } else {
-      _loadVideo();
+      unawaited(_loadVideo());
     }
   }
 
   @override
   void dispose() {
-    unawaited(NativePlayer.setKeepScreenOn(false).catchError((_) {}));
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(NativePlayer.setKeepScreenOn(false).catchError((Object _) {}));
     _progressTimer?.cancel();
     ++_loadGeneration;
+    ++_descriptionGeneration;
     _watchTime.stop();
     unawaited(_persistProgress());
     unawaited(_teardownPlayer());
     super.dispose();
   }
 
-  Future<void> _teardownPlayer() async {
-    final cancellations = <Future<void>>[];
-    for (final s in _subs) {
-      cancellations.add(s.cancel());
-    }
-    _subs.clear();
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) => _syncWatchClock();
+
+  Future<void> _teardownPlayer() {
     final old = _player;
     _player = null;
-    await Future.wait(cancellations);
-    await old?.dispose();
+    _activeIndex = null;
+    final cancellations = [
+      for (final subscription in _subs) subscription.cancel(),
+    ];
+    _subs.clear();
+    final release = () async {
+      await Future.wait(cancellations);
+      if (old != null) {
+        try {
+          if (old.isCreated) await old.pause();
+        } finally {
+          await old.dispose();
+        }
+      }
+    }();
+    // Every new session waits for all previously detached players, even if a
+    // later request supersedes the request which initiated their teardown.
+    _releases = Future.wait([
+      _releases,
+      release,
+    ]).then<void>((_) {}).catchError((Object _) {});
+    return _releases;
   }
 
   Future<void> _loadVideo() async {
     if (widget.eps.isEmpty) return;
     final generation = ++_loadGeneration;
-    final episode = widget.eps[_index];
-    if (mounted) {
-      setState(() {
-        _initVideo = true;
-        _error = null;
-      });
-    }
-
+    final index = _index;
+    final episode = widget.eps[index];
     _progressTimer?.cancel();
-    _watchTime
-      ..stop()
-      ..reset();
-    _position = Duration.zero;
-    _duration = Duration.zero;
-    _playing = false;
-    await _teardownPlayer();
-    if (!mounted || generation != _loadGeneration) return;
+    _watchTime.stop();
+    unawaited(_persistProgress());
+    final release = _teardownPlayer();
+    _watchTime.reset();
+    setState(() {
+      _initVideo = true;
+      _error = null;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _playing = false;
+    });
 
+    NativePlayer? candidate;
     try {
       final response =
           await (widget.contentLoader?.call(episode) ??
@@ -120,7 +158,7 @@ class _PlayerPageState extends State<PlayerPage> {
                 tab: '短剧',
                 mode: 'stream',
               ));
-      if (!mounted || generation != _loadGeneration) return;
+      if (!_current(generation)) return;
       final data = response['data'] is Map
           ? Map<String, dynamic>.from(response['data'] as Map)
           : response;
@@ -128,158 +166,130 @@ class _PlayerPageState extends State<PlayerPage> {
           .toString()
           .trim();
       final keyHex = (data['key_hex'] ?? '').toString().trim();
-      if (rawUrl.isEmpty) {
-        // Old backends may not expose the stream route; fall back to the
-        // deep video URL extraction used previously.
-        rawUrl = _extractVideoUrl(response);
-      }
+      if (rawUrl.isEmpty) rawUrl = _extractVideoUrl(response);
       final url = rawUrl.isEmpty ? '' : ApiClient.instance.absoluteUrl(rawUrl);
       if (url.isEmpty) throw ApiException('获取播放地址失败');
-      await _startWith(url, keyHex, generation, episode);
-    } catch (e) {
-      if (!mounted || generation != _loadGeneration) return;
-      setState(() {
-        _error = '$e';
-        _initVideo = false;
-      });
-    }
-  }
 
-  Future<void> _startWith(
-    String url,
-    String keyHex,
-    int generation,
-    Chapter episode,
-  ) async {
-    final player = widget.playerFactory?.call() ?? NativePlayer();
-    try {
+      await release;
+      if (!_current(generation)) return;
+      await _historyWrites;
+      if (!_current(generation)) return;
+      Map<String, dynamic>? saved;
+      try {
+        saved = await _historyStore.historyEntry(widget.bookId);
+      } catch (_) {
+        // Local storage is optional for starting a video.
+      }
+      if (!_current(generation)) return;
+      final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
+      _player = player;
       await player.create(url, keyHex);
-      if (player.lastError case final Object error) throw error;
-      if (!mounted || generation != _loadGeneration) {
+      if (!_current(generation, player)) {
         await player.dispose();
         return;
       }
+      if (player.lastError case final Object error) throw error;
+      _subscribe(player, generation);
+      var rate = 1.0;
+      try {
+        rate = await PlayerPreferences.loadPlaybackRate();
+      } catch (_) {}
+      if (!_current(generation, player)) return;
+      await player.setRate(rate);
+      if (!_current(generation, player)) return;
+
+      final savedIndex = (saved?['episode'] as num?)?.toInt();
+      final savedPosition = (saved?['position'] as num?)?.toDouble() ?? 0;
+      if (savedIndex == index && savedPosition.isFinite && savedPosition > 0) {
+        final requested = (savedPosition * 1000).round();
+        final durationMs = player.duration.inMilliseconds;
+        await player.seek(
+          Duration(
+            milliseconds: durationMs > 0
+                ? requested.clamp(0, durationMs)
+                : requested,
+          ),
+        );
+        if (!_current(generation, player)) return;
+      }
+
       setState(() {
-        _player = player;
-        _displayPlayer = player;
+        _activeIndex = index;
         _position = player.position;
         _duration = player.duration;
         _playing = player.playing;
         _initVideo = false;
       });
-      _subscribe(player, generation);
-    } catch (e) {
-      await player.dispose();
-      if (!mounted || generation != _loadGeneration) return;
-      setState(() {
-        _error = '$e';
-        _initVideo = false;
-      });
-      return;
-    }
-
-    // Restore saved progress for the same episode.
-    final saved = await _historyStore.historyEntry(widget.bookId);
-    if (!mounted || generation != _loadGeneration) {
-      await player.dispose();
-      return;
-    }
-    final savedEpisode = saved?['episode'] is num
-        ? (saved!['episode'] as num).toInt()
-        : -1;
-    if (savedEpisode == _index && saved?['position'] is num) {
-      final savedSeconds = (saved!['position'] as num).toDouble();
-      if (savedSeconds > 0) {
-        await player.seek(
-          Duration(milliseconds: (savedSeconds * 1000).round()),
-        );
-        if (!mounted || generation != _loadGeneration) return;
-        setState(
-          () =>
-              _position = Duration(milliseconds: (savedSeconds * 1000).round()),
-        );
+      final history = _historyEntry(index, player);
+      unawaited(_writeHistory(() => _historyStore.addHistory(history)));
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+        await player.play();
+      }
+      if (!_current(generation, player)) return;
+      _syncWatchClock();
+      _progressTimer = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => unawaited(_persistProgress()),
+      );
+    } catch (error) {
+      if (_current(generation)) {
+        _fail(error, generation);
+      } else {
+        await candidate?.dispose();
       }
     }
-    if (!mounted || generation != _loadGeneration) return;
-    final lifecycle = WidgetsBinding.instance.lifecycleState;
-    if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
-      await player.play();
-    }
-    if (!mounted || generation != _loadGeneration) return;
-    _syncWatchClock();
-    _progressTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(_persistProgress()),
-    );
-    await _historyStore.addHistory({
-      'id': widget.bookId,
-      'kind': 'video',
-      'title': widget.title,
-      'bookId': widget.bookId,
-      'seriesId': widget.bookId,
-      'episodeId': episode.itemId,
-      'episode': _index,
-      'progress': savedEpisode == _index && saved?['progress'] is num
-          ? (saved!['progress'] as num).toDouble()
-          : 0.0,
-      'position': savedEpisode == _index && saved?['position'] is num
-          ? (saved!['position'] as num).toDouble()
-          : 0.0,
-      'duration': _duration.inMilliseconds / 1000,
-      'cover': widget.cover,
-      'time': DateTime.now().millisecondsSinceEpoch,
+  }
+
+  void _fail(Object error, int generation) {
+    if (!_current(generation)) return;
+    ++_loadGeneration;
+    _progressTimer?.cancel();
+    _watchTime.stop();
+    unawaited(_persistProgress());
+    unawaited(_teardownPlayer());
+    setState(() {
+      _error = '$error';
+      _initVideo = false;
+      _playing = false;
     });
   }
 
   void _subscribe(NativePlayer player, int generation) {
-    _subs.add(
+    _subs.addAll([
       player.bufferingStream.listen((_) {
-        if (mounted && generation == _loadGeneration) _syncWatchClock();
+        if (!_current(generation, player)) return;
+        setState(() {});
+        _syncWatchClock();
       }),
-    );
-    _subs.add(
-      player.positionStream.listen((pos) {
-        if (!mounted || generation != _loadGeneration) return;
-        setState(() => _position = pos);
+      player.videoSizeStream.listen((_) {
+        if (_current(generation, player)) setState(() {});
       }),
-    );
-    _subs.add(
-      player.durationStream.listen((dur) {
-        if (!mounted || generation != _loadGeneration) return;
-        setState(() => _duration = dur);
+      player.firstFrameStream.listen((_) {
+        if (_current(generation, player)) setState(() {});
       }),
-    );
-    _subs.add(
+      player.positionStream.listen((position) {
+        if (_current(generation, player)) setState(() => _position = position);
+      }),
+      player.durationStream.listen((duration) {
+        if (_current(generation, player)) setState(() => _duration = duration);
+      }),
       player.playingStream.listen((playing) {
-        if (!mounted || generation != _loadGeneration) return;
+        if (!_current(generation, player)) return;
         setState(() => _playing = playing);
         _syncWatchClock();
       }),
-    );
-    _subs.add(
       player.completedStream.listen((completed) {
-        if (!mounted ||
-            generation != _loadGeneration ||
+        if (!_current(generation, player) ||
             !completed ||
-            _advancing) {
+            _paging ||
+            _activeIndex != _index) {
           return;
         }
-        _advancing = true;
-        unawaited(_next(auto: true).whenComplete(() => _advancing = false));
+        unawaited(_selectEpisode(_index + 1, expectedGeneration: generation));
       }),
-    );
-    _subs.add(
-      player.errorStream.listen((error) {
-        if (!mounted || generation != _loadGeneration) return;
-        _progressTimer?.cancel();
-        _watchTime.stop();
-        setState(() {
-          _error = '$error';
-          _initVideo = false;
-          _playing = false;
-        });
-      }),
-    );
+      player.errorStream.listen((error) => _fail(error, generation)),
+    ]);
   }
 
   void _syncWatchClock() {
@@ -292,172 +302,176 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  Future<void> _persistProgress() async {
-    final player = _player;
-    if (player == null || widget.eps.isEmpty) return;
-    final index = _index;
-    final episodeId = widget.eps[index].itemId;
+  Map<String, dynamic> _historyEntry(int index, NativePlayer player) {
     final durationMs = player.duration.inMilliseconds;
-    final positionMs = player.position.inMilliseconds.clamp(0, durationMs);
-    final progress = durationMs > 0 ? positionMs / durationMs : 0.0;
-    // Actual active time is independent of seeking and playback speed.
+    final positionMs = player.position.inMilliseconds.clamp(
+      0,
+      durationMs > 0 ? durationMs : 0,
+    );
+    return {
+      'id': widget.bookId,
+      'kind': 'video',
+      'title': widget.title,
+      'bookId': widget.bookId,
+      'seriesId': widget.bookId,
+      'episodeId': widget.eps[index].itemId,
+      'chapterId': widget.eps[index].itemId,
+      'episode': index,
+      'progress': durationMs > 0 ? positionMs / durationMs : 0.0,
+      'position': positionMs / 1000,
+      'duration': durationMs / 1000,
+      'maxScroll': durationMs / 1000,
+      'cover': widget.cover,
+      'time': DateTime.now().millisecondsSinceEpoch,
+    };
+  }
+
+  Future<void> _writeHistory(Future<void> Function() write) {
+    _historyWrites = _historyWrites
+        .then((_) => write())
+        .catchError((Object _) {});
+    return _historyWrites;
+  }
+
+  Future<void> _persistProgress() {
+    final player = _player;
+    final index = _activeIndex;
+    if (player == null || index == null) return Future<void>.value();
+    // Capture identity and progress before any await. All writes (including a
+    // new episode's history entry) share this queue to preserve their order.
+    final history = _historyEntry(index, player);
     final seconds =
         _watchTime.elapsedMicroseconds / Duration.microsecondsPerSecond;
     _watchTime.reset();
-    try {
+    return _writeHistory(() async {
       if (seconds > 0) {
         await _historyStore.accumulateReadTime(widget.bookId, 'video', seconds);
       }
-      await _historyStore.updateProgress(
-        widget.bookId,
-        index,
-        progress.clamp(0.0, 1.0),
-        chapterId: episodeId,
-        position: positionMs / 1000,
-        maxScroll: durationMs / 1000,
-      );
-    } catch (_) {
-      // Playback continues if history storage is temporarily unavailable.
-    }
+      await _historyStore.addHistory(history);
+    });
   }
 
-  Future<void> _selectEpisode(int index) async {
-    if (_changingEpisode ||
+  Future<void> _selectEpisode(int index, {int? expectedGeneration}) {
+    if (!mounted ||
         index < 0 ||
         index >= widget.eps.length ||
-        index == _index) {
-      return;
+        index == _index ||
+        (expectedGeneration != null && !_current(expectedGeneration))) {
+      return Future<void>.value();
     }
-    _changingEpisode = true;
-    try {
-      await _persistProgress();
-      if (!mounted) return;
-      setState(() => _index = index);
-      await _loadVideo();
-    } finally {
-      _changingEpisode = false;
-    }
+    setState(() => _index = index);
+    // _loadVideo invalidates prior work synchronously; no network or history
+    // operation may delay recording the user's newest target.
+    return _loadVideo();
   }
 
-  Future<void> _next({bool auto = false}) async {
-    if (_index >= widget.eps.length - 1) return;
-    await _selectEpisode(_index + 1);
+  Future<void> _loadDescription({bool retry = false}) async {
+    if (_descriptionLoading || (_descriptionLoaded && !retry)) return;
+    final generation = ++_descriptionGeneration;
+    setState(() {
+      _descriptionLoading = true;
+      _descriptionError = null;
+    });
+    try {
+      final description =
+          await (widget.descriptionLoader?.call() ??
+              ApiClient.instance
+                  .detail(widget.bookId, tab: '短剧')
+                  .then(extractMediaDescription));
+      if (!mounted || generation != _descriptionGeneration) return;
+      setState(() {
+        _description = description;
+        _descriptionLoaded = true;
+      });
+    } catch (error) {
+      if (!mounted || generation != _descriptionGeneration) return;
+      setState(() {
+        _descriptionError = '$error';
+        _descriptionLoaded = true;
+      });
+    } finally {
+      if (mounted && generation == _descriptionGeneration) {
+        setState(() => _descriptionLoading = false);
+      }
+    }
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (widget.eps.isEmpty) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
-          title: Text(widget.title),
-        ),
-        body: Center(
-          child: Text(
-            _error ?? '暂无剧集',
-            style: const TextStyle(color: Colors.white70),
-          ),
-        ),
-      );
-    }
-
-    final episode = widget.eps[_index];
-    final player = _displayPlayer;
-    if (player != null && _error == null) {
-      return VideoPlayerChrome(
-        player: player,
-        episodes: widget.eps,
-        currentIndex: _index,
-        position: _position,
-        duration: _duration,
-        playing: _playing,
-        enabled: identical(player, _player) && player.isCreated && !_initVideo,
-        onSelectEpisode: _selectEpisode,
-        onError: (error) {
-          _watchTime.stop();
-          _progressTimer?.cancel();
-          setState(() => _error = '$error');
-          unawaited(_teardownPlayer());
-        },
-        child: _videoArea(),
-      );
-    }
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: Text(
-          episode.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        actions: [
-          Center(
-            child: Text(
-              '${_index + 1}/${widget.eps.length}',
-              style: const TextStyle(color: Colors.white70),
-            ),
-          ),
-          const SizedBox(width: 12),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [Expanded(child: Center(child: _videoArea()))],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => VideoPlayerChrome(
+    player: _player,
+    title: widget.title,
+    episodes: widget.eps,
+    currentIndex: _index,
+    playingIndex: _activeIndex,
+    position: _position,
+    duration: _duration,
+    playing: _playing,
+    enabled:
+        _player != null &&
+        _activeIndex != null &&
+        !_initVideo &&
+        _error == null,
+    description: _description,
+    descriptionLoading: _descriptionLoading,
+    descriptionError: _descriptionError,
+    onRequestDescription: () => unawaited(_loadDescription()),
+    onRetryDescription: () => unawaited(_loadDescription(retry: true)),
+    onPagingChanged: (paging) => _paging = paging,
+    onSelectEpisode: _selectEpisode,
+    onError: (error) => _fail(error, _loadGeneration),
+    child: _videoArea(),
+  );
 
   Widget _videoArea() {
-    if (_initVideo) {
-      return const CircularProgressIndicator(color: Colors.white);
-    }
     if (_error != null) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Text(
-              _error!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.red),
-            ),
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white70, size: 32),
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (widget.eps.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                OutlinedButton(onPressed: _loadVideo, child: const Text('重试')),
+              ],
+            ],
           ),
-          const SizedBox(height: 12),
-          OutlinedButton(onPressed: _loadVideo, child: const Text('重试')),
-        ],
+        ),
       );
     }
-    final player = _player;
-    final textureId = player?.textureId;
-    if (player == null || textureId == null) {
-      return const CircularProgressIndicator(color: Colors.white);
-    }
-    final vw = player.videoWidth > 0 ? player.videoWidth.toDouble() : 9.0;
-    final vh = player.videoHeight > 0 ? player.videoHeight.toDouble() : 16.0;
-    final aspectRatio = vw / vh;
-    final video = Texture(textureId: textureId);
-
-    Widget display;
-    if (aspectRatio > 1.0) {
-      display = Center(
-        child: AspectRatio(aspectRatio: aspectRatio, child: video),
-      );
-    } else {
-      // Vertical short-drama: fill the screen, crop top/bottom edges.
-      display = FittedBox(
-        fit: BoxFit.cover,
-        alignment: const Alignment(0, 0.45),
-        child: SizedBox(width: vw, height: vh, child: video),
+    final texture = _player?.textureId;
+    if (_initVideo || texture == null) {
+      return Center(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 16),
+              Text(
+                '正在加载第 ${_index + 1} 集',
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
+          ),
+        ),
       );
     }
-
-    return display;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Texture(textureId: texture),
+        if (_player!.buffering)
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+      ],
+    );
   }
 }
 

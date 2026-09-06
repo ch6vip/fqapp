@@ -74,6 +74,11 @@ class MemoryChapterCache implements ChapterCache {
 }
 
 class FakeNativePlayer extends NativePlayer {
+  int width;
+  int height;
+
+  FakeNativePlayer({this.width = 1920, this.height = 1080});
+
   final calls = <String>[];
   Duration currentPosition = const Duration(seconds: 20);
   Duration totalDuration = const Duration(minutes: 2);
@@ -105,9 +110,9 @@ class FakeNativePlayer extends NativePlayer {
   @override
   bool get firstFrameRendered => true;
   @override
-  int get videoWidth => 1920;
+  int get videoWidth => width;
   @override
-  int get videoHeight => 1080;
+  int get videoHeight => height;
   @override
   Stream<Duration> get positionStream => positions.stream;
   @override
