@@ -13,6 +13,8 @@ class ControlledNativePlayer extends FakeNativePlayer {
   bool _created = false;
   bool _completed = false;
   Future<void>? _release;
+  bool hasFirstFrame;
+  final firstFrames = StreamController<bool>.broadcast();
 
   ControlledNativePlayer({
     this.createGate,
@@ -20,6 +22,7 @@ class ControlledNativePlayer extends FakeNativePlayer {
     this.seekGate,
     this.rateGate,
     this.playGate,
+    this.hasFirstFrame = true,
   }) {
     currentPosition = Duration.zero;
   }
@@ -32,6 +35,24 @@ class ControlledNativePlayer extends FakeNativePlayer {
 
   @override
   bool get completed => _completed;
+
+  @override
+  bool get firstFrameRendered => hasFirstFrame;
+
+  @override
+  Stream<bool> get firstFrameStream => firstFrames.stream;
+
+  void emitFirstFrame() {
+    if (disposed) return;
+    hasFirstFrame = true;
+    firstFrames.add(true);
+  }
+
+  void emitBuffering(bool buffering) {
+    if (disposed) return;
+    isBuffering = buffering;
+    bufferingEvents.add(buffering);
+  }
 
   @override
   Future<int> create(String cdnUrl, String keyHex) async {
@@ -94,7 +115,7 @@ class ControlledNativePlayer extends FakeNativePlayer {
 
   Future<void> _dispose() async {
     calls.add('dispose');
-    final closed = super.dispose();
+    final closed = Future.wait([super.dispose(), firstFrames.close()]);
     await releaseGate?.future;
     await closed;
     calls.add('released');

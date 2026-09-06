@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +9,7 @@ import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/fakes.dart';
+import 'support/controlled_player.dart';
 
 void main() {
   setUp(
@@ -103,6 +106,158 @@ void main() {
       await player.dispose();
     },
   );
+
+  testWidgets('cancelling an accepted long press restores the saved speed', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    try {
+      await tester.pumpWidget(_app(player));
+      await tester.pumpAndSettle();
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const ValueKey('video-surface'))),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(player.rate, 2);
+      await gesture.cancel();
+      await tester.pump();
+      expect(player.rate, 1.5);
+      expect(find.text('2× 加速中'), findsNothing);
+      expect(await PlayerPreferences.loadPlaybackRate(), 1.5);
+      expect(player.isPlaying, true);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    }
+  });
+
+  testWidgets(
+    'backgrounding during long press restores speed before resuming',
+    (tester) async {
+      final player = FakeNativePlayer()..isPlaying = true;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      try {
+        await tester.pumpWidget(_app(player));
+        await tester.pumpAndSettle();
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(const ValueKey('video-surface'))),
+        );
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(player.rate, 2);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        expect(player.rate, 1.5);
+        expect(player.isPlaying, false);
+        await gesture.cancel();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        expect(player.isPlaying, true);
+        expect(player.rate, 1.5);
+        expect(await PlayerPreferences.loadPlaybackRate(), 1.5);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await player.dispose();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      }
+    },
+  );
+
+  testWidgets(
+    'replacing the player during a long press restores both players to the saved rate',
+    (tester) async {
+      final first = FakeNativePlayer()..isPlaying = true;
+      final second = FakeNativePlayer()..isPlaying = true;
+      try {
+        await tester.pumpWidget(_app(first));
+        await tester.pumpAndSettle();
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(const ValueKey('video-surface'))),
+        );
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(first.rate, 2);
+        await tester.pumpWidget(_app(second));
+        await tester.pump();
+        expect(first.rate, 1.5);
+        expect(second.rate, 1.5);
+        await gesture.cancel();
+        await tester.pump();
+        expect(second.rate, 1.5);
+        expect(find.text('2× 加速中'), findsNothing);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await first.dispose();
+        await second.dispose();
+      }
+    },
+  );
+
+  for (final playing in [true, false]) {
+    for (final pendingSeek in [true, false]) {
+      testWidgets(
+        'seek then background preserves pause intent (playing: $playing, awaiting native: $pendingSeek)',
+        (tester) async {
+          final seek = Completer<void>();
+          final player = ControlledNativePlayer(seekGate: seek)
+            ..isPlaying = playing;
+          await player.create('https://example.invalid/1.mp4', '');
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          try {
+            await tester.pumpWidget(_app(player));
+            await tester.pumpAndSettle();
+            final track = tester.getRect(
+              find.byKey(const ValueKey('video-seek')),
+            );
+            final gesture = await tester.startGesture(
+              Offset(track.left + track.width * .2, track.center.dy),
+            );
+            await gesture.moveBy(const Offset(50, 0));
+            await tester.pump();
+            expect(player.isPlaying, false);
+            if (pendingSeek) {
+              await gesture.up();
+              await tester.pump();
+              expect(
+                player.calls.where((call) => call.startsWith('seek:')),
+                hasLength(1),
+              );
+            }
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.paused,
+            );
+            await tester.pump();
+            if (!pendingSeek) await gesture.cancel();
+            seek.complete();
+            await tester.pump();
+            expect(player.isPlaying, false);
+            expect(player.calls.where((call) => call == 'play'), isEmpty);
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.resumed,
+            );
+            await tester.pump();
+            expect(player.isPlaying, playing);
+            expect(
+              player.calls.where((call) => call == 'play'),
+              hasLength(playing ? 1 : 0),
+            );
+            expect(tester.takeException(), isNull);
+          } finally {
+            if (!seek.isCompleted) seek.complete();
+            await tester.pumpWidget(const SizedBox.shrink());
+            await player.dispose();
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.resumed,
+            );
+          }
+        },
+      );
+    }
+  }
 
   testWidgets('controls fit narrow screens with large fonts', (tester) async {
     await tester.binding.setSurfaceSize(const Size(280, 600));

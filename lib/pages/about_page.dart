@@ -49,7 +49,7 @@ class AboutPage extends StatelessWidget {
               _AboutRow(
                 icon: Icons.commit_outlined,
                 title: '当前版本',
-                trailingText: '1.0.0',
+                trailingText: '1.0.1 (2)',
               ),
             ],
           ),
@@ -138,10 +138,7 @@ class _AboutRow extends StatelessWidget {
               style: theme.textTheme.labelMedium?.copyWith(color: outline),
             ),
       trailing: trailingText != null
-          ? Text(
-              trailingText!,
-              style: TextStyle(fontSize: 13, color: outline),
-            )
+          ? Text(trailingText!, style: TextStyle(fontSize: 13, color: outline))
           : url != null
           ? Icon(Icons.arrow_forward, size: 16, color: outline)
           : null,

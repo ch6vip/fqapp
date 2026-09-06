@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../models/media_item.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
+import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_player_panel.dart';
 import 'player/story_seek_bar.dart';
@@ -22,6 +23,7 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool playing;
   final bool enabled;
   final Widget child;
+  final String coverUrl;
   final String description;
   final bool descriptionLoading;
   final String? descriptionError;
@@ -43,6 +45,7 @@ class VideoPlayerChrome extends StatefulWidget {
     required this.playing,
     this.enabled = true,
     required this.child,
+    this.coverUrl = '',
     this.description = '',
     this.descriptionLoading = false,
     this.descriptionError,
@@ -652,13 +655,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                             ),
                           )
                         else
-                          Center(
-                            child: Text(
-                              widget.episodes[index].title,
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 18,
-                              ),
+                          Positioned.fromRect(
+                            rect: layout.viewport,
+                            child: PlayerCover(
+                              url: widget.coverUrl,
+                              label: widget.episodes[index].title,
                             ),
                           ),
                       ],
@@ -674,6 +675,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               ],
               if ((_visible || _seeking) && unobstructed && _ready)
                 Positioned(
+                  // Controls leave this Stack while seeking. Keep the outer
+                  // layer keyed so the active drag recognizer survives that
+                  // sibling change until the finger is released.
+                  key: const ValueKey('video-seek-layer'),
                   left: insets.left + 12,
                   right: insets.right + 12,
                   bottom: insets.bottom + 61,

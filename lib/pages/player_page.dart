@@ -1,15 +1,17 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../models/media_description.dart';
 import '../services/api_client.dart';
+import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
 import '../services/player_history.dart';
+import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
+import '../widgets/player/player_cover.dart';
 import '../widgets/video_player_chrome.dart';
 
 class PlayerPage extends StatefulWidget {
@@ -23,6 +25,7 @@ class PlayerPage extends StatefulWidget {
   final Future<Map<String, dynamic>> Function(Chapter)? contentLoader;
   final NativePlayer Function()? playerFactory;
   final ReaderStore? historyStore;
+  final PlayerLoadDiagnostics? loadDiagnostics;
 
   const PlayerPage({
     super.key,
@@ -36,6 +39,7 @@ class PlayerPage extends StatefulWidget {
     this.contentLoader,
     this.playerFactory,
     this.historyStore,
+    this.loadDiagnostics,
   });
 
   @override
@@ -57,6 +61,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   final Stopwatch _watchTime = Stopwatch();
   final List<StreamSubscription<dynamic>> _subs = [];
   Future<void> _releases = Future<void>.value();
+  late final EpisodeSourceCache _sources;
+  late final PlayerLoadDiagnostics _diagnostics;
+  PlayerLoadTrace? _loadTrace;
+  Timer? _prefetchTimer;
+  int? _prefetchQueuedGeneration;
+  int? _prefetchAttemptedGeneration;
 
   late String _description;
   late bool _descriptionLoaded;
@@ -85,6 +95,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         : widget.startIndex.clamp(0, widget.eps.length - 1);
     _description = widget.description ?? '';
     _descriptionLoaded = widget.description != null;
+    _diagnostics = widget.loadDiagnostics ?? PlayerLoadDiagnostics();
+    _sources = EpisodeSourceCache(
+      loader: (episode) async => EpisodeSource.fromResponse(
+        await (widget.contentLoader?.call(episode) ??
+            ApiClient.instance.content(
+              episode.itemId,
+              tab: '短剧',
+              mode: 'stream',
+            )),
+      ),
+    );
     if (widget.eps.isEmpty) {
       _error = '暂无可播放剧集';
     } else {
@@ -97,6 +118,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(NativePlayer.setKeepScreenOn(false).catchError((Object _) {}));
     _progressTimer?.cancel();
+    _prefetchTimer?.cancel();
+    _sources.dispose();
+    _loadTrace?.finish('disposed');
     ++_loadGeneration;
     ++_descriptionGeneration;
     _pagingSettled?.complete();
@@ -109,12 +133,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _loadTrace?.setAppActive(state == AppLifecycleState.resumed);
     _syncWatchClock();
     if (state == AppLifecycleState.resumed) {
       _resumePendingAutoplay();
     } else {
       unawaited(_persistProgress());
     }
+    _updatePrefetch();
   }
 
   void _onPagingChanged(bool paging) {
@@ -137,6 +163,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _resumePendingAutoplay();
       }
     }
+    _updatePrefetch();
   }
 
   Future<bool> _waitForPaging(int generation, [NativePlayer? player]) async {
@@ -169,12 +196,72 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       return;
     }
     _pendingAutoplay = null;
+    _loadTrace?.playRequested();
     await player.play();
     if (_current(generation, player) && !_appActive) {
       // The lifecycle can change while the platform acknowledges play.
       _pendingAutoplay = player;
       await player.pause();
     }
+  }
+
+  bool _canPrefetch(int generation, NativePlayer player) =>
+      _current(generation, player) &&
+      _appActive &&
+      !_paging &&
+      !_initVideo &&
+      _error == null &&
+      _activeIndex == _index &&
+      player.firstFrameRendered &&
+      player.playing &&
+      !player.buffering &&
+      _index + 1 < widget.eps.length;
+
+  void _updatePrefetch() {
+    final generation = _loadGeneration;
+    final player = _player;
+    if (player == null || !_canPrefetch(generation, player)) {
+      _prefetchTimer?.cancel();
+      _prefetchTimer = null;
+      return;
+    }
+    if (_prefetchTimer != null ||
+        _prefetchQueuedGeneration == generation ||
+        _prefetchAttemptedGeneration == generation) {
+      return;
+    }
+    final next = widget.eps[_index + 1];
+    _prefetchTimer = Timer(const Duration(milliseconds: 750), () {
+      _prefetchTimer = null;
+      if (!_canPrefetch(generation, player)) return;
+      _prefetchQueuedGeneration = generation;
+      unawaited(
+        _sources
+            .prefetch(
+              next,
+              stillWanted: () {
+                if (!_canPrefetch(generation, player)) return false;
+                _prefetchAttemptedGeneration = generation;
+                return true;
+              },
+            )
+            .whenComplete(() {
+              if (_prefetchQueuedGeneration == generation) {
+                _prefetchQueuedGeneration = null;
+              }
+              if (_current(generation, player)) _updatePrefetch();
+            }),
+      );
+    });
+  }
+
+  void _onFirstFrame(NativePlayer player, int generation) {
+    if (!_current(generation, player) || !player.firstFrameRendered) return;
+    _loadTrace?.firstFrame();
+    if (!_initVideo && _activeIndex == _index) {
+      _loadTrace?.finish('firstFrame');
+    }
+    _updatePrefetch();
   }
 
   Future<void> _teardownPlayer() {
@@ -206,11 +293,28 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     return _releases;
   }
 
-  Future<void> _loadVideo() async {
+  Future<void> _loadVideo({bool refresh = false}) async {
     if (widget.eps.isEmpty) return;
+    _loadTrace?.finish('superseded');
     final generation = ++_loadGeneration;
     final index = _index;
     final episode = widget.eps[index];
+    final trace = _loadTrace = _diagnostics.begin(
+      attempt: generation,
+      episode: index + 1,
+      trigger: refresh
+          ? 'retry'
+          : generation == 1
+          ? 'initial'
+          : 'switch',
+      appActive: _appActive,
+    );
+    _prefetchTimer?.cancel();
+    _prefetchTimer = null;
+    _sources.retainOnly({
+      episode.itemId,
+      if (index + 1 < widget.eps.length) widget.eps[index + 1].itemId,
+    });
     _progressTimer?.cancel();
     _watchTime.stop();
     unawaited(_persistProgress());
@@ -226,43 +330,36 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
     NativePlayer? candidate;
     try {
-      final response =
-          await (widget.contentLoader?.call(episode) ??
-              ApiClient.instance.content(
-                episode.itemId,
-                tab: '短剧',
-                mode: 'stream',
-              ));
+      final request = _sources.request(episode, refresh: refresh);
+      trace.source = request.origin.name;
+      final source = await request.future;
       if (!_current(generation)) return;
-      final data = response['data'] is Map
-          ? Map<String, dynamic>.from(response['data'] as Map)
-          : response;
-      var rawUrl = (data['video_url'] ?? data['main_url'] ?? '')
-          .toString()
-          .trim();
-      final keyHex = (data['key_hex'] ?? '').toString().trim();
-      if (rawUrl.isEmpty) rawUrl = _extractVideoUrl(response);
-      final url = rawUrl.isEmpty ? '' : ApiClient.instance.absoluteUrl(rawUrl);
-      if (url.isEmpty) throw ApiException('获取播放地址失败');
-
+      trace.stage('releaseWait');
       await release;
       if (!_current(generation)) return;
+      trace.stage('history');
       Map<String, dynamic>? saved;
       try {
         saved = await _history.load(widget.bookId);
       } catch (_) {
         // Local storage is optional for starting a video.
       }
+      trace.stage('pagingBeforeCreate');
       if (!await _waitForPaging(generation)) return;
+      trace.stage('create');
       final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
       _player = player;
-      await player.create(url, keyHex);
+      await player.create(source.url, source.keyHex);
       if (!_current(generation, player)) {
         await player.dispose();
         return;
       }
       if (player.lastError case final Object error) throw error;
+      trace.stage('initialize');
       _subscribe(player, generation);
+      _onFirstFrame(player, generation);
+      // Keep the texture mounted beneath the cover while rate/seek initialize.
+      setState(() {});
       var rate = 1.0;
       try {
         rate = await PlayerPreferences.loadPlaybackRate();
@@ -293,6 +390,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (!_current(generation, player)) return;
       }
 
+      trace.stage('pagingBeforePlay');
       if (!await _waitForPaging(generation, player)) return;
       setState(() {
         _activeIndex = index;
@@ -301,11 +399,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _playing = player.playing;
         _initVideo = false;
       });
+      trace.stage('autoplayWait');
       final history = _historyEntry(index, player);
       unawaited(_history.save(history));
       _pendingAutoplay = player;
       await _tryAutoplay(generation);
       if (!_current(generation, player)) return;
+      _onFirstFrame(player, generation);
+      _updatePrefetch();
       _syncWatchClock();
       _progressTimer = Timer.periodic(
         const Duration(seconds: 2),
@@ -322,6 +423,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _fail(Object error, int generation) {
     if (!_current(generation)) return;
+    _loadTrace?.finish('error');
+    _sources.invalidate(widget.eps[_index].itemId);
+    _prefetchTimer?.cancel();
+    _prefetchTimer = null;
     ++_loadGeneration;
     _progressTimer?.cancel();
     _watchTime.stop();
@@ -340,12 +445,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (!_current(generation, player)) return;
         setState(() {});
         _syncWatchClock();
+        _updatePrefetch();
       }),
       player.videoSizeStream.listen((_) {
         if (_current(generation, player)) setState(() {});
       }),
       player.firstFrameStream.listen((_) {
-        if (_current(generation, player)) setState(() {});
+        if (!_current(generation, player)) return;
+        _onFirstFrame(player, generation);
+        setState(() {});
       }),
       player.positionStream.listen((position) {
         if (_current(generation, player)) setState(() => _position = position);
@@ -357,6 +465,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (!_current(generation, player)) return;
         setState(() => _playing = playing);
         _syncWatchClock();
+        _updatePrefetch();
       }),
       player.completedStream.listen((completed) {
         if (!_current(generation, player) || _activeIndex != _index) {
@@ -482,6 +591,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     position: _position,
     duration: _duration,
     playing: _playing,
+    coverUrl: ApiClient.instance.absoluteUrl(widget.cover),
     enabled:
         _player != null &&
         _activeIndex != null &&
@@ -499,52 +609,51 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   );
 
   Widget _videoArea() {
-    if (_error != null) {
-      return Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.error_outline, color: Colors.white70, size: 32),
-              const SizedBox(height: 12),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white70),
-              ),
-              if (widget.eps.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                OutlinedButton(onPressed: _loadVideo, child: const Text('重试')),
-              ],
-            ],
-          ),
-        ),
-      );
-    }
     final texture = _player?.textureId;
-    if (_initVideo || texture == null) {
-      return Center(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(color: Colors.white),
-              const SizedBox(height: 16),
-              Text(
-                '正在加载第 ${_index + 1} 集',
-                style: const TextStyle(color: Colors.white70),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+    final waiting =
+        _initVideo || texture == null || !_player!.firstFrameRendered;
     return Stack(
       fit: StackFit.expand,
       children: [
-        Texture(textureId: texture),
-        if (_player!.buffering)
+        if (texture != null)
+          Texture(key: const ValueKey('player-texture'), textureId: texture),
+        if (waiting || _error != null)
+          PlayerCover(
+            key: const ValueKey('player-cover'),
+            url: ApiClient.instance.absoluteUrl(widget.cover),
+            loading: _error == null,
+            label: _error == null ? '正在加载第 ${_index + 1} 集' : null,
+          ),
+        if (_error != null)
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: Colors.white70,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _error!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  if (widget.eps.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: () => unawaited(_loadVideo(refresh: true)),
+                      child: const Text('重试'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        if (!waiting && _error == null && _player!.buffering)
           const Center(child: CircularProgressIndicator(color: Colors.white)),
       ],
     );
@@ -562,58 +671,4 @@ double countablePlaybackDelta({
   if (!playing) return 0;
   final delta = currentSeconds - previousSeconds;
   return delta > 0.5 && delta <= 10 ? delta : 0;
-}
-
-// Deep video URL extraction fallback for old backends that do not expose
-// the stream route (key_hex empty → plain playback).
-String _extractVideoUrl(Map<String, dynamic> payload) {
-  String visit(dynamic value, [int depth = 0]) {
-    if (depth > 7 || value == null) return '';
-    if (value is String) {
-      final trimmed = value.trim();
-      if (trimmed.startsWith('http://') ||
-          trimmed.startsWith('https://') ||
-          trimmed.startsWith('/src/')) {
-        return trimmed;
-      }
-      if (trimmed.startsWith('{')) {
-        try {
-          return visit(jsonDecode(trimmed), depth + 1);
-        } catch (_) {
-          return '';
-        }
-      }
-      return '';
-    }
-    if (value is List) {
-      for (final item in value.reversed) {
-        final found = visit(item, depth + 1);
-        if (found.isNotEmpty) return found;
-      }
-      return '';
-    }
-    if (value is Map) {
-      for (final key in ['video_url', 'play_url', 'main_url', 'url']) {
-        final found = visit(value[key], depth + 1);
-        if (found.isNotEmpty) return found;
-      }
-      for (final key in [
-        'data',
-        'video_info',
-        'video_list',
-        'play_info_list',
-        'video_model',
-      ]) {
-        final found = visit(value[key], depth + 1);
-        if (found.isNotEmpty) return found;
-      }
-      for (final nested in value.values) {
-        final found = visit(nested, depth + 1);
-        if (found.isNotEmpty) return found;
-      }
-    }
-    return '';
-  }
-
-  return visit(payload);
 }
