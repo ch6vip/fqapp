@@ -18,7 +18,6 @@ class VideoPlayerChrome extends StatefulWidget {
   final List<Chapter> episodes;
   final int currentIndex;
   final int? playingIndex;
-  final Duration position;
   final Duration duration;
   final bool playing;
   final bool enabled;
@@ -40,7 +39,6 @@ class VideoPlayerChrome extends StatefulWidget {
     required this.episodes,
     required this.currentIndex,
     this.playingIndex,
-    required this.position,
     required this.duration,
     required this.playing,
     this.enabled = true,
@@ -64,6 +62,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     with WidgetsBindingObserver {
   late final PageController _pages;
   final _panel = DraggableScrollableController();
+  final _panelExtent = ValueNotifier<double>(0);
+  final _panelExpanded = ValueNotifier<bool>(false);
+  final _position = ValueNotifier<Duration>(Duration.zero);
+  final _seekValue = ValueNotifier<double?>(null);
+  late final _timeline = Listenable.merge([_position, _seekValue]);
+  StreamSubscription<Duration>? _positionSubscription;
   Timer? _hideTimer;
   bool _visible = true;
   bool _seeking = false;
@@ -81,7 +85,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   int _panelTab = 1;
   int _panelAnimation = 0;
   int _interaction = 0;
-  double _panelFraction = 0;
   double _panelRestFraction = .55;
   double _panelMaxFraction = .55;
   List<double> _panelSnapSizes = const [.55];
@@ -89,7 +92,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   int _rateGeneration = 0;
   Future<void> _systemUiUpdates = Future<void>.value();
   bool _systemUiTouched = false;
-  double? _seekValue;
+
+  double get _panelFraction => _panelExtent.value;
+  double get _progressValue {
+    final durationMs = math.max(0, widget.duration.inMilliseconds);
+    return _seekValue.value ??
+        (durationMs > 0
+            ? _position.value.inMilliseconds.clamp(0, durationMs) / durationMs
+            : 0.0);
+  }
 
   bool get _ready => widget.enabled && (widget.player?.isCreated ?? false);
   Size get _videoSize => Size(
@@ -107,6 +118,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     super.initState();
     _pages = PageController(initialPage: widget.currentIndex);
     _panel.addListener(_panelChanged);
+    _listenToPosition();
     WidgetsBinding.instance.addObserver(this);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
@@ -118,6 +130,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   @override
   void didUpdateWidget(VideoPlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.player != widget.player) _listenToPosition();
     if (oldWidget.player != widget.player ||
         oldWidget.enabled && !widget.enabled) {
       if (_boosting && oldWidget.player != null) {
@@ -125,7 +138,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       }
       ++_interaction;
       _seeking = false;
-      _seekValue = null;
+      _seekValue.value = null;
       _resumeAfterSeek = false;
       _resumeOnForeground = false;
       _boosting = false;
@@ -156,6 +169,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _hideTimer?.cancel();
     _pages.dispose();
     _panel.dispose();
+    _panelExtent.dispose();
+    _panelExpanded.dispose();
+    unawaited(_positionSubscription?.cancel());
+    _position.dispose();
+    _seekValue.dispose();
     if (_boosting && widget.player != null) {
       unawaited(widget.player!.setRate(_rate).catchError((Object _) {}));
     }
@@ -163,6 +181,19 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       unawaited(_systemUiUpdates.then((_) => _restoreSystemUi()));
     }
     super.dispose();
+  }
+
+  void _listenToPosition() {
+    unawaited(_positionSubscription?.cancel());
+    final player = widget.player;
+    _position.value = player?.position ?? Duration.zero;
+    // The native 200ms ticks belong to the timeline only. In particular, they
+    // must not rebuild the episode pager, description or the video texture.
+    _positionSubscription = player?.positionStream.listen((position) {
+      if (mounted && identical(widget.player, player)) {
+        _position.value = position;
+      }
+    });
   }
 
   Future<void> _loadRate() async {
@@ -249,7 +280,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _resumeAfterSeek = widget.playing;
     setState(() {
       _seeking = true;
-      _seekValue = value;
+      _seekValue.value = value;
     });
     unawaited(_control((player) => player.pause()));
   }
@@ -276,7 +307,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       if (mounted && widget.player == player && interaction == _interaction) {
         setState(() {
           _seeking = false;
-          _seekValue = null;
+          _seekValue.value = null;
         });
         _scheduleHide();
       }
@@ -289,14 +320,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     final shouldResume = resume && _resumeAfterSeek && _appActive;
     setState(() {
       _seeking = false;
-      _seekValue = null;
+      _seekValue.value = null;
     });
     if (shouldResume) unawaited(_control((player) => player.play()));
     _scheduleHide();
   }
 
   void _seekBy(int seconds) {
-    final milliseconds = (widget.position.inMilliseconds + seconds * 1000)
+    final milliseconds = (_position.value.inMilliseconds + seconds * 1000)
         .clamp(0, math.max(0, widget.duration.inMilliseconds));
     unawaited(
       _control(
@@ -406,7 +437,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   void _panelChanged() {
     if (!mounted || !_panel.isAttached) return;
-    setState(() => _panelFraction = _panel.size);
+    _panelExtent.value = _panel.size;
+    _panelExpanded.value = _panelFraction > .9;
     if (_panelFraction > .01) _panelWasVisible = true;
     if (_panelFraction <= .001 && _panelWasVisible && !_panelAnimating) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -471,7 +503,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _panelOpen = false;
-      _panelFraction = 0;
+      _panelExtent.value = 0;
+      _panelExpanded.value = false;
       _panelWasVisible = false;
       _panelHeaderDragging = false;
       _visible = true;
@@ -598,12 +631,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             fullScreen: _fullScreen,
           );
           final durationMs = math.max(0, widget.duration.inMilliseconds);
-          final positionMs = widget.position.inMilliseconds.clamp(
-            0,
-            durationMs,
-          );
-          final value =
-              _seekValue ?? (durationMs > 0 ? positionMs / durationMs : 0.0);
           final unobstructed = !_panelOpen && !_modalOpen;
           final controls = _visible && unobstructed && !_seeking;
           final canPage = unobstructed && !_seeking && !_boosting && !landscape;
@@ -647,16 +674,19 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                       children: [
                         const ColoredBox(color: Colors.black),
                         if (index == widget.currentIndex)
-                          Positioned.fromRect(
-                            rect: _ready ? layout.video : layout.viewport,
+                          _positionVideo(
+                            window: window,
+                            insets: insets,
+                            fitVideo: _ready,
                             child: SizedBox(
                               key: const ValueKey('video-frame'),
                               child: widget.child,
                             ),
                           )
                         else
-                          Positioned.fromRect(
-                            rect: layout.viewport,
+                          _positionVideo(
+                            window: window,
+                            insets: insets,
                             child: PlayerCover(
                               url: widget.coverUrl,
                               label: widget.episodes[index].title,
@@ -682,15 +712,20 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   left: insets.left + 12,
                   right: insets.right + 12,
                   bottom: insets.bottom + 61,
-                  child: StorySeekBar(
-                    key: const ValueKey('video-seek'),
-                    value: value,
-                    enabled: durationMs > 0,
-                    seeking: _seeking,
-                    onStart: _startSeek,
-                    onChanged: (value) => setState(() => _seekValue = value),
-                    onEnd: (value) => unawaited(_finishSeek(value)),
-                    onCancel: _cancelSeek,
+                  child: RepaintBoundary(
+                    child: ListenableBuilder(
+                      listenable: _timeline,
+                      builder: (context, child) => StorySeekBar(
+                        key: const ValueKey('video-seek'),
+                        value: _progressValue,
+                        enabled: durationMs > 0,
+                        seeking: _seeking,
+                        onStart: _startSeek,
+                        onChanged: (value) => _seekValue.value = value,
+                        onEnd: (value) => unawaited(_finishSeek(value)),
+                        onCancel: _cancelSeek,
+                      ),
+                    ),
                   ),
                 ),
               if (_ready &&
@@ -711,11 +746,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                             color: Colors.white.withValues(alpha: .2),
                           ),
                           const SizedBox(height: 12),
-                          Text(
-                            '${_time(widget.position)} / ${_time(widget.duration)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
+                          ValueListenableBuilder<Duration>(
+                            valueListenable: _position,
+                            builder: (context, position, child) => Text(
+                              '${_time(position)} / ${_time(widget.duration)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
                             ),
                           ),
                         ],
@@ -726,12 +764,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               if (_seeking)
                 Center(
                   child: IgnorePointer(
-                    child: Text(
-                      '${_time(Duration(milliseconds: (durationMs * value).round()))} / ${_time(widget.duration)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        shadows: [Shadow(blurRadius: 8)],
+                    child: ListenableBuilder(
+                      listenable: _timeline,
+                      builder: (context, child) => Text(
+                        '${_time(Duration(milliseconds: (durationMs * _progressValue).round()))} / ${_time(widget.duration)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          shadows: [Shadow(blurRadius: 8)],
+                        ),
                       ),
                     ),
                   ),
@@ -768,38 +809,48 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                       snap: true,
                       snapSizes: _panelSnapSizes,
                       shouldCloseOnMinExtent: false,
-                      builder: (context, scroll) => StoryPlayerPanel(
-                        scrollController: scroll,
-                        episodes: widget.episodes,
-                        currentIndex: widget.currentIndex,
-                        playingIndex:
-                            widget.playingIndex ??
-                            (_ready ? widget.currentIndex : null),
-                        title: _seriesTitle,
-                        description: widget.description,
-                        descriptionLoading: widget.descriptionLoading,
-                        descriptionError: widget.descriptionError,
-                        onRetryDescription: widget.onRetryDescription,
-                        initialTab: _panelTab,
-                        expanded: _panelFraction > .9,
-                        playing: widget.playing,
-                        onTabChanged: (tab) => _panelTab = tab,
-                        onSelectEpisode: (index) {
-                          unawaited(_animatePanel(0));
-                          unawaited(_selectEpisode(index));
-                        },
-                        onDragStart: _startPanelDrag,
-                        onDragUpdate: (details) =>
-                            _dragPanel(details, layout.availableHeight),
-                        onDragEnd: _endPanelDrag,
-                        onDragCancel: () => _endPanelDrag(DragEndDetails()),
-                        onExpand: () => unawaited(
-                          _animatePanel(
-                            _panelFraction > .9 ? _panelRestFraction : 1,
+                      builder: (context, scroll) =>
+                          ValueListenableBuilder<bool>(
+                            valueListenable: _panelExpanded,
+                            builder: (context, expanded, child) =>
+                                StoryPlayerPanel(
+                                  scrollController: scroll,
+                                  episodes: widget.episodes,
+                                  currentIndex: widget.currentIndex,
+                                  playingIndex:
+                                      widget.playingIndex ??
+                                      (_ready ? widget.currentIndex : null),
+                                  title: _seriesTitle,
+                                  description: widget.description,
+                                  descriptionLoading: widget.descriptionLoading,
+                                  descriptionError: widget.descriptionError,
+                                  onRetryDescription: widget.onRetryDescription,
+                                  initialTab: _panelTab,
+                                  expanded: expanded,
+                                  playing: widget.playing,
+                                  onTabChanged: (tab) => _panelTab = tab,
+                                  onSelectEpisode: (index) {
+                                    unawaited(_animatePanel(0));
+                                    unawaited(_selectEpisode(index));
+                                  },
+                                  onDragStart: _startPanelDrag,
+                                  onDragUpdate: (details) => _dragPanel(
+                                    details,
+                                    layout.availableHeight,
+                                  ),
+                                  onDragEnd: _endPanelDrag,
+                                  onDragCancel: () =>
+                                      _endPanelDrag(DragEndDetails()),
+                                  onExpand: () => unawaited(
+                                    _animatePanel(
+                                      _panelFraction > .9
+                                          ? _panelRestFraction
+                                          : 1,
+                                    ),
+                                  ),
+                                  onClose: () => unawaited(_animatePanel(0)),
+                                ),
                           ),
-                        ),
-                        onClose: () => unawaited(_animatePanel(0)),
-                      ),
                     ),
                   ),
                 ),
@@ -809,6 +860,32 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         },
       ),
     ),
+  );
+
+  Widget _positionVideo({
+    required Size window,
+    required EdgeInsets insets,
+    required Widget child,
+    bool fitVideo = false,
+  }) => ValueListenableBuilder<double>(
+    valueListenable: _panelExtent,
+    child: child,
+    builder: (context, fraction, child) {
+      final layout = PlayerVideoLayout.calculate(
+        window: window,
+        insets: insets,
+        videoSize: _videoSize,
+        panelFraction: fraction,
+        restingPanelFraction: _panelRestFraction,
+        fullScreen: _fullScreen,
+      );
+      // Retain the video/cover subtree while only its rectangle follows the
+      // panel. DraggableScrollableSheet already retains its own content.
+      return Positioned.fromRect(
+        rect: fitVideo ? layout.video : layout.viewport,
+        child: child!,
+      );
+    },
   );
 
   Widget _topBar(EdgeInsets insets) => Positioned(

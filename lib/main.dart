@@ -10,6 +10,7 @@ import 'pages/mine_page.dart';
 import 'services/app_theme.dart';
 import 'services/backend_service.dart';
 import 'services/library_store.dart';
+import 'widgets/lazy_indexed_stack.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -132,13 +133,16 @@ class _RootShellState extends State<RootShell> {
       );
     }
 
-    final pages = [const HomePage(), const LibraryPage(), const MinePage()];
-
     return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
+      body: LazyIndexedStack(
+        index: _index,
+        children: const [HomePage(), LibraryPage(), MinePage()],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        onDestinationSelected: (i) {
+          if (i != _index) setState(() => _index = i);
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),

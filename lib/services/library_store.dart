@@ -37,8 +37,8 @@ class LibraryStore implements ReaderStore {
   late Box<dynamic> _readTimeBox;
   Future<void> _readTimeWrites = Future<void>.value();
 
-  /// Hive-backed notifications used by pages kept alive in the root
-  /// IndexedStack. They update as soon as a reader/detail page writes data.
+  /// Hive-backed notifications for retained tabs. Visible pages update after
+  /// writes; hidden pages defer their snapshots until the next visit.
   ValueListenable<Box<dynamic>> get historyListenable => _histBox.listenable();
   ValueListenable<Box<dynamic>> get readTimeListenable =>
       _readTimeBox.listenable();

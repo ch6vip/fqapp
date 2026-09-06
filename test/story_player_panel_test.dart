@@ -514,7 +514,6 @@ Future<_Fixture> _mount(
         currentIndex: currentIndex,
         playingIndex: currentIndex,
         playing: true,
-        position: player.position,
         duration: player.duration,
         description: description,
         onSelectEpisode: (index) async => selected.add(index),

@@ -37,6 +37,9 @@ class _StatsPageState extends State<StatsPage> {
   late final Listenable _historyChanges;
   late final Listenable _readTimeChanges;
   Timer? _reloadTimer;
+  bool _visible = false;
+  bool _storeDirty = true;
+  bool _preferencesLoaded = false;
 
   Map<String, double> _computeDayMinutes(
     List<Map<String, dynamic>> history,
@@ -88,6 +91,18 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _visible = TickerMode.valuesOf(context).enabled;
+    if (!_visible) {
+      _reloadTimer?.cancel();
+      _reloadTimer = null;
+    } else if (_storeDirty) {
+      _reloadFromStore();
+    }
+  }
+
+  @override
   void dispose() {
     _reloadTimer?.cancel();
     _historyChanges.removeListener(_scheduleStoreReload);
@@ -96,12 +111,18 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   void _scheduleStoreReload() {
+    _storeDirty = true;
     _reloadTimer?.cancel();
+    _reloadTimer = null;
+    if (!_visible) return;
     _reloadTimer = Timer(const Duration(milliseconds: 250), _reloadFromStore);
   }
 
   void _reloadFromStore() {
-    if (!mounted) return;
+    if (!mounted || !_visible || !_preferencesLoaded) return;
+    _reloadTimer?.cancel();
+    _reloadTimer = null;
+    _storeDirty = false;
     final store = LibraryStore.instance;
     final history = store.historySnapshot();
     final timeMap = store.readTimeSnapshot();
@@ -118,6 +139,7 @@ class _StatsPageState extends State<StatsPage> {
     final sp = await SharedPreferences.getInstance();
     if (!mounted) return;
     _goalMinutes = sp.getInt(_goalKey) ?? 30;
+    _preferencesLoaded = true;
     _reloadFromStore();
   }
 

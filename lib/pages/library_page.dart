@@ -19,25 +19,42 @@ class LibraryPage extends StatefulWidget {
 }
 
 class _LibraryPageState extends State<LibraryPage> {
-  List<Map<String, dynamic>> _hist = [];
+  List<_ShelfEntry> _entries = [];
   // Legado layout values: 0 standard list, 1 compact list, 2..6 grid columns.
   int _layout = 3;
   late final Listenable _historyChanges;
+  bool _visible = false;
 
   @override
   void initState() {
     super.initState();
     _historyChanges = LibraryStore.instance.historyListenable
-      ..addListener(_load);
-    _load();
+      ..addListener(_historyChanged);
     _loadLayoutPreference();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (_visible == visible) return;
+    _visible = visible;
+    // Catch up once when returning from another tab or an opaque route.
+    if (_visible) _load();
+  }
+
+  void _historyChanged() {
+    if (_visible) _load();
   }
 
   void _load() {
     if (!mounted) return;
     final store = LibraryStore.instance;
     setState(() {
-      _hist = store.historySnapshot();
+      _entries = [
+        for (final history in store.historySnapshot())
+          _ShelfEntry.from(_historyItem(history), history),
+      ];
     });
   }
 
@@ -50,13 +67,13 @@ class _LibraryPageState extends State<LibraryPage> {
 
   @override
   void dispose() {
-    _historyChanges.removeListener(_load);
+    _historyChanges.removeListener(_historyChanged);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final entries = _visibleEntries();
+    final entries = _entries;
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 64,
@@ -162,13 +179,6 @@ class _LibraryPageState extends State<LibraryPage> {
         );
       },
     );
-  }
-
-  List<_ShelfEntry> _visibleEntries() {
-    return [
-      for (final history in _hist)
-        _ShelfEntry.from(_historyItem(history), history),
-    ];
   }
 
   MediaItem _historyItem(Map<String, dynamic> history) {

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/player_preferences.dart';
+import 'package:fqapp/widgets/player/story_seek_bar.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/fakes.dart';
@@ -274,6 +275,38 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });
+
+  testWidgets('replacing the player disconnects its old position updates', (
+    tester,
+  ) async {
+    final first = FakeNativePlayer();
+    final second = FakeNativePlayer()
+      ..currentPosition = const Duration(seconds: 80);
+    try {
+      await tester.pumpWidget(_app(first));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(_app(second));
+      await tester.pumpAndSettle();
+      first.positions.add(const Duration(seconds: 119));
+      await tester.pump();
+      expect(
+        tester.widget<StorySeekBar>(find.byType(StorySeekBar)).value,
+        closeTo(80 / 120, .0001),
+      );
+      await second.seek(const Duration(seconds: 90));
+      await tester.pump();
+      expect(tester.widget<StorySeekBar>(find.byType(StorySeekBar)).value, .75);
+      expect(find.text('01:30 / 02:00'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      second.positions.add(const Duration(seconds: 100));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await first.dispose();
+      await second.dispose();
+    }
+  });
 }
 
 Widget _app(
@@ -288,25 +321,20 @@ Widget _app(
   home: StreamBuilder<bool>(
     stream: player.playingStream,
     initialData: player.playing,
-    builder: (context, playing) => StreamBuilder<Duration>(
-      stream: player.positionStream,
-      initialData: player.position,
-      builder: (context, position) => VideoPlayerChrome(
-        player: player,
-        episodes: [
-          Chapter(itemId: '1', title: '第一集', volumeName: ''),
-          Chapter(itemId: '2', title: '第二集', volumeName: ''),
-        ],
-        currentIndex: 0,
-        position: position.data!,
-        duration: player.duration,
-        playing: playing.data!,
-        onSelectEpisode: (index) async {
-          selected?.add(index);
-        },
-        onError: (error) => throw error,
-        child: const ColoredBox(color: Colors.black),
-      ),
+    builder: (context, playing) => VideoPlayerChrome(
+      player: player,
+      episodes: [
+        Chapter(itemId: '1', title: '第一集', volumeName: ''),
+        Chapter(itemId: '2', title: '第二集', volumeName: ''),
+      ],
+      currentIndex: 0,
+      duration: player.duration,
+      playing: playing.data!,
+      onSelectEpisode: (index) async {
+        selected?.add(index);
+      },
+      onError: (error) => throw error,
+      child: const ColoredBox(color: Colors.black),
     ),
   ),
 );

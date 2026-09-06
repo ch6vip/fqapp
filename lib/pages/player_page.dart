@@ -76,7 +76,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   PlayerHistory get _history =>
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
-  Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _playing = false;
 
@@ -323,7 +322,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     setState(() {
       _initVideo = true;
       _error = null;
-      _position = Duration.zero;
       _duration = Duration.zero;
       _playing = false;
     });
@@ -394,7 +392,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (!await _waitForPaging(generation, player)) return;
       setState(() {
         _activeIndex = index;
-        _position = player.position;
         _duration = player.duration;
         _playing = player.playing;
         _initVideo = false;
@@ -455,15 +452,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _onFirstFrame(player, generation);
         setState(() {});
       }),
-      player.positionStream.listen((position) {
-        if (_current(generation, player)) setState(() => _position = position);
-      }),
       player.durationStream.listen((duration) {
-        if (_current(generation, player)) setState(() => _duration = duration);
+        if (_current(generation, player) && _duration != duration) {
+          setState(() => _duration = duration);
+        }
       }),
       player.playingStream.listen((playing) {
         if (!_current(generation, player)) return;
-        setState(() => _playing = playing);
+        if (_playing != playing) setState(() => _playing = playing);
         _syncWatchClock();
         _updatePrefetch();
       }),
@@ -588,7 +584,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     episodes: widget.eps,
     currentIndex: _index,
     playingIndex: _activeIndex,
-    position: _position,
     duration: _duration,
     playing: _playing,
     coverUrl: ApiClient.instance.absoluteUrl(widget.cover),

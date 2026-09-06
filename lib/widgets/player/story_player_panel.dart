@@ -58,6 +58,12 @@ class StoryPlayerPanel extends StatefulWidget {
 
 class _StoryPlayerPanelState extends State<StoryPlayerPanel>
     with SingleTickerProviderStateMixin {
+  static final _theme = ThemeData.light(useMaterial3: true).copyWith(
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: storyAccent,
+      primary: storyAccent,
+    ),
+  );
   late final TabController _tabs;
   final _search = TextEditingController();
   final _searchFocus = FocusNode();
@@ -169,13 +175,11 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
     final headerHeight = 14 + tabHeight + (_tab == 1 ? toolbarHeight + 8 : 0);
     _tileHeight = math.max(52.0, scale.scale(16) * 1.2 + 24);
     _rowHeight = math.max(64.0, scale.scale(16) * 1.25 + 32);
+    // A sheet-height change only needs layout. Keep the existing header and
+    // lazy list children; state/data/text-scale changes create a fresh build.
+    Widget? contents;
     return Theme(
-      data: ThemeData.light(useMaterial3: true).copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: storyAccent,
-          primary: storyAccent,
-        ),
-      ),
+      data: _theme,
       child: Material(
         key: const ValueKey('story-panel'),
         color: Colors.white,
@@ -195,6 +199,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
             if (_columns != columns) {
               _columns = columns;
               _needsLocate = true;
+              contents = null;
             }
             _locateEpisode();
             // While the sheet closes, clip the fixed header instead of
@@ -203,7 +208,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
               alignment: Alignment.topCenter,
               minHeight: math.max(headerHeight, constraints.maxHeight),
               maxHeight: math.max(headerHeight, constraints.maxHeight),
-              child: Column(
+              child: contents ??= Column(
                 children: [
                   GestureDetector(
                     key: const ValueKey('story-panel-drag'),
