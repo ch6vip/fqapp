@@ -189,6 +189,33 @@ void main() {
       expect(player.position, const Duration(seconds: 38));
     },
   );
+
+  nativeTest('video size events carry rotation without swapping display size', (
+    tester,
+    player,
+  ) async {
+    final creation = player.create('https://example.invalid/rotation.mp4', '');
+    await tester.pump();
+    await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+    await tester.pump();
+    await creation;
+    for (final rotation in [90, 180, 270, 0, 45, null]) {
+      await _sendEvent({
+        'playerId': 71,
+        'type': 'videoSize',
+        'width': 1080,
+        'height': 1920,
+        'rotationCorrection': ?rotation,
+      });
+      await tester.pump();
+      expect(player.videoWidth, 1080);
+      expect(player.videoHeight, 1920);
+      expect(
+        player.videoRotationCorrection,
+        [90, 180, 270].contains(rotation) ? rotation : 0,
+      );
+    }
+  });
 }
 
 Future<void> _sendEvent(Map<String, dynamic> event) =>

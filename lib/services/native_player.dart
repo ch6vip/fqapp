@@ -102,6 +102,7 @@ class NativePlayer {
   bool _firstFrameRendered = false;
   int _videoWidth = 0;
   int _videoHeight = 0;
+  int _videoRotationCorrection = 0;
   Object? _lastError;
 
   Duration get position => _position;
@@ -112,6 +113,9 @@ class NativePlayer {
   bool get firstFrameRendered => _firstFrameRendered;
   int get videoWidth => _videoWidth;
   int get videoHeight => _videoHeight;
+
+  /// Clockwise rotation not applied by the native texture backend.
+  int get videoRotationCorrection => _videoRotationCorrection;
   Object? get lastError => _lastError;
 
   final _positionCtrl = StreamController<Duration>.broadcast();
@@ -330,6 +334,11 @@ class NativePlayer {
         if (width is num && height is num) {
           _videoWidth = width.toInt();
           _videoHeight = height.toInt();
+          final rotation = event['rotationCorrection'];
+          _videoRotationCorrection =
+              rotation is num && const [90, 180, 270].contains(rotation)
+              ? rotation.toInt()
+              : 0;
           _videoSizeCtrl.add(Size(width.toDouble(), height.toDouble()));
         }
     }

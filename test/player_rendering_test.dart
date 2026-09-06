@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -163,6 +164,95 @@ void main() {
     expect(builds, isEmpty);
     expect(tester.takeException(), isNull);
   });
+
+  for (final size in [
+    const Size(1080, 1920),
+    const Size(1920, 1080),
+    const Size(1080, 1080),
+  ]) {
+    testWidgets('panel animation retains the active texture for $size', (
+      tester,
+    ) async {
+      final player = await _mount(tester, videoSize: size);
+      final texture = find.byKey(const ValueKey('player-texture'));
+      final element = tester.element(texture);
+      final box = tester.renderObject<TextureBox>(texture);
+      final originalRect = tester.getRect(texture);
+      final calls = List<String>.of(player.calls);
+      final rectangles = <Rect>{originalRect};
+
+      Future<void> checkFrames() async {
+        for (var frame = 0; frame < 20; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          expect(tester.element(texture), same(element));
+          expect(tester.renderObject<TextureBox>(texture), same(box));
+          expect(box.attached, true);
+          expect(box.textureId, player.textureId);
+          expect(box.freeze, false);
+          expect(find.byKey(const ValueKey('player-cover')), findsNothing);
+          final rect = tester.getRect(texture);
+          rectangles.add(rect);
+          expect(rect.width, greaterThan(0));
+          expect(rect.height, greaterThan(0));
+          expect(rect.width / rect.height, closeTo(size.aspectRatio, .001));
+          expect(player.calls, calls);
+          expect(player.playing, true);
+          expect(tester.takeException(), isNull);
+        }
+      }
+
+      // Include the frame that inserts/removes the panel, plus repeated cycles.
+      for (var cycle = 0; cycle < 3; cycle++) {
+        await tester.tap(find.text('简介'));
+        await checkFrames();
+        expect(find.byKey(const ValueKey('story-panel')), findsOneWidget);
+        await tester.tap(find.byTooltip('关闭面板'));
+        await checkFrames();
+        expect(find.byKey(const ValueKey('story-panel')), findsNothing);
+        expect(tester.getRect(texture), originalRect);
+      }
+      expect(rectangles.length, greaterThan(10));
+    });
+  }
+
+  testWidgets(
+    'texture rotation preserves portrait layout through panel animation',
+    (tester) async {
+      final player = _RotatedPlayer();
+      await _mount(tester, player: player);
+      final texture = find.byKey(const ValueKey('player-texture'));
+      final box = tester.renderObject<TextureBox>(texture);
+      final frame = find.byKey(const ValueKey('video-frame'));
+
+      void checkRotation() {
+        final rotation = tester.widget<RotatedBox>(
+          find.ancestor(of: texture, matching: find.byType(RotatedBox)),
+        );
+        expect(rotation.quarterTurns, 1);
+        // Media3 has already swapped display width/height. RotatedBox gives the
+        // decoder texture landscape constraints and presents portrait output.
+        expect(box.size.aspectRatio, closeTo(1920 / 1080, .001));
+        expect(
+          tester.getRect(frame).size.aspectRatio,
+          closeTo(1080 / 1920, .001),
+        );
+      }
+
+      checkRotation();
+      await tester.tap(find.text('简介'));
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(tester.renderObject<TextureBox>(texture), same(box));
+        checkRotation();
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+class _RotatedPlayer extends ControlledNativePlayer {
+  @override
+  int get videoRotationCorrection => 90;
 }
 
 Map<String, int> _recordBuilds() {
@@ -182,10 +272,12 @@ Map<String, int> _recordBuilds() {
 Future<ControlledNativePlayer> _mount(
   WidgetTester tester, {
   Duration duration = const Duration(minutes: 2),
+  Size videoSize = const Size(1080, 1920),
+  ControlledNativePlayer? player,
 }) async {
-  final player = ControlledNativePlayer()
-    ..width = 1080
-    ..height = 1920
+  final activePlayer = (player ?? ControlledNativePlayer())
+    ..width = videoSize.width.toInt()
+    ..height = videoSize.height.toInt()
     ..totalDuration = duration;
   await tester.binding.setSurfaceSize(const Size(400, 800));
   tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -211,12 +303,12 @@ Future<ControlledNativePlayer> _mount(
         contentLoader: (chapter) async => {
           'video_url': 'https://example.invalid/${chapter.itemId}.mp4',
         },
-        playerFactory: () => player,
+        playerFactory: () => activePlayer,
       ),
     ),
   );
   await tester.pump();
   await tester.runAsync(() => Future<void>.delayed(Duration.zero));
   await tester.pumpAndSettle();
-  return player;
+  return activePlayer;
 }

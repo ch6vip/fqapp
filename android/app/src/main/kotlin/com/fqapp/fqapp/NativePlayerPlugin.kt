@@ -4,7 +4,6 @@ import android.app.Activity
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.view.Surface
 import android.view.WindowManager
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -57,8 +56,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     private data class PlayerInstance(
         val id: Int,
         val player: ExoPlayer,
-        val textureEntry: TextureRegistry.SurfaceTextureEntry,
-        val surface: Surface,
+        val videoOutput: NativeVideoOutput,
         var positionUpdater: Runnable? = null
     )
 
@@ -192,52 +190,54 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 
     private fun createPlayerWithUri(playerId: Int, uri: String) {
-        if (!attachedToEngine) return
-        if (cancelledPlayerIds.remove(playerId)) return
-        val textureEntry = textureRegistry.createSurfaceTexture()
-        val surface = Surface(textureEntry.surfaceTexture())
-        var player: ExoPlayer? = null
-        try {
-            player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
-            player.setVideoSurface(surface)
-            setupPlayerListener(playerId, player)
-            players[playerId] = PlayerInstance(playerId, player, textureEntry, surface)
+        createPlayer(playerId) { player ->
             player.setMediaItem(MediaItem.fromUri(uri))
-            player.prepare()
-            sendEvent(playerId, "created", textureEntry.id())
-        } catch (error: Throwable) {
-            players.remove(playerId)
-            player?.release()
-            surface.release()
-            textureEntry.release()
-            sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
         }
     }
 
     private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String) {
-        if (!attachedToEngine) return
-        if (cancelledPlayerIds.remove(playerId)) return
-        val textureEntry = textureRegistry.createSurfaceTexture()
-        val surface = Surface(textureEntry.surfaceTexture())
-        var player: ExoPlayer? = null
-        try {
-            player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
-            player.setVideoSurface(surface)
-            setupPlayerListener(playerId, player)
-            players[playerId] = PlayerInstance(playerId, player, textureEntry, surface)
+        createPlayer(playerId) { player ->
             val dataSourceFactory = DataSource.Factory {
                 CryptoDataSource(cdnUrl, keyHex)
             }
             val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
                 .createMediaSource(MediaItem.fromUri("crypto://$cdnUrl"))
             player.setMediaSource(mediaSource)
+        }
+    }
+
+    private fun createPlayer(playerId: Int, configure: (ExoPlayer) -> Unit) {
+        if (!attachedToEngine) return
+        if (cancelledPlayerIds.remove(playerId)) return
+        var producer: TextureRegistry.SurfaceProducer? = null
+        var player: ExoPlayer? = null
+        var output: NativeVideoOutput? = null
+        try {
+            // SurfaceProducer uses decoder buffers directly on Vulkan. The
+            // legacy SurfaceTexture path copies through GL and reallocates a
+            // buffer at each animated display size, causing black video frames.
+            // MediaCodec supplies the buffer dimensions; don't resize the
+            // producer to match the description panel's Flutter rectangle.
+            producer = textureRegistry.createSurfaceProducer()
+            player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
+            output = NativeVideoOutput(player, producer)
+            players[playerId] = PlayerInstance(playerId, player, output)
+            output.attach()
+            setupPlayerListener(playerId, player)
+            configure(player)
             player.prepare()
-            sendEvent(playerId, "created", textureEntry.id())
+            sendEvent(playerId, "created", output.textureId)
         } catch (error: Throwable) {
             players.remove(playerId)
-            player?.release()
-            surface.release()
-            textureEntry.release()
+            if (output != null) {
+                output.release()
+            } else {
+                try {
+                    player?.release()
+                } finally {
+                    producer?.release()
+                }
+            }
             sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
         }
     }
@@ -267,12 +267,21 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
+                    val instance = players[playerId] ?: return
+                    // Media3 reports display width/height after rotation. Its
+                    // ImageReader output still needs the format rotation in
+                    // Flutter; SurfaceTexture producers already apply it.
+                    val rotation = instance.videoOutput.rotationCorrection(
+                        player.videoFormat?.rotationDegrees ?: 0
+                    )
                     handler.post {
+                        if (!attachedToEngine || players[playerId] !== instance) return@post
                         eventSink?.success(mapOf(
                             "playerId" to playerId,
                             "type" to "videoSize",
                             "width" to videoSize.width,
-                            "height" to videoSize.height
+                            "height" to videoSize.height,
+                            "rotationCorrection" to rotation
                         ))
                     }
                 }
@@ -332,9 +341,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
             return
         }
         instance.positionUpdater?.let(handler::removeCallbacks)
-        instance.player.release()
-        instance.surface.release()
-        instance.textureEntry.release()
+        instance.videoOutput.release()
     }
 
     private inner class CryptoDataSource(

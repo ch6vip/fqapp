@@ -611,7 +611,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       fit: StackFit.expand,
       children: [
         if (texture != null)
-          Texture(key: const ValueKey('player-texture'), textureId: texture),
+          RotatedBox(
+            quarterTurns: _player!.videoRotationCorrection ~/ 90,
+            child: Texture(
+              key: const ValueKey('player-texture'),
+              textureId: texture,
+            ),
+          ),
         if (waiting || _error != null)
           PlayerCover(
             key: const ValueKey('player-cover'),
