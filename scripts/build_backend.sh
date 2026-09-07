@@ -113,12 +113,40 @@ sync_config filter.json
 sync_config device_pool.example.json
 rm -f "$APP_DIR/assets/config/device_pool.json"
 
+# Copy only missing entries without cp -n: newer GNU cp can report a skipped
+# existing file as an error, while BSD cp and older GNU cp return success.
+# Walk directories explicitly so existing app fixes and missing nested files
+# have the same behavior on Linux, macOS, and Git Bash. A real copy/mkdir
+# failure still stops the build.
+copy_missing_tree() (
+  local src="$1" dst="$2" entry target
+  if [ ! -d "$src" ]; then
+    echo "错误：运行时源码目录不存在：$src" >&2
+    return 1
+  fi
+  mkdir -p "$dst" || return
+  shopt -s dotglob nullglob
+  for entry in "$src"/*; do
+    target="$dst/${entry##*/}"
+    if [ -d "$entry" ] && [ ! -L "$entry" ]; then
+      if { [ -e "$target" ] || [ -L "$target" ]; } &&
+         { [ ! -d "$target" ] || [ -L "$target" ]; }; then
+        echo "错误：运行时目标路径不是可同步的目录：$target" >&2
+        return 1
+      fi
+      copy_missing_tree "$entry" "$target" || return
+    elif [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      cp -RP "$entry" "$target" || return
+    fi
+  done
+)
+
 # 保留 App 仓库中的修复。只有显式 --force-runtime 才用上游代码覆盖。
 for name in filters web plugins; do
   if [ "$FORCE_RUNTIME" -eq 1 ]; then
     cp -R "$LEGACY_DIR/$name/." "$APP_DIR/assets/$name/"
   else
-    cp -Rn "$LEGACY_DIR/$name/." "$APP_DIR/assets/$name/"
+    copy_missing_tree "$LEGACY_DIR/$name" "$APP_DIR/assets/$name"
   fi
 done
 echo "    已同步 filters/ web/ plugins/（默认保留已有文件）"

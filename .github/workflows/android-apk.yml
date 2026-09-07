@@ -1,0 +1,187 @@
+name: Android APK
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'native/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/build_backend.sh'
+      - 'scripts/check_native_alignment.cjs'
+      - 'scripts/verify_android_apk.py'
+      - 'test/build_backend_scripts_test.cjs'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Committed Android/JNI integration on ch6vip/'s fqapp-android branch.
+  LEGACY_COMMIT: '40481102257f9405c8086c614b50796873091a4e'
+  FLUTTER_VERSION: '3.44.6'
+  GO_VERSION: '1.26.7'
+  NDK_VERSION: '28.2.13676358'
+  CMAKE_VERSION: '3.22.1'
+  BUILD_TOOLS_VERSION: '36.0.0'
+  TEST_SIGNER_SHA256: '1417f1ebe05f468b0631304431896821c7148849977900b3d0049cca7f79955a'
+  FQAPP_USE_MAVEN_MIRRORS: 'false'
+  GOMAXPROCS: '2'
+  GOFLAGS: '-p=2'
+  GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m" -Dorg.gradle.workers.max=2 -Dorg.gradle.daemon=false'
+  CMAKE_BUILD_PARALLEL_LEVEL: '2'
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Check out app source
+        uses: actions/checkout@v4
+        with:
+          path: app
+          persist-credentials: false
+
+      - name: Check out pinned private backend source
+        uses: actions/checkout@v4
+        with:
+          repository: ch6vip/
+          ref: ${{ env.LEGACY_COMMIT }}
+          path: 
+          ssh-key: ${{ secrets.LEGACY_READONLY_SSH_KEY }}
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: /go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager_bin="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager_bin" --licenses < <(yes) > /dev/null
+          "$sdkmanager_bin" "platforms;android-36" "build-tools;$BUILD_TOOLS_VERSION" \
+            "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION"
+          printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
+          flutter config --android-sdk "$ANDROID_HOME" --no-analytics
+
+      - name: Check backend build scripts
+        run: node --test test/build_backend_scripts_test.cjs
+
+      - name: Test the committed backend source
+        working-directory: 
+        run: go test -mod=readonly -count=1 ./...
+
+      - name: Compile backend and synchronize runtime assets
+        run: bash scripts/build_backend.sh --jni ../
+
+      - name: Check Android backend JNI exports
+        run: |
+          mkdir -p build/ci-artifacts
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+            --dynamic --defined-only android/app/src/main/jniLibs/arm64-v8a/liblegacy.so \
+            > build/ci-artifacts/backend-symbols.txt
+          for method in startBackend stopBackend status; do
+            if ! grep -Eq "[[:space:]]Java_com_fqapp_fqapp_BackendNative_${method}$" build/ci-artifacts/backend-symbols.txt; then
+              echo "Missing JNI method: BackendNative.$method" >&2
+              exit 1
+            fi
+          done
+
+      - name: Restore the shared test signing identity
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$ANDROID_DEBUG_KEYSTORE_BASE64" ]]; then
+            echo 'Missing Actions secret ANDROID_DEBUG_KEYSTORE_BASE64.' >&2
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$HOME/.android"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+
+      - name: Compile ARM64 release APK
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter build apk --release --target-platform android-arm64 --no-pub
+
+      - name: Verify APK contents, signing, and 16 KiB alignment
+        run: |
+          python3 scripts/verify_android_apk.py \
+            --apk build/app/outputs/flutter-apk/app-release.apk \
+            --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
+            --expected-signer-sha256 "$TEST_SIGNER_SHA256" \
+            --report-dir build/ci-artifacts/verification
+          cp build/app/outputs/flutter-apk/app-release.apk build/ci-artifacts/app-release.apk
+          {
+            printf 'App commit: %s\nBackend commit: %s\n' "$GITHUB_SHA" "$LEGACY_COMMIT"
+            printf 'NDK: %s\nCMake: %s\nAndroid Build Tools: %s\n' "$NDK_VERSION" "$CMAKE_VERSION" "$BUILD_TOOLS_VERSION"
+            flutter --version
+            go version
+            java -version 2>&1
+          } > build/ci-artifacts/build-info.txt
+
+      - name: Upload APK and verification reports
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fqapp-arm64-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            app/build/ci-artifacts/app-release.apk
+            app/build/ci-artifacts/build-info.txt
+            app/build/ci-artifacts/backend-symbols.txt
+            app/build/ci-artifacts/verification/*.json
+            app/build/ci-artifacts/verification/*.sha256
+            app/build/ci-artifacts/verification/*.log
+
+      - name: Retain diagnostics if a build or APK check fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fqapp-apk-diagnostics-${{ github.run_number }}
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            app/build/ci-artifacts/backend-symbols.txt
+            app/build/ci-artifacts/verification/*.json
+            app/build/ci-artifacts/verification/*.log
+
+      - name: Write download summary
+        env:
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          {
+            printf '[下载 ARM64 APK 和校验报告](%s)\n\n' "$ARTIFACT_URL"
+            printf 'App commit: `%s`  \nBackend commit: `%s`\n\n' "$GITHUB_SHA" "$LEGACY_COMMIT"
+            printf '使用固定调试签名。已验证全部原生库和 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary signing file
+        if: always()
+        run: rm -f -- "$HOME/.android/debug.keystore"

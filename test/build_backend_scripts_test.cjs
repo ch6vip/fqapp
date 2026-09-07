@@ -67,6 +67,29 @@ function fixture(t, options = {}) {
   const fakeGo = path.join(fakeBin, 'go');
   write(fakeGo, fs.readFileSync(path.join(root, 'test', 'support', 'fake_backend_go.sh'), 'utf8').replaceAll('\r\n', '\n'));
   fs.chmodSync(fakeGo, 0o755);
+  let realCp = '';
+  if (options.newCp || options.copyFailure) {
+    const found = spawnSync(bash, ['-c', 'command -v cp'], { encoding: 'utf8' });
+    assert.equal(found.status, 0, found.error?.message || found.stderr);
+    realCp = found.stdout.trim();
+    const fakeCp = path.join(fakeBin, 'cp');
+    write(fakeCp, [
+      '#!/usr/bin/env bash',
+      'set -eu',
+      'if [ "$FQAPP_FAKE_COPY_FAILURE" = 1 ]; then',
+      "  printf '%s\\n' 'fixture copy denied' >&2",
+      '  exit 17',
+      'fi',
+      'for arg in "$@"; do',
+      '  case "$arg" in',
+      "    -n|-Rn|-nR|--no-clobber) printf '%s\\n' 'fixture cp -n skipped an existing destination' >&2; exit 1 ;;",
+      '  esac',
+      'done',
+      'exec "$FQAPP_REAL_CP" "$@"',
+      '',
+    ].join('\n'));
+    fs.chmodSync(fakeCp, 0o755);
+  }
   if (options.uname) {
     const fakeUname = path.join(fakeBin, 'uname');
     write(fakeUname, `#!/usr/bin/env bash\nprintf '%s\\n' '${options.uname}'\n`);
@@ -82,6 +105,7 @@ function fixture(t, options = {}) {
     FQAPP_FAKE_LOG: log, FQAPP_FAKE_REPORT: report, FQAPP_FAKE_SOURCE: source,
     FQAPP_FAKE_HOST_OS: hostOS, FQAPP_FAKE_HOST_ARCH: hostArch,
     FQAPP_FAKE_FAILURE: options.failure || '',
+    FQAPP_REAL_CP: realCp, FQAPP_FAKE_COPY_FAILURE: options.copyFailure ? '1' : '0',
     FQAPP_BUILD_JNI: options.jni === false ? '0' : '1',
     FQAPP_FORCE_RUNTIME: options.force ? '1' : '0', FQAPP_FORCE_CONFIG: options.force ? '1' : '0',
   };
@@ -185,5 +209,44 @@ test('Bash: selects the Darwin NDK toolchain on macOS hosts', { skip: !hasBash }
   assert.equal(result.builds[0].GOOS, 'darwin');
   assert.equal(result.builds[0].GOARCH, 'arm64');
   assert.match(result.builds[1].CC, /darwin-x86_64/);
+  f.checkNoBuildTemps();
+});
+
+test('Bash: missing runtime entries are copied even when cp -n treats existing files as failures', { skip: !hasBash }, t => {
+  const f = fixture(t, { newCp: true });
+  write(path.join(f.source, 'web', '.existing-hidden'), 'upstream hidden');
+  write(path.join(f.app, 'assets', 'web', '.existing-hidden'), 'app hidden fix');
+  write(path.join(f.source, 'web', '.hidden directory', 'new hidden.txt'), 'new hidden file');
+  fs.mkdirSync(path.join(f.source, 'web', 'empty directory'));
+  const result = f.runBash();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.deepEqual(result.builds.map(build => build.kind), ['standalone', 'jni']);
+  f.checkRuntime();
+  assert.equal(fs.readFileSync(path.join(f.app, 'assets', 'web', '.existing-hidden'), 'utf8'), 'app hidden fix');
+  assert.equal(fs.readFileSync(path.join(f.app, 'assets', 'web', '.hidden directory', 'new hidden.txt'), 'utf8'), 'new hidden file');
+  assert.ok(fs.statSync(path.join(f.app, 'assets', 'web', 'empty directory')).isDirectory());
+  f.checkNoBuildTemps();
+});
+
+test('Bash: a genuine runtime copy failure stops the build before replacing the JNI library', { skip: !hasBash }, t => {
+  const f = fixture(t, { copyFailure: true });
+  const result = f.runBash();
+  assert.equal(result.status, 17, result.stderr || result.stdout);
+  assert.match(result.stderr, /fixture copy denied/);
+  assert.deepEqual(result.builds.map(build => build.kind), ['standalone']);
+  assert.equal(fs.readFileSync(f.library, 'utf8'), 'previous jni');
+  assert.equal(fs.readFileSync(path.join(f.app, 'assets', 'filters', 'existing.txt'), 'utf8'), 'app runtime fix');
+  f.checkNoBuildTemps();
+});
+
+test('Bash: an existing file cannot be replaced by an upstream runtime directory', { skip: !hasBash }, t => {
+  const f = fixture(t);
+  const collision = path.join(f.app, 'assets', 'filters', 'nested directory');
+  write(collision, 'existing app file');
+  const result = f.runBash();
+  assert.notEqual(result.status, 0, 'directory/file collisions must be reported');
+  assert.match(result.stderr, /运行时目标路径不是可同步的目录/);
+  assert.equal(fs.readFileSync(collision, 'utf8'), 'existing app file');
+  assert.equal(fs.readFileSync(f.library, 'utf8'), 'previous jni');
   f.checkNoBuildTemps();
 });

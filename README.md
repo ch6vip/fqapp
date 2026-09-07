@@ -189,6 +189,33 @@ flutter build apk --release --target-platform android-arm64
 生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
 对应 ABI 编译并打包 `liblegacy.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
 
+### GitHub Actions 云端编译
+
+打开 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，
+点击 **Run workflow** 即可从源码构建。`master` 上的应用、原生库及构建配置变更也会自动触发。
+运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
+`app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
+
+[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.44.6`、Go `1.26.7`、JDK 17、
+NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 runner 上编译，
+构建脚本默认保留本仓库已有的移动端资源。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false` 使用
+官方 Maven 源；本地构建默认仍使用国内镜像。
+
+`` 是私有仓库，CI 固定读取专用 `fqapp-android` 分支上的已提交版本
+[`4048110`](https://github.com/ch6vip//commit/40481102257f9405c8086c614b50796873091a4e)。
+更新后端时，应先提交并推送源码，再更新工作流中的 `LEGACY_COMMIT`；本地未提交改动不进入云端构建。
+本仓库已配置以下 Actions secrets，复制工作流到其它仓库时需要配置对应内容：
+
+| Secret | 用途 |
+| --- | --- |
+| `LEGACY_READONLY_SSH_KEY` | 仅授予 `` 读取权限的独立 SSH deploy key |
+| `ANDROID_DEBUG_KEYSTORE_BASE64` | 固定测试 keystore 的 Base64 内容，保持各次 APK 的签名一致 |
+
+云端 APK 使用与当前本地验证包一致的**调试签名**，可以覆盖安装同签名的测试版本。
+校验脚本还会核对预期证书指纹，避免意外使用 runner 随机生成的调试证书。
+正式发布需要另行配置正式签名，并同步更新预期证书指纹。
+ELF/ZIP 的 16 KiB 对齐检查通过后，仍需在对应 Android 设备上验证实际播放。
+
 ### 4. 安装运行
 
 ```powershell
