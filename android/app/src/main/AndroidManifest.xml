@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 访问本地后端 127.0.0.1 与上游番茄 API -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <application
         android:label="番茄小铺"
         android:name="${applicationName}"

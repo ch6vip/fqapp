@@ -1,9 +1,12 @@
 package com.fqapp.fqapp
 
 import android.app.Activity
+import android.content.Context
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -46,6 +49,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     @Volatile private var attachedToEngine = false
 
     private var activity: Activity? = null
+    private var deviceControls: NativePlaybackControls? = null
     private val players = ConcurrentHashMap<Int, PlayerInstance>()
     private val cancelledPlayerIds = ConcurrentHashMap.newKeySet<Int>()
     private val nextId = AtomicInteger(1)
@@ -79,16 +83,39 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
-        activity = binding.activity
+        attachActivity(binding.activity)
     }
-    override fun onDetachedFromActivityForConfigChanges() { activity = null }
+    override fun onDetachedFromActivityForConfigChanges() { detachActivity() }
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-        activity = binding.activity
+        attachActivity(binding.activity)
     }
-    override fun onDetachedFromActivity() { activity = null }
+    override fun onDetachedFromActivity() { detachActivity() }
+
+    private fun attachActivity(attached: Activity) {
+        detachActivity()
+        activity = attached
+        deviceControls = NativePlaybackControls(
+            attached.window,
+            attached.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        ) {
+            Settings.System.getInt(
+                attached.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128
+            ) / 255f
+        }
+    }
+
+    private fun detachActivity() {
+        try {
+            deviceControls?.close()
+        } finally {
+            deviceControls = null
+            activity = null
+        }
+    }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         attachedToEngine = false
+        detachActivity()
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         players.keys.toList().forEach { disposePlayer(it) }
@@ -100,6 +127,28 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "beginDeviceControls", "readDeviceControls", "setScreenBrightness",
+            "setMediaVolume", "endDeviceControls" -> {
+                try {
+                    val controls = checkNotNull(deviceControls) { "Activity unavailable" }
+                    val session = requireNotNull(call.argument<Number>("session")).toInt()
+                    val response = when (call.method) {
+                        "beginDeviceControls" -> controls.begin(session)
+                        "readDeviceControls" -> controls.read(session)
+                        "setScreenBrightness" -> controls.setBrightness(
+                            session, requireNotNull(call.argument<Number>("value")).toDouble()
+                        )
+                        "setMediaVolume" -> controls.setVolume(
+                            session, requireNotNull(call.argument<Number>("value")).toDouble()
+                        )
+                        else -> { controls.end(session); null }
+                    }
+                    result.success(response)
+                } catch (error: Exception) {
+                    // An unavailable device adjustment must never tear down video playback.
+                    result.error("device_controls_unavailable", error.message, null)
+                }
+            }
             "create" -> {
                 val cdnUrl = call.argument<String>("cdnUrl")!!
                 val keyHex = call.argument<String>("keyHex")!!
@@ -254,7 +303,12 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
                         sendEvent(playerId, "buffering", false)
                         sendEvent(playerId, "duration", player.duration)
                     }
-                    Player.STATE_ENDED -> sendEvent(playerId, "completed", true)
+                    Player.STATE_ENDED -> {
+                        // The periodic updater stops with isPlaying. Publish
+                        // the exact end position before saving stop-at-end history.
+                        sendEvent(playerId, "position", player.currentPosition)
+                        sendEvent(playerId, "completed", true)
+                    }
                     Player.STATE_IDLE -> {}
                 }
             }

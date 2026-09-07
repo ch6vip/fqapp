@@ -8,6 +8,7 @@ import '../models/media_item.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
 import 'player/player_cover.dart';
+import 'player/player_device_gestures.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_player_panel.dart';
 import 'player/story_seek_bar.dart';
@@ -20,6 +21,8 @@ class VideoPlayerChrome extends StatefulWidget {
   final int? playingIndex;
   final Duration duration;
   final bool playing;
+  final bool autoAdvance;
+  final ValueChanged<bool>? onAutoAdvanceChanged;
   final bool enabled;
   final Widget child;
   final String coverUrl;
@@ -41,6 +44,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.playingIndex,
     required this.duration,
     required this.playing,
+    this.autoAdvance = true,
+    this.onAutoAdvanceChanged,
     this.enabled = true,
     required this.child,
     this.coverUrl = '',
@@ -78,6 +83,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _panelWasVisible = false;
   bool _panelHeaderDragging = false;
   bool _fullScreen = false;
+  bool _locked = false;
   bool _boosting = false;
   bool _paging = false;
   bool _appActive = true;
@@ -221,6 +227,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     final active = state == AppLifecycleState.resumed;
     if (!active && _appActive) {
       _appActive = false;
+      ++_interaction;
       _resumeOnForeground =
           _ready && (widget.playing || (_seeking && _resumeAfterSeek));
       _cancelSeek(resume: false);
@@ -263,17 +270,42 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _togglePlayback() {
-    if (!_ready || _panelOpen || _modalOpen || _seeking || _paging) return;
+    if (!_ready ||
+        !_appActive ||
+        _locked ||
+        _panelOpen ||
+        _modalOpen ||
+        _seeking ||
+        _paging) {
+      return;
+    }
     _endBoost();
+    final interaction = ++_interaction;
+    final pause = widget.playing;
     unawaited(
-      _control((player) => widget.playing ? player.pause() : player.play()),
+      _control((player) async {
+        if (pause) {
+          await player.pause();
+        } else {
+          if (player.completed) await player.seek(Duration.zero);
+          if (!mounted ||
+              widget.player != player ||
+              interaction != _interaction ||
+              !_appActive ||
+              _locked ||
+              !_ready) {
+            return;
+          }
+          await player.play();
+        }
+      }),
     );
     setState(() => _visible = true);
     _scheduleHide();
   }
 
   void _startSeek(double value) {
-    if (!_ready) return;
+    if (!_ready || _locked) return;
     _endBoost();
     ++_interaction;
     _hideTimer?.cancel();
@@ -327,6 +359,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _seekBy(int seconds) {
+    if (_locked) return;
     final milliseconds = (_position.value.inMilliseconds + seconds * 1000)
         .clamp(0, math.max(0, widget.duration.inMilliseconds));
     unawaited(
@@ -339,6 +372,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   void _startBoost() {
     if (!_ready ||
+        _locked ||
         !widget.playing ||
         _seeking ||
         _paging ||
@@ -358,38 +392,66 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _scheduleHide();
   }
 
-  Future<void> _showRates() async {
+  Future<void> _showRates({bool includePlaybackSettings = false}) async {
+    if (_locked || _modalOpen) return;
     _endBoost();
     _cancelSeek();
     _hideTimer?.cancel();
     setState(() => _modalOpen = true);
+    var autoAdvance = widget.autoAdvance;
     final selected = await showModalBottomSheet<double>(
       context: context,
       useSafeArea: true,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('播放速度', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 10,
-                runSpacing: 8,
-                children: [
-                  for (final rate in PlayerPreferences.playbackRates)
-                    ChoiceChip(
-                      label: Text('${_rateLabel(rate)}×'),
-                      selected: rate == _rate,
-                      onSelected: (_) => Navigator.pop(context, rate),
-                    ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, updateSheet) => SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  includePlaybackSettings ? '播放设置' : '播放速度',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                if (includePlaybackSettings) ...[
+                  SwitchListTile(
+                    key: const ValueKey('player-auto-advance'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('自动连播'),
+                    subtitle: Text(autoAdvance ? '播完自动播放下一集' : '本集播完停止'),
+                    value: autoAdvance,
+                    onChanged: widget.onAutoAdvanceChanged == null
+                        ? null
+                        : (enabled) {
+                            updateSheet(() => autoAdvance = enabled);
+                            widget.onAutoAdvanceChanged!(enabled);
+                          },
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('播放速度'),
                 ],
-              ),
-            ],
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: [
+                    for (final rate in PlayerPreferences.playbackRates)
+                      ChoiceChip(
+                        label: Text('${_rateLabel(rate)}×'),
+                        selected: rate == _rate,
+                        onSelected: (_) => Navigator.pop(context, rate),
+                      ),
+                  ],
+                ),
+                if (includePlaybackSettings) ...[
+                  const SizedBox(height: 20),
+                  const Text('横屏全屏时，左侧上下滑调亮度，右侧调音量'),
+                ],
+              ],
+            ),
           ),
         ),
       ),
@@ -414,6 +476,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _openPanel(int tab) {
+    if (_locked) return;
     _endBoost();
     _cancelSeek();
     _hideTimer?.cancel();
@@ -547,7 +610,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   Future<void> _selectEpisode(int index) async {
-    if (index < 0 ||
+    if (_locked ||
+        index < 0 ||
         index >= widget.episodes.length ||
         index == widget.currentIndex) {
       return;
@@ -559,7 +623,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   Future<void> _back() async {
-    if (_panelOpen) {
+    if (_locked) {
+      _setLocked(false);
+    } else if (_panelOpen) {
       await _animatePanel(0);
     } else if (_fullScreen) {
       await _toggleFullScreen();
@@ -569,11 +635,23 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   Future<void> _toggleFullScreen() async {
+    if (_locked) return;
     _endBoost();
     _cancelSeek();
     setState(() => _fullScreen = !_fullScreen);
     await _applySystemUi();
     if (mounted) _scheduleHide();
+  }
+
+  void _setLocked(bool locked) {
+    _endBoost();
+    _cancelSeek();
+    ++_interaction;
+    setState(() {
+      _locked = locked;
+      _visible = true;
+    });
+    _scheduleHide();
   }
 
   Future<void> _applySystemUi() async {
@@ -611,9 +689,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: !_panelOpen && !_fullScreen,
+    canPop: !_locked && !_panelOpen && !_fullScreen,
     onPopInvokedWithResult: (didPop, result) {
-      if (!didPop && (_panelOpen || _fullScreen)) unawaited(_back());
+      if (!didPop && (_locked || _panelOpen || _fullScreen)) unawaited(_back());
     },
     child: Scaffold(
       backgroundColor: Colors.black,
@@ -632,67 +710,79 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           );
           final durationMs = math.max(0, widget.duration.inMilliseconds);
           final unobstructed = !_panelOpen && !_modalOpen;
-          final controls = _visible && unobstructed && !_seeking;
-          final canPage = unobstructed && !_seeking && !_boosting && !landscape;
+          final controls = _visible && unobstructed && !_seeking && !_locked;
+          final canPage =
+              unobstructed && !_locked && !_seeking && !_boosting && !landscape;
           return Stack(
             fit: StackFit.expand,
             children: [
-              GestureDetector(
-                key: const ValueKey('video-surface'),
-                behavior: HitTestBehavior.opaque,
-                onTap: _toggleControls,
-                onDoubleTap: _togglePlayback,
-                onLongPressStart: (_) => _startBoost(),
-                onLongPressEnd: (_) => _endBoost(),
-                onLongPressCancel: _endBoost,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    if (notification.depth != 0) return false;
-                    if (notification is ScrollStartNotification) {
-                      _paging = true;
-                      _hideTimer?.cancel();
-                      widget.onPagingChanged?.call(true);
-                    } else if (notification is ScrollEndNotification) {
-                      _paging = false;
-                      widget.onPagingChanged?.call(false);
-                      _scheduleHide();
-                    }
-                    return false;
-                  },
-                  child: PageView.builder(
-                    key: const ValueKey('episode-pager'),
-                    controller: _pages,
-                    scrollDirection: Axis.vertical,
-                    physics: canPage
-                        ? const ClampingScrollPhysics()
-                        : const NeverScrollableScrollPhysics(),
-                    itemCount: math.max(1, widget.episodes.length),
-                    onPageChanged: (index) => unawaited(_selectEpisode(index)),
-                    itemBuilder: (context, index) => Stack(
-                      key: ValueKey('episode-page-$index'),
-                      fit: StackFit.expand,
-                      children: [
-                        const ColoredBox(color: Colors.black),
-                        if (index == widget.currentIndex)
-                          _positionVideo(
-                            window: window,
-                            insets: insets,
-                            fitVideo: _ready,
-                            child: SizedBox(
-                              key: const ValueKey('video-frame'),
-                              child: widget.child,
+              PlayerDeviceGestures(
+                active: landscape,
+                enabled:
+                    _ready &&
+                    unobstructed &&
+                    !_locked &&
+                    !_seeking &&
+                    !_boosting,
+                interactionKey: widget.player,
+                child: GestureDetector(
+                  key: const ValueKey('video-surface'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _toggleControls,
+                  onDoubleTap: _togglePlayback,
+                  onLongPressStart: (_) => _startBoost(),
+                  onLongPressEnd: (_) => _endBoost(),
+                  onLongPressCancel: _endBoost,
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      if (notification.depth != 0) return false;
+                      if (notification is ScrollStartNotification) {
+                        _paging = true;
+                        _hideTimer?.cancel();
+                        widget.onPagingChanged?.call(true);
+                      } else if (notification is ScrollEndNotification) {
+                        _paging = false;
+                        widget.onPagingChanged?.call(false);
+                        _scheduleHide();
+                      }
+                      return false;
+                    },
+                    child: PageView.builder(
+                      key: const ValueKey('episode-pager'),
+                      controller: _pages,
+                      scrollDirection: Axis.vertical,
+                      physics: canPage
+                          ? const ClampingScrollPhysics()
+                          : const NeverScrollableScrollPhysics(),
+                      itemCount: math.max(1, widget.episodes.length),
+                      onPageChanged: (index) =>
+                          unawaited(_selectEpisode(index)),
+                      itemBuilder: (context, index) => Stack(
+                        key: ValueKey('episode-page-$index'),
+                        fit: StackFit.expand,
+                        children: [
+                          const ColoredBox(color: Colors.black),
+                          if (index == widget.currentIndex)
+                            _positionVideo(
+                              window: window,
+                              insets: insets,
+                              fitVideo: _ready,
+                              child: SizedBox(
+                                key: const ValueKey('video-frame'),
+                                child: widget.child,
+                              ),
+                            )
+                          else
+                            _positionVideo(
+                              window: window,
+                              insets: insets,
+                              child: PlayerCover(
+                                url: widget.coverUrl,
+                                label: widget.episodes[index].title,
+                              ),
                             ),
-                          )
-                        else
-                          _positionVideo(
-                            window: window,
-                            insets: insets,
-                            child: PlayerCover(
-                              url: widget.coverUrl,
-                              label: widget.episodes[index].title,
-                            ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -703,7 +793,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 if (!landscape) _information(insets),
                 if (_ready) _transport(insets, landscape),
               ],
-              if ((_visible || _seeking) && unobstructed && _ready)
+              if ((_visible || _seeking) && unobstructed && _ready && !_locked)
                 Positioned(
                   // Controls leave this Stack while seeking. Keep the outer
                   // layer keyed so the active drag recognizer survives that
@@ -730,6 +820,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 ),
               if (_ready &&
                   !widget.playing &&
+                  !_locked &&
                   unobstructed &&
                   _visible &&
                   !_seeking)
@@ -786,6 +877,26 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     child: IgnorePointer(child: Chip(label: Text('2× 加速中'))),
                   ),
                 ),
+              if (_locked) ...[
+                Positioned.fill(
+                  child: GestureDetector(
+                    key: const ValueKey('player-lock-shield'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _toggleControls,
+                  ),
+                ),
+                if (_visible)
+                  Positioned(
+                    left: insets.left + 12,
+                    top: window.height / 2 - 24,
+                    child: FilledButton.tonalIcon(
+                      key: const ValueKey('player-unlock'),
+                      onPressed: () => _setLocked(false),
+                      icon: const Icon(Icons.lock_open_rounded),
+                      label: const Text('解锁'),
+                    ),
+                  ),
+              ],
               if (_panelOpen) ...[
                 Positioned.fill(
                   child: GestureDetector(
@@ -927,8 +1038,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               ),
             ),
             IconButton(
+              tooltip: '锁定播放',
+              onPressed: () => _setLocked(true),
+              icon: const Icon(Icons.lock_outline_rounded, color: Colors.white),
+            ),
+            IconButton(
               tooltip: '播放设置',
-              onPressed: _showRates,
+              onPressed: () => _showRates(includePlaybackSettings: true),
               icon: const Icon(Icons.more_vert, color: Colors.white),
             ),
           ],
@@ -940,7 +1056,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Widget _rightBar(EdgeInsets insets) {
     final scale = MediaQuery.textScalerOf(context);
     final width = math.min(84.0, math.max(56.0, scale.scale(28) + 24));
-    final height = math.max(58.0, scale.scale(21) + scale.scale(12) + 20);
+    final height = math.max(
+      58.0,
+      math.max(30.0, scale.scale(21) * 1.2) + scale.scale(12) * 1.2 + 8,
+    );
     Widget action(
       String label,
       String tooltip,

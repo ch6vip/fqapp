@@ -80,6 +80,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
   Duration _duration = Duration.zero;
   bool _playing = false;
+  bool _autoAdvance = true;
+  int _autoAdvanceGeneration = 0;
+  late final Future<void> _autoAdvanceReady;
 
   bool _current(int generation, [NativePlayer? player]) =>
       mounted &&
@@ -96,6 +99,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         : widget.startIndex.clamp(0, widget.eps.length - 1);
     _description = widget.description ?? '';
     _descriptionLoaded = widget.description != null;
+    _autoAdvanceReady = _loadAutoAdvance();
     _diagnostics = widget.loadDiagnostics ?? PlayerLoadDiagnostics();
     _sources = EpisodeSourceCache(
       loader: (episode) async => EpisodeSource.fromResponse(
@@ -154,7 +158,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _pagingSettled = null;
       final completedGeneration = _pendingCompletion;
       _pendingCompletion = null;
-      if (completedGeneration != null &&
+      if (_autoAdvance &&
+          completedGeneration != null &&
           _current(completedGeneration) &&
           _activeIndex == _index) {
         unawaited(
@@ -165,6 +170,34 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
     }
     _updatePrefetch();
+  }
+
+  Future<void> _loadAutoAdvance() async {
+    final generation = _autoAdvanceGeneration;
+    try {
+      final enabled = await PlayerPreferences.loadAutoAdvance();
+      if (mounted && generation == _autoAdvanceGeneration) {
+        setState(() => _autoAdvance = enabled);
+      }
+    } catch (_) {
+      // Keep the existing automatic-next-episode behavior if storage fails.
+    }
+  }
+
+  void _setAutoAdvance(bool enabled) {
+    if (_autoAdvance == enabled) return;
+    final generation = ++_autoAdvanceGeneration;
+    setState(() => _autoAdvance = enabled);
+    if (!enabled) _pendingCompletion = null;
+    unawaited(
+      PlayerPreferences.saveAutoAdvance(enabled).catchError((Object _) {
+        if (mounted && generation == _autoAdvanceGeneration) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('连播设置已生效，但未能保存')));
+        }
+      }),
+    );
   }
 
   Future<bool> _waitForPaging(int generation, [NativePlayer? player]) async {
@@ -364,6 +397,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       try {
         rate = await PlayerPreferences.loadPlaybackRate();
       } catch (_) {}
+      await _autoAdvanceReady;
       if (!_current(generation, player)) return;
       await player.setRate(rate);
       if (!_current(generation, player)) return;
@@ -469,8 +503,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (!_current(generation, player) || _activeIndex != _index) {
           return;
         }
-        if (!completed) {
+        if (!completed || !_autoAdvance) {
           _pendingCompletion = null;
+          if (completed) unawaited(_persistProgress());
           return;
         }
         if (_paging) {
@@ -539,7 +574,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         index < 0 ||
         index >= widget.eps.length ||
         index == _index ||
-        (expectedGeneration != null && !_current(expectedGeneration))) {
+        (expectedGeneration != null &&
+            (!_autoAdvance || !_current(expectedGeneration)))) {
       return Future<void>.value();
     }
     setState(() => _index = index);
@@ -588,6 +624,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     playingIndex: _activeIndex,
     duration: _duration,
     playing: _playing,
+    autoAdvance: _autoAdvance,
+    onAutoAdvanceChanged: _setAutoAdvance,
     coverUrl: ApiClient.instance.absoluteUrl(widget.cover),
     enabled:
         _player != null &&
