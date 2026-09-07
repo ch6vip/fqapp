@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.example.shortplay.CryptoNative
@@ -295,10 +296,21 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                // "Source error" alone loses the difference between a network
+                // timeout, an expired URL and a server response. Keep the
+                // stable codes for Flutter's user-facing explanation.
+                val httpError = generateSequence(error as Throwable) { it.cause }
+                    .take(8)
+                    .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
+                    .firstOrNull()
                 sendEvent(
                     playerId,
                     "error",
-                    error.message ?: "ExoPlayer error ${error.errorCode}"
+                    mapOf(
+                        "message" to (error.message ?: "ExoPlayer error"),
+                        "errorCode" to error.errorCode,
+                        "httpStatusCode" to httpError?.responseCode
+                    )
                 )
             }
         })

@@ -49,7 +49,7 @@ class AboutPage extends StatelessWidget {
               _AboutRow(
                 icon: Icons.commit_outlined,
                 title: '当前版本',
-                trailingText: '1.0.3 (4)',
+                trailingText: '1.0.4 (5)',
               ),
             ],
           ),

@@ -8,10 +8,12 @@ import '../services/api_client.dart';
 import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
+import '../services/playback_issue.dart';
 import '../services/player_history.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
 import '../widgets/player/player_cover.dart';
+import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
 
 class PlayerPage extends StatefulWidget {
@@ -56,7 +58,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Completer<void>? _pagingSettled;
   int? _pendingCompletion;
   NativePlayer? _pendingAutoplay;
-  String? _error;
+  PlaybackIssue? _error;
   int _loadGeneration = 0;
   final Stopwatch _watchTime = Stopwatch();
   final List<StreamSubscription<dynamic>> _subs = [];
@@ -106,7 +108,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ),
     );
     if (widget.eps.isEmpty) {
-      _error = '暂无可播放剧集';
+      _error = PlaybackIssue.empty;
     } else {
       unawaited(_loadVideo());
     }
@@ -430,7 +432,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_persistProgress());
     unawaited(_teardownPlayer());
     setState(() {
-      _error = '$error';
+      _error = PlaybackIssue.fromError(error);
       _initVideo = false;
       _playing = false;
     });
@@ -604,6 +606,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   );
 
   Widget _videoArea() {
+    final generation = _loadGeneration;
+    void retry() {
+      if (_current(generation)) unawaited(_loadVideo(refresh: true));
+    }
+
     final texture = _player?.textureId;
     final waiting =
         _initVideo || texture == null || !_player!.firstFrameRendered;
@@ -622,40 +629,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           PlayerCover(
             key: const ValueKey('player-cover'),
             url: ApiClient.instance.absoluteUrl(widget.cover),
-            loading: _error == null,
-            label: _error == null ? '正在加载第 ${_index + 1} 集' : null,
           ),
         if (_error != null)
-          Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.error_outline,
-                    color: Colors.white70,
-                    size: 32,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _error!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                  if (widget.eps.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      onPressed: () => unawaited(_loadVideo(refresh: true)),
-                      child: const Text('重试'),
-                    ),
-                  ],
-                ],
-              ),
-            ),
+          PlayerErrorFeedback(
+            key: const ValueKey('player-error'),
+            issue: _error!,
+            onRetry: widget.eps.isEmpty ? null : retry,
           ),
-        if (!waiting && _error == null && _player!.buffering)
-          const Center(child: CircularProgressIndicator(color: Colors.white)),
+        if (_error == null && (waiting || _player!.buffering))
+          PlayerLoadingFeedback(
+            key: ValueKey('player-loading-$generation'),
+            label: waiting ? '正在加载第 ${_index + 1} 集' : null,
+            onRetry: retry,
+          ),
       ],
     );
   }

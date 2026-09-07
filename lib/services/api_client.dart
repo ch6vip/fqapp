@@ -249,7 +249,7 @@ class ApiClient {
 
 Map<String, dynamic> _decodeEnvelope(int statusCode, List<int> bodyBytes) {
   if (statusCode != 200) {
-    throw ApiException('HTTP $statusCode');
+    throw ApiException('HTTP $statusCode', statusCode: statusCode);
   }
   final decoded = jsonDecode(utf8.decode(bodyBytes));
   if (decoded is! Map) throw ApiException('响应格式错误');
@@ -307,7 +307,9 @@ String _cleanChapterText(String text) => text
 
 class ApiException implements Exception {
   final String message;
-  ApiException(this.message);
+  final int? statusCode;
+
+  const ApiException(this.message, {this.statusCode});
 
   @override
   String toString() => message;

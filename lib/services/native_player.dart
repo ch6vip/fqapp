@@ -2,6 +2,37 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+class NativePlaybackException implements Exception {
+  final String message;
+  final int? errorCode;
+  final int? httpStatusCode;
+
+  const NativePlaybackException(
+    this.message, {
+    this.errorCode,
+    this.httpStatusCode,
+  });
+
+  factory NativePlaybackException.fromEvent(Object? value) {
+    if (value is Map) {
+      return NativePlaybackException(
+        value['message'] is String
+            ? value['message'] as String
+            : 'Player error',
+        errorCode: value['errorCode'] is int ? value['errorCode'] as int : null,
+        httpStatusCode: value['httpStatusCode'] is int
+            ? value['httpStatusCode'] as int
+            : null,
+      );
+    }
+    // Creation/probe errors and older hosts still send a plain string.
+    return NativePlaybackException(value is String ? value : 'Player error');
+  }
+
+  @override
+  String toString() => 'NativePlaybackException: $message';
+}
+
 /// Flutter-side wrapper of the native ExoPlayer host.
 class NativePlayer {
   static const _channel = MethodChannel('fqapp/native_player');
@@ -294,7 +325,7 @@ class NativePlayer {
           _createdCompleter.complete(value.toInt());
         }
       case 'error':
-        final error = StateError('${event['value'] ?? 'unknown player error'}');
+        final error = NativePlaybackException.fromEvent(event['value']);
         _lastError = error;
         if (!_createdCompleter.isCompleted) {
           _createdCompleter.completeError(error);

@@ -284,7 +284,8 @@ void main() {
       session.players.single.emitPosition(const Duration(seconds: 62));
       session.players.single.errors.add(StateError('decode failed'));
       await _flush(tester);
-      expect(find.textContaining('decode failed'), findsOneWidget);
+      expect(find.text('播放失败'), findsOneWidget);
+      expect(find.textContaining('decode failed'), findsNothing);
       expect(session.players.single.disposed, true);
       await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
       await tester.pump(const Duration(milliseconds: 350));
@@ -312,7 +313,8 @@ void main() {
         },
       );
       await _mount(tester, session);
-      expect(find.textContaining('source unavailable'), findsOneWidget);
+      expect(find.text('播放失败'), findsOneWidget);
+      expect(find.textContaining('source unavailable'), findsNothing);
       await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
       await tester.pump(const Duration(milliseconds: 350));
       await _flush(tester);

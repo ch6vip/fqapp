@@ -160,7 +160,7 @@ void main() {
         createGate!.complete({'playerId': 71});
         await tester.pump();
         if (fails) {
-          expect(await creation, isStateError);
+          expect(await creation, isA<NativePlaybackException>());
           expect(player.lastError.toString(), contains('source failed'));
           expect(calls.where((call) => call.method == 'dispose'), hasLength(1));
         } else {
@@ -216,6 +216,42 @@ void main() {
       );
     }
   });
+
+  for (final beforeCreated in [true, false]) {
+    nativeTest(
+      'structured native errors retain HTTP details beforeCreated=$beforeCreated',
+      (tester, player) async {
+        final receivedError = player.errorStream.first;
+        final creation = player
+            .create('https://example.invalid/video', '')
+            .then<Object>((value) => value, onError: (Object error) => error);
+        await tester.pump();
+        if (!beforeCreated) {
+          await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+          await tester.pump();
+          expect(await creation, 9);
+        }
+        await _sendEvent({
+          'playerId': 71,
+          'type': 'error',
+          'value': {
+            'message': 'Source error',
+            'errorCode': 2004,
+            'httpStatusCode': 403,
+          },
+        });
+        await tester.pump();
+        final error = player.lastError! as NativePlaybackException;
+        expect(error.errorCode, 2004);
+        expect(error.httpStatusCode, 403);
+        expect(await receivedError, same(error));
+        if (beforeCreated) {
+          expect(await creation, same(error));
+          expect(calls.where((call) => call.method == 'dispose'), hasLength(1));
+        }
+      },
+    );
+  }
 }
 
 Future<void> _sendEvent(Map<String, dynamic> event) =>
