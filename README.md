@@ -212,7 +212,8 @@ NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 r
 | `ANDROID_DEBUG_KEYSTORE_BASE64` | 固定测试 keystore 的 Base64 内容，保持各次 APK 的签名一致 |
 
 云端 APK 使用与当前本地验证包一致的**调试签名**，可以覆盖安装同签名的测试版本。
-校验脚本还会核对预期证书指纹，避免意外使用 runner 随机生成的调试证书。
+CI 通过 `FQAPP_DEBUG_KEYSTORE` 显式传入临时 keystore 的绝对路径，并在编译前及 APK
+生成后核对预期证书指纹，避免使用 runner 其它默认目录中的调试证书。
 正式发布需要另行配置正式签名，并同步更新预期证书指纹。
 ELF/ZIP 的 16 KiB 对齐检查通过后，仍需在对应 Android 设备上验证实际播放。
 

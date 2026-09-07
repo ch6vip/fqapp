@@ -68,6 +68,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            app/android/**/*.gradle.kts
+            app/android/gradle/wrapper/gradle-wrapper.properties
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -123,8 +127,16 @@ jobs:
             exit 1
           fi
           umask 077
-          mkdir -p "$HOME/.android"
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          signing_path="$RUNNER_TEMP/fqapp-debug.keystore"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$signing_path"
+          actual_signer="$(keytool -exportcert -keystore "$signing_path" -storepass android \
+            -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)"
+          if [[ "$actual_signer" != "$TEST_SIGNER_SHA256" ]]; then
+            echo 'The signing secret does not contain the expected test certificate.' >&2
+            exit 1
+          fi
+          printf 'FQAPP_DEBUG_KEYSTORE=%s\n' "$signing_path" >> "$GITHUB_ENV"
+          printf 'Verified test signing certificate: %s\n' "$actual_signer"
 
       - name: Compile ARM64 release APK
         run: |
@@ -187,4 +199,4 @@ jobs:
 
       - name: Remove temporary signing file
         if: always()
-        run: rm -f -- "$HOME/.android/debug.keystore"
+        run: rm -f -- "$RUNNER_TEMP/fqapp-debug.keystore"

@@ -47,6 +47,16 @@ android {
         }
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // CI supplies an absolute path instead of relying on the runner's
+            // Android user-directory defaults for debug.keystore.
+            providers.environmentVariable("FQAPP_DEBUG_KEYSTORE").orNull?.let { keystorePath ->
+                storeFile = file(keystorePath)
+            }
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
