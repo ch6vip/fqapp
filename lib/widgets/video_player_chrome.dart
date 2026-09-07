@@ -8,7 +8,6 @@ import '../models/media_item.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
 import 'player/player_cover.dart';
-import 'player/player_device_gestures.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_player_panel.dart';
 import 'player/story_seek_bar.dart';
@@ -446,10 +445,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                       ),
                   ],
                 ),
-                if (includePlaybackSettings) ...[
-                  const SizedBox(height: 20),
-                  const Text('横屏全屏时，左侧上下滑调亮度，右侧调音量'),
-                ],
               ],
             ),
           ),
@@ -716,73 +711,62 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           return Stack(
             fit: StackFit.expand,
             children: [
-              PlayerDeviceGestures(
-                active: landscape,
-                enabled:
-                    _ready &&
-                    unobstructed &&
-                    !_locked &&
-                    !_seeking &&
-                    !_boosting,
-                interactionKey: widget.player,
-                child: GestureDetector(
-                  key: const ValueKey('video-surface'),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _toggleControls,
-                  onDoubleTap: _togglePlayback,
-                  onLongPressStart: (_) => _startBoost(),
-                  onLongPressEnd: (_) => _endBoost(),
-                  onLongPressCancel: _endBoost,
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      if (notification.depth != 0) return false;
-                      if (notification is ScrollStartNotification) {
-                        _paging = true;
-                        _hideTimer?.cancel();
-                        widget.onPagingChanged?.call(true);
-                      } else if (notification is ScrollEndNotification) {
-                        _paging = false;
-                        widget.onPagingChanged?.call(false);
-                        _scheduleHide();
-                      }
-                      return false;
-                    },
-                    child: PageView.builder(
-                      key: const ValueKey('episode-pager'),
-                      controller: _pages,
-                      scrollDirection: Axis.vertical,
-                      physics: canPage
-                          ? const ClampingScrollPhysics()
-                          : const NeverScrollableScrollPhysics(),
-                      itemCount: math.max(1, widget.episodes.length),
-                      onPageChanged: (index) =>
-                          unawaited(_selectEpisode(index)),
-                      itemBuilder: (context, index) => Stack(
-                        key: ValueKey('episode-page-$index'),
-                        fit: StackFit.expand,
-                        children: [
-                          const ColoredBox(color: Colors.black),
-                          if (index == widget.currentIndex)
-                            _positionVideo(
-                              window: window,
-                              insets: insets,
-                              fitVideo: _ready,
-                              child: SizedBox(
-                                key: const ValueKey('video-frame'),
-                                child: widget.child,
-                              ),
-                            )
-                          else
-                            _positionVideo(
-                              window: window,
-                              insets: insets,
-                              child: PlayerCover(
-                                url: widget.coverUrl,
-                                label: widget.episodes[index].title,
-                              ),
+              GestureDetector(
+                key: const ValueKey('video-surface'),
+                behavior: HitTestBehavior.opaque,
+                onTap: _toggleControls,
+                onDoubleTap: _togglePlayback,
+                onLongPressStart: (_) => _startBoost(),
+                onLongPressEnd: (_) => _endBoost(),
+                onLongPressCancel: _endBoost,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification.depth != 0) return false;
+                    if (notification is ScrollStartNotification) {
+                      _paging = true;
+                      _hideTimer?.cancel();
+                      widget.onPagingChanged?.call(true);
+                    } else if (notification is ScrollEndNotification) {
+                      _paging = false;
+                      widget.onPagingChanged?.call(false);
+                      _scheduleHide();
+                    }
+                    return false;
+                  },
+                  child: PageView.builder(
+                    key: const ValueKey('episode-pager'),
+                    controller: _pages,
+                    scrollDirection: Axis.vertical,
+                    physics: canPage
+                        ? const ClampingScrollPhysics()
+                        : const NeverScrollableScrollPhysics(),
+                    itemCount: math.max(1, widget.episodes.length),
+                    onPageChanged: (index) => unawaited(_selectEpisode(index)),
+                    itemBuilder: (context, index) => Stack(
+                      key: ValueKey('episode-page-$index'),
+                      fit: StackFit.expand,
+                      children: [
+                        const ColoredBox(color: Colors.black),
+                        if (index == widget.currentIndex)
+                          _positionVideo(
+                            window: window,
+                            insets: insets,
+                            fitVideo: _ready,
+                            child: SizedBox(
+                              key: const ValueKey('video-frame'),
+                              child: widget.child,
                             ),
-                        ],
-                      ),
+                          )
+                        else
+                          _positionVideo(
+                            window: window,
+                            insets: insets,
+                            child: PlayerCover(
+                              url: widget.coverUrl,
+                              label: widget.episodes[index].title,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),

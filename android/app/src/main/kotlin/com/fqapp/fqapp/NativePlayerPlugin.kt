@@ -1,12 +1,9 @@
 package com.fqapp.fqapp
 
 import android.app.Activity
-import android.content.Context
-import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.view.WindowManager
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -49,7 +46,6 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     @Volatile private var attachedToEngine = false
 
     private var activity: Activity? = null
-    private var deviceControls: NativePlaybackControls? = null
     private val players = ConcurrentHashMap<Int, PlayerInstance>()
     private val cancelledPlayerIds = ConcurrentHashMap.newKeySet<Int>()
     private val nextId = AtomicInteger(1)
@@ -83,39 +79,17 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
-        attachActivity(binding.activity)
+        activity = binding.activity
     }
-    override fun onDetachedFromActivityForConfigChanges() { detachActivity() }
+    override fun onDetachedFromActivityForConfigChanges() { activity = null }
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-        attachActivity(binding.activity)
+        activity = binding.activity
     }
-    override fun onDetachedFromActivity() { detachActivity() }
-
-    private fun attachActivity(attached: Activity) {
-        detachActivity()
-        activity = attached
-        deviceControls = NativePlaybackControls(
-            attached.window,
-            attached.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        ) {
-            Settings.System.getInt(
-                attached.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128
-            ) / 255f
-        }
-    }
-
-    private fun detachActivity() {
-        try {
-            deviceControls?.close()
-        } finally {
-            deviceControls = null
-            activity = null
-        }
-    }
+    override fun onDetachedFromActivity() { activity = null }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         attachedToEngine = false
-        detachActivity()
+        activity = null
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         players.keys.toList().forEach { disposePlayer(it) }
@@ -127,28 +101,6 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "beginDeviceControls", "readDeviceControls", "setScreenBrightness",
-            "setMediaVolume", "endDeviceControls" -> {
-                try {
-                    val controls = checkNotNull(deviceControls) { "Activity unavailable" }
-                    val session = requireNotNull(call.argument<Number>("session")).toInt()
-                    val response = when (call.method) {
-                        "beginDeviceControls" -> controls.begin(session)
-                        "readDeviceControls" -> controls.read(session)
-                        "setScreenBrightness" -> controls.setBrightness(
-                            session, requireNotNull(call.argument<Number>("value")).toDouble()
-                        )
-                        "setMediaVolume" -> controls.setVolume(
-                            session, requireNotNull(call.argument<Number>("value")).toDouble()
-                        )
-                        else -> { controls.end(session); null }
-                    }
-                    result.success(response)
-                } catch (error: Exception) {
-                    // An unavailable device adjustment must never tear down video playback.
-                    result.error("device_controls_unavailable", error.message, null)
-                }
-            }
             "create" -> {
                 val cdnUrl = call.argument<String>("cdnUrl")!!
                 val keyHex = call.argument<String>("keyHex")!!
