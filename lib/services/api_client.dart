@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/media_item.dart';
 import 'backend_service.dart';
+import 'chapter_text_formatter.dart';
 
 /// A parsed homepage page. Keeping the cursor next to the parsed cards lets
 /// callers update the feed atomically after checking that the request is
@@ -274,7 +275,7 @@ String _extractChapterText(Map<String, dynamic> payload) {
       for (final key in ['content', 'text', 'article_content', 'body']) {
         final candidate = value[key];
         if (candidate is String && candidate.trim().isNotEmpty) {
-          return _cleanChapterText(candidate);
+          return normalizeChapterText(candidate);
         }
       }
       for (final nested in value.values) {
@@ -292,18 +293,6 @@ String _extractChapterText(Map<String, dynamic> payload) {
 
   return visit(payload);
 }
-
-String _cleanChapterText(String text) => text
-    .replaceAll(RegExp(r'<\s*br\s*/?\s*>', caseSensitive: false), '\n')
-    .replaceAll(RegExp(r'</\s*p\s*>', caseSensitive: false), '\n')
-    .replaceAll(RegExp(r'<[^>]+>'), '')
-    .replaceAll('&nbsp;', ' ')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&amp;', '&')
-    .replaceAll(RegExp(r'\r\n?'), '\n')
-    .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-    .trim();
 
 class ApiException implements Exception {
   final String message;

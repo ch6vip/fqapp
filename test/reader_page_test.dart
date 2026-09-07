@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -6,6 +7,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
+import 'package:fqapp/services/chapter_text_formatter.dart';
 
 import 'support/fakes.dart';
 
@@ -37,7 +39,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('第一章的离线正文'), findsOneWidget);
+      expect(find.textContaining('第一章的离线正文'), findsOneWidget);
       expect(requests, isEmpty);
       await tester.tap(find.text('目录'));
       await tester.pump();
@@ -47,11 +49,101 @@ void main() {
         find.descendant(of: find.byType(ListTile), matching: find.text('尾声')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('尾声的离线正文'), findsOneWidget);
+      expect(find.textContaining('尾声的离线正文'), findsOneWidget);
       expect(requests, isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  for (final offline in [false, true]) {
+    testWidgets(
+      'paragraphs indent only the first line and wrap naturally (offline: $offline)',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(360, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        const first = '“尉迟，南宫，欧阳，上官，司马，东方……”';
+        const second = '黎问音站在学校门口的优秀学生公告栏那，碎碎念着这些学生的姓氏，就明白了。';
+        final cache = MemoryChapterCache();
+        if (offline) {
+          for (final chapter in _chapters) {
+            await cache.write(
+              bookId: 'reader-test',
+              chapterId: chapter.itemId,
+              title: chapter.title,
+              text: '${chapter.title}\r\n　　$first\r\n\r\n  $second',
+            );
+          }
+        }
+        final requests = <String>[];
+        await tester.pumpWidget(
+          _readerApp(
+            chapterCache: cache,
+            textScaler: TextScaler.linear(offline ? 1.3 : 1),
+            chapterLoader: (chapter) async {
+              requests.add(chapter.itemId);
+              if (offline) throw StateError('网络断开');
+              return normalizeChapterText(
+                '<h1>${chapter.title}</h1><div>　　$first</div>'
+                '<div>  $second</div>',
+              );
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('第一章'), findsNWidgets(2));
+        expect(find.textContaining(first), findsOneWidget);
+        expect(find.textContaining(second), findsOneWidget);
+        if (offline) expect(requests, isEmpty);
+        final firstParagraph = find.byKey(const ValueKey('reader-paragraph-0'));
+        final secondParagraph = find.byKey(
+          const ValueKey('reader-paragraph-1'),
+        );
+        final firstRender = _paragraphRender(tester, firstParagraph);
+        final contentBoxes = firstRender.getBoxesForSelection(
+          const TextSelection(baseOffset: 1, extentOffset: first.length + 1),
+        );
+        expect(contentBoxes.length, greaterThan(1));
+        expect(
+          contentBoxes.first.left,
+          closeTo(18 * (offline ? 1.3 : 1) * 2, 2),
+        );
+        expect(contentBoxes[1].left, closeTo(0, .01));
+        expect(contentBoxes.last.right, lessThan(firstRender.size.width - 9));
+        expect(
+          tester.getRect(secondParagraph).top -
+              tester.getRect(firstParagraph).bottom,
+          closeTo(12, .01),
+        );
+
+        final secondRender = _paragraphRender(tester, secondParagraph);
+        const selection = TextSelection(
+          baseOffset: 1,
+          extentOffset: second.length + 1,
+        );
+        final wideBoxes = secondRender.getBoxesForSelection(selection);
+        final wideLineEnd = secondRender.getPositionForOffset(
+          Offset(
+            secondRender.size.width,
+            (wideBoxes.first.top + wideBoxes.first.bottom) / 2,
+          ),
+        );
+        await tester.binding.setSurfaceSize(const Size(280, 900));
+        await tester.pumpAndSettle();
+        final narrowRender = _paragraphRender(tester, secondParagraph);
+        final narrowBoxes = narrowRender.getBoxesForSelection(selection);
+        final narrowLineEnd = narrowRender.getPositionForOffset(
+          Offset(
+            narrowRender.size.width,
+            (narrowBoxes.first.top + narrowBoxes.first.bottom) / 2,
+          ),
+        );
+        expect(narrowBoxes.length, greaterThanOrEqualTo(wideBoxes.length));
+        expect(narrowLineEnd.offset, lessThan(wideLineEnd.offset));
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
 
   testWidgets('right tap scrolls one screen before changing chapter', (
     tester,
@@ -169,6 +261,11 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 }
+
+RenderParagraph _paragraphRender(WidgetTester tester, Finder paragraph) =>
+    tester.renderObject<RenderParagraph>(
+      find.descendant(of: paragraph, matching: find.byType(RichText)),
+    );
 
 Widget _readerApp({
   ChapterTextLoader? chapterLoader,

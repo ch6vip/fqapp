@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
 import '../services/reader_preferences.dart';
 import '../widgets/chapter_cache_sheet.dart';
@@ -148,7 +149,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
     try {
       final text = await _chapterText(chapter);
-      if (text.trim().isEmpty) throw ApiException('正文为空');
+      final paragraphs = splitChapterParagraphs(
+        text,
+        chapterTitle: chapter.title,
+      );
+      if (paragraphs.isEmpty) throw ApiException('正文为空');
       if (!mounted || generation != _loadGeneration) return;
       final saved = await _readerStore.historyEntry(widget.bookId);
       if (!mounted || generation != _loadGeneration) return;
@@ -158,7 +163,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           : 0.0;
       setState(() {
         _content = text;
-        _paragraphs = _splitParagraphs(text);
+        _paragraphs = paragraphs;
         _loading = false;
       });
       if (_appActive) {
@@ -605,6 +610,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                             ),
                             child: Text(
                               chapter.title,
+                              key: const ValueKey('reader-chapter-title'),
                               style: TextStyle(
                                 color: preset.textColor,
                                 fontSize: _preferences.fontSize + 2,
@@ -619,8 +625,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                             padding: EdgeInsets.only(
                               bottom: _preferences.paragraphSpacing,
                             ),
-                            child: Text(
-                              _paragraphs[itemIndex - 1],
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  WidgetSpan(
+                                    // Justification can discard leading spaces.
+                                    // WidgetSpan reserves real first-line width
+                                    // and Flutter scales it with the text once.
+                                    child: SizedBox(
+                                      width: _preferences.fontSize * 2,
+                                      height: 0,
+                                    ),
+                                  ),
+                                  TextSpan(text: _paragraphs[itemIndex - 1]),
+                                ],
+                              ),
+                              key: ValueKey(
+                                'reader-paragraph-${itemIndex - 1}',
+                              ),
+                              textAlign: TextAlign.justify,
+                              semanticsLabel: _paragraphs[itemIndex - 1],
+                              locale: const Locale('zh', 'CN'),
                               style: TextStyle(
                                 color: preset.textColor,
                                 fontSize: _preferences.fontSize,
@@ -628,6 +653,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                                   _preferences.fontWeight,
                                 ),
                                 height: _preferences.lineHeight,
+                                letterSpacing: 0,
                               ),
                             ),
                           );
@@ -1403,12 +1429,3 @@ FontWeight _fontWeight(int value) => switch (value) {
   600 => FontWeight.w600,
   _ => FontWeight.w700,
 };
-
-List<String> _splitParagraphs(String text) {
-  final paragraphs = text
-      .split(RegExp(r'\n+'))
-      .map((line) => line.trim())
-      .where((line) => line.isNotEmpty)
-      .toList(growable: false);
-  return paragraphs.isEmpty ? [text] : paragraphs;
-}
