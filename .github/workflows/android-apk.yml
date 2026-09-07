@@ -11,6 +11,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'scripts/build_backend.sh'
+      - 'scripts/build_backend.ps1'
       - 'scripts/check_native_alignment.cjs'
       - 'scripts/verify_android_apk.py'
       - 'test/build_backend_scripts_test.cjs'
@@ -45,6 +46,7 @@ jobs:
     timeout-minutes: 50
     defaults:
       run:
+        shell: bash
         working-directory: app
     steps:
       - name: Check out app source
@@ -73,6 +75,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Check backend build scripts
+        run: node --test test/build_backend_scripts_test.cjs
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -87,9 +93,6 @@ jobs:
             "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION"
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
           flutter config --android-sdk "$ANDROID_HOME" --no-analytics
-
-      - name: Check backend build scripts
-        run: node --test test/build_backend_scripts_test.cjs
 
       - name: Test the committed backend source
         working-directory: 

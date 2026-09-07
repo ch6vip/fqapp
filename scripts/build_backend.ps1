@@ -65,7 +65,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
     }
     finally { Pop-Location }
-    if (-not (Test-Path -LiteralPath $buildBin) -or ((Get-Item -LiteralPath $buildBin).Length -eq 0)) {
+    # Dot-prefixed temporary outputs are hidden on Unix PowerShell.
+    if (-not (Test-Path -LiteralPath $buildBin) -or ((Get-Item -LiteralPath $buildBin -Force).Length -eq 0)) {
         throw "build produced no output at $buildBin"
     }
     Move-Item -LiteralPath $buildBin -Destination $outBin -Force
@@ -74,7 +75,7 @@ finally {
     $env:GOOS = $originalGoOS
     $env:GOARCH = $originalGoArch
     $env:CGO_ENABLED = $originalCgo
-    Remove-Item -LiteralPath $buildBin -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $buildBin -Force -ErrorAction SilentlyContinue
 }
 
 # Never trust go's exit code alone: it can be 0 while producing no file.
@@ -199,7 +200,7 @@ if ($Jni) {
             if ($LASTEXITCODE -ne 0) { throw 'go c-shared build failed' }
         }
         finally { Pop-Location }
-        if (-not (Test-Path -LiteralPath $buildSo) -or (Get-Item -LiteralPath $buildSo).Length -eq 0) {
+        if (-not (Test-Path -LiteralPath $buildSo) -or (Get-Item -LiteralPath $buildSo -Force).Length -eq 0) {
             throw "JNI build produced no output at $buildSo"
         }
         Move-Item -LiteralPath $buildSo -Destination $outSo -Force
