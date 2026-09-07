@@ -1,0 +1,55 @@
+name: Native crypto
+
+on:
+  push:
+    paths:
+      - 'native/**'
+      - 'test/native_*'
+      - 'test/support/cenc_fixture.cjs'
+      - 'test/support/native_compile.cjs'
+      - '.github/workflows/native-crypto.yml'
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'test/native_*'
+      - 'test/support/cenc_fixture.cjs'
+      - 'test/support/native_compile.cjs'
+      - '.github/workflows/native-crypto.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install compiler and media fixtures tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ffmpeg
+      - name: C core, malformed input, and real media with sanitizers
+        env:
+          NATIVE_CC: clang
+          NATIVE_CFLAGS: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          node --test --test-concurrency=1
+          test/native_aes_test.cjs
+          test/native_crypto_test.cjs
+          test/native_crypto_media_test.cjs
+      - name: Execute the real JNI bridge with JDK checks
+        env:
+          NATIVE_CC: clang
+          NATIVE_JNI_REQUIRED: '1'
+        run: node --test --test-concurrency=1 test/native_jni_test.cjs

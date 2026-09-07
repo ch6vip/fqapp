@@ -103,6 +103,7 @@ fqapp/
 │   ├── web/                         # 后端自带 Web UI(浏览器备用)
 │   └── plugins/                     # manga_reader / player HTML 插件
 ├── android/                         # Android 工程、JNI 桥接与 JVM 测试
+├── native/                          # 可重建的 CENC 流式 C 解密库与 CMake
 ├── scripts/
 │   ├── build_backend.sh             # 编译宿主后端、可选 Android JNI + 同步运行时文件
 │   └── build_backend.ps1            # 同上，Windows PowerShell 版
@@ -111,8 +112,8 @@ fqapp/
 ```
 
 > **仓库不含原生二进制**：`assets/bin/` 和两份 `.so` 均被 Git 忽略。独立后端及
-> `liblegacy.so` 可由 `` 源码重建；`libshortplay_crypto.so` 是单独的依赖，当前仓库
-> 尚未包含其 C 源码和构建入口。Android 构建前需要按下面的步骤准备两份库。
+> `liblegacy.so` 可由 `` 源码重建；`libshortplay_crypto.so` 由本仓库 `native/` 中的
+> C 源码在 Android 构建时自动生成。Android 构建前需准备 Go JNI 后端。
 
 ---
 
@@ -126,7 +127,8 @@ fqapp/
 | Dart SDK | 3.12+ | 随 Flutter |
 | Android SDK | 36 (platform) + Build-Tools | 编译 APK |
 | Go | 1.26+ | 交叉编译后端二进制 |
-| Android NDK | 28.x | 编译 Android JNI 后端所必需 |
+| Android NDK | 28.2.13676358 | 编译 Go JNI 后端与 C 流式解密库 |
+| CMake | 3.22.1 | Android 构建自动编译 C 库 |
 
 > Windows 下构建注意：Kotlin 增量编译在部分环境会报 `Could not close incremental caches`，已在 `android/gradle.properties` 中关闭（`kotlin.incremental=false`）。
 
@@ -160,34 +162,18 @@ JNI 后端固定使用 `GOOS=android`、`GOARCH=arm64` 和 NDK clang。
 > 脚本会跳过它并清理 `assets/config/` 中的副本；`pubspec.yaml` 也只声明上述三个配置文件。
 > 设备实际注册的池保存在应用私有目录，后续资源升级会保留它。
 
-### 2. 准备加密播放库
+### 2. 构建加密播放库
 
-将匹配当前 `com.example.shortplay.CryptoNative` JNI 接口的 **Android arm64**
-`libshortplay_crypto.so` 放到：
+`native/` 提供自行实现的 CENC MP4 流式解密核心，沿用 `com.example.shortplay.CryptoNative`
+JNI 接口与 ExoPlayer。Gradle 通过 CMake 自动编译 `libshortplay_crypto.so`，支持边读边解密与拖动，
+使用 NDK 28 并显式设置 16 KB ELF 对齐，不再需要下载外部预编译 crypto 库。
 
-```text
-android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so
-```
+升级旧工作区时，请把 `android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so`
+备份到 `jniLibs` 之外，避免它与自动生成的库重复。Gradle 会检查旧输入以及 Go JNI 库是否就绪。
+`build_backend -Jni` / `--jni` 仍只负责编译 旧后端；C 库由下一步 APK 构建自动生成。
 
-它负责 CENC 流式解密，现有 旧后端库不能直接替换它。`build_backend -Jni` / `--jni` **不会生成它**。
-已确认现有产物来自 `Erlmo/shortplay`。为复现现有构建，可获取
-[上游固定版本的 Android arm64 预编译库](https://raw.githubusercontent.com/Erlmo/shortplay/0082724d314d4378fc9191de3ac43029a8fe6d39/android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so)，
-放到上述路径并核对 SHA-256：
-
-```text
-47528DB2BB24D3DE7F85530A89750949C082767A9887958D2692F585A34694C4
-```
-
-该文件与本次审查使用的库完全一致，仍存在下述 16 KB 页兼容问题。上游明确注明 C 源码未公开；
-仅克隆本仓库、`` 和上游公开仓库，仍无法从源码重建这份 C 库。
-来源、核查范围和后续方案见 [加密库来源记录](docs/native-crypto-provenance-20260908.md)。
-
-Gradle 在合并 Android 原生库前检查两份 `.so` 是否存在且具有 ARM64 ELF 共享库头，
-缺库或架构不符时会直接报错。该检查不能替代 JNI 接口兼容性与真机播放验证。
-
-本次审查使用的加密库 LOAD 段仍为 4 KB 对齐，尚未满足原生 16 KB 内存页兼容要求；
-需要取得源码重新链接、取得兼容的构建产物，或实现替代的流式解密路径，并在相应设备上验证。
-Go JNI 后端的 LOAD 段已为 16 KB 对齐。
+实现范围、支持的 MP4 格式、主机回归和设备验证边界见 [C 库说明](native/README.md)。
+旧库来源调查保存在 [历史来源记录](docs/native-crypto-provenance-20260908.md)。
 
 ### 3. 构建 APK
 
@@ -286,7 +272,7 @@ Android 上 JNI 失败会显示启动错误与重试入口，不回退到 `Proce
 ```
 
 Go JNI 入口会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；HTTP 服务只绑定 `127.0.0.1`。
-加密播放还需单独准备上文说明的 `libshortplay_crypto.so`。
+加密播放所需的 `libshortplay_crypto.so` 由 APK 构建自动从 `native/` 生成。
 
 ---
 
@@ -399,8 +385,8 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 ### 1. 原生库与真机验证
 
 - Android 后端必须使用 JNI。执行 `scripts/build_backend.ps1 -Jni` 或 Bash 版本的 `--jni` 生成 `liblegacy.so`。
-- 加密播放还需另行提供匹配的 `libshortplay_crypto.so`；其源码当前不在本仓库内，构建脚本不会生成它。
-- 两份库准备好后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。纯 JVM 测试不会加载这两份库。
+- 加密播放使用 `native/` 中的 C 源码，Gradle/CMake 自动生成 `libshortplay_crypto.so`。
+- 准备 Go JNI 后端后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。Android 的纯 JVM 测试不会加载这两份库。
 - 本轮审查的修复范围、自动化验证与剩余限制见 [全项目代码审查记录](docs/project-code-review-20260908.md)。
 
 ### 2. 调试技巧
@@ -457,7 +443,8 @@ adb logcat -s flutter
 - [x] 首页真实推荐接口（`/api/v1/recommend/homepage`）
 - [ ] Android arm64 真机 smoke test（启动、搜索、阅读、播放）
 - [x] 短剧流式播放（Media3 + JNI CENC 解密与 HTTP Range）
-- [ ] 实现可重建的短剧流式解密，并完成 16 KB 页兼容验证（见[后续方案](docs/native-crypto-provenance-20260908.md#后续实施方向)）
+- [x] 可重建的 C 短剧流式解密与 16 KB ELF 链接配置（见 [C 库说明](native/README.md)）
+- [ ] 16 KB 页 Android 设备上的加密播放与生命周期验证
 - [ ] 漫画阅读页（图片平铺/翻页）
 - [ ] 听书播放页（音频播放器）
 - [x] 小说章节下载/离线缓存

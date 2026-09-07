@@ -44,9 +44,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/build/
+/android/app/.cxx/
 
 # 旧后端产物可由  源码重建；Android 请使用脚本的 --jni / -Jni。
-# shortplay 加密库是另行提供的原生依赖，准备方式与当前源码缺口见 README。
+# shortplay 加密库由 native/ 中的 C 源码通过 CMake 构建，不提交生成的 .so。
 /assets/bin/
 /assets/config/device_pool.json
 /android/app/src/main/jniLibs/*/*.so

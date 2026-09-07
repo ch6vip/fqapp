@@ -2,6 +2,7 @@ package com.example.shortplay;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import kotlin.Unit;
 import okhttp3.MediaType;
@@ -78,6 +80,90 @@ public class HttpRangeClientTest {
     }
 
     @Test
+    public void sizeUsesAOneByteProbeAndKeepsTheFull64BitTotal() {
+        respond(206, "bytes 0-0/5000000000", "x", 1);
+        assertEquals(5000000000L, bridge.httpSize(URL));
+        assertEquals("bytes=0-0", requests.get(0).header("Range"));
+        assertEquals("identity", requests.get(0).header("Accept-Encoding"));
+        assertTrue(body.closed);
+    }
+
+    @Test
+    public void sizeRejectsIgnoredRangesUnknownTotalsAndTruncation() {
+        respond(200, null, "abcdef", 6);
+        assertEquals(-1L, bridge.httpSize(URL));
+        assertTrue(body.closed);
+        for (String invalid : new String[] {
+                null, "bytes 0-0/*", "bytes 1-1/6", "bytes 0-1/6", "bytes 0-0/0",
+                "bytes 0-0/9223372036854775808"
+        }) {
+            respond(206, invalid, "x", 1);
+            assertEquals(-1L, bridge.httpSize(URL));
+            assertTrue(body.closed);
+        }
+        respond(206, "bytes 0-0/6", "", -1);
+        assertEquals(-1L, bridge.httpSize(URL));
+        assertTrue(body.closed);
+        respond(206, "bytes 0-0/6", "x", 1);
+        encoding = "gzip";
+        assertEquals(-1L, bridge.httpSize(URL));
+        assertTrue(body.closed);
+    }
+
+    @Test
+    public void aPreparedRequestCanBeCancelledBeforeAnyNetworkIo() {
+        long id = bridge.streamPrepare(URL, 2, 6);
+        assertTrue(id > 0L);
+        assertTrue(requests.isEmpty());
+        bridge.streamClose(id);
+        bridge.streamClose(id);
+        assertFalse(bridge.streamConnect(id));
+        assertEquals(-1, bridge.streamRead(id, new byte[1]));
+        assertTrue(requests.isEmpty());
+    }
+
+    @Test
+    public void nativeStreamsRejectAChangedOrUnknownResourceSize() {
+        for (String changed : new String[] {"bytes 2-5/6", "bytes 2-5/*"}) {
+            respond(206, changed, "cdef", 4);
+            long id = bridge.streamPrepare(URL, 2, 7);
+            assertTrue(id > 0L);
+            assertFalse(bridge.streamConnect(id));
+            assertEquals(-1, bridge.streamRead(id, new byte[1]));
+            assertTrue(body.closed);
+        }
+        respond(206, "bytes 2-5/6", "cdef", 4);
+        long id = bridge.streamPrepare(URL, 2, 6);
+        try {
+            assertTrue(bridge.streamConnect(id));
+            assertTrue(bridge.streamConnect(id));
+            assertEquals(4, bridge.streamRead(id, new byte[4]));
+        } finally {
+            bridge.streamClose(id);
+        }
+    }
+
+    @Test
+    public void aBoundedReadDoesNotConsumeTheRestOfTheReusableBuffer() {
+        respond(206, "bytes 2-5/6", "cdef", 4);
+        long id = bridge.streamOpen(URL, 2);
+        byte[] buffer = new byte[32];
+        try {
+            assertEquals(-1, bridge.streamRead(id, buffer, -1));
+            assertEquals(-1, bridge.streamRead(id, buffer, 33));
+            assertEquals(1, bridge.streamRead(id, buffer, 1));
+            assertEquals('c', buffer[0]);
+            assertEquals(0, buffer[1]);
+            assertEquals(3, bridge.streamRead(id, buffer, buffer.length));
+            assertEquals('d', buffer[0]);
+            assertEquals('f', buffer[2]);
+            assertEquals(0, bridge.streamRead(id, buffer, buffer.length));
+        } finally {
+            bridge.streamClose(id);
+        }
+    }
+
+    @Test
     public void rangeIgnoredAtANonzeroOffsetIsRejectedAndClosed() {
         respond(200, null, "abcdef", 6);
         assertNull(bridge.httpRange(URL, 2, 4));
@@ -125,6 +211,10 @@ public class HttpRangeClientTest {
         assertNull(bridge.httpRange(URL, 4, 3));
         assertNull(bridge.httpRange(URL, 0, Long.MAX_VALUE));
         assertEquals(0, bridge.streamOpen(URL, -1));
+        assertEquals(0, bridge.streamPrepare(URL, -1, 6));
+        assertEquals(0, bridge.streamPrepare(URL, 0, -2));
+        assertEquals(0, bridge.streamPrepare(URL, 6, 6));
+        assertEquals(0, bridge.streamPrepare(URL, 0, 0));
         assertTrue(requests.isEmpty());
     }
 
@@ -186,6 +276,92 @@ public class HttpRangeClientTest {
     @Test(timeout = 4000)
     public void streamingBodyReadsHaveABoundedReadTimeout() throws Exception {
         assertStalledSocketTimesOut(true);
+    }
+
+    @Test(timeout = 5000)
+    public void closeInterruptsPendingResponseHeaders() throws Exception {
+        assertCloseInterruptsStalledSocket(false);
+    }
+
+    @Test(timeout = 5000)
+    public void closeInterruptsAPendingBodyRead() throws Exception {
+        assertCloseInterruptsStalledSocket(true);
+    }
+
+    private void assertCloseInterruptsStalledSocket(boolean sendHeaders) throws Exception {
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        CountDownLatch accepted = new CountDownLatch(1);
+        CountDownLatch readingBody = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        OkHttpClient cancellableClient = new OkHttpClient.Builder()
+                .proxy(Proxy.NO_PROXY).retryOnConnectionFailure(false)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .addNetworkInterceptor(chain -> {
+                    Response response = chain.proceed(chain.request());
+                    ResponseBody delegate = response.body();
+                    // OkHttp's responseBodyStart event fires only after the
+                    // first read returns. Observe entry into the actual body
+                    // read instead, while the socket still has no payload.
+                    ResponseBody tracked = new ResponseBody() {
+                        private final BufferedSource source = Okio.buffer(
+                                new ForwardingSource(delegate.source()) {
+                                    @Override
+                                    public long read(Buffer sink, long byteCount) throws IOException {
+                                        readingBody.countDown();
+                                        return super.read(sink, byteCount);
+                                    }
+                                });
+
+                        @Override
+                        public MediaType contentType() { return delegate.contentType(); }
+
+                        @Override
+                        public long contentLength() { return delegate.contentLength(); }
+
+                        @Override
+                        public BufferedSource source() { return source; }
+                    };
+                    return response.newBuilder().body(tracked).build();
+                }).build();
+        HttpRangeClient streaming = new HttpRangeClient(cancellableClient, message -> Unit.INSTANCE);
+        long id = 0L;
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            workers.submit(() -> {
+                try (Socket socket = server.accept()) {
+                    if (sendHeaders) {
+                        socket.getOutputStream().write(bytes(
+                                "HTTP/1.1 206 Partial Content\r\n"
+                                + "Content-Range: bytes 0-3/4\r\nContent-Length: 4\r\n\r\n"));
+                        socket.getOutputStream().flush();
+                    }
+                    accepted.countDown();
+                    release.await();
+                } catch (Exception ignored) {
+                }
+            });
+            id = streaming.streamPrepare("http://localhost:" + server.getLocalPort() + "/video.mp4", 0, 4);
+            assertTrue(id > 0L);
+            final long requestId = id;
+            long started = System.nanoTime();
+            Future<Integer> result = workers.submit(() -> {
+                if (!streaming.streamConnect(requestId)) return -1;
+                return streaming.streamRead(requestId, new byte[4]);
+            });
+            assertTrue(accepted.await(2, TimeUnit.SECONDS));
+            if (sendHeaders) assertTrue(readingBody.await(2, TimeUnit.SECONDS));
+            assertFalse(result.isDone());
+            streaming.streamClose(id);
+            assertEquals(-1, (int) result.get(2, TimeUnit.SECONDS));
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 4000);
+            assertEquals(-1, streaming.streamRead(id, new byte[1]));
+        } finally {
+            streaming.streamClose(id);
+            release.countDown();
+            workers.shutdownNow();
+            cancellableClient.connectionPool().evictAll();
+            cancellableClient.dispatcher().executorService().shutdownNow();
+        }
     }
 
     private void assertStalledSocketTimesOut(boolean sendHeaders) throws Exception {

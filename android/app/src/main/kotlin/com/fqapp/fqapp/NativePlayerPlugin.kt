@@ -400,7 +400,9 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
                     else -> minOf(available, dataSpec.length)
                 }
                 if (dataSpec.position > 0 && bytesRemaining != 0L) {
-                    stream.seek(streamHandle, dataSpec.position)
+                    if (stream.seek(streamHandle, dataSpec.position) != dataSpec.position) {
+                        throw IOException("Crypto stream could not seek to the requested position")
+                    }
                 }
                 opened = true
                 transferStarted(dataSpec)

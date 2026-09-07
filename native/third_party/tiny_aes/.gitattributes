@@ -1,0 +1,4 @@
+# Preserve pinned upstream source byte-for-byte, including its whitespace.
+aes.c text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+aes.h text eol=lf whitespace=-blank-at-eol
+unlicense.txt text eol=lf

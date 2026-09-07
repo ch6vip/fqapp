@@ -22,6 +22,7 @@ import androidx.media3.datasource.DataSourceException;
 import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.TransferListener;
 import java.io.EOFException;
+import java.io.IOException;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -35,6 +36,7 @@ public class CryptoDataSourceTest {
         stream = mock(CryptoStream.class);
         when(stream.open("https://example.invalid/video.mp4", "key")).thenReturn(7L);
         when(stream.size(7L)).thenReturn(100L);
+        when(stream.seek(eq(7L), anyLong())).thenAnswer(invocation -> invocation.getArgument(1));
         source = new NativePlayerPlugin.CryptoDataSource(
                 "https://example.invalid/video.mp4", "key", stream);
         uri = mock(Uri.class);
@@ -120,6 +122,18 @@ public class CryptoDataSourceTest {
         clearInvocations(stream);
         source.close();
         verify(stream, never()).close(7L);
+    }
+
+    @Test
+    public void aFailedOrInexactNativeSeekCannotServeBytesFromTheWrongOffset() {
+        for (long actualPosition : new long[] {-1L, 0L, 79L, 81L}) {
+            when(stream.seek(7L, 80L)).thenReturn(actualPosition);
+            assertThrows(IOException.class, () -> source.open(request(80, 10)));
+            verify(stream).close(7L);
+            assertNull(source.getUri());
+            verify(stream, never()).read(eq(7L), any(byte[].class), anyInt());
+            clearInvocations(stream);
+        }
     }
 
     @Test

@@ -10,7 +10,15 @@ plugins {
 android {
     namespace = "com.fqapp.fqapp"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Compile the in-repository crypto core with the NDK's 16 KiB support.
+    ndkVersion = "28.2.13676358"
+
+    externalNativeBuild {
+        cmake {
+            path = file("../../native/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -31,6 +39,11 @@ android {
         // native backend cannot start and Process.start is blocked by SELinux.
         ndk {
             abiFilters += setOf("arm64-v8a")
+        }
+        externalNativeBuild {
+            cmake {
+                targets += "shortplay_crypto"
+            }
         }
     }
 
@@ -68,18 +81,29 @@ flutter {
     source = "../.."
 }
 
-// Both libraries are external build inputs. Validate them only when Android
-// native libraries are assembled, so pure JVM tests can run in a clean checkout.
+// The Go library is the only external native build input. The crypto library
+// is compiled from native/ by externalNativeBuild. Keep this check at packaging
+// time so pure JVM tests can still run without the Go backend artifact.
 val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibraries") {
     group = "verification"
-    description = "Checks the required Android ARM64 JNI libraries before packaging."
-    val nativeFiles = listOf("liblegacy.so", "libshortplay_crypto.so").map { name ->
+    description = "Checks the external Android ARM64 Go JNI library before packaging."
+    val nativeFiles = listOf("liblegacy.so").map { name ->
         layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/$name").asFile
     }
     // Optional inputs let the task report missing files with setup guidance,
     // instead of Gradle failing input validation before our check can run.
     inputs.files(nativeFiles).withPropertyName("requiredNativeLibraries").optional()
     doLast {
+        val legacyCrypto = layout.projectDirectory.file(
+            "src/main/jniLibs/arm64-v8a/libshortplay_crypto.so"
+        ).asFile
+        if (legacyCrypto.exists()) {
+            throw GradleException(
+                "Remove the legacy prebuilt crypto library from jniLibs before packaging: " +
+                    legacyCrypto.path +
+                    ". Keep a backup outside jniLibs; native/ now builds this library automatically."
+            )
+        }
         val failures = nativeFiles.mapNotNull { library ->
             when {
                 !library.isFile -> "${library.name}: missing (${library.path})"
@@ -108,8 +132,8 @@ val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibrarie
                 "Required Android native libraries are missing or incompatible:\n" +
                     failures.joinToString("\n") +
                     "\nSee the native library setup in the repository README.md. " +
-                    "build_backend -Jni/--jni builds liblegacy.so; " +
-                    "libshortplay_crypto.so must be provided separately."
+                    "build_backend -Jni/--jni builds liblegacy.so. " +
+                    "The crypto library is built automatically from native/."
             )
         }
     }
