@@ -169,15 +169,25 @@ JNI 后端固定使用 `GOOS=android`、`GOARCH=arm64` 和 NDK clang。
 android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so
 ```
 
-它负责 CENC 流式解密，不能用 旧后端库替代。`build_backend -Jni` / `--jni` **不会生成它**。
-目前需要从原 `shortplay` 原生工程的维护者取得匹配的构建产物，或恢复该工程的 C 源码与构建入口；
-本仓库没有可用的下载地址或完整源码重建步骤。仅克隆本仓库和 `` 还不足以完成 Android 构建。
+它负责 CENC 流式解密，现有 旧后端库不能直接替换它。`build_backend -Jni` / `--jni` **不会生成它**。
+已确认现有产物来自 `Erlmo/shortplay`。为复现现有构建，可获取
+[上游固定版本的 Android arm64 预编译库](https://raw.githubusercontent.com/Erlmo/shortplay/0082724d314d4378fc9191de3ac43029a8fe6d39/android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so)，
+放到上述路径并核对 SHA-256：
+
+```text
+47528DB2BB24D3DE7F85530A89750949C082767A9887958D2692F585A34694C4
+```
+
+该文件与本次审查使用的库完全一致，仍存在下述 16 KB 页兼容问题。上游明确注明 C 源码未公开；
+仅克隆本仓库、`` 和上游公开仓库，仍无法从源码重建这份 C 库。
+来源、核查范围和后续方案见 [加密库来源记录](docs/native-crypto-provenance-20260908.md)。
 
 Gradle 在合并 Android 原生库前检查两份 `.so` 是否存在且具有 ARM64 ELF 共享库头，
 缺库或架构不符时会直接报错。该检查不能替代 JNI 接口兼容性与真机播放验证。
 
 本次审查使用的加密库 LOAD 段仍为 4 KB 对齐，尚未满足原生 16 KB 内存页兼容要求；
-需要恢复其源码、重新链接并在相应设备上验证。Go JNI 后端的 LOAD 段已为 16 KB 对齐。
+需要取得源码重新链接、取得兼容的构建产物，或实现替代的流式解密路径，并在相应设备上验证。
+Go JNI 后端的 LOAD 段已为 16 KB 对齐。
 
 ### 3. 构建 APK
 
@@ -447,7 +457,7 @@ adb logcat -s flutter
 - [x] 首页真实推荐接口（`/api/v1/recommend/homepage`）
 - [ ] Android arm64 真机 smoke test（启动、搜索、阅读、播放）
 - [x] 短剧流式播放（Media3 + JNI CENC 解密与 HTTP Range）
-- [ ] 补齐 `shortplay` 原生加密库源码、可重建入口和 16 KB 页兼容验证
+- [ ] 实现可重建的短剧流式解密，并完成 16 KB 页兼容验证（见[后续方案](docs/native-crypto-provenance-20260908.md#后续实施方向)）
 - [ ] 漫画阅读页（图片平铺/翻页）
 - [ ] 听书播放页（音频播放器）
 - [x] 小说章节下载/离线缓存
