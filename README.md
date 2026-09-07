@@ -173,6 +173,7 @@ JNI 接口与 ExoPlayer。Gradle 通过 CMake 自动编译 `libshortplay_crypto.
 `build_backend -Jni` / `--jni` 仍只负责编译 旧后端；C 库由下一步 APK 构建自动生成。
 
 实现范围、支持的 MP4 格式、主机回归和设备验证边界见 [C 库说明](native/README.md)。
+本轮测试结果、APK 校验值和 16 KB 设备验证状态见 [C 库验证记录](docs/native-c-validation-20260908.md)。
 旧库来源调查保存在 [历史来源记录](docs/native-crypto-provenance-20260908.md)。
 
 ### 3. 构建 APK
