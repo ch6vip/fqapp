@@ -106,6 +106,8 @@ class ChapterCacheStore implements ChapterCache {
   Future<Box<dynamic>>? _opening;
   Future<void> _writes = Future<void>.value();
   final Map<String, int> _accessTimes = {};
+  final Expando<int> _byteCounts = Expando<int>();
+  int _lastAccessTime = 0;
 
   Future<Box<dynamic>> _box() async {
     final box = await (_opening ??= _hive.openBox<dynamic>(
@@ -135,27 +137,52 @@ class ChapterCacheStore implements ChapterCache {
   bool _isChapter(dynamic value) =>
       value is Map &&
       value['bookId'] is String &&
+      (value['bookId'] as String).isNotEmpty &&
       value['chapterId'] is String &&
+      (value['chapterId'] as String).isNotEmpty &&
       value['text'] is String &&
       (value['text'] as String).trim().isNotEmpty;
 
-  int _bytes(Map entry) =>
-      (entry['bytes'] as num?)?.toInt() ??
-      utf8.encode(entry['text'] as String).length;
+  int _bytes(Map entry) {
+    // Validate each stored record once; stale byte metadata cannot bypass caps.
+    return _byteCounts[entry] ??= utf8.encode(entry['text'] as String).length;
+  }
+
+  int _accessedAt(Map entry) {
+    final value = entry['accessedAt'];
+    return value is num && value.isFinite && value >= 0 ? value.toInt() : 0;
+  }
+
+  int _touch(String key) {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    // Several accesses can share a clock tick, especially on Windows.
+    _lastAccessTime = now > _lastAccessTime ? now : _lastAccessTime + 1;
+    return _accessTimes[key] = _lastAccessTime;
+  }
 
   @override
   Future<String?> read({required String bookId, required String chapterId}) =>
       _serialize((box) async {
         final key = _key(bookId, chapterId);
         final raw = box.get(key);
-        if (!_isChapter(raw)) return null;
-        final entry = Map<String, dynamic>.from(raw as Map);
-        final now = DateTime.now().microsecondsSinceEpoch;
-        _accessTimes[key] = now;
-        final lastSaved = (entry['accessedAt'] as num?)?.toInt() ?? 0;
+        if (!_isChapter(raw) ||
+            raw['bookId'] != bookId ||
+            raw['chapterId'] != chapterId) {
+          return null;
+        }
+        final entry = <String, dynamic>{
+          for (final item in (raw as Map).entries)
+            if (item.key is String) item.key as String: item.value,
+        };
+        final now = _touch(key);
+        final lastSaved = _accessedAt(entry);
         if (now - lastSaved >= const Duration(hours: 1).inMicroseconds) {
           entry['accessedAt'] = now;
-          await box.put(key, entry);
+          try {
+            await box.put(key, entry);
+          } catch (_) {
+            // Cached text is still readable if an access-time write fails.
+          }
         }
         return entry['text'] as String;
       });
@@ -170,15 +197,15 @@ class ChapterCacheStore implements ChapterCache {
     if (bookId.isEmpty || chapterId.isEmpty || text.trim().isEmpty) return;
     final bytes = utf8.encode(text).length;
     if (bytes > maxBytes) throw StateError('该章节超过缓存容量上限');
-    _accessTimes[_key(bookId, chapterId)] =
-        DateTime.now().microsecondsSinceEpoch;
-    await box.put(_key(bookId, chapterId), {
+    final key = _key(bookId, chapterId);
+    final accessedAt = _touch(key);
+    await box.put(key, {
       'bookId': bookId,
       'chapterId': chapterId,
       'title': title,
       'text': text,
       'bytes': bytes,
-      'accessedAt': DateTime.now().microsecondsSinceEpoch,
+      'accessedAt': accessedAt,
     });
     await _trim(box, keepBook: bookId);
     changes.value++;
@@ -222,7 +249,7 @@ class ChapterCacheStore implements ChapterCache {
       final id = value['bookId'] as String;
       counts[id] = (counts[id] ?? 0) + 1;
       bytes[id] = (bytes[id] ?? 0) + _bytes(value as Map);
-      final time = value['accessedAt'] as num? ?? 0;
+      final time = _accessedAt(value);
       if (time > (accessed[id] ?? 0)) accessed[id] = time;
     }
     final books = <CachedBookSummary>[];
@@ -251,7 +278,9 @@ class ChapterCacheStore implements ChapterCache {
       await box.deleteAll([
         'book:$bookId',
         for (final key in box.keys)
-          if (_isChapter(box.get(key)) && box.get(key)['bookId'] == bookId) key,
+          if (key is String &&
+              key.startsWith('chapter:[${jsonEncode(bookId)},'))
+            key,
       ]);
       _accessTimes.removeWhere((key, _) => !box.containsKey(key));
     }
@@ -270,7 +299,7 @@ class ChapterCacheStore implements ChapterCache {
       entries.add((
         key: key,
         bytes: bytes,
-        accessedAt: _accessTimes[key] ?? raw['accessedAt'] as num? ?? 0,
+        accessedAt: _accessTimes[key] ?? _accessedAt(raw),
       ));
     }
     entries.sort((a, b) => a.accessedAt.compareTo(b.accessedAt));

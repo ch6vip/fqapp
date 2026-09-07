@@ -242,7 +242,7 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients) return;
+    if (!_scrollController.hasClients || _loadMoreError != null) return;
     if (_scrollController.position.extentAfter < _paginationThreshold) {
       _loadMore();
     }
@@ -343,9 +343,18 @@ class _SearchPageState extends State<SearchPage> {
                     ),
                   )
                 : activeTab == null
-                ? const Center(child: Text('输入关键词搜索'))
-                : activeTab.items.isEmpty
                 ? const Center(child: Text('无结果'))
+                : activeTab.items.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('无结果'),
+                        if (_hasMore || _loadingMore || _loadMoreError != null)
+                          _paginationFooter(context),
+                      ],
+                    ),
+                  )
                 : _resultGrid(context, activeTab),
           ),
         ],
@@ -494,7 +503,12 @@ class _SearchPageState extends State<SearchPage> {
         ),
       );
     }
-    return const SizedBox(height: 32);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: TextButton(onPressed: _loadMore, child: const Text('加载更多')),
+      ),
+    );
   }
 
   void _selectTab(int index) {
@@ -503,6 +517,7 @@ class _SearchPageState extends State<SearchPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _scrollController.hasClients) {
         _scrollController.jumpTo(0);
+        _onScroll();
       }
     });
   }

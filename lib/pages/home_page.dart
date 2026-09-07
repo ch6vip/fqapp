@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -26,41 +28,52 @@ class _HomePageState extends ConsumerState<HomePage> {
   final ScrollController _scroll = ScrollController();
   // Throttle window for load-more triggers (PiliPlus EasyThrottle style):
   // rapid scrolling near the bottom must not fire back-to-back requests.
-  DateTime? _lastLoadMoreAt;
+  Timer? _loadMoreTimer;
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       ref.read(homeProvider.notifier).load();
     });
   }
 
   @override
   void dispose() {
+    _loadMoreTimer?.cancel();
     _scroll.dispose();
     super.dispose();
   }
 
   void _onScroll() {
-    if (!_scroll.hasClients) return;
+    if (!_scroll.hasClients) {
+      final state = ref.read(homeProvider);
+      if (state.error == null && _visibleItems(state).isEmpty) {
+        _maybeLoadMore();
+      }
+      return;
+    }
     final pos = _scroll.position;
     if (pos.pixels >= pos.maxScrollExtent - 400) {
       _maybeLoadMore();
     }
   }
 
-  /// Throttled load-more trigger. Shared by the scroll listener and the
-  /// "last item built" path, so short feeds (fewer cards than fill a screen)
-  /// still paginate even though they never scroll.
+  /// Throttled load-more trigger. Shared by the scroll listener and content
+  /// builders so empty or short feeds keep paginating without scrolling.
   void _maybeLoadMore() {
-    final now = DateTime.now();
-    if (_lastLoadMoreAt == null ||
-        now.difference(_lastLoadMoreAt!) >= const Duration(milliseconds: 500)) {
-      _lastLoadMoreAt = now;
-      ref.read(homeProvider.notifier).loadMore();
-    }
+    if (!mounted || _loadMoreTimer != null) return;
+    final state = ref.read(homeProvider);
+    if (state.isLoading || state.isLoadMore || !state.hasMore) return;
+    _loadMoreTimer = Timer(const Duration(milliseconds: 500), () {
+      _loadMoreTimer = null;
+      // An empty or short page can finish inside the throttle window without
+      // a scroll event. Recheck it when the window ends to keep paginating.
+      if (mounted) _onScroll();
+    });
+    ref.read(homeProvider.notifier).loadMore();
   }
 
   List<MediaItem> _visibleItems(HomeState state) {
@@ -111,9 +124,13 @@ class _HomePageState extends ConsumerState<HomePage> {
           children: [
             Icon(Icons.search, size: 20, color: scheme.onSurfaceVariant),
             const SizedBox(width: 8),
-            Text(
-              '搜索短剧、小说、漫画...',
-              style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
+            Expanded(
+              child: Text(
+                '搜索短剧、小说、漫画...',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
+              ),
             ),
           ],
         ),
@@ -175,19 +192,26 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
     if (state.error != null) {
       return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(state.error!, style: const TextStyle(color: Colors.red)),
-            const SizedBox(height: 12),
-            OutlinedButton(onPressed: notifier.load, child: const Text('重试')),
-          ],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(state.error!, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              OutlinedButton(onPressed: notifier.load, child: const Text('重试')),
+            ],
+          ),
         ),
       );
     }
 
     final items = _visibleItems(state);
     if (items.isEmpty) {
+      if (state.hasMore) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
+        return const Center(child: CircularProgressIndicator());
+      }
       return const Center(child: Text('暂无内容'));
     }
 

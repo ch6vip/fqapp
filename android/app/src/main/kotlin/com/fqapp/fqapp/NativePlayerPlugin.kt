@@ -14,6 +14,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -26,6 +27,8 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
+import java.io.EOFException
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -47,7 +50,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
 
     private var activity: Activity? = null
     private val players = ConcurrentHashMap<Int, PlayerInstance>()
-    private val cancelledPlayerIds = ConcurrentHashMap.newKeySet<Int>()
+    private val pendingPlayerIds = ConcurrentHashMap.newKeySet<Int>()
     private val nextId = AtomicInteger(1)
     private val handler = Handler(Looper.getMainLooper())
     private val backgroundExecutor = Executors.newCachedThreadPool()
@@ -94,7 +97,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         eventChannel.setStreamHandler(null)
         players.keys.toList().forEach { disposePlayer(it) }
         handler.removeCallbacksAndMessages(null)
-        cancelledPlayerIds.clear()
+        pendingPlayerIds.clear()
         eventSink = null
         backgroundExecutor.shutdownNow()
     }
@@ -155,40 +158,41 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
 
     private fun handleCreate(cdnUrl: String, keyHex: String, result: MethodChannel.Result) {
         val playerId = nextId.getAndIncrement()
+        pendingPlayerIds.add(playerId)
         result.success(mapOf("playerId" to playerId, "textureId" to -1))
 
         if (keyHex.isEmpty()) {
             handler.post {
-                if (attachedToEngine && !cancelledPlayerIds.remove(playerId)) {
-                    createPlayerWithUri(playerId, cdnUrl)
-                }
+                createPlayerWithUri(playerId, cdnUrl)
             }
         } else {
             try {
                 CryptoNative.ensureInit()
                 backgroundExecutor.execute {
                     try {
-                        if (cancelledPlayerIds.remove(playerId)) return@execute
+                        if (!attachedToEngine || !pendingPlayerIds.contains(playerId)) return@execute
                         // Probe-only open: verifies the CDN + key are playable.
                         val probeHandle = CryptoNative.nativePlayerStreamOpen(cdnUrl, keyHex)
                         if (probeHandle == 0L) {
-                            sendEvent(playerId, "error", "sp_stream_open failed")
+                            failCreation(playerId, "sp_stream_open failed")
                             return@execute
                         }
                         CryptoNative.nativePlayerStreamClose(probeHandle)
                         handler.post {
-                            if (attachedToEngine && !cancelledPlayerIds.remove(playerId)) {
-                                createPlayerWithCrypto(playerId, cdnUrl, keyHex)
-                            }
+                            createPlayerWithCrypto(playerId, cdnUrl, keyHex)
                         }
                     } catch (error: Throwable) {
-                        sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
+                        failCreation(playerId, error.message ?: error.javaClass.simpleName)
                     }
                 }
             } catch (error: Throwable) {
-                sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
+                failCreation(playerId, error.message ?: error.javaClass.simpleName)
             }
         }
+    }
+
+    private fun failCreation(playerId: Int, message: String) {
+        if (pendingPlayerIds.remove(playerId)) sendEvent(playerId, "error", message)
     }
 
     private fun createPlayerWithUri(playerId: Int, uri: String) {
@@ -209,8 +213,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 
     private fun createPlayer(playerId: Int, configure: (ExoPlayer) -> Unit) {
-        if (!attachedToEngine) return
-        if (cancelledPlayerIds.remove(playerId)) return
+        if (!attachedToEngine || !pendingPlayerIds.remove(playerId)) return
         var producer: TextureRegistry.SurfaceProducer? = null
         var player: ExoPlayer? = null
         var output: NativeVideoOutput? = null
@@ -270,6 +273,12 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
                 if (isPlaying) {
                     startPositionUpdates(playerId)
                 }
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                // isPlaying becomes false during buffering without a pause.
+                // Flutter needs the separate intent to resume after backgrounding.
+                sendEvent(playerId, "playWhenReady", playWhenReady)
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -350,21 +359,18 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 
     private fun disposePlayer(id: Int) {
-        val instance = players.remove(id)
-        if (instance == null) {
-            // Creation/probing can still be in flight. The creation path
-            // consumes this marker before allocating a texture or player.
-            cancelledPlayerIds.add(id)
-            handler.postDelayed({ cancelledPlayerIds.remove(id) }, 30_000)
-            return
-        }
+        // Only a still-pending request may allocate. A slow probe can outlive
+        // any cancellation timeout, so cancellation must never expire.
+        pendingPlayerIds.remove(id)
+        val instance = players.remove(id) ?: return
         instance.positionUpdater?.let(handler::removeCallbacks)
         instance.videoOutput.release()
     }
 
-    private inner class CryptoDataSource(
+    internal class CryptoDataSource(
         private val cdnUrl: String,
-        private val keyHex: String
+        private val keyHex: String,
+        private val stream: CryptoStream = JniCryptoStream
     ) : BaseDataSource(true) {
 
         private var streamHandle: Long = 0L
@@ -377,24 +383,32 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
 
         override fun open(dataSpec: DataSpec): Long {
             uri = dataSpec.uri
-            streamHandle = CryptoNative.nativePlayerStreamOpen(cdnUrl, keyHex)
-            if (streamHandle == 0L) {
-                throw java.io.IOException("Failed to open crypto stream")
+            transferInitializing(dataSpec)
+            try {
+                streamHandle = stream.open(cdnUrl, keyHex)
+                if (streamHandle == 0L) {
+                    throw IOException("Failed to open crypto stream")
+                }
+                val totalSize = stream.size(streamHandle)
+                if (totalSize > 0 && dataSpec.position > totalSize) {
+                    throw DataSourceException(PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE)
+                }
+                val available = if (totalSize > 0) totalSize - dataSpec.position else C.LENGTH_UNSET.toLong()
+                bytesRemaining = when {
+                    dataSpec.length == C.LENGTH_UNSET.toLong() -> available
+                    available == C.LENGTH_UNSET.toLong() -> dataSpec.length
+                    else -> minOf(available, dataSpec.length)
+                }
+                if (dataSpec.position > 0 && bytesRemaining != 0L) {
+                    stream.seek(streamHandle, dataSpec.position)
+                }
+                opened = true
+                transferStarted(dataSpec)
+                return bytesRemaining
+            } catch (error: Throwable) {
+                close()
+                throw error
             }
-            val totalSize = CryptoNative.nativePlayerStreamSize(streamHandle)
-            if (dataSpec.position > 0) {
-                CryptoNative.nativePlayerStreamSeek(streamHandle, dataSpec.position)
-            }
-            bytesRemaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) {
-                dataSpec.length
-            } else if (totalSize > 0) {
-                totalSize - dataSpec.position
-            } else {
-                C.LENGTH_UNSET.toLong()
-            }
-            transferStarted(dataSpec)
-            opened = true
-            return bytesRemaining
         }
 
         override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
@@ -410,8 +424,16 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
                 tmp = ByteArray(toRead)
                 readBuffer = tmp
             }
-            val bytesRead = CryptoNative.nativePlayerStreamRead(streamHandle, tmp, toRead)
-            if (bytesRead <= 0) return C.RESULT_END_OF_INPUT
+            val bytesRead = stream.read(streamHandle, tmp, toRead)
+            if (bytesRead <= 0) {
+                // A known resource/request length must be fulfilled. Reporting
+                // an early network failure as EOF can make ExoPlayer mark the
+                // episode completed and skip to the next one.
+                if (bytesRemaining != C.LENGTH_UNSET.toLong()) {
+                    throw EOFException("Crypto stream ended before the expected length")
+                }
+                return C.RESULT_END_OF_INPUT
+            }
             System.arraycopy(tmp, 0, buffer, offset, bytesRead)
             if (bytesRemaining != C.LENGTH_UNSET.toLong()) {
                 bytesRemaining -= bytesRead
@@ -423,14 +445,35 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         override fun getUri(): Uri? = uri
 
         override fun close() {
-            if (streamHandle != 0L) {
-                CryptoNative.nativePlayerStreamClose(streamHandle)
-                streamHandle = 0L
-            }
-            if (opened) {
-                opened = false
-                transferEnded()
+            val handle = streamHandle
+            streamHandle = 0L
+            uri = null
+            try {
+                if (handle != 0L) stream.close(handle)
+            } finally {
+                if (opened) {
+                    opened = false
+                    transferEnded()
+                }
             }
         }
     }
+}
+
+/** The JNI boundary is injectable so DataSource range/error behavior can be verified on the JVM. */
+internal interface CryptoStream {
+    fun open(url: String, keyHex: String): Long
+    fun size(handle: Long): Long
+    fun seek(handle: Long, position: Long): Long
+    fun read(handle: Long, buffer: ByteArray, length: Int): Int
+    fun close(handle: Long)
+}
+
+private object JniCryptoStream : CryptoStream {
+    override fun open(url: String, keyHex: String) = CryptoNative.nativePlayerStreamOpen(url, keyHex)
+    override fun size(handle: Long) = CryptoNative.nativePlayerStreamSize(handle)
+    override fun seek(handle: Long, position: Long) = CryptoNative.nativePlayerStreamSeek(handle, position)
+    override fun read(handle: Long, buffer: ByteArray, length: Int) =
+        CryptoNative.nativePlayerStreamRead(handle, buffer, length)
+    override fun close(handle: Long) = CryptoNative.nativePlayerStreamClose(handle)
 }

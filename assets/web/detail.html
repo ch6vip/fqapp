@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>作品详情</title>
+    <link rel="icon" href="./favicon.png" type="image/png">
     <link rel="stylesheet" href="./assets/css/all.min.css">
     <style>
         :root {
@@ -399,6 +400,8 @@
         let chapterData = [];
         let currentPage = 1;
         let downloadAbort = false;
+        let downloadRunning = false;
+        let downloadHideTimer = null;
         const chapterMemoryCache = new Map();
 
         function readMeta() {
@@ -564,7 +567,9 @@
             grouped.forEach((chapters, volume) => {
                 const block = document.createElement("div");
                 block.className = "volume";
-                block.innerHTML = `<h3>${volume}</h3>`;
+                const heading = document.createElement("h3");
+                heading.textContent = volume;
+                block.appendChild(heading);
                 const grid = document.createElement("div");
                 grid.className = "chapters";
                 chapters.forEach(chapter => {
@@ -623,38 +628,27 @@
 
         function normalizeDownloadParagraphs(content, chapterTitle) {
             const raw = String(content || "");
-            const temp = document.createElement("div");
-            temp.innerHTML = raw;
-            let paragraphs = [];
-
-            temp.querySelectorAll("p, div").forEach(node => {
-                const text = node.textContent
-                    .replace(/[\u200b-\u200d\ufeff]/g, "")
-                    .replace(/\u00a0/g, " ")
-                    .trim();
-                if (text) paragraphs.push(text);
-            });
-
-            if (!paragraphs.length) {
-                paragraphs = raw
-                    .replace(/\r/g, "")
-                    .replace(/<br\s*\/?>/gi, "\n")
-                    .replace(/<\/p>/gi, "\n")
-                    .replace(/<[^>]+>/g, "")
-                    .split(/\n+/)
-                    .map(text => text.replace(/[\u200b-\u200d\ufeff]/g, "").replace(/\u00a0/g, " ").trim())
-                    .filter(Boolean);
+            const temp = new DOMParser().parseFromString(raw, "text/html");
+            function collectText(node) {
+                if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+                if (node.nodeType !== Node.ELEMENT_NODE) return "";
+                const tag = node.nodeName.toLowerCase();
+                if (["script", "style", "iframe", "object", "embed", "template"].includes(tag)) return "";
+                if (tag === "br") return "\n";
+                const text = Array.from(node.childNodes, collectText).join("");
+                return /^(p|div|h[1-6]|li|blockquote|tr)$/.test(tag) ? `\n${text}\n` : text;
             }
+            const paragraphs = collectText(temp.body)
+                .replace(/\r/g, "")
+                .split(/\n+/)
+                .map(text => text.replace(/[\u200b-\u200d\ufeff]/g, "").replace(/\u00a0/g, " ").trim())
+                .filter(Boolean);
 
             const normalizedTitle = String(chapterTitle || "").replace(/\s+/g, "");
             while (paragraphs.length) {
                 const first = paragraphs[0].replace(/\s+/g, "");
                 if (!first || !normalizedTitle) break;
-                if (
-                    first === normalizedTitle ||
-                    first.startsWith(normalizedTitle) ||
-                    normalizedTitle.startsWith(first)
-                ) {
+                if (first === normalizedTitle) {
                     paragraphs.shift();
                     continue;
                 }
@@ -673,157 +667,21 @@
             }
             let content = payload?.data?.content || "";
             if (Array.isArray(content)) content = content.join("\n");
-            const temp = document.createElement("div");
-            temp.innerHTML = String(content);
-            const lines = [];
-            temp.querySelectorAll("p, div").forEach(node => {
-                const text = node.textContent.trim();
-                if (text) lines.push(text);
-            });
-            if (!lines.length) {
-                return String(content).replaceAll("　", "").split(/\r?\n|<br\s*\/?>/i).map(text => text.trim()).filter(Boolean).join("\n");
-            }
-            return lines.join("
-");
-        }
-
-        async function frontendDownload() {
-            if (tab !== "小说") return;
-            const allChapters = chapterData.flatMap(item => item.chapters);
-            if (!allChapters.length) {
-                statusBar.textContent = "没有可下载的章节";
-                return;
-            }
-
-            downloadAbort = false;
-            progressBox.style.display = "block";
-            progressBar.style.width = "0%";
-            progressText.textContent = "正在准备下载…";
-
-            try {
-                let output = `书名：${titleEl.textContent}\n简介：\n${descEl.textContent}\n\n`;
-                for (let i = 0; i < allChapters.length; i += 1) {
-                    if (downloadAbort) {
-                        progressText.textContent = "下载已取消";
-                        progressBar.style.width = "0%";
-                        return;
-                    }
-                    const chapter = allChapters[i];
-                    const text = await fetchChapterText(chapter.id);
-                    output += `${chapter.title}\n    ${text.replace(/\n/g, "\n    ")}\n\n`;
-                    const percent = Math.floor(((i + 1) / allChapters.length) * 100);
-                    progressBar.style.width = `${percent}%`;
-                    progressText.textContent = `正在下载：${i + 1} / ${allChapters.length}`;
-                }
-
-                const blob = new Blob([output], { type: "text/plain;charset=utf-8" });
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(blob);
-                a.download = `${safeFileName(titleEl.textContent)}.txt`;
-                a.click();
-                URL.revokeObjectURL(a.href);
-                progressText.textContent = "下载完成";
-                progressBar.style.width = "100%";
-            } catch (error) {
-                progressText.textContent = error.message || "下载失败";
-            } finally {
-                setTimeout(() => {
-                    progressBox.style.display = "none";
-                }, 1000);
-            }
-        }
-
-        async function fetchChapterText(itemId, chapterTitle) {
-            const cacheKey = `${source}:${bookId}:${itemId}`;
-            let payload = chapterMemoryCache.get(cacheKey);
-            if (!payload) {
-                payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
-                rememberChapterCache(cacheKey, payload);
-            }
-            let content = payload?.data?.content || "";
-            if (Array.isArray(content)) content = content.join("\n");
-            return normalizeDownloadParagraphs(content, chapterTitle);
-        }
-
-        async function frontendDownload() {
-            if (tab !== "灏忚") return;
-            const allChapters = chapterData.flatMap(item => item.chapters);
-            if (!allChapters.length) {
-                statusBar.textContent = "娌℃湁鍙笅杞界殑绔犺妭";
-                return;
-            }
-
-            downloadAbort = false;
-            progressBox.style.display = "block";
-            progressBar.style.width = "0%";
-            progressText.textContent = "姝ｅ湪鍑嗗涓嬭浇鈥?";
-
-            try {
-                const chapterOutputs = new Array(allChapters.length);
-                const concurrency = Math.min(6, allChapters.length);
-                let nextIndex = 0;
-                let finished = 0;
-
-                async function worker() {
-                    while (nextIndex < allChapters.length) {
-                        if (downloadAbort) return;
-                        const index = nextIndex;
-                        nextIndex += 1;
-                        const chapter = allChapters[index];
-                        const text = await fetchChapterText(chapter.id, chapter.title);
-                        chapterOutputs[index] = `${chapter.title}\n    ${text.replace(/\n/g, "\n    ")}\n\n`;
-                        finished += 1;
-                        const percent = Math.floor((finished / allChapters.length) * 100);
-                        progressBar.style.width = `${percent}%`;
-                        progressText.textContent = `姝ｅ湪涓嬭浇锛?${finished} / ${allChapters.length}`;
-                    }
-                }
-
-                await Promise.all(Array.from({ length: concurrency }, () => worker()));
-                if (downloadAbort) {
-                    progressText.textContent = "涓嬭浇宸插彇娑?";
-                    progressBar.style.width = "0%";
-                    return;
-                }
-
-                const output = `涔﹀悕锛?{titleEl.textContent}\n绠€浠嬶細\n${descEl.textContent}\n\n${chapterOutputs.join("")}`;
-                const blob = new Blob([output], { type: "text/plain;charset=utf-8" });
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(blob);
-                a.download = `${safeFileName(titleEl.textContent)}.txt`;
-                a.click();
-                URL.revokeObjectURL(a.href);
-                progressText.textContent = "涓嬭浇瀹屾垚";
-                progressBar.style.width = "100%";
-            } catch (error) {
-                progressText.textContent = error.message || "涓嬭浇澶辫触";
-            } finally {
-                setTimeout(() => {
-                    progressBox.style.display = "none";
-                }, 1000);
-            }
-        }
-
-        async function fetchChapterText(itemId, chapterTitle) {
-            const cacheKey = `${source}:${bookId}:${itemId}`;
-            let payload = chapterMemoryCache.get(cacheKey);
-            if (!payload) {
-                payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
-                rememberChapterCache(cacheKey, payload);
-            }
-            let content = payload?.data?.content || "";
-            if (Array.isArray(content)) content = content.join("\n");
             return normalizeDownloadParagraphs(content, chapterTitle);
         }
 
         async function frontendDownload() {
             if (tab !== "\u5c0f\u8bf4") return;
+            if (downloadRunning) return;
             const allChapters = chapterData.flatMap(item => item.chapters);
             if (!allChapters.length) {
                 statusBar.textContent = "\u6ca1\u6709\u53ef\u4e0b\u8f7d\u7684\u7ae0\u8282";
                 return;
             }
 
+            downloadRunning = true;
+            document.getElementById("frontendDownloadBtn").disabled = true;
+            clearTimeout(downloadHideTimer);
             downloadAbort = false;
             progressBox.style.display = "block";
             progressBar.style.width = "0%";
@@ -834,14 +692,22 @@
                 const concurrency = Math.min(6, allChapters.length);
                 let nextIndex = 0;
                 let finished = 0;
+                let failure = null;
 
                 async function worker() {
                     while (nextIndex < allChapters.length) {
-                        if (downloadAbort) return;
+                        if (downloadAbort || failure) return;
                         const index = nextIndex;
                         nextIndex += 1;
                         const chapter = allChapters[index];
-                        const text = await fetchChapterText(chapter.id, chapter.title);
+                        let text;
+                        try {
+                            text = await fetchChapterText(chapter.id, chapter.title);
+                        } catch (error) {
+                            if (!failure) failure = error;
+                            return;
+                        }
+                        if (downloadAbort || failure) return;
                         chapterOutputs[index] = `${chapter.title}\n    ${text.replace(/\n/g, "\n    ")}\n\n`;
                         finished += 1;
                         const percent = Math.floor((finished / allChapters.length) * 100);
@@ -856,6 +722,7 @@
                     progressBar.style.width = "0%";
                     return;
                 }
+                if (failure) throw failure;
 
                 const output = `\u4e66\u540d\uff1a${titleEl.textContent}\n\u7b80\u4ecb\uff1a\n${descEl.textContent}\n\n${chapterOutputs.join("")}`;
                 const blob = new Blob([output], { type: "text/plain;charset=utf-8" });
@@ -869,7 +736,9 @@
             } catch (error) {
                 progressText.textContent = error.message || "\u4e0b\u8f7d\u5931\u8d25";
             } finally {
-                setTimeout(() => {
+                downloadRunning = false;
+                document.getElementById("frontendDownloadBtn").disabled = false;
+                downloadHideTimer = setTimeout(() => {
                     progressBox.style.display = "none";
                 }, 1000);
             }

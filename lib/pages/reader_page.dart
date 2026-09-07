@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
+import '../services/reader_history.dart';
 import '../services/reader_preferences.dart';
 import '../widgets/chapter_cache_sheet.dart';
 
@@ -47,6 +48,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   String _content = '';
   List<String> _paragraphs = const [];
   bool _loading = true;
+  bool _progressReady = false;
+  double _lastPosition = 0;
+  double _lastMaxScroll = 0;
   String? _error;
   ReaderPreferences _preferences = const ReaderPreferences();
   ReaderThemePreset _dayTheme = ReaderThemePreset.light;
@@ -62,6 +66,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   final LinkedHashMap<String, String> _chapterCache = LinkedHashMap();
   final Map<String, Future<String>> _chapterRequests = {};
   Future<void>? _catalogFuture;
+  late final ReaderHistory _history = ReaderHistory(_readerStore);
 
   Chapter get _chapter => widget.chapters[_index];
   ReaderStore get _readerStore => widget.readerStore ?? LibraryStore.instance;
@@ -138,8 +143,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (widget.chapters.isEmpty) return;
     final generation = ++_loadGeneration;
     final chapter = _chapter;
+    _saveTimer?.cancel();
     setState(() {
       _loading = true;
+      _progressReady = false;
       _error = null;
       _content = '';
       _paragraphs = const [];
@@ -155,42 +162,19 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       );
       if (paragraphs.isEmpty) throw ApiException('正文为空');
       if (!mounted || generation != _loadGeneration) return;
-      final saved = await _readerStore.historyEntry(widget.bookId);
+      Map<String, dynamic>? saved;
+      try {
+        saved = await _history.load(widget.bookId);
+      } catch (_) {
+        // History storage must not prevent an available chapter from opening.
+      }
       if (!mounted || generation != _loadGeneration) return;
-      final sameChapter = saved?['chapterId']?.toString() == chapter.itemId;
-      final savedPosition = sameChapter && saved?['position'] is num
-          ? (saved!['position'] as num).toDouble()
-          : 0.0;
       setState(() {
         _content = text;
         _paragraphs = paragraphs;
         _loading = false;
       });
-      if (_appActive) {
-        _sessionActive = true;
-        _readStart = DateTime.now();
-      }
-
-      await _readerStore.addHistory({
-        'id': widget.bookId,
-        'kind': 'book',
-        'title': widget.title,
-        'bookId': widget.bookId,
-        'chapterId': chapter.itemId,
-        'episode': _index,
-        'position': savedPosition,
-        'maxScroll': sameChapter && saved?['maxScroll'] is num
-            ? (saved!['maxScroll'] as num).toDouble()
-            : 0.0,
-        'progress': _chapterProgress(),
-        'cover': widget.cover,
-        'time': DateTime.now().millisecondsSinceEpoch,
-      });
-      if (startAtEnd) {
-        _scrollToChapterEnd(generation);
-      } else {
-        await _restorePosition(chapter.itemId, saved);
-      }
+      _restorePosition(generation, saved, startAtEnd: startAtEnd);
       unawaited(_prefetchAround(_index));
     } catch (e) {
       if (!mounted || generation != _loadGeneration) return;
@@ -250,8 +234,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
     final text = await _fetchChapter(chapter);
     if (text.trim().isEmpty) throw ApiException('正文为空');
+    if (!mounted) return text;
     try {
       await _ensureCatalog();
+      if (!mounted) return text;
       await _diskCache.write(
         bookId: widget.bookId,
         chapterId: chapter.itemId,
@@ -281,52 +267,49 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _restorePosition(
-    String chapterId,
-    Map<String, dynamic>? saved,
-  ) async {
-    if (!mounted ||
-        saved == null ||
-        saved['chapterId']?.toString() != chapterId) {
-      return;
-    }
-    final rawPosition = saved['position'];
-    final position = rawPosition is num ? rawPosition.toDouble() : 0.0;
-    if (position <= 0) return;
-    final rawMaxScroll = saved['maxScroll'];
-    final savedMaxScroll = rawMaxScroll is num ? rawMaxScroll.toDouble() : 0.0;
-    final savedFraction = savedMaxScroll > 0
-        ? (position / savedMaxScroll).clamp(0.0, 1.0)
-        : null;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          !_scrollController.hasClients ||
-          _chapter.itemId != chapterId) {
-        return;
-      }
-      final currentMaxScroll = _scrollController.position.maxScrollExtent;
-      final restoredPosition = savedFraction == null
-          ? position
-          : currentMaxScroll * savedFraction;
-      final target = restoredPosition.clamp(0.0, currentMaxScroll);
-      _scrollController.jumpTo(target);
-    });
-  }
-
-  void _scrollToChapterEnd(int generation) {
+  void _restorePosition(
+    int generation,
+    Map<String, dynamic>? saved, {
+    required bool startAtEnd,
+  }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           generation != _loadGeneration ||
           !_scrollController.hasClients) {
         return;
       }
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      unawaited(_persistProgress());
+      final currentMaxScroll = _scrollController.position.maxScrollExtent;
+      var target = 0.0;
+      if (startAtEnd) {
+        target = currentMaxScroll;
+      } else if (saved?['chapterId']?.toString() == _chapter.itemId) {
+        final rawPosition = saved?['position'];
+        final position = rawPosition is num ? rawPosition.toDouble() : 0.0;
+        final rawMaxScroll = saved?['maxScroll'];
+        final savedMaxScroll = rawMaxScroll is num
+            ? rawMaxScroll.toDouble()
+            : 0.0;
+        if (position.isFinite && position > 0) {
+          target = savedMaxScroll.isFinite && savedMaxScroll > 0
+              ? currentMaxScroll * (position / savedMaxScroll).clamp(0.0, 1.0)
+              : position.clamp(0.0, currentMaxScroll);
+        }
+      }
+      _scrollController.jumpTo(target);
+      // Only displayed content with its restored position may replace history.
+      _progressReady = true;
+      if (_appActive) {
+        _sessionActive = true;
+        _readStart = DateTime.now();
+      }
+      unawaited(_persistProgress(createHistory: true));
     });
   }
 
   void _onScroll() {
     _saveTimer?.cancel();
+    if (!_progressReady) return;
+    _captureScrollProgress();
     _saveTimer = Timer(const Duration(milliseconds: 500), () {
       _settleReadTime();
       unawaited(_persistProgress());
@@ -340,29 +323,48 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final now = DateTime.now();
     final delta = now.difference(_readStart).inMilliseconds / 1000;
     if (delta >= 1) {
-      unawaited(_readerStore.accumulateReadTime(widget.bookId, 'book', delta));
+      unawaited(
+        _readerStore
+            .accumulateReadTime(widget.bookId, 'book', delta)
+            .catchError((_) {}),
+      );
     }
     _readStart = now;
   }
 
-  Future<void> _persistProgress() async {
-    if (widget.chapters.isEmpty) return;
+  void _captureScrollProgress() {
+    if (!_scrollController.hasClients) return;
+    _lastPosition = _scrollController.offset;
+    _lastMaxScroll = _scrollController.position.maxScrollExtent;
+  }
+
+  Future<void> _persistProgress({bool createHistory = false}) async {
+    if (!_progressReady) return;
+    // The scrollable may already be detached when the reader is disposed.
+    _captureScrollProgress();
     final index = _index;
     final chapterId = _chapter.itemId;
-    final position = _scrollController.hasClients
-        ? _scrollController.offset
-        : 0.0;
-    final max = _scrollController.hasClients
-        ? _scrollController.position.maxScrollExtent
-        : 0.0;
-    await _readerStore.updateProgress(
-      widget.bookId,
-      index,
-      _chapterProgress(position: position, maxScroll: max, index: index),
-      chapterId: chapterId,
+    final position = _lastPosition;
+    final max = _lastMaxScroll;
+    final progress = _chapterProgress(
       position: position,
       maxScroll: max,
+      index: index,
     );
+    final entry = {
+      'id': widget.bookId,
+      'kind': 'book',
+      'title': widget.title,
+      'bookId': widget.bookId,
+      'chapterId': chapterId,
+      'episode': index,
+      'position': position,
+      'maxScroll': max,
+      'progress': progress,
+      'cover': widget.cover,
+      'time': DateTime.now().millisecondsSinceEpoch,
+    };
+    await _history.save(entry, createHistory: createHistory);
   }
 
   double _chapterProgress({double? position, double? maxScroll, int? index}) {
@@ -815,7 +817,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Widget _errorView({Color? textColor}) => Center(
-    child: Padding(
+    child: SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,

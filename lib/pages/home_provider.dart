@@ -52,6 +52,7 @@ class _TabFeed {
   int offset = 0;
   String? sessionId;
   int searchPage = 0;
+  Map<String, int> searchPages = const {};
   final Set<String> seen = {};
   bool recommendExhausted = false;
   bool hasMore = true;
@@ -62,6 +63,7 @@ class _TabFeed {
     offset = 0;
     sessionId = null;
     searchPage = 0;
+    searchPages = const {};
     seen.clear();
     recommendExhausted = false;
     hasMore = true;
@@ -74,6 +76,7 @@ class _FetchedFeed {
   final int? nextOffset;
   final String? sessionId;
   final int searchPage;
+  final Map<String, int> searchPages;
   final bool recommendExhausted;
   final bool hasMore;
 
@@ -82,6 +85,7 @@ class _FetchedFeed {
     required this.nextOffset,
     required this.sessionId,
     required this.searchPage,
+    this.searchPages = const {},
     required this.recommendExhausted,
     required this.hasMore,
   });
@@ -127,7 +131,11 @@ class HomeNotifier extends Notifier<HomeState> {
   int _generation = 0;
 
   @override
-  HomeState build() => const HomeState();
+  HomeState build() {
+    ++_generation;
+    _feeds.clear();
+    return const HomeState();
+  }
 
   _TabFeed _feedFor(int tabIndex) => _feeds.putIfAbsent(tabIndex, _TabFeed.new);
 
@@ -146,7 +154,11 @@ class HomeNotifier extends Notifier<HomeState> {
 
     try {
       final fetched = await _loadInitial(tabIndex);
-      if (generation != _generation || state.tabIndex != tabIndex) return;
+      if (!ref.mounted ||
+          generation != _generation ||
+          state.tabIndex != tabIndex) {
+        return;
+      }
       _applyFetched(feed, fetched, replace: true);
       state = state.copyWith(
         items: feed.items,
@@ -155,7 +167,11 @@ class HomeNotifier extends Notifier<HomeState> {
         hasMore: feed.hasMore,
       );
     } catch (error) {
-      if (generation != _generation || state.tabIndex != tabIndex) return;
+      if (!ref.mounted ||
+          generation != _generation ||
+          state.tabIndex != tabIndex) {
+        return;
+      }
       feed.hasMore = false;
       state = state.copyWith(
         error: '$error',
@@ -193,7 +209,11 @@ class HomeNotifier extends Notifier<HomeState> {
 
     try {
       final fetched = await _loadNext(tabIndex, feed);
-      if (generation != _generation || state.tabIndex != tabIndex) return;
+      if (!ref.mounted ||
+          generation != _generation ||
+          state.tabIndex != tabIndex) {
+        return;
+      }
       _applyFetched(feed, fetched, replace: false);
       state = state.copyWith(
         items: feed.items,
@@ -201,7 +221,11 @@ class HomeNotifier extends Notifier<HomeState> {
         hasMore: feed.hasMore,
       );
     } catch (_) {
-      if (generation != _generation || state.tabIndex != tabIndex) return;
+      if (!ref.mounted ||
+          generation != _generation ||
+          state.tabIndex != tabIndex) {
+        return;
+      }
       // Stop automatic bottom-of-grid retry loops. Pull-to-refresh gives the
       // user an explicit retry path and resets this flag.
       feed.hasMore = false;
@@ -231,13 +255,15 @@ class HomeNotifier extends Notifier<HomeState> {
     try {
       final page = await _homepageLoader(tabType: tabType);
       final items = _forceKind(page.items, kind);
-      if (items.isNotEmpty) {
+      final nextOffset = page.nextOffset;
+      final canAdvance = nextOffset != null && nextOffset > 0;
+      if (items.isNotEmpty || canAdvance) {
         return _FetchedFeed(
           items: items,
-          nextOffset: page.nextOffset,
+          nextOffset: canAdvance ? nextOffset : null,
           sessionId: page.sessionId,
           searchPage: 0,
-          recommendExhausted: page.nextOffset == null,
+          recommendExhausted: !canAdvance,
           // Search remains available after recommendations are exhausted.
           hasMore: true,
         );
@@ -262,7 +288,7 @@ class HomeNotifier extends Notifier<HomeState> {
   /// "全部" combines the novel recommendation stream with first pages for
   /// the other supported categories.
   Future<_FetchedFeed> _loadAllInitial() async {
-    final recommendationFuture = _attempt(_homepageLoader(tabType: 2));
+    final recommendationFuture = _attempt(_loadInitial(1));
     final videoFuture = _attempt(_searchLoader('短剧'));
     final mangaFuture = _attempt(_searchLoader('漫画'));
     final audioFuture = _attempt(_searchLoader('听书'));
@@ -283,8 +309,7 @@ class HomeNotifier extends Notifier<HomeState> {
     }
 
     final groups = <List<MediaItem>>[
-      if (recommendation.value != null)
-        _forceKind(recommendation.value!.items, 'book'),
+      if (recommendation.value != null) recommendation.value!.items,
       if (video.value != null) _searchItems(video.value!, '短剧', 'video'),
       if (manga.value != null) _searchItems(manga.value!, '漫画', 'manga'),
       if (audio.value != null) _searchItems(audio.value!, '听书', 'audio'),
@@ -296,8 +321,14 @@ class HomeNotifier extends Notifier<HomeState> {
       nextOffset: page?.nextOffset,
       sessionId: page?.sessionId,
       searchPage: 1,
-      recommendExhausted: page == null || page.nextOffset == null,
-      hasMore: items.isNotEmpty,
+      searchPages: {
+        '小说': page?.searchPage ?? 0,
+        if (video.value != null) '短剧': 1,
+        if (manga.value != null) '漫画': 1,
+        if (audio.value != null) '听书': 1,
+      },
+      recommendExhausted: page?.recommendExhausted ?? true,
+      hasMore: items.isNotEmpty || page?.nextOffset != null,
     );
   }
 
@@ -315,13 +346,17 @@ class HomeNotifier extends Notifier<HomeState> {
           sessionId: feed.sessionId,
         );
         final items = _forceKind(page.items, kind);
-        if (items.any((item) => _isUnseen(feed, item))) {
+        final nextOffset = page.nextOffset;
+        final canAdvance = nextOffset != null && nextOffset > feed.offset;
+        // Duplicate or empty pages can still lead to fresh recommendations.
+        // Only an advancing cursor is safe to request again.
+        if (canAdvance || items.any((item) => _isUnseen(feed, item))) {
           return _FetchedFeed(
             items: items,
-            nextOffset: page.nextOffset,
+            nextOffset: canAdvance ? nextOffset : null,
             sessionId: page.sessionId,
             searchPage: feed.searchPage,
-            recommendExhausted: page.nextOffset == null,
+            recommendExhausted: !canAdvance,
             hasMore: true,
           );
         }
@@ -346,28 +381,32 @@ class HomeNotifier extends Notifier<HomeState> {
 
   Future<_FetchedFeed> _loadAllNext(_TabFeed feed) async {
     final pageNumber = feed.searchPage + 1;
-    final recommendationFuture = feed.recommendExhausted
-        ? null
-        : _attempt(
-            _homepageLoader(
-              tabType: 2,
-              offset: feed.offset,
-              sessionId: feed.sessionId,
-            ),
-          );
-    final videoFuture = _attempt(_searchLoader('短剧', page: pageNumber));
-    final mangaFuture = _attempt(_searchLoader('漫画', page: pageNumber));
-    final audioFuture = _attempt(_searchLoader('听书', page: pageNumber));
+    // Novel recommendations and search have their own cursor. In particular,
+    // the first fallback search must start at page one even if the other
+    // categories have already loaded several pages.
+    final bookFeed = _TabFeed()
+      ..offset = feed.offset
+      ..sessionId = feed.sessionId
+      ..searchPage = feed.searchPages['小说'] ?? 0
+      ..recommendExhausted = feed.recommendExhausted;
+    bookFeed.seen.addAll(feed.seen);
+    final recommendationFuture = _attempt(_loadNext(1, bookFeed));
+    final videoPage = (feed.searchPages['短剧'] ?? 0) + 1;
+    final mangaPage = (feed.searchPages['漫画'] ?? 0) + 1;
+    final audioPage = (feed.searchPages['听书'] ?? 0) + 1;
+    final videoFuture = _attempt(_searchLoader('短剧', page: videoPage));
+    final mangaFuture = _attempt(_searchLoader('漫画', page: mangaPage));
+    final audioFuture = _attempt(_searchLoader('听书', page: audioPage));
 
     final recommendation = await recommendationFuture;
     final video = await videoFuture;
     final manga = await mangaFuture;
     final audio = await audioFuture;
-    if (recommendation?.value == null &&
+    if (recommendation.value == null &&
         video.value == null &&
         manga.value == null &&
         audio.value == null) {
-      throw recommendation?.error ??
+      throw recommendation.error ??
           video.error ??
           manga.error ??
           audio.error ??
@@ -375,24 +414,27 @@ class HomeNotifier extends Notifier<HomeState> {
     }
 
     final groups = <List<MediaItem>>[
-      if (recommendation?.value != null)
-        _forceKind(recommendation!.value!.items, 'book'),
+      if (recommendation.value != null) recommendation.value!.items,
       if (video.value != null) _searchItems(video.value!, '短剧', 'video'),
       if (manga.value != null) _searchItems(manga.value!, '漫画', 'manga'),
       if (audio.value != null) _searchItems(audio.value!, '听书', 'audio'),
     ];
-    final recommendationPage = recommendation?.value;
+    final recommendationPage = recommendation.value;
     final items = _interleave(groups);
     return _FetchedFeed(
       items: items,
       nextOffset: recommendationPage?.nextOffset,
       sessionId: recommendationPage?.sessionId ?? feed.sessionId,
       searchPage: pageNumber,
+      searchPages: {
+        ...feed.searchPages,
+        if (recommendationPage != null) '小说': recommendationPage.searchPage,
+        if (video.value != null) '短剧': videoPage,
+        if (manga.value != null) '漫画': mangaPage,
+        if (audio.value != null) '听书': audioPage,
+      },
       recommendExhausted:
-          feed.recommendExhausted ||
-          (recommendation != null &&
-              recommendation.value != null &&
-              recommendationPage!.nextOffset == null),
+          recommendationPage?.recommendExhausted ?? feed.recommendExhausted,
       hasMore:
           items.isNotEmpty ||
           (recommendationPage != null && recommendationPage.nextOffset != null),
@@ -414,6 +456,7 @@ class HomeNotifier extends Notifier<HomeState> {
       ..offset = fetched.nextOffset ?? feed.offset
       ..sessionId = fetched.sessionId ?? feed.sessionId
       ..searchPage = fetched.searchPage
+      ..searchPages = fetched.searchPages
       ..recommendExhausted = fetched.recommendExhausted
       ..hasMore = fetched.hasMore
       ..loaded = true;
@@ -439,10 +482,10 @@ class HomeNotifier extends Notifier<HomeState> {
           (tab.title.contains(label) || label.contains(tab.title)),
     );
     final selected = matching.isEmpty ? searchTabs : matching;
-    return _forceKind(
-      selected.expand((tab) => tab.items).toList(growable: false),
-      kind,
-    );
+    return selected
+        .expand((tab) => tab.items)
+        .where((item) => item.kind == kind)
+        .toList(growable: false);
   }
 
   List<MediaItem> _forceKind(List<MediaItem> items, String kind) {

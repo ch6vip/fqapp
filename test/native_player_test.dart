@@ -1,8 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/native_player.dart';
+import 'package:fqapp/widgets/video_player_chrome.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _methods = MethodChannel('fqapp/native_player');
 const _eventMethods = MethodChannel('fqapp/native_player/events');
@@ -14,6 +18,7 @@ void main() {
   Completer<void>? disposeGate;
 
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     calls = [];
     createGate = null;
     disposeGate = null;
@@ -31,6 +36,9 @@ void main() {
   });
 
   Future<void> cleanUp(WidgetTester tester, NativePlayer player) async {
+    if (find.byType(VideoPlayerChrome).evaluate().isNotEmpty) {
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
     if (createGate != null && !createGate!.isCompleted) {
       createGate!.complete({'playerId': 71});
     }
@@ -45,6 +53,7 @@ void main() {
     await tester.pump(const Duration(seconds: 31));
     messenger.setMockMethodCallHandler(_methods, null);
     messenger.setMockMethodCallHandler(_eventMethods, null);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   }
 
   void nativeTest(
@@ -217,6 +226,100 @@ void main() {
     }
   });
 
+  nativeTest('play intent follows commands and native pauses while buffering', (
+    tester,
+    player,
+  ) async {
+    await _createPlayer(tester, player);
+    await player.play();
+    await _sendEvent({'playerId': 71, 'type': 'buffering', 'value': true});
+    await _sendEvent({'playerId': 71, 'type': 'playing', 'value': false});
+    await tester.pump();
+    expect(player.playing, false);
+    expect(player.playWhenReady, true);
+    await _sendEvent({'playerId': 71, 'type': 'playWhenReady', 'value': false});
+    await tester.pump();
+    expect(player.playWhenReady, false);
+    await player.play();
+    await player.pause();
+    await tester.pump();
+    expect(player.playWhenReady, false);
+  });
+
+  for (final paused in [false, true]) {
+    nativeTest(
+      'buffering survives backgrounding only when playback is requested (paused: $paused)',
+      (tester, player) async {
+        await _createPlayer(tester, player);
+        await player.play();
+        await _sendEvent({'playerId': 71, 'type': 'buffering', 'value': true});
+        await _sendEvent({'playerId': 71, 'type': 'playing', 'value': false});
+        await tester.pumpWidget(_playerApp(player));
+        await tester.pumpAndSettle();
+        expect(find.byTooltip('暂停'), findsOneWidget);
+        if (paused) {
+          // A buffering video must still offer pause and honor it on return.
+          await tester.tap(find.byTooltip('暂停'));
+          await tester.pump();
+          expect(player.playWhenReady, false);
+          expect(find.byTooltip('播放'), findsOneWidget);
+        }
+        calls.clear();
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        expect(player.playWhenReady, false);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        expect(player.playWhenReady, !paused);
+        expect(
+          calls.where((call) => call.method == 'play'),
+          hasLength(paused ? 0 : 1),
+        );
+      },
+    );
+  }
+
+  nativeTest('seeking during buffering resumes the requested playback', (
+    tester,
+    player,
+  ) async {
+    await _createPlayer(tester, player);
+    await player.play();
+    await _sendEvent({'playerId': 71, 'type': 'buffering', 'value': true});
+    await tester.pumpWidget(_playerApp(player));
+    await tester.pumpAndSettle();
+    calls.clear();
+    final track = tester.getRect(find.byKey(const ValueKey('video-seek')));
+    await tester.dragFrom(
+      track.centerLeft + const Offset(20, 0),
+      const Offset(80, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(calls.where((call) => call.method == 'seek'), hasLength(1));
+    expect(calls.where((call) => call.method == 'play'), hasLength(1));
+    expect(player.playWhenReady, true);
+  });
+
+  nativeTest('completed playback is not resumed on foreground', (
+    tester,
+    player,
+  ) async {
+    await _createPlayer(tester, player);
+    await player.play();
+    await _sendEvent({'playerId': 71, 'type': 'completed', 'value': true});
+    await tester.pumpWidget(_playerApp(player));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('播放'), findsOneWidget);
+    calls.clear();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(calls.where((call) => call.method == 'play'), isEmpty);
+  });
+
   for (final beforeCreated in [true, false]) {
     nativeTest(
       'structured native errors retain HTTP details beforeCreated=$beforeCreated',
@@ -253,6 +356,28 @@ void main() {
     );
   }
 }
+
+Future<void> _createPlayer(WidgetTester tester, NativePlayer player) async {
+  final creation = player.create('https://example.invalid/video.mp4', '');
+  await tester.pump();
+  await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+  await _sendEvent({'playerId': 71, 'type': 'duration', 'value': 120000});
+  await tester.pump();
+  await creation;
+}
+
+Widget _playerApp(NativePlayer player) => MaterialApp(
+  home: VideoPlayerChrome(
+    player: player,
+    episodes: [Chapter(itemId: '1', title: '第一集', volumeName: '')],
+    currentIndex: 0,
+    duration: player.duration,
+    playing: player.playing,
+    onSelectEpisode: (_) async {},
+    onError: (error) => throw error,
+    child: const ColoredBox(color: Colors.black),
+  ),
+);
 
 Future<void> _sendEvent(Map<String, dynamic> event) =>
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

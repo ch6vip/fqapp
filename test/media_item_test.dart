@@ -51,6 +51,51 @@ void main() {
     expect(chapters.map((c) => c.itemId), ['c1', 'c2']);
   });
 
+  test('omits non-addressable rows from every supported directory shape', () {
+    final entries = [
+      {'title': '缺失 ID'},
+      {'item_id': '   '},
+      {'item_id': '0'},
+      {'item_id': 0},
+      {'item_id': ' c1 ', 'title': '可阅读章节'},
+    ];
+    for (final data in [
+      entries,
+      {
+        'chapterListWithVolume': [entries],
+      },
+      {'episodes': entries},
+    ]) {
+      final chapters = parseDirectory({'data': data}).expand((v) => v).toList();
+      expect(chapters.map((chapter) => chapter.itemId), ['c1']);
+    }
+  });
+
+  test('parses legacy chapter IDs in a nested array envelope', () {
+    final chapters = parseDirectory({
+      'data': {
+        'data': [
+          {'chapter_id': 'chapter-1', 'title': '第一章'},
+        ],
+      },
+    }).expand((v) => v).toList();
+    expect(chapters.single.itemId, 'chapter-1');
+  });
+
+  test('keeps the volume container name in an unwrapped directory', () {
+    final volumes = parseDirectory({
+      'chapterListWithVolume': [
+        {
+          'volume_name': '第一卷',
+          'chapterList': [
+            {'itemId': 'c1', 'title': '第一章'},
+          ],
+        },
+      ],
+    });
+    expect(volumes.single.single.volumeName, '第一卷');
+  });
+
   test('prefers video id over book id for short dramas', () {
     final item = MediaItem.fromRaw({
       'book_id': 'series-book',
@@ -178,6 +223,99 @@ void main() {
     });
     expect(item.kind, 'video');
     expect(item.id, 'series-2');
+  });
+
+  test('restores all normalized media metadata', () {
+    final original = MediaItem(
+      id: 'saved-book',
+      title: '已保存作品',
+      cover: '/covers/book.jpg',
+      author: '作者',
+      badge: '悬疑',
+      ep: '120',
+      kind: 'book',
+    );
+
+    expect(MediaItem.fromRaw(original.toJson()).toJson(), original.toJson());
+  });
+
+  test('explicit media kinds take precedence over upstream hints', () {
+    for (final kind in ['book', 'manga', 'audio']) {
+      final item = MediaItem.fromRaw({
+        'book_id': 'work-1',
+        'title': '作品',
+        'kind': kind,
+        'video_id': 'preview-video',
+        'category': '短剧',
+        'duration': 100,
+      });
+
+      expect(item.kind, kind);
+      expect(item.id, 'work-1');
+      expect(item.seriesId, isNull);
+      expect(item.episodeId, isNull);
+    }
+  });
+
+  test('audio duration alone does not identify a video', () {
+    final item = MediaItem.fromRaw({
+      'audio_book_id': 'audio-1',
+      'title': '有声书',
+      'duration': 1200,
+    });
+
+    expect(item.kind, 'audio');
+    expect(item.id, 'audio-1');
+  });
+
+  test('preserves every work in a grouped book search cell', () {
+    final tabs = parseSearchTabs({
+      'data': {
+        'search_tabs': [
+          {
+            'title': '书籍',
+            'data': [
+              {
+                'cell_name': '相关作品',
+                'category': '悬疑',
+                'book_data': [
+                  {'book_id': 'b1', 'book_name': '作品一'},
+                  {'book_id': 'b2', 'book_name': '作品二'},
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(tabs.single.items.map((item) => item.id), ['b1', 'b2']);
+    expect(tabs.single.items.map((item) => item.title), ['作品一', '作品二']);
+    expect(tabs.single.items.map((item) => item.badge), ['悬疑', '悬疑']);
+  });
+
+  test('keeps a legacy parent ID when book_data contains only metadata', () {
+    final tabs = parseSearchTabs({
+      'data': {
+        'search_tabs': [
+          {
+            'title': '书籍',
+            'data': [
+              {
+                'book_id': 'b1',
+                'title': '作品一',
+                'book_data': [
+                  {'author': '作者', 'thumb_url': '/cover.jpg'},
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(tabs.single.items.single.id, 'b1');
+    expect(tabs.single.items.single.author, '作者');
   });
 
   test('novel cards with audio_thumb_uri stay books', () {

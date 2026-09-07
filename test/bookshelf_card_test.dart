@@ -5,6 +5,60 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/bookshelf_card.dart';
 
 void main() {
+  testWidgets('narrow shelf rows fit large text and complete date labels', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(280, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(3)),
+          child: Scaffold(
+            body: ListView(
+              children: [
+                for (final compact in [false, true])
+                  BookshelfListCard(
+                    item: _item('测试作品'),
+                    compact: compact,
+                    readingText: '第12章 · 35%',
+                    lastUpdateText: '12月31日',
+                    badgeText: '100%',
+                    onTap: () {},
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('large badges stay inside narrow grid covers', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(3)),
+          child: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 70,
+                height: 220,
+                child: BookshelfGridCard(item: _item('书名'), onTap: () {}),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final cover = tester.getRect(find.byType(AspectRatio));
+    final badge = tester.getRect(find.text('小说'));
+    expect(badge.left, greaterThanOrEqualTo(cover.left));
+    expect(badge.right, lessThanOrEqualTo(cover.right));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('grid shelf card uses a 3:4 cover and centered title', (
     tester,
   ) async {

@@ -68,6 +68,8 @@ class ControlledNativePlayer extends FakeNativePlayer {
   Future<void> play() async {
     if (disposed) return;
     calls.add('play');
+    playbackRequested = true;
+    playWhenReadyEvents.add(true);
     await playGate?.future;
     if (disposed) return;
     isPlaying = true;

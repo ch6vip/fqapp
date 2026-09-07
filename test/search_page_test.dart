@@ -11,6 +11,73 @@ import 'package:fqapp/services/search_history_store.dart';
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  testWidgets('an empty tab can request results from the next page', (
+    tester,
+  ) async {
+    final requestedPages = <int>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchPage(
+          initialQuery: '测试',
+          historyStore: _DelayedHistory()..initial.complete([]),
+          searchLoader: (query, {int page = 1}) async {
+            requestedPages.add(page);
+            return [
+              SearchTab(
+                title: '小说',
+                items: page == 2 ? [_item('book', '第二页小说')] : [],
+              ),
+              SearchTab(
+                title: '短剧',
+                items: page == 1 ? [_item('video', '短剧')] : [],
+              ),
+            ];
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(requestedPages, [1]);
+    expect(find.text('加载更多'), findsOneWidget);
+    await tester.tap(find.text('加载更多'));
+    await tester.pumpAndSettle();
+    expect(requestedPages, contains(2));
+    expect(find.text('第二页小说'), findsOneWidget);
+  });
+
+  testWidgets('selecting a short result tab resumes automatic pagination', (
+    tester,
+  ) async {
+    final requestedPages = <int>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchPage(
+          initialQuery: '测试',
+          historyStore: _DelayedHistory()..initial.complete([]),
+          searchLoader: (query, {int page = 1}) async {
+            requestedPages.add(page);
+            if (page > 2) return [];
+            return [
+              SearchTab(
+                title: '小说',
+                items: page == 1
+                    ? [for (var i = 0; i < 30; i++) _item('b$i', '小说 $i')]
+                    : [],
+              ),
+              SearchTab(title: '漫画', items: [_item('m$page', '漫画 $page')]),
+            ];
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(requestedPages, [1]);
+    await tester.tap(find.widgetWithText(ChoiceChip, '漫画'));
+    await tester.pumpAndSettle();
+    expect(requestedPages, contains(2));
+    expect(find.text('漫画 2'), findsOneWidget);
+  });
+
   testWidgets('history can search again, delete one entry and clear all', (
     tester,
   ) async {

@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/library_store.dart';
+import '../widgets/reading_goal_dialog.dart';
 import 'detail_page.dart';
 
 /// Reading statistics page modeled after the legado ReadRecordFragment:
@@ -87,16 +88,19 @@ class _StatsPageState extends State<StatsPage> {
       ..addListener(_scheduleStoreReload);
     _readTimeChanges = LibraryStore.instance.readTimeListenable
       ..addListener(_scheduleStoreReload);
-    _load();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final wasVisible = _visible;
     _visible = TickerMode.valuesOf(context).enabled;
     if (!_visible) {
       _reloadTimer?.cancel();
       _reloadTimer = null;
+    } else if (!wasVisible) {
+      // Settings can update the goal while this retained page is covered.
+      _load();
     } else if (_storeDirty) {
       _reloadFromStore();
     }
@@ -150,54 +154,11 @@ class _StatsPageState extends State<StatsPage> {
       firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now(),
     );
-    if (picked != null) setState(() => _selected = picked);
+    if (picked != null && mounted) setState(() => _selected = picked);
   }
 
   Future<void> _editGoal() async {
-    final ctrl = TextEditingController(text: '$_goalMinutes');
-    final value = await showDialog<int>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('每日阅读目标'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: '分钟'),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              children: [15, 30, 60, 120].map((m) {
-                return ActionChip(
-                  label: Text('$m 分钟'),
-                  onPressed: () {
-                    ctrl.text = '$m';
-                    Navigator.pop(c, m);
-                  },
-                );
-              }).toList(),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = int.tryParse(ctrl.text) ?? 30;
-              Navigator.pop(c, v.clamp(1, 1440));
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-    ctrl.dispose();
+    final value = await showReadingGoalDialog(context, _goalMinutes);
     if (value != null) {
       final sp = await SharedPreferences.getInstance();
       await sp.setInt(_goalKey, value);
@@ -401,17 +362,32 @@ class _StatsPageState extends State<StatsPage> {
 
   List<_HeatCell> _heatmapCells() {
     final dayMinutes = _dayMinutes;
-    final start = _selected.subtract(const Duration(days: 111));
-    return List.generate(112, (i) {
-      final date = start.add(Duration(days: i));
-      return _HeatCell(date, dayMinutes[_dayKey(date)] ?? 0);
-    });
+    return [
+      for (final date in readingHeatmapDates(_selected))
+        _HeatCell(
+          date,
+          date.isAfter(_selected) ? 0 : dayMinutes[_dayKey(date)] ?? 0,
+        ),
+    ];
   }
 }
 
 // ---------- shared helpers ----------
 
 String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
+
+/// Sixteen calendar weeks, with Monday in the first row of every column.
+List<DateTime> readingHeatmapDates(DateTime selected) {
+  final start = DateTime(
+    selected.year,
+    selected.month,
+    selected.day - (selected.weekday - DateTime.monday) - 15 * 7,
+  );
+  return [
+    for (var index = 0; index < 112; index++)
+      DateTime(start.year, start.month, start.day + index),
+  ];
+}
 
 String _monthPrefix(DateTime d) => '${d.year}-${d.month}-';
 
@@ -533,12 +509,15 @@ class _OverviewCard extends StatelessWidget {
       ('总计', _formatDuring(total)),
       ('活跃天数', '$activeDays 天'),
     ];
+    final scaler = MediaQuery.textScalerOf(context);
     return _Card(
-      child: GridView.count(
-        crossAxisCount: 2,
+      child: GridView(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          mainAxisExtent: scaler.scale(20) * 1.2 + scaler.scale(12) * 1.2 + 18,
+        ),
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        childAspectRatio: 2.6,
         children: [
           for (final (label, value) in stats)
             Column(
@@ -547,8 +526,11 @@ class _OverviewCard extends StatelessWidget {
               children: [
                 Text(
                   value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 20,
+                    height: 1.2,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -557,6 +539,7 @@ class _OverviewCard extends StatelessWidget {
                   label,
                   style: TextStyle(
                     fontSize: 12,
+                    height: 1.2,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -602,6 +585,14 @@ class _Heatmap extends StatelessWidget {
       _formatMonth(cells[cells.length ~/ 2].date),
       _formatMonth(end),
     ];
+    const weekdayLabels = ['周一', '', '周三', '', '周五', '', ''];
+    final labelHeight = MediaQuery.textScalerOf(context).scale(10) * 1.2;
+    final rowHeight = labelHeight > 14 ? labelHeight : 14.0;
+    final labelStyle = TextStyle(
+      fontSize: 10,
+      height: 1.2,
+      color: scheme.onSurfaceVariant,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -626,11 +617,16 @@ class _Heatmap extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: const [
-                Text('周一', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                Text('周三', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                Text('周五', style: TextStyle(fontSize: 10, color: Colors.grey)),
+              children: [
+                for (var row = 0; row < 7; row++) ...[
+                  if (row > 0) const SizedBox(height: 3),
+                  SizedBox(
+                    height: rowHeight,
+                    child: Center(
+                      child: Text(weekdayLabels[row], style: labelStyle),
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(width: 6),
@@ -639,13 +635,18 @@ class _Heatmap extends StatelessWidget {
                 children: [
                   for (var row = 0; row < 7; row++) ...[
                     if (row > 0) const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        for (var col = 0; col < 16; col++) ...[
-                          if (col > 0) const SizedBox(width: 3),
-                          _cell(primary, scheme, col * 7 + row),
+                    SizedBox(
+                      height: rowHeight,
+                      child: Row(
+                        children: [
+                          for (var col = 0; col < 16; col++) ...[
+                            if (col > 0) const SizedBox(width: 3),
+                            Flexible(
+                              child: _cell(primary, scheme, col * 7 + row),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ],
                 ],
@@ -667,12 +668,17 @@ class _Heatmap extends StatelessWidget {
       4 => primary,
       _ => scheme.surfaceContainerHighest,
     };
-    return Container(
+    return SizedBox(
+      key: ValueKey('reading-heatmap-cell-$index'),
       width: 14,
-      height: 14,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(3),
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ),
       ),
     );
   }

@@ -57,7 +57,9 @@ class FqApp extends StatelessWidget {
 }
 
 class RootShell extends StatefulWidget {
-  const RootShell({super.key});
+  final Future<void> Function()? backendStarter;
+
+  const RootShell({super.key, this.backendStarter});
 
   @override
   State<RootShell> createState() => _RootShellState();
@@ -79,7 +81,7 @@ class _RootShellState extends State<RootShell> {
       _backendError = null;
     });
     try {
-      await BackendService.instance.start();
+      await (widget.backendStarter ?? BackendService.instance.start)();
       if (mounted) {
         setState(() => _backendReady = true);
       }
@@ -96,38 +98,51 @@ class _RootShellState extends State<RootShell> {
   Widget build(BuildContext context) {
     if (!_backendReady) {
       return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(_backendError == null ? '正在启动本地服务...' : '启动失败'),
-              TextButton.icon(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const CachedBooksPage()),
-                ),
-                icon: const Icon(Icons.download_for_offline_outlined),
-                label: const Text('离线阅读'),
-              ),
-              if (_backendError != null) ...[
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Text(
-                    _backendError!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, color: Colors.red),
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_backendError == null)
+                    const CircularProgressIndicator()
+                  else
+                    Icon(
+                      Icons.error_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  const SizedBox(height: 16),
+                  Text(_backendError == null ? '正在启动本地服务...' : '启动失败'),
+                  TextButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CachedBooksPage(),
+                      ),
+                    ),
+                    icon: const Icon(Icons.download_for_offline_outlined),
+                    label: const Text('离线阅读'),
                   ),
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton(
-                  onPressed: _startBackend,
-                  child: const Text('重试'),
-                ),
-              ],
-            ],
+                  if (_backendError != null) ...[
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(
+                        _backendError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 12, color: Colors.red),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: _startBackend,
+                      child: const Text('重试'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
       );

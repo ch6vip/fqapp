@@ -65,10 +65,15 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
     });
     try {
       await widget.cache.saveBook(widget.book);
-      final cached = await widget.cache.cachedChapterIds(widget.book.id);
       for (final chapter in chapters) {
         if (!mounted || job != _job) return;
-        if (!cached.contains(chapter.itemId)) {
+        // Earlier writes may evict a chapter that was cached when we started.
+        final cached = await widget.cache.read(
+          bookId: widget.book.id,
+          chapterId: chapter.itemId,
+        );
+        if (!mounted || job != _job) return;
+        if (cached == null || cached.trim().isEmpty) {
           final text = await widget
               .loader(chapter)
               .timeout(const Duration(seconds: 30));

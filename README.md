@@ -1,6 +1,6 @@
 # fqapp — 番茄小说/短剧 Flutter 客户端
 
-一个运行在 **Android 手机本地** 的番茄小说聚合客户端：内置 Go 版 `` 后端（签名、解密全在手机本地完成），Flutter 原生 UI 提供小说阅读、短剧播放、漫画、听书、搜索、历史等完整功能。
+一个运行在 **Android 手机本地** 的番茄小说聚合客户端：内置 Go 版 `` 后端，Flutter 原生 UI 提供小说阅读、短剧播放、搜索、历史和离线缓存。漫画和听书目前支持内容识别，原生阅读与播放页面尚未开放。
 
 > **核心设计**：后端跑在 `127.0.0.1:8080`，UI 通过 HTTP 调用本地后端。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问番茄上游。
 
@@ -32,8 +32,8 @@
 | 🎧 听书 | 内容类型识别（播放器暂未开放） |
 | 🔍 搜索 | 跨类型搜索，按 小说/漫画/听书/短剧 分 tab |
 | 🕘 历史 | 阅读/播放进度记录，续看 |
-| 🏠 首页 | 推荐内容流（走搜索推荐接口） |
-| 📱 纯本地 | 旧后端 + 前端全部在手机内运行，无外部服务器 |
+| 🏠 首页 | 推荐内容流，推荐不可用或耗尽后回退分类搜索 |
+| 📱 本地后端 | 旧后端与前端在手机内运行，在线内容从上游获取 |
 
 ---
 
@@ -54,11 +54,11 @@
 │  │(历史/时长)│   │(进程管理)   │                 │
 │  └──────────┘   └─────┬──────┘                 │
 └───────────────────────┼────────────────────────┘
-                        │ Process.start / JNI
+                        │ Android JNI
                         ▼
               ┌─────────────────────┐
               │   Go  后端      │
-              │  (assets/bin/) │
+              │    liblegacy.so     │
               │  签名 · 解密 · 代理  │
               └─────────┬───────────┘
                         │ HTTPS
@@ -68,7 +68,7 @@
 
 ### 数据流
 
-1. **启动**：`main.dart` → `BackendService.start()` 把 `assets/bin/`（Android arm64 ELF）+ config/filters/web 部署到 app 私有目录 → 启动子进程 → 轮询 `/health` 直到 200。
+1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、Web 页面及其 CSS/字体、插件部署到 app 私有目录 → 通过 Kotlin/JNI 启动 APK 中的 `liblegacy.so` → 轮询 `/health` 直到 200。Android 不执行私有目录中的独立二进制；桌面后端路径使用宿主平台的 `assets/bin/`。
 2. **请求**：UI 页面 → `ApiClient`（`http` 包）→ `http://127.0.0.1:8080/api/*` → 后端完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
@@ -83,7 +83,7 @@ fqapp/
 │   ├── models/
 │   │   └── media_item.dart          # MediaItem/Chapter/SearchTab 模型 + 归一化解析
 │   ├── services/
-│   │   ├── backend_service.dart     # 旧后端进程管理(部署/启动/健康检查/日志)
+│   │   ├── backend_service.dart     # 旧后端管理(部署/JNI/桌面进程/健康检查/日志)
 │   │   ├── api_client.dart          # 后端 HTTP 客户端(对接 /api/* 桥接层)
 │   │   └── library_store.dart       # 历史/阅读时长本地存储
 │   ├── pages/
@@ -91,27 +91,28 @@ fqapp/
 │   │   ├── search_page.dart         # 搜索(分 tab)
 │   │   ├── detail_page.dart         # 详情(简介+目录)
 │   │   ├── reader_page.dart         # 小说阅读器
-│   │   ├── player_page.dart         # 短剧播放器(video_player)
+│   │   ├── player_page.dart         # 短剧播放器(Media3 + JNI 流式解密)
 │   │   ├── library_page.dart        # 书架(阅读历史)
 │   │   └── mine_page.dart           # 我的(服务状态)
 │   └── widgets/
 │       └── media_card.dart          # 封面卡片组件
 ├── assets/
-│   ├── bin/                    # 旧后端二进制(android-arm64, ~16MB)
-│   ├── config/                      # config.json / filter.json / device_pool
+│   ├── bin/                    # 宿主平台独立后端，不打入 Android APK
+│   ├── config/                      # config.json / filter.json / 设备池示例
 │   ├── filters/                     # 15 个 JS 过滤脚本(goja 运行时)
 │   ├── web/                         # 后端自带 Web UI(浏览器备用)
 │   └── plugins/                     # manga_reader / player HTML 插件
-├── android/                         # Android 工程(Gradle Kotlin DSL)
+├── android/                         # Android 工程、JNI 桥接与 JVM 测试
 ├── scripts/
-│   ├── build_backend.sh             # 从  源码交叉编译后端 + 同步运行时文件
+│   ├── build_backend.sh             # 编译宿主后端、可选 Android JNI + 同步运行时文件
 │   └── build_backend.ps1            # 同上，Windows PowerShell 版
-├── test/widget_test.dart            # 冒烟测试
+├── test/                            # Flutter 单元/组件测试及 Web 回归
 └── pubspec.yaml                     # Flutter 依赖与资源声明
 ```
 
-> **仓库不含后端二进制**：`assets/bin/`（约 16MB）体积大且可由源码完整重建，已加入
-> `.gitignore`。clone 后请先跑 `scripts/build_backend.sh`，否则 APK 里没有后端、本地服务起不来。
+> **仓库不含原生二进制**：`assets/bin/` 和两份 `.so` 均被 Git 忽略。独立后端及
+> `liblegacy.so` 可由 `` 源码重建；`libshortplay_crypto.so` 是单独的依赖，当前仓库
+> 尚未包含其 C 源码和构建入口。Android 构建前需要按下面的步骤准备两份库。
 
 ---
 
@@ -125,44 +126,60 @@ fqapp/
 | Dart SDK | 3.12+ | 随 Flutter |
 | Android SDK | 36 (platform) + Build-Tools | 编译 APK |
 | Go | 1.26+ | 交叉编译后端二进制 |
-| Android NDK | 28.x (可选) | JNI 方案(见下) |
+| Android NDK | 28.x | 编译 Android JNI 后端所必需 |
 
 > Windows 下构建注意：Kotlin 增量编译在部分环境会报 `Could not close incremental caches`，已在 `android/gradle.properties` 中关闭（`kotlin.incremental=false`）。
 
 ### 1. 编译后端并同步运行时文件
 
-一条命令完成交叉编译 + 配置 / 过滤器 / 网页资源同步：
+脚本默认编译当前宿主系统与架构的独立后端，并同步运行时资源。Android 构建必须加
+`--jni` / `-Jni`，同时生成 `android/app/src/main/jniLibs/arm64-v8a/liblegacy.so`：
 
 ```bash
-./scripts/build_backend.sh                  # 默认把 ../ 当作源码目录
-./scripts/build_backend.sh /path/to/   # 或手动指定源码目录
+./scripts/build_backend.sh --jni                  # 默认源码目录 ../
+./scripts/build_backend.sh --jni /path/to/    # 手动指定源码目录
 ```
 
 Windows PowerShell：
 
 ```powershell
-.\scripts\build_backend.ps1                 # 默认 ..\
-.\scripts\build_backend.ps1 C:\path\to\
-.\scripts\build_backend.ps1 -Jni            # 同时编译 Android JNI 库
+.\scripts\build_backend.ps1 -Jni                       # 默认 ..\
+.\scripts\build_backend.ps1 -Jni C:\path\to\
 ```
 
-脚本内部做的事等价于下面这段（想手动执行也可以）：
+NDK 可由 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` 指定，或放在 Android SDK 的 `ndk/` 下。
+源码树必须包含与 `BackendNative.kt` 匹配的 JNI 入口。独立后端使用 `GOHOSTOS/GOHOSTARCH`，
+JNI 后端固定使用 `GOOS=android`、`GOARCH=arm64` 和 NDK clang。
 
-```powershell
-cd    # 即  仓库
-$env:GOOS="android"; $env:GOARCH="arm64"; $env:CGO_ENABLED="0"
-go build -trimpath -ldflags "-s -w" -o ..\fqapp\assets\bin\ .
-
-Copy-Item \filters\*  fqapp\assets\filters\ -Recurse
-Copy-Item \web\*      fqapp\assets\web\     -Recurse
-Copy-Item \plugins\*  fqapp\assets\plugins\ -Recurse
-```
+脚本默认保留已有配置、过滤器、Web 与插件，只补齐缺失文件，以保留本项目的移动端配置和修复。
+需要从上游覆盖时，分别使用 `--force-config` / `-ForceConfig` 和
+`--force-runtime` / `-ForceRuntime`；覆盖后应检查 diff 并重跑测试。
 
 > ⚠️ 脚本只拷贝 `config.json`、`filter.json`、`device_pool.example.json` 三个确定的配置文件，
 > **不会**整目录复制 `config/`。真实设备池 `device_pool.json` 里带 `secret_key`，
-> 一旦打进 APK 等于把设备凭据发出去；脚本会跳过它并删掉已存在的副本。
+> 脚本会跳过它并清理 `assets/config/` 中的副本；`pubspec.yaml` 也只声明上述三个配置文件。
+> 设备实际注册的池保存在应用私有目录，后续资源升级会保留它。
 
-### 2. 构建 APK
+### 2. 准备加密播放库
+
+将匹配当前 `com.example.shortplay.CryptoNative` JNI 接口的 **Android arm64**
+`libshortplay_crypto.so` 放到：
+
+```text
+android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so
+```
+
+它负责 CENC 流式解密，不能用 旧后端库替代。`build_backend -Jni` / `--jni` **不会生成它**。
+目前需要从原 `shortplay` 原生工程的维护者取得匹配的构建产物，或恢复该工程的 C 源码与构建入口；
+本仓库没有可用的下载地址或完整源码重建步骤。仅克隆本仓库和 `` 还不足以完成 Android 构建。
+
+Gradle 在合并 Android 原生库前检查两份 `.so` 是否存在且具有 ARM64 ELF 共享库头，
+缺库或架构不符时会直接报错。该检查不能替代 JNI 接口兼容性与真机播放验证。
+
+本次审查使用的加密库 LOAD 段仍为 4 KB 对齐，尚未满足原生 16 KB 内存页兼容要求；
+需要恢复其源码、重新链接并在相应设备上验证。Go JNI 后端的 LOAD 段已为 16 KB 对齐。
+
+### 3. 构建 APK
 
 ```powershell
 cd fqapp
@@ -173,9 +190,9 @@ flutter build apk --release --target-platform android-arm64
 ```
 
 生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
-对应 ABI 编译并打包 `liblegacy.so`。
+对应 ABI 编译并打包 `liblegacy.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
 
-### 3. 安装运行
+### 4. 安装运行
 
 ```powershell
 # 真机 USB 调试连接后
@@ -183,7 +200,8 @@ adb install -r build\app\outputs\flutter-apk\app-debug.apk
 adb shell am start -n com.fqapp.fqapp/.MainActivity
 ```
 
-首次启动：App 把后端二进制 + 配置部署到 `files/backend/`，启动进程，健康检查通过后进入主界面（约 1-3 秒）。
+首次启动：App 将运行时资源部署到 `files/backend/`，通过 JNI 启动本地后端，健康检查通过后进入主界面。
+已有缓存时也可在启动页面直接进入离线阅读。
 
 ---
 
@@ -220,25 +238,24 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 
 ### 部署流程（`BackendService._deploy`）
 
-1. `rootBundle.load('assets/bin/')` → 写入 `files/backend/`
-2. `chmod 755` 赋予执行权限
-3. 复制 `config.json`、`filter.json`、`device_pool.example.json`
-4. 首次启动：把 `device_pool.example.json` 复制为 `device_pool.json`（后端会按需注册真实设备并持久化）
-5. 复制 15 个 JS 过滤脚本 + 6 个 Web 页面
+1. 将 `config.json`、`filter.json`、`device_pool.example.json` 部署到应用私有目录 `files/backend/config/`。
+2. 首次启动时用示例初始化 `device_pool.json`；以后保留后端注册并保存的实际设备池。
+3. 从 Flutter 资源清单枚举并部署全部 `filters/`、`web/`、`plugins/` 文件，包含 CSS 和字体。内容变更时替换旧资源。
+4. 仅桌面进程路径另外部署 `assets/bin/` 并设置执行权限；Android 从 APK 加载 JNI 库。
 
 ### 启动流程（`BackendService.start`）
 
 ```dart
 // Android: MethodChannel → Kotlin → liblegacy.so (JNI)
-// Desktop / JNI 不可用时：
+// Desktop：
 _proc = await Process.start(bin, [
     '-config', ..., '-pool', ..., '-filter', ..., '-runtime-dir', dir.path,
   ], workingDirectory: dir.path);
 ```
 
-- stdout/stderr 实时写入 `backend.log`（诊断用）
-- `_waitHealthy` 每 300ms 轮询 `/health`，超时 15s 抛错
-- 进程退出时自动置空 `_proc`（下次 `start()` 可重启）
+- 并发 `start()` 等待同一次完整启动，`stop()` 会等待进行中的部署与启动结束再清理。
+- 健康检查默认总时限 15 秒，单次请求覆盖连接、响应头和响应体的时限，失败后间隔最多 300 毫秒重试。
+- 启动诊断、桌面后端 stdout/stderr 写入 `backend.log`。后端子进程退出时清除引用；显式 `stop()` 等待其退出，超时后升级终止信号。
 
 ### ⚠️ SELinux 关键限制（已实测）
 
@@ -247,32 +264,30 @@ _proc = await Process.start(bin, [
 | Flutter `Process.start`（untrusted_app 域） | ❌ `Permission denied` |
 | `adb shell run-as <pkg> ./`（shell 域） | ✅ 可执行 |
 
-**Android 的 `untrusted_app` SELinux 域禁止执行 `app_data_file` 下的二进制**（安全设计）。当前已知的可靠方案：
+**Android 的 `untrusted_app` SELinux 域禁止执行 `app_data_file` 下的二进制**。
+本项目已实现 JNI 路径：Go 使用 `-buildmode=c-shared` 生成 `liblegacy.so`，
+Kotlin 通过 `System.loadLibrary("")` 加载，再调用匹配的 JNI 启停入口。
+Android 上 JNI 失败会显示启动错误与重试入口，不回退到 `Process.start`。
 
-1. **JNI 方案（推荐）**：Go 用 `-buildmode=c-shared` 编译成 `liblegacy.so` 放入 `android/app/src/main/jniLibs/arm64-v8a/`，Kotlin 侧 `System.loadLibrary("")` 触发 dlopen（`apk_data_file` 域允许）。需要：
-   - 安装 NDK（`sdkmanager "ndk;28.2.13676358"`）
-   - Go 代码改造：`main` 逻辑移到导出的 `JNI_OnLoad` 或 `Java_...` 函数，在后台 goroutine 启动 HTTP server
-2. **Termux 思路**：把二进制放到 Termux 环境（`~/.termux` 域）——不适用本项目（无 Termux 依赖）。
-3. **Root 设备**：`su -c` 提权执行——不推荐，违背"免 root"设计。
-
-> **当前状态**：JNI 路径已经实现。`BackendService` 在 Android 上先加载
-> `liblegacy.so`，桌面或 JNI 不可用时才回退 `Process.start`。由于 Android
-> SELinux 限制，真机发布包应使用 arm64 JNI 构建：
+安装 NDK（例如 `sdkmanager "ndk;28.2.13676358"`）后编译：
 
 ```powershell
 .\scripts\build_backend.ps1 -Jni
 ```
 
 Go JNI 入口会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；HTTP 服务只绑定 `127.0.0.1`。
+加密播放还需单独准备上文说明的 `libshortplay_crypto.so`。
 
 ---
 
 ## API 对接说明
 
-App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响应已归一化，无需解析番茄原始格式：
+App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），首页推荐使用
+`/api/v1/recommend/homepage`。客户端模型同时兼容归一化结果及部分旧版响应结构：
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| GET | `/api/v1/recommend/homepage?tab_type=&offset=&session_id=` | 首页分类推荐及游标分页 |
 | GET | `/api/search?source=番茄&query=&page=` | 搜索（返回 `{code,message,data:{search_tabs:[{title,data:[]}]}}`） |
 | GET | `/api/detail?source=番茄&book_id=&tab=` | 详情（tab=听书 走有声详情） |
 | GET | `/api/directory?source=番茄&book_id=&tab=` | 目录（短剧走剧集；输出 `chapterListWithVolume` 格式） |
@@ -281,9 +296,11 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 | GET | `/api/download?source=番茄&book_id=` | 整本 TXT 下载 |
 | GET | `/health` | 健康检查（返回设备池数量） |
 
-**响应信封**：成功 `{code:200, message:"success", data:...}`；错误 `{code:非200, message:...}`。
+**响应信封**：客户端接受 `code=200`（Web 桥接）或 `code=0`（上游兼容接口）的成功响应；
+其他显式状态码或 `success=false` 视为错误。
 
-**搜索 tab 归一化**：后端把"综合"tab 的数据复制到 书籍/漫画/听书/短剧 各 tab（`normalizeSearchTabs`），App 直接按 tab 展示。
+**搜索 tab 归一化**：后端将“综合”tab 的结果整理为书籍/漫画/听书/短剧各 tab
+（`normalizeSearchTabs`），搜索页按 tab 展示；首页搜索回退还会按条目实际 `kind` 筛选目标类型。
 
 ---
 
@@ -296,12 +313,12 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 | 字段 | 来源优先级 |
 |---|---|
 | `id` | 小说/漫画/听书使用内容 ID；短剧优先使用系列 `pseries_id`/`series_id`，单集结果保留 `episodeId` |
-| `kind` | 检测显式 `kind` 及 `video_id`/`vid`/`video_platform` → 短剧；`manga_id`/`comic_id` → 漫画；`album_id`/`audio_book_id` → 听书；否则小说 |
-| `title` | `cell_name` → 高亮 → `book_name` → `title`/`name` |
+| `kind` | 合法显式 `kind` 优先；缺失或未知时根据视频、漫画、音频标识推断，否则为小说 |
+| `title` | 高亮标题 → 外层标题 → 嵌套标题/书名 → `cell_name` |
 | `cover` | `thumb_url` → `cover`/`cover_url`/`poster` |
 | `author` | `author`/`author_name` |
-| `badge` | `category`/`type`/`cell_alias`/`card_tips` |
-| `ep` | `serial_count`/`item_count`/`episode_count` |
+| `badge` | 已保存的 `badge` → `category`/`type`/`cell_alias`/`card_tips` |
+| `ep` | 已保存的 `ep` → `serial_count`/`item_count`/`episode_count` |
 
 ### `Chapter`（目录章节）
 
@@ -311,7 +328,7 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 
 ### `SearchTab`（搜索 tab）
 
-`title` + `items[]`，支持嵌套 `video_data` 展开。
+`title` + `items[]`，支持嵌套 `video_data`、`book_data` 展开。
 
 ---
 
@@ -369,11 +386,12 @@ App 通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），响
 
 ## 已知问题与调试
 
-### 1. JNI 构建与真机验证
-- **现象**：`ProcessException: Permission denied`
-- **验证**：`adb shell run-as com.fqapp.fqapp ./files/backend/ -h` 可执行 → 确认是 app 进程域限制
-- **方案**：执行 `scripts/build_backend.ps1 -Jni`，安装 arm64 APK 后验证 `/health`。
-- `liblegacy.so` 和 `assets/bin/` 均为可重建产物，默认不入库；发布构建机必须先执行脚本。
+### 1. 原生库与真机验证
+
+- Android 后端必须使用 JNI。执行 `scripts/build_backend.ps1 -Jni` 或 Bash 版本的 `--jni` 生成 `liblegacy.so`。
+- 加密播放还需另行提供匹配的 `libshortplay_crypto.so`；其源码当前不在本仓库内，构建脚本不会生成它。
+- 两份库准备好后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。纯 JVM 测试不会加载这两份库。
+- 本轮审查的修复范围、自动化验证与剩余限制见 [全项目代码审查记录](docs/project-code-review-20260908.md)。
 
 ### 2. 调试技巧
 
@@ -428,7 +446,8 @@ adb logcat -s flutter
 - [x] 短剧目录归一化、自动连播、播放进度续看
 - [x] 首页真实推荐接口（`/api/v1/recommend/homepage`）
 - [ ] Android arm64 真机 smoke test（启动、搜索、阅读、播放）
-- [ ] 短剧流式播放（当前加密视频仍需先下载解密；已支持本地 Range）
+- [x] 短剧流式播放（Media3 + JNI CENC 解密与 HTTP Range）
+- [ ] 补齐 `shortplay` 原生加密库源码、可重建入口和 16 KB 页兼容验证
 - [ ] 漫画阅读页（图片平铺/翻页）
 - [ ] 听书播放页（音频播放器）
 - [x] 小说章节下载/离线缓存

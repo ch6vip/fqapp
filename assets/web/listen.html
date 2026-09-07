@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="./favicon.png" type="image/png">
     <link rel="stylesheet" href="./assets/css/all.min.css">
     <title>听书</title>
     <style>
@@ -437,6 +437,10 @@
         let rememberProgress = localStorage.getItem(REMEMBER_KEY) !== "false";
         let chapters = [];
         let currentIndex = 0;
+        let chapterGeneration = 0;
+        let activeItemId = "";
+        let metadataHandler = null;
+        let pendingAutoplay = false;
 
         const audio = document.getElementById("audioPlayer");
         const playBtn = document.getElementById("playBtn");
@@ -519,7 +523,10 @@
                 const button = document.createElement("button");
                 button.className = "item" + (index === currentIndex ? " active" : "");
                 button.type = "button";
-                button.innerHTML = `${chapter.title}<small>第 ${index + 1} 章</small>`;
+                button.textContent = chapter.title;
+                const number = document.createElement("small");
+                number.textContent = `第 ${index + 1} 章`;
+                button.appendChild(number);
                 button.onclick = () => goToIndex(index);
                 chapterListEl.appendChild(button);
             });
@@ -538,9 +545,18 @@
                 if (book.thumb_url) bookCoverEl.src = book.thumb_url;
                 const tones = String(book.tones || "").split(",").map(v => v.trim()).filter(Boolean);
                 if (tones.length) {
-                    toneSelect.innerHTML = tones.map((value, index) => `<option value="${value}">音色 ${index + 1}</option>`).join("");
-                    if (!tones.includes(toneId)) toneId = tones[0];
+                    toneSelect.replaceChildren(...tones.map((value, index) => {
+                        const option = document.createElement("option");
+                        option.value = value;
+                        option.textContent = `音色 ${index + 1}`;
+                        return option;
+                    }));
+                    const toneChanged = !tones.includes(toneId);
+                    if (toneChanged) toneId = tones[0];
                     toneSelect.value = toneId;
+                    if (toneChanged && chapterGeneration) {
+                        await loadChapter(!audio.paused || (!activeItemId && pendingAutoplay));
+                    }
                 }
             } catch (_) {
                 pageMetaEl.textContent = `${source} · 听书`;
@@ -570,13 +586,23 @@
         }
 
         function saveProgress() {
-            if (!rememberProgress || !itemId || !audio.currentTime) return;
-            localStorage.setItem(progressKey(itemId), String(audio.currentTime));
+            if (!rememberProgress || !activeItemId || !Number.isFinite(audio.currentTime) || audio.currentTime <= 0 || audio.ended) return;
+            localStorage.setItem(progressKey(activeItemId), String(audio.currentTime));
         }
 
         async function loadChapter(autoplay = true) {
             const current = chapters[currentIndex];
             if (!current) return;
+            const generation = ++chapterGeneration;
+            const requestedToneId = toneId;
+            pendingAutoplay = autoplay;
+            saveProgress();
+            activeItemId = "";
+            if (metadataHandler) audio.removeEventListener("loadedmetadata", metadataHandler);
+            metadataHandler = null;
+            audio.pause();
+            audio.removeAttribute("src");
+            audio.load();
             itemId = current.id;
             chapterTitleEl.textContent = current.title;
             setStatus("正在加载音频...");
@@ -585,37 +611,46 @@
             renderList();
 
             try {
-                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent("听书")}&tone_id=${encodeURIComponent(toneId)}&source=${encodeURIComponent(source)}`);
+                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(current.id)}&tab=${encodeURIComponent("听书")}&tone_id=${encodeURIComponent(requestedToneId)}&source=${encodeURIComponent(source)}`);
+                if (generation !== chapterGeneration) return;
                 const url = payload.data?.audio_url;
                 if (!url) throw new Error("未获取到音频地址");
-                audio.src = url;
-                audio.load();
-                const saved = Number(localStorage.getItem(progressKey(itemId)) || "0");
-                audio.addEventListener("loadedmetadata", () => {
+                const saved = Number(localStorage.getItem(progressKey(current.id)) || "0");
+                metadataHandler = () => {
+                    if (generation !== chapterGeneration) return;
+                    metadataHandler = null;
+                    activeItemId = current.id;
                     if (rememberProgress && saved > 0 && saved < audio.duration) {
                         audio.currentTime = saved;
                     }
-                }, { once: true });
-                renderSpeed();
+                    renderSpeed();
+                    if (autoplay) audio.play().catch(() => {
+                        if (generation === chapterGeneration) setStatus("浏览器阻止了自动播放，请手动点击播放");
+                    });
+                };
+                audio.addEventListener("loadedmetadata", metadataHandler, { once: true });
+                audio.src = url;
+                audio.load();
                 setStatus("音频已加载");
-                if (autoplay) {
-                    audio.play().catch(() => setStatus("浏览器阻止了自动播放，请手动点击播放"));
-                }
             } catch (error) {
+                if (generation !== chapterGeneration) return;
                 setStatus(error.message || "音频加载失败");
             }
         }
 
         async function goToIndex(index) {
             if (index < 0 || index >= chapters.length) return;
-            saveProgress();
             currentIndex = index;
             closePanels();
             await loadChapter(true);
         }
 
         playBtn.addEventListener("click", () => {
-            if (audio.paused) audio.play().catch(() => setStatus("播放失败，请重试"));
+            if (!audio.getAttribute("src")) return;
+            const generation = chapterGeneration;
+            if (audio.paused) audio.play().catch(() => {
+                if (generation === chapterGeneration) setStatus("播放失败，请重试");
+            });
             else audio.pause();
         });
         prevBtn.addEventListener("click", () => goToIndex(currentIndex - 1));
@@ -651,22 +686,27 @@
 
         audio.addEventListener("play", () => {
             playBtn.innerHTML = '<i class="fas fa-pause"></i> 暂停';
-            setStatus("正在播放");
+            if (activeItemId && !audio.paused) setStatus("正在播放");
         });
         audio.addEventListener("pause", () => {
             playBtn.innerHTML = '<i class="fas fa-play"></i> 播放';
             saveProgress();
-            if (audio.currentTime && audio.currentTime < audio.duration) setStatus("已暂停");
+            if (activeItemId && audio.paused && audio.currentTime && audio.currentTime < audio.duration) setStatus("已暂停");
         });
         audio.addEventListener("timeupdate", () => {
             if (Math.floor(audio.currentTime) % 5 === 0) saveProgress();
         });
         audio.addEventListener("ended", () => {
-            localStorage.removeItem(progressKey(itemId));
+            if (!activeItemId || !audio.ended) return;
+            localStorage.removeItem(progressKey(activeItemId));
+            activeItemId = "";
             if (autoNext && currentIndex < chapters.length - 1) goToIndex(currentIndex + 1);
             else setStatus("当前章节播放完成");
         });
-        audio.addEventListener("error", () => setStatus("音频播放失败"));
+        audio.addEventListener("error", () => {
+            if (audio.error) setStatus("音频播放失败");
+        });
+        window.addEventListener("pagehide", saveProgress);
 
         document.addEventListener("keydown", event => {
             if (event.target && ["INPUT", "SELECT"].includes(event.target.tagName)) return;
@@ -682,7 +722,7 @@
         applyTheme();
         renderSpeed();
         Promise.all([loadBookDetail(), loadDirectory()])
-            .then(() => loadChapter(false))
+            .then(() => { if (!chapterGeneration) return loadChapter(false); })
             .catch(error => setStatus(error.message || "页面初始化失败"));
     </script>
 </body>

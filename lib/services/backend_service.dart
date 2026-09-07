@@ -7,6 +7,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+typedef BackendProcessStarter =
+    Future<Process> Function(
+      String executable,
+      List<String> arguments, {
+      String? workingDirectory,
+    });
+
 /// Manages the local Go  backend.
 ///
 /// On Android the backend ships as liblegacy.so (a real c-shared library with
@@ -14,17 +21,33 @@ import 'package:path_provider/path_provider.dart';
 /// standalone executable is deployed only on desktop; Android cannot execute
 /// app-data binaries under SELinux and therefore uses the JNI backend only.
 class BackendService {
-  BackendService._();
+  BackendService({
+    AssetBundle? assets,
+    Future<Directory> Function()? supportDirectory,
+    bool? useJni,
+    BackendProcessStarter? startProcess,
+    this.baseUrl = 'http://127.0.0.1:8080',
+    this._startupTimeout = const Duration(seconds: 15),
+    this._shutdownTimeout = const Duration(seconds: 3),
+  }) : _assets = assets ?? rootBundle,
+       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
+       _useJni = useJni ?? (!kIsWeb && Platform.isAndroid),
+       _startProcess = startProcess ?? Process.start;
 
-  static final BackendService instance = BackendService._();
+  static final BackendService instance = BackendService();
 
-  static const int _port = 8080;
-  static const String _host = '127.0.0.1';
   static const MethodChannel _channel = MethodChannel('fqapp/backend');
+  final AssetBundle _assets;
+  final Future<Directory> Function() _supportDirectory;
+  final bool _useJni;
+  final BackendProcessStarter _startProcess;
+  final Duration _startupTimeout;
+  final Duration _shutdownTimeout;
 
   Process? _proc;
   bool _viaJni = false;
   Future<void>? _startFuture;
+  Future<void>? _stopFuture;
   final List<StreamSubscription<String>> _logSubs = [];
   final List<String> _logLines = [];
   File? _logFile;
@@ -32,7 +55,7 @@ class BackendService {
   Future<void> _logWriteQueue = Future.value();
 
   /// Base URL of the local backend.
-  String get baseUrl => 'http://$_host:$_port';
+  final String baseUrl;
 
   /// Whether the backend is currently running (via JNI or as a subprocess).
   bool get isRunning => _viaJni || (_proc != null && _proc!.pid > 0);
@@ -42,7 +65,7 @@ class BackendService {
 
   /// Path of the directory where backend files live.
   Future<Directory> _backendDir() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await _supportDirectory();
     final backend = Directory('${dir.path}/backend');
     if (!await backend.exists()) {
       await backend.create(recursive: true);
@@ -52,7 +75,7 @@ class BackendService {
 
   /// Copies an asset bundle entry to [dest] if missing or stale.
   Future<void> _copyAsset(String assetPath, File dest) async {
-    final data = await rootBundle.load(assetPath);
+    final data = await _assets.load(assetPath);
     final bytes = data.buffer.asUint8List(
       data.offsetInBytes,
       data.lengthInBytes,
@@ -117,39 +140,15 @@ class BackendService {
       await _copyAsset('assets/config/device_pool.example.json', poolFile);
     }
 
-    // Filters
-    final filterNames = [
-      'article.js',
-      'audio.js',
-      'author.js',
-      'book.js',
-      'chapter.js',
-      'comment.js',
-      'forum_id.js',
-      'item.js',
-      'manga.js',
-      'novel.js',
-      'rank.js',
-      'recommend.js',
-      'search.js',
-      'video.js',
-      'viewer.js',
-    ];
-    for (final n in filterNames) {
-      await _copyAsset('assets/filters/$n', File('${dir.path}/filters/$n'));
-    }
-
-    // Web UI (used by browser; Flutter uses the API directly but keep parity)
-    final webNames = [
-      'index.html',
-      'detail.html',
-      'read.html',
-      'listen.html',
-      'comic.html',
-      'video.html',
-    ];
-    for (final n in webNames) {
-      await _copyAsset('assets/web/$n', File('${dir.path}/web/$n'));
+    // Use the bundle manifest so nested CSS/fonts and plugin files are
+    // deployed along with the top-level HTML and filters.
+    const runtimeRoots = ['assets/filters/', 'assets/web/', 'assets/plugins/'];
+    final manifest = await AssetManifest.loadFromAssetBundle(_assets);
+    for (final asset in manifest.listAssets()) {
+      if (runtimeRoots.any(asset.startsWith)) {
+        final relative = asset.substring('assets/'.length);
+        await _copyAsset(asset, File('${dir.path}/$relative'));
+      }
     }
   }
 
@@ -171,7 +170,8 @@ class BackendService {
   /// Concurrent callers share the same startup future, so every caller waits
   /// for a definitive healthy/error result.
   Future<void> start() {
-    if (_viaJni || _proc != null) return Future<void>.value();
+    final stopping = _stopFuture;
+    if (stopping != null) return stopping.then((_) => start());
     final active = _startFuture;
     if (active != null) return active;
     late final Future<void> tracked;
@@ -184,12 +184,18 @@ class BackendService {
 
   Future<void> _startInternal() async {
     try {
-      final android = !kIsWeb && Platform.isAndroid;
+      if (_viaJni || _proc != null) {
+        if (await _waitHealthy(_startupTimeout)) return;
+        await _stopRunningBackend();
+      }
+      await _cancelLogSubscriptions();
+      final android = _useJni;
       await _deploy(includeExecutable: !android);
       final dir = await _backendDir();
 
       // Reset log file each start.
       final logPath = '${dir.path}/backend.log';
+      await _logWriteQueue;
       try {
         File(logPath).deleteSync();
       } catch (_) {}
@@ -209,12 +215,8 @@ class BackendService {
           _log('JNI startBackend returned: $result');
           if (result == 'running') {
             _viaJni = true;
-            final ok = await _waitHealthy(const Duration(seconds: 15));
+            final ok = await _waitHealthy(_startupTimeout);
             if (!ok) {
-              await _channel
-                  .invokeMethod('stopBackend')
-                  .timeout(const Duration(seconds: 3));
-              _viaJni = false;
               throw StateError(
                 'JNI backend started but /health did not come up',
               );
@@ -229,7 +231,7 @@ class BackendService {
           try {
             await _channel
                 .invokeMethod('stopBackend')
-                .timeout(const Duration(seconds: 3));
+                .timeout(_shutdownTimeout);
           } catch (stopError) {
             _log('stop failed JNI backend failed: $stopError');
           }
@@ -242,7 +244,7 @@ class BackendService {
       _log('starting backend via Process.start: $bin');
       _log('workdir: ${dir.path}');
 
-      _proc = await Process.start(bin, [
+      _proc = await _startProcess(bin, [
         '-config',
         '${dir.path}/config/config.json',
         '-pool',
@@ -257,24 +259,35 @@ class BackendService {
 
       // Drain stdout/stderr so the child never blocks on a full pipe.
       final stdoutLines = process.stdout
-          .transform(SystemEncoding().decoder)
+          .transform(const Utf8Decoder(allowMalformed: true))
           .transform(const LineSplitter());
-      _logSubs.add(stdoutLines.listen((String l) => _log(l)));
+      _logSubs.add(
+        stdoutLines.listen(
+          _log,
+          onError: (Object error) => _log('backend stdout error: $error'),
+        ),
+      );
       final stderrLines = process.stderr
-          .transform(SystemEncoding().decoder)
+          .transform(const Utf8Decoder(allowMalformed: true))
           .transform(const LineSplitter());
-      _logSubs.add(stderrLines.listen((String l) => _log(l)));
+      _logSubs.add(
+        stderrLines.listen(
+          _log,
+          onError: (Object error) => _log('backend stderr error: $error'),
+        ),
+      );
       process.exitCode.then((code) {
         _log('backend exited with code $code');
         if (identical(_proc, process)) _proc = null;
       });
 
       // Wait for the health endpoint to come up.
-      final ok = await _waitHealthy(const Duration(seconds: 15));
+      final ok = await _waitHealthy(_startupTimeout);
       if (!ok) {
-        // Kill and report failure.
-        _proc?.kill();
-        _proc = null;
+        // Do not release the process until it has exited; retries must not
+        // overwrite its executable or race an old listener for the same port.
+        await _stopRunningBackend();
+        await _cancelLogSubscriptions();
         throw StateError(
           ' backend failed to start (health check timeout)\n'
           'logs: ${_logLines.join('\n')}',
@@ -289,37 +302,81 @@ class BackendService {
 
   /// Polls /health until the backend responds or [timeout] elapses.
   Future<bool> _waitHealthy(Duration timeout) async {
-    final deadline = DateTime.now().add(timeout);
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
-    try {
-      while (DateTime.now().isBefore(deadline)) {
-        // If the process died and we're not on the JNI path, give up.
-        if (!_viaJni && _proc == null) return false;
-        try {
+    final elapsed = Stopwatch()..start();
+    while (elapsed.elapsed < timeout) {
+      // If the process died and we're not on the JNI path, give up.
+      if (!_viaJni && _proc == null) return false;
+      final remaining = timeout - elapsed.elapsed;
+      final attemptTimeout = remaining < const Duration(seconds: 2)
+          ? remaining
+          : const Duration(seconds: 2);
+      final client = HttpClient()..connectionTimeout = attemptTimeout;
+      try {
+        final statusCode = await (() async {
           final req = await client.getUrl(Uri.parse('$baseUrl/health'));
           final resp = await req.close();
           await resp.drain<void>();
-          if (resp.statusCode == 200) return true;
-          _log('health check: HTTP ${resp.statusCode}');
-        } catch (e) {
-          // Not up yet.
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+          return resp.statusCode;
+        })().timeout(attemptTimeout);
+        if (statusCode == 200) return _viaJni || _proc != null;
+        _log('health check: HTTP $statusCode');
+      } catch (_) {
+        // Not up yet. Bound the complete exchange, including response-body
+        // draining: connectionTimeout alone cannot stop a stalled server.
+      } finally {
+        client.close(force: true);
       }
-      return false;
-    } finally {
-      client.close(force: true);
+      final pause = timeout - elapsed.elapsed;
+      if (pause <= Duration.zero) break;
+      await Future<void>.delayed(
+        pause < const Duration(milliseconds: 300)
+            ? pause
+            : const Duration(milliseconds: 300),
+      );
     }
+    return false;
   }
 
   /// Stops the backend (JNI or subprocess).
-  Future<void> stop() async {
+  Future<void> stop() {
+    final active = _stopFuture;
+    if (active != null) return active;
+    late final Future<void> tracked;
+    tracked = _stopInternal().whenComplete(() {
+      if (identical(_stopFuture, tracked)) _stopFuture = null;
+    });
+    _stopFuture = tracked;
+    return tracked;
+  }
+
+  Future<void> _stopInternal() async {
+    // Deployment and native startup can still be in flight when stop() is
+    // called. Wait for that attempt before stopping the resource it owns.
+    try {
+      await _startFuture;
+    } catch (_) {
+      // A failed start performs its own cleanup.
+    }
+    try {
+      await _stopRunningBackend();
+    } finally {
+      await _cancelLogSubscriptions();
+      await _logWriteQueue;
+    }
+  }
+
+  Future<void> _cancelLogSubscriptions() async {
+    for (final s in _logSubs) {
+      await s.cancel();
+    }
+    _logSubs.clear();
+  }
+
+  Future<void> _stopRunningBackend() async {
     // JNI path
     if (_viaJni) {
       try {
-        await _channel
-            .invokeMethod('stopBackend')
-            .timeout(const Duration(seconds: 3));
+        await _channel.invokeMethod('stopBackend').timeout(_shutdownTimeout);
       } catch (e) {
         _log('stopBackend via JNI failed: $e');
       }
@@ -327,19 +384,20 @@ class BackendService {
       return;
     }
     // Subprocess path
-    if (_proc == null) return;
+    final process = _proc;
+    if (process == null) return;
+    var exited = false;
     try {
-      _proc?.kill();
-      await _proc?.exitCode.timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => -1,
-      );
-    } finally {
-      _proc = null;
-      for (final s in _logSubs) {
-        await s.cancel();
+      process.kill();
+      try {
+        await process.exitCode.timeout(_shutdownTimeout);
+      } on TimeoutException {
+        process.kill(ProcessSignal.sigkill);
+        await process.exitCode.timeout(_shutdownTimeout);
       }
-      _logSubs.clear();
+      exited = true;
+    } finally {
+      if (exited && identical(_proc, process)) _proc = null;
     }
   }
 }

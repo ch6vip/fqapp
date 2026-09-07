@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/library_store.dart';
 import '../services/player_history.dart';
+import '../services/reader_history.dart';
 import '../widgets/media_card.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
@@ -29,8 +30,19 @@ Future<_Captured<T>> _capture<T>(Future<T> future) async {
 
 class DetailPage extends StatefulWidget {
   final MediaItem item;
+  final Future<Map<String, dynamic>> Function(String bookId, {String tab})?
+  detailLoader;
+  final Future<List<List<Chapter>>> Function(String bookId, {String tab})?
+  directoryLoader;
+  final ReaderStore? readerStore;
 
-  const DetailPage({super.key, required this.item});
+  const DetailPage({
+    super.key,
+    required this.item,
+    this.detailLoader,
+    this.directoryLoader,
+    this.readerStore,
+  });
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -44,6 +56,8 @@ class _DetailPageState extends State<DetailPage> {
   String? _error;
   late final String _tab;
   int _loadGeneration = 0;
+  int _openGeneration = 0;
+  bool _opening = false;
 
   bool get _supported =>
       widget.item.kind == 'book' || widget.item.kind == 'video';
@@ -83,10 +97,13 @@ class _DetailPageState extends State<DetailPage> {
     // perfectly playable. Start both before awaiting either so the page waits
     // for the slower request, not the sum of both request times.
     final detailFuture = _capture(
-      ApiClient.instance.detail(_contentId, tab: _tab),
+      (widget.detailLoader ?? ApiClient.instance.detail)(_contentId, tab: _tab),
     );
     final directoryFuture = _capture(
-      ApiClient.instance.directoryChapters(_contentId, tab: _tab),
+      (widget.directoryLoader ?? ApiClient.instance.directoryChapters)(
+        _contentId,
+        tab: _tab,
+      ),
     );
     final detailResult = await detailFuture;
     final directoryResult = await directoryFuture;
@@ -110,7 +127,7 @@ class _DetailPageState extends State<DetailPage> {
       ];
     }
 
-    if (detail == null && volumes.isEmpty && directoryResult.error != null) {
+    if (volumes.isEmpty && directoryResult.error != null) {
       setState(() {
         _error = '${directoryResult.error}';
         _loading = false;
@@ -153,7 +170,7 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Widget _errorView() => Center(
-    child: Padding(
+    child: SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -389,28 +406,51 @@ class _DetailPageState extends State<DetailPage> {
         child: FilledButton.icon(
           icon: Icon(_isVideo ? Icons.play_arrow : Icons.menu_book),
           label: Text(_isVideo ? '播放 / 续看' : '阅读 / 续读'),
-          onPressed: _openLastPosition,
+          onPressed: _opening ? null : _openLastPosition,
         ),
       ),
     ),
   );
 
   Future<void> _openLastPosition() async {
-    if (_allChapters.isEmpty) return;
-    final saved = _isVideo
-        ? await PlayerHistory(LibraryStore.instance).load(_contentId)
-        : await LibraryStore.instance.historyEntry(_contentId);
-    if (!mounted || _allChapters.isEmpty) return;
-    final savedIndex = _isVideo
-        ? resumeEpisodeIndex(saved, _allChapters) ?? 0
-        : saved?['episode'] is num
-        ? (saved!['episode'] as num).toInt()
-        : 0;
-    final index = savedIndex.clamp(0, _allChapters.length - 1);
-    _openChapter(_allChapters[index]);
+    if (_opening || _allChapters.isEmpty) return;
+    final generation = ++_openGeneration;
+    setState(() => _opening = true);
+    try {
+      final store = widget.readerStore ?? LibraryStore.instance;
+      Map<String, dynamic>? saved;
+      try {
+        saved = _isVideo
+            ? await PlayerHistory(store).load(_contentId)
+            : await ReaderHistory(store).load(_contentId);
+      } catch (_) {
+        // A missing resume record must not prevent reading available content.
+      }
+      if (!mounted || generation != _openGeneration || _allChapters.isEmpty) {
+        return;
+      }
+      // Books also save a chapter ID. Prefer it to a stale array index when
+      // the publisher inserts or reorders chapters.
+      final resumeRecord = !_isVideo && saved != null
+          ? {
+              ...saved,
+              if (saved['chapterId'] != null)
+                'chapterId': saved['chapterId'].toString(),
+            }
+          : saved;
+      final index = resumeEpisodeIndex(resumeRecord, _allChapters) ?? 0;
+      _openChapter(_allChapters[index]);
+    } finally {
+      if (mounted && generation == _openGeneration) {
+        setState(() => _opening = false);
+      }
+    }
   }
 
   void _openChapter(Chapter chapter) {
+    // An explicit chapter selection supersedes any pending resume lookup.
+    ++_openGeneration;
+    if (_opening) setState(() => _opening = false);
     final index = _allChapters.indexWhere((c) => c.itemId == chapter.itemId);
     if (_isVideo) {
       Navigator.push(
@@ -420,6 +460,7 @@ class _DetailPageState extends State<DetailPage> {
             bookId: _contentId,
             title: widget.item.title,
             cover: widget.item.cover,
+            historyStore: widget.readerStore,
             eps: _allChapters,
             description: _detail == null
                 ? null
@@ -436,6 +477,7 @@ class _DetailPageState extends State<DetailPage> {
             bookId: _contentId,
             title: widget.item.title,
             cover: widget.item.cover,
+            readerStore: widget.readerStore,
             chapters: _allChapters,
             startIndex: index < 0 ? 0 : index,
           ),

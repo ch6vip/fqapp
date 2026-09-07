@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
 
@@ -27,21 +28,26 @@ class HomepagePage {
 /// Uses the same `/api/*` bridge the web UI uses, so responses are already
 /// normalized for the frontend (search tabs, chapterListWithVolume, etc.).
 class ApiClient {
-  ApiClient._();
+  ApiClient({
+    http.Client? client,
+    String? baseUrl,
+    this._timeout = const Duration(seconds: 20),
+  }) : _client = client ?? http.Client(),
+       _base = baseUrl ?? BackendService.instance.baseUrl;
 
-  static final ApiClient instance = ApiClient._();
+  static final ApiClient instance = ApiClient();
 
   // Reuse sockets for the lifetime of the app. All requests target the same
   // loopback backend, so creating a new Client for every call only adds TCP
   // setup and TIME_WAIT churn.
-  final http.Client _client = http.Client();
+  final http.Client _client;
 
   /// Timeout applied to every backend request. The backend runs locally, so a
   /// healthy call returns in well under this; a hung child process or a stuck
   /// upstream request must not leave a page spinning forever.
-  static const Duration _timeout = Duration(seconds: 20);
+  final Duration _timeout;
 
-  String get _base => BackendService.instance.baseUrl;
+  final String _base;
 
   /// Converts a backend-relative resource (`/src/foo.mp4`) into a URL the
   /// Flutter networking plugins can consume. JSON API paths stay untouched.
@@ -50,8 +56,7 @@ class ApiClient {
     if (raw.isEmpty) return raw;
     final parsed = Uri.tryParse(raw);
     if (parsed != null && parsed.hasScheme) return raw;
-    if (raw.startsWith('/')) return '$_base$raw';
-    return '$_base/$raw';
+    return Uri.parse(_base).resolve(raw).toString();
   }
 
   /// Decodes and envelope-checks a response body on a background isolate so
@@ -63,12 +68,34 @@ class ApiClient {
   }
 
   /// Sends a GET to the local backend with a timeout.
-  Future<http.Response> _get(String url) {
-    return _client.get(Uri.parse(url)).timeout(_timeout);
+  Future<http.Response> _get(String url, {Duration? timeout}) async {
+    final abort = Completer<void>();
+    final request = http.AbortableRequest(
+      'GET',
+      Uri.parse(url),
+      abortTrigger: abort.future,
+    );
+    try {
+      return await _client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(timeout ?? _timeout);
+    } on TimeoutException {
+      // Future.timeout alone leaves a hung request occupying a connection.
+      // Cancel this request without closing the shared client's other calls.
+      abort.complete();
+      rethrow;
+    }
   }
 
+  String _url(String path, Map<String, String> query) =>
+      Uri.parse(_base).resolve(path).replace(queryParameters: query).toString();
+
   String _searchUrl(String query, int page) =>
-      '$_base/api/search?source=${Uri.encodeQueryComponent('番茄')}&query=${Uri.encodeQueryComponent(query)}&page=$page';
+      _url('/api/search', {'source': '番茄', 'query': query, 'page': '$page'});
+
+  String _directoryUrl(String bookId, String tab) =>
+      _url('/api/directory', {'source': '番茄', 'book_id': bookId, 'tab': tab});
 
   /// Search across content types.
   /// Returns normalized {tabs: [{title, data:[...]}], ...} structure.
@@ -95,7 +122,7 @@ class ApiClient {
     String tab = '小说',
   }) async {
     final r = await _get(
-      '$_base/api/detail?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
+      _url('/api/detail', {'source': '番茄', 'book_id': bookId, 'tab': tab}),
     );
     return _decodeAsync(r);
   }
@@ -105,9 +132,7 @@ class ApiClient {
     String bookId, {
     String tab = '小说',
   }) async {
-    final r = await _get(
-      '$_base/api/directory?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
-    );
+    final r = await _get(_directoryUrl(bookId, tab));
     return _decodeAsync(r);
   }
 
@@ -117,9 +142,7 @@ class ApiClient {
     String bookId, {
     String tab = '小说',
   }) async {
-    final r = await _get(
-      '$_base/api/directory?source=${Uri.encodeQueryComponent('番茄')}&book_id=$bookId&tab=${Uri.encodeQueryComponent(tab)}',
-    );
+    final r = await _get(_directoryUrl(bookId, tab));
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
     return Isolate.run(
@@ -133,8 +156,13 @@ class ApiClient {
     required String tab,
     String? toneId,
     String? mode,
-  }) =>
-      '$_base/api/content?source=${Uri.encodeQueryComponent('番茄')}&item_id=$itemId&tab=${Uri.encodeQueryComponent(tab)}${toneId != null ? '&tone_id=$toneId' : ''}${mode != null ? '&mode=$mode' : ''}';
+  }) => _url('/api/content', {
+    'source': '番茄',
+    'item_id': itemId,
+    'tab': tab,
+    'tone_id': ?toneId,
+    'mode': ?mode,
+  });
 
   Future<Map<String, dynamic>> content(
     String itemId, {
@@ -162,9 +190,7 @@ class ApiClient {
 
   /// Resolve a share URL to a book id.
   Future<Map<String, dynamic>> resolve(String url) async {
-    final r = await _get(
-      '$_base/api/resolve?url=${Uri.encodeQueryComponent(url)}',
-    );
+    final r = await _get(_url('/api/resolve', {'url': url}));
     return _decodeAsync(r);
   }
 
@@ -179,12 +205,7 @@ class ApiClient {
     int offset = 0,
     String? sessionId,
   }) async {
-    final session = sessionId == null || sessionId.isEmpty
-        ? ''
-        : '&session_id=${Uri.encodeQueryComponent(sessionId)}';
-    final r = await _get(
-      '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset$session',
-    );
+    final r = await _get(_homepageUrl(tabType, offset, sessionId));
     return _decodeAsync(r);
   }
 
@@ -195,12 +216,7 @@ class ApiClient {
     int offset = 0,
     String? sessionId,
   }) async {
-    final session = sessionId == null || sessionId.isEmpty
-        ? ''
-        : '&session_id=${Uri.encodeQueryComponent(sessionId)}';
-    final r = await _get(
-      '$_base/api/v1/recommend/homepage?tab_type=$tabType&offset=$offset$session',
-    );
+    final r = await _get(_homepageUrl(tabType, offset, sessionId));
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
     return Isolate.run(() {
@@ -235,12 +251,20 @@ class ApiClient {
     });
   }
 
+  String _homepageUrl(int tabType, int offset, String? sessionId) =>
+      _url('/api/v1/recommend/homepage', {
+        'tab_type': '$tabType',
+        'offset': '$offset',
+        if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
+      });
+
   /// Health check.
   Future<bool> health() async {
     try {
-      final r = await _client
-          .get(Uri.parse('$_base/health'))
-          .timeout(const Duration(seconds: 3));
+      final r = await _get(
+        '$_base/health',
+        timeout: const Duration(seconds: 3),
+      );
       return r.statusCode == 200;
     } catch (_) {
       return false;

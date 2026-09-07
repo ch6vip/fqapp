@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>聚合搜索</title>
+    <link rel="icon" href="./favicon.png" type="image/png">
     <link rel="stylesheet" href="./assets/css/all.min.css">
     <style>
         :root {
@@ -371,7 +372,8 @@
         const defaultTabs = ["小说"];
         const pageSizeMap = { "番茄": 9 };
 
-        const state = { source: "番茄", tab: "小说", page: 1, hasMore: true, loading: false };
+        const state = { source: "番茄", tab: "小说", query: "", page: 0, hasMore: false, loading: false };
+        let searchGeneration = 0;
 
         const queryInput = document.getElementById("queryInput");
         const searchBtn = document.getElementById("searchBtn");
@@ -498,14 +500,20 @@
         }
 
         function resetResults() {
-            state.page = 1;
-            state.hasMore = true;
+            searchGeneration += 1;
+            state.query = "";
+            state.page = 0;
+            state.hasMore = false;
+            state.loading = false;
             resultsEl.innerHTML = "";
             statusBar.textContent = "";
         }
 
         function showEmpty(message) {
-            resultsEl.innerHTML = `<div class="hint">${message}</div>`;
+            const hint = document.createElement("div");
+            hint.className = "hint";
+            hint.textContent = message;
+            resultsEl.replaceChildren(hint);
         }
 
         function extractItemsBySource(source, tab, payload) {
@@ -539,15 +547,34 @@
             items.forEach(item => {
                 const card = document.createElement("div");
                 card.className = "card";
-                card.innerHTML = `
-                    <img src="${item.cover || `https://picsum.photos/240/320?random=${Math.random()}`}" alt="${item.title}" loading="lazy" referrerpolicy="no-referrer">
-                    <div class="card-body">
-                        <h3>${item.title || "未命名作品"}</h3>
-                        <div class="meta"><span>${item.author || "未知作者"}</span><span>${item.source}</span><span>${item.tab}</span></div>
-                        <p class="desc">${item.desc || "暂无简介"}</p>
-                        <div class="tags">${(item.tags || []).slice(0, 4).map(tag => `<span>${tag}</span>`).join("")}</div>
-                    </div>
-                `;
+                const cover = document.createElement("img");
+                cover.src = item.cover || `https://picsum.photos/240/320?random=${Math.random()}`;
+                cover.alt = item.title || "未命名作品";
+                cover.loading = "lazy";
+                cover.referrerPolicy = "no-referrer";
+                const body = document.createElement("div");
+                body.className = "card-body";
+                const title = document.createElement("h3");
+                title.textContent = item.title || "未命名作品";
+                const meta = document.createElement("div");
+                meta.className = "meta";
+                [item.author || "未知作者", item.source, item.tab].forEach(value => {
+                    const span = document.createElement("span");
+                    span.textContent = value;
+                    meta.appendChild(span);
+                });
+                const description = document.createElement("p");
+                description.className = "desc";
+                description.textContent = item.desc || "暂无简介";
+                const tags = document.createElement("div");
+                tags.className = "tags";
+                (item.tags || []).slice(0, 4).forEach(value => {
+                    const span = document.createElement("span");
+                    span.textContent = value;
+                    tags.appendChild(span);
+                });
+                body.append(title, meta, description, tags);
+                card.append(cover, body);
                 card.addEventListener("click", () => {
                     location.href = `/detail.html?source=${encodeURIComponent(item.source)}&book_id=${encodeURIComponent(item.id)}&tab=${encodeURIComponent(item.tab)}`;
                 });
@@ -584,9 +611,10 @@
             }
         }
 
-        async function jumpByURL(input) {
+        async function jumpByURL(input, generation) {
             try {
                 const finalURL = await resolveURL(input);
+                if (generation !== searchGeneration) return;
                 const parsed = new URL(finalURL);
                 const host = parsed.hostname;
                 const path = parsed.pathname;
@@ -614,45 +642,58 @@
                 }
                 throw new Error("暂不支持识别这个链接");
             } catch (error) {
-                statusBar.textContent = error.message || "链接识别失败";
+                if (generation === searchGeneration) statusBar.textContent = error.message || "链接识别失败";
             }
         }
 
         async function runSearch(append) {
-            if (state.loading || (append && !state.hasMore)) return;
-            const query = queryInput.value.trim();
+            if (append && (state.loading || !state.hasMore)) return;
+            if (!append) {
+                resetResults();
+                state.query = queryInput.value.trim();
+            }
+            const query = state.query;
             if (!query) {
                 showEmpty("");
                 return;
             }
+            const generation = ++searchGeneration;
             if (/^https?:\/\//i.test(query) && !append) {
                 statusBar.textContent = "正在识别链接…";
-                await jumpByURL(query);
+                await jumpByURL(query, generation);
                 return;
             }
 
+            const { source, tab } = state;
+            const page = state.page + 1;
             state.loading = true;
             statusBar.textContent = "正在加载…";
             try {
-                const cacheKey = `${state.source}:${state.tab}:${state.page}:${query}`;
+                const cacheKey = `${source}:${tab}:${page}:${query}`;
                 let payload = readCache("search", cacheKey);
                 if (!payload) {
-                    const response = await fetch(`/api/search?source=${encodeURIComponent(state.source)}&page=${state.page}&query=${encodeURIComponent(query)}&tab=${encodeURIComponent(state.tab)}`);
+                    const response = await fetch(`/api/search?source=${encodeURIComponent(source)}&page=${page}&query=${encodeURIComponent(query)}&tab=${encodeURIComponent(tab)}`);
                     payload = await response.json();
+                    if (generation !== searchGeneration) return;
                     if (!response.ok || (payload.code && payload.code !== 200)) throw new Error(payload.message || "搜索失败");
                     writeCache("search", cacheKey, payload);
                 }
-                const items = extractItemsBySource(state.source, state.tab, payload);
+                if (generation !== searchGeneration) return;
+                const items = extractItemsBySource(source, tab, payload);
                 renderResults(items, append);
-                state.hasMore = items.length >= (pageSizeMap[state.source] || 10);
+                state.page = page;
+                state.hasMore = items.length >= (pageSizeMap[source] || 10);
                 statusBar.textContent = state.hasMore ? "" : "没有更多内容了";
             } catch (error) {
+                if (generation !== searchGeneration) return;
                 if (!append) showEmpty(error.message || "请求失败");
                 state.hasMore = false;
                 statusBar.textContent = error.message || "搜索失败";
             } finally {
-                state.loading = false;
-                maybeFillViewport();
+                if (generation === searchGeneration) {
+                    state.loading = false;
+                    maybeFillViewport();
+                }
             }
         }
 
@@ -662,7 +703,6 @@
             }
             const docHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
             if (docHeight <= window.innerHeight + 120) {
-                state.page += 1;
                 runSearch(true);
             }
         }
@@ -673,7 +713,6 @@
             scrollTimer = setTimeout(() => {
                 scrollTimer = null;
                 if (window.scrollY + window.innerHeight >= document.body.scrollHeight - 120 && !state.loading && state.hasMore) {
-                    state.page += 1;
                     runSearch(true);
                 }
             }, 120);
@@ -684,11 +723,10 @@
             renderThemeToggle();
         });
         document.getElementById("clearCacheBtn").addEventListener("click", clearManagedCache);
-        searchBtn.addEventListener("click", () => { resetResults(); runSearch(false); });
+        searchBtn.addEventListener("click", () => runSearch(false));
         queryInput.addEventListener("keydown", event => {
             if (event.key === "Enter") {
                 event.preventDefault();
-                resetResults();
                 runSearch(false);
             }
         });

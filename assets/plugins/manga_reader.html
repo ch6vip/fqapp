@@ -79,6 +79,7 @@ class MangaReader {
         this.singleTapTimer = null;
         this.lastTapTime = 0;
         this.changingChapter = false;
+        this.loadGeneration = 0;
         this.scrollTimeout = null;
         this.ignoreScrollBoundary = false;
         this.baseUrl = window.BASE_URL || "";
@@ -187,16 +188,21 @@ class MangaReader {
 
     async loadChapter(itemId) {
         if (!itemId) return;
-        this.showLoading(true); this.currentItemId = window.PLUGIN_PARAMS.item_id || window.PLUGIN_PARAMS.item_ids || "";
+        const generation = ++this.loadGeneration;
+        this.changingChapter = true; this.ignoreScrollBoundary = true;
+        clearTimeout(this.scrollTimeout);
+        this.showLoading(true); this.currentItemId = String(itemId);
+        if (this.chapters.length > 0) this.updateIndexByItemId(itemId);
         try {
-            const url = this.baseUrl + "/api/v1/manga/" + itemId;
+            const url = this.baseUrl + "/api/v1/manga/" + encodeURIComponent(itemId);
             const res = await fetch(url); const json = await res.json();
+            if (generation !== this.loadGeneration) return;
             if (json.success && json.data.images && json.data.images.length > 0) {
                 this.images = json.data.images; this.renderImages();
                 if (this.chapters.length > 0) { this.updateIndexByItemId(itemId); }
             } else { throw new Error(json.error || "Failed to get manga images"); }
-        } catch (e) { this.showToast("Error: " + e.message); }
-        finally { this.changingChapter = false; this.showLoading(false); }
+        } catch (e) { if (generation === this.loadGeneration) this.showToast("Error: " + e.message); }
+        finally { if (generation === this.loadGeneration) { this.changingChapter = false; this.showLoading(false); } }
     }
 
     renderImages() {
@@ -204,7 +210,6 @@ class MangaReader {
         this.images.forEach((imgUrl, index) => {
             const img = document.createElement('img');
             img.src = imgUrl; img.alt = 'Image ' + (index + 1);
-            img.onload = () => { this.showLoading(false); };
             img.onerror = () => { console.error('Image load failed: ' + imgUrl); };
             this.imageScrollArea.appendChild(img);
         });
@@ -212,7 +217,7 @@ class MangaReader {
     }
 
     readChapter(index) {
-        if (this.changingChapter) return;
+        if (this.changingChapter && index === this.currentChapterIndex) return;
         if (index < 0 || index >= this.chapters.length) { this.showToast(index < 0 ? "Already at first chapter" : "Already at last chapter"); return; }
         this.changingChapter = true; this.ignoreScrollBoundary = true;
         this.currentChapterIndex = index; const chapter = this.chapters[index]; this.loadChapter(chapter.item_id);

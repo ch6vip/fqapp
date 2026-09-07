@@ -45,7 +45,8 @@ app.*.map.json
 /android/app/release
 /android/build/
 
-# 旧后端二进制：体积大（每个约 16MB）且可由源码完整重建，不入库。
-# clone 后首次构建前请先运行 scripts/build_backend.sh（Windows 可用 .ps1）。
+# 旧后端产物可由  源码重建；Android 请使用脚本的 --jni / -Jni。
+# shortplay 加密库是另行提供的原生依赖，准备方式与当前源码缺口见 README。
 /assets/bin/
+/assets/config/device_pool.json
 /android/app/src/main/jniLibs/*/*.so

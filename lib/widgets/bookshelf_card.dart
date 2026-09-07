@@ -126,100 +126,110 @@ class BookshelfListCard extends StatelessWidget {
               horizontal: 8,
               vertical: compact ? 4 : 5,
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: coverWidth,
-                  child: AspectRatio(
-                    aspectRatio: bookshelfCoverAspectRatio,
-                    child: _BookshelfCover(item: item),
+            child: LayoutBuilder(
+              builder: (context, constraints) => Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: coverWidth,
+                    child: AspectRatio(
+                      aspectRatio: bookshelfCoverAspectRatio,
+                      child: _BookshelfCover(item: item),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      SizedBox(height: compact ? 4 : 6),
-                      if (compact)
-                        Text(
-                          metadata.isEmpty
-                              ? bookshelfKindLabel(item.kind)
-                              : metadata.join(' • '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        )
-                      else ...[
-                        if (item.author.trim().isNotEmpty)
-                          _MetaLine(
-                            icon: Icons.person_outline,
-                            text: item.author.trim(),
-                          ),
-                        if (readingText?.trim().isNotEmpty == true)
-                          _MetaLine(
-                            icon: Icons.history,
-                            text: readingText!.trim(),
-                          ),
-                        if (item.ep.trim().isNotEmpty)
-                          _MetaLine(
-                            icon: Icons.menu_book_outlined,
-                            text: _totalText(item),
-                          ),
-                        if (item.author.trim().isEmpty &&
-                            readingText?.trim().isNotEmpty != true &&
-                            item.ep.trim().isEmpty)
-                          _MetaLine(
-                            icon: Icons.category_outlined,
-                            text: bookshelfKindLabel(item.kind),
-                          ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (badgeText?.trim().isNotEmpty == true ||
-                    lastUpdateText?.trim().isNotEmpty == true)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
+                  const SizedBox(width: 12),
+                  Expanded(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (badgeText?.trim().isNotEmpty == true)
-                          _StatusBadge(
-                            text: badgeText!.trim(),
-                            color: _kindColors[item.kind] ?? scheme.primary,
+                        Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
                           ),
-                        if (lastUpdateText?.trim().isNotEmpty == true) ...[
-                          const SizedBox(height: 6),
+                        ),
+                        SizedBox(height: compact ? 4 : 6),
+                        if (compact)
                           Text(
-                            lastUpdateText!.trim(),
+                            metadata.isEmpty
+                                ? bookshelfKindLabel(item.kind)
+                                : metadata.join(' • '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 13,
                               color: scheme.onSurfaceVariant,
                             ),
-                          ),
+                          )
+                        else ...[
+                          if (item.author.trim().isNotEmpty)
+                            _MetaLine(
+                              icon: Icons.person_outline,
+                              text: item.author.trim(),
+                            ),
+                          if (readingText?.trim().isNotEmpty == true)
+                            _MetaLine(
+                              icon: Icons.history,
+                              text: readingText!.trim(),
+                            ),
+                          if (item.ep.trim().isNotEmpty)
+                            _MetaLine(
+                              icon: Icons.menu_book_outlined,
+                              text: _totalText(item),
+                            ),
+                          if (item.author.trim().isEmpty &&
+                              readingText?.trim().isNotEmpty != true &&
+                              item.ep.trim().isEmpty)
+                            _MetaLine(
+                              icon: Icons.category_outlined,
+                              text: bookshelfKindLabel(item.kind),
+                            ),
                         ],
                       ],
                     ),
                   ),
-              ],
+                  if (badgeText?.trim().isNotEmpty == true ||
+                      lastUpdateText?.trim().isNotEmpty == true)
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: math.max(
+                          0,
+                          (constraints.maxWidth - coverWidth - 12) / 2,
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (badgeText?.trim().isNotEmpty == true)
+                              _StatusBadge(
+                                text: badgeText!.trim(),
+                                color: _kindColors[item.kind] ?? scheme.primary,
+                              ),
+                            if (lastUpdateText?.trim().isNotEmpty == true) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                lastUpdateText!.trim(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -309,10 +319,14 @@ class _BookshelfCover extends StatelessWidget {
               if (badgeText?.trim().isNotEmpty == true)
                 Positioned(
                   top: 5,
+                  left: 5,
                   right: 5,
-                  child: _StatusBadge(
-                    text: badgeText!.trim(),
-                    color: _kindColors[item.kind] ?? scheme.primary,
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: _StatusBadge(
+                      text: badgeText!.trim(),
+                      color: _kindColors[item.kind] ?? scheme.primary,
+                    ),
                   ),
                 ),
             ],

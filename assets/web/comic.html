@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
-    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="./favicon.png" type="image/png">
     <link rel="stylesheet" href="./assets/css/all.min.css">
     <title>漫画阅读</title>
     <style>
@@ -132,6 +132,7 @@
         let currentTheme = localStorage.getItem(THEME_KEY) || "light";
         let chapters = [];
         let currentIndex = 0;
+        let chapterGeneration = 0;
         let chromeHideTimer = null;
         const comicSettings = (() => {
             try { return { ...{ width: 920, gap: 8 }, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; }
@@ -267,6 +268,7 @@
         async function loadChapter() {
             const current = chapters[currentIndex];
             if (!current) return;
+            const generation = ++chapterGeneration;
             itemId = current.id;
             chapterTitleEl.textContent = current.title;
             bottomTitleEl.textContent = current.title;
@@ -277,7 +279,8 @@
             renderCatalog();
 
             try {
-                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}&source=${encodeURIComponent(source)}&cmd=${encodeURIComponent(cmd)}`);
+                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(current.id)}&tab=${encodeURIComponent(tab)}&source=${encodeURIComponent(source)}&cmd=${encodeURIComponent(cmd)}`);
+                if (generation !== chapterGeneration) return;
                 const html = decodeBase64Maybe(String(payload.data?.images || ""));
                 const images = extractImages(html);
                 if (!images.length) throw new Error("没有获取到漫画图片");
@@ -291,8 +294,16 @@
                 });
                 window.scrollTo({ top: 0, behavior: "smooth" });
             } catch (error) {
-                imageListEl.innerHTML = `<p class="empty">${error.message || "漫画加载失败"}</p>`;
+                if (generation !== chapterGeneration) return;
+                showImageMessage(error.message || "漫画加载失败");
             }
+        }
+
+        function showImageMessage(message) {
+            const paragraph = document.createElement("p");
+            paragraph.className = "empty";
+            paragraph.textContent = message;
+            imageListEl.replaceChildren(paragraph);
         }
 
         async function goToIndex(index) {
@@ -339,6 +350,7 @@
             applyTheme();
         });
         document.addEventListener("keydown", event => {
+            if (event.target && ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
             if (event.key === "Escape") {
                 closeSidebar();
                 scheduleChromeHide(300);
@@ -358,7 +370,7 @@
         showChrome();
         scheduleChromeHide();
         loadDirectory().then(loadChapter).catch(error => {
-            imageListEl.innerHTML = `<p class="empty">${error.message || "页面初始化失败"}</p>`;
+            showImageMessage(error.message || "页面初始化失败");
             pageMetaEl.textContent = "目录加载失败";
         });
     </script>

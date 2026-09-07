@@ -6,6 +6,7 @@ class SettingsCategory {
   final String title;
   final String subtitle;
   final List<SettingsItem> items;
+
   /// When set, tapping the category opens [pageBuilder] directly instead of
   /// the generic category page (e.g. the About entry jumps straight to the
   /// About page).
@@ -27,6 +28,7 @@ class SettingsItem {
   final String? subtitle;
   final Widget? trailing;
   final Widget Function(BuildContext context)? trailingBuilder;
+
   /// When set, renders a fully custom row instead of the default ListTile.
   final Widget Function(BuildContext context)? rowBuilder;
   final void Function(BuildContext context, StateSetter setState)? onTap;
@@ -67,10 +69,11 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
-          Container(
+          Card(
             margin: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerLow,
+            elevation: 0,
+            color: theme.colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             clipBehavior: Clip.antiAlias,
@@ -93,9 +96,7 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
     if (rowBuilder != null) return rowBuilder(context);
     final theme = Theme.of(context);
     return ListTile(
-      onTap: item.onTap == null
-          ? null
-          : () => item.onTap!(context, setState),
+      onTap: item.onTap == null ? null : () => item.onTap!(context, setState),
       leading: Icon(item.icon, color: theme.colorScheme.primary),
       title: Text(item.title, style: theme.textTheme.titleMedium),
       subtitle: item.subtitle == null

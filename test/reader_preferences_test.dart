@@ -50,4 +50,38 @@ void main() {
     expect(restored.horizontalPadding, 48);
     expect(restored.themePreset, ReaderThemePreset.light);
   });
+
+  test(
+    'wrong types and non-finite values fall back to safe defaults',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'reader_font_size': double.nan,
+        'reader_font_weight': double.infinity,
+        'reader_line_height': 'large',
+        'reader_paragraph_spacing': double.negativeInfinity,
+        'reader_horizontal_padding': double.nan,
+        'reader_theme_preset': 42,
+      });
+      final restored = await ReaderPreferences.load();
+      expect(restored.fontSize, 18);
+      expect(restored.fontWeight, 400);
+      expect(restored.lineHeight, 1.8);
+      expect(restored.paragraphSpacing, 12);
+      expect(restored.horizontalPadding, 20);
+      expect(restored.themePreset, ReaderThemePreset.light);
+    },
+  );
+
+  test('normalization never passes non-finite dimensions to the reader', () {
+    final value = const ReaderPreferences(
+      fontSize: double.nan,
+      lineHeight: double.infinity,
+      paragraphSpacing: double.negativeInfinity,
+      horizontalPadding: double.nan,
+    ).normalized();
+    expect(value.fontSize, 18);
+    expect(value.lineHeight, 1.8);
+    expect(value.paragraphSpacing, 12);
+    expect(value.horizontalPadding, 20);
+  });
 }

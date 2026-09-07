@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="./favicon.png" type="image/png">
     <link rel="stylesheet" href="./assets/css/all.min.css">
     <title>视频播放</title>
     <style>
@@ -273,6 +273,9 @@
         let currentTheme = localStorage.getItem(THEME_KEY) || "light";
         let episodes = [];
         let currentIndex = 0;
+        let episodeGeneration = 0;
+        let activeItemId = "";
+        let metadataHandler = null;
 
         const video = document.getElementById("videoPlayer");
         const pageTitleEl = document.getElementById("pageTitle");
@@ -341,7 +344,10 @@
                 const button = document.createElement("button");
                 button.className = "item" + (index === currentIndex ? " active" : "");
                 button.type = "button";
-                button.innerHTML = `${episode.title}<small>第 ${index + 1} 集</small>`;
+                button.textContent = episode.title;
+                const number = document.createElement("small");
+                number.textContent = `第 ${index + 1} 集`;
+                button.appendChild(number);
                 button.onclick = () => goToIndex(index, true);
                 episodeListEl.appendChild(button);
             });
@@ -357,8 +363,8 @@
         }
 
         function saveProgress() {
-            if (!itemId || !video.currentTime || !video.duration) return;
-            localStorage.setItem(progressKey(itemId), String(video.currentTime));
+            if (!activeItemId || !Number.isFinite(video.currentTime) || video.currentTime <= 0 || video.ended) return;
+            localStorage.setItem(progressKey(activeItemId), String(video.currentTime));
         }
 
         async function loadDirectory() {
@@ -379,6 +385,14 @@
         async function loadEpisode(autoPlay = false) {
             const current = episodes[currentIndex];
             if (!current) return;
+            const generation = ++episodeGeneration;
+            saveProgress();
+            activeItemId = "";
+            if (metadataHandler) video.removeEventListener("loadedmetadata", metadataHandler);
+            metadataHandler = null;
+            video.pause();
+            video.removeAttribute("src");
+            video.load();
             itemId = current.id;
             episodeTitleEl.textContent = current.title;
             pageTitleEl.textContent = current.title;
@@ -390,28 +404,35 @@
             renderList();
 
             try {
-                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}&source=${encodeURIComponent(source)}&cmd=${encodeURIComponent(cmd)}`);
+                const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(current.id)}&tab=${encodeURIComponent(tab)}&source=${encodeURIComponent(source)}&cmd=${encodeURIComponent(cmd)}`);
+                if (generation !== episodeGeneration) return;
                 const url = payload.data?.video_url;
                 if (!url) throw new Error("未获取到视频地址");
                 video.classList.remove("is-portrait");
-                video.src = url;
-                video.load();
-                const saved = Number(localStorage.getItem(progressKey(itemId)) || "0");
-                video.addEventListener("loadedmetadata", () => {
+                const saved = Number(localStorage.getItem(progressKey(current.id)) || "0");
+                metadataHandler = () => {
+                    if (generation !== episodeGeneration) return;
+                    metadataHandler = null;
+                    activeItemId = current.id;
                     video.classList.toggle("is-portrait", video.videoHeight > video.videoWidth);
                     if (saved > 0 && saved < video.duration) video.currentTime = saved;
                     renderSpeed();
-                    if (autoPlay) video.play().catch(() => setStatus("浏览器阻止了自动播放，请手动点击播放"));
-                }, { once: true });
+                    if (autoPlay) video.play().catch(() => {
+                        if (generation === episodeGeneration) setStatus("浏览器阻止了自动播放，请手动点击播放");
+                    });
+                };
+                video.addEventListener("loadedmetadata", metadataHandler, { once: true });
+                video.src = url;
+                video.load();
                 setStatus("视频已加载");
             } catch (error) {
+                if (generation !== episodeGeneration) return;
                 setStatus(error.message || "视频加载失败");
             }
         }
 
         async function goToIndex(index, autoPlay = true) {
             if (index < 0 || index >= episodes.length) return;
-            saveProgress();
             currentIndex = index;
             closeCatalog();
             await loadEpisode(autoPlay);
@@ -432,20 +453,27 @@
             renderSpeed();
         });
 
-        video.addEventListener("play", () => setStatus("正在播放"));
+        video.addEventListener("play", () => {
+            if (activeItemId && !video.paused) setStatus("正在播放");
+        });
         video.addEventListener("pause", () => {
             saveProgress();
-            if (video.currentTime && video.currentTime < video.duration) setStatus("已暂停");
+            if (activeItemId && video.paused && video.currentTime && video.currentTime < video.duration) setStatus("已暂停");
         });
         video.addEventListener("timeupdate", () => {
             if (Math.floor(video.currentTime) % 5 === 0) saveProgress();
         });
         video.addEventListener("ended", () => {
-            localStorage.removeItem(progressKey(itemId));
+            if (!activeItemId || !video.ended) return;
+            localStorage.removeItem(progressKey(activeItemId));
+            activeItemId = "";
             if (currentIndex < episodes.length - 1) goToIndex(currentIndex + 1, true);
             else setStatus("当前剧集播放完成");
         });
-        video.addEventListener("error", () => setStatus("视频播放失败"));
+        video.addEventListener("error", () => {
+            if (video.error) setStatus("视频播放失败");
+        });
+        window.addEventListener("pagehide", saveProgress);
 
         document.addEventListener("keydown", event => {
             if (event.key === "Escape") {

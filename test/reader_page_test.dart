@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +16,238 @@ import 'support/fakes.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
+      AppLifecycleState.resumed,
+    );
+  });
+
+  testWidgets('a long chapter error can be scrolled to retry', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 560));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var attempts = 0;
+    await tester.pumpWidget(
+      _readerApp(
+        chapterLoader: (chapter) async {
+          if (chapter.itemId == 'chapter-1' && ++attempts == 1) {
+            throw StateError(List.filled(60, '正文请求失败，连接中断。').join('\n'));
+          }
+          return _shortChapterLoader(chapter);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.text('重试').hitTestable(), findsOneWidget);
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
+    expect(attempts, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final loadState in ['pending', 'failed', 'not yet displayed']) {
+    testWidgets('leaving a $loadState chapter preserves saved progress', (
+      tester,
+    ) async {
+      final pending = Completer<String>();
+      final saved = <String, dynamic>{
+        'id': 'reader-test',
+        'chapterId': 'chapter-2',
+        'episode': 1,
+        'position': 300.0,
+        'maxScroll': 900.0,
+        'progress': 4 / 9,
+      };
+      final store = _FakeReaderStore()..entry = Map.of(saved);
+      await tester.pumpWidget(
+        _readerApp(readerStore: store, chapterLoader: (_) => pending.future),
+      );
+      await tester.pump();
+      if (loadState == 'failed') {
+        pending.completeError(StateError('chapter unavailable'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('chapter unavailable'), findsOneWidget);
+      } else if (loadState == 'not yet displayed') {
+        pending.complete('A chapter that has not been displayed.');
+        await tester.idle();
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      }
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.idle();
+      expect(store.entry, saved);
+      await tester.pumpWidget(const SizedBox.shrink());
+      if (!pending.isCompleted) pending.complete('A chapter opened too late.');
+      await tester.pumpAndSettle();
+      expect(store.entry, saved);
+      expect(tester.takeException(), isNull);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+  }
+
+  testWidgets('a failed chapter switch preserves the last displayed position', (
+    tester,
+  ) async {
+    final nextChapter = Completer<String>();
+    final store = _FakeReaderStore();
+    await tester.pumpWidget(
+      _readerApp(
+        readerStore: store,
+        chapterLoader: (chapter) => chapter.itemId == 'chapter-1'
+            ? _longChapterLoader(chapter)
+            : nextChapter.future,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final controller = tester
+        .widget<ListView>(find.byType(ListView))
+        .controller!;
+    controller.jumpTo(300);
+    await tester.pump();
+    await tester.tap(find.byTooltip('下一章'));
+    await tester.pump();
+    final saved = Map<String, dynamic>.of(store.entry!);
+    expect(saved['chapterId'], 'chapter-1');
+    expect(saved['position'], 300);
+    await tester.pump(const Duration(seconds: 1));
+    expect(store.entry, saved);
+
+    nextChapter.completeError(StateError('next chapter unavailable'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('next chapter unavailable'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(store.entry, saved);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final operation in ['read history', 'add history', 'update progress']) {
+    testWidgets('a $operation failure keeps reading and navigation usable', (
+      tester,
+    ) async {
+      final store = _FakeReaderStore()
+        ..failHistoryRead = operation == 'read history'
+        ..failHistoryWrite = operation == 'add history'
+        ..failProgressWrite = operation == 'update progress';
+      await tester.pumpWidget(_readerApp(readerStore: store));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
+      expect(find.text('重试'), findsNothing);
+      await tester.tap(find.byTooltip('下一章'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
+      expect(find.text('重试'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('restoration finishes before history is saved', (tester) async {
+    final store = _FakeReaderStore()
+      ..entry = {
+        'id': 'reader-test',
+        'chapterId': 'chapter-1',
+        'episode': 0,
+        'position': 300.0,
+        'maxScroll': 900.0,
+        'progress': 1 / 9,
+      };
+    await tester.pumpWidget(
+      _readerApp(readerStore: store, chapterLoader: _longChapterLoader),
+    );
+    await tester.pumpAndSettle();
+    final controller = tester
+        .widget<ListView>(find.byType(ListView))
+        .controller!;
+    expect(controller.offset, greaterThan(0));
+    expect(store.entry?['position'], controller.offset);
+    expect(store.entry?['progress'], closeTo(1 / 9, .001));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a delayed history write cannot overwrite later exit progress', (
+    tester,
+  ) async {
+    final historyWrite = Completer<void>();
+    final store = _FakeReaderStore()..historyWriteDelay = historyWrite.future;
+    await tester.pumpWidget(
+      _readerApp(readerStore: store, chapterLoader: _longChapterLoader),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-page-surface')), findsOneWidget);
+    final controller = tester
+        .widget<ListView>(find.byType(ListView))
+        .controller!;
+    controller.jumpTo(300);
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    historyWrite.complete();
+    await tester.pumpAndSettle();
+    expect(store.entry?['chapterId'], 'chapter-1');
+    expect(store.entry?['position'], 300);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reopening waits for the departing reader to save its position', (
+    tester,
+  ) async {
+    final store = _FakeReaderStore();
+    await tester.pumpWidget(
+      _readerApp(readerStore: store, chapterLoader: _longChapterLoader),
+    );
+    await tester.pumpAndSettle();
+    final controller = tester
+        .widget<ListView>(find.byType(ListView))
+        .controller!;
+    final exitWrite = Completer<void>();
+    store.progressWriteDelay = exitWrite.future;
+    controller.jumpTo(300);
+    await tester.pumpWidget(const SizedBox.shrink());
+    store.progressWriteDelay = null;
+
+    await tester.pumpWidget(
+      _readerApp(readerStore: store, chapterLoader: _longChapterLoader),
+    );
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-page-surface')), findsNothing);
+    exitWrite.complete();
+    await tester.pumpAndSettle();
+    final reopened = tester.widget<ListView>(find.byType(ListView)).controller!;
+    expect(reopened.offset, greaterThan(200));
+    reopened.jumpTo(700);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(store.entry?['position'], 700);
+  });
+
+  testWidgets('late prefetch cannot recreate a cache cleared after leaving', (
+    tester,
+  ) async {
+    final cache = MemoryChapterCache();
+    final pending = Completer<String>();
+    await tester.pumpWidget(
+      _readerApp(
+        chapterCache: cache,
+        chapterLoader: (chapter) => chapter.itemId == 'chapter-1'
+            ? _shortChapterLoader(chapter)
+            : pending.future,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    cache.content.clear();
+    cache.catalogs.clear();
+    pending.complete('A chapter fetched after the reader was closed.');
+    await tester.pumpAndSettle();
+    expect(cache.content, isEmpty);
+    expect(cache.catalogs, isEmpty);
+  });
 
   testWidgets(
     'cached chapters open offline and directory marks saved chapters',
@@ -310,14 +543,22 @@ Future<String> _longChapterLoader(Chapter chapter) async {
 class _FakeReaderStore implements ReaderStore {
   Map<String, dynamic>? entry;
   double readSeconds = 0;
+  bool failHistoryRead = false;
+  bool failHistoryWrite = false;
+  bool failProgressWrite = false;
+  Future<void>? historyWriteDelay;
+  Future<void>? progressWriteDelay;
 
   @override
   Future<Map<String, dynamic>?> historyEntry(String id) async {
+    if (failHistoryRead) throw StateError('history read failed');
     return entry == null ? null : Map<String, dynamic>.from(entry!);
   }
 
   @override
   Future<void> addHistory(Map<String, dynamic> value) async {
+    if (failHistoryWrite) throw StateError('history write failed');
+    await historyWriteDelay;
     entry = Map<String, dynamic>.from(value);
   }
 
@@ -330,6 +571,8 @@ class _FakeReaderStore implements ReaderStore {
     double? position,
     double? maxScroll,
   }) async {
+    if (failProgressWrite) throw StateError('progress write failed');
+    await progressWriteDelay;
     if (entry == null) return;
     entry = {
       ...entry!,

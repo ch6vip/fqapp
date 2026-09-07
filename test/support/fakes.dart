@@ -83,12 +83,14 @@ class FakeNativePlayer extends NativePlayer {
   Duration currentPosition = const Duration(seconds: 20);
   Duration totalDuration = const Duration(minutes: 2);
   bool isPlaying = false;
+  bool playbackRequested = false;
   bool isBuffering = false;
   bool disposed = false;
   double rate = 1;
   final positions = StreamController<Duration>.broadcast(sync: true);
   final durations = StreamController<Duration>.broadcast(sync: true);
   final playingEvents = StreamController<bool>.broadcast(sync: true);
+  final playWhenReadyEvents = StreamController<bool>.broadcast(sync: true);
   final completedEvents = StreamController<bool>.broadcast(sync: true);
   final bufferingEvents = StreamController<bool>.broadcast(sync: true);
   final errors = StreamController<Object>.broadcast(sync: true);
@@ -103,6 +105,8 @@ class FakeNativePlayer extends NativePlayer {
   Duration get duration => totalDuration;
   @override
   bool get playing => isPlaying;
+  @override
+  bool get playWhenReady => playbackRequested;
   @override
   bool get completed => false;
   @override
@@ -120,6 +124,8 @@ class FakeNativePlayer extends NativePlayer {
   @override
   Stream<bool> get playingStream => playingEvents.stream;
   @override
+  Stream<bool> get playWhenReadyStream => playWhenReadyEvents.stream;
+  @override
   Stream<bool> get completedStream => completedEvents.stream;
   @override
   Stream<bool> get bufferingStream => bufferingEvents.stream;
@@ -135,6 +141,8 @@ class FakeNativePlayer extends NativePlayer {
   @override
   Future<void> play() async {
     calls.add('play');
+    playbackRequested = true;
+    playWhenReadyEvents.add(true);
     isPlaying = true;
     playingEvents.add(true);
   }
@@ -142,6 +150,8 @@ class FakeNativePlayer extends NativePlayer {
   @override
   Future<void> pause() async {
     calls.add('pause');
+    playbackRequested = false;
+    playWhenReadyEvents.add(false);
     isPlaying = false;
     playingEvents.add(false);
   }
@@ -167,6 +177,7 @@ class FakeNativePlayer extends NativePlayer {
       positions.close(),
       durations.close(),
       playingEvents.close(),
+      playWhenReadyEvents.close(),
       completedEvents.close(),
       bufferingEvents.close(),
       errors.close(),

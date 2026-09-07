@@ -85,6 +85,36 @@ void main() {
     },
   );
 
+  testWidgets('an older rate reply cannot overwrite a newer saved selection', (
+    tester,
+  ) async {
+    final player = _RateAcknowledgementPlayer();
+    final olderReply = Completer<void>();
+    try {
+      await tester.pumpWidget(_app(player));
+      await tester.pumpAndSettle();
+      player.rateAcknowledgement = olderReply;
+      await tester.tap(find.byTooltip('倍速 1.5×'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '2×'));
+      await tester.pumpAndSettle();
+      player.rateAcknowledgement = null;
+      await tester.tap(find.byTooltip('倍速 2×'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '1.25×'));
+      await tester.pumpAndSettle();
+      expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
+      olderReply.complete();
+      await tester.pumpAndSettle();
+      expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
+      expect(player.rate, 1.25);
+    } finally {
+      if (!olderReply.isCompleted) olderReply.complete();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    }
+  });
+
   testWidgets(
     'fullscreen back exits fullscreen and background playback pauses',
     (tester) async {
@@ -307,6 +337,17 @@ void main() {
       await second.dispose();
     }
   });
+}
+
+class _RateAcknowledgementPlayer extends FakeNativePlayer {
+  Completer<void>? rateAcknowledgement;
+
+  @override
+  Future<void> setRate(double rate) async {
+    final acknowledgement = rateAcknowledgement;
+    await super.setRate(rate);
+    await acknowledgement?.future;
+  }
 }
 
 Widget _app(

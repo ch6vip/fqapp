@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/backend_service.dart';
 import '../services/library_store.dart';
+import '../widgets/reading_goal_dialog.dart';
 import 'about_page.dart';
 import 'cached_books_page.dart';
 import 'settings_category_page.dart';
@@ -68,10 +69,11 @@ class SettingsPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
-          Container(
+          Card(
             margin: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerLow,
+            elevation: 0,
+            color: theme.colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             clipBehavior: Clip.antiAlias,
@@ -204,49 +206,7 @@ class SettingsPage extends StatelessWidget {
     final sp = await SharedPreferences.getInstance();
     if (!context.mounted) return;
     final current = sp.getInt('stats_daily_goal_minutes') ?? 30;
-    final ctrl = TextEditingController(text: '$current');
-    final value = await showDialog<int>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('每日阅读目标'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: '分钟'),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              children: [15, 30, 60, 120].map((m) {
-                return ActionChip(
-                  label: Text('$m 分钟'),
-                  onPressed: () {
-                    ctrl.text = '$m';
-                    Navigator.pop(c, m);
-                  },
-                );
-              }).toList(),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = int.tryParse(ctrl.text) ?? 30;
-              Navigator.pop(c, v.clamp(1, 1440));
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
+    final value = await showReadingGoalDialog(context, current);
     if (value != null) {
       await sp.setInt('stats_daily_goal_minutes', value);
     }

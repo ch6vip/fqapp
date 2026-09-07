@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
-    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="./favicon.png" type="image/png">
     <link rel="stylesheet" href="./assets/css/all.min.css">
     <title>章节阅读</title>
     <style>
@@ -704,6 +704,7 @@
 
         let chapterList = [];
         let currentIndex = 0;
+        let chapterGeneration = 0;
         let chromeHideTimer = null;
         let currentTheme = localStorage.getItem(THEME_KEY) || "light";
         let readerSettings = loadReaderSettings();
@@ -873,13 +874,20 @@
         function setLoading(message) {
             readerSurface.classList.add("is-loading");
             readerSurface.classList.remove("is-error");
-            contentEl.innerHTML = `<p class="reader-empty">${message}</p>`;
+            showReaderMessage(message);
         }
 
         function setError(message) {
             readerSurface.classList.remove("is-loading");
             readerSurface.classList.add("is-error");
-            contentEl.innerHTML = `<p class="reader-empty">${message}</p>`;
+            showReaderMessage(message);
+        }
+
+        function showReaderMessage(message) {
+            const paragraph = document.createElement("p");
+            paragraph.className = "reader-empty";
+            paragraph.textContent = message;
+            contentEl.replaceChildren(paragraph);
         }
 
         function setReady() {
@@ -935,7 +943,7 @@
             }
         }
 
-        function normalizeContent(payload) {
+        function normalizeContent(payload, title) {
             if (!payload || typeof payload !== "object") {
                 throw new Error("章节数据无效");
             }
@@ -947,7 +955,7 @@
                 rawContent = rawContent.join("\n");
             }
             return {
-                title: chapterList[currentIndex]?.title || "未命名章节",
+                title: title || "未命名章节",
                 content: decodeBase64Maybe(String(rawContent || ""))
             };
         }
@@ -979,11 +987,7 @@
                 if (!first || !normalizedTitle) {
                     break;
                 }
-                if (
-                    first === normalizedTitle ||
-                    first.startsWith(normalizedTitle) ||
-                    normalizedTitle.startsWith(first)
-                ) {
+                if (first === normalizedTitle) {
                     paragraphs.shift();
                     continue;
                 }
@@ -997,7 +1001,6 @@
             const doc = parser.parseFromString(html, "text/html");
             const root = doc.querySelector("body") || doc;
             const fragment = document.createDocumentFragment();
-            let appended = 0;
 
             root.childNodes.forEach(node => {
                 if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) {
@@ -1009,16 +1012,39 @@
                         return;
                     }
                 }
-                fragment.appendChild(node.cloneNode(true));
-                appended += 1;
+                fragment.appendChild(safeChapterNode(node));
             });
 
             contentEl.innerHTML = "";
-            if (!appended) {
-                renderTextContent(html, title);
+            if (!fragment.childNodes.length) {
+                showReaderMessage("这一章暂时没有可显示的正文内容。");
                 return;
             }
             contentEl.appendChild(fragment);
+        }
+
+        function safeChapterNode(node) {
+            if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent);
+            const fragment = document.createDocumentFragment();
+            if (node.nodeType !== Node.ELEMENT_NODE) return fragment;
+            const tag = node.nodeName.toLowerCase();
+            // Parsed documents are inert only until their nodes enter the live
+            // page. Recreate reading markup without scripts or event attributes.
+            if (["script", "style", "iframe", "object", "embed", "svg", "math", "template", "link", "meta", "base"].includes(tag)) return fragment;
+            const allowed = ["p", "div", "span", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i", "u", "s", "del", "blockquote", "ul", "ol", "li", "ruby", "rt", "rp", "sub", "sup", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "img"];
+            const result = allowed.includes(tag) ? document.createElement(tag) : fragment;
+            if (tag === "img") {
+                try {
+                    const url = new URL(node.getAttribute("src") || "", location.href);
+                    if (!["http:", "https:"].includes(url.protocol) || !node.getAttribute("src")) return fragment;
+                    result.src = url.href;
+                    result.alt = node.getAttribute("alt") || "";
+                    result.loading = "lazy";
+                    result.referrerPolicy = "no-referrer";
+                } catch (_) { return fragment; }
+            }
+            node.childNodes.forEach(child => result.appendChild(safeChapterNode(child)));
+            return result;
         }
 
         function renderTextContent(text, title) {
@@ -1121,21 +1147,27 @@
             if (!itemId) {
                 return;
             }
-            const cacheKey = `${source}:${bookId}:${itemId}`;
+            const generation = ++chapterGeneration;
+            const requestedItemId = itemId;
+            const title = chapterList[currentIndex]?.title;
+            const cacheKey = `${source}:${bookId}:${requestedItemId}`;
             setLoading("章节内容加载中...");
+            updateNavigationState();
             try {
                 let chapter = chapterMemoryCache.get(cacheKey);
                 if (!chapter) {
-                    const payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
-                    chapter = normalizeContent(payload);
+                    const payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(requestedItemId)}&tab=${encodeURIComponent(tab)}`);
+                    chapter = normalizeContent(payload, title);
                     setMemoryCache(cacheKey, chapter);
                 }
+                if (generation !== chapterGeneration) return;
                 renderChapter(chapter);
                 rememberLastChapter();
                 updateNavigationState();
                 updateURL();
                 window.scrollTo({ top: 0, behavior: "smooth" });
             } catch (error) {
+                if (generation !== chapterGeneration) return;
                 setError(error.message || "章节加载失败，请稍后重试");
             }
         }

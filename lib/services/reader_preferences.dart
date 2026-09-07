@@ -50,18 +50,22 @@ class ReaderPreferences {
     final normalizedWeight = ((fontWeight.clamp(300, 700) / 100).round() * 100)
         .clamp(300, 700);
     return ReaderPreferences(
-      fontSize: fontSize.clamp(14, 32),
+      fontSize: fontSize.isFinite ? fontSize.clamp(14, 32) : 18,
       fontWeight: normalizedWeight,
-      lineHeight: lineHeight.clamp(1.2, 2.4),
-      paragraphSpacing: paragraphSpacing.clamp(0, 32),
-      horizontalPadding: horizontalPadding.clamp(8, 48),
+      lineHeight: lineHeight.isFinite ? lineHeight.clamp(1.2, 2.4) : 1.8,
+      paragraphSpacing: paragraphSpacing.isFinite
+          ? paragraphSpacing.clamp(0, 32)
+          : 12,
+      horizontalPadding: horizontalPadding.isFinite
+          ? horizontalPadding.clamp(8, 48)
+          : 20,
       themePreset: themePreset,
     );
   }
 
   static Future<ReaderPreferences> load() async {
     final preferences = await SharedPreferences.getInstance();
-    final rawPreset = preferences.getString(_themePresetKey);
+    final rawPreset = preferences.get(_themePresetKey);
     final preset = ReaderThemePreset.values.firstWhere(
       (value) => value.name == rawPreset,
       orElse: () => ReaderThemePreset.light,
@@ -91,6 +95,6 @@ class ReaderPreferences {
 
   static double? _number(SharedPreferences preferences, String key) {
     final value = preferences.get(key);
-    return value is num ? value.toDouble() : null;
+    return value is num && value.isFinite ? value.toDouble() : null;
   }
 }

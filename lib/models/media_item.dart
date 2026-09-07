@@ -60,16 +60,15 @@ class MediaItem {
         _dig(titleObj, ['text']);
 
     final explicitKind = _normalizeKind(item['kind']);
-    final isVideo = explicitKind == 'video' || _isVideoItem(item, bd);
-    final isManga =
-        !isVideo && (explicitKind == 'manga' || _isMangaItem(item, bd));
-    final isAudio =
-        !isVideo &&
-        !isManga &&
-        (explicitKind == 'audio' || _isAudioItem(item, bd));
-    final kind = isVideo
+    final kind = explicitKind.isNotEmpty
+        ? explicitKind
+        : _isVideoItem(item, bd)
         ? 'video'
-        : (isManga ? 'manga' : (isAudio ? 'audio' : 'book'));
+        : _isMangaItem(item, bd)
+        ? 'manga'
+        : _isAudioItem(item, bd)
+        ? 'audio'
+        : 'book';
 
     final seriesKeys = <String>['pseries_id', 'series_id'];
     // A search cell can wrap episodes in video_data and expose the series
@@ -149,6 +148,7 @@ class MediaItem {
           '',
       badge:
           _firstString(item, [
+            'badge',
             'category',
             'type',
             'cell_alias',
@@ -156,6 +156,7 @@ class MediaItem {
             'book_type_name',
           ]) ??
           _firstString(bd, [
+            'badge',
             'category',
             'type',
             'cell_alias',
@@ -165,12 +166,14 @@ class MediaItem {
           '',
       ep:
           _firstString(item, [
+            'ep',
             'serial_count',
             'item_count',
             'episode_count',
             'episode_cnt',
           ]) ??
           _firstString(bd, [
+            'ep',
             'serial_count',
             'item_count',
             'episode_count',
@@ -198,7 +201,6 @@ class MediaItem {
           'series_id',
           'video_platform',
           'use_video_model',
-          'duration',
         ]) ||
         _truthyAny(bd, [
           'video_id',
@@ -434,12 +436,11 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
   if (inner is List) {
     final entries = _asMapList(inner);
     if (entries != null && entries.isNotEmpty) {
-      return [
-        [
-          for (var i = 0; i < entries.length; i++)
-            Chapter.fromRaw(entries[i], index: i),
-        ],
-      ];
+      final chapters = [
+        for (var i = 0; i < entries.length; i++)
+          Chapter.fromRaw(entries[i], index: i),
+      ].where((chapter) => chapter.itemId.isNotEmpty).toList();
+      return chapters.isEmpty ? [] : [chapters];
     }
   }
   if (inner is! Map) return [];
@@ -450,10 +451,23 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
     for (final volume in volumeRaw) {
       final rawChapters = _chapterListFromVolume(volume);
       if (rawChapters == null) continue;
+      final volumeName = volume is Map
+          ? (volume['volume_name'] ?? volume['volumeName'] ?? '').toString()
+          : '';
       final chapters = <Chapter>[];
       for (var i = 0; i < rawChapters.length; i++) {
         final raw = rawChapters[i];
-        chapters.add(Chapter.fromRaw(raw, index: i));
+        final chapter = Chapter.fromRaw(raw, index: i);
+        if (chapter.itemId.isEmpty) continue;
+        chapters.add(
+          Chapter(
+            itemId: chapter.itemId,
+            title: chapter.title,
+            volumeName: chapter.volumeName.isEmpty
+                ? volumeName
+                : chapter.volumeName,
+          ),
+        );
       }
       if (chapters.isNotEmpty) volumes.add(chapters);
     }
@@ -467,7 +481,8 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
     if (episodes != null) {
       final chapters = <Chapter>[];
       for (var i = 0; i < episodes.length; i++) {
-        chapters.add(Episode.fromRaw(episodes[i], index: i).toChapter());
+        final chapter = Episode.fromRaw(episodes[i], index: i).toChapter();
+        if (chapter.itemId.isNotEmpty) chapters.add(chapter);
       }
       if (chapters.isNotEmpty) volumes.add(chapters);
     }
@@ -519,6 +534,24 @@ List<SearchTab> parseSearchTabs(Map<String, dynamic> payload) {
             final merged = Map<String, dynamic>.from(item);
             merged.addAll(Map<String, dynamic>.from(child));
             final media = MediaItem.fromRaw(merged);
+            if (media.id.isNotEmpty) items.add(media);
+          }
+        } else if (item['book_data'] is List) {
+          final before = items.length;
+          for (final child in item['book_data'] as List) {
+            if (child is! Map) continue;
+            final book = Map<String, dynamic>.from(child);
+            if (!_isSearchMediaNode({'book_data': book})) continue;
+            final merged = Map<String, dynamic>.from(item)
+              ..addAll(book)
+              ..['book_data'] = book;
+            final media = MediaItem.fromRaw(merged);
+            if (media.id.isNotEmpty) items.add(media);
+          }
+          // Some legacy cells put the only ID on the parent and use
+          // book_data solely for metadata. Keep that existing fallback.
+          if (items.length == before && _isSearchMediaNode(item)) {
+            final media = MediaItem.fromRaw(item);
             if (media.id.isNotEmpty) items.add(media);
           }
         } else if (_isSearchMediaNode(item)) {
@@ -666,8 +699,10 @@ List<MediaItem> parseMediaItems(Map<String, dynamic> payload) {
 }
 
 dynamic _directoryInner(Map<String, dynamic> payload) {
-  dynamic data = payload['data'];
-  if (data is Map && data['data'] is Map) data = data['data'];
+  dynamic data = payload['data'] ?? payload;
+  if (data is Map && (data['data'] is Map || data['data'] is List)) {
+    data = data['data'];
+  }
   return data;
 }
 
@@ -697,6 +732,7 @@ String _entryId(Map<String, dynamic> m) {
   for (final key in [
     'itemId',
     'item_id',
+    'chapter_id',
     'video_id',
     'vid',
     'episode_id',
@@ -704,7 +740,9 @@ String _entryId(Map<String, dynamic> m) {
     'item_ids',
   ]) {
     final value = m[key];
-    if (value is String && value.isNotEmpty) return value;
+    if (value is String && value.trim().isNotEmpty && value.trim() != '0') {
+      return value.trim();
+    }
     if (value is num && value != 0) return value.toString();
   }
   return '';

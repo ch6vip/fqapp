@@ -74,6 +74,87 @@ void main() {
       expect(history.get('a')['position'], 35);
     },
   );
+
+  test(
+    'damaged metadata cannot block cache reads or defeat capacity limits',
+    () async {
+      final store = ChapterCacheStore(maxBytes: 8);
+      await store.saveBook(_book('a'));
+      final box = Hive.box('chapter_cache_v1');
+      await box.put('chapter:["a","same"]', {
+        'bookId': 'a',
+        'chapterId': 'same',
+        'text': 'abcdef',
+        'bytes': 1,
+        'accessedAt': 'invalid',
+        42: 'invalid map key',
+      });
+      expect((await store.stats()).byteCount, 6);
+      expect((await store.books()).single.stats.byteCount, 6);
+      expect(await store.read(bookId: 'a', chapterId: 'same'), 'abcdef');
+      await _write(store, 'a', 'new', 'xyz');
+      expect(await store.cachedChapterIds('a'), {'new'});
+      expect((await store.stats()).byteCount, 3);
+    },
+  );
+
+  test(
+    'clearing a book removes damaged chapter records without touching others',
+    () async {
+      final store = ChapterCacheStore();
+      await store.saveBook(_book('a'));
+      await store.saveBook(_book('ab'));
+      await _write(store, 'ab', 'same', 'Unrelated content');
+      final box = Hive.box('chapter_cache_v1');
+      await box.put('chapter:["a","same"]', {'text': 42});
+      await box.put('chapter:["a","truncated"]', 'truncated data');
+      await store.clear(bookId: 'a');
+      expect(box.containsKey('chapter:["a","same"]'), isFalse);
+      expect(box.containsKey('chapter:["a","truncated"]'), isFalse);
+      expect(
+        await store.read(bookId: 'ab', chapterId: 'same'),
+        'Unrelated content',
+      );
+    },
+  );
+
+  test(
+    'an access-time write failure does not hide readable offline text',
+    () async {
+      final store = ChapterCacheStore(hive: _ReadOnlyHive());
+      expect(
+        await store.read(bookId: 'a', chapterId: 'same'),
+        'Readable content',
+      );
+    },
+  );
+}
+
+class _ReadOnlyHive extends Fake implements HiveInterface {
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #openBox) {
+      return Future<Box<dynamic>>.value(_ReadOnlyBox());
+    }
+    return super.noSuchMethod(invocation);
+  }
+}
+
+class _ReadOnlyBox extends Fake implements Box<dynamic> {
+  @override
+  bool get isOpen => true;
+
+  @override
+  dynamic get(dynamic key, {dynamic defaultValue}) => {
+    'bookId': 'a',
+    'chapterId': 'same',
+    'text': 'Readable content',
+    'accessedAt': 0,
+  };
+
+  @override
+  Future<void> put(dynamic key, dynamic value) async =>
+      throw StateError('Disk is read-only');
 }
 
 CachedBook _book(String id) => CachedBook(

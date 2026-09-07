@@ -121,6 +121,7 @@ class NativePlayer {
   Future<void>? _disposeFuture;
   Future<void>? _nativeRelease;
   int _seekGeneration = 0;
+  int _playWhenReadyGeneration = 0;
 
   int? get textureId => _textureId;
   bool get isCreated => _textureId != null && !_disposed;
@@ -128,6 +129,7 @@ class NativePlayer {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _playing = false;
+  bool _playWhenReady = false;
   bool _completed = false;
   bool _buffering = false;
   bool _firstFrameRendered = false;
@@ -139,6 +141,9 @@ class NativePlayer {
   Duration get position => _position;
   Duration get duration => _duration;
   bool get playing => _playing;
+
+  /// Playback intent stays true while ExoPlayer is buffering or suppressed.
+  bool get playWhenReady => _playWhenReady;
   bool get completed => _completed;
   bool get buffering => _buffering;
   bool get firstFrameRendered => _firstFrameRendered;
@@ -152,6 +157,7 @@ class NativePlayer {
   final _positionCtrl = StreamController<Duration>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
   final _playingCtrl = StreamController<bool>.broadcast();
+  final _playWhenReadyCtrl = StreamController<bool>.broadcast();
   final _completedCtrl = StreamController<bool>.broadcast();
   final _bufferingCtrl = StreamController<bool>.broadcast();
   final _firstFrameCtrl = StreamController<bool>.broadcast();
@@ -161,6 +167,7 @@ class NativePlayer {
   Stream<Duration> get positionStream => _positionCtrl.stream;
   Stream<Duration> get durationStream => _durationCtrl.stream;
   Stream<bool> get playingStream => _playingCtrl.stream;
+  Stream<bool> get playWhenReadyStream => _playWhenReadyCtrl.stream;
   Stream<bool> get completedStream => _completedCtrl.stream;
   Stream<bool> get bufferingStream => _bufferingCtrl.stream;
   Stream<bool> get firstFrameStream => _firstFrameCtrl.stream;
@@ -228,8 +235,29 @@ class NativePlayer {
     }
   }
 
-  Future<void> play() => _invoke('play');
-  Future<void> pause() => _invoke('pause');
+  Future<void> play() => _setPlayWhenReady(true);
+  Future<void> pause() => _setPlayWhenReady(false);
+
+  Future<void> _setPlayWhenReady(bool value) async {
+    if (_disposed) return;
+    final generation = ++_playWhenReadyGeneration;
+    final previous = _playWhenReady;
+    _updatePlayWhenReady(value);
+    try {
+      await _invoke(value ? 'play' : 'pause');
+    } catch (_) {
+      if (!_disposed && generation == _playWhenReadyGeneration) {
+        _updatePlayWhenReady(previous);
+      }
+      rethrow;
+    }
+  }
+
+  void _updatePlayWhenReady(bool value) {
+    if (_playWhenReady == value) return;
+    _playWhenReady = value;
+    _playWhenReadyCtrl.add(value);
+  }
 
   Future<void> seek(Duration position) async {
     final generation = ++_seekGeneration;
@@ -277,6 +305,7 @@ class NativePlayer {
       _positionCtrl.close(),
       _durationCtrl.close(),
       _playingCtrl.close(),
+      _playWhenReadyCtrl.close(),
       _completedCtrl.close(),
       _bufferingCtrl.close(),
       _firstFrameCtrl.close(),
@@ -346,6 +375,11 @@ class NativePlayer {
         if (value is! bool) return;
         _playing = value;
         _playingCtrl.add(_playing);
+      case 'playWhenReady':
+        final value = event['value'];
+        if (value is! bool) return;
+        ++_playWhenReadyGeneration;
+        _updatePlayWhenReady(value);
       case 'completed':
         final value = event['value'];
         if (value is! bool) return;

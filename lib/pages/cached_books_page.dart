@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
+import '../services/reader_history.dart';
 import 'reader_page.dart';
 
 class CachedBooksPage extends StatefulWidget {
@@ -19,6 +20,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
       widget.cacheStore ?? ChapterCacheStore.instance;
   List<CachedBookSummary> _books = [];
   bool _loading = true;
+  bool _openingBook = false;
   String? _error;
   int _generation = 0;
 
@@ -86,9 +88,16 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   }
 
   Future<void> _open(CachedBook book) async {
+    if (_openingBook) return;
+    _openingBook = true;
     try {
       final historyStore = widget.readerStore ?? LibraryStore.instance;
-      final saved = await historyStore.historyEntry(book.id);
+      Map<String, dynamic>? saved;
+      try {
+        saved = await ReaderHistory(historyStore).load(book.id);
+      } catch (_) {
+        // An unavailable history store must not block cached chapters.
+      }
       final cached = await _store.cachedChapterIds(book.id);
       if (!mounted) return;
       if (cached.isEmpty) {
@@ -96,13 +105,12 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
         return;
       }
       var index = book.chapters.indexWhere(
-        (chapter) => chapter.itemId == saved?['chapterId'],
+        (chapter) => chapter.itemId == saved?['chapterId']?.toString(),
       );
       if (index < 0) {
-        index = ((saved?['episode'] as num?)?.toInt() ?? 0).clamp(
-          0,
-          book.chapters.length - 1,
-        );
+        final episode = num.tryParse(saved?['episode']?.toString() ?? '');
+        index = (episode != null && episode.isFinite ? episode.toInt() : 0)
+            .clamp(0, book.chapters.length - 1);
       }
       if (!cached.contains(book.chapters[index].itemId)) {
         index = book.chapters.indexWhere(
@@ -130,6 +138,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
           context,
         ).showSnackBar(const SnackBar(content: Text('无法打开缓存，请重试')));
       }
+    } finally {
+      _openingBook = false;
     }
   }
 

@@ -9,6 +9,48 @@ import 'package:fqapp/widgets/chapter_cache_sheet.dart';
 import 'support/fakes.dart';
 
 void main() {
+  testWidgets('chapters evicted during a download are fetched again', (
+    tester,
+  ) async {
+    final cache = _EvictingCache();
+    await cache.write(
+      bookId: 'book',
+      chapterId: '3',
+      title: '第三章',
+      text: '旧正文',
+    );
+    final requested = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChapterCacheSheet(
+            book: CachedBook(
+              id: 'book',
+              title: '测试小说',
+              chapters: [
+                for (var index = 1; index <= 3; index++)
+                  Chapter(itemId: '$index', title: '第$index章', volumeName: ''),
+              ],
+            ),
+            currentIndex: 0,
+            cache: cache,
+            loader: (chapter) async {
+              requested.add(chapter.itemId);
+              return '正文${chapter.itemId}';
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('缓存后 2 章'));
+    await tester.pumpAndSettle();
+    expect(requested, ['2', '3']);
+    expect(await cache.cachedChapterIds('book'), {'2', '3'});
+    expect(find.textContaining('缓存完成'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
     'completed download stores following text and the offline catalog',
     (tester) async {
@@ -91,4 +133,22 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+}
+
+class _EvictingCache extends MemoryChapterCache {
+  @override
+  Future<void> write({
+    required String bookId,
+    required String chapterId,
+    required String title,
+    required String text,
+  }) async {
+    await super.write(
+      bookId: bookId,
+      chapterId: chapterId,
+      title: title,
+      text: text,
+    );
+    if (chapterId == '2') content[bookId]?.remove('3');
+  }
 }

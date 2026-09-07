@@ -72,6 +72,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   final _seekValue = ValueNotifier<double?>(null);
   late final _timeline = Listenable.merge([_position, _seekValue]);
   StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<bool>? _playWhenReadySubscription;
   Timer? _hideTimer;
   bool _visible = true;
   bool _seeking = false;
@@ -108,6 +109,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   bool get _ready => widget.enabled && (widget.player?.isCreated ?? false);
+  bool get _playbackRequested =>
+      widget.playing ||
+      ((widget.player?.playWhenReady ?? false) &&
+          !(widget.player?.completed ?? false));
   Size get _videoSize => Size(
     (widget.player?.videoWidth ?? 9).toDouble(),
     (widget.player?.videoHeight ?? 16).toDouble(),
@@ -177,6 +182,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _panelExtent.dispose();
     _panelExpanded.dispose();
     unawaited(_positionSubscription?.cancel());
+    unawaited(_playWhenReadySubscription?.cancel());
     _position.dispose();
     _seekValue.dispose();
     if (_boosting && widget.player != null) {
@@ -190,6 +196,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   void _listenToPosition() {
     unawaited(_positionSubscription?.cancel());
+    unawaited(_playWhenReadySubscription?.cancel());
     final player = widget.player;
     _position.value = player?.position ?? Duration.zero;
     // The native 200ms ticks belong to the timeline only. In particular, they
@@ -198,6 +205,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       if (mounted && identical(widget.player, player)) {
         _position.value = position;
       }
+    });
+    _playWhenReadySubscription = player?.playWhenReadyStream.listen((_) {
+      if (mounted && identical(widget.player, player)) setState(() {});
     });
   }
 
@@ -228,7 +238,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _appActive = false;
       ++_interaction;
       _resumeOnForeground =
-          _ready && (widget.playing || (_seeking && _resumeAfterSeek));
+          _ready && (_playbackRequested || (_seeking && _resumeAfterSeek));
       _cancelSeek(resume: false);
       _endBoost();
       _hideTimer?.cancel();
@@ -280,7 +290,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
     _endBoost();
     final interaction = ++_interaction;
-    final pause = widget.playing;
+    final pause = _playbackRequested;
     unawaited(
       _control((player) async {
         if (pause) {
@@ -308,7 +318,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _endBoost();
     ++_interaction;
     _hideTimer?.cancel();
-    _resumeAfterSeek = widget.playing;
+    _resumeAfterSeek = _playbackRequested;
     setState(() {
       _seeking = true;
       _seekValue.value = value;
@@ -454,13 +464,17 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (!mounted) return;
     setState(() => _modalOpen = false);
     if (selected != null) {
-      ++_rateGeneration;
+      final generation = ++_rateGeneration;
       setState(() => _rate = selected);
-      await _control((player) => player.setRate(selected));
       try {
-        await PlayerPreferences.savePlaybackRate(selected);
+        // Persist in selection order. A slow reply to an older native rate
+        // change must not save that value after the user's newer selection.
+        await Future.wait<void>([
+          PlayerPreferences.savePlaybackRate(selected),
+          _control((player) => player.setRate(selected)),
+        ]);
       } catch (_) {
-        if (mounted) {
+        if (mounted && generation == _rateGeneration) {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text('倍速已生效，但未能保存设置')));
@@ -803,7 +817,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   ),
                 ),
               if (_ready &&
-                  !widget.playing &&
+                  !_playbackRequested &&
                   !_locked &&
                   unobstructed &&
                   _visible &&
@@ -1207,8 +1221,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             widget.duration > Duration.zero ? () => _seekBy(-10) : null,
           ),
           _transportButton(
-            widget.playing ? '暂停' : '播放',
-            widget.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            _playbackRequested ? '暂停' : '播放',
+            _playbackRequested ? Icons.pause_rounded : Icons.play_arrow_rounded,
             _togglePlayback,
           ),
           _transportButton(

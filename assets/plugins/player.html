@@ -132,6 +132,8 @@ class ShortVideoPlayer {
         this.longPressTimer = null;
         this.isLongPressing = false;
         this.originalSpeed = 1.0;
+        this.loadGeneration = 0;
+        this.retryOnInteraction = null;
         this.baseUrl = window.BASE_URL || "";
         this.init();
     }
@@ -194,6 +196,11 @@ class ShortVideoPlayer {
             if (now - this.lastTapTime < 300) { clearTimeout(this.singleTapTimer); this.togglePlay(); this.lastTapTime = 0; }
             else { this.lastTapTime = now; this.singleTapTimer = setTimeout(() => { this.toggleControls(); }, 300); }
         });
+        interactionLayer.addEventListener('touchcancel', () => {
+            clearTimeout(this.longPressTimer);
+            if (this.isLongPressing) this.stopFastForward();
+            this.isLongPressing = false;
+        });
         this.video.addEventListener('timeupdate', () => this.updateProgress());
         this.video.addEventListener('loadedmetadata', () => { this.updateProgress(); this.video.playbackRate = this.speeds[this.currentSpeedIndex]; });
         this.video.addEventListener('play', () => this.updatePlayState(true));
@@ -201,8 +208,9 @@ class ShortVideoPlayer {
         this.video.addEventListener('waiting', () => this.loading.style.display = 'block');
         this.video.addEventListener('playing', () => this.loading.style.display = 'none');
         this.video.addEventListener('canplay', () => this.loading.style.display = 'none');
-        this.video.addEventListener('ended', () => this.next());
+        this.video.addEventListener('ended', () => { if (this.video.ended) this.next(); });
         this.video.addEventListener('error', (e) => {
+            if (!this.video.error) return;
             this.loading.style.display = 'none';
             var errorMsg = "Video load failed";
             if (this.video.error) {
@@ -273,25 +281,39 @@ class ShortVideoPlayer {
 
     async loadVideo(itemId) {
         if (!itemId) return;
-        this.showLoading(true); this.currentItemId = window.PLUGIN_PARAMS.item_id || window.PLUGIN_PARAMS.item_ids || "";
+        const generation = ++this.loadGeneration;
+        this.clearPlaybackRetry();
+        clearTimeout(this.longPressTimer);
+        if (this.isLongPressing) this.stopFastForward();
+        this.isLongPressing = false;
+        this.video.pause(); this.video.removeAttribute('src'); this.video.load();
+        this.showLoading(true); this.currentItemId = String(itemId);
+        if (this.playlist.length > 0) this.updateIndexByItemId(itemId);
         try {
-            const url = this.baseUrl + "/api/v1/videos/" + itemId;
+            const url = this.baseUrl + "/api/v1/videos/" + encodeURIComponent(itemId);
             const res = await fetch(url); const json = await res.json();
+            if (generation !== this.loadGeneration) return;
             const videoUrl = this.extractVideoUrl(json);
             if (videoUrl) {
                 this.video.src = videoUrl; this.video.muted = false; this.video.autoplay = true;
-                const attemptPlay = async () => {
-                    try { await this.video.play(); this.playIcon.style.opacity = 0; }
-                    catch (error) {
-                        const retryOnInteraction = () => { this.video.play().catch(e => {}); ['touchstart', 'click', 'keydown'].forEach(evt => document.removeEventListener(evt, retryOnInteraction)); };
-                        ['touchstart', 'click', 'keydown'].forEach(evt => document.addEventListener(evt, retryOnInteraction, { once: true }));
-                    }
-                };
-                attemptPlay();
-                if (this.playlist.length > 0) { this.updateIndexByItemId(itemId); }
+                this.video.load();
+                this.video.play().catch(() => {
+                    if (generation !== this.loadGeneration) return;
+                    this.retryOnInteraction = () => {
+                        this.clearPlaybackRetry();
+                        if (generation === this.loadGeneration && this.video.paused) this.togglePlay();
+                    };
+                    ['touchstart', 'click', 'keydown'].forEach(evt => document.addEventListener(evt, this.retryOnInteraction, { once: true }));
+                });
             } else { throw new Error("Failed to get video URL"); }
-        } catch (e) { this.showToast("Error: " + e.message); }
-        finally { this.showLoading(false); }
+        } catch (e) { if (generation === this.loadGeneration) this.showToast("Error: " + e.message); }
+        finally { if (generation === this.loadGeneration) this.showLoading(false); }
+    }
+
+    clearPlaybackRetry() {
+        if (!this.retryOnInteraction) return;
+        ['touchstart', 'click', 'keydown'].forEach(evt => document.removeEventListener(evt, this.retryOnInteraction));
+        this.retryOnInteraction = null;
     }
 
     playIndex(index) {
@@ -311,8 +333,14 @@ class ShortVideoPlayer {
         if (isPlaying) { this.playIcon.style.opacity = 0; this.playPauseBtn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'; }
         else { this.playIcon.style.opacity = 1; this.playPauseBtn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'; }
     }
-    toggleSpeed() { this.currentSpeedIndex = (this.currentSpeedIndex + 1) % this.speeds.length; const speed = this.speeds[this.currentSpeedIndex]; this.video.playbackRate = speed; this.speedBtn.innerText = speed.toFixed(1) + 'x'; this.showToast("Speed: " + speed + "x"); }
-    togglePlay() { if (this.video.paused) { this.video.play(); } else { this.video.pause(); } }
+    toggleSpeed() { this.currentSpeedIndex = (this.currentSpeedIndex + 1) % this.speeds.length; const speed = this.speeds[this.currentSpeedIndex]; this.video.playbackRate = speed; this.speedBtn.innerText = speed + 'x'; this.showToast("Speed: " + speed + "x"); }
+    togglePlay() {
+        this.clearPlaybackRetry();
+        if (this.video.paused) {
+            const generation = this.loadGeneration;
+            this.video.play().catch(() => { if (generation === this.loadGeneration) this.showToast("Playback failed. Tap to retry."); });
+        } else { this.video.pause(); }
+    }
     showLoading(show) { this.loading.style.display = show ? 'block' : 'none'; }
     showToast(msg) { this.toastEl.innerText = msg; this.toastEl.style.opacity = 1; setTimeout(() => { this.toastEl.style.opacity = 0; }, 2000); }
 }
