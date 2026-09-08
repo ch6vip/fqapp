@@ -5,17 +5,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
+import '../widgets/home/ambient_backdrop.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/home/home_hero.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
-import '../widgets/media_card.dart' show mediaGridDelegateFor;
 import 'detail_page.dart';
 import 'search_page.dart';
 import 'home_provider.dart';
 
-/// Home feed, rebuilt as an editorial surface: an oversized typographic hero
-/// with a scroll-driven marquee, a pinned frosted category strip, a featured
-/// showcase card and a cascading cover grid.
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
@@ -30,10 +29,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     '漫画': 'manga',
     '听书': 'audio',
   };
+  static const _captions = [
+    '换个故事，换一种心情',
+    '翻开之后，就舍不得合上',
+    '好戏开场，下一集更精彩',
+    '每一格，都藏着一个新世界',
+    '让好故事，陪你走过日常',
+  ];
 
   final ScrollController _scroll = ScrollController();
-  // Throttle window for load-more triggers (PiliPlus EasyThrottle style):
-  // rapid scrolling near the bottom must not fire back-to-back requests.
   Timer? _loadMoreTimer;
 
   @override
@@ -41,8 +45,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.initState();
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      ref.read(homeProvider.notifier).load();
+      if (mounted) ref.read(homeProvider.notifier).load();
     });
   }
 
@@ -56,27 +59,20 @@ class _HomePageState extends ConsumerState<HomePage> {
   void _onScroll() {
     if (!_scroll.hasClients) {
       final state = ref.read(homeProvider);
-      if (state.error == null && _visibleItems(state).isEmpty) {
-        _maybeLoadMore();
-      }
+      if (state.error == null && _visibleItems(state).isEmpty) _maybeLoadMore();
       return;
     }
-    final pos = _scroll.position;
-    if (pos.pixels >= pos.maxScrollExtent - 400) {
-      _maybeLoadMore();
-    }
+    final position = _scroll.position;
+    if (position.pixels >= position.maxScrollExtent - 600) _maybeLoadMore();
   }
 
-  /// Throttled load-more trigger. Shared by the scroll listener and content
-  /// builders so empty or short feeds keep paginating without scrolling.
+  /// Short and empty pages must continue even without a user scroll event.
   void _maybeLoadMore() {
     if (!mounted || _loadMoreTimer != null) return;
     final state = ref.read(homeProvider);
     if (state.isLoading || state.isLoadMore || !state.hasMore) return;
     _loadMoreTimer = Timer(const Duration(milliseconds: 500), () {
       _loadMoreTimer = null;
-      // An empty or short page can finish inside the throttle window without
-      // a scroll event. Recheck it when the window ends to keep paginating.
       if (mounted) _onScroll();
     });
     ref.read(homeProvider.notifier).loadMore();
@@ -92,126 +88,154 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
     final notifier = ref.read(homeProvider.notifier);
+    final palette = HomePalette.of(context);
+    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
 
     return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        // A load error replaces the feed entirely so the (potentially long)
-        // message stays scrollable down to the retry action.
-        child: state.error != null
-            ? _ErrorView(message: state.error!, onRetry: notifier.load)
-            : RefreshIndicator(
-                onRefresh: notifier.load,
-                child: CustomScrollView(
-                  controller: _scroll,
-                  physics: const BouncingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics(),
-                  ),
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: HomeHero(
-                        scroll: _scroll,
-                        onSearch: _openSearch,
+      backgroundColor: palette.canvas,
+      body: Stack(
+        children: [
+          Positioned.fill(child: AmbientBackdrop(scroll: _scroll)),
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 840),
+              child: SafeArea(
+                bottom: false,
+                child: state.error != null
+                    ? _ErrorView(message: state.error!, onRetry: notifier.load)
+                    : RefreshIndicator(
+                        color: HomePalette.accent,
+                        backgroundColor: palette.surface,
                         onRefresh: notifier.load,
+                        child: CustomScrollView(
+                          key: const Key('home_feed'),
+                          controller: _scroll,
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
+                          slivers: [
+                            SliverToBoxAdapter(
+                              child: HomeHero(
+                                onSearch: _openSearch,
+                                onRefresh: notifier.load,
+                                refreshing: state.isLoading,
+                              ),
+                            ),
+                            SliverPersistentHeader(
+                              pinned: true,
+                              delegate: HomeTabBarDelegate(
+                                selectedIndex: state.tabIndex,
+                                onSelect: notifier.selectTab,
+                                extent: 60 + (textScale - 1).clamp(0, 2) * 24,
+                              ),
+                            ),
+                            ..._contentSlivers(state),
+                          ],
+                        ),
                       ),
-                    ),
-                    SliverPersistentHeader(
-                      pinned: true,
-                      delegate: HomeTabBarDelegate(
-                        selectedIndex: state.tabIndex,
-                        onSelect: notifier.selectTab,
-                      ),
-                    ),
-                    ..._contentSlivers(state),
-                  ],
-                ),
               ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   List<Widget> _contentSlivers(HomeState state) {
     final items = _visibleItems(state);
-
-    if (state.isLoading && items.isEmpty) {
-      return const [
+    if (items.isEmpty) {
+      if (state.isLoading || state.hasMore) {
+        if (!state.isLoading) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
+        }
+        return const [SliverToBoxAdapter(child: _LoadingView())];
+      }
+      return [
         SliverFillRemaining(
           hasScrollBody: false,
-          child: Center(child: CircularProgressIndicator()),
+          child: _EmptyView(onRefresh: ref.read(homeProvider.notifier).load),
         ),
       ];
     }
 
-    if (items.isEmpty) {
-      if (state.hasMore) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
-        return const [
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: CircularProgressIndicator()),
-          ),
-        ];
-      }
-      return const [
-        SliverFillRemaining(hasScrollBody: false, child: _EmptyView()),
-      ];
-    }
+    final featured = items.take(3).toList(growable: false);
+    final rest = items.skip(featured.length).toList(growable: false);
+    // The next page may be needed before any grid card has been built.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _onScroll();
+    });
 
-    final featured = items.first;
-    final rest = items.sublist(1);
-    // A tall hero and featured card can push a short grid below the fold, so
-    // the "last card built" trigger is no longer reachable. Recheck proximity
-    // after every content build instead; the scroll-position guard inside
-    // _onScroll stops this once the feed is taller than the viewport.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
     return [
       SliverToBoxAdapter(
-        child: StaggeredEntrance(
-          index: 0,
-          child: FeaturedMediaCard(
-            item: featured,
-            onTap: () => _openItem(featured),
+        child: HomeEntrance(
+          child: HomeSpotlight(
+            key: ValueKey('spotlight_${state.tabIndex}'),
+            items: featured,
+            onOpen: _openItem,
           ),
         ),
       ),
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        sliver: SliverGrid(
-          gridDelegate: mediaGridDelegateFor(context),
-          delegate: SliverChildBuilderDelegate((context, i) {
-            return StaggeredEntrance(
-              index: i + 1,
-              child: HomeMediaCard(
-                item: rest[i],
-                index: i + 1,
-                onTap: () => _openItem(rest[i]),
-              ),
-            );
-          }, childCount: rest.length),
+      if (rest.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: HomeSectionHeader(
+            title: state.tabIndex == 0
+                ? '发现更多好故事'
+                : '值得一看的${homeCategories[state.tabIndex].label}',
+            subtitle: _captions[state.tabIndex],
+          ),
         ),
-      ),
-      // Full-width footer spinner instead of an extra grid cell, so the
-      // loader never occupies a lone trailing card slot.
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          sliver: SliverLayoutBuilder(
+            builder: (context, constraints) => SliverGrid(
+              gridDelegate: homeGridDelegate(
+                context,
+                constraints.crossAxisExtent,
+              ),
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final item = rest[index];
+                return HomeEntrance(
+                  key: ValueKey('${item.kind}:${item.id}'),
+                  index: index,
+                  child: HomeMediaCard(
+                    item: item,
+                    onTap: () => _openItem(item),
+                  ),
+                );
+              }, childCount: rest.length),
+            ),
+          ),
+        ),
+      ],
       if (state.isLoadMore)
         const SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
+            padding: EdgeInsets.symmetric(vertical: 28),
             child: Center(
               child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: HomePalette.accent,
+                ),
               ),
             ),
           ),
         )
       else if (!state.hasMore)
-        const SliverToBoxAdapter(child: _EndOfFeed()),
+        const SliverToBoxAdapter(child: _EndOfFeed())
+      else
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
     ];
   }
 
   void _openSearch() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchPage()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SearchPage()),
+    );
   }
 
   void _openItem(MediaItem item) {
@@ -222,30 +246,85 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 }
 
-/// Editorial empty state for a feed with no entries.
-class _EmptyView extends StatelessWidget {
-  const _EmptyView();
+class _LoadingView extends StatelessWidget {
+  const _LoadingView();
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Center(
+    final palette = HomePalette.of(context);
+    return Container(
+      height: 270,
+      margin: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+      decoration: BoxDecoration(
+        color: palette.soft,
+        borderRadius: BorderRadius.circular(24),
+      ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(LucideIcons.compass, size: 34, color: scheme.onSurfaceVariant),
-          const SizedBox(height: 12),
-          const Text(
-            '暂无内容',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: HomePalette.accent,
+            ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 18),
+          Text('正在寻找好故事', style: TextStyle(fontSize: 13, color: palette.muted)),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyView extends StatelessWidget {
+  final Future<void> Function() onRefresh;
+
+  const _EmptyView({required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: palette.soft,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              LucideIcons.compass,
+              size: 32,
+              color: HomePalette.accent,
+            ),
+          ),
+          const SizedBox(height: 20),
           Text(
-            'NOTHING HERE — YET',
+            '暂无内容',
             style: TextStyle(
-              fontSize: 10,
-              letterSpacing: 3,
-              color: scheme.onSurfaceVariant,
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              color: palette.ink,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '换个分类，或刷新发现新故事',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: palette.muted),
+          ),
+          const SizedBox(height: 22),
+          OutlinedButton.icon(
+            onPressed: onRefresh,
+            icon: const Icon(LucideIcons.rotate_ccw, size: 16),
+            label: const Text('刷新推荐'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: palette.accentText,
             ),
           ),
         ],
@@ -254,35 +333,36 @@ class _EmptyView extends StatelessWidget {
   }
 }
 
-/// Hairline rule marking the end of pagination.
 class _EndOfFeed extends StatelessWidget {
   const _EndOfFeed();
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final palette = HomePalette.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 32),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(width: 28, height: 0.5, color: scheme.outlineVariant),
-          const SizedBox(width: 10),
-          Icon(
-            LucideIcons.asterisk,
-            size: 12,
-            color: scheme.onSurfaceVariant,
+          Expanded(child: Divider(color: palette.line)),
+          Flexible(
+            flex: 4,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Text(
+                '好故事，未完待续',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: palette.muted),
+              ),
+            ),
           ),
-          const SizedBox(width: 10),
-          Container(width: 28, height: 0.5, color: scheme.outlineVariant),
+          Expanded(child: Divider(color: palette.line)),
         ],
       ),
     );
   }
 }
 
-/// Full-page error panel. The message lives inside a [SingleChildScrollView]
-/// so even a very long error can be scrolled down to the retry action.
+/// Long upstream messages stay scrollable all the way to the retry action.
 class _ErrorView extends StatelessWidget {
   final String message;
   final Future<void> Function() onRetry;
@@ -291,86 +371,63 @@ class _ErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final palette = HomePalette.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(width: 22, height: 1, color: scheme.primary),
-              const SizedBox(width: 8),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'SYSTEM NOTICE',
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 10,
-                      letterSpacing: 3,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.primary,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: palette.soft,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Icon(
+              LucideIcons.cloud_off,
+              size: 30,
+              color: HomePalette.accent,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            '故事还在路上',
+            style: TextStyle(
+              fontSize: 30,
+              height: 1.2,
+              fontWeight: FontWeight.w800,
+              color: palette.ink,
+            ),
           ),
           const SizedBox(height: 12),
           Text(
-            '加载失败',
-            style: TextStyle(
-              fontSize: 40,
-              height: 1.05,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -1,
-              color: scheme.onSurface,
-            ),
+            '暂时无法加载推荐，稍后再试一次。',
+            style: TextStyle(color: palette.muted, fontSize: 14, height: 1.6),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
           Container(
-            padding: const EdgeInsets.all(14),
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: scheme.outlineVariant.withValues(alpha: 0.6),
-              ),
+              color: palette.soft,
+              borderRadius: BorderRadius.circular(16),
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  LucideIcons.cloud_off,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    message,
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.6,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
+            child: Text(
+              message,
+              style: TextStyle(fontSize: 12, height: 1.6, color: palette.muted),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: onRetry,
             icon: const Icon(LucideIcons.rotate_ccw, size: 16),
             label: const Text('重试'),
             style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              foregroundColor: Colors.white,
+              backgroundColor: HomePalette.accentStrong,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(14),
               ),
             ),
           ),

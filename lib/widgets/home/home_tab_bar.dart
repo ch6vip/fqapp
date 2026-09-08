@@ -1,9 +1,8 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
-/// A home category: label plus its Lucide glyph.
+import 'home_design.dart';
+
 class HomeCategory {
   final String label;
   final IconData icon;
@@ -12,27 +11,29 @@ class HomeCategory {
 }
 
 const homeCategories = [
-  HomeCategory('全部', LucideIcons.sparkles),
+  HomeCategory('推荐', LucideIcons.sparkles),
   HomeCategory('小说', LucideIcons.book_open),
   HomeCategory('短剧', LucideIcons.clapperboard),
   HomeCategory('漫画', LucideIcons.image),
   HomeCategory('听书', LucideIcons.headphones),
 ];
 
-/// Pinned, horizontally scrollable category strip. Chips morph into a solid
-/// accent pill when selected; the bar itself floats over the feed behind a
-/// frosted-glass blur.
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   final int selectedIndex;
   final ValueChanged<int> onSelect;
+  final double extent;
 
-  HomeTabBarDelegate({required this.selectedIndex, required this.onSelect});
+  HomeTabBarDelegate({
+    required this.selectedIndex,
+    required this.onSelect,
+    this.extent = 60,
+  });
 
   @override
-  double get minExtent => 58;
+  double get minExtent => extent;
 
   @override
-  double get maxExtent => 58;
+  double get maxExtent => extent;
 
   @override
   Widget build(
@@ -40,85 +41,94 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     double shrinkOffset,
     bool overlapsContent,
   ) {
-    final scheme = Theme.of(context).colorScheme;
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: Container(
-          decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: 0.82),
-            border: Border(
-              bottom: BorderSide(
-                color: scheme.outlineVariant.withValues(alpha: 0.6),
-                width: 0.5,
-              ),
-            ),
-          ),
-          alignment: Alignment.center,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: homeCategories.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 8),
-            itemBuilder: (context, i) {
-              final category = homeCategories[i];
-              final selected = i == selectedIndex;
-              return Center(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => onSelect(i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOutCubic,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: selected ? scheme.primary : Colors.transparent,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: selected
-                            ? scheme.primary
-                            : scheme.outlineVariant.withValues(alpha: 0.8),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          category.icon,
-                          size: 14,
-                          color: selected
-                              ? scheme.onPrimary
-                              : scheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          category.label,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w500,
+    final palette = HomePalette.of(context);
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.canvas,
+        border: Border(
+          bottom: BorderSide(color: palette.line.withValues(alpha: 0.65)),
+        ),
+      ),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        scrollDirection: Axis.horizontal,
+        itemCount: homeCategories.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 3),
+        itemBuilder: (context, index) {
+          final selected = index == selectedIndex;
+          final category = homeCategories[index];
+          return Semantics(
+            selected: selected,
+            button: true,
+            label: category.label,
+            excludeSemantics: true,
+            onTap: () => onSelect(index),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                key: ValueKey('home_category_$index'),
+                onTap: () => onSelect(index),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            category.icon,
+                            size: 15,
                             color: selected
-                                ? scheme.onPrimary
-                                : scheme.onSurfaceVariant,
+                                ? HomePalette.accent
+                                : palette.muted,
                           ),
+                          const SizedBox(width: 5),
+                          AnimatedDefaultTextStyle(
+                            duration: duration,
+                            style: Theme.of(context).textTheme.labelLarge!
+                                .copyWith(
+                                  fontSize: 16,
+                                  fontWeight: selected
+                                      ? FontWeight.w800
+                                      : FontWeight.w500,
+                                  color: selected ? palette.ink : palette.muted,
+                                ),
+                            child: Text(category.label),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      AnimatedContainer(
+                        duration: duration,
+                        curve: Curves.easeOutCubic,
+                        height: 3,
+                        width: selected ? 22 : 6,
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? HomePalette.accent
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(3),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
-              );
-            },
-          ),
-        ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
   @override
   bool shouldRebuild(HomeTabBarDelegate oldDelegate) =>
-      selectedIndex != oldDelegate.selectedIndex;
+      selectedIndex != oldDelegate.selectedIndex ||
+      extent != oldDelegate.extent ||
+      onSelect != oldDelegate.onSelect;
 }

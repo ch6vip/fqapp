@@ -49,7 +49,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final hint = find.text('搜索短剧、小说、漫画...');
+      final hint = find.text('搜索你想看的故事');
       expect(hint, findsOneWidget);
       expect(
         tester.getRect(hint).right,

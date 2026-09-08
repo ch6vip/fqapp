@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
 
@@ -85,7 +86,7 @@ class MediaCard extends StatelessWidget {
                           errorWidget: (context, url, error) => Container(
                             color: scheme.surfaceContainerHighest,
                             child: Icon(
-                              Icons.book,
+                              LucideIcons.book_open,
                               size: 40,
                               color: scheme.onSurfaceVariant,
                             ),
@@ -94,7 +95,7 @@ class MediaCard extends StatelessWidget {
                       : Container(
                           color: scheme.surfaceContainerHighest,
                           child: Icon(
-                            Icons.book,
+                            LucideIcons.book_open,
                             size: 40,
                             color: scheme.onSurfaceVariant,
                           ),

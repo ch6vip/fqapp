@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -11,6 +12,7 @@ import 'services/app_theme.dart';
 import 'services/backend_service.dart';
 import 'services/library_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
+import 'widgets/home/home_design.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -109,7 +111,7 @@ class _RootShellState extends State<RootShell> {
                     const CircularProgressIndicator()
                   else
                     Icon(
-                      Icons.error_outline,
+                      LucideIcons.triangle_alert,
                       color: Theme.of(context).colorScheme.error,
                     ),
                   const SizedBox(height: 16),
@@ -121,7 +123,7 @@ class _RootShellState extends State<RootShell> {
                         builder: (_) => const CachedBooksPage(),
                       ),
                     ),
-                    icon: const Icon(Icons.download_for_offline_outlined),
+                    icon: const Icon(LucideIcons.download),
                     label: const Text('离线阅读'),
                   ),
                   if (_backendError != null) ...[
@@ -153,28 +155,64 @@ class _RootShellState extends State<RootShell> {
         index: _index,
         children: const [HomePage(), LibraryPage(), MinePage()],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) {
-          if (i != _index) setState(() => _index = i);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: '首页',
+      bottomNavigationBar: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          height: 72,
+          elevation: 0,
+          backgroundColor: HomePalette.of(context).canvas,
+          surfaceTintColor: Colors.transparent,
+          indicatorColor: HomePalette.accent.withValues(alpha: 0.10),
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => IconThemeData(
+              size: 22,
+              color: states.contains(WidgetState.selected)
+                  ? HomePalette.accent
+                  : HomePalette.of(context).muted,
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.collections_bookmark_outlined),
-            selectedIcon: Icon(Icons.collections_bookmark),
-            label: '书架',
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (states) => TextStyle(
+              fontSize: 11,
+              fontWeight: states.contains(WidgetState.selected)
+                  ? FontWeight.w700
+                  : FontWeight.w500,
+              color: states.contains(WidgetState.selected)
+                  ? HomePalette.of(context).accentText
+                  : HomePalette.of(context).muted,
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: '我的',
+        ),
+        child: DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(
+            border: Border(
+              top: BorderSide(color: HomePalette.of(context).line, width: 0.5),
+            ),
           ),
-        ],
+          child: NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: (i) {
+              if (i != _index) setState(() => _index = i);
+            },
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(LucideIcons.house),
+                selectedIcon: Icon(LucideIcons.house),
+                label: '首页',
+              ),
+              NavigationDestination(
+                icon: Icon(LucideIcons.library_big),
+                selectedIcon: Icon(LucideIcons.library_big),
+                label: '书架',
+              ),
+              NavigationDestination(
+                icon: Icon(LucideIcons.circle_user_round),
+                selectedIcon: Icon(LucideIcons.circle_user_round),
+                label: '我的',
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
