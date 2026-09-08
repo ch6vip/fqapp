@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
@@ -52,7 +53,9 @@ void main() {
       expect(hint, findsOneWidget);
       expect(
         tester.getRect(hint).right,
-        lessThanOrEqualTo(tester.getRect(find.byIcon(Icons.refresh)).left),
+        lessThanOrEqualTo(
+          tester.getRect(find.byIcon(LucideIcons.refresh_ccw)).left,
+        ),
       );
       expect(tester.takeException(), isNull);
     });
@@ -230,6 +233,19 @@ void main() {
       await tester.pumpAndSettle();
     }
     expect(offsets, [0, 1, 2, 3]);
+    // The hero and featured card push the grid below the fold, so scroll the
+    // feed until the lazily-built card enters the viewport. The tab strip is
+    // a horizontal Scrollable too, so match the vertical feed by axis.
+    final feedScrollable = find.byWidgetPredicate(
+      (widget) =>
+          widget is Scrollable && widget.axisDirection == AxisDirection.down,
+    );
+    await tester.scrollUntilVisible(
+      find.text('小说 3'),
+      300,
+      scrollable: feedScrollable,
+    );
+    await tester.pumpAndSettle();
     expect(find.text('小说 3'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     expect(tester.takeException(), isNull);
