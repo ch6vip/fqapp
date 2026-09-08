@@ -37,6 +37,7 @@ void main() {
     await tester.ensureVisible(find.text('重试'));
     await tester.pumpAndSettle();
     expect(find.text('重试').hitTestable(), findsOneWidget);
+    await tester.ensureVisible(find.text('重试'));
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(find.text('第一章'), findsOneWidget);
@@ -61,7 +62,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('阅读 / 续读'));
+    await _revealSecondChapter(tester);
+    await tester.tap(find.byKey(const Key('detail_read_button')));
     await tester.tap(find.text('第二章'));
     expect(observer.pushes, 2);
     store.pending.complete({'chapterId': 'first', 'episode': 0});
@@ -89,10 +91,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('重试'), findsOneWidget);
     expect(find.text('暂无目录'), findsNothing);
+    await tester.ensureVisible(find.text('重试'));
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(find.text('第一章'), findsOneWidget);
-    expect(find.text('阅读 / 续读'), findsOneWidget);
+    expect(find.byKey(const Key('detail_read_button')), findsOneWidget);
     expect(attempts, 2);
   });
 
@@ -111,7 +114,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('第一章'), findsOneWidget);
-    expect(find.text('阅读 / 续读'), findsOneWidget);
+    expect(find.byKey(const Key('detail_read_button')), findsOneWidget);
     expect(find.text('重试'), findsNothing);
   });
 
@@ -134,7 +137,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     final context = tester.element(find.byType(DetailPage));
-    await tester.tap(find.text('阅读 / 续读'));
+    await tester.tap(find.byKey(const Key('detail_read_button')));
     final page = (observer.lastRoute! as MaterialPageRoute).builder(context);
     expect(page, isA<ReaderPage>());
     expect((page as ReaderPage).startIndex, 1);
@@ -143,8 +146,8 @@ void main() {
   });
 
   for (final media in [
-    (kind: 'audio', tab: '听书', action: '播放 / 续听'),
-    (kind: 'manga', tab: '漫画', action: '阅读 / 续读'),
+    (kind: 'audio', tab: '听书', action: '开始收听'),
+    (kind: 'manga', tab: '漫画', action: '开始阅读'),
   ]) {
     testWidgets(
       '${media.kind} opens its native page with the selected chapter',
@@ -171,6 +174,7 @@ void main() {
         expect(tabs, [media.tab, media.tab]);
         expect(find.text(media.action), findsOneWidget);
         final context = tester.element(find.byType(DetailPage));
+        await _revealSecondChapter(tester);
         await tester.tap(find.text('第二章'));
         final page = (observer.lastRoute! as MaterialPageRoute).builder(
           context,
@@ -214,7 +218,7 @@ void main() {
           );
           await tester.pumpAndSettle();
           final context = tester.element(find.byType(DetailPage));
-          await tester.tap(find.text(media.action));
+          await tester.tap(find.byKey(const Key('detail_read_button')));
           await tester.idle();
           final page = (observer.lastRoute! as MaterialPageRoute).builder(
             context,
@@ -247,7 +251,8 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.text(media.action));
+        await _revealSecondChapter(tester);
+        await tester.tap(find.byKey(const Key('detail_read_button')));
         await tester.tap(find.text('第二章'));
         expect(observer.pushes, 2);
         store.pending.complete({'kind': media.kind, 'chapterId': 'first'});
@@ -299,4 +304,11 @@ class _PendingHistory extends MemoryReaderStore {
 
   @override
   Future<Map<String, dynamic>?> historyEntry(String id) => pending.future;
+}
+
+Future<void> _revealSecondChapter(WidgetTester tester) async {
+  await tester.ensureVisible(
+    find.byKey(const Key('detail_preview_chapter_second')),
+  );
+  await tester.pumpAndSettle();
 }
