@@ -10,6 +10,8 @@ on:
       - 'assets/**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
+      - 'analysis_options.yaml'
+      - 'test/**'
       - 'scripts/build_backend.sh'
       - 'scripts/build_backend.ps1'
       - 'scripts/check_native_alignment.cjs'
@@ -138,10 +140,14 @@ jobs:
           printf 'FQAPP_DEBUG_KEYSTORE=%s\n' "$signing_path" >> "$GITHUB_ENV"
           printf 'Verified test signing certificate: %s\n' "$actual_signer"
 
-      - name: Compile ARM64 release APK
+      - name: Check Flutter application
         run: |
           flutter pub get --enforce-lockfile
-          flutter build apk --release --target-platform android-arm64 --no-pub
+          flutter analyze --no-pub
+          flutter test --no-pub --concurrency=2
+
+      - name: Compile ARM64 release APK
+        run: flutter build apk --release --target-platform android-arm64 --no-pub
 
       - name: Verify APK contents, signing, and 16 KiB alignment
         run: |

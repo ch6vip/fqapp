@@ -32,6 +32,8 @@ class LibraryStore implements ReaderStore {
 
   static const _histBoxName = 'history';
   static const _readTimeBoxName = 'read_time';
+  static const _legacyTimeKey = '_legacy_media_time_v1';
+  static const _newTimeKey = '_new_media_time_v1';
 
   late Box<dynamic> _histBox;
   late Box<dynamic> _readTimeBox;
@@ -47,6 +49,17 @@ class LibraryStore implements ReaderStore {
     _histBox = await Hive.openBox(_histBoxName);
     _readTimeBox = await Hive.openBox(_readTimeBoxName);
     await _migrateFromSp();
+    // Copy typed legacy media before a novel can reuse its original key.
+    // The originals remain available if a write fails or migration is retried.
+    for (final key in _histBox.keys.toList()) {
+      final record = _historyRecord(_histBox.get(key), id: key.toString());
+      if (record == null) continue;
+      try {
+        await _preserveLegacyMedia(record);
+      } catch (_) {
+        // Saving that media or replacing its key retries the preservation.
+      }
+    }
   }
 
   Future<void> _migrateFromSp() async {
@@ -81,10 +94,19 @@ class LibraryStore implements ReaderStore {
             if (id.isEmpty) continue;
             final days = _readTimeRecord(entry.value);
             if (days.isEmpty) continue;
-            await _readTimeBox.put(id, {
-              ...days,
-              ..._readTimeRecord(_readTimeBox.get(id)),
-            });
+            final current = _readTimeStorage(_readTimeBox.get(id));
+            final savedDays = _readTimeRecord(current);
+            final newDays = _newReadTime(current);
+            for (final day in days.entries) {
+              final newSeconds = newDays[day.key] ?? 0;
+              final oldSeconds = (savedDays[day.key] ?? 0) - newSeconds;
+              if (day.value > oldSeconds) {
+                // A retry may backfill old seconds on a day that already has
+                // new reading time. Keep both without importing the old twice.
+                current[day.key] = day.value + newSeconds;
+              }
+            }
+            await _readTimeBox.put(id, current);
           }
           await sp.remove('read_time_map');
         }
@@ -95,10 +117,23 @@ class LibraryStore implements ReaderStore {
   }
 
   List<Map<String, dynamic>> historySnapshot() {
-    final values = <Map<String, dynamic>>[
-      for (final key in _histBox.keys)
-        ?_historyRecord(_histBox.get(key), id: key.toString()),
-    ];
+    final byIdentity = <(String, String), Map<String, dynamic>>{};
+    for (final key in _histBox.keys) {
+      final record = _historyRecord(_histBox.get(key), id: key.toString());
+      if (record == null) continue;
+      final identity = _historyIdentity(record);
+      final previous = byIdentity[identity];
+      final scoped = record['contentId'] != null;
+      final previousScoped = previous?['contentId'] != null;
+      final time = (record['time'] as num?) ?? 0;
+      final previousTime = (previous?['time'] as num?) ?? 0;
+      if (previous == null ||
+          (scoped && !previousScoped) ||
+          (scoped == previousScoped && time > previousTime)) {
+        byIdentity[identity] = record;
+      }
+    }
+    final values = byIdentity.values.toList();
     // Sort by time descending (newest first)
     values.sort((a, b) {
       final ta = (a['time'] as num?)?.toInt() ?? 0;
@@ -122,18 +157,27 @@ class LibraryStore implements ReaderStore {
     if (record == null) return;
     final id = record['id'] as String;
 
+    final originalId = record['contentId']?.toString() ?? id;
+    final previous = _historyRecord(_histBox.get(originalId), id: originalId);
+    if (previous != null &&
+        (record['contentId'] != null || previous['kind'] != record['kind'])) {
+      await _preserveLegacyMedia(previous);
+    }
+
     await _histBox.put(id, record);
 
     // Trim history to 50 entries once it grows past 100 (leaves headroom so
     // we don't prune on every single write).
     if (_histBox.length > 100) {
-      final keys = _histBox.keys.toList();
-      int time(dynamic key) =>
-          _historyRecord(_histBox.get(key), id: key.toString())?['time']
-              as int? ??
-          0;
-      keys.sort((a, b) => time(a).compareTo(time(b)));
-      final oldestKeys = keys.take(_histBox.length - 50);
+      // Legacy backups must not make fifty books look like a hundred books.
+      final retained = historySnapshot().take(50).map(_historyIdentity).toSet();
+      final oldestKeys = <dynamic>[];
+      for (final key in _histBox.keys) {
+        final record = _historyRecord(_histBox.get(key), id: key.toString());
+        if (record == null || !retained.contains(_historyIdentity(record))) {
+          oldestKeys.add(key);
+        }
+      }
       await _histBox.deleteAll(oldestKeys);
     }
   }
@@ -148,7 +192,9 @@ class LibraryStore implements ReaderStore {
     double? maxScroll,
   }) async {
     final map = _historyRecord(_histBox.get(id), id: id);
-    if (map != null) {
+    // Partial novel updates cannot establish their kind after a failed insert.
+    // Scoped media first copies its legacy record, then updates the scoped key.
+    if (map != null && _legacyMediaKey(map) == null) {
       map['episode'] = episode;
       map['progress'] = progress;
       if (chapterId != null) map['chapterId'] = chapterId;
@@ -169,6 +215,35 @@ class LibraryStore implements ReaderStore {
       final days = _readTimeRecord(_readTimeBox.get(key));
       if (days.isNotEmpty) out[key.toString()] = days;
     }
+
+    // A saved baseline assigns old seconds to their media without deleting
+    // the original data. Future novel seconds at the original ID remain its
+    // own time, and retrying migration never adds the baseline twice.
+    for (final key in _readTimeBox.keys) {
+      final allocation = _legacyTimeAllocation(_readTimeBox.get(key));
+      if (allocation == null) continue;
+      final (sourceId, days) = allocation;
+      _addDays(out, key.toString(), days);
+      _subtractDays(out[sourceId], days);
+      if (out[sourceId]?.isEmpty ?? false) out.remove(sourceId);
+    }
+
+    // Records written by an older version can exist before init's migration
+    // or before their first save. Normalize their statistics immediately.
+    for (final key in _histBox.keys) {
+      final record = _historyRecord(_histBox.get(key), id: key.toString());
+      if (record == null) continue;
+      final target = _legacyMediaKey(record);
+      if (target == null) continue;
+      final id = record['id'] as String;
+      final remaining = out[id];
+      if (remaining == null) continue;
+      final days = Map<String, double>.from(remaining);
+      _subtractDays(days, _newReadTime(_readTimeBox.get(id)));
+      _addDays(out, target, days);
+      _subtractDays(remaining, days);
+      if (remaining.isEmpty) out.remove(id);
+    }
     return out;
   }
 
@@ -187,14 +262,131 @@ class LibraryStore implements ReaderStore {
     }
     final day = _dayKey(at ?? DateTime.now());
     final write = _readTimeWrites.then((_) async {
-      final perBook = _readTimeRecord(_readTimeBox.get(bookId));
-      perBook[day] = (perBook[day] ?? 0) + seconds;
+      final history = _historyRecord(_histBox.get(bookId), id: bookId);
+      final legacy = history != null && _legacyMediaKey(history) != null;
+      final newTime = !legacy || history['kind'] != kind;
+      if (legacy && newTime) {
+        // This callback already owns the queue. Preserve directly so a failed
+        // history insert cannot make new novel seconds part of the old media.
+        await _preserveLegacyMediaInWrite(history);
+      }
+      final raw = _readTimeBox.get(bookId);
+      final perBook = _readTimeStorage(raw);
+      final days = _readTimeRecord(raw);
+      perBook[day] = (days[day] ?? 0) + seconds;
+      if (newTime) {
+        final newDays = _newReadTime(raw);
+        newDays[day] = (newDays[day] ?? 0) + seconds;
+        // Persist the counter and its classification atomically.
+        perBook[_newTimeKey] = newDays;
+      }
       await _readTimeBox.put(bookId, perBook);
     });
     // Keep the serialization chain usable after an individual Hive error,
     // while still returning that error to the original caller.
     _readTimeWrites = write.catchError((_) {});
     return write;
+  }
+
+  static (String, String) _historyIdentity(Map<String, dynamic> record) => (
+    record['kind']?.toString() ?? 'book',
+    (record['contentId'] ?? record['id']).toString(),
+  );
+
+  static String? _legacyMediaKey(Map<String, dynamic> record) {
+    final kind = record['kind'];
+    if (record['contentId'] != null || (kind != 'audio' && kind != 'manga')) {
+      return null;
+    }
+    return '$kind:${record['id']}';
+  }
+
+  Future<void> _preserveLegacyMedia(Map<String, dynamic> record) {
+    if (_legacyMediaKey(record) == null) return Future<void>.value();
+    final write = _readTimeWrites.then(
+      (_) => _preserveLegacyMediaInWrite(record),
+    );
+    _readTimeWrites = write.catchError((Object _) {});
+    return write;
+  }
+
+  Future<void> _preserveLegacyMediaInWrite(Map<String, dynamic> record) async {
+    final target = _legacyMediaKey(record);
+    if (target == null) return;
+    final id = record['id'] as String;
+    if (!_histBox.containsKey(target)) {
+      await _histBox.put(target, {...record, 'id': target, 'contentId': id});
+    }
+    final current = _readTimeBox.get(target);
+    final previous = _legacyTimeAllocation(current);
+    final source = _readTimeBox.get(id);
+    final days = _readTimeRecord(source);
+    _subtractDays(days, _newReadTime(source));
+    // A retry can find both an existing allocation and newly migrated days.
+    // Add only old seconds that have not already been assigned to any media.
+    for (final key in _readTimeBox.keys) {
+      final allocation = _legacyTimeAllocation(_readTimeBox.get(key));
+      if (allocation != null && allocation.$1 == id) {
+        _subtractDays(days, allocation.$2);
+      }
+    }
+    final allocated = previous?.$1 == id ? previous!.$2 : <String, double>{};
+    for (final day in days.entries) {
+      allocated[day.key] = (allocated[day.key] ?? 0) + day.value;
+    }
+    await _readTimeBox.put(target, {
+      ..._readTimeStorage(current),
+      _legacyTimeKey: {'sourceId': id, 'days': allocated},
+    });
+  }
+
+  static (String, Map<String, double>)? _legacyTimeAllocation(dynamic raw) {
+    if (raw is! Map) return null;
+    final value = raw[_legacyTimeKey];
+    if (value is! Map ||
+        value['sourceId'] is! String ||
+        value['days'] is! Map) {
+      return null;
+    }
+    final id = value['sourceId'] as String;
+    return id.isEmpty ? null : (id, _readTimeRecord(value['days']));
+  }
+
+  static Map<String, dynamic> _readTimeStorage(dynamic raw) => {
+    ..._readTimeRecord(raw),
+    if (raw is Map && raw[_legacyTimeKey] is Map)
+      _legacyTimeKey: raw[_legacyTimeKey],
+    if (raw is Map && raw[_newTimeKey] is Map) _newTimeKey: raw[_newTimeKey],
+  };
+
+  static Map<String, double> _newReadTime(dynamic raw) =>
+      raw is Map ? _readTimeRecord(raw[_newTimeKey]) : {};
+
+  static void _addDays(
+    Map<String, Map<String, double>> totals,
+    String id,
+    Map<String, double> days,
+  ) {
+    if (days.isEmpty) return;
+    final target = totals.putIfAbsent(id, () => <String, double>{});
+    for (final day in days.entries) {
+      target[day.key] = (target[day.key] ?? 0) + day.value;
+    }
+  }
+
+  static void _subtractDays(
+    Map<String, double>? target,
+    Map<String, double> days,
+  ) {
+    if (target == null) return;
+    for (final day in days.entries) {
+      final remaining = (target[day.key] ?? 0) - day.value;
+      if (remaining > 0) {
+        target[day.key] = remaining;
+      } else {
+        target.remove(day.key);
+      }
+    }
   }
 
   static String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';

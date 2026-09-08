@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/library_store.dart';
+import '../services/media_history_store.dart';
 import '../widgets/reading_goal_dialog.dart';
 import 'detail_page.dart';
 
@@ -57,7 +58,7 @@ class _StatsPageState extends State<StatsPage> {
     // still shows up during the transition. Drops out once real data exists.
     final withRealData = readTimeMap.keys.toSet();
     for (final entry in history) {
-      final id = '${entry['bookId'] ?? entry['id']}';
+      final id = historyStatisticsId(entry);
       if (withRealData.contains(id)) continue;
       final day = _dayKey(
         DateTime.fromMillisecondsSinceEpoch(
@@ -222,19 +223,15 @@ class _StatsPageState extends State<StatsPage> {
       final totalMin = days.values.fold<double>(0, (a, b) => a + b) / 60;
       if (totalMin <= 0) return;
       final entry = history.firstWhere(
-        (e) => '${e['bookId'] ?? e['id']}' == bookId,
-        orElse: () => <String, dynamic>{
-          'title': bookId,
-          'bookId': bookId,
-          'id': bookId,
-        },
+        (e) => historyStatisticsId(e) == bookId,
+        orElse: () => _historyForStatisticsId(bookId),
       );
       byBook[bookId] = _RankItem(entry: entry, minutes: totalMin, index: 0);
     });
     // Fallback for history books without real data yet.
     final withRealData = readTimeMap.keys.toSet();
     for (final entry in history) {
-      final id = '${entry['bookId'] ?? entry['id']}';
+      final id = historyStatisticsId(entry);
       if (withRealData.contains(id)) continue;
       final existing = byBook[id];
       if (existing == null) {
@@ -261,7 +258,7 @@ class _StatsPageState extends State<StatsPage> {
       MaterialPageRoute(
         builder: (_) => DetailPage(
           item: MediaItem(
-            id: '${entry['id'] ?? ''}',
+            id: historyContentId(entry),
             title: '${entry['title'] ?? ''}',
             cover: '${entry['cover'] ?? ''}',
             author: '${entry['author'] ?? ''}',
@@ -372,6 +369,22 @@ class _StatsPageState extends State<StatsPage> {
   }
 }
 
+Map<String, dynamic> _historyForStatisticsId(String id) {
+  for (final kind in const {'audio': '听书', 'manga': '漫画'}.entries) {
+    final prefix = '${kind.key}:';
+    if (!id.startsWith(prefix) || id.length == prefix.length) continue;
+    final contentId = id.substring(prefix.length);
+    return {
+      'id': id,
+      'bookId': contentId,
+      'contentId': contentId,
+      'kind': kind.key,
+      'title': '${kind.value} $contentId',
+    };
+  }
+  return {'id': id, 'bookId': id, 'title': id};
+}
+
 // ---------- shared helpers ----------
 
 String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
@@ -412,7 +425,7 @@ double _bookMinutesOf(
   Map<String, dynamic> entry,
   Map<String, Map<String, double>> timeMap,
 ) {
-  final id = '${entry['bookId'] ?? entry['id']}';
+  final id = historyStatisticsId(entry);
   final days = timeMap[id];
   if (days != null && days.isNotEmpty) {
     return days.values.fold<double>(0, (a, b) => a + b) / 60;

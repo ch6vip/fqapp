@@ -4,6 +4,7 @@ import 'dart:isolate';
 
 import 'package:http/http.dart' as http;
 
+import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import 'backend_service.dart';
 import 'chapter_text_formatter.dart';
@@ -32,6 +33,7 @@ class ApiClient {
     http.Client? client,
     String? baseUrl,
     this._timeout = const Duration(seconds: 20),
+    this._comicTimeout = const Duration(seconds: 90),
   }) : _client = client ?? http.Client(),
        _base = baseUrl ?? BackendService.instance.baseUrl;
 
@@ -46,6 +48,10 @@ class ApiClient {
   /// healthy call returns in well under this; a hung child process or a stuck
   /// upstream request must not leave a page spinning forever.
   final Duration _timeout;
+
+  // Encrypted comic chapters are downloaded and decrypted by the backend
+  // before its JSON response is ready, so they need a separate finite limit.
+  final Duration _comicTimeout;
 
   final String _base;
 
@@ -107,8 +113,20 @@ class ApiClient {
   /// Search with JSON decoding and model parsing combined into one isolate
   /// hop. This avoids decoding a large response in one isolate and then
   /// copying the resulting map into a second isolate for normalization.
-  Future<List<SearchTab>> searchTabs(String query, {int page = 1}) async {
-    final r = await _get(_searchUrl(query, page));
+  Future<List<SearchTab>> searchTabs(
+    String query, {
+    int page = 1,
+    int? tabType,
+  }) async {
+    final url = tabType == null
+        ? _searchUrl(query, page)
+        : _url('/api/v1/search', {
+            'query': query,
+            'tab_type': '$tabType',
+            'offset': '${(page > 1 ? page - 1 : 0) * 10}',
+            'count': '10',
+          });
+    final r = await _get(url);
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
     return Isolate.run(
@@ -174,6 +192,75 @@ class ApiClient {
       _contentUrl(itemId, tab: tab, toneId: toneId, mode: mode),
     );
     return _decodeAsync(r);
+  }
+
+  /// With a book ID, resolve the real playback model directly. The speech
+  /// bridge often contains only subtitles and remains a legacy fallback for
+  /// callers that do not have a book ID.
+  Future<AudioSource> audioSource(
+    String itemId, {
+    String? toneId,
+    String? bookId,
+  }) async {
+    final usePlayback = bookId != null && bookId.trim().isNotEmpty;
+    final selectedTone = toneId == null || toneId.trim().isEmpty
+        ? (usePlayback ? '0' : '1')
+        : toneId.trim();
+    final response = await _get(
+      usePlayback
+          ? _url('/api/v1/audio/play', {
+              'book_id': bookId,
+              'item_ids': itemId,
+              'tone_id': selectedTone,
+            })
+          : _contentUrl(itemId, tab: '听书', toneId: selectedTone),
+    );
+    final statusCode = response.statusCode;
+    final bodyBytes = response.bodyBytes;
+    final baseUrl = _base;
+    return Isolate.run(() {
+      try {
+        return parseAudioSource(
+          _decodeEnvelope(statusCode, bodyBytes),
+          itemId: itemId,
+          toneId: selectedTone,
+          baseUrl: baseUrl,
+        );
+      } on FormatException catch (error) {
+        throw ApiException(error.message);
+      }
+    });
+  }
+
+  /// Voice IDs come from ordinary book detail, as in the existing web player.
+  /// Optional metadata failures must not prevent playing the default voice.
+  Future<List<AudioVoice>> audioVoices(String bookId) async {
+    try {
+      return parseAudioVoices(await detail(bookId, tab: '小说'));
+    } on Exception {
+      return defaultAudioVoices;
+    }
+  }
+
+  /// Returns comic pages in backend order with absolute HTTP(S) URLs.
+  Future<List<ComicImage>> comicImages(String itemId) async {
+    final response = await _get(
+      _contentUrl(itemId, tab: '漫画'),
+      timeout: _comicTimeout,
+    );
+    final statusCode = response.statusCode;
+    final bodyBytes = response.bodyBytes;
+    final baseUrl = _base;
+    return Isolate.run(() {
+      try {
+        return parseComicImages(
+          _decodeEnvelope(statusCode, bodyBytes),
+          baseUrl: baseUrl,
+        );
+      } on FormatException catch (error) {
+        throw ApiException(error.message);
+      }
+    });
   }
 
   /// Text-reader variant that combines JSON decode, nested content lookup and

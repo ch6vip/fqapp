@@ -26,6 +26,15 @@ void main() {
     });
     await api.searchTabs(special, page: 3);
     expect(sent.queryParameters['query'], special);
+    await api.searchTabs(special, page: 3, tabType: 8);
+    expect(sent.path, '/api/v1/search');
+    expect(sent.queryParameters, {
+      'query': special,
+      'tab_type': '8',
+      'offset': '20',
+      'count': '10',
+    });
+    expect(sent.fragment, isEmpty);
 
     for (final action in [api.detail, api.directory, api.directoryChapters]) {
       await action(special, tab: special);

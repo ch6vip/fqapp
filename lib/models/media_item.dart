@@ -253,7 +253,12 @@ class MediaItem {
       bd['type'],
       bd['book_type_name'],
     ]);
-    return _truthyAny(item, [
+    // The dedicated manga search (tab_type=8) uses this numeric genre pair.
+    // Genre 6 also contains ordinary publications, so it cannot identify a
+    // comic even when a copied search tab is labelled "漫画".
+    return _matchesGenre(item, 1, 110) ||
+        _matchesGenre(bd, 1, 110) ||
+        _truthyAny(item, [
           'manga_id',
           'comic_id',
           'manga_type',
@@ -284,7 +289,11 @@ class MediaItem {
       bd['type'],
       bd['book_type_name'],
     ]);
-    return _truthyAny(item, [
+    // Actual audio-book search cards can have only book_id and genre=4;
+    // their title and category need not mention audio or listening.
+    return _matchesGenre(item, 4) ||
+        _matchesGenre(bd, 4) ||
+        _truthyAny(item, [
           'album_id',
           'audio_book_id',
           'audio_id',
@@ -304,6 +313,18 @@ class MediaItem {
           'is_listen',
         ]) ||
         _audioRe.hasMatch(text);
+  }
+
+  static bool _matchesGenre(
+    Map<String, dynamic> item,
+    int genre, [
+    int? genreType,
+  ]) {
+    bool matches(dynamic value, int expected) =>
+        value == expected ||
+        (value is String && value.trim() == expected.toString());
+    return matches(item['genre'], genre) &&
+        (genreType == null || matches(item['genre_type'], genreType));
   }
 
   static bool _truthyAny(Map<String, dynamic> map, List<String> keys) {
@@ -513,7 +534,9 @@ List<Map<String, dynamic>>? _findDirectoryEntries(
 /// profile cards, related-query prompts and other UI-only cells; only nodes
 /// with a real media identity belong in the media grid.
 List<SearchTab> parseSearchTabs(Map<String, dynamic> payload) {
-  final data = payload['data'];
+  // /api/search wraps its result in data; /api/v1/search returns the
+  // upstream search_tabs object directly.
+  final data = payload['data'] ?? payload;
   if (data is! Map) return [];
   final tabs = data['search_tabs'];
   if (tabs is! List) return [];

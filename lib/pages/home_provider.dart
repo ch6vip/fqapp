@@ -122,10 +122,21 @@ class HomeNotifier extends Notifier<HomeState> {
 
   final HomepageLoader _homepageLoader;
   final SearchTabsLoader _searchLoader;
+  final SearchTabsLoader _mangaSearchLoader;
 
-  HomeNotifier({HomepageLoader? homepageLoader, SearchTabsLoader? searchLoader})
-    : _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
-      _searchLoader = searchLoader ?? ApiClient.instance.searchTabs;
+  HomeNotifier({
+    HomepageLoader? homepageLoader,
+    SearchTabsLoader? searchLoader,
+    SearchTabsLoader? mangaSearchLoader,
+  }) : _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
+       _searchLoader = searchLoader ?? ApiClient.instance.searchTabs,
+       _mangaSearchLoader = mangaSearchLoader ?? searchLoader ?? _searchManga;
+
+  static Future<List<SearchTab>> _searchManga(String query, {int page = 1}) =>
+      ApiClient.instance.searchTabs(query, page: page, tabType: 8);
+
+  Future<List<SearchTab>> _searchByType(String name, {int page = 1}) =>
+      (name == '漫画' ? _mangaSearchLoader : _searchLoader)(name, page: page);
 
   final Map<int, _TabFeed> _feeds = {};
   int _generation = 0;
@@ -240,7 +251,7 @@ class HomeNotifier extends Notifier<HomeState> {
     final kind = tabKinds[name]!;
     final tabType = tabTypes[name];
     if (tabType == null) {
-      final search = await _searchLoader(name);
+      final search = await _searchByType(name);
       final items = _searchItems(search, name, kind);
       return _FetchedFeed(
         items: items,
@@ -273,7 +284,7 @@ class HomeNotifier extends Notifier<HomeState> {
       // tab usable.
     }
 
-    final search = await _searchLoader(name);
+    final search = await _searchByType(name);
     final items = _searchItems(search, name, kind);
     return _FetchedFeed(
       items: items,
@@ -290,7 +301,7 @@ class HomeNotifier extends Notifier<HomeState> {
   Future<_FetchedFeed> _loadAllInitial() async {
     final recommendationFuture = _attempt(_loadInitial(1));
     final videoFuture = _attempt(_searchLoader('短剧'));
-    final mangaFuture = _attempt(_searchLoader('漫画'));
+    final mangaFuture = _attempt(_mangaSearchLoader('漫画'));
     final audioFuture = _attempt(_searchLoader('听书'));
 
     final recommendation = await recommendationFuture;
@@ -367,7 +378,7 @@ class HomeNotifier extends Notifier<HomeState> {
     }
 
     final pageNumber = feed.searchPage + 1;
-    final searchTabs = await _searchLoader(name, page: pageNumber);
+    final searchTabs = await _searchByType(name, page: pageNumber);
     final items = _searchItems(searchTabs, name, kind);
     return _FetchedFeed(
       items: items,
@@ -395,7 +406,7 @@ class HomeNotifier extends Notifier<HomeState> {
     final mangaPage = (feed.searchPages['漫画'] ?? 0) + 1;
     final audioPage = (feed.searchPages['听书'] ?? 0) + 1;
     final videoFuture = _attempt(_searchLoader('短剧', page: videoPage));
-    final mangaFuture = _attempt(_searchLoader('漫画', page: mangaPage));
+    final mangaFuture = _attempt(_mangaSearchLoader('漫画', page: mangaPage));
     final audioFuture = _attempt(_searchLoader('听书', page: audioPage));
 
     final recommendation = await recommendationFuture;

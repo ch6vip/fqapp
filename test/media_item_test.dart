@@ -268,6 +268,134 @@ void main() {
     expect(item.id, 'audio-1');
   });
 
+  test('recognizes genre 4 audio books without an audio label or ID field', () {
+    for (final genre in [4, '4']) {
+      final raw = {
+        'book_id': '7239243941252598845',
+        'book_name': '全球冰封：我打造了末日安全屋',
+        'category': '科幻末世',
+        'genre': genre,
+        'genre_type': '1',
+        'book_type': '1',
+        'is_ebook': '0',
+      };
+      for (final item in [
+        MediaItem.fromRaw(raw),
+        MediaItem.fromRaw({'book_data': raw}),
+      ]) {
+        expect(item.kind, 'audio');
+        expect(item.id, '7239243941252598845');
+        expect(item.title, '全球冰封：我打造了末日安全屋');
+      }
+    }
+  });
+
+  test(
+    'parses the real manga genre pair in raw and wrapped search results',
+    () {
+      for (final codes in [
+        [1, 110],
+        ['1', '110'],
+      ]) {
+        final raw = {
+          'code': 0,
+          'search_tabs': [
+            {
+              'title': '漫画',
+              'tab_type': 8,
+              'data': [
+                {
+                  'book_data': [
+                    {
+                      'book_id': '7113804239352105991',
+                      'book_name': '我在精神病院学斩神',
+                      'category': '都市脑洞',
+                      'genre': codes[0],
+                      'genre_type': codes[1],
+                      'is_ebook': '1',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+        for (final payload in [
+          raw,
+          {'code': 200, 'data': raw},
+        ]) {
+          final tab = parseSearchTabs(payload).single;
+          expect(tab.title, '漫画');
+          expect(tab.items.single.kind, 'manga');
+          expect(tab.items.single.id, '7113804239352105991');
+          expect(tab.items.single.title, '我在精神病院学斩神');
+        }
+      }
+    },
+  );
+
+  test('publication genres and comic-themed novel titles stay books', () {
+    for (final raw in [
+      {
+        'book_id': '7050043210055289869',
+        'book_name': '最后一个道士（全七册）',
+        'category': '悬疑脑洞',
+        'genre': '6',
+        'genre_type': '160',
+      },
+      {
+        'book_id': '7657916022938143768',
+        'book_name': '身为漫画路人的我也要拯救世界吗',
+        'category': '现言脑洞',
+        'genre': '0',
+        'genre_type': '0',
+      },
+      {
+        'book_id': '6993297551990459399',
+        // Some publications contain image chapters, but these search fields
+        // alone do not distinguish them from prose publications.
+        'book_name': '罗小黑战记1（同名动画原著）',
+        'category': '国内影视',
+        'genre': '6',
+        'genre_type': '160',
+      },
+    ]) {
+      final tab = parseSearchTabs({
+        'data': {
+          'search_tabs': [
+            {
+              // The backend fills empty tabs with unfiltered general hits.
+              'title': '漫画',
+              'tab_type': 8,
+              'data': [
+                {'book_data': raw},
+              ],
+            },
+          ],
+        },
+      }).single;
+      expect(tab.items.single.kind, 'book');
+      expect(tab.items.single.id, raw['book_id']);
+    }
+  });
+
+  test('numeric media genres preserve explicit kinds and video identities', () {
+    final saved = MediaItem.fromRaw({
+      'book_id': 'saved-book',
+      'kind': 'book',
+      'genre': '4',
+      'genre_type': '1',
+    });
+    expect(saved.kind, 'book');
+    final video = MediaItem.fromRaw({
+      'video_id': 'video-1',
+      'genre': '1',
+      'genre_type': '110',
+    });
+    expect(video.kind, 'video');
+    expect(video.id, 'video-1');
+  });
+
   test('preserves every work in a grouped book search cell', () {
     final tabs = parseSearchTabs({
       'data': {

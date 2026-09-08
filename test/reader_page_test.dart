@@ -131,12 +131,12 @@ void main() {
     ) async {
       final store = _FakeReaderStore()
         ..failHistoryRead = operation == 'read history'
-        ..failHistoryWrite = operation == 'add history'
-        ..failProgressWrite = operation == 'update progress';
+        ..failHistoryWrite = operation == 'add history';
       await tester.pumpWidget(_readerApp(readerStore: store));
       await tester.pumpAndSettle();
       expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
       expect(find.text('重试'), findsNothing);
+      if (operation == 'update progress') store.failHistoryWrite = true;
       await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
@@ -169,6 +169,31 @@ void main() {
     expect(store.entry?['progress'], closeTo(1 / 9, .001));
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'novel reading never interprets legacy audio seconds as scroll position',
+    (tester) async {
+      final store = _FakeReaderStore()
+        ..entry = {
+          'id': 'reader-test',
+          'kind': 'audio',
+          'chapterId': 'chapter-1',
+          'episode': 0,
+          'position': 300.0,
+          'maxScroll': 900.0,
+        };
+      await tester.pumpWidget(
+        _readerApp(readerStore: store, chapterLoader: _longChapterLoader),
+      );
+      await tester.pumpAndSettle();
+      final controller = tester
+          .widget<ListView>(find.byType(ListView))
+          .controller!;
+      expect(controller.offset, 0);
+      expect(store.entry?['kind'], 'book');
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('a delayed history write cannot overwrite later exit progress', (
     tester,
@@ -205,10 +230,10 @@ void main() {
         .widget<ListView>(find.byType(ListView))
         .controller!;
     final exitWrite = Completer<void>();
-    store.progressWriteDelay = exitWrite.future;
+    store.historyWriteDelay = exitWrite.future;
     controller.jumpTo(300);
     await tester.pumpWidget(const SizedBox.shrink());
-    store.progressWriteDelay = null;
+    store.historyWriteDelay = null;
 
     await tester.pumpWidget(
       _readerApp(readerStore: store, chapterLoader: _longChapterLoader),
@@ -545,9 +570,7 @@ class _FakeReaderStore implements ReaderStore {
   double readSeconds = 0;
   bool failHistoryRead = false;
   bool failHistoryWrite = false;
-  bool failProgressWrite = false;
   Future<void>? historyWriteDelay;
-  Future<void>? progressWriteDelay;
 
   @override
   Future<Map<String, dynamic>?> historyEntry(String id) async {
@@ -571,8 +594,6 @@ class _FakeReaderStore implements ReaderStore {
     double? position,
     double? maxScroll,
   }) async {
-    if (failProgressWrite) throw StateError('progress write failed');
-    await progressWriteDelay;
     if (entry == null) return;
     entry = {
       ...entry!,

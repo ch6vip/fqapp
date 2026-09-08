@@ -165,6 +165,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       Map<String, dynamic>? saved;
       try {
         saved = await _history.load(widget.bookId);
+        if (saved?['kind'] != null && saved?['kind'] != 'book') saved = null;
       } catch (_) {
         // History storage must not prevent an available chapter from opening.
       }

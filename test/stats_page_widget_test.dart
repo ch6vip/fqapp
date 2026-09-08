@@ -6,6 +6,7 @@ import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/mine_page.dart';
+import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/stats_page.dart';
 import 'package:fqapp/services/library_store.dart';
 
@@ -92,4 +93,64 @@ void main() {
     expect(find.textContaining('/ 60 分钟'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  for (final media in const {'audio': '听书', 'manga': '漫画'}.entries) {
+    testWidgets(
+      'retained ${media.key} statistics reopen the original content ID',
+      (tester) async {
+        await tester.runAsync(
+          () => LibraryStore.instance.accumulateReadTime(
+            '${media.key}:shared',
+            media.key,
+            60,
+          ),
+        );
+        final observer = _StatsRouteObserver();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [observer],
+            home: const Scaffold(body: StatsPage()),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final context = tester.element(find.byType(StatsPage));
+        final showAll = find.widgetWithText(TextButton, '查看全部');
+        await tester.scrollUntilVisible(
+          showAll,
+          400,
+          scrollable: find
+              .descendant(
+                of: find.byType(StatsPage),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(showAll);
+        await tester.pumpAndSettle();
+        await tester.tap(showAll.hitTestable());
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(SimpleDialog),
+            matching: find.text('${media.value} shared'),
+          ),
+        );
+        final page =
+            (observer.lastRoute! as MaterialPageRoute).builder(context)
+                as DetailPage;
+        expect(page.item.id, 'shared');
+        expect(page.item.kind, media.key);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+}
+
+class _StatsRouteObserver extends NavigatorObserver {
+  Route<dynamic>? lastRoute;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      lastRoute = route;
 }

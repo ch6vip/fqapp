@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/media_item.dart';
 import '../services/library_store.dart';
+import '../services/media_history_store.dart';
 import '../widgets/bookshelf_card.dart';
 import 'detail_page.dart';
 import 'cached_books_page.dart';
@@ -183,7 +184,7 @@ class _LibraryPageState extends State<LibraryPage> {
 
   MediaItem _historyItem(Map<String, dynamic> history) {
     return MediaItem(
-      id: history['id']?.toString() ?? '',
+      id: historyContentId(history),
       title: history['title']?.toString() ?? '未知作品',
       cover: history['cover']?.toString() ?? '',
       author: history['author']?.toString() ?? '',

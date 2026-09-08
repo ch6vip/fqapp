@@ -17,18 +17,10 @@ class ReaderHistory {
     final previous = _writes[store] ?? Future<void>.value();
     final write = previous.then((_) async {
       try {
-        if (createHistory) {
-          await store.addHistory(snapshot);
-        } else {
-          await store.updateProgress(
-            snapshot['id'] as String,
-            snapshot['episode'] as int,
-            snapshot['progress'] as double,
-            chapterId: snapshot['chapterId'] as String,
-            position: snapshot['position'] as double,
-            maxScroll: snapshot['maxScroll'] as double,
-          );
-        }
+        // Every caller already supplies the full snapshot. Retrying it also
+        // retries a failed first insert; a partial update could otherwise
+        // overwrite a legacy record belonging to another media kind.
+        await store.addHistory(snapshot);
       } catch (_) {
         // Storage errors must not interrupt reading or poison later saves.
       }

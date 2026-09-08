@@ -8,6 +8,50 @@ import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 
 void main() {
+  for (final tabIndex in [0, 3]) {
+    test(
+      'tab $tabIndex loads and pages actual manga results independently',
+      () async {
+        final requests = <int>[];
+        final provider = NotifierProvider<HomeNotifier, HomeState>(
+          () => HomeNotifier(
+            homepageLoader:
+                ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                    const HomepagePage(
+                      items: [],
+                      nextOffset: null,
+                      sessionId: null,
+                    ),
+            searchLoader: (query, {int page = 1}) async {
+              expect(query, isNot('漫画'));
+              return [];
+            },
+            mangaSearchLoader: (query, {int page = 1}) async {
+              expect(query, '漫画');
+              requests.add(page);
+              return [
+                SearchTab(
+                  title: '漫画',
+                  items: [_item('manga-$page', kind: 'manga')],
+                ),
+              ];
+            },
+          ),
+        );
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(provider.notifier);
+        await _loadTab(notifier, tabIndex);
+        await notifier.loadMore();
+        expect(requests, [1, 2]);
+        expect(container.read(provider).items.map((item) => item.id), [
+          'manga-1',
+          'manga-2',
+        ]);
+      },
+    );
+  }
+
   for (final tabIndex in [0, 1]) {
     final tabName = HomeNotifier.tabs[tabIndex];
     for (final initiallyEmpty in [false, true]) {

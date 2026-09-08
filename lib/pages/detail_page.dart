@@ -5,10 +5,14 @@ import '../models/media_item.dart';
 import '../models/media_description.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
+import '../services/audio_history.dart';
 import '../services/library_store.dart';
+import '../services/media_history_store.dart';
 import '../services/player_history.dart';
 import '../services/reader_history.dart';
 import '../widgets/media_card.dart';
+import 'audio_page.dart';
+import 'comic_reader_page.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
 
@@ -59,10 +63,17 @@ class _DetailPageState extends State<DetailPage> {
   int _openGeneration = 0;
   bool _opening = false;
 
-  bool get _supported =>
-      widget.item.kind == 'book' || widget.item.kind == 'video';
+  bool get _supported => kindLabels.containsKey(widget.item.kind);
   bool get _isVideo => widget.item.kind == 'video';
+  bool get _isAudio => widget.item.kind == 'audio';
+  bool get _isManga => widget.item.kind == 'manga';
   String get _contentId => widget.item.seriesId ?? widget.item.id;
+  IconData get _mediaIcon => switch (widget.item.kind) {
+    'video' => Icons.movie_outlined,
+    'audio' => Icons.headphones,
+    'manga' => Icons.auto_stories_outlined,
+    _ => Icons.book,
+  };
 
   @override
   void initState() {
@@ -83,9 +94,6 @@ class _DetailPageState extends State<DetailPage> {
       });
     }
 
-    // Manga/audio readers are intentionally not advertised in V0.1. Do not
-    // call incompatible detail endpoints and then show a misleading novel
-    // reader when the user taps them.
     if (!_supported) {
       if (!mounted || generation != _loadGeneration) return;
       setState(() => _loading = false);
@@ -193,15 +201,9 @@ class _DetailPageState extends State<DetailPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            widget.item.kind == 'manga' ? Icons.menu_book : Icons.headphones,
-            size: 56,
-            color: Colors.grey,
-          ),
+          const Icon(Icons.article_outlined, size: 56, color: Colors.grey),
           const SizedBox(height: 12),
-          Text('${kindLabels[widget.item.kind] ?? '该类型'}阅读器正在开发中'),
-          const SizedBox(height: 8),
-          const Text('当前版本先提供小说阅读和短剧播放。', style: TextStyle(color: Colors.grey)),
+          const Text('暂不支持此内容类型'),
         ],
       ),
     ),
@@ -209,7 +211,11 @@ class _DetailPageState extends State<DetailPage> {
 
   Widget _buildContent() {
     final desc = extractMediaDescription(_detail);
-    final countLabel = _isVideo ? '集' : '章';
+    final countLabel = _isVideo
+        ? '集'
+        : _isManga
+        ? '话'
+        : '章';
     final gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: 4,
       childAspectRatio: 2.2,
@@ -356,10 +362,7 @@ class _DetailPageState extends State<DetailPage> {
       width: 100,
       height: 140,
       color: scheme.surfaceContainerHighest,
-      child: Icon(
-        _isVideo ? Icons.movie_outlined : Icons.book,
-        color: scheme.onSurfaceVariant,
-      ),
+      child: Icon(_mediaIcon, color: scheme.onSurfaceVariant),
     );
     if (widget.item.cover.isEmpty) {
       return ClipRRect(borderRadius: BorderRadius.circular(8), child: fallback);
@@ -404,8 +407,20 @@ class _DetailPageState extends State<DetailPage> {
       child: SizedBox(
         width: double.infinity,
         child: FilledButton.icon(
-          icon: Icon(_isVideo ? Icons.play_arrow : Icons.menu_book),
-          label: Text(_isVideo ? '播放 / 续看' : '阅读 / 续读'),
+          icon: Icon(
+            _isAudio
+                ? Icons.headphones
+                : _isVideo
+                ? Icons.play_arrow
+                : Icons.menu_book,
+          ),
+          label: Text(
+            _isAudio
+                ? '播放 / 续听'
+                : _isVideo
+                ? '播放 / 续看'
+                : '阅读 / 续读',
+          ),
           onPressed: _opening ? null : _openLastPosition,
         ),
       ),
@@ -420,17 +435,24 @@ class _DetailPageState extends State<DetailPage> {
       final store = widget.readerStore ?? LibraryStore.instance;
       Map<String, dynamic>? saved;
       try {
-        saved = _isVideo
-            ? await PlayerHistory(store).load(_contentId)
-            : await ReaderHistory(store).load(_contentId);
+        saved = switch (widget.item.kind) {
+          'video' => await PlayerHistory(store).load(_contentId),
+          'audio' => await AudioHistory(store).load(_contentId),
+          'manga' => await ReaderHistory(
+            scopedHistoryStore(store, 'manga'),
+          ).load(_contentId),
+          _ => await ReaderHistory(store).load(_contentId),
+        };
+        if (saved?['kind'] != null && saved?['kind'] != widget.item.kind) {
+          saved = null;
+        }
       } catch (_) {
         // A missing resume record must not prevent reading available content.
       }
       if (!mounted || generation != _openGeneration || _allChapters.isEmpty) {
         return;
       }
-      // Books also save a chapter ID. Prefer it to a stale array index when
-      // the publisher inserts or reorders chapters.
+      // Follow the same chapter when the publisher inserts or reorders it.
       final resumeRecord = !_isVideo && saved != null
           ? {
               ...saved,
@@ -438,7 +460,11 @@ class _DetailPageState extends State<DetailPage> {
                 'chapterId': saved['chapterId'].toString(),
             }
           : saved;
-      final index = resumeEpisodeIndex(resumeRecord, _allChapters) ?? 0;
+      final index =
+          (_isAudio
+              ? resumeAudioChapterIndex(resumeRecord, _allChapters)
+              : resumeEpisodeIndex(resumeRecord, _allChapters)) ??
+          0;
       _openChapter(_allChapters[index]);
     } finally {
       if (mounted && generation == _openGeneration) {
@@ -452,37 +478,42 @@ class _DetailPageState extends State<DetailPage> {
     ++_openGeneration;
     if (_opening) setState(() => _opening = false);
     final index = _allChapters.indexWhere((c) => c.itemId == chapter.itemId);
-    if (_isVideo) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PlayerPage(
-            bookId: _contentId,
-            title: widget.item.title,
-            cover: widget.item.cover,
-            historyStore: widget.readerStore,
-            eps: _allChapters,
-            description: _detail == null
-                ? null
-                : extractMediaDescription(_detail),
-            startIndex: index < 0 ? 0 : index,
-          ),
-        ),
-      );
-    } else {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ReaderPage(
-            bookId: _contentId,
-            title: widget.item.title,
-            cover: widget.item.cover,
-            readerStore: widget.readerStore,
-            chapters: _allChapters,
-            startIndex: index < 0 ? 0 : index,
-          ),
-        ),
-      );
-    }
+    final startIndex = index < 0 ? 0 : index;
+    final page = switch (widget.item.kind) {
+      'video' => PlayerPage(
+        bookId: _contentId,
+        title: widget.item.title,
+        cover: widget.item.cover,
+        historyStore: widget.readerStore,
+        eps: _allChapters,
+        description: _detail == null ? null : extractMediaDescription(_detail),
+        startIndex: startIndex,
+      ),
+      'audio' => AudioPage(
+        bookId: _contentId,
+        title: widget.item.title,
+        cover: widget.item.cover,
+        historyStore: widget.readerStore,
+        chapters: _allChapters,
+        startIndex: startIndex,
+      ),
+      'manga' => ComicReaderPage(
+        bookId: _contentId,
+        title: widget.item.title,
+        cover: widget.item.cover,
+        readerStore: widget.readerStore,
+        chapters: _allChapters,
+        startIndex: startIndex,
+      ),
+      _ => ReaderPage(
+        bookId: _contentId,
+        title: widget.item.title,
+        cover: widget.item.cover,
+        readerStore: widget.readerStore,
+        chapters: _allChapters,
+        startIndex: startIndex,
+      ),
+    };
+    Navigator.push(context, MaterialPageRoute<void>(builder: (_) => page));
   }
 }
