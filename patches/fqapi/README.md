@@ -9,13 +9,15 @@
 
 ```
 b2379115307295651e2e7b09c7ea74e438aa4b46   (ch6vip/ 分支 fqapp-android)
+b237911 → ... → f667122                      (后续提交逐个更新 LEGACY_COMMIT)
 ```
 
+当前固定提交：`f66712208c305c1c24b98cb4231b9601f7514ea1`（短剧系列详情／演员表）。
 本地重建同样从该提交构建：
 
 ```powershell
 git -C ../ fetch origin
-git -C ../ checkout b2379115307295651e2e7b09c7ea74e438aa4b46
+git -C ../ checkout f66712208c305c1c24b98cb4231b9601f7514ea1
 .\scripts\build_backend.ps1 -Jni
 ```
 
@@ -34,6 +36,9 @@ git -C ../ checkout b2379115307295651e2e7b09c7ea74e438aa4b46
   `/api/v1/chapters/{id}/paragraphs/{n}/reviews` 路由；评论列表端点补上
   `group_id`/`group_type`/`comment_source`/`comment_type`/`server_channel`/
   `para_index`/`item_version`/`insert_comment_ids`，默认值与原书评请求逐字段一致。
+- 短剧系列详情（演员表）走播放器域的 `/novel/player/video_detail/v1/`，
+  暴露为 `/api/v1/series/{id}`；`biz_param.video_id_type` 必须为 1，且不传
+  `video_platform`。
 
 ## 退休做了什么
 

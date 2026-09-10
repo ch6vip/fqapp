@@ -8,6 +8,7 @@ import '../models/book_comment.dart';
 import '../models/book_detail.dart';
 import '../models/media_item.dart';
 import '../models/media_description.dart';
+import '../models/series_detail.dart';
 import '../services/api_client.dart';
 import '../services/audio_history.dart';
 import '../services/chapter_cache_store.dart';
@@ -79,6 +80,10 @@ class DetailPage extends StatefulWidget {
   final Future<List<List<Chapter>>> Function(String bookId, {String tab})?
   directoryLoader;
   final DetailExtrasLoader? extrasLoader;
+
+  /// Series detail (cast list) for short dramas and manju. Only consulted for
+  /// video kinds; other content has no cast.
+  final Future<SeriesDetail> Function(String seriesId)? seriesLoader;
   final ReaderStore? readerStore;
 
   const DetailPage({
@@ -87,6 +92,7 @@ class DetailPage extends StatefulWidget {
     this.detailLoader,
     this.directoryLoader,
     this.extrasLoader,
+    this.seriesLoader,
     this.readerStore,
   });
 
@@ -97,6 +103,7 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   Map<String, dynamic>? _detail;
   BookDetail? _bookDetail;
+  SeriesDetail _series = SeriesDetail.empty;
   BookCommentPage _comments = const BookCommentPage();
   List<Chapter> _allChapters = [];
   final _scroll = ScrollController();
@@ -157,6 +164,7 @@ class _DetailPageState extends State<DetailPage> {
         _error = null;
         _detail = null;
         _bookDetail = null;
+        _series = SeriesDetail.empty;
         _comments = const BookCommentPage();
         _allChapters = const [];
         _opening = false;
@@ -185,6 +193,11 @@ class _DetailPageState extends State<DetailPage> {
     );
     // Reviews are cosmetic: they load alongside and never gate the page.
     final extrasFuture = _capture(_loadExtras(_contentId));
+    // Short-drama cast lives on a series endpoint the reading API does not
+    // expose, so it is fetched separately and only for video kinds.
+    final seriesFuture = _isVideo
+        ? _capture((widget.seriesLoader ?? _defaultSeries)(_contentId))
+        : null;
     final detailResult = await detailFuture;
     final directoryResult = await directoryFuture;
     if (!mounted || generation != _loadGeneration) return;
@@ -233,6 +246,13 @@ class _DetailPageState extends State<DetailPage> {
     if (extras.value case final DetailExtras loaded) {
       setState(() => _comments = loaded.comments);
     }
+
+    if (seriesFuture == null) return;
+    final series = await seriesFuture;
+    if (!mounted || generation != _loadGeneration) return;
+    if (series.value case final SeriesDetail loaded) {
+      setState(() => _series = loaded);
+    }
   }
 
   /// Resolves the optional review payload.
@@ -248,6 +268,15 @@ class _DetailPageState extends State<DetailPage> {
       return Future.value(const DetailExtras());
     }
     return _defaultExtras(bookId);
+  }
+
+  /// Same offline rule as [_loadExtras]: an injected loader means the caller
+  /// drives its own data.
+  Future<SeriesDetail> _defaultSeries(String seriesId) {
+    if (widget.detailLoader != null || widget.directoryLoader != null) {
+      return Future.value(SeriesDetail.empty);
+    }
+    return ApiClient.instance.seriesDetail(seriesId);
   }
 
   @override
@@ -419,6 +448,10 @@ class _DetailPageState extends State<DetailPage> {
         ],
         DetailStatsRow(stats: stats),
         const SizedBox(height: 20),
+        if (_series.cast.isNotEmpty) ...[
+          DetailCastRow(cast: _series.cast),
+          const SizedBox(height: 20),
+        ],
         DetailDescription(text: extractMediaDescription(_detail)),
         if (detail != null && detail.tags.isNotEmpty) ...[
           const SizedBox(height: 18),

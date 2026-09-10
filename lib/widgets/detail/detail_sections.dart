@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/book_detail.dart';
+import '../../models/series_detail.dart';
 import '../home/home_design.dart';
 
 /// Author row: avatar, pen name, level badge, tagline and follow action.
@@ -382,4 +383,154 @@ class DetailDirectoryRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Horizontal cast list for a short drama: avatar, actor name and role.
+///
+/// Renders nothing when the series has no cast, so the section disappears
+/// rather than leaving an empty heading.
+class DetailCastRow extends StatelessWidget {
+  final List<CastMember> cast;
+
+  const DetailCastRow({super.key, required this.cast});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    if (cast.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              '演员表',
+              style: TextStyle(
+                color: palette.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${cast.length} 位',
+              style: TextStyle(color: palette.muted, fontSize: 12),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 118,
+          child: ListView.separated(
+            key: const Key('detail_cast_row'),
+            scrollDirection: Axis.horizontal,
+            itemCount: cast.length,
+            separatorBuilder: (context, _) => const SizedBox(width: 14),
+            itemBuilder: (context, index) =>
+                _CastTile(member: cast[index], palette: palette),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CastTile extends StatelessWidget {
+  final CastMember member;
+  final HomePalette palette;
+
+  const _CastTile({required this.member, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      key: ValueKey(
+        'detail_cast_${member.id.isEmpty ? member.actor : member.id}',
+      ),
+      width: 64,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          ClipOval(
+            child: SizedBox.square(
+              dimension: 56,
+              child: _CastAvatar(member: member, palette: palette),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            member.actor.isEmpty ? '未知' : member.actor,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: palette.ink,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.25,
+            ),
+          ),
+          if (member.role.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              '饰 ${member.role}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: palette.muted,
+                fontSize: 10.5,
+                height: 1.25,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Cast avatars are served as HEIC, which some decoders reject; fall back to the
+/// performer's initial so a tile is never blank.
+class _CastAvatar extends StatelessWidget {
+  final CastMember member;
+  final HomePalette palette;
+
+  const _CastAvatar({required this.member, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = _InitialAvatar(member: member, palette: palette);
+    if (member.avatar.isEmpty) return fallback;
+    return Image.network(
+      member.avatar,
+      fit: BoxFit.cover,
+      errorBuilder: (context, _, _) => fallback,
+      loadingBuilder: (context, child, progress) =>
+          progress == null ? child : fallback,
+    );
+  }
+}
+
+class _InitialAvatar extends StatelessWidget {
+  final CastMember member;
+  final HomePalette palette;
+
+  const _InitialAvatar({required this.member, required this.palette});
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: palette.soft,
+    child: Center(
+      child: Text(
+        member.initial,
+        style: TextStyle(
+          color: palette.muted,
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
+  );
 }

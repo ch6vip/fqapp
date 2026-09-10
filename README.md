@@ -211,8 +211,8 @@ NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 r
 每次构建先运行 Flutter 静态分析与完整单元/组件测试，再生成并校验 APK。
 
 `` 是私有仓库，CI 固定读取专用 `fqapp-android` 分支上的已提交版本
-[`b237911`](https://github.com/ch6vip//commit/b2379115307295651e2e7b09c7ea74e438aa4b46) 并原样构建，不打任何补丁。
-该提交包含小说图文解密契约、短剧剧集标题索引，以及章评／段评后端；这些改动曾以
+[`f667122`](https://github.com/ch6vip//commit/f66712208c305c1c24b98cb4231b9601f7514ea1) 并原样构建，不打任何补丁。
+该提交包含小说图文解密契约、短剧剧集标题索引、章评／段评后端，以及短剧系列详情（演员表）；这些改动曾以
 [配套补丁](patches//README.md) 的形式随 App 保存，现已并入后端历史并退休。
 完整 Go 测试通过后再构建 JNI，构建报告记录该固定提交。
 本地其它未提交的后端改动不进入云端构建。
@@ -328,6 +328,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 | GET | `/api/v1/recommend/homepage?tab_type=&offset=&session_id=` | 首页分类推荐及游标分页 |
 | GET | `/api/v1/search?query=&tab_type=&offset=&count=10` | 搜索页按分类请求：综合 `1`、短剧/漫剧 `11`、漫画 `8`、听书 `2`，使用返回的游标 |
 | GET | `/api/v1/books/{id}/detail` | 按作品 ID 精确查询名称、封面和类型；详情不可用时使用同一路径的 `/directory` 中的 `book_info`。详情页的全部富元数据（分类/完结状态/字数/在读人数/评分/标签/作者等级/榜单）都取自这一份响应，不额外发请求 |
+| GET | `/api/v1/series/{id}` | 短剧／漫剧系列详情：标题、简介、集数、播放量、分类，以及**演员表**（`data.video_data.celebrities`，含 `nickname`/`role_name`/`avatar`）。也可经 `/api/v1/videos/{id}/detail` 访问。阅读类接口不含演员字段 |
 | GET | `/api/v1/books/{id}/comments` | 书评列表与页级计数（`comment_cnt`、`score_cnt`、`context`）；详情页书评区与听书页「书评」使用 |
 | GET | `/api/v1/books/{id}/related` | 关联作品（`book_data` 原著小说 / `video_data` 改编短剧）；听书页横向卡片使用 |
 | GET | `/api/v1/books/{id}/tones` | 智能朗读音色（**小写键** `id`/`title`/`description`/`badge`/`is_multi_tone`）与真人讲书 `audio_tones`（用 `abook_id`）；听书页音色卡片使用 |
@@ -351,7 +352,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 **响应信封**：客户端接受 `code=200`（Web 桥接）或 `code=0`（上游兼容接口）的成功响应；
 其他显式状态码或 `success=false` 视为错误。
 
-**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持需要同步 `/internal/endpoints/base.go` 的解密修复，再运行 `scripts/build_backend.ps1 -Jni` 构建 Android 后端；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。旧后端没有解密成功标记时，客户端回退文字。该修复现已在 CI 固定的 `` 提交 [`b237911`](patches//README.md) 中，本地从该提交构建即可，不能复用旧 `liblegacy.so`。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
+**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持需要同步 `/internal/endpoints/base.go` 的解密修复，再运行 `scripts/build_backend.ps1 -Jni` 构建 Android 后端；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。旧后端没有解密成功标记时，客户端回退文字。该修复现已在 CI 固定的 `` 提交 [`f667122`](patches//README.md) 中，本地从该提交构建即可，不能复用旧 `liblegacy.so`。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
 
 **搜索分类与分页**：搜索页使用 `/api/v1/search` 请求所选分类，在拆分漫剧之前先选取对应的上游 tab，
 再按条目实际 `kind` 筛选。综合保留全部作品；短剧、漫剧、漫画、听书分别只展示 `video`、`manju`、`manga`、`audio`。
@@ -420,6 +421,8 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 - 左上封面（3:4）+ 右侧标题、`分类 · 完结状态 · 字数`、「番茄原创」徽章，标题始终完整换行不截断
 - 作者行：头像、笔名、等级徽章（上游 `user_title_infos` 的「作家Lv.5」）与关注按钮
 - 数据三栏：榜单、正在阅读人数、评分（含五星），按可用字段自适应列数
+- 演员表：短剧／漫剧显示横向演员卡片（头像、姓名、饰演角色）。数据来自 `/api/v1/series/{id}`；
+  该接口失败或没有演员时不显示该区块，不影响播放。头像上游为 HEIC，解码失败时降级为姓名首字
 - 书籍简介三行折叠可展开，题材标签，`查看目录` 行与 3 章目录预览
 - 书评区：评分卡 + 评论列表（0-10 分转五星、相对时间、在读时长、点赞与回复数）
 - 底部：听书 / 下载 / 阅读（播放、续看）三键；听书与下载仅小说显示

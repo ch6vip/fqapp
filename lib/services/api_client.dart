@@ -11,6 +11,7 @@ import '../models/chapter_ideas.dart';
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../models/media_id.dart';
+import '../models/series_detail.dart';
 import 'backend_service.dart';
 import 'chapter_text_formatter.dart';
 
@@ -468,6 +469,26 @@ class ApiClient {
     return Isolate.run(
       () => parseParagraphComments(_decodeEnvelope(status, bytes)),
     );
+  }
+
+  /// Short-drama series detail, including the cast list.
+  ///
+  /// The reading-API detail and directory responses carry no cast data, so the
+  /// actor row needs this call. A failure yields [SeriesDetail.empty] — the row
+  /// is decoration and must not break a playable series.
+  Future<SeriesDetail> seriesDetail(String seriesId) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/series/${Uri.encodeComponent(seriesId)}', {}),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return Isolate.run(
+        () => SeriesDetail.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return SeriesDetail.empty;
+    }
   }
 
   /// Returns comic pages in backend order with absolute HTTP(S) URLs.
