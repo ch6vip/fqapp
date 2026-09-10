@@ -8,6 +8,7 @@ on:
       - 'android/**'
       - 'native/**'
       - 'assets/**'
+      - 'patches//**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'analysis_options.yaml'
@@ -28,7 +29,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Committed Android/JNI integration on ch6vip/'s fqapp-android branch.
+  # Reproducible backend = this published base + patches//app-compat.patch.
+  # Note: contract and patch retirement rules are documented in
+  # .agents/notes/implemented/bug-fix/2026-09-10-reader-illustrations.md
   LEGACY_COMMIT: '40481102257f9405c8086c614b50796873091a4e'
   FLUTTER_VERSION: '3.44.6'
   GO_VERSION: '1.26.7'
@@ -66,6 +69,12 @@ jobs:
           ssh-key: ${{ secrets.LEGACY_READONLY_SSH_KEY }}
           persist-credentials: false
 
+      - name: Apply reviewed app backend compatibility fixes
+        run: |
+          test "$(git -C ../ rev-parse HEAD)" = "$LEGACY_COMMIT"
+          git -C ../ apply --check "$GITHUB_WORKSPACE/app/patches//app-compat.patch"
+          git -C ../ apply "$GITHUB_WORKSPACE/app/patches//app-compat.patch"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -100,7 +109,7 @@ jobs:
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
           flutter config --android-sdk "$ANDROID_HOME" --no-analytics
 
-      - name: Test the committed backend source
+      - name: Test backend including novel decryption contract
         working-directory: 
         run: go test -mod=readonly -count=1 ./...
 
@@ -159,6 +168,7 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk build/ci-artifacts/app-release.apk
           {
             printf 'App commit: %s\nBackend commit: %s\n' "$GITHUB_SHA" "$LEGACY_COMMIT"
+            sha256sum patches//app-compat.patch
             printf 'NDK: %s\nCMake: %s\nAndroid Build Tools: %s\n' "$NDK_VERSION" "$CMAKE_VERSION" "$BUILD_TOOLS_VERSION"
             flutter --version
             go version
@@ -200,6 +210,7 @@ jobs:
           {
             printf '[下载 ARM64 APK 和校验报告](%s)\n\n' "$ARTIFACT_URL"
             printf 'App commit: `%s`  \nBackend commit: `%s`\n\n' "$GITHUB_SHA" "$LEGACY_COMMIT"
+            printf 'Backend compatibility patch: `%s`\n\n' "$(sha256sum patches//app-compat.patch | cut -d ' ' -f 1)"
             printf '使用固定调试签名。已验证全部原生库和 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
           } >> "$GITHUB_STEP_SUMMARY"
 

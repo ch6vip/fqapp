@@ -5,6 +5,24 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/bookshelf_card.dart';
 
 void main() {
+  testWidgets('a saved manju uses episode counts in shelf rows', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BookshelfListCard(
+            item: _item('测试漫剧', kind: 'manju'),
+            compact: false,
+            onTap: () {},
+          ),
+        ),
+      ),
+    );
+    expect(find.text('共 120集'), findsOneWidget);
+    expect(find.text('共 120章'), findsNothing);
+  });
+
   testWidgets('narrow shelf rows fit large text and complete date labels', (
     tester,
   ) async {
@@ -171,12 +189,12 @@ void main() {
   });
 }
 
-MediaItem _item(String title) => MediaItem(
+MediaItem _item(String title, {String kind = 'book'}) => MediaItem(
   id: title,
   title: title,
   cover: '',
   author: '测试作者',
   badge: '',
   ep: '120',
-  kind: 'book',
+  kind: kind,
 );

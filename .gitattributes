@@ -1,6 +1,8 @@
 # Shell scripts must keep LF endings: a CRLF shebang becomes
 # "#!/usr/bin/env bash\r" and the script fails to execute.
 *.sh text eol=lf
+# Unified diffs preserve blank context lines and a space before Go tabs.
+*.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
 
 # PowerShell is line-ending agnostic; normalize to CRLF for Windows editors.
 *.ps1 text eol=crlf

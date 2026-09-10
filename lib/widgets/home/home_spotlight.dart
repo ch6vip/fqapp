@@ -259,6 +259,7 @@ class _SpotlightCard extends StatelessWidget {
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final action = switch (item.kind) {
       'video' => '开始追剧',
+      'manju' => '观看漫剧',
       'audio' => '开始听书',
       'manga' => '翻开漫画',
       _ => '立即阅读',

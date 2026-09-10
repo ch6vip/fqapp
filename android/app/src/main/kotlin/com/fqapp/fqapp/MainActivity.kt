@@ -16,6 +16,7 @@ class MainActivity : FlutterActivity() {
 
         // Native ExoPlayer host for DRM short dramas (CENC streaming decrypt).
         flutterEngine.plugins.add(NativePlayerPlugin())
+        flutterEngine.plugins.add(ReaderDevicePlugin())
 
         // BackendNative loads liblegacy.so in its init block. If the .so is
         // missing or has no JNI exports (e.g. the old placeholder copy), this

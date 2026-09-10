@@ -128,10 +128,11 @@ void main() {
         ],
       },
     });
-    expect(tabs.single.items.single.id, 's1');
-    expect(tabs.single.items.single.seriesId, 's1');
-    expect(tabs.single.items.single.kind, 'video');
-    expect(tabs.single.items.single.title, '初次沦陷');
+    final item = tabs.singleWhere((tab) => tab.title == '短剧').items.single;
+    expect(item.id, 's1');
+    expect(item.seriesId, 's1');
+    expect(item.kind, 'video');
+    expect(item.title, '初次沦陷');
   });
 
   test('filters profile and related-query cells from search results', () {

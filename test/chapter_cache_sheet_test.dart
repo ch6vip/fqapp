@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
@@ -9,6 +10,90 @@ import 'package:fqapp/widgets/chapter_cache_sheet.dart';
 import 'support/fakes.dart';
 
 void main() {
+  testWidgets(
+    'text fallback remains readable on a cold cache without claiming images are complete',
+    (tester) async {
+      final cache = MemoryChapterCache();
+      final fallback = ChapterContent.fromPlainText('可离线阅读的正文');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChapterCacheSheet(
+              book: CachedBook(
+                id: 'book',
+                title: '缓存测试',
+                chapters: [
+                  Chapter(itemId: '1', title: '第一章', volumeName: ''),
+                  Chapter(itemId: '2', title: '第二章', volumeName: ''),
+                ],
+              ),
+              currentIndex: 0,
+              cache: cache,
+              loader: (_) async => fallback.toCacheText(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('缓存后 1 章'));
+      await tester.pumpAndSettle();
+      expect(cache.content['book']!['2'], fallback.toCacheText());
+      expect(find.textContaining('插图未更新'), findsOneWidget);
+      expect(find.textContaining('缓存完成'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'text fallback preserves cached pictures and reports incomplete images',
+    (tester) async {
+      final cache = MemoryChapterCache();
+      final old = ChapterContent(
+        blocks: const [
+          ChapterParagraph('已有的正文'),
+          ChapterImage(
+            url: 'https://images.test/old?x-expires=1',
+            width: 100,
+            height: 200,
+          ),
+        ],
+      );
+      await cache.write(
+        bookId: 'book',
+        chapterId: '2',
+        title: '第二章',
+        text: old.toCacheText(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChapterCacheSheet(
+              book: CachedBook(
+                id: 'book',
+                title: '缓存测试',
+                chapters: [
+                  Chapter(itemId: '1', title: '第一章', volumeName: ''),
+                  Chapter(itemId: '2', title: '第二章', volumeName: ''),
+                ],
+              ),
+              currentIndex: 0,
+              cache: cache,
+              loader: (_) async =>
+                  ChapterContent.fromPlainText('已有的正文').toCacheText(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('缓存后 1 章'));
+      await tester.pumpAndSettle();
+      expect(cache.content['book']!['2'], old.toCacheText());
+      expect(find.textContaining('插图未更新'), findsOneWidget);
+      expect(find.textContaining('缓存完成'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('chapters evicted during a download are fetched again', (
     tester,
   ) async {
@@ -93,7 +178,10 @@ void main() {
         bookId: 'book',
         chapterId: '2',
         title: '第二章',
-        text: '已缓存',
+        text: ChapterContent.fromPlainText(
+          '已缓存',
+          illustrationsChecked: true,
+        ).toCacheText(),
       );
       final pending = Completer<String>();
       final requested = <String>[];

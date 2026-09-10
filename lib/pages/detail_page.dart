@@ -76,7 +76,7 @@ class _DetailPageState extends State<DetailPage> {
   bool _opening = false;
 
   bool get _supported => kindLabels.containsKey(widget.item.kind);
-  bool get _isVideo => widget.item.kind == 'video';
+  bool get _isVideo => isVideoKind(widget.item.kind);
   bool get _isAudio => widget.item.kind == 'audio';
   bool get _isManga => widget.item.kind == 'manga';
   String get _contentId => widget.item.seriesId ?? widget.item.id;
@@ -86,7 +86,7 @@ class _DetailPageState extends State<DetailPage> {
       ? '话'
       : '章';
   String get _readLabel => switch (widget.item.kind) {
-    'video' => _resumeIndex == null ? '开始观看' : '继续观看',
+    'video' || 'manju' => _resumeIndex == null ? '开始观看' : '继续观看',
     'audio' => _resumeIndex == null ? '开始收听' : '继续收听',
     _ => _resumeIndex == null ? '开始阅读' : '继续阅读',
   };
@@ -94,7 +94,7 @@ class _DetailPageState extends State<DetailPage> {
   @override
   void initState() {
     super.initState();
-    _tab = kindLabels[widget.item.kind] ?? '小说';
+    _tab = _isVideo ? '短剧' : kindLabels[widget.item.kind] ?? '小说';
     _scroll.addListener(_onScroll);
     _load();
   }
@@ -501,14 +501,16 @@ class _DetailPageState extends State<DetailPage> {
     final store = widget.readerStore ?? LibraryStore.instance;
     try {
       final saved = switch (widget.item.kind) {
-        'video' => await PlayerHistory(store).load(_contentId),
+        'video' || 'manju' => await PlayerHistory(store).load(_contentId),
         'audio' => await AudioHistory(store).load(_contentId),
         'manga' => await ReaderHistory(
           scopedHistoryStore(store, 'manga'),
         ).load(_contentId),
         _ => await ReaderHistory(store).load(_contentId),
       };
-      if (saved?['kind'] != null && saved?['kind'] != widget.item.kind) {
+      if (saved?['kind'] != null &&
+          saved?['kind'] != widget.item.kind &&
+          !(_isVideo && isVideoKind(saved!['kind'].toString()))) {
         return null;
       }
       // Legacy text-reading records sometimes encode the chapter ID as a number.
@@ -562,8 +564,9 @@ class _DetailPageState extends State<DetailPage> {
     final index = _allChapters.indexWhere((c) => c.itemId == chapter.itemId);
     final startIndex = index < 0 ? 0 : index;
     final page = switch (widget.item.kind) {
-      'video' => PlayerPage(
+      'video' || 'manju' => PlayerPage(
         bookId: _contentId,
+        kind: widget.item.kind,
         title: widget.item.title,
         cover: widget.item.cover,
         historyStore: widget.readerStore,

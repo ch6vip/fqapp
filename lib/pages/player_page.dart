@@ -18,6 +18,7 @@ import '../widgets/video_player_chrome.dart';
 
 class PlayerPage extends StatefulWidget {
   final String bookId;
+  final String kind;
   final String title;
   final String cover;
   final List<Chapter> eps;
@@ -32,6 +33,7 @@ class PlayerPage extends StatefulWidget {
   const PlayerPage({
     super.key,
     required this.bookId,
+    this.kind = 'video',
     required this.title,
     this.cover = '',
     required this.eps,
@@ -50,6 +52,7 @@ class PlayerPage extends StatefulWidget {
 
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late int _index;
+  late String _historyKind = widget.kind;
   int? _activeIndex;
   NativePlayer? _player;
   Timer? _progressTimer;
@@ -379,6 +382,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
       trace.stage('pagingBeforeCreate');
       if (!await _waitForPaging(generation)) return;
+      if (saved?['kind'] == 'manju') _historyKind = 'manju';
       trace.stage('create');
       final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
       _player = player;
@@ -540,7 +544,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         : rawPositionMs;
     return {
       'id': widget.bookId,
-      'kind': 'video',
+      'kind': _historyKind,
       'title': widget.title,
       'bookId': widget.bookId,
       'seriesId': widget.bookId,

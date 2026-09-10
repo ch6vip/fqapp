@@ -7,6 +7,8 @@ library;
 
 import 'dart:isolate';
 
+bool isVideoKind(String kind) => kind == 'video' || kind == 'manju';
+
 /// Runs [parseMediaItems] on a background isolate so deep recursive payload
 /// traversal never janks the UI thread.
 Future<List<MediaItem>> parseMediaItemsAsync(Map<String, dynamic> payload) =>
@@ -34,7 +36,7 @@ class MediaItem {
   final String author;
   final String badge;
   final String ep;
-  final String kind; // 'book' | 'video' | 'manga' | 'audio'
+  final String kind; // 'book' | 'video' | 'manju' | 'manga' | 'audio'
   /// For short dramas, seriesId is the ID accepted by the pseries directory
   /// endpoint and episodeId is an optional individual video ID.
   final String? seriesId;
@@ -62,6 +64,8 @@ class MediaItem {
     final explicitKind = _normalizeKind(item['kind']);
     final kind = explicitKind.isNotEmpty
         ? explicitKind
+        : _isManjuItem(item, bd)
+        ? 'manju'
         : _isVideoItem(item, bd)
         ? 'video'
         : _isMangaItem(item, bd)
@@ -75,12 +79,12 @@ class MediaItem {
     // identifier only as its book_id. A standalone video result should keep
     // its video_id instead, because that is what /api/content accepts.
     if (item['video_data'] is List) seriesKeys.add('book_id');
-    final seriesId = kind == 'video'
+    final seriesId = isVideoKind(kind)
         ? (_firstString(item, ['seriesId']) ??
               _firstString(item, seriesKeys) ??
               _firstString(bd, seriesKeys))
         : null;
-    final episodeId = kind == 'video'
+    final episodeId = isVideoKind(kind)
         ? (_firstString(item, [
                 'episodeId',
                 'video_id',
@@ -92,7 +96,7 @@ class MediaItem {
         : null;
 
     final idKeys = switch (kind) {
-      'video' => [
+      'video' || 'manju' => [
         'video_id',
         'vid',
         'pseries_id',
@@ -194,7 +198,11 @@ class MediaItem {
       bd['type'],
       bd['book_type_name'],
     ]);
-    return _truthyAny(item, [
+    // Work detail records identify short dramas as genre=203 even without
+    // the video fields that search cards carry.
+    return _matchesGenre(item, 203) ||
+        _matchesGenre(bd, 203) ||
+        _truthyAny(item, [
           'video_id',
           'vid',
           'pseries_id',
@@ -213,9 +221,35 @@ class MediaItem {
         _videoRe.hasMatch(text);
   }
 
+  // Note: 漫剧的类型证据与视频接口复用，见
+  // .agents/notes/implemented/feature/2026-09-09-manju.md
+  static bool _isManjuItem(Map<String, dynamic> item, Map<String, dynamic> bd) {
+    bool hasTag(dynamic value) {
+      if (value is Map) return hasTag(value['text']);
+      if (value is Iterable) return value.any(hasTag);
+      return value is String &&
+          const {'漫剧', '动态漫', '动态漫画'}.contains(value.trim());
+    }
+
+    bool matches(Map<String, dynamic> value) =>
+        _matchesGenre(value, 205) ||
+        hasTag(value['tag_info']) ||
+        hasTag(value['cover_tag_info_list']) ||
+        hasTag(value['book_type_name']) ||
+        hasTag(value['type']);
+    // Titles, synopses and publisher names may mention adaptations. Only
+    // structured genre/tag metadata identifies the video itself as a manju.
+    return matches(item) || matches(bd);
+  }
+
   static String _normalizeKind(dynamic value) {
     final raw = value?.toString().trim().toLowerCase() ?? '';
     switch (raw) {
+      case 'manju':
+      case 'comic_drama':
+      case '漫剧':
+      case '动态漫':
+        return 'manju';
       case 'video':
       case 'drama':
       case 'short_drama':
@@ -446,8 +480,15 @@ class Episode {
 class SearchTab {
   final String title;
   final List<MediaItem> items;
+  final bool? hasMore;
+  final int? nextOffset;
 
-  SearchTab({required this.title, required this.items});
+  SearchTab({
+    required this.title,
+    required this.items,
+    this.hasMore,
+    this.nextOffset,
+  });
 }
 
 /// Parses the normalized directory payload into chapter lists grouped by
@@ -533,7 +574,9 @@ List<Map<String, dynamic>>? _findDirectoryEntries(
 /// results are nested in a `video_data` array. Search responses also contain
 /// profile cards, related-query prompts and other UI-only cells; only nodes
 /// with a real media identity belong in the media grid.
-List<SearchTab> parseSearchTabs(Map<String, dynamic> payload) {
+/// When [tabType] is requested, select that source before splitting manju so
+/// another tab's results or pagination cannot leak into the requested page.
+List<SearchTab> parseSearchTabs(Map<String, dynamic> payload, {int? tabType}) {
   // /api/search wraps its result in data; /api/v1/search returns the
   // upstream search_tabs object directly.
   final data = payload['data'] ?? payload;
@@ -541,9 +584,20 @@ List<SearchTab> parseSearchTabs(Map<String, dynamic> payload) {
   final tabs = data['search_tabs'];
   if (tabs is! List) return [];
 
-  return tabs.map((rawTab) {
+  final requestedTitle = const {1: '综合', 11: '短剧', 8: '漫画', 2: '听书'}[tabType];
+  final selected = tabType == null
+      ? tabs
+      : tabs.where((tab) {
+          if (tab is! Map) return false;
+          final type = _asInt(tab['tab_type']);
+          return type == tabType ||
+              (type == null &&
+                  requestedTitle != null &&
+                  tab['title'] == requestedTitle);
+        });
+  final parsed = selected.map((rawTab) {
     if (rawTab is! Map) return SearchTab(title: '', items: []);
-    final title = (rawTab['title'] ?? '').toString();
+    final title = (requestedTitle ?? rawTab['title'] ?? '').toString();
     final rawItems = rawTab['data'];
     final items = <MediaItem>[];
     if (rawItems is List) {
@@ -583,8 +637,58 @@ List<SearchTab> parseSearchTabs(Map<String, dynamic> payload) {
         }
       }
     }
-    return SearchTab(title: title, items: items);
+    return SearchTab(
+      title: title,
+      items: items,
+      hasMore: rawTab['has_more'] is bool ? rawTab['has_more'] as bool : null,
+      nextOffset: _asInt(rawTab['next_offset']),
+    );
   }).toList();
+  return separateManjuSearchTabs(parsed);
+}
+
+/// The upstream searches manju in the short-drama tab. Keep a distinct app
+/// filter without classifying unrelated matches by their search keyword.
+List<SearchTab> separateManjuSearchTabs(List<SearchTab> tabs) {
+  final manju = <MediaItem>[];
+  final seen = <String>{};
+  SearchTab? source;
+  for (final tab in tabs) {
+    if (tab.title == '短剧' || tab.title == '漫剧') source = tab;
+    for (final item in tab.items) {
+      if (item.kind == 'manju' && item.id.isNotEmpty && seen.add(item.id)) {
+        manju.add(item);
+      }
+    }
+  }
+  if (source == null && manju.isEmpty) return tabs;
+  final manjuTab = SearchTab(
+    title: '漫剧',
+    items: manju,
+    hasMore: source?.hasMore,
+    nextOffset: source?.nextOffset,
+  );
+  final result = <SearchTab>[];
+  var inserted = false;
+  for (final tab in tabs) {
+    if (tab.title == '漫剧') continue;
+    result.add(
+      SearchTab(
+        title: tab.title,
+        items: const {'短剧', '小说', '书籍', '漫画', '听书'}.contains(tab.title)
+            ? tab.items.where((item) => item.kind != 'manju').toList()
+            : tab.items,
+        hasMore: tab.hasMore,
+        nextOffset: tab.nextOffset,
+      ),
+    );
+    if (tab.title == '短剧') {
+      result.add(manjuTab);
+      inserted = true;
+    }
+  }
+  if (!inserted) result.add(manjuTab);
+  return result;
 }
 
 const _searchMediaIdKeys = <String>[
@@ -649,13 +753,13 @@ bool _isSearchMediaNode(Map<String, dynamic> item) {
 /// Extracts media cards from recommendation and legacy endpoint responses.
 /// It understands the nested `tab_item/cell_data/book_data` format as well as
 /// search and directory-style lists.
-List<MediaItem> parseMediaItems(Map<String, dynamic> payload) {
+List<MediaItem> parseMediaItems(Map<String, dynamic> payload, {String? kind}) {
   final root = payload['data'] ?? payload;
   final out = <MediaItem>[];
   final seen = <String>{};
 
   void add(Map<String, dynamic> raw) {
-    final item = MediaItem.fromRaw(raw);
+    final item = MediaItem.fromRaw({...raw, 'kind': ?kind});
     if (item.id.isEmpty) return;
     final key = '${item.kind}:${item.id}';
     if (seen.add(key)) out.add(item);

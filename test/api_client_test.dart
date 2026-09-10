@@ -9,6 +9,69 @@ import 'package:http/testing.dart';
 void main() {
   const special = 'id &mode=changed#+/中文%';
 
+  for (final wrapped in [false, true]) {
+    test(
+      'typed search isolates its source before splitting manju ($wrapped)',
+      () async {
+        late Uri sent;
+        final payload = {
+          'code': 0,
+          'search_tabs': [
+            {
+              'title': '综合',
+              'tab_type': 1,
+              'has_more': true,
+              'next_offset': 99,
+              'data': [
+                {'video_id': 'other', 'title': '其他栏目的漫剧', 'kind': 'manju'},
+              ],
+            },
+            {
+              'title': '短剧',
+              'tab_type': '11',
+              'has_more': true,
+              'next_offset': '27',
+              'data': [
+                {'video_id': 'live', 'title': '本栏短剧'},
+                {'video_id': 'animated', 'title': '本栏漫剧', 'kind': 'manju'},
+              ],
+            },
+          ],
+        };
+        final transport = MockClient((request) async {
+          sent = request.url;
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode(wrapped ? {'code': 200, 'data': payload} : payload),
+            ),
+            200,
+          );
+        });
+        addTearDown(transport.close);
+        final api = ApiClient(
+          client: transport,
+          baseUrl: 'http://localhost:9000',
+        );
+
+        final tabs = await api.searchTabs('作品', tabType: 11, offset: 14);
+        expect(sent.path, '/api/v1/search');
+        expect(sent.queryParameters, {
+          'query': '作品',
+          'tab_type': '11',
+          'offset': '14',
+          'count': '10',
+        });
+        expect(tabs.map((tab) => tab.title), ['短剧', '漫剧']);
+        expect(tabs[0].items.single.id, 'live');
+        expect(tabs[1].items.single.id, 'animated');
+        expect(
+          tabs.every((tab) => tab.hasMore == true && tab.nextOffset == 27),
+          isTrue,
+        );
+      },
+    );
+  }
+
   test('query values survive all API request builders unchanged', () async {
     late Uri sent;
     final transport = MockClient((request) async {
@@ -35,6 +98,15 @@ void main() {
       'count': '10',
     });
     expect(sent.fragment, isEmpty);
+
+    await api.searchTabs(special, page: 3, tabType: 11, offset: 17);
+    expect(sent.path, '/api/v1/search');
+    expect(sent.queryParameters, {
+      'query': special,
+      'tab_type': '11',
+      'offset': '17',
+      'count': '10',
+    });
 
     for (final action in [api.detail, api.directory, api.directoryChapters]) {
       await action(special, tab: special);

@@ -27,6 +27,53 @@ void main() {
         );
   });
 
+  for (final scenario in [
+    (kind: 'manju', savedKind: 'video'),
+    (kind: 'video', savedKind: 'manju'),
+  ]) {
+    testWidgets('player keeps manju kind and resume position for $scenario', (
+      tester,
+    ) async {
+      final store = MemoryReaderStore(
+        entry: {
+          'id': 'manju-series',
+          'kind': scenario.savedKind,
+          'episodeId': 'episode-1',
+          'episode': 0,
+          'position': 37.0,
+        },
+      );
+      final player = FakeNativePlayer();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            bookId: 'manju-series',
+            kind: scenario.kind,
+            title: '测试漫剧',
+            eps: [Chapter(itemId: 'episode-1', title: '第1集', volumeName: '')],
+            startIndex: 0,
+            historyStore: store,
+            contentLoader: (_) async => {
+              'video_url': 'https://example.invalid/manju.mp4',
+            },
+            playerFactory: () => player,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(player.calls, contains('seek:37'));
+      expect(player.isPlaying, isTrue);
+      expect(store.entry?['kind'], 'manju');
+      expect(store.entry?['id'], 'manju-series');
+      expect(store.entry?['position'], 37.0);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump();
+      expect(store.entry?['kind'], 'manju');
+      expect(player.disposed, isTrue);
+    });
+  }
+
   testWidgets(
     'episode switches restore speed and keep fullscreen while loading',
     (tester) async {

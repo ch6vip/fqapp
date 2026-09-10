@@ -17,7 +17,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
@@ -108,6 +108,7 @@ void main() {
         .controller!;
     controller.jumpTo(300);
     await tester.pump();
+    await _openMenu(tester);
     await tester.tap(find.byTooltip('下一章'));
     await tester.pump();
     final saved = Map<String, dynamic>.of(store.entry!);
@@ -137,6 +138,7 @@ void main() {
       expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
       expect(find.text('重试'), findsNothing);
       if (operation == 'update progress') store.failHistoryWrite = true;
+      await _openMenu(tester);
       await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
@@ -298,7 +300,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('第一章的离线正文'), findsOneWidget);
-      expect(requests, isEmpty);
+      expect(requests, [_chapters.first.itemId]);
+      await _openMenu(tester);
       await tester.tap(find.text('目录'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
@@ -308,7 +311,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('尾声的离线正文'), findsOneWidget);
-      expect(requests, isEmpty);
+      expect(requests, [_chapters.first.itemId, _chapters.last.itemId]);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -352,7 +355,7 @@ void main() {
         expect(find.text('第一章'), findsNWidgets(2));
         expect(find.textContaining(first), findsOneWidget);
         expect(find.textContaining(second), findsOneWidget);
-        if (offline) expect(requests, isEmpty);
+        if (offline) expect(requests, [_chapters.first.itemId]);
         final firstParagraph = find.byKey(const ValueKey('reader-paragraph-0'));
         final secondParagraph = find.byKey(
           const ValueKey('reader-paragraph-1'),
@@ -430,7 +433,7 @@ void main() {
     await tester.tapAt(rightSide);
     await tester.pumpAndSettle();
 
-    expect(find.byType(AppBar), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-toolbar')), findsNothing);
     expect(controller.offset, greaterThan(0));
     expect(find.text('第二章'), findsNothing);
     expect(store.entry?['episode'], 0);
@@ -462,6 +465,7 @@ void main() {
     final store = _FakeReaderStore();
     await tester.pumpWidget(_readerApp(readerStore: store));
     await tester.pumpAndSettle();
+    await _openMenu(tester);
     await tester.tap(find.text('目录'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -512,12 +516,21 @@ void main() {
 
     await tester.pumpWidget(_readerApp(textScaler: const TextScaler.linear(2)));
     await tester.pumpAndSettle();
+    await _openMenu(tester);
+    await tester.ensureVisible(find.text('排版'));
     await tester.tap(find.text('排版'));
     await tester.pumpAndSettle();
 
     expect(find.text('排版设置'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+Future<void> _openMenu(WidgetTester tester) async {
+  await tester.tapAt(
+    tester.getCenter(find.byKey(const ValueKey('reader-page-surface'))),
+  );
+  await tester.pumpAndSettle();
 }
 
 RenderParagraph _paragraphRender(WidgetTester tester, Finder paragraph) =>

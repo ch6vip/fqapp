@@ -7,11 +7,18 @@ import '../models/media_item.dart';
 
 const bookshelfCoverAspectRatio = 3 / 4;
 
-const _kindLabels = {'book': '小说', 'video': '短剧', 'manga': '漫画', 'audio': '听书'};
+const _kindLabels = {
+  'book': '小说',
+  'video': '短剧',
+  'manju': '漫剧',
+  'manga': '漫画',
+  'audio': '听书',
+};
 
 const _kindColors = {
   'book': Color(0xFF4A90D9),
   'video': Color(0xFFE8532D),
+  'manju': Color(0xFFAA5A92),
   'manga': Color(0xFF34A853),
   'audio': Color(0xFF9C6ADE),
 };
@@ -239,7 +246,7 @@ class BookshelfListCard extends StatelessWidget {
 
   String _totalText(MediaItem item) {
     final suffix = switch (item.kind) {
-      'video' || 'audio' => '集',
+      'video' || 'manju' || 'audio' => '集',
       'manga' => '话',
       _ => '章',
     };

@@ -7,11 +7,71 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/comic_reader_page.dart';
 import 'package:fqapp/pages/detail_page.dart';
+import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 
 import 'support/fakes.dart';
 
 void main() {
+  for (final savedKind in ['video', 'manju']) {
+    testWidgets(
+      'manju detail resumes $savedKind history through the video API',
+      (tester) async {
+        final observer = _RouteObserver();
+        final requests = <String>[];
+        final store = MemoryReaderStore(
+          entry: {
+            'id': 'series',
+            'kind': savedKind,
+            'episodeId': 'second',
+            'episode': 0,
+            'position': 37.0,
+          },
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [observer],
+            home: DetailPage(
+              item: MediaItem(
+                id: 'episode',
+                seriesId: 'series',
+                title: '测试漫剧',
+                cover: '',
+                author: '',
+                badge: '',
+                ep: '2',
+                kind: 'manju',
+              ),
+              readerStore: store,
+              detailLoader: (id, {String tab = '小说'}) async {
+                requests.add('$tab:$id');
+                return {};
+              },
+              directoryLoader: (id, {String tab = '小说'}) async {
+                requests.add('$tab:$id');
+                return [_chapters];
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(requests, ['短剧:series', '短剧:series']);
+        expect(find.text('继续观看'), findsOneWidget);
+        final context = tester.element(find.byType(DetailPage));
+        await tester.tap(find.byKey(const Key('detail_read_button')));
+        await tester.idle();
+        final page =
+            (observer.lastRoute! as MaterialPageRoute).builder(context)
+                as PlayerPage;
+        expect(page.kind, 'manju');
+        expect(page.bookId, 'series');
+        expect(page.startIndex, 1);
+        expect(page.historyStore, same(store));
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
   testWidgets('a long directory error can be scrolled to retry', (
     tester,
   ) async {

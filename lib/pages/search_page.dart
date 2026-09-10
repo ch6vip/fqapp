@@ -3,23 +3,30 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../models/media_id.dart';
 import '../services/api_client.dart';
 import '../services/search_history_store.dart';
 import '../widgets/media_card.dart';
 import 'detail_page.dart';
 
 typedef SearchPageLoader =
-    Future<List<SearchTab>> Function(String query, {int page});
+    Future<List<SearchTab>> Function(
+      String query, {
+      required int tabType,
+      required int offset,
+    });
 
 class SearchPage extends StatefulWidget {
   final String? initialQuery;
   final SearchPageLoader? searchLoader;
+  final Future<MediaItem?> Function(String id)? idSearchLoader;
   final SearchHistoryRepository? historyStore;
 
   const SearchPage({
     super.key,
     this.initialQuery,
     this.searchLoader,
+    this.idSearchLoader,
     this.historyStore,
   });
 
@@ -29,18 +36,16 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   static const _paginationThreshold = 480.0;
+  static const _categories = _SearchCategory.values;
 
   final TextEditingController _ctrl = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  List<SearchTab> _tabs = [];
+  final ScrollController _scrollController = ScrollController(
+    keepScrollOffset: false,
+  );
+  List<_SearchFeed> _feeds = [for (final _ in _categories) _SearchFeed()];
   String _query = '';
-  bool _loading = false;
-  bool _loadingMore = false;
-  bool _hasMore = false;
-  String? _error;
-  String? _loadMoreError;
+  String? _idQuery;
   int _tabIndex = 0;
-  int _page = 0;
   int _requestGeneration = 0;
   List<String> _history = const [];
   bool _historyLoading = true;
@@ -77,7 +82,7 @@ class _SearchPageState extends State<SearchPage> {
     }
   }
 
-  Future<void> _search(String q) async {
+  Future<void> _search(String q, {bool asKeyword = false}) async {
     final query = normalizeSearchQuery(q);
     if (query.isEmpty) return;
     if (_ctrl.text != query) {
@@ -88,38 +93,14 @@ class _SearchPageState extends State<SearchPage> {
     }
     FocusManager.instance.primaryFocus?.unfocus();
     _rememberQuery(query);
-    final generation = ++_requestGeneration;
-    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    ++_requestGeneration;
     setState(() {
       _query = query;
-      _loading = true;
-      _loadingMore = false;
-      _hasMore = true;
-      _error = null;
-      _loadMoreError = null;
+      _idQuery = asKeyword ? null : mediaIdFromSearch(query);
       _tabIndex = 0;
-      _page = 0;
-      _tabs = const [];
+      _feeds = [for (final _ in _categories) _SearchFeed()];
     });
-    try {
-      final tabs = await _loadPage(query, page: 1);
-      if (!mounted || generation != _requestGeneration) return;
-      final merged = _mergeSearchTabs(const [], tabs);
-      setState(() {
-        _tabs = merged.tabs;
-        _page = 1;
-        _hasMore = merged.addedCount > 0;
-        _loading = false;
-      });
-      _scheduleLoadMoreIfNeeded();
-    } catch (e) {
-      if (!mounted || generation != _requestGeneration) return;
-      setState(() {
-        _error = '$e';
-        _loading = false;
-        _hasMore = false;
-      });
-    }
+    await _loadTab(0);
   }
 
   void _rememberQuery(String query) {
@@ -186,16 +167,10 @@ class _SearchPageState extends State<SearchPage> {
 
   void _showHistory() {
     ++_requestGeneration;
-    if (_scrollController.hasClients) _scrollController.jumpTo(0);
     setState(() {
       _query = '';
-      _tabs = const [];
-      _loading = false;
-      _loadingMore = false;
-      _hasMore = false;
-      _error = null;
-      _loadMoreError = null;
-      _page = 0;
+      _idQuery = null;
+      _feeds = [for (final _ in _categories) _SearchFeed()];
       _tabIndex = 0;
     });
   }
@@ -205,54 +180,128 @@ class _SearchPageState extends State<SearchPage> {
     _showHistory();
   }
 
-  Future<void> _loadMore() async {
-    if (_loading || _loadingMore || !_hasMore || _query.isEmpty) return;
+  Future<void> _loadMore() => _loadTab(_tabIndex);
 
+  Future<void> _loadId(String id) async {
+    if (_feeds.first.loading || _feeds.first.initialized) return;
     final generation = _requestGeneration;
-    final nextPage = _page + 1;
     setState(() {
-      _loadingMore = true;
-      _loadMoreError = null;
+      for (final feed in _feeds) {
+        feed.loading = true;
+        feed.error = null;
+      }
     });
-
     try {
-      final nextTabs = await _loadPage(_query, page: nextPage);
+      final item =
+          await (widget.idSearchLoader ?? ApiClient.instance.lookupMediaById)(
+            id,
+          );
       if (!mounted || generation != _requestGeneration) return;
-      final merged = _mergeSearchTabs(_tabs, nextTabs);
       setState(() {
-        _tabs = merged.tabs;
-        _page = nextPage;
-        _hasMore = merged.addedCount > 0;
-        _loadingMore = false;
+        for (var index = 0; index < _categories.length; index++) {
+          final feed = _feeds[index];
+          final kind = _categories[index].kind;
+          if (item != null && (kind == null || kind == item.kind)) {
+            feed.items.add(item);
+          }
+          feed.initialized = true;
+          feed.loading = false;
+          feed.hasMore = false;
+        }
       });
-      if (merged.addedCount > 0) _scheduleLoadMoreIfNeeded();
-    } catch (e) {
+    } catch (error) {
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
-        _loadingMore = false;
-        _loadMoreError = '$e';
+        for (final feed in _feeds) {
+          feed.loading = false;
+          feed.error = '$error';
+        }
       });
     }
   }
 
-  Future<List<SearchTab>> _loadPage(String query, {required int page}) {
-    final loader = widget.searchLoader;
-    if (loader != null) return loader(query, page: page);
-    return ApiClient.instance.searchTabs(query, page: page);
+  // Note: 分类来源、游标与请求隔离见 .agents/notes/implemented/bug-fix/2026-09-10-search-categories.md
+  Future<void> _loadTab(int index) async {
+    if (_idQuery != null) return _loadId(_idQuery!);
+    final feed = _feeds[index];
+    if (_query.isEmpty || feed.loading || (feed.initialized && !feed.hasMore)) {
+      return;
+    }
+
+    final generation = _requestGeneration;
+    final category = _categories[index];
+    final offset = feed.nextOffset;
+    setState(() {
+      feed.loading = true;
+      feed.error = null;
+    });
+
+    try {
+      final loader = widget.searchLoader ?? ApiClient.instance.searchTabs;
+      final tabs = await loader(
+        _query,
+        tabType: category.tabType,
+        offset: offset,
+      );
+      if (!mounted || generation != _requestGeneration) return;
+
+      final sources = tabs
+          .where(
+            (tab) =>
+                tab.title == category.sourceTitle ||
+                tab.title == category.title,
+          )
+          .toList();
+      final page = separateManjuSearchTabs(sources).firstWhere(
+        (tab) => tab.title == category.title,
+        orElse: () => SearchTab(title: category.title, items: []),
+      );
+      final before = feed.items.length;
+      setState(() {
+        for (final item in page.items) {
+          if (item.id.isEmpty ||
+              (category.kind != null && item.kind != category.kind)) {
+            continue;
+          }
+          if (feed.seen.add('${item.kind}:${item.id}')) feed.items.add(item);
+        }
+        final next = page.nextOffset;
+        feed.hasMore = page.hasMore != false && next != null && next > offset;
+        if (feed.hasMore) feed.nextOffset = next!;
+        feed.initialized = true;
+        feed.loading = false;
+      });
+      // A filtered-empty or duplicate page can still advance. Leave a manual
+      // continuation instead of chaining requests without new visible results.
+      if (feed.items.length > before) {
+        _scheduleLoadMoreIfNeeded(index, generation);
+      }
+    } catch (e) {
+      if (!mounted || generation != _requestGeneration) return;
+      setState(() {
+        feed.loading = false;
+        feed.error = '$e';
+      });
+    }
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients || _loadMoreError != null) return;
+    if (_idQuery != null) return;
+    final feed = _feeds[_tabIndex];
+    if (!_scrollController.hasClients ||
+        !feed.initialized ||
+        feed.error != null) {
+      return;
+    }
     if (_scrollController.position.extentAfter < _paginationThreshold) {
       _loadMore();
     }
   }
 
-  void _scheduleLoadMoreIfNeeded() {
+  void _scheduleLoadMoreIfNeeded(int index, int generation) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      if (_scrollController.position.extentAfter < _paginationThreshold) {
-        _loadMore();
+      if (mounted && index == _tabIndex && generation == _requestGeneration) {
+        _onScroll();
       }
     });
   }
@@ -267,9 +316,7 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final activeTab = _tabs.isNotEmpty
-        ? _tabs[_tabIndex.clamp(0, _tabs.length - 1)]
-        : null;
+    final feed = _feeds[_tabIndex];
 
     return Scaffold(
       appBar: AppBar(
@@ -278,7 +325,7 @@ class _SearchPageState extends State<SearchPage> {
           autofocus: false,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            hintText: '搜索短剧、小说、漫画...',
+            hintText: '搜索名称或作品 ID',
             border: InputBorder.none,
             suffixIconConstraints: const BoxConstraints(minWidth: 48),
             suffixIcon: ValueListenableBuilder<TextEditingValue>(
@@ -309,18 +356,18 @@ class _SearchPageState extends State<SearchPage> {
       ),
       body: Column(
         children: [
-          if (_tabs.isNotEmpty)
+          if (_query.isNotEmpty)
             SizedBox(
               height: 44,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                children: List.generate(_tabs.length, (i) {
-                  final t = _tabs[i];
+                children: List.generate(_categories.length, (i) {
+                  final category = _categories[i];
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: ChoiceChip(
-                      label: Text(t.title),
+                      label: Text(category.title),
                       selected: i == _tabIndex,
                       onSelected: (_) => _selectTab(i),
                     ),
@@ -328,38 +375,69 @@ class _SearchPageState extends State<SearchPage> {
                 }),
               ),
             ),
+          if (_idQuery != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  const Expanded(child: Text('按作品 ID 查找')),
+                  TextButton(
+                    onPressed: () => _search(_query, asKeyword: true),
+                    child: const Text('按关键词搜索'),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
-            child: _query.isEmpty && !_loading
+            child: _query.isEmpty
                 ? _historyView(context)
-                : _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                ? Center(
-                    child: Text(
-                      _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  )
-                : activeTab == null
-                ? const Center(child: Text('无结果'))
-                : activeTab.items.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('无结果'),
-                        if (_hasMore || _loadingMore || _loadMoreError != null)
-                          _paginationFooter(context),
-                      ],
-                    ),
-                  )
-                : _resultGrid(context, activeTab),
+                : _resultsView(context, feed),
           ),
         ],
       ),
     );
+  }
+
+  Widget _resultsView(BuildContext context, _SearchFeed feed) {
+    if (!feed.initialized && feed.loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (!feed.initialized && feed.error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                feed.error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+              _paginationFooter(context, feed),
+            ],
+          ),
+        ),
+      );
+    }
+    if (feed.items.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _idQuery != null
+                  ? (_feeds.first.items.isEmpty
+                        ? '未找到该 ID 对应的作品'
+                        : '该分类下没有匹配的作品')
+                  : (feed.hasMore ? '当前页暂无匹配结果' : '无结果'),
+            ),
+            if (feed.hasMore || feed.loading || feed.error != null)
+              _paginationFooter(context, feed),
+          ],
+        ),
+      );
+    }
+    return _resultGrid(context, feed);
   }
 
   Widget _historyView(BuildContext context) {
@@ -448,8 +526,9 @@ class _SearchPageState extends State<SearchPage> {
     );
   }
 
-  Widget _resultGrid(BuildContext context, SearchTab activeTab) {
+  Widget _resultGrid(BuildContext context, _SearchFeed feed) {
     return CustomScrollView(
+      key: ValueKey((_requestGeneration, _tabIndex)),
       controller: _scrollController,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       slivers: [
@@ -458,18 +537,19 @@ class _SearchPageState extends State<SearchPage> {
           sliver: SliverGrid(
             gridDelegate: mediaGridDelegateFor(context),
             delegate: SliverChildBuilderDelegate((context, i) {
-              final item = activeTab.items[i];
+              final item = feed.items[i];
               return MediaCard(item: item, onTap: () => _openItem(item));
-            }, childCount: activeTab.items.length),
+            }, childCount: feed.items.length),
           ),
         ),
-        SliverToBoxAdapter(child: _paginationFooter(context)),
+        if (_idQuery == null)
+          SliverToBoxAdapter(child: _paginationFooter(context, feed)),
       ],
     );
   }
 
-  Widget _paginationFooter(BuildContext context) {
-    if (_loadingMore) {
+  Widget _paginationFooter(BuildContext context, _SearchFeed feed) {
+    if (feed.loading) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 18),
         child: Center(
@@ -480,7 +560,7 @@ class _SearchPageState extends State<SearchPage> {
         ),
       );
     }
-    if (_loadMoreError != null) {
+    if (feed.error != null) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Center(
@@ -492,7 +572,7 @@ class _SearchPageState extends State<SearchPage> {
         ),
       );
     }
-    if (!_hasMore) {
+    if (!feed.hasMore) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 18),
         child: Center(
@@ -514,12 +594,12 @@ class _SearchPageState extends State<SearchPage> {
   void _selectTab(int index) {
     if (index == _tabIndex) return;
     setState(() => _tabIndex = index);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-        _onScroll();
-      }
-    });
+    final feed = _feeds[index];
+    if (!feed.initialized && feed.error == null) {
+      _loadTab(index);
+    } else {
+      _scheduleLoadMoreIfNeeded(index, _requestGeneration);
+    }
   }
 
   void _openItem(MediaItem item) {
@@ -530,49 +610,28 @@ class _SearchPageState extends State<SearchPage> {
   }
 }
 
-class _SearchTabsMerge {
-  final List<SearchTab> tabs;
-  final int addedCount;
+enum _SearchCategory {
+  general('综合', 1),
+  video('短剧', 11, 'video'),
+  manju('漫剧', 11, 'manju'),
+  manga('漫画', 8, 'manga'),
+  audio('听书', 2, 'audio');
 
-  const _SearchTabsMerge(this.tabs, this.addedCount);
+  const _SearchCategory(this.title, this.tabType, [this.kind]);
+
+  final String title;
+  final int tabType;
+  final String? kind;
+
+  String get sourceTitle => this == manju ? '短剧' : title;
 }
 
-_SearchTabsMerge _mergeSearchTabs(
-  List<SearchTab> current,
-  List<SearchTab> incoming,
-) {
-  final merged = <SearchTab>[];
-  final indexByTitle = <String, int>{};
-  final seenByTitle = <String, Set<String>>{};
-  var addedCount = 0;
-
-  void appendTab(SearchTab tab, {required bool countAsAdded}) {
-    var index = indexByTitle[tab.title];
-    if (index == null) {
-      index = merged.length;
-      indexByTitle[tab.title] = index;
-      seenByTitle[tab.title] = <String>{};
-      merged.add(SearchTab(title: tab.title, items: []));
-    }
-
-    final items = List<MediaItem>.of(merged[index].items);
-    final seen = seenByTitle[tab.title]!;
-    for (final item in tab.items) {
-      if (item.id.isEmpty) continue;
-      final key = '${item.kind}:${item.id}';
-      if (!seen.add(key)) continue;
-      items.add(item);
-      if (countAsAdded) addedCount++;
-    }
-    merged[index] = SearchTab(title: tab.title, items: items);
-  }
-
-  for (final tab in current) {
-    appendTab(tab, countAsAdded: false);
-  }
-  for (final tab in incoming) {
-    appendTab(tab, countAsAdded: true);
-  }
-
-  return _SearchTabsMerge(merged, addedCount);
+class _SearchFeed {
+  final items = <MediaItem>[];
+  final seen = <String>{};
+  bool initialized = false;
+  bool loading = false;
+  bool hasMore = false;
+  int nextOffset = 0;
+  String? error;
 }

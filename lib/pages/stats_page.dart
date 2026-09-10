@@ -736,7 +736,7 @@ class _RecentBooksCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final title = entry['title']?.toString() ?? '未知';
     final chapter = entry['chapterId']?.toString() ?? '';
-    final isVideo = entry['kind'] == 'video';
+    final isVideo = isVideoKind(entry['kind']?.toString() ?? '');
     final time = DateTime.fromMillisecondsSinceEpoch(
       (entry['time'] as num?)?.toInt() ?? 0,
     );

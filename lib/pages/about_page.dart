@@ -38,7 +38,7 @@ class AboutPage extends StatelessWidget {
               style: theme.textTheme.titleLarge?.copyWith(height: 2),
             ),
             subtitle: Text(
-              '番茄小说/短剧/漫画/听书聚合客户端',
+              '番茄小说/短剧/漫剧/漫画/听书聚合客户端',
               textAlign: TextAlign.center,
               style: TextStyle(color: outline, fontSize: 13),
             ),
@@ -49,7 +49,7 @@ class AboutPage extends StatelessWidget {
               _AboutRow(
                 icon: Icons.commit_outlined,
                 title: '当前版本',
-                trailingText: '1.0.8 (9)',
+                trailingText: '1.0.17 (18)',
               ),
             ],
           ),

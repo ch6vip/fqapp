@@ -15,7 +15,7 @@ enum PlaybackIssue {
   service('播放服务暂时不可用', '请稍后重试，或先观看其他剧集。'),
   decoding('视频解析失败', '视频格式可能不受支持，可以重试或切换其他剧集。'),
   unknown('播放失败', '请重试，或切换其他剧集。'),
-  empty('暂无可播放剧集', '返回后试试其他短剧。');
+  empty('暂无可播放剧集', '返回后试试其他作品。');
 
   final String title;
   final String message;

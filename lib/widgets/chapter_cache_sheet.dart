@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/chapter_text_formatter.dart';
 
 class ChapterCacheSheet extends StatefulWidget {
   final CachedBook book;
   final int currentIndex;
   final ChapterCache cache;
   final Future<String> Function(Chapter) loader;
+  final void Function(Chapter chapter, String text)? onContentAvailable;
 
   const ChapterCacheSheet({
     super.key,
@@ -15,6 +17,7 @@ class ChapterCacheSheet extends StatefulWidget {
     required this.currentIndex,
     required this.cache,
     required this.loader,
+    this.onContentAvailable,
   });
 
   @override
@@ -26,6 +29,7 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
   bool _running = false;
   int _completed = 0;
   int _total = 0;
+  int _incompleteImages = 0;
   int _job = 0;
   String? _message;
 
@@ -61,6 +65,7 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
       _running = true;
       _completed = 0;
       _total = chapters.length;
+      _incompleteImages = 0;
       _message = null;
     });
     try {
@@ -73,12 +78,35 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
           chapterId: chapter.itemId,
         );
         if (!mounted || job != _job) return;
-        if (cached == null || cached.trim().isEmpty) {
+        var content = _readCachedChapter(cached, chapter.title);
+        var shouldWrite = false;
+        if (content == null || content.needsImageRefresh()) {
           final text = await widget
               .loader(chapter)
               .timeout(const Duration(seconds: 30));
           if (!mounted || job != _job) return;
-          if (text.trim().isEmpty) throw StateError('章节正文为空');
+          final fetched = ChapterContent.isStructuredCache(text)
+              ? ChapterContent.fromCacheText(text)
+              : ChapterContent.fromPlainText(text, illustrationsChecked: true);
+          if (fetched.withoutLeadingTitle(chapter.title).isEmpty) {
+            throw StateError('章节正文为空');
+          }
+          // A reader refresh may have completed while the batch was fetching.
+          final latest = await widget.cache.read(
+            bookId: widget.book.id,
+            chapterId: chapter.itemId,
+          );
+          if (!mounted || job != _job) return;
+          final previous = _readCachedChapter(latest, chapter.title);
+          content = fetched.preferCompleteCache(previous);
+          shouldWrite = !identical(content, previous);
+        }
+        final text = content.toCacheText();
+        // Publish before queuing the disk write so older reader requests can
+        // no longer queue a stale write behind it. A failed save still leaves
+        // the downloaded chapter available to the open reader.
+        widget.onContentAvailable?.call(chapter, text);
+        if (shouldWrite) {
           await widget.cache.write(
             bookId: widget.book.id,
             chapterId: chapter.itemId,
@@ -87,10 +115,17 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
           );
         }
         if (!mounted || job != _job) return;
-        setState(() => _completed++);
+        setState(() {
+          _completed++;
+          if (content!.needsImageRefresh()) _incompleteImages++;
+        });
       }
       if (mounted && job == _job) {
-        setState(() => _message = '缓存完成，可从书架的离线缓存入口继续阅读');
+        setState(
+          () => _message = _incompleteImages == 0
+              ? '缓存完成，可从书架的离线缓存入口继续阅读'
+              : '已保存 $_completed/$_total 章，其中 $_incompleteImages 章插图未更新，联网后可重试',
+        );
       }
     } catch (_) {
       if (mounted && job == _job) {
@@ -111,6 +146,16 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
       _message = '已停止缓存，已保存的章节会保留';
     });
     _refresh();
+  }
+
+  ChapterContent? _readCachedChapter(String? text, String title) {
+    if (text == null) return null;
+    try {
+      final content = ChapterContent.fromCacheText(text);
+      return content.withoutLeadingTitle(title).isEmpty ? null : content;
+    } on FormatException {
+      return null;
+    }
   }
 
   @override
@@ -138,7 +183,7 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
             const SizedBox(height: 6),
             Text('已缓存 $cachedCount / ${widget.book.chapters.length} 章'),
             const SizedBox(height: 16),
-            const Text('阅读过的章节会自动保存。也可以提前缓存后续章节，已缓存的内容会跳过。'),
+            const Text('阅读过的章节会自动保存，也可提前缓存后续章节。插图首次查看需要联网，显示后会自动缓存。'),
             const SizedBox(height: 16),
             if (remaining == 0)
               const Text('当前已是最后一章')

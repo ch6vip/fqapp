@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
+import '../models/media_id.dart';
 import 'backend_service.dart';
 import 'chapter_text_formatter.dart';
 
@@ -117,21 +118,59 @@ class ApiClient {
     String query, {
     int page = 1,
     int? tabType,
+    int? offset,
   }) async {
+    final searchOffset = offset ?? (page > 1 ? page - 1 : 0) * 10;
     final url = tabType == null
         ? _searchUrl(query, page)
         : _url('/api/v1/search', {
             'query': query,
             'tab_type': '$tabType',
-            'offset': '${(page > 1 ? page - 1 : 0) * 10}',
+            'offset': '${searchOffset < 0 ? 0 : searchOffset}',
             'count': '10',
           });
     final r = await _get(url);
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
     return Isolate.run(
-      () => parseSearchTabs(_decodeEnvelope(statusCode, bodyBytes)),
+      () => parseSearchTabs(
+        _decodeEnvelope(statusCode, bodyBytes),
+        tabType: tabType,
+      ),
     );
+  }
+
+  // Note: ID 识别、精确匹配与目录回退见 .agents/notes/implemented/feature/2026-09-10-id-search.md
+  Future<MediaItem?> lookupMediaById(String input) async {
+    final id = input.trim();
+    if (!isValidMediaId(id)) {
+      throw const ApiException('作品 ID 需为 1 至 20 位数字，且不能全为 0');
+    }
+    Exception? failure;
+    StackTrace? failureStack;
+    for (final endpoint in ['detail', 'directory']) {
+      try {
+        final response = await _get(_url('/api/v1/books/$id/$endpoint', {}));
+        final status = response.statusCode;
+        final bytes = response.bodyBytes;
+        final item = await Isolate.run(
+          () => parseMediaIdResult(_decodeEnvelope(status, bytes), id),
+        );
+        if (item != null) return item;
+      } on Exception catch (error, stack) {
+        if (error is ApiException) {
+          // BOOK_NOT_EXIST_ERROR is a definitive lookup result. Requesting
+          // a directory for it adds delay and can obscure it with a timeout.
+          if (error.upstreamCode == 101104) break;
+          if (error.statusCode == 404) continue;
+        }
+        failure = error;
+        failureStack = stack;
+      }
+    }
+    // An unavailable source is retryable; it must not become "no results".
+    if (failure != null) Error.throwWithStackTrace(failure, failureStack!);
+    return null;
   }
 
   /// Book detail.
@@ -275,6 +314,42 @@ class ApiClient {
     });
   }
 
+  // Note: 图文接口的解密标记与旧缓存升级见
+  // .agents/notes/implemented/bug-fix/2026-09-10-reader-illustrations.md
+  Future<ChapterContent> chapterContent(String itemId) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/chapters/${Uri.encodeComponent(itemId)}/novel', {}),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      final baseUrl = _base;
+      return await Isolate.run(() {
+        final payload = _decodeEnvelope(status, bytes);
+        final data = payload['data'];
+        // Older backends return code=0 with ciphertext still in content.
+        // Only consume a chapter the backend explicitly decrypted successfully.
+        if (data is! Map ||
+            data['content_decrypted'] != true ||
+            data['content'] is! String) {
+          throw const ApiException('图文正文尚未解密');
+        }
+        final content = parseChapterContent(
+          data['content'] as String,
+          baseUrl: baseUrl,
+        );
+        if (content.isEmpty) throw const ApiException('正文为空');
+        return content;
+      });
+    } on Exception {
+      // Keep text available if the illustrated source is temporarily down.
+      // The cache records this as incomplete, allowing a later visit to retry.
+      final text = await contentText(itemId);
+      if (text.trim().isEmpty) throw const ApiException('正文为空');
+      return ChapterContent.fromPlainText(text);
+    }
+  }
+
   /// Resolve a share URL to a book id.
   Future<Map<String, dynamic>> resolve(String url) async {
     final r = await _get(_url('/api/resolve', {'url': url}));
@@ -308,15 +383,19 @@ class ApiClient {
     final bodyBytes = r.bodyBytes;
     return Isolate.run(() {
       final payload = _decodeEnvelope(statusCode, bodyBytes);
-      final items = parseMediaItems(payload);
       int? nextOffset;
       String? nextSessionId;
+      var selectedPayload = payload;
       final data = payload['data'];
       if (data is Map) {
         final tabItems = data['tab_item'];
         if (tabItems is List) {
+          selectedPayload = <String, dynamic>{};
           for (final raw in tabItems) {
-            if (raw is! Map) continue;
+            if (raw is! Map || raw['tab_type']?.toString() != '$tabType') {
+              continue;
+            }
+            selectedPayload = Map<String, dynamic>.from(raw);
             final candidate = raw['next_offset'];
             if (candidate is num &&
                 candidate.toInt() > offset &&
@@ -330,6 +409,10 @@ class ApiClient {
           }
         }
       }
+      final items = parseMediaItems(
+        selectedPayload,
+        kind: tabType == 24 ? 'manju' : null,
+      );
       return HomepagePage(
         items: items,
         nextOffset: nextOffset,
@@ -371,7 +454,10 @@ Map<String, dynamic> _decodeEnvelope(int statusCode, List<int> bodyBytes) {
   if (payload['code'] != null &&
       payload['code'] != 200 &&
       payload['code'] != 0) {
-    throw ApiException('${payload['message'] ?? '请求失败'}');
+    throw ApiException(
+      '${payload['message'] ?? '请求失败'}',
+      upstreamCode: payload['code'] is int ? payload['code'] as int : null,
+    );
   }
   if (payload['success'] == false) {
     throw ApiException('${payload['error'] ?? payload['message'] ?? '请求失败'}');
@@ -408,8 +494,9 @@ String _extractChapterText(Map<String, dynamic> payload) {
 class ApiException implements Exception {
   final String message;
   final int? statusCode;
+  final int? upstreamCode;
 
-  const ApiException(this.message, {this.statusCode});
+  const ApiException(this.message, {this.statusCode, this.upstreamCode});
 
   @override
   String toString() => message;

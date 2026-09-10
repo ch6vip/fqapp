@@ -135,7 +135,7 @@ void main() {
       await tester.tap(find.text('离线测试书'));
       await tester.pumpAndSettle();
       expect(find.textContaining('这段正文来自磁盘缓存'), findsOneWidget);
-      await tester.pageBack();
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('删除《离线测试书》缓存'));
       await tester.pumpAndSettle();

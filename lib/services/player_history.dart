@@ -23,7 +23,7 @@ class PlayerHistory {
             try {
               await store.accumulateReadTime(
                 snapshot['id'] as String,
-                'video',
+                snapshot['kind'] == 'manju' ? 'manju' : 'video',
                 watchedSeconds,
               );
             } catch (_) {

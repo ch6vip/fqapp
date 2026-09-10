@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' show parseFragment;
 
@@ -41,6 +43,270 @@ const _hiddenTags = {
 final _lineBreaks = RegExp(r'\r\n?|[\u0085\u2028\u2029]');
 final _edgeMarkers = RegExp(r'^[\u200B\uFEFF]+|[\u200B\uFEFF]+$');
 final _titleSpaces = RegExp(r'\s+');
+
+sealed class ChapterBlock {
+  const ChapterBlock();
+}
+
+class ChapterParagraph extends ChapterBlock {
+  final String text;
+
+  const ChapterParagraph(this.text);
+}
+
+class ChapterImage extends ChapterBlock {
+  final String url;
+  final String alt;
+  final double? width;
+  final double? height;
+
+  const ChapterImage({
+    required this.url,
+    this.alt = '',
+    this.width,
+    this.height,
+  });
+
+  double? get aspectRatio =>
+      width != null && height != null ? width! / height! : null;
+}
+
+// Note: 图文缓存、旧文字锚点迁移与原始 HTML 来源见
+// .agents/notes/implemented/bug-fix/2026-09-10-reader-illustrations.md
+class ChapterContent {
+  static const _cachePrefix = '\u001efqapp:chapter:2\n';
+
+  final List<ChapterBlock> blocks;
+  // Keep the exact old normalization for migrating saved text-only offsets.
+  final String legacyText;
+  final bool illustrationsChecked;
+
+  ChapterContent({
+    required List<ChapterBlock> blocks,
+    String? legacyText,
+    this.illustrationsChecked = true,
+  }) : blocks = List.unmodifiable(blocks),
+       legacyText =
+           legacyText ??
+           blocks.whereType<ChapterParagraph>().map((p) => p.text).join('\n');
+
+  factory ChapterContent.fromPlainText(
+    String text, {
+    bool illustrationsChecked = false,
+  }) => ChapterContent(
+    blocks: [for (final p in splitChapterParagraphs(text)) ChapterParagraph(p)],
+    legacyText: splitChapterParagraphs(text).join('\n'),
+    illustrationsChecked: illustrationsChecked,
+  );
+
+  bool get isEmpty => blocks.isEmpty;
+  bool get hasImages => blocks.any((block) => block is ChapterImage);
+  Iterable<ChapterImage> get images => blocks.whereType<ChapterImage>();
+
+  /// An incomplete response is useful on a cache miss, but cannot refresh a
+  /// readable cached chapter: missing pictures may just mean a source outage.
+  ChapterContent preferCompleteCache(ChapterContent? cached) =>
+      !illustrationsChecked && cached != null && !cached.isEmpty
+      ? cached
+      : this;
+
+  bool needsImageRefresh({DateTime? now}) {
+    if (!illustrationsChecked) return true;
+    final deadline =
+        (now ?? DateTime.now()).millisecondsSinceEpoch ~/ 1000 + 60;
+    return images.any((image) {
+      final expires = int.tryParse(
+        Uri.parse(image.url).queryParameters['x-expires'] ?? '',
+      );
+      return expires != null && expires > 0 && expires <= deadline;
+    });
+  }
+
+  ChapterContent withoutLeadingTitle(String title) {
+    final firstText = blocks.indexWhere((block) => block is ChapterParagraph);
+    final body = [...blocks];
+    if (firstText >= 0 &&
+        title.trim().isNotEmpty &&
+        (blocks[firstText] as ChapterParagraph).text.replaceAll(
+              _titleSpaces,
+              '',
+            ) ==
+            title.replaceAll(_titleSpaces, '')) {
+      body.removeAt(firstText);
+    }
+    return ChapterContent(
+      blocks: body,
+      legacyText: splitChapterParagraphs(
+        legacyText,
+        chapterTitle: title,
+      ).join('\n'),
+      illustrationsChecked: illustrationsChecked,
+    );
+  }
+
+  String toCacheText() =>
+      _cachePrefix +
+      jsonEncode({
+        'version': 2,
+        'illustrationsChecked': illustrationsChecked,
+        'legacyText': legacyText,
+        'blocks': [
+          for (final block in blocks)
+            switch (block) {
+              ChapterParagraph() => {'type': 'text', 'text': block.text},
+              ChapterImage() => {
+                'type': 'image',
+                'url': block.url,
+                'alt': block.alt,
+                'width': ?block.width,
+                'height': ?block.height,
+              },
+            },
+        ],
+      });
+
+  static bool isStructuredCache(String text) => text.startsWith(_cachePrefix);
+
+  factory ChapterContent.fromCacheText(String text) {
+    if (!isStructuredCache(text)) return ChapterContent.fromPlainText(text);
+    final data = jsonDecode(text.substring(_cachePrefix.length));
+    if (data is! Map ||
+        data['version'] != 2 ||
+        data['blocks'] is! List ||
+        data['legacyText'] is! String ||
+        data['illustrationsChecked'] is! bool) {
+      throw const FormatException('章节缓存格式无效');
+    }
+    final blocks = <ChapterBlock>[];
+    for (final raw in data['blocks'] as List) {
+      if (raw is! Map) throw const FormatException('章节缓存内容无效');
+      if (raw['type'] == 'text' && raw['text'] is String) {
+        for (final paragraph in splitChapterParagraphs(raw['text'] as String)) {
+          blocks.add(ChapterParagraph(paragraph));
+        }
+      } else if (raw['type'] == 'image' && raw['url'] is String) {
+        final url = _chapterImageUrl(raw['url'] as String);
+        if (url == null) throw const FormatException('章节插图地址无效');
+        blocks.add(
+          ChapterImage(
+            url: url,
+            alt: raw['alt'] is String ? raw['alt'] as String : '',
+            width: _imageDimension(raw['width']),
+            height: _imageDimension(raw['height']),
+          ),
+        );
+      } else {
+        throw const FormatException('章节缓存内容无效');
+      }
+    }
+    return ChapterContent(
+      blocks: blocks,
+      legacyText: data['legacyText'] as String,
+      illustrationsChecked: data['illustrationsChecked'] as bool,
+    );
+  }
+}
+
+/// Parse upstream markup once. Cached text is decoded with fromCacheText so
+/// literal tags and entities inside a novel are never interpreted a second time.
+ChapterContent parseChapterContent(String source, {String? baseUrl}) {
+  final blocks = <ChapterBlock>[];
+  var pending = StringBuffer();
+  void flush() {
+    for (final paragraph in splitChapterParagraphs(pending.toString())) {
+      blocks.add(ChapterParagraph(paragraph));
+    }
+    pending = StringBuffer();
+  }
+
+  void append(dom.Node node) {
+    if (node is dom.Text) {
+      pending.write(node.data);
+    } else if (node is dom.Element) {
+      final tag = node.localName;
+      if (_hiddenTags.contains(tag)) return;
+      if (tag == 'img') {
+        flush();
+        String? url;
+        for (final key in ['data-src', 'data-original', 'src']) {
+          url = _chapterImageUrl(node.attributes[key], baseUrl: baseUrl);
+          if (url != null) break;
+        }
+        final alt = node.attributes['alt']?.trim() ?? '';
+        if (url != null) {
+          blocks.add(
+            ChapterImage(
+              url: url,
+              alt: alt,
+              width: _imageDimension(
+                node.attributes['img-width'] ??
+                    node.attributes['width'] ??
+                    node.attributes['data-width'],
+              ),
+              height: _imageDimension(
+                node.attributes['img-height'] ??
+                    node.attributes['height'] ??
+                    node.attributes['data-height'],
+              ),
+            ),
+          );
+        } else if (alt.isNotEmpty) {
+          blocks.add(ChapterParagraph(alt));
+        }
+        return;
+      }
+      final paragraph = _paragraphTags.contains(tag);
+      if (paragraph || tag == 'br' || tag == 'hr') flush();
+      for (final child in node.nodes) {
+        append(child);
+      }
+      if (paragraph) flush();
+      if (tag == 'td' || tag == 'th') pending.write(' ');
+    }
+  }
+
+  for (final node in parseFragment(source).nodes) {
+    append(node);
+  }
+  flush();
+  return ChapterContent(
+    blocks: blocks,
+    legacyText: normalizeChapterText(source),
+  );
+}
+
+String? _chapterImageUrl(String? value, {String? baseUrl}) {
+  final raw = value?.trim();
+  if (raw == null || raw.isEmpty) return null;
+  try {
+    final uri = Uri.parse(raw);
+    final resolved = uri.hasScheme
+        ? uri
+        : baseUrl != null
+        ? Uri.parse(baseUrl).resolveUri(uri)
+        : null;
+    if (resolved == null ||
+        (resolved.scheme != 'https' && resolved.scheme != 'http') ||
+        resolved.host.isEmpty ||
+        resolved.userInfo.isNotEmpty) {
+      return null;
+    }
+    // Re-encoding an absolute signed CDN URL can invalidate its signature.
+    return uri.hasScheme ? raw : resolved.toString();
+  } on FormatException {
+    return null;
+  }
+}
+
+double? _imageDimension(Object? value) {
+  final dimension = double.tryParse(value?.toString() ?? '');
+  return dimension != null &&
+          dimension.isFinite &&
+          dimension > 0 &&
+          dimension <= 100000
+      ? dimension
+      : null;
+}
 
 /// Converts an upstream chapter to plain text once, before it is cached.
 /// Block elements and explicit breaks carry paragraph boundaries; inline

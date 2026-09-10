@@ -7,6 +7,24 @@ import 'support/controlled_player.dart';
 
 void main() {
   test(
+    'manju progress and watched time share the existing video history key',
+    () async {
+      final store = _KindTrackingStore();
+      await PlayerHistory(store).save({
+        'id': 'series',
+        'kind': 'manju',
+        'episodeId': 'episode',
+        'position': 37.0,
+      }, watchedSeconds: 5);
+      expect((await PlayerHistory(store).load('series'))?['kind'], 'manju');
+      expect(store.entry?['id'], 'series');
+      expect(store.watchedKind, 'manju');
+      expect(store.watchedId, 'series');
+      expect(store.seconds, 5);
+    },
+  );
+
+  test(
     'detail resume reads wait for a departing player to save its latest episode',
     () async {
       final gate = Completer<void>();
@@ -52,4 +70,21 @@ void main() {
       expect(store.seconds, 2);
     },
   );
+}
+
+class _KindTrackingStore extends ControlledReaderStore {
+  String? watchedKind;
+  String? watchedId;
+
+  @override
+  Future<void> accumulateReadTime(
+    String bookId,
+    String kind,
+    double seconds, {
+    DateTime? at,
+  }) async {
+    watchedId = bookId;
+    watchedKind = kind;
+    await super.accumulateReadTime(bookId, kind, seconds, at: at);
+  }
 }

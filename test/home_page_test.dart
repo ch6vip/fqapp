@@ -11,6 +11,66 @@ import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 
 void main() {
+  testWidgets(
+    'manju, manga and audio tabs show the matching feed after insertion',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 850));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      MediaItem item(String label) => MediaItem(
+        id: label,
+        title: '$label 作品',
+        cover: '',
+        author: '',
+        badge: '',
+        ep: '',
+        kind: HomeNotifier.tabKinds[label]!,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            homeProvider.overrideWith(
+              () => HomeNotifier(
+                homepageLoader:
+                    ({
+                      int tabType = 2,
+                      int offset = 0,
+                      String? sessionId,
+                    }) async => HomepagePage(
+                      items: [
+                        item(
+                          HomeNotifier.tabTypes.entries
+                              .firstWhere((entry) => entry.value == tabType)
+                              .key,
+                        ),
+                      ],
+                      nextOffset: null,
+                      sessionId: null,
+                    ),
+                searchLoader: (query, {int page = 1}) async => [
+                  SearchTab(title: query, items: [item(query)], hasMore: false),
+                ],
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: HomePage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (final label in ['漫剧', '漫画', '听书']) {
+        final index = HomeNotifier.tabs.indexOf(label);
+        final tab = find.byKey(ValueKey('home_category_$index'));
+        await tester.ensureVisible(tab);
+        await tester.pumpAndSettle();
+        await tester.tap(tab);
+        await tester.pumpAndSettle();
+        expect(find.text('$label 作品'), findsOneWidget);
+        if (label == '漫剧') expect(find.text('观看漫剧'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
   for (final scale in [1.0, 1.8]) {
     testWidgets('search hint fits a narrow phone at text scale $scale', (
       tester,

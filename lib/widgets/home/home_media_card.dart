@@ -9,6 +9,7 @@ import 'home_design.dart';
 
 String homeKindLabel(String kind) => switch (kind) {
   'video' => '短剧',
+  'manju' => '漫剧',
   'manga' => '漫画',
   'audio' => '听书',
   _ => '小说',
@@ -16,6 +17,7 @@ String homeKindLabel(String kind) => switch (kind) {
 
 IconData homeKindIcon(String kind) => switch (kind) {
   'video' => LucideIcons.clapperboard,
+  'manju' => LucideIcons.film,
   'manga' => LucideIcons.image,
   'audio' => LucideIcons.headphones,
   _ => LucideIcons.book_open,
@@ -98,6 +100,7 @@ class _CoverArtwork extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final colors = switch (kind) {
       'video' => [const Color(0xFF734740), const Color(0xFF242428)],
+      'manju' => [const Color(0xFF8B557E), const Color(0xFF35283D)],
       'manga' => [const Color(0xFF6F6887), const Color(0xFF343349)],
       'audio' => [const Color(0xFF426C78), const Color(0xFF233B42)],
       _ => [const Color(0xFF6A7964), const Color(0xFF293C35)],

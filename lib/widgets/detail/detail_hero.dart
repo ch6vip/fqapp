@@ -336,13 +336,8 @@ class _CoverStage extends StatelessWidget {
               final offset = !reducedMotion && scroll.hasClients
                   ? scroll.offset.clamp(-70.0, 320.0)
                   : 0.0;
-              return Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.identity()
-                  ..setEntry(3, 2, 0.001)
-                  ..translateByDouble(0, offset * 0.12, 0, 1)
-                  ..rotateY(-0.08)
-                  ..rotateZ(-0.045),
+              return Transform.translate(
+                offset: Offset(0, offset * 0.12),
                 child: child,
               );
             },

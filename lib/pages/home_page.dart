@@ -23,16 +23,11 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
-  static const _tabKinds = {
-    '小说': 'book',
-    '短剧': 'video',
-    '漫画': 'manga',
-    '听书': 'audio',
-  };
   static const _captions = [
     '换个故事，换一种心情',
     '翻开之后，就舍不得合上',
     '好戏开场，下一集更精彩',
+    '画中的故事，正在上演',
     '每一格，都藏着一个新世界',
     '让好故事，陪你走过日常',
   ];
@@ -80,7 +75,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   List<MediaItem> _visibleItems(HomeState state) {
     if (state.tabIndex == 0) return state.items;
-    final kind = _tabKinds[homeCategories[state.tabIndex].label];
+    final kind = HomeNotifier.tabKinds[homeCategories[state.tabIndex].label];
     return state.items.where((item) => item.kind == kind).toList();
   }
 

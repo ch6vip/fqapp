@@ -100,7 +100,7 @@ class HomeHero extends StatelessWidget {
                 child: HomePressable(
                   key: const Key('home_search_button'),
                   onTap: onSearch,
-                  semanticLabel: '搜索小说、短剧、漫画和听书',
+                  semanticLabel: '搜索小说、短剧、漫剧、漫画和听书',
                   child: Container(
                     constraints: const BoxConstraints(minHeight: 50),
                     padding: const EdgeInsets.symmetric(

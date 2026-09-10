@@ -14,6 +14,7 @@ const homeCategories = [
   HomeCategory('推荐', LucideIcons.sparkles),
   HomeCategory('小说', LucideIcons.book_open),
   HomeCategory('短剧', LucideIcons.clapperboard),
+  HomeCategory('漫剧', LucideIcons.film),
   HomeCategory('漫画', LucideIcons.image),
   HomeCategory('听书', LucideIcons.headphones),
 ];

@@ -18,6 +18,16 @@ void main() {
       paragraphSpacing: 18,
       horizontalPadding: 28,
       themePreset: ReaderThemePreset.eyeCare,
+      letterSpacing: 0.8,
+      verticalPadding: 30,
+      titleSize: 28,
+      titleAlignment: ReaderTitleAlignment.center,
+      showReadingInfo: false,
+      followSystemBrightness: false,
+      brightness: 0.3,
+      fontPath: '/private/reader-fonts/test.font',
+      fontName: '测试宋体.ttf',
+      pageMode: ReaderPageMode.scroll,
     );
 
     await expected.save();
@@ -29,6 +39,16 @@ void main() {
     expect(restored.paragraphSpacing, 18);
     expect(restored.horizontalPadding, 28);
     expect(restored.themePreset, ReaderThemePreset.eyeCare);
+    expect(restored.letterSpacing, 0.8);
+    expect(restored.verticalPadding, 30);
+    expect(restored.titleSize, 28);
+    expect(restored.titleAlignment, ReaderTitleAlignment.center);
+    expect(restored.showReadingInfo, isFalse);
+    expect(restored.followSystemBrightness, isFalse);
+    expect(restored.brightness, 0.3);
+    expect(restored.fontPath, '/private/reader-fonts/test.font');
+    expect(restored.fontName, '测试宋体.ttf');
+    expect(restored.pageMode, ReaderPageMode.scroll);
   });
 
   test('reader preferences normalize invalid stored values', () async {
@@ -39,6 +59,14 @@ void main() {
       'reader_paragraph_spacing': -4,
       'reader_horizontal_padding': 100,
       'reader_theme_preset': 'missing',
+      'reader_letter_spacing': 8,
+      'reader_vertical_padding': -10,
+      'reader_title_size': 100,
+      'reader_title_alignment': 'unknown',
+      'reader_show_reading_info': 'no',
+      'reader_follow_system_brightness': 3,
+      'reader_brightness': 0,
+      'reader_page_mode': 'unknown',
     });
 
     final restored = await ReaderPreferences.load();
@@ -49,6 +77,14 @@ void main() {
     expect(restored.paragraphSpacing, 0);
     expect(restored.horizontalPadding, 48);
     expect(restored.themePreset, ReaderThemePreset.light);
+    expect(restored.letterSpacing, 3);
+    expect(restored.verticalPadding, 0);
+    expect(restored.titleSize, 40);
+    expect(restored.titleAlignment, ReaderTitleAlignment.start);
+    expect(restored.showReadingInfo, isTrue);
+    expect(restored.followSystemBrightness, isTrue);
+    expect(restored.brightness, 0.02);
+    expect(restored.pageMode, ReaderPageMode.paged);
   });
 
   test(
@@ -84,4 +120,37 @@ void main() {
     expect(value.paragraphSpacing, 12);
     expect(value.horizontalPadding, 20);
   });
+
+  test(
+    'legacy preferences preserve their title size and use system brightness',
+    () async {
+      SharedPreferences.setMockInitialValues({'reader_font_size': 24});
+      final restored = await ReaderPreferences.load();
+      expect(restored.titleSize, 26);
+      expect(restored.followSystemBrightness, isTrue);
+      expect(restored.fontPath, isEmpty);
+    },
+  );
+
+  test(
+    'overlapping saves leave one complete latest preference snapshot',
+    () async {
+      final first = const ReaderPreferences(
+        fontSize: 16,
+        brightness: 0.2,
+      ).save();
+      final last = const ReaderPreferences(
+        fontSize: 25,
+        brightness: 0.7,
+        titleAlignment: ReaderTitleAlignment.center,
+        followSystemBrightness: false,
+      ).save();
+      final restored = await ReaderPreferences.load();
+      await Future.wait([first, last]);
+      expect(restored.fontSize, 25);
+      expect(restored.brightness, 0.7);
+      expect(restored.followSystemBrightness, isFalse);
+      expect(restored.titleAlignment, ReaderTitleAlignment.center);
+    },
+  );
 }

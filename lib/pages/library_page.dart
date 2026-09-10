@@ -344,7 +344,7 @@ String? _readingText(
   final episode = history['episode'];
   if (episode is num && episode >= 0) {
     final suffix = switch (kind) {
-      'video' || 'audio' => '集',
+      'video' || 'manju' || 'audio' => '集',
       'manga' => '话',
       _ => '章',
     };

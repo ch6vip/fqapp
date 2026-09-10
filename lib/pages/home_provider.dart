@@ -7,6 +7,7 @@ typedef HomepageLoader =
     Future<HomepagePage> Function({int tabType, int offset, String? sessionId});
 typedef SearchTabsLoader =
     Future<List<SearchTab>> Function(String query, {int page});
+typedef CategorySearchLoader = Future<List<SearchTab>> Function({int offset});
 
 /// Immutable view-model of the home recommendation feed.
 class HomeState {
@@ -53,6 +54,9 @@ class _TabFeed {
   String? sessionId;
   int searchPage = 0;
   Map<String, int> searchPages = const {};
+  Map<String, int> searchOffsets = const {};
+  bool manjuSearchExhausted = false;
+  bool mangaSearchExhausted = false;
   final Set<String> seen = {};
   bool recommendExhausted = false;
   bool hasMore = true;
@@ -64,6 +68,9 @@ class _TabFeed {
     sessionId = null;
     searchPage = 0;
     searchPages = const {};
+    searchOffsets = const {};
+    manjuSearchExhausted = false;
+    mangaSearchExhausted = false;
     seen.clear();
     recommendExhausted = false;
     hasMore = true;
@@ -77,6 +84,10 @@ class _FetchedFeed {
   final String? sessionId;
   final int searchPage;
   final Map<String, int> searchPages;
+  final Map<String, int> searchOffsets;
+  final bool manjuSearchExhausted;
+  final bool mangaSearchExhausted;
+  final bool searchCanAdvance;
   final bool recommendExhausted;
   final bool hasMore;
 
@@ -86,6 +97,10 @@ class _FetchedFeed {
     required this.sessionId,
     required this.searchPage,
     this.searchPages = const {},
+    this.searchOffsets = const {},
+    this.manjuSearchExhausted = false,
+    this.mangaSearchExhausted = false,
+    this.searchCanAdvance = false,
     required this.recommendExhausted,
     required this.hasMore,
   });
@@ -111,32 +126,56 @@ Future<_Attempt<T>> _attempt<T>(Future<T> future) async {
 /// and feed before the first await, so switching tabs can never redirect a
 /// late response into a different tab's cache.
 class HomeNotifier extends Notifier<HomeState> {
-  static const tabs = ['全部', '小说', '短剧', '漫画', '听书'];
+  static const tabs = ['全部', '小说', '短剧', '漫剧', '漫画', '听书'];
   static const tabKinds = {
     '小说': 'book',
     '短剧': 'video',
+    '漫剧': 'manju',
     '漫画': 'manga',
     '听书': 'audio',
   };
-  static const tabTypes = {'小说': 2, '短剧': 8, '听书': 5};
+  static const tabTypes = {'小说': 2, '短剧': 8, '漫剧': 24, '听书': 5};
 
   final HomepageLoader _homepageLoader;
   final SearchTabsLoader _searchLoader;
-  final SearchTabsLoader _mangaSearchLoader;
+  final CategorySearchLoader _mangaSearchLoader;
+  final CategorySearchLoader _manjuSearchLoader;
 
   HomeNotifier({
     HomepageLoader? homepageLoader,
     SearchTabsLoader? searchLoader,
-    SearchTabsLoader? mangaSearchLoader,
+    CategorySearchLoader? mangaSearchLoader,
+    CategorySearchLoader? manjuSearchLoader,
   }) : _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
        _searchLoader = searchLoader ?? ApiClient.instance.searchTabs,
-       _mangaSearchLoader = mangaSearchLoader ?? searchLoader ?? _searchManga;
+       _mangaSearchLoader =
+           mangaSearchLoader ??
+           (searchLoader == null
+               ? _searchManga
+               : ({int offset = 0}) =>
+                     searchLoader('漫画', page: offset ~/ 10 + 1)),
+       _manjuSearchLoader =
+           manjuSearchLoader ??
+           (searchLoader == null
+               ? _searchManju
+               : ({int offset = 0}) =>
+                     searchLoader('漫剧', page: offset ~/ 10 + 1));
 
-  static Future<List<SearchTab>> _searchManga(String query, {int page = 1}) =>
-      ApiClient.instance.searchTabs(query, page: page, tabType: 8);
+  static Future<List<SearchTab>> _searchManga({int offset = 0}) =>
+      ApiClient.instance.searchTabs('漫画', tabType: 8, offset: offset);
 
-  Future<List<SearchTab>> _searchByType(String name, {int page = 1}) =>
-      (name == '漫画' ? _mangaSearchLoader : _searchLoader)(name, page: page);
+  static Future<List<SearchTab>> _searchManju({int offset = 0}) =>
+      ApiClient.instance.searchTabs('漫剧', tabType: 11, offset: offset);
+
+  Future<List<SearchTab>> _searchByType(
+    String name, {
+    int page = 1,
+    int offset = 0,
+  }) => switch (name) {
+    '漫画' => _mangaSearchLoader(offset: offset),
+    '漫剧' => _manjuSearchLoader(offset: offset),
+    _ => _searchLoader(name, page: page),
+  };
 
   final Map<int, _TabFeed> _feeds = {};
   int _generation = 0;
@@ -250,49 +289,43 @@ class HomeNotifier extends Notifier<HomeState> {
 
     final kind = tabKinds[name]!;
     final tabType = tabTypes[name];
-    if (tabType == null) {
-      final search = await _searchByType(name);
-      final items = _searchItems(search, name, kind);
-      return _FetchedFeed(
-        items: items,
-        nextOffset: null,
-        sessionId: null,
-        searchPage: 1,
-        recommendExhausted: true,
-        hasMore: items.isNotEmpty,
-      );
-    }
-
-    try {
-      final page = await _homepageLoader(tabType: tabType);
-      final items = _forceKind(page.items, kind);
-      final nextOffset = page.nextOffset;
-      final canAdvance = nextOffset != null && nextOffset > 0;
-      if (items.isNotEmpty || canAdvance) {
-        return _FetchedFeed(
-          items: items,
-          nextOffset: canAdvance ? nextOffset : null,
-          sessionId: page.sessionId,
-          searchPage: 0,
-          recommendExhausted: !canAdvance,
-          // Search remains available after recommendations are exhausted.
-          hasMore: true,
-        );
+    if (tabType != null) {
+      try {
+        final page = await _homepageLoader(tabType: tabType);
+        final items = _forceKind(page.items, kind);
+        final nextOffset = page.nextOffset;
+        final canAdvance = nextOffset != null && nextOffset > 0;
+        if (items.isNotEmpty || canAdvance) {
+          return _FetchedFeed(
+            items: items,
+            nextOffset: canAdvance ? nextOffset : null,
+            sessionId: page.sessionId,
+            searchPage: 0,
+            recommendExhausted: !canAdvance,
+            // Search remains available after recommendations are exhausted.
+            hasMore: true,
+          );
+        }
+      } catch (_) {
+        // Older backends may not expose recommendations; search below keeps the
+        // tab usable.
       }
-    } catch (_) {
-      // Older backends may not expose recommendations; search below keeps the
-      // tab usable.
     }
 
     final search = await _searchByType(name);
     final items = _searchItems(search, name, kind);
+    final progress = _searchProgress(search, name, items, offset: 0);
     return _FetchedFeed(
       items: items,
       nextOffset: null,
       sessionId: null,
       searchPage: 1,
+      searchOffsets: {
+        if (progress.nextOffset != null) name: progress.nextOffset!,
+      },
+      searchCanAdvance: progress.hasCursor,
       recommendExhausted: true,
-      hasMore: items.isNotEmpty,
+      hasMore: progress.hasMore,
     );
   }
 
@@ -301,28 +334,47 @@ class HomeNotifier extends Notifier<HomeState> {
   Future<_FetchedFeed> _loadAllInitial() async {
     final recommendationFuture = _attempt(_loadInitial(1));
     final videoFuture = _attempt(_searchLoader('短剧'));
-    final mangaFuture = _attempt(_mangaSearchLoader('漫画'));
+    final manjuFuture = _attempt(_manjuSearchLoader());
+    final mangaFuture = _attempt(_mangaSearchLoader());
     final audioFuture = _attempt(_searchLoader('听书'));
 
     final recommendation = await recommendationFuture;
     final video = await videoFuture;
+    final manju = await manjuFuture;
     final manga = await mangaFuture;
     final audio = await audioFuture;
     if (recommendation.value == null &&
         video.value == null &&
+        manju.value == null &&
         manga.value == null &&
         audio.value == null) {
       throw recommendation.error ??
           video.error ??
+          manju.error ??
           manga.error ??
           audio.error ??
           StateError('首页加载失败');
     }
 
+    final manjuItems = _searchItems(manju.value ?? [], '漫剧', 'manju');
+    final manjuProgress = _searchProgress(
+      manju.value ?? [],
+      '漫剧',
+      manjuItems,
+      offset: 0,
+    );
+    final mangaItems = _searchItems(manga.value ?? [], '漫画', 'manga');
+    final mangaProgress = _searchProgress(
+      manga.value ?? [],
+      '漫画',
+      mangaItems,
+      offset: 0,
+    );
     final groups = <List<MediaItem>>[
       if (recommendation.value != null) recommendation.value!.items,
       if (video.value != null) _searchItems(video.value!, '短剧', 'video'),
-      if (manga.value != null) _searchItems(manga.value!, '漫画', 'manga'),
+      manjuItems,
+      mangaItems,
       if (audio.value != null) _searchItems(audio.value!, '听书', 'audio'),
     ];
     final page = recommendation.value;
@@ -335,11 +387,21 @@ class HomeNotifier extends Notifier<HomeState> {
       searchPages: {
         '小说': page?.searchPage ?? 0,
         if (video.value != null) '短剧': 1,
-        if (manga.value != null) '漫画': 1,
         if (audio.value != null) '听书': 1,
       },
+      searchOffsets: {
+        if (manjuProgress.nextOffset != null) '漫剧': manjuProgress.nextOffset!,
+        if (mangaProgress.nextOffset != null) '漫画': mangaProgress.nextOffset!,
+      },
+      searchCanAdvance: manjuProgress.hasCursor || mangaProgress.hasCursor,
+      manjuSearchExhausted: manju.value != null && !manjuProgress.hasMore,
+      mangaSearchExhausted: manga.value != null && !mangaProgress.hasMore,
       recommendExhausted: page?.recommendExhausted ?? true,
-      hasMore: items.isNotEmpty || page?.nextOffset != null,
+      hasMore:
+          items.isNotEmpty ||
+          page?.nextOffset != null ||
+          manjuProgress.hasMore ||
+          mangaProgress.hasMore,
     );
   }
 
@@ -378,15 +440,31 @@ class HomeNotifier extends Notifier<HomeState> {
     }
 
     final pageNumber = feed.searchPage + 1;
-    final searchTabs = await _searchByType(name, page: pageNumber);
+    final searchOffset = feed.searchOffsets[name] ?? 0;
+    final searchTabs = await _searchByType(
+      name,
+      page: pageNumber,
+      offset: searchOffset,
+    );
     final items = _searchItems(searchTabs, name, kind);
+    final progress = _searchProgress(
+      searchTabs,
+      name,
+      items,
+      offset: searchOffset,
+    );
     return _FetchedFeed(
       items: items,
       nextOffset: null,
       sessionId: feed.sessionId,
       searchPage: pageNumber,
+      searchOffsets: {
+        ...feed.searchOffsets,
+        if (progress.nextOffset != null) name: progress.nextOffset!,
+      },
+      searchCanAdvance: progress.hasCursor,
       recommendExhausted: true,
-      hasMore: items.isNotEmpty,
+      hasMore: progress.hasMore,
     );
   }
 
@@ -403,31 +481,55 @@ class HomeNotifier extends Notifier<HomeState> {
     bookFeed.seen.addAll(feed.seen);
     final recommendationFuture = _attempt(_loadNext(1, bookFeed));
     final videoPage = (feed.searchPages['短剧'] ?? 0) + 1;
-    final mangaPage = (feed.searchPages['漫画'] ?? 0) + 1;
     final audioPage = (feed.searchPages['听书'] ?? 0) + 1;
     final videoFuture = _attempt(_searchLoader('短剧', page: videoPage));
-    final mangaFuture = _attempt(_mangaSearchLoader('漫画', page: mangaPage));
+    final manjuOffset = feed.searchOffsets['漫剧'] ?? 0;
+    final manjuFuture = feed.manjuSearchExhausted
+        ? Future.value(const _Attempt<List<SearchTab>>.value([]))
+        : _attempt(_manjuSearchLoader(offset: manjuOffset));
+    final mangaOffset = feed.searchOffsets['漫画'] ?? 0;
+    final mangaFuture = feed.mangaSearchExhausted
+        ? Future.value(const _Attempt<List<SearchTab>>.value([]))
+        : _attempt(_mangaSearchLoader(offset: mangaOffset));
     final audioFuture = _attempt(_searchLoader('听书', page: audioPage));
 
     final recommendation = await recommendationFuture;
     final video = await videoFuture;
+    final manju = await manjuFuture;
     final manga = await mangaFuture;
     final audio = await audioFuture;
     if (recommendation.value == null &&
         video.value == null &&
+        manju.value == null &&
         manga.value == null &&
         audio.value == null) {
       throw recommendation.error ??
           video.error ??
+          manju.error ??
           manga.error ??
           audio.error ??
           StateError('首页分页失败');
     }
 
+    final manjuItems = _searchItems(manju.value ?? [], '漫剧', 'manju');
+    final manjuProgress = _searchProgress(
+      manju.value ?? [],
+      '漫剧',
+      manjuItems,
+      offset: manjuOffset,
+    );
+    final mangaItems = _searchItems(manga.value ?? [], '漫画', 'manga');
+    final mangaProgress = _searchProgress(
+      manga.value ?? [],
+      '漫画',
+      mangaItems,
+      offset: mangaOffset,
+    );
     final groups = <List<MediaItem>>[
       if (recommendation.value != null) recommendation.value!.items,
       if (video.value != null) _searchItems(video.value!, '短剧', 'video'),
-      if (manga.value != null) _searchItems(manga.value!, '漫画', 'manga'),
+      manjuItems,
+      mangaItems,
       if (audio.value != null) _searchItems(audio.value!, '听书', 'audio'),
     ];
     final recommendationPage = recommendation.value;
@@ -441,14 +543,28 @@ class HomeNotifier extends Notifier<HomeState> {
         ...feed.searchPages,
         if (recommendationPage != null) '小说': recommendationPage.searchPage,
         if (video.value != null) '短剧': videoPage,
-        if (manga.value != null) '漫画': mangaPage,
         if (audio.value != null) '听书': audioPage,
       },
+      searchOffsets: {
+        ...feed.searchOffsets,
+        if (manjuProgress.nextOffset != null) '漫剧': manjuProgress.nextOffset!,
+        if (mangaProgress.nextOffset != null) '漫画': mangaProgress.nextOffset!,
+      },
+      searchCanAdvance: manjuProgress.hasCursor || mangaProgress.hasCursor,
+      manjuSearchExhausted:
+          feed.manjuSearchExhausted ||
+          (manju.value != null && !manjuProgress.hasMore),
+      mangaSearchExhausted:
+          feed.mangaSearchExhausted ||
+          (manga.value != null && !mangaProgress.hasMore),
       recommendExhausted:
           recommendationPage?.recommendExhausted ?? feed.recommendExhausted,
       hasMore:
           items.isNotEmpty ||
-          (recommendationPage != null && recommendationPage.nextOffset != null),
+          (recommendationPage != null &&
+              recommendationPage.nextOffset != null) ||
+          manjuProgress.hasMore ||
+          mangaProgress.hasMore,
     );
   }
 
@@ -468,13 +584,19 @@ class HomeNotifier extends Notifier<HomeState> {
       ..sessionId = fetched.sessionId ?? feed.sessionId
       ..searchPage = fetched.searchPage
       ..searchPages = fetched.searchPages
+      ..searchOffsets = fetched.searchOffsets
+      ..manjuSearchExhausted = fetched.manjuSearchExhausted
+      ..mangaSearchExhausted = fetched.mangaSearchExhausted
       ..recommendExhausted = fetched.recommendExhausted
       ..hasMore = fetched.hasMore
       ..loaded = true;
 
     // If a page contained only duplicates and no source has a known cursor,
     // stop cleanly instead of repeatedly requesting the same page.
-    if (!replace && fresh.isEmpty && fetched.nextOffset == null) {
+    if (!replace &&
+        fresh.isEmpty &&
+        fetched.nextOffset == null &&
+        !fetched.searchCanAdvance) {
       feed.hasMore = false;
     }
   }
@@ -487,6 +609,7 @@ class HomeNotifier extends Notifier<HomeState> {
     String label,
     String kind,
   ) {
+    searchTabs = separateManjuSearchTabs(searchTabs);
     final matching = searchTabs.where(
       (tab) =>
           tab.title.isNotEmpty &&
@@ -499,8 +622,42 @@ class HomeNotifier extends Notifier<HomeState> {
         .toList(growable: false);
   }
 
+  // Note: 首页漫画与漫剧都保留 v1 搜索游标，重复页不等于结束；见
+  // .agents/notes/implemented/bug-fix/2026-09-10-search-categories.md
+  ({bool hasMore, int? nextOffset, bool hasCursor}) _searchProgress(
+    List<SearchTab> tabs,
+    String label,
+    List<MediaItem> items, {
+    required int offset,
+  }) {
+    if (label != '漫剧' && label != '漫画') {
+      return (hasMore: items.isNotEmpty, nextOffset: null, hasCursor: false);
+    }
+    for (final tab in separateManjuSearchTabs(tabs)) {
+      if (tab.title != label ||
+          (tab.hasMore == null && tab.nextOffset == null)) {
+        continue;
+      }
+      final next = tab.nextOffset;
+      final advances = tab.hasMore != false && next != null && next > offset;
+      return (
+        hasMore: advances,
+        nextOffset: advances ? next : null,
+        hasCursor: advances,
+      );
+    }
+    // Compatibility with loaders lacking cursor metadata. The dedicated
+    // category search requests ten results; known upstream cursors win above.
+    return (
+      hasMore: items.isNotEmpty,
+      nextOffset: items.isEmpty ? null : offset + 10,
+      hasCursor: false,
+    );
+  }
+
   List<MediaItem> _forceKind(List<MediaItem> items, String kind) {
     return items
+        .where((item) => item.kind != 'manju' || kind == 'manju')
         .map(
           (item) => MediaItem(
             id: item.id,
