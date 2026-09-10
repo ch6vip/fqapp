@@ -3,13 +3,20 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../home/home_design.dart';
 
+/// Bottom action bar: secondary actions (听书 / 下载) on the left and the
+/// primary read / play call to action as a filled pill on the right.
 class DetailReadBar extends StatelessWidget {
   final String label;
   final String? resumeTitle;
   final IconData icon;
   final bool opening;
   final VoidCallback onRead;
-  final VoidCallback onDirectory;
+
+  /// Opens the listening page. Hidden when the work has no audio version.
+  final VoidCallback? onListen;
+
+  /// Downloads the following chapters. Hidden when caching is unsupported.
+  final VoidCallback? onDownload;
 
   const DetailReadBar({
     super.key,
@@ -17,14 +24,19 @@ class DetailReadBar extends StatelessWidget {
     required this.icon,
     required this.opening,
     required this.onRead,
-    required this.onDirectory,
     this.resumeTitle,
+    this.onListen,
+    this.onDownload,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final largeType = MediaQuery.textScalerOf(context).scale(16) > 24;
+    final secondary = <(IconData, String, VoidCallback)>[
+      if (onListen != null) (LucideIcons.headphones, '听书', onListen!),
+      if (onDownload != null) (LucideIcons.download, '下载', onDownload!),
+    ];
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.canvas,
@@ -70,50 +82,20 @@ class DetailReadBar extends StatelessWidget {
                     ),
                   Row(
                     children: [
-                      Tooltip(
-                        message: '打开目录',
-                        child: HomePressable(
-                          key: const Key('detail_directory_button'),
-                          semanticLabel: '打开目录',
-                          onTap: onDirectory,
-                          child: Container(
-                            constraints: BoxConstraints(
-                              minWidth: largeType ? 48 : 66,
-                              minHeight: 56,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: palette.soft,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  LucideIcons.list,
-                                  color: palette.ink,
-                                  size: 21,
-                                ),
-                                if (!largeType) ...[
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    '目录',
-                                    style: TextStyle(
-                                      color: palette.ink,
-                                      fontSize: 10,
-                                      height: 1.3,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
+                      for (final action in secondary) ...[
+                        _SecondaryAction(
+                          icon: action.$1,
+                          label: action.$2,
+                          onTap: action.$3,
+                          compact: largeType,
                         ),
-                      ),
-                      const SizedBox(width: 12),
+                        Container(
+                          width: 0.5,
+                          height: 22,
+                          color: palette.line,
+                          margin: const EdgeInsets.symmetric(horizontal: 14),
+                        ),
+                      ],
                       Expanded(
                         child: Semantics(
                           enabled: !opening,
@@ -122,13 +104,14 @@ class DetailReadBar extends StatelessWidget {
                             child: HomePressable(
                               key: const Key('detail_read_button'),
                               onTap: onRead,
+                              borderRadius: BorderRadius.circular(999),
                               child: Container(
                                 constraints: const BoxConstraints(
-                                  minHeight: 56,
+                                  minHeight: 48,
                                 ),
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 12,
-                                  vertical: 15,
+                                  vertical: 13,
                                 ),
                                 decoration: BoxDecoration(
                                   gradient: LinearGradient(
@@ -139,13 +122,13 @@ class DetailReadBar extends StatelessWidget {
                                             Color(0xFFE4432E),
                                           ],
                                   ),
-                                  borderRadius: BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(999),
                                   boxShadow: opening
                                       ? null
                                       : [
                                           BoxShadow(
                                             color: HomePalette.accent
-                                                .withValues(alpha: 0.18),
+                                                .withValues(alpha: 0.20),
                                             blurRadius: 14,
                                             offset: const Offset(0, 5),
                                           ),
@@ -157,7 +140,7 @@ class DetailReadBar extends StatelessWidget {
                                     if (!largeType) ...[
                                       if (opening)
                                         const SizedBox.square(
-                                          dimension: 18,
+                                          dimension: 17,
                                           child: CircularProgressIndicator(
                                             strokeWidth: 2,
                                             color: Colors.white,
@@ -167,17 +150,19 @@ class DetailReadBar extends StatelessWidget {
                                         Icon(
                                           icon,
                                           color: Colors.white,
-                                          size: 21,
+                                          size: 19,
                                         ),
-                                      const SizedBox(width: 10),
+                                      const SizedBox(width: 8),
                                     ],
                                     Flexible(
                                       child: Text(
                                         opening ? '正在打开' : label,
                                         textAlign: TextAlign.center,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                           color: Colors.white,
-                                          fontSize: 16,
+                                          fontSize: 15.5,
                                           fontWeight: FontWeight.w700,
                                           height: 1.4,
                                         ),
@@ -196,6 +181,51 @@ class DetailReadBar extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SecondaryAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool compact;
+
+  const _SecondaryAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    required this.compact,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return HomePressable(
+      key: Key('detail_action_$label'),
+      semanticLabel: label,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 19, color: palette.ink),
+            if (!compact) ...[
+              const SizedBox(height: 3),
+              Text(
+                label,
+                style: TextStyle(
+                  color: palette.ink,
+                  fontSize: 10.5,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );

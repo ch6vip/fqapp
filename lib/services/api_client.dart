@@ -4,6 +4,10 @@ import 'dart:isolate';
 
 import 'package:http/http.dart' as http;
 
+import '../models/audio_extra.dart';
+import '../models/book_comment.dart';
+import '../models/book_detail.dart';
+import '../models/chapter_ideas.dart';
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../models/media_id.dart';
@@ -279,6 +283,164 @@ class ApiClient {
     } on Exception {
       return defaultAudioVoices;
     }
+  }
+
+  // --- Rich detail metadata -------------------------------------------------
+  // The endpoints below feed the redesigned detail and listening pages. All of
+  // them are optional decoration: a failure must degrade to a hidden section
+  // rather than an error page, so each loader is wrapped by its caller.
+
+  /// Rich book metadata (category, word count, rating, tags, author level…).
+  /// Returns an empty model when the backend has no detail record.
+  Future<BookDetail> bookDetail(String bookId) async {
+    final response = await _get(
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/detail', {}),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => BookDetail.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
+  /// Book reviews plus the counters shown above them.
+  Future<BookCommentPage> bookComments(
+    String bookId, {
+    int count = 10,
+    int offset = 0,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/comments', {
+        'count': '$count',
+        'offset': '$offset',
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => BookCommentPage.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
+  /// Companion works: the original novel and any short-drama adaptation.
+  Future<List<RelatedWork>> relatedWorks(String bookId) async {
+    final response = await _get(
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/related', {}),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => RelatedWork.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
+  /// 智能朗读 / 真人讲书 voices with their display names.
+  Future<AudioToneSet> bookTones(String bookId) async {
+    final response = await _get(
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/tones', {}),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => AudioToneSet.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
+  /// 边听边读 subtitles for one chapter.
+  ///
+  /// `genre` and `tone_id` are mandatory for a usable answer: the backend
+  /// defaults (`genre=4`, `tone_id=99`) always return `1301008 no available
+  /// speech text`, while a real tone id with `genre=1` returns the track. A
+  /// book without generated speech text yields [SubtitleTrack.empty].
+  Future<SubtitleTrack> chapterTimeline(
+    String itemId, {
+    String toneId = '1',
+    int genre = 1,
+  }) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/chapters/${Uri.encodeComponent(itemId)}/timeline', {
+          'genre': '$genre',
+          'tone_id': toneId,
+        }),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return Isolate.run(() {
+        final payload = _decodeEnvelope(status, bytes);
+        // "No speech text" is a normal, expected answer, not a failure.
+        if (isUnavailableCode(payload['code'])) return SubtitleTrack.empty;
+        return SubtitleTrack.fromPayload(payload);
+      });
+    } on Exception {
+      return SubtitleTrack.empty;
+    }
+  }
+
+  /// Chapter ideas (段评 / 章评): per-paragraph counts and comment ids.
+  ///
+  /// These come from the item-ideas service, not the book review list — the
+  /// latter rejects the item and paragraph comment types outright. The payload
+  /// carries counts and comment ids only; comment bodies need a second call
+  /// through [bookReviews] with the paragraph recipe.
+  Future<ChapterIdeas> chapterIdeas(
+    String itemId, {
+    String? itemVersion,
+    int commentSource = 3,
+  }) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/chapters/${Uri.encodeComponent(itemId)}/reviews', {
+          'comment_source': '$commentSource',
+          if (itemVersion != null && itemVersion.isNotEmpty)
+            'item_version': itemVersion,
+        }),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return Isolate.run(() {
+        final payload = _decodeEnvelope(status, bytes);
+        if (isUnavailableIdeaCode(payload['code'])) return ChapterIdeas.empty;
+        return ChapterIdeas.fromPayload(payload);
+      });
+    } on Exception {
+      // Ideas are decoration; a failure must not break chapter loading.
+      return ChapterIdeas.empty;
+    }
+  }
+
+  /// Comment bodies for one paragraph.
+  ///
+  /// This is the official client's paragraph-comment recipe: the container is
+  /// the **chapter item id** while `business_param.book_id` stays the real book
+  /// id, and the upstream rejects the request with
+  /// `103001 book_id, item_version, or para_index invalid` unless all three of
+  /// `book_id`, [itemVersion] and [paraIndex] are usable.
+  Future<BookCommentPage> paragraphComments(
+    String bookId,
+    String itemId, {
+    required String itemVersion,
+    required int paraIndex,
+    int count = 20,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/reviews', {
+        'book_id': bookId,
+        'group_id': itemId,
+        'group_type': '15',
+        'comment_source': '2',
+        'comment_type': '1',
+        'server_channel': '43',
+        'para_index': '$paraIndex',
+        'item_version': itemVersion,
+        'count': '$count',
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => parseParagraphComments(_decodeEnvelope(status, bytes)),
+    );
   }
 
   /// Returns comic pages in backend order with absolute HTTP(S) URLs.

@@ -1,0 +1,385 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
+
+import '../../models/book_detail.dart';
+import '../home/home_design.dart';
+
+/// Author row: avatar, pen name, level badge, tagline and follow action.
+class DetailAuthorRow extends StatelessWidget {
+  final BookAuthor author;
+  final VoidCallback? onFollow;
+
+  const DetailAuthorRow({super.key, required this.author, this.onFollow});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final avatar = ClipOval(
+      child: SizedBox.square(
+        dimension: 38,
+        child: author.avatar.isEmpty
+            ? ColoredBox(
+                color: palette.soft,
+                child: Icon(LucideIcons.user, size: 20, color: palette.muted),
+              )
+            : Image.network(
+                author.avatar,
+                fit: BoxFit.cover,
+                errorBuilder: (context, _, _) => ColoredBox(
+                  color: palette.soft,
+                  child: Icon(LucideIcons.user, size: 20, color: palette.muted),
+                ),
+              ),
+      ),
+    );
+    final follow = _FollowButton(onTap: onFollow);
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Flexible(
+              child: Text(
+                author.name,
+                key: const Key('detail_author_name'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: palette.ink,
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (author.title.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              _LevelBadge(text: author.title),
+            ],
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(
+          '关注我，掌握书籍最新动态',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: palette.muted, fontSize: 11.5, height: 1.3),
+        ),
+      ],
+    );
+
+    return Row(
+      children: [
+        avatar,
+        const SizedBox(width: 11),
+        Expanded(child: identity),
+        const SizedBox(width: 10),
+        follow,
+      ],
+    );
+  }
+}
+
+class _LevelBadge extends StatelessWidget {
+  final String text;
+
+  const _LevelBadge({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    // The official badge is orange; reuse the accent family so it still reads
+    // as a rank chip in both themes.
+    final color = palette.dark
+        ? const Color(0xFFE9A23B)
+        : const Color(0xFFD98324);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          height: 1.4,
+        ),
+      ),
+    );
+  }
+}
+
+class _FollowButton extends StatelessWidget {
+  final VoidCallback? onTap;
+
+  const _FollowButton({this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return HomePressable(
+      key: const Key('detail_follow_button'),
+      semanticLabel: '关注作者',
+      onTap: onTap ?? () {},
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: palette.accentText.withValues(alpha: 0.5)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.plus, size: 13, color: palette.accentText),
+            const SizedBox(width: 3),
+            Text(
+              '关注',
+              style: TextStyle(
+                color: palette.accentText,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One statistic rendered in the three-column row under the author.
+class DetailStat {
+  const DetailStat({
+    required this.value,
+    required this.label,
+    this.icon,
+    this.stars = 0,
+    this.accent = false,
+  });
+
+  final String value;
+  final String label;
+  final IconData? icon;
+
+  /// Filled-star count (0-5) rendered under [value]; 0 hides the row.
+  final double stars;
+  final bool accent;
+
+  bool get isEmpty => value.trim().isEmpty && label.trim().isEmpty;
+}
+
+/// Rank / readers / rating, separated by hairline dividers.
+class DetailStatsRow extends StatelessWidget {
+  final List<DetailStat> stats;
+
+  const DetailStatsRow({super.key, required this.stats});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final visible = stats
+        .where((stat) => !stat.isEmpty)
+        .toList(growable: false);
+    if (visible.isEmpty) return const SizedBox.shrink();
+    final children = <Widget>[];
+    for (var index = 0; index < visible.length; index++) {
+      if (index > 0) {
+        children.add(Container(width: 0.5, height: 34, color: palette.line));
+      }
+      children.add(Expanded(child: _StatCell(stat: visible[index])));
+    }
+    return Container(
+      key: const Key('detail_stats_row'),
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        border: Border.symmetric(
+          horizontal: BorderSide(color: palette.line, width: 0.5),
+        ),
+      ),
+      child: Row(children: children),
+    );
+  }
+}
+
+class _StatCell extends StatelessWidget {
+  final DetailStat stat;
+
+  const _StatCell({required this.stat});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final valueColor = stat.accent ? palette.accentText : palette.ink;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (stat.icon != null) ...[
+            Icon(
+              stat.icon,
+              size: 17,
+              color: stat.accent ? palette.accentText : palette.muted,
+            ),
+            const SizedBox(height: 4),
+          ],
+          Text(
+            stat.value,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 15.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.2,
+            ),
+          ),
+          if (stat.stars > 0) ...[
+            const SizedBox(height: 2),
+            _StarRow(stars: stat.stars),
+          ],
+          const SizedBox(height: 3),
+          Text(
+            stat.label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: palette.muted, fontSize: 11, height: 1.3),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Five stars filled to [stars] (halves supported), used by the stats row and
+/// the review card.
+class _StarRow extends StatelessWidget {
+  final double stars;
+  final double size;
+
+  const _StarRow({required this.stars, this.size = 11});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var index = 1; index <= 5; index++)
+          Icon(
+            stars >= index
+                ? LucideIcons.star
+                : (stars >= index - 0.5
+                      ? LucideIcons.star_half
+                      : LucideIcons.star),
+            size: size,
+            color: stars >= index - 0.5 ? HomePalette.accent : palette.line,
+          ),
+      ],
+    );
+  }
+}
+
+/// Half-star row exposed for the review card.
+class DetailStarRow extends StatelessWidget {
+  final double stars;
+  final double size;
+
+  const DetailStarRow({super.key, required this.stars, this.size = 11});
+
+  @override
+  Widget build(BuildContext context) => _StarRow(stars: stars, size: size);
+}
+
+/// Genre tags as rounded chips.
+class DetailTagChips extends StatelessWidget {
+  final List<String> tags;
+
+  const DetailTagChips({super.key, required this.tags});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    if (tags.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      key: const Key('detail_tag_chips'),
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final tag in tags)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: palette.soft,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Text(
+              tag,
+              style: TextStyle(
+                color: palette.muted,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// `查看目录  完结 共1157章 ›` row that opens the full catalog.
+class DetailDirectoryRow extends StatelessWidget {
+  final String trailing;
+  final VoidCallback onTap;
+
+  const DetailDirectoryRow({
+    super.key,
+    required this.trailing,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return HomePressable(
+      key: const Key('detail_directory_button'),
+      semanticLabel: '查看目录',
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Row(
+          children: [
+            Text(
+              '查看目录',
+              style: TextStyle(
+                color: palette.ink,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
+            ),
+            const Spacer(),
+            if (trailing.isNotEmpty)
+              Flexible(
+                child: Text(
+                  trailing,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: palette.muted, fontSize: 12),
+                ),
+              ),
+            const SizedBox(width: 4),
+            Icon(LucideIcons.chevron_right, size: 17, color: palette.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -4,26 +4,57 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../models/book_comment.dart';
+import '../models/book_detail.dart';
 import '../models/media_item.dart';
 import '../models/media_description.dart';
 import '../services/api_client.dart';
 import '../services/audio_history.dart';
+import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/player_history.dart';
 import '../services/reader_history.dart';
-import '../widgets/media_card.dart';
+import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/detail/detail_chapter_row.dart';
 import '../widgets/detail/detail_description.dart';
 import '../widgets/detail/detail_directory_sheet.dart';
 import '../widgets/detail/detail_hero.dart';
 import '../widgets/detail/detail_read_bar.dart';
+import '../widgets/detail/detail_reviews.dart';
+import '../widgets/detail/detail_sections.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/media_card.dart';
 import 'audio_page.dart';
 import 'comic_reader_page.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
+
+/// Optional decorations for the detail page (currently the review block).
+/// Kept as one injected bundle so callers that already stub the detail and
+/// directory loaders can stay fully offline.
+///
+/// Note: 详情页版式复刻、以及「注入过 loader 即视为离线」的规则 — 见
+/// .agents/notes/implemented/feature/2026-09-10-detail-audio-replica.md
+class DetailExtras {
+  const DetailExtras({this.comments = const BookCommentPage()});
+
+  final BookCommentPage comments;
+}
+
+typedef DetailExtrasLoader = Future<DetailExtras> Function(String bookId);
+
+Future<DetailExtras> _defaultExtras(String bookId) async {
+  try {
+    return DetailExtras(
+      comments: await ApiClient.instance.bookComments(bookId),
+    );
+  } on Exception {
+    // Reviews are decoration; a failure must not affect the page.
+    return const DetailExtras();
+  }
+}
 
 class _Captured<T> {
   final T? value;
@@ -47,6 +78,7 @@ class DetailPage extends StatefulWidget {
   detailLoader;
   final Future<List<List<Chapter>>> Function(String bookId, {String tab})?
   directoryLoader;
+  final DetailExtrasLoader? extrasLoader;
   final ReaderStore? readerStore;
 
   const DetailPage({
@@ -54,6 +86,7 @@ class DetailPage extends StatefulWidget {
     required this.item,
     this.detailLoader,
     this.directoryLoader,
+    this.extrasLoader,
     this.readerStore,
   });
 
@@ -63,6 +96,8 @@ class DetailPage extends StatefulWidget {
 
 class _DetailPageState extends State<DetailPage> {
   Map<String, dynamic>? _detail;
+  BookDetail? _bookDetail;
+  BookCommentPage _comments = const BookCommentPage();
   List<Chapter> _allChapters = [];
   final _scroll = ScrollController();
   final _compactTitle = ValueNotifier(false);
@@ -79,6 +114,7 @@ class _DetailPageState extends State<DetailPage> {
   bool get _isVideo => isVideoKind(widget.item.kind);
   bool get _isAudio => widget.item.kind == 'audio';
   bool get _isManga => widget.item.kind == 'manga';
+  bool get _isBook => widget.item.kind == 'book';
   String get _contentId => widget.item.seriesId ?? widget.item.id;
   String get _chapterUnit => _isVideo
       ? '集'
@@ -120,6 +156,8 @@ class _DetailPageState extends State<DetailPage> {
         _loading = true;
         _error = null;
         _detail = null;
+        _bookDetail = null;
+        _comments = const BookCommentPage();
         _allChapters = const [];
         _opening = false;
         _resumeIndex = null;
@@ -145,6 +183,8 @@ class _DetailPageState extends State<DetailPage> {
         tab: _tab,
       ),
     );
+    // Reviews are cosmetic: they load alongside and never gate the page.
+    final extrasFuture = _capture(_loadExtras(_contentId));
     final detailResult = await detailFuture;
     final directoryResult = await directoryFuture;
     if (!mounted || generation != _loadGeneration) return;
@@ -176,6 +216,9 @@ class _DetailPageState extends State<DetailPage> {
     }
     setState(() {
       _detail = detail;
+      // The rich metadata rides on the same detail response the page already
+      // fetches, so no extra request is needed for the masthead or stats row.
+      _bookDetail = detail == null ? null : BookDetail.fromPayload(detail);
       _allChapters = volumes.expand((volume) => volume).toList(growable: false);
       // A missing optional detail response should not hide a usable list.
       _error = detail == null && detailResult.error != null && volumes.isEmpty
@@ -184,6 +227,27 @@ class _DetailPageState extends State<DetailPage> {
       _loading = false;
     });
     unawaited(_refreshResume());
+
+    final extras = await extrasFuture;
+    if (!mounted || generation != _loadGeneration) return;
+    if (extras.value case final DetailExtras loaded) {
+      setState(() => _comments = loaded.comments);
+    }
+  }
+
+  /// Resolves the optional review payload.
+  ///
+  /// A caller that already injects its own detail or directory loader is
+  /// offline by construction (tests, previews), so the page must not reach for
+  /// the network behind its back; such callers inject [DetailExtrasLoader] when
+  /// they want the review block exercised.
+  Future<DetailExtras> _loadExtras(String bookId) {
+    final loader = widget.extrasLoader;
+    if (loader != null) return loader(bookId);
+    if (widget.detailLoader != null || widget.directoryLoader != null) {
+      return Future.value(const DetailExtras());
+    }
+    return _defaultExtras(bookId);
   }
 
   @override
@@ -273,10 +337,7 @@ class _DetailPageState extends State<DetailPage> {
                     child: DetailHero(
                       item: widget.item,
                       scroll: _scroll,
-                      chapterCount: _loading || _error != null
-                          ? null
-                          : _allChapters.length,
-                      chapterUnit: _chapterUnit,
+                      detail: _bookDetail,
                     ),
                   ),
                   SliverPadding(
@@ -297,16 +358,7 @@ class _DetailPageState extends State<DetailPage> {
                               message: '请检查网络连接，再试一次。',
                               retry: true,
                             )
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                DetailDescription(
-                                  text: extractMediaDescription(_detail),
-                                ),
-                                const SizedBox(height: 28),
-                                _directoryPreview(palette),
-                              ],
-                            ),
+                          : _content(palette),
                     ),
                   ),
                 ],
@@ -323,10 +375,65 @@ class _DetailPageState extends State<DetailPage> {
                     ? null
                     : _allChapters[_resumeIndex!].title,
                 onRead: _openLastPosition,
-                onDirectory: _openDirectory,
+                onListen: _isBook ? _openListening : null,
+                onDownload: _isBook ? _showDownload : null,
               )
             : null,
       ),
+    );
+  }
+
+  /// Masthead metadata, author, stats, summary, tags, catalog and reviews —
+  /// the section order of the official detail page.
+  Widget _content(HomePalette palette) {
+    final detail = _bookDetail;
+    final author = detail?.author;
+    final score = detail?.scoreValue;
+    final stats = <DetailStat>[
+      if (detail != null && detail.rankTitle.isNotEmpty)
+        DetailStat(
+          value: detail.rankTitle,
+          label: detail.rank.isEmpty ? '榜单' : detail.rank.first.text,
+          icon: LucideIcons.trophy,
+          accent: true,
+        ),
+      if (detail != null && detail.readLabel.isNotEmpty)
+        DetailStat(value: detail.readLabel, label: '正在阅读'),
+      if (score != null)
+        DetailStat(
+          value: detail!.scoreLabel,
+          label: _comments.scoreLabel.isEmpty ? '读者评分' : _comments.scoreLabel,
+          stars: score / 2,
+        ),
+    ];
+    final trailing = [
+      if (detail?.statusLabel.isNotEmpty == true) detail!.statusLabel,
+      '共 ${_allChapters.length} $_chapterUnit',
+    ].join(' ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (author != null && author.name.isNotEmpty) ...[
+          DetailAuthorRow(author: author),
+          const SizedBox(height: 18),
+        ],
+        DetailStatsRow(stats: stats),
+        const SizedBox(height: 20),
+        DetailDescription(text: extractMediaDescription(_detail)),
+        if (detail != null && detail.tags.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          DetailTagChips(tags: detail.tags),
+        ],
+        const SizedBox(height: 6),
+        DetailDirectoryRow(trailing: trailing, onTap: _openDirectory),
+        _directoryPreview(palette),
+        if (_comments.comments.isNotEmpty || _comments.totalCount > 0) ...[
+          const SizedBox(height: 22),
+          Divider(height: 1, color: palette.line),
+          const SizedBox(height: 22),
+          DetailReviews(page: _comments, detail: detail),
+        ],
+      ],
     );
   }
 
@@ -399,6 +506,8 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
+  /// A short catalog preview keeps the resume shortcut one tap away; the full
+  /// catalog still opens from the `查看目录` row above it.
   Widget _directoryPreview(HomePalette palette) {
     if (_allChapters.isEmpty) {
       return _stateCard(
@@ -408,78 +517,28 @@ class _DetailPageState extends State<DetailPage> {
         retry: true,
       );
     }
-    final heading = Text(
-      '目录',
-      style: TextStyle(
-        color: palette.ink,
-        fontSize: 23,
-        fontWeight: FontWeight.w800,
-        letterSpacing: -0.5,
+    final preview = _allChapters.take(3).toList(growable: false);
+    return Container(
+      key: const Key('detail_preview_chapters'),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: palette.line.withValues(alpha: 0.7)),
       ),
-    );
-    final action = TextButton(
-      key: const Key('detail_all_chapters_button'),
-      onPressed: _openDirectory,
-      style: TextButton.styleFrom(
-        foregroundColor: palette.muted,
-        minimumSize: const Size(48, 48),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
         children: [
-          Flexible(
-            child: Text(
-              '全部 ${_allChapters.length} $_chapterUnit',
-              style: const TextStyle(fontSize: 12),
+          for (var index = 0; index < preview.length; index++)
+            DetailChapterRow(
+              key: ValueKey('detail_preview_chapter_${preview[index].itemId}'),
+              chapter: preview[index],
+              index: index,
+              current: index == _resumeIndex,
+              divider: index < preview.length - 1,
+              onTap: () => _openChapter(preview[index]),
             ),
-          ),
-          const SizedBox(width: 5),
-          const Icon(LucideIcons.arrow_up_right, size: 16),
         ],
       ),
-    );
-    final preview = _allChapters.take(3).toList(growable: false);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (MediaQuery.textScalerOf(context).scale(14) > 23)
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [heading, action],
-          )
-        else
-          Row(
-            children: [
-              Expanded(child: heading),
-              action,
-            ],
-          ),
-        const SizedBox(height: 10),
-        Container(
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: palette.line.withValues(alpha: 0.7)),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              for (var index = 0; index < preview.length; index++)
-                DetailChapterRow(
-                  key: ValueKey(
-                    'detail_preview_chapter_${preview[index].itemId}',
-                  ),
-                  chapter: preview[index],
-                  index: index,
-                  current: index == _resumeIndex,
-                  divider: index < preview.length - 1,
-                  onTap: () => _openChapter(preview[index]),
-                ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 
@@ -495,6 +554,67 @@ class _DetailPageState extends State<DetailPage> {
       currentIndex: _resumeIndex,
     );
     if (mounted && chapter != null) _openChapter(chapter);
+  }
+
+  /// Opens the listening page for the same work, starting where the saved
+  /// audio progress left off.
+  Future<void> _openListening() async {
+    if (_allChapters.isEmpty || _opening) return;
+    final generation = ++_openGeneration;
+    setState(() => _opening = true);
+    try {
+      final saved = await _readSavedRecord();
+      if (!mounted || generation != _openGeneration || _allChapters.isEmpty) {
+        return;
+      }
+      final index = resumeAudioChapterIndex(saved, _allChapters) ?? 0;
+      await _push(
+        AudioPage(
+          bookId: _contentId,
+          title: widget.item.title,
+          cover: widget.item.cover,
+          historyStore: widget.readerStore,
+          chapters: _allChapters,
+          startIndex: index,
+        ),
+      );
+    } finally {
+      if (mounted && generation == _openGeneration) {
+        setState(() => _opening = false);
+      }
+    }
+  }
+
+  /// Caches the following chapters for offline reading using the same sheet
+  /// the reader exposes.
+  Future<void> _showDownload() async {
+    if (_allChapters.isEmpty) return;
+    final cache = ChapterCacheStore.instance;
+    final book = CachedBook(
+      id: _contentId,
+      title: widget.item.title,
+      cover: widget.item.cover,
+      chapters: _allChapters,
+    );
+    try {
+      await cache.saveBook(book);
+    } on Exception {
+      // A cache index failure must not block opening the download sheet.
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (context) => ChapterCacheSheet(
+        book: book,
+        currentIndex: _resumeIndex ?? 0,
+        cache: cache,
+        loader: (chapter) => ApiClient.instance.contentText(chapter.itemId),
+      ),
+    );
+    if (mounted) unawaited(_refreshResume());
   }
 
   Future<Map<String, dynamic>?> _readSavedRecord() async {
@@ -599,6 +719,10 @@ class _DetailPageState extends State<DetailPage> {
         startIndex: startIndex,
       ),
     };
+    await _push(page);
+  }
+
+  Future<void> _push(Widget page) async {
     await Navigator.push(
       context,
       MaterialPageRoute<void>(builder: (_) => page),

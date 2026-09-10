@@ -652,6 +652,58 @@ void main() {
     expect(session.players, isEmpty);
     expect(session.requests, isEmpty);
   });
+
+  testWidgets('the review action is labelled 书评 and opens a review sheet', (
+    tester,
+  ) async {
+    // The official page calls this 章评 (chapter-end discussion), but the
+    // backend exposes no chapter-comment list, so the label must describe what
+    // the action actually shows.
+    final session = _Session();
+    await _mount(tester, session);
+    expect(find.byKey(const ValueKey('audio_chapter_comment')), findsOneWidget);
+    expect(find.text('书评'), findsOneWidget);
+    expect(find.text('章评'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('audio_chapter_comment')));
+    await tester.pumpAndSettle();
+    // Without an injected comment loader the sheet states the outage rather
+    // than reaching for the network.
+    expect(find.text('暂时无法加载书评'), findsOneWidget);
+  });
+
+  testWidgets('the shelf action toggles and persists its state', (
+    tester,
+  ) async {
+    final session = _Session();
+    await _mount(tester, session);
+    expect(find.text('加入书架'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('audio_shelf')));
+    await _flush(tester);
+    expect(find.text('已在书架'), findsOneWidget);
+    expect(session.store.entry?['inShelf'], true);
+    await tester.tap(find.byKey(const ValueKey('audio_shelf')));
+    await _flush(tester);
+    expect(find.text('加入书架'), findsOneWidget);
+    expect(session.store.entry?['inShelf'], false);
+  });
+
+  testWidgets('the sleep timer pauses playback when it elapses', (
+    tester,
+  ) async {
+    final session = _Session();
+    await _mount(tester, session);
+    final player = session.players.single;
+    expect(player.isPlaying, true);
+    await tester.tap(find.byTooltip('定时'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('15 分钟后'));
+    await tester.pumpAndSettle();
+    // The countdown is a real Timer, so drive it explicitly.
+    await tester.pump(const Duration(minutes: 15, seconds: 1));
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    expect(session.store.entry?['position'], isNotNull);
+  });
 }
 
 AudioSource _source(String id, String? toneId) => AudioSource(

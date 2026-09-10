@@ -266,7 +266,18 @@ Future<void> _pumpBook(
 }
 
 Future<void> _openDirectory(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('detail_directory_button')));
+  // The catalog entry lives in the page body. On small viewports with a large
+  // text scale the masthead fills the viewport, so the sliver is offstage and
+  // must be looked up with skipOffstage disabled before scrolling to it.
+  final button = find.byKey(
+    const Key('detail_directory_button'),
+    skipOffstage: false,
+  );
+  await tester.ensureVisible(button);
+  // A single frame is enough to apply the jump; settling here would hang while
+  // an unrelated pending action keeps its progress indicator spinning.
+  await tester.pump();
+  await tester.tap(button);
   await tester.pumpAndSettle();
 }
 
