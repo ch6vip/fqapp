@@ -108,9 +108,10 @@ item_version   = 章节版本
   `insert_comment_ids` 的存在与省略、以及 `splitCSV` 的边界。
 - `router_test.go` 的三条章节评论路由断言由 `book_reviews` 更新为 `idea_list`。
 - `go test -mod=readonly -count=1 ./...` 全绿。
-- **CI 等价验证**：在固定基础提交
-  `40481102257f9405c8086c614b50796873091a4e` 的临时 worktree 中
-  `git apply` 新补丁并跑完整 Go 测试，通过后已移除 worktree。
+- **后端已退休补丁**：这些改动已提交到 ``（分支 `fqapp-android`，提交
+  `b237911`）。逐文件比对「旧基础 `4048110` + 补丁」与「`b237911`」的 blob，
+  9 个文件全部一致；在新提交上**不打补丁**直接跑完整 Go 测试通过。
+  CI 的 `LEGACY_COMMIT` 已更新为该提交，补丁文件与 `git apply` 步骤已删除。
 - 发布二进制端到端复验（含两跳链路）：第 1 跳 `/chapters/{id}/reviews?comment_source=3`
   返回 `code=0` 与 85 段（最大段 `idx=72`、3920 条）；第 2 跳
   `/books/{id}/reviews?...&insert_comment_ids=…` 返回 `code=0` 与 8 条正文
@@ -121,6 +122,6 @@ item_version   = 章节版本
   `null`、面板只列出有段评的段落、正文按需加载且折叠后不重复请求、加载失败留在面板内、
   阅读器入口计数与跨章重新拉取、无段评时入口隐藏。
 - `flutter analyze` 无问题；`flutter test` **663 项通过**；CI（Android APK）成功，
-  其中包含在固定基础提交上应用补丁并构建 JNI 后端。
+  其中包含检出后端固定提交并构建 JNI 后端。
 - 未做真机验证；Android `liblegacy.so` 未在本机构建（本机无 NDK 28.2.13676358），
   由 CI 生成。

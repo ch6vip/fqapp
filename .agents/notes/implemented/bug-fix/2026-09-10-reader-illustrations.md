@@ -10,7 +10,7 @@ Status: implemented
 
 [ApiClient.chapterContent](../../../../lib/services/api_client.dart) 优先调用 `/api/v1/chapters/{id}/novel`。对应的 `/internal/endpoints/base.go` 使用已有 `support_image=1` 上游参数，并把响应头 `c=1` 视为加密标志，从 JSON `data.content` 取密文；旧版把密文放在 `c` 头中的协议仍兼容。解密必须成功且产生非空 UTF-8，随后增加 `data.content_decrypted=true`。客户端只接受这个成功标记，防止旧后端返回 `code=0` 却将密文显示为正文。
 
-图文接口失败时保留原 `contentText` 作为文字回退，并标记尚未完成插图检查。原纯文字接口与 TXT 导出保持原协议。完整支持要求从配套 `` 源码重建 JNI 后端；仅更新 Flutter 不足以取回插图。[CI 工作流](../../../../.github/workflows/android-apk.yml) 在固定基础提交 `40481102257f9405c8086c614b50796873091a4e` 上检查并应用 [App 后端补丁](../../../../patches//app-compat.patch)，补丁包含解密契约测试和已有的剧集标题索引修复。完整 Go 测试通过后才编译 JNI，构建报告记录基础提交和补丁 SHA-256。后端发布包含这些改动的真实提交后，应同时更新固定版本并移除已被包含的补丁，不能忽略补丁冲突。
+图文接口失败时保留原 `contentText` 作为文字回退，并标记尚未完成插图检查。原纯文字接口与 TXT 导出保持原协议。完整支持要求从配套 `` 源码重建 JNI 后端；仅更新 Flutter 不足以取回插图。[CI 工作流](../../../../.github/workflows/android-apk.yml) 固定 `` 提交 `b2379115307295651e2e7b09c7ea74e438aa4b46` 并原样构建，完整 Go 测试通过后才编译 JNI，构建报告记录该提交。解密契约测试与剧集标题索引修复曾以 [App 后端补丁](../../../../patches//README.md) 的形式随 App 保存，现已并入 `` 历史（分支 `fqapp-android`）并退休，退休前后的文件逐字节一致。
 
 [ChapterContent](../../../../lib/services/chapter_text_formatter.dart) 在隔离线程中解析上游 HTML，顺序保存段落与插图，识别 `img-width/img-height`、常见尺寸和懒加载字段，只允许 HTTP(S) 图片地址。HTML 实体仅解析一次，绝对签名 URL 不重新编码。重复图片和纯图片章节是有效内容。缓存使用显式版本前缀和 JSON，保留块、旧规范化文字及检查状态；无前缀的缓存按纯文字读取，不再次解释书中提到的字面标签。
 

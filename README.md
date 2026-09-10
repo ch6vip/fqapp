@@ -211,8 +211,11 @@ NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 r
 每次构建先运行 Flutter 静态分析与完整单元/组件测试，再生成并校验 APK。
 
 `` 是私有仓库，CI 固定读取专用 `fqapp-android` 分支上的已提交版本
-[`4048110`](https://github.com/ch6vip//commit/40481102257f9405c8086c614b50796873091a4e)。
-CI 在此基础上检查并应用随 App 保存的 [配套补丁](patches//README.md)，包含小说图文解密契约和剧集标题索引修复，完整 Go 测试通过后再构建 JNI。构建报告同时记录基础提交与补丁 SHA-256。本地其它未提交的后端改动不进入云端构建；后端发布包含这些修复的真实提交后，应同步更新 `LEGACY_COMMIT` 并删除已合入的补丁。
+[`b237911`](https://github.com/ch6vip//commit/b2379115307295651e2e7b09c7ea74e438aa4b46) 并原样构建，不打任何补丁。
+该提交包含小说图文解密契约、短剧剧集标题索引，以及章评／段评后端；这些改动曾以
+[配套补丁](patches//README.md) 的形式随 App 保存，现已并入后端历史并退休。
+完整 Go 测试通过后再构建 JNI，构建报告记录该固定提交。
+本地其它未提交的后端改动不进入云端构建。
 本仓库已配置以下 Actions secrets，复制工作流到其它仓库时需要配置对应内容：
 
 | Secret | 用途 |
@@ -348,7 +351,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 **响应信封**：客户端接受 `code=200`（Web 桥接）或 `code=0`（上游兼容接口）的成功响应；
 其他显式状态码或 `success=false` 视为错误。
 
-**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持需要同步 `/internal/endpoints/base.go` 的解密修复，再运行 `scripts/build_backend.ps1 -Jni` 构建 Android 后端；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。旧后端没有解密成功标记时，客户端回退文字。CI 通过[配套源码补丁](patches//README.md)包含该修复；本地从干净后端构建时也需要先应用补丁，不能复用旧 `liblegacy.so`。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
+**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持需要同步 `/internal/endpoints/base.go` 的解密修复，再运行 `scripts/build_backend.ps1 -Jni` 构建 Android 后端；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。旧后端没有解密成功标记时，客户端回退文字。该修复现已在 CI 固定的 `` 提交 [`b237911`](patches//README.md) 中，本地从该提交构建即可，不能复用旧 `liblegacy.so`。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
 
 **搜索分类与分页**：搜索页使用 `/api/v1/search` 请求所选分类，在拆分漫剧之前先选取对应的上游 tab，
 再按条目实际 `kind` 筛选。综合保留全部作品；短剧、漫剧、漫画、听书分别只展示 `video`、`manju`、`manga`、`audio`。
