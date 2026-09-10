@@ -4,6 +4,8 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/book_comment.dart';
+import '../models/chapter_ideas.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/chapter_cache_store.dart';
@@ -17,12 +19,20 @@ import '../widgets/reader/reader_appearance_sheet.dart';
 import '../widgets/reader/reader_chapter_layout.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_illustration.dart';
+import '../widgets/reader/reader_ideas_sheet.dart';
 import '../widgets/reader/reader_paged_view.dart';
 import '../widgets/reader/reader_status_bar.dart';
 import '../widgets/reader/reader_theme.dart';
 
 typedef ChapterTextLoader = Future<String> Function(Chapter chapter);
 typedef _LoadedChapter = ({String text, bool fetched});
+
+/// Loads a chapter's paragraph ideas (段评).
+typedef ChapterIdeasLoader = Future<ChapterIdeas> Function(String itemId);
+
+/// Resolves the comment bodies for one paragraph's idea bucket.
+typedef ParagraphCommentResolver =
+    Future<BookCommentPage> Function(String itemId, ParagraphIdeas paragraph);
 
 class ReaderPage extends StatefulWidget {
   final String bookId;
@@ -36,6 +46,13 @@ class ReaderPage extends StatefulWidget {
   final ReaderDevice? readerDevice;
   final ReaderImageProviderFactory? imageProviderFactory;
 
+  /// Paragraph ideas for the current chapter. When both this and
+  /// [commentResolver] are null the reader fetches them itself, unless a
+  /// [chapterCache] was injected (an injected cache marks the caller as
+  /// driving its own data).
+  final ChapterIdeasLoader? ideasLoader;
+  final ParagraphCommentResolver? commentResolver;
+
   const ReaderPage({
     super.key,
     required this.bookId,
@@ -48,6 +65,8 @@ class ReaderPage extends StatefulWidget {
     this.chapterCache,
     this.readerDevice,
     this.imageProviderFactory,
+    this.ideasLoader,
+    this.commentResolver,
   });
 
   @override
@@ -62,6 +81,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   Timer? _saveTimer;
   String _content = '';
   ChapterContent _chapterContent = ChapterContent(blocks: const []);
+  ChapterIdeas _ideas = ChapterIdeas.empty;
   bool _loading = true;
   bool _progressReady = false;
   double _lastPosition = 0;
@@ -321,8 +341,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _chapterContent = content;
         _savedPosition = saved;
         _loading = false;
+        // Ideas belong to the chapter, so they are dropped on every load and
+        // fetched again; a stale count would otherwise point at another chapter.
+        _ideas = ChapterIdeas.empty;
       });
       unawaited(_prefetchAround(_index));
+      unawaited(_loadIdeas(chapter, generation));
       if (!loaded.fetched && content.needsImageRefresh()) {
         unawaited(_refreshCachedChapter(chapter));
       }
@@ -334,6 +358,79 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       });
     }
   }
+
+  /// Loads the chapter's paragraph ideas. Decoration only: a failure leaves the
+  /// reader fully usable with the段评 action hidden.
+  Future<void> _loadIdeas(Chapter chapter, int generation) async {
+    final loader = widget.ideasLoader;
+    if (loader == null && widget.chapterCache != null) {
+      // An injected cache means the caller drives its own data; do not reach
+      // for the network behind its back.
+      return;
+    }
+    try {
+      final ideas = await (loader ?? _defaultIdeas)(chapter.itemId);
+      if (!mounted || generation != _loadGeneration) return;
+      if (chapter.itemId != widget.chapters[_index].itemId) return;
+      setState(() => _ideas = ideas);
+    } catch (_) {
+      // Keep the section hidden rather than surfacing a failure. Catches Error
+      // as well as Exception: ideas are decoration, not a page-level failure.
+    }
+  }
+
+  Future<void> _showIdeas() async {
+    if (_ideas.isEmpty) return;
+    setState(() => _controlsVisible = false);
+    final texts = _paragraphTexts();
+    final ideaSnapshot = _ideas;
+    final chapter = widget.chapters[_index];
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: _preferences.themePreset.panelColor,
+      builder: (context) => SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.7,
+        child: ReaderIdeasSheet(
+          ideas: ideaSnapshot,
+          paragraphTexts: texts,
+          preset: _preferences.themePreset,
+          loadComments: (paragraph) async {
+            final resolver = widget.commentResolver;
+            if (resolver != null) return resolver(chapter.itemId, paragraph);
+            return _defaultComments(chapter.itemId, paragraph);
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Paragraph id to text, so the sheet can show each comment's context.
+  /// Ids come from the upstream `<p idx>` attribute and match the idea keys.
+  Map<int, String> _paragraphTexts() {
+    final texts = <int, String>{};
+    for (final block in _chapterContent.blocks) {
+      if (block is ChapterParagraph && block.paraIndex != null) {
+        texts.putIfAbsent(block.paraIndex!, () => block.text);
+      }
+    }
+    return texts;
+  }
+
+  /// Default idea fetch and comment resolution; see [ReaderPage.ideasLoader].
+  Future<ChapterIdeas> _defaultIdeas(String itemId) =>
+      ApiClient.instance.chapterIdeas(itemId);
+
+  Future<BookCommentPage> _defaultComments(
+    String itemId,
+    ParagraphIdeas paragraph,
+  ) => ApiClient.instance.commentsByIds(
+    widget.bookId,
+    itemId,
+    paragraph.commentIds,
+  );
 
   Future<_LoadedChapter> _chapterText(Chapter chapter) async {
     final id = chapter.itemId;
@@ -1297,6 +1394,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       onNight: _toggleNightTheme,
       onAppearance: _showAppearanceSettings,
       onCache: _showCache,
+      onIdeas: _ideas.isEmpty ? null : _showIdeas,
+      ideaCount: _ideas.total,
     );
   }
 

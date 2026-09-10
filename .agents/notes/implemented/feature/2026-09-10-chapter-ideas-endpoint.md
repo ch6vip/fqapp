@@ -71,40 +71,56 @@ item_version   = 章节版本
   （包括一并试过的 `forum_id` 端点 `count` 参数——它对 `mix_data` 没有任何影响）。
 - **用 `forum_id` 端点的 `mix_data` 承载章评**：`count` 取 0/10/20 时响应逐字节相同，
   `mix_data` 恒为 `null`，只有 `item_related_count`（本章 22 条）可用。否掉。
+- **按 `para_index` 直接从评论列表取段评**：官方 `ParaCommentListPresenter` 的配方是
+  `comment_source=2`／`comment_type=1`／`group_type=15`／`server_channel=43` 配
+  `para_index` + `item_version`（取自目录 `item_data_list[i].version`）。请求能被接受
+  （`code=0`），但对含 3920 条段评的段落仍返回 `total=0`，确认该端点不提供段评正文。
+  最终改用 `insert_comment_ids` 回填正文。
 - **新建 app 侧 `/api/*` 桥接层做两次上游调用**：能让客户端一次拿到正文，但
   `webui.go` 的桥接层是给旧页面用的，`/api/v1` 才是 App 的入口；把链式调用塞进
   REST 层需要新增可组合的端点类型，超出本次范围。改为让客户端按需分两步调用。
 - **把段落评论正文与计数合并进一个自建端点**：需要后端持有 reader 的段落 ID 空间，
   而那属于客户端的排版状态。保持后端无状态。
+- **在阅读器正文里内联渲染段评角标**：需要改动分页布局
+  （`reader_chapter_layout.dart`）逐行的命中测试，风险高于收益。段评先做成
+  菜单入口 + 按段落面板。
 
 ## Consequences
 
 - 章节评论路由从「恒 400」变为可用；章评与段评有了真实数据来源。
-- 书评行为逐字段不变（`TestBookReviewBodyDefaultsMatchBookReviews` 锁定默认请求体）。
-- 客户端新增 `ChapterIdeas` 模型与 `ApiClient.chapterIdeas` / `paragraphComments`，
+- 书评行为逐字段不变（`TestBookReviewBodyDefaultsMatchBookReviews` 锁定默认请求体，
+  `TestBookReviewBodyInsertIDs` 锁定 `insert_comment_ids` 在未传时必须缺席）。
+- 客户端新增 `ChapterIdeas` 模型与 `ApiClient.chapterIdeas` / `commentsByIds`，
   段落评论响应（`data_list[i].comment` 嵌套结构）与书评响应（扁平 `comment[]`）
   统一归一化为 `BookCommentPage`。
-- **段评正文需要两跳且依赖客户端持有的段落 ID 与章节版本**。阅读器 UI 尚未接入；
-  本次交付的是端点能力、数据层与归一化解析，以及 `README` 中记录的两跳契约。
-- 上游只给数量时不给正文，因此「段评角标」可以在一次请求内完成，而正文按需懒加载。
-- 段落 ID 与 idea map 的键是否同一空间尚未确认：idea map 的键是 0..51 的连续序号，
-  而 `bubble_data` 里 channel 43 对段 0 的计数为 0，与传序号查正文得到 `total=0`
-  的现象一致。接入阅读器时需要用真实 `getEndParaId` 语义再验一次。
+- **段落 ID 来自正文 HTML**：`<p idx="N">` 的 `idx` 与 idea map 的键同一空间。
+  `ChapterParagraph` 新增 `paraIndex` 并随结构化缓存持久化；旧缓存没有该字段时
+  降级为 `null`，只影响该章的段评，正文照常显示。段评因此对离线缓存章节同样可用。
+- 阅读器新增段评入口（控制栏 `段评 · N`）与按段落懒加载的面板；没有段评时入口隐藏，
+  加载失败既不改变正文也不弹错误。
+- 上游只给数量时不给正文，因此角标计数一次请求即可，正文按需懒加载。
+- `para_index` 是段落 ID 而非 0 基序号：按序号查会稳定得到 `code=0, total=0`。
 
 ## Verification
 
 - 新增 `internal/endpoints/idea_list_test.go`：校验 `item_id` 必填返回 `badRequest`、
-  `idea_list` 请求体契约（`comment_source=3`）、书评默认请求体逐字段不变、以及
-  官方段评配方（`2/1/15/43` + `group_id` 为章节 ID + `business_param` 三要素）。
+  `idea_list` 请求体契约（`comment_source=3`）、书评默认请求体逐字段不变、
+  `insert_comment_ids` 的存在与省略、以及 `splitCSV` 的边界。
 - `router_test.go` 的三条章节评论路由断言由 `book_reviews` 更新为 `idea_list`。
 - `go test -mod=readonly -count=1 ./...` 全绿。
 - **CI 等价验证**：在固定基础提交
   `40481102257f9405c8086c614b50796873091a4e` 的临时 worktree 中
   `git apply` 新补丁并跑完整 Go 测试，通过后已移除 worktree。
-- 发布二进制端到端复验：章评路由 `code=0`（48 段，段 0 共 287 条），
-  段评配方 `code=0` 且无 `debug_info`，书评基线 `total=6536` 不变。
+- 发布二进制端到端复验（含两跳链路）：第 1 跳 `/chapters/{id}/reviews?comment_source=3`
+  返回 `code=0` 与 85 段（最大段 `idx=72`、3920 条）；第 2 跳
+  `/books/{id}/reviews?...&insert_comment_ids=…` 返回 `code=0` 与 8 条正文
+  （如「孔子云：何惧死刑！[奸笑]…」）；书评基线 `total` 不变。
 - 客户端 `test/chapter_ideas_test.dart` 覆盖按段号读取、通道计数与段落计数分离、
-  仅暴露评论 ID、业务错误码降级、`data_list[i].comment` 归一化与游标 offset 解析；
-  `flutter analyze` 无问题，`flutter test` **651 项通过**。
-- 未做真机验证；Android `liblegacy.so` 未在本机构建（无 NDK 28.2.13676358），
-  需由 CI 或装有 NDK 的环境用 `scripts/build_backend.ps1 -Jni` 生成。
+  仅暴露评论 ID、业务错误码降级、`data_list[i].comment` 归一化与游标 offset 解析。
+- `test/reader_ideas_test.dart` 覆盖 `<p idx>` 解析、结构化缓存往返、旧缓存降级为
+  `null`、面板只列出有段评的段落、正文按需加载且折叠后不重复请求、加载失败留在面板内、
+  阅读器入口计数与跨章重新拉取、无段评时入口隐藏。
+- `flutter analyze` 无问题；`flutter test` **663 项通过**；CI（Android APK）成功，
+  其中包含在固定基础提交上应用补丁并构建 JNI 后端。
+- 未做真机验证；Android `liblegacy.so` 未在本机构建（本机无 NDK 28.2.13676358），
+  由 CI 生成。

@@ -52,10 +52,15 @@ index af11790..764673d 100644
 +	return result, nil
  }
 diff --git a/internal/endpoints/book_reviews.go b/internal/endpoints/book_reviews.go
-index 9881f52..f83da8a 100644
+index 9881f52..d3c70dd 100644
 --- a/internal/endpoints/book_reviews.go
 +++ b/internal/endpoints/book_reviews.go
-@@ -8,11 +8,35 @@ import (
+@@ -4,15 +4,43 @@ import (
+ 	"encoding/json"
+ 	"net/http"
+ 	"net/url"
++	"strings"
+ 
  	"/internal/upstream"
  )
  
@@ -87,6 +92,9 @@ index 9881f52..f83da8a 100644
 +//	server_channel (optional, default 7) UgcCommentChannelEnum
 +//	para_index     (optional, default 0) paragraph ordinal
 +//	item_version   (optional) chapter content version
++//	insert_comment_ids (optional, comma separated) fetch these comment ids
++//	               regardless of the container. The official client uses it to
++//	               resolve the idea ids returned by the idea list into bodies.
 +//	count          (optional, default 20)
 +//	item_count     (optional, default 0)
 +//	sort           (optional, default 1)
@@ -94,7 +102,7 @@ index 9881f52..f83da8a 100644
  type BookReviews struct {
  	up *upstream.Client
  }
-@@ -27,32 +51,26 @@ const bookReviewsPath = "/novel/commentapi/comment/list/"
+@@ -27,32 +55,27 @@ const bookReviewsPath = "/novel/commentapi/comment/list/"
  // Handle implements Endpoint.
  func (c *BookReviews) Handle(q url.Values) (interface{}, error) {
  	bookID := q.Get("book_id")
@@ -139,6 +147,7 @@ index 9881f52..f83da8a 100644
 +		ServerChannel: intDefault(q.Get("server_channel"), 7),
 +		ParaIndex:     intDefault(q.Get("para_index"), 0),
 +		ItemVersion:   q.Get("item_version"),
++		InsertIDs:     splitCSV(q.Get("insert_comment_ids")),
 +		ItemCount:     intDefault(q.Get("item_count"), 0),
 +		Count:         intDefault(q.Get("count"), 20),
 +		Sort:          intDefault(q.Get("sort"), 1),
@@ -146,7 +155,7 @@ index 9881f52..f83da8a 100644
  	})
  	if err != nil {
  		return nil, err
-@@ -62,9 +80,57 @@ func (c *BookReviews) Handle(q url.Values) (interface{}, error) {
+@@ -62,9 +85,82 @@ func (c *BookReviews) Handle(q url.Values) (interface{}, error) {
  		Mode:    ModeDeviceSigned,
  		Method:  http.MethodPost,
  		Host:    hostFQNovel,
@@ -170,6 +179,7 @@ index 9881f52..f83da8a 100644
 +	ServerChannel int
 +	ParaIndex     int
 +	ItemVersion   string
++	InsertIDs     []string
 +	ItemCount     int
 +	Count         int
 +	Sort          int
@@ -179,23 +189,29 @@ index 9881f52..f83da8a 100644
 +// bookReviewBody builds the upstream request body. Split out so the wire
 +// contract can be asserted without a network round trip.
 +func bookReviewBody(p bookReviewParams) ([]byte, error) {
++	business := map[string]interface{}{
++		"book_id":                          p.BookID,
++		"comment_sort_debug":               false,
++		"end_offset_time":                  0,
++		"fold_type":                        p.FoldType,
++		"item_count":                       p.ItemCount,
++		"item_version":                     p.ItemVersion,
++		"max_item_count":                   0,
++		"need_count":                       true,
++		"need_danmaku_occlusion_face_data": false,
++		"para_index":                       p.ParaIndex,
++		"playlet_item_duration":            0,
++		"read_item_count":                  0,
++		"req_type":                         0,
++		"start_offset_time":                0,
++	}
++	// Only sent when set: the upstream distinguishes an absent list from an
++	// empty one, and the book-review request must stay byte for byte identical.
++	if len(p.InsertIDs) > 0 {
++		business["insert_comment_ids"] = p.InsertIDs
++	}
 +	return json.Marshal(map[string]interface{}{
-+		"business_param": map[string]interface{}{
-+			"book_id":                          p.BookID,
-+			"comment_sort_debug":               false,
-+			"end_offset_time":                  0,
-+			"fold_type":                        p.FoldType,
-+			"item_count":                       p.ItemCount,
-+			"item_version":                     p.ItemVersion,
-+			"max_item_count":                   0,
-+			"need_count":                       true,
-+			"need_danmaku_occlusion_face_data": false,
-+			"para_index":                       p.ParaIndex,
-+			"playlet_item_duration":            0,
-+			"read_item_count":                  0,
-+			"req_type":                         0,
-+			"start_offset_time":                0,
-+		},
++		"business_param": business,
 +		"comment_source": p.CommentSource,
 +		"comment_type":   p.CommentType,
 +		"count":          p.Count,
@@ -204,6 +220,24 @@ index 9881f52..f83da8a 100644
 +		"server_channel": p.ServerChannel,
 +		"sort":           p.Sort,
 +	})
++}
++
++// splitCSV parses a comma separated id list, dropping blanks.
++func splitCSV(value string) []string {
++	if strings.TrimSpace(value) == "" {
++		return nil
++	}
++	parts := strings.Split(value, ",")
++	ids := make([]string, 0, len(parts))
++	for _, part := range parts {
++		if trimmed := strings.TrimSpace(part); trimmed != "" {
++			ids = append(ids, trimmed)
++		}
++	}
++	if len(ids) == 0 {
++		return nil
++	}
++	return ids
 +}
 diff --git a/internal/endpoints/content_decryption_test.go b/internal/endpoints/content_decryption_test.go
 new file mode 100644
@@ -370,16 +404,17 @@ index 0000000..499123c
 +}
 diff --git a/internal/endpoints/idea_list_test.go b/internal/endpoints/idea_list_test.go
 new file mode 100644
-index 0000000..b6882d8
+index 0000000..939350f
 --- /dev/null
 +++ b/internal/endpoints/idea_list_test.go
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,246 @@
 +package endpoints
 +
 +import (
 +	"encoding/json"
 +	"errors"
 +	"net/url"
++	"strings"
 +	"testing"
 +)
 +
@@ -431,6 +466,75 @@ index 0000000..b6882d8
 +		var bad badRequest
 +		if !errors.As(err, &bad) {
 +			t.Fatalf("want a badRequest (HTTP 400), got %T: %v", err, err)
++		}
++	}
++}
++
++// The idea list returns comment ids without bodies; the client resolves them
++// through insert_comment_ids. It must stay absent from the book-review request
++// so that request remains byte for byte identical.
++func TestBookReviewBodyInsertIDs(t *testing.T) {
++	base := bookReviewParams{
++		BookID:        "7491705400958405694",
++		GroupID:       "7491705434915488318",
++		GroupType:     1,
++		CommentSource: 1,
++		CommentType:   2,
++		ServerChannel: 7,
++		Count:         20,
++		Sort:          1,
++		FoldType:      1,
++	}
++
++	absent, err := bookReviewBody(base)
++	if err != nil {
++		t.Fatalf("build body: %v", err)
++	}
++	if strings.Contains(string(absent), "insert_comment_ids") {
++		t.Error("insert_comment_ids must be omitted when no ids are given")
++	}
++
++	base.InsertIDs = []string{"7508330344748876606", "7459605510494946110"}
++	present, err := bookReviewBody(base)
++	if err != nil {
++		t.Fatalf("build body: %v", err)
++	}
++	var got struct {
++		BusinessParam struct {
++			InsertIDs []string `json:"insert_comment_ids"`
++		} `json:"business_param"`
++	}
++	if err := json.Unmarshal(present, &got); err != nil {
++		t.Fatalf("unmarshal body: %v", err)
++	}
++	want := []string{"7508330344748876606", "7459605510494946110"}
++	if len(got.BusinessParam.InsertIDs) != len(want) {
++		t.Fatalf("insert_comment_ids = %v, want %v", got.BusinessParam.InsertIDs, want)
++	}
++	for i := range want {
++		if got.BusinessParam.InsertIDs[i] != want[i] {
++			t.Errorf("insert_comment_ids[%d] = %q, want %q",
++				i, got.BusinessParam.InsertIDs[i], want[i])
++		}
++	}
++}
++
++func TestSplitCSV(t *testing.T) {
++	cases := []struct {
++		in   string
++		want int
++	}{
++		{"", 0},
++		{"   ", 0},
++		{"a", 1},
++		{"a,b", 2},
++		{" a , b ", 2},
++		{"a,,b", 2},
++		{",", 0},
++	}
++	for _, c := range cases {
++		if got := splitCSV(c.in); len(got) != c.want {
++			t.Errorf("splitCSV(%q) = %v, want %d entries", c.in, got, c.want)
 +		}
 +	}
 +}

@@ -23,6 +23,11 @@ class ReaderControls extends StatelessWidget {
   final VoidCallback onAppearance;
   final VoidCallback onCache;
 
+  /// Chapter ideas (段评). Null while the chapter has none to show, which
+  /// disables the action instead of opening an empty sheet.
+  final VoidCallback? onIdeas;
+  final int ideaCount;
+
   const ReaderControls({
     super.key,
     required this.preferences,
@@ -43,6 +48,8 @@ class ReaderControls extends StatelessWidget {
     required this.onNight,
     required this.onAppearance,
     required this.onCache,
+    this.onIdeas,
+    this.ideaCount = 0,
   });
 
   @override
@@ -200,6 +207,33 @@ class ReaderControls extends StatelessWidget {
                       ),
                     ],
                   ),
+                  // Ideas get their own row so the count badge has room and the
+                  // four primary actions keep their size.
+                  if (onIdeas != null) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton.icon(
+                            key: const ValueKey('reader-ideas'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: preset.accentColor,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            onPressed: onIdeas,
+                            icon: const Icon(Icons.forum_outlined, size: 19),
+                            label: Text(
+                              ideaCount > 0 ? '段评 · $ideaCount' : '段评',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

@@ -328,8 +328,9 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 | GET | `/api/v1/books/{id}/comments` | 书评列表与页级计数（`comment_cnt`、`score_cnt`、`context`）；详情页书评区与听书页「书评」使用 |
 | GET | `/api/v1/books/{id}/related` | 关联作品（`book_data` 原著小说 / `video_data` 改编短剧）；听书页横向卡片使用 |
 | GET | `/api/v1/books/{id}/tones` | 智能朗读音色（**小写键** `id`/`title`/`description`/`badge`/`is_multi_tone`）与真人讲书 `audio_tones`（用 `abook_id`）；听书页音色卡片使用 |
-| GET | `/api/v1/chapters/{id}/reviews` | 章评／段评（item-ideas）：按段号索引的数量、`bubble_data` 通道计数与评论 ID。`comment_source=3` 取段评；正文需再用 `/books/{id}/reviews` 按段落配方取 |
+| GET | `/api/v1/chapters/{id}/reviews` | 章评／段评，返回按段号索引的数量与评论 ID（`comment_source=3` 取段评）；正文需再用 `/books/{id}/reviews` 的 `insert_comment_ids` 按 ID 回填 |
 | GET | `/api/v1/chapters/{id}/paragraphs/{n}/reviews` | 同上，并带上 `para_index` 供客户端定位段落 |
+| GET | `/api/v1/books/{id}/reviews?book_id=&group_id=&insert_comment_ids=` | 评论列表。默认即整本书评；`insert_comment_ids` 按 ID 回填正文，是段评的第二跳 |
 | GET | `/api/v1/chapters/{id}/timeline` | 边听边读字幕（`data.speech_text`，格式 `[起始毫秒,0]<...>文本`）。**必须显式传 `genre` 与有效 `tone_id`**：后端默认的 `genre=4, tone_id=99` 恒返回 `1301008`，无字幕是该端点的正常答案 |
 | GET | `/api/v1/search?query=&tab_type=8&offset=&count=10` | 漫画专属搜索，按真实类型识别结果 |
 | GET | `/api/v1/search?query=漫剧&tab_type=11&offset=&count=10` | 漫剧首页推荐耗尽后的搜索来源，仅保留明确漫剧类型，沿用返回的 `next_offset` |
@@ -438,6 +439,9 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 - 菜单、排版、目录和缓存面板随阅读主题配色；小屏、大字体与横屏下可滚动访问设置
 - 目录支持搜索、倒序、当前章定位与缓存标记
 - 章节 ID、图文位置和封面写入历史，换字号、横竖屏或阅读方式后按原位置续读；兼容旧文字偏移和滚动历史
+- 章节正文解析上游 `<p idx>` 段落 ID，随结构化缓存持久化；旧缓存没有该字段时只影响段评
+- 段评：控制栏入口显示本章条数，面板按段落列出并展示该段原文；展开某段时才拉取正文
+  （idea 接口只给数量与评论 ID，正文按 ID 回填）；本章没有段评时入口隐藏
 - 正文和目录自动保存到磁盘，底部“缓存”可下载后续 20/50/100 章并随时停止；旧文字缓存立即可读，联网后自动补图并迁移阅读位置
 - 章节缓存保存图片地址和尺寸；插图文件首次显示时联网加载并自动缓存。过期签名在打开章节或恢复前台时刷新，离线时保留已有图文
 - 缓存上限为 500 章或 80 MB，超出后清理较久未读的章节

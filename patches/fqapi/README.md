@@ -11,8 +11,8 @@
 - 短剧目录按列表位置显示“第1集…第N集”，与客户端播放及历史索引一致。
 - 章评／段评改为走真正的 item-ideas 服务（`/novel/commentapi/idea/list/`），
   并修好恒返回 400 的 `/api/v1/chapters/{id}/paragraphs/{n}/reviews` 路由。
-  同时给评论列表端点补上官方段评配方所需的参数（`group_id`/`group_type`/
-  `comment_source`/`comment_type`/`server_channel`/`para_index`/`item_version`），
+  同时给评论列表端点补上段评所需参数（`group_id`/`group_type`/`comment_source`/
+  `comment_type`/`server_channel`/`para_index`/`item_version`/`insert_comment_ids`），
   默认值与原书评请求逐字段一致。
 
 ## 章评／段评为什么不能复用书评端点
@@ -23,15 +23,16 @@
 - 书评端点把 `comment_type` 锁死在 2（Book）。传 item／paragraph 类型时上游返回
   `103001 invalid param`，`debug_info` 为 `comment_type invalid`；把 `group_id`
   指向章节 forum 也只能得到 `total=0`。
-- 段评列表仍然用书评端点，但要用官方客户端配方：`comment_source=2`
-  （NovelParaComment）、`comment_type=1`（Paragraph）、`group_type=15`
-  （UgcRelativeType.Item）、`server_channel=43`（NovelParaUserCommentList），
-  `group_id` 为**章节 ID**，`business_param` 同时需要真实 `book_id`、`para_index`
-  与 `item_version`。三者缺一，上游即返回
-  `103001 book_id, item_version, or para_index invalid`。
-  `item_version` 取自目录接口 `data.item_data_list[i].version`。
-- `idea/list` 返回按段号索引的数量与评论 ID（`infos` 只带 `comment_id`），
-  不含评论正文；正文需再用上面的配方向评论列表端点取。
+- `idea/list` 返回按段号索引的数量与评论 ID，**不含正文**：
+  `data.data["<idx>"].count` 是段评数，`infos` 只有 `comment_id`。
+- 段评正文需要第二跳：用 `insert_comment_ids` 让评论列表按 ID 回填。实测
+  `book_id` + `group_id`（章节 ID）+ `insert_comment_ids` 即可返回正文，
+  无需 `para_index`／`item_version`。
+- 已试过但**无效**的路径：用评论列表按 `para_index` 取段评（即使带上
+  `group_type=15`／`comment_source=2`／`comment_type=1`／`server_channel=43`
+  与正确的 `item_version`，`total` 恒为 0）；用 `forum_id` 端点的 `mix_data`
+  （`count` 取 0/10/20 时响应逐字节相同，`mix_data` 恒为 `null`）。
+- 段落 ID 来自正文 HTML 的 `<p idx="N">` 属性，与 idea map 的键同一空间。
 
 CI 在干净的固定提交上先执行 `git apply --check`，再应用补丁并运行完整 Go 测试，
 然后构建 JNI 库。构建报告同时记录基础提交与补丁 SHA-256，避免 Flutter 更新后

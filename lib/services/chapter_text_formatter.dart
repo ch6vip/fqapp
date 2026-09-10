@@ -51,7 +51,14 @@ sealed class ChapterBlock {
 class ChapterParagraph extends ChapterBlock {
   final String text;
 
-  const ChapterParagraph(this.text);
+  /// Upstream paragraph id from the `<p idx="N">` attribute.
+  ///
+  /// Chapter ideas (段评) are keyed by this id, so it is the only way to line a
+  /// paragraph up with its comment count. Null for plain-text sources and for
+  /// markup that carries no attribute.
+  final int? paraIndex;
+
+  const ChapterParagraph(this.text, {this.paraIndex});
 }
 
 class ChapterImage extends ChapterBlock {
@@ -153,7 +160,11 @@ class ChapterContent {
         'blocks': [
           for (final block in blocks)
             switch (block) {
-              ChapterParagraph() => {'type': 'text', 'text': block.text},
+              ChapterParagraph() => {
+                'type': 'text',
+                'text': block.text,
+                if (block.paraIndex != null) 'idx': block.paraIndex,
+              },
               ChapterImage() => {
                 'type': 'image',
                 'url': block.url,
@@ -181,8 +192,16 @@ class ChapterContent {
     for (final raw in data['blocks'] as List) {
       if (raw is! Map) throw const FormatException('章节缓存内容无效');
       if (raw['type'] == 'text' && raw['text'] is String) {
-        for (final paragraph in splitChapterParagraphs(raw['text'] as String)) {
-          blocks.add(ChapterParagraph(paragraph));
+        // Older caches carry no `idx`; ideas simply stay unavailable for them.
+        final paraIndex = raw['idx'] is int ? raw['idx'] as int : null;
+        final paragraphs = splitChapterParagraphs(raw['text'] as String);
+        for (var i = 0; i < paragraphs.length; i++) {
+          blocks.add(
+            ChapterParagraph(
+              paragraphs[i],
+              paraIndex: i == 0 ? paraIndex : null,
+            ),
+          );
         }
       } else if (raw['type'] == 'image' && raw['url'] is String) {
         final url = _chapterImageUrl(raw['url'] as String);
@@ -212,11 +231,19 @@ class ChapterContent {
 ChapterContent parseChapterContent(String source, {String? baseUrl}) {
   final blocks = <ChapterBlock>[];
   var pending = StringBuffer();
+  // Upstream paragraph id currently in scope, from `<p idx="N">`.
+  int? activeIndex;
   void flush() {
-    for (final paragraph in splitChapterParagraphs(pending.toString())) {
-      blocks.add(ChapterParagraph(paragraph));
+    final paragraphs = splitChapterParagraphs(pending.toString());
+    for (var i = 0; i < paragraphs.length; i++) {
+      // A single upstream paragraph can split into several display paragraphs;
+      // the id belongs to the first of them.
+      blocks.add(
+        ChapterParagraph(paragraphs[i], paraIndex: i == 0 ? activeIndex : null),
+      );
     }
     pending = StringBuffer();
+    activeIndex = null;
   }
 
   void append(dom.Node node) {
@@ -257,10 +284,16 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
       }
       final paragraph = _paragraphTags.contains(tag);
       if (paragraph || tag == 'br' || tag == 'hr') flush();
+      final outerIndex = activeIndex;
+      if (paragraph) {
+        final attribute = int.tryParse(node.attributes['idx']?.trim() ?? '');
+        if (attribute != null) activeIndex = attribute;
+      }
       for (final child in node.nodes) {
         append(child);
       }
       if (paragraph) flush();
+      activeIndex = outerIndex;
       if (tag == 'td' || tag == 'th') pending.write(' ');
     }
   }

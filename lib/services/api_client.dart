@@ -443,6 +443,33 @@ class ApiClient {
     );
   }
 
+  /// Resolves specific comment bodies by id.
+  ///
+  /// The idea list returns comment ids without bodies, so this is the second
+  /// hop of the chapter-ideas chain: `insert_comment_ids` asks the comment list
+  /// for exactly those entries. The container stays the chapter item id, which
+  /// is what the upstream expects for comments anchored to a chapter.
+  Future<BookCommentPage> commentsByIds(
+    String bookId,
+    String itemId,
+    List<String> commentIds,
+  ) async {
+    if (commentIds.isEmpty) return const BookCommentPage();
+    final response = await _get(
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/reviews', {
+        'book_id': bookId,
+        'group_id': itemId,
+        'insert_comment_ids': commentIds.join(','),
+        'count': '${commentIds.length}',
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => parseParagraphComments(_decodeEnvelope(status, bytes)),
+    );
+  }
+
   /// Returns comic pages in backend order with absolute HTTP(S) URLs.
   Future<List<ComicImage>> comicImages(String itemId) async {
     final response = await _get(
