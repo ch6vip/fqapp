@@ -16,6 +16,7 @@ import '../services/reader_device.dart';
 import '../services/reader_preferences.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
+import '../widgets/reader/reader_bubble.dart';
 import '../widgets/reader/reader_chapter_layout.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_illustration.dart';
@@ -120,6 +121,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ReaderChapterLayout? _chapterLayout;
   ReaderPageMode? _layoutMode;
   int _layoutRevision = 0;
+
+  /// Bumped whenever [_ideas] changes. Cached layouts remember the revision they
+  /// were measured with, so a chapter is re-measured once its paragraph bubbles
+  /// arrive even though the text, font and viewport are unchanged.
+  int _ideasRevision = 0;
+  int _layoutIdeasRevision = -1;
   int _textOffset = 0;
   int _pageIndex = 0;
   Map<String, dynamic>? _savedPosition;
@@ -372,14 +379,32 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final ideas = await (loader ?? _defaultIdeas)(chapter.itemId);
       if (!mounted || generation != _loadGeneration) return;
       if (chapter.itemId != widget.chapters[_index].itemId) return;
-      setState(() => _ideas = ideas);
+      setState(() {
+        _ideas = ideas;
+        ++_ideasRevision;
+      });
     } catch (_) {
       // Keep the section hidden rather than surfacing a failure. Catches Error
       // as well as Exception: ideas are decoration, not a page-level failure.
     }
   }
 
-  Future<void> _showIdeas() async {
+  /// The in-text paragraph-comment bubble, built during layout so it can be
+  /// measured as a placeholder at the end of the paragraph.
+  ///
+  /// Note: 气泡的门槛与几何规格取自官方客户端 — 见
+  /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+  Widget _buildParagraphBubble(int paraIndex, int count) =>
+      ReaderParagraphBubble(
+        count: count,
+        metrics: ReaderBubbleMetrics.forFontSize(
+          MediaQuery.textScalerOf(context).scale(_preferences.fontSize),
+        ),
+        preset: _preferences.themePreset,
+        onTap: () => unawaited(_showIdeas(focusParaIndex: paraIndex)),
+      );
+
+  Future<void> _showIdeas({int? focusParaIndex}) async {
     if (_ideas.isEmpty) return;
     setState(() => _controlsVisible = false);
     final texts = _paragraphTexts();
@@ -397,6 +422,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           ideas: ideaSnapshot,
           paragraphTexts: texts,
           preset: _preferences.themePreset,
+          // Tapping a bubble in the text opens the panel with that paragraph
+          // already expanded, so the tap lands on the comments it promised.
+          initialParaIndex: focusParaIndex,
           loadComments: (paragraph) async {
             final resolver = widget.commentResolver;
             if (resolver != null) return resolver(chapter.itemId, paragraph);
@@ -676,16 +704,26 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       fontFamily:
           _fontFamily ?? Theme.of(context).textTheme.bodyLarge?.fontFamily,
     );
-    if (_chapterLayout?.spec == spec && _layoutMode == _preferences.pageMode) {
+    if (_chapterLayout?.spec == spec &&
+        _layoutMode == _preferences.pageMode &&
+        _layoutIdeasRevision == _ideasRevision) {
       return _chapterLayout!;
     }
-    final layout = _chapterLayout?.spec == spec
+    // Reuse the measured text layout only when nothing that feeds it changed.
+    // Switching page mode keeps the same spec and page-insensitive measurements,
+    // so it must not re-measure — but a change in paragraph bubbles must.
+    final reusable =
+        _chapterLayout?.spec == spec && _layoutIdeasRevision == _ideasRevision;
+    final layout = reusable
         ? _chapterLayout!
         : ReaderChapterLayout(
             title: _chapter.title,
             content: _chapterContent,
             spec: spec,
+            paragraphBubbles: _ideas.bubbleCounts,
+            bubbleBuilder: _buildParagraphBubble,
           );
+    _layoutIdeasRevision = _ideasRevision;
     final initialRestore = _needsRestore;
     final restored = initialRestore
         ? layout.restore(
@@ -1276,6 +1314,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   Widget _buildScrollContent(ReaderChapterLayout layout) {
     final spec = layout.spec;
+    // The scroll list re-renders the measured span, so the bubble is already in
+    // it. Its size still depends on this list's own constraints, and the
+    // painter's placeholder was measured at spec.width — the same width, so the
+    // two agree without a second measurement pass.
     return NotificationListener<ScrollStartNotification>(
       onNotification: (notification) {
         if (notification.dragDetails != null) _hideControlsOnDrag();

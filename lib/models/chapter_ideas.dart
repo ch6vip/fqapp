@@ -36,6 +36,22 @@ class ParagraphIdeas {
 
   /// Count for one channel, or 0 when the upstream did not report it.
   int countForChannel(int channel) => channelCounts[channel] ?? 0;
+
+  /// Whether the reader should draw an in-text bubble for this paragraph.
+  ///
+  /// The official client gates the bubble on `bubble_data[3].count > 0` and then
+  /// prints the paragraph's total [count] inside it, so a paragraph with ideas
+  /// does not automatically get a bubble. On a live chapter that gate passes for
+  /// 21 of 48 paragraphs — without it nearly every paragraph would sprout one.
+  ///
+  /// A payload that carries no `bubble_data` at all cannot be gated; those fall
+  /// back to "has ideas". See
+  /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+  bool get showsBubble =>
+      channelCounts.isEmpty ? hasIdeas : countForChannel(bubbleGateChannel) > 0;
+
+  /// The `bubble_data` key the official client reads as its gate.
+  static const bubbleGateChannel = 3;
 }
 
 /// Every paragraph idea bucket for one chapter.
@@ -57,6 +73,15 @@ class ChapterIdeas {
     for (final p in paragraphs)
       if (p.hasIdeas) p,
   ];
+
+  /// Paragraph count to print in each in-text bubble, keyed by paragraph id.
+  ///
+  /// Only paragraphs that pass [ParagraphIdeas.showsBubble] appear, and the
+  /// value is the paragraph's total count (not the gated channel's).
+  Map<int, int> get bubbleCounts => {
+    for (final p in paragraphs)
+      if (p.showsBubble) p.paraIndex: p.count,
+  };
 
   /// Total idea count across the chapter.
   int get total {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_preferences.dart';
+import 'reader_bubble.dart';
 import 'reader_illustration.dart';
 import 'reader_theme.dart';
 
@@ -107,6 +108,14 @@ class ReaderContentBlock {
   final List<ReaderTextLine> lines;
   final ChapterImage? illustration;
 
+  /// Upstream paragraph id, when the source carried one. Paragraph-comment
+  /// bubbles are keyed by this, not by the block's ordinal position.
+  final int? paraIndex;
+
+  /// Paragraph-comment count rendered as a bubble at the end of the last line;
+  /// null when the paragraph has none or the upstream gate did not pass.
+  final int? bubbleCount;
+
   const ReaderContentBlock({
     required this.index,
     required this.text,
@@ -118,11 +127,14 @@ class ReaderContentBlock {
     required this.align,
     required this.lines,
     this.illustration,
+    this.paraIndex,
+    this.bubbleCount,
   });
 
   int get end => start + text.length;
   bool get isTitle => index == 0;
   bool get isImage => illustration != null;
+  bool get hasBubble => bubbleCount != null;
 }
 
 /// A slice retains its original paragraph layout, including justification.
@@ -183,6 +195,8 @@ class ReaderChapterLayout {
     required String title,
     required ChapterContent content,
     required ReaderLayoutSpec spec,
+    Map<int, int> paragraphBubbles = const {},
+    Widget Function(int paraIndex, int count)? bubbleBuilder,
   }) {
     final body = content.withoutLeadingTitle(title);
     final legacyText = [
@@ -201,6 +215,13 @@ class ReaderChapterLayout {
         if (found >= 0) legacyStart = found;
         legacyCursor = (legacyStart + text.length).clamp(0, legacyText.length);
       }
+      final paraIndex = element is ChapterParagraph ? element.paraIndex : null;
+      final bubbleCount = paraIndex == null
+          ? null
+          : paragraphBubbles[paraIndex];
+      final bubble = bubbleCount == null || bubbleBuilder == null
+          ? null
+          : bubbleBuilder(paraIndex!, bubbleCount);
       final block = element is ChapterImage
           ? _measureImage(
               element,
@@ -217,6 +238,9 @@ class ReaderChapterLayout {
               legacyStart: legacyStart,
               top: top,
               spec: spec,
+              paraIndex: paraIndex,
+              bubbleCount: bubbleCount,
+              bubble: bubble,
             );
       blocks.add(block);
       // An absent title contributes neither text nor a leading newline.
@@ -353,6 +377,9 @@ class ReaderChapterLayout {
     required int legacyStart,
     required double top,
     required ReaderLayoutSpec spec,
+    int? paraIndex,
+    int? bubbleCount,
+    Widget? bubble,
   }) {
     final title = index == 0;
     final style = title ? spec.titleStyle : spec.bodyStyle;
@@ -362,11 +389,23 @@ class ReaderChapterLayout {
       (style.fontSize! + (style.letterSpacing ?? 0)) * 2,
       math.max(0.0, spec.width / scale - style.fontSize!),
     );
+    // The bubble rides at the very end of the paragraph's text, so it follows
+    // the last line and wraps only when that line has no room left. Measuring it
+    // as a placeholder keeps paint and measurement in agreement.
+    final metrics = bubble == null
+        ? null
+        : ReaderBubbleMetrics.forFontSize(
+            spec.textScaler.scale(style.fontSize!),
+          ).forCount(bubbleCount!);
+    final bubbleSpan = bubble == null || metrics == null
+        ? null
+        : WidgetSpan(alignment: PlaceholderAlignment.middle, child: bubble);
     final span = TextSpan(
       style: style,
       children: [
         if (!title) WidgetSpan(child: SizedBox(width: indent, height: 0)),
         TextSpan(text: text),
+        ?bubbleSpan,
       ],
     );
     if (title && text.isEmpty) {
@@ -380,6 +419,8 @@ class ReaderChapterLayout {
         span: span,
         align: align,
         lines: const [],
+        paraIndex: paraIndex,
+        bubbleCount: bubbleCount,
       );
     }
     final painter = TextPainter(
@@ -396,22 +437,36 @@ class ReaderChapterLayout {
             size: Size(indent * scale, 0),
             alignment: PlaceholderAlignment.bottom,
           ),
+          // The bubble's own left gap is inside the widget, so its placeholder
+          // width has to include it or the trailing glyph and the bubble would
+          // overlap.
+          if (metrics != null)
+            PlaceholderDimensions(
+              size: Size(
+                metrics.width + ReaderBubbleMetrics.gap,
+                metrics.height,
+              ),
+              alignment: PlaceholderAlignment.middle,
+            ),
         ]);
       }
       painter.layout(minWidth: spec.width, maxWidth: spec.width);
-      final metrics = painter.computeLineMetrics();
+      final metricsList = painter.computeLineMetrics();
       final starts = <int>[];
       final tops = <double>[];
-      final plainText = '${title ? '' : '\uFFFC'}$text';
+      // One placeholder per `\uFFFC`: the paragraph indent, then the bubble.
+      final leading = title ? 0 : 1;
+      final plainText =
+          '${title ? '' : '\uFFFC'}$text${metrics == null ? '' : '\uFFFC'}';
       var cursor = 0;
-      for (final line in metrics) {
+      for (final line in metricsList) {
         // Hit-testing by y can jump into another line's emoji/RTL glyph box.
         // Walking logical line boundaries keeps offsets ordered in all fonts.
         var range = painter.getLineBoundary(TextPosition(offset: cursor));
         if (range.end <= cursor && cursor < plainText.length) {
           range = painter.getLineBoundary(TextPosition(offset: ++cursor));
         }
-        starts.add((range.start - (title ? 0 : 1)).clamp(0, text.length));
+        starts.add((range.start - leading).clamp(0, text.length));
         tops.add(tops.isEmpty ? 0 : line.baseline - line.ascent);
         cursor = range.end;
         if (cursor < plainText.length && plainText.codeUnitAt(cursor) == 10) {
@@ -430,6 +485,8 @@ class ReaderChapterLayout {
       }
       // Some fallback fonts wrap a multi-codepoint emoji onto several lines.
       // Such a cluster, and any indent-only line, must stay on the same page.
+      // A line holding only the bubble also has no cut of its own: it keeps
+      // riding with the previous line so the bubble never lands alone.
       final cuts = <int>[0];
       for (var i = 1; i < starts.length; i++) {
         if (starts[i] > starts[cuts.last] &&
@@ -456,6 +513,8 @@ class ReaderChapterLayout {
               i + 1 < cuts.length ? tops[cuts[i + 1]] : painter.height,
             ),
         ]),
+        paraIndex: paraIndex,
+        bubbleCount: bubbleCount,
       );
     } finally {
       painter.dispose();

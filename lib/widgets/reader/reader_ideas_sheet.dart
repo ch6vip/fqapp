@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/book_comment.dart';
@@ -22,12 +24,17 @@ class ReaderIdeasSheet extends StatefulWidget {
 
   final ReaderThemePreset preset;
 
+  /// Paragraph to expand and scroll to as soon as the sheet opens, so a tap on
+  /// an in-text bubble lands directly on that paragraph's comments.
+  final int? initialParaIndex;
+
   const ReaderIdeasSheet({
     super.key,
     required this.ideas,
     required this.paragraphTexts,
     required this.loadComments,
     required this.preset,
+    this.initialParaIndex,
   });
 
   @override
@@ -39,6 +46,38 @@ class _ReaderIdeasSheetState extends State<ReaderIdeasSheet> {
   final _loading = <int>{};
   final _bodies = <int, BookCommentPage>{};
   final _failed = <int>{};
+  final _scrollController = ScrollController();
+
+  /// Height of one collapsed row, used only to bring the focused paragraph into
+  /// view. An estimate is fine: the sheet scrolls to it, it does not measure it.
+  static const _rowExtent = 86.0;
+
+  @override
+  void initState() {
+    super.initState();
+    final focus = widget.initialParaIndex;
+    if (focus == null) return;
+    final paragraphs = widget.ideas.withIdeas;
+    final index = paragraphs.indexWhere((p) => p.paraIndex == focus);
+    if (index < 0) return;
+    // Expand immediately and fetch its bodies, then bring the row into view
+    // once the first frame has laid the list out.
+    unawaited(_toggle(paragraphs[index]));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = (index * _rowExtent).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.jumpTo(position);
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   Future<void> _toggle(ParagraphIdeas paragraph) async {
     setState(() {
@@ -108,6 +147,7 @@ class _ReaderIdeasSheetState extends State<ReaderIdeasSheet> {
                     ),
                   )
                 : ListView.builder(
+                    controller: _scrollController,
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     itemCount: paragraphs.length,
                     itemBuilder: (context, index) =>
