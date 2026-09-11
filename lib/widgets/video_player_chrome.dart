@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -99,6 +100,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Future<void> _systemUiUpdates = Future<void>.value();
   bool _systemUiTouched = false;
 
+  /// The orientation list currently pinned while fullscreen, so an unchanged
+  /// answer does not re-issue a rotation request.
+  List<DeviceOrientation>? _appliedOrientations;
+
+  /// The video size [appliedOrientations] was decided from. The player mutates
+  /// its own size when the media loads, so comparing widget generations would
+  /// read the new value on both sides and never notice the change.
+  Size _appliedVideoSize = Size.zero;
+
   double get _panelFraction => _panelExtent.value;
   double get _progressValue {
     final durationMs = math.max(0, widget.duration.inMilliseconds);
@@ -155,7 +165,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
     if (_ready && (oldWidget.player != widget.player || !oldWidget.enabled)) {
       unawaited(_control((player) => player.setRate(_rate)));
-      if (_fullScreen) unawaited(_applySystemUi());
+      // A locked screen keeps the orientation the viewer settled on, so an
+      // episode change must not rotate it either.
+      if (_fullScreen && !_locked) unawaited(_applySystemUi());
     }
     if (oldWidget.currentIndex != widget.currentIndex) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -165,6 +177,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         }
       });
     }
+    // The video size arrives a moment after a player is created, so this is
+    // where a fullscreen episode learns whether it is landscape. The check is
+    // size-based because the player mutates its own size in place.
+    _adoptVideoOrientation();
     if (oldWidget.enabled != widget.enabled ||
         oldWidget.playing != widget.playing ||
         oldWidget.player != widget.player) {
@@ -660,6 +676,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _locked = locked;
       _visible = true;
     });
+    // A locked screen means the viewer has settled on an orientation, so
+    // unlocking is when the video gets to claim it.
+    if (!locked) _adoptVideoOrientation();
     _scheduleHide();
   }
 
@@ -670,23 +689,63 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       if (!mounted || _fullScreen != fullScreen) return;
       if (fullScreen) {
         await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-        final landscape =
-            (widget.player?.videoWidth ?? 9) >
-            (widget.player?.videoHeight ?? 16);
-        await SystemChrome.setPreferredOrientations(
-          landscape
-              ? [
-                  DeviceOrientation.landscapeLeft,
-                  DeviceOrientation.landscapeRight,
-                ]
-              : [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown],
-        );
+        final orientations = _orientationsForVideo;
+        // A freshly created player reports no video size, so the orientation is
+        // unknown rather than portrait. Deciding "0 > 0 is false, therefore
+        // portrait" is what snapped landscape playback back to portrait every
+        // time the next episode auto-played. With no answer, leave the device in
+        // the orientation the viewer already chose; [_adoptVideoOrientation]
+        // applies the real one once the size arrives.
+        _appliedOrientations = orientations;
+        _appliedVideoSize = _playerVideoSize;
+        if (orientations == null) return;
+        await SystemChrome.setPreferredOrientations(orientations);
       } else {
+        _appliedOrientations = null;
+        _appliedVideoSize = Size.zero;
         await _restoreSystemUi();
       }
     });
     _systemUiUpdates = operation.catchError((Object _) {});
     await _systemUiUpdates;
+  }
+
+  /// The player's reported video size; 0x0 until the media has loaded.
+  Size get _playerVideoSize => Size(
+    (widget.player?.videoWidth ?? 0).toDouble(),
+    (widget.player?.videoHeight ?? 0).toDouble(),
+  );
+
+  /// The orientations fullscreen should use, or null while the video size is
+  /// still unknown (a new player starts at 0x0).
+  ///
+  /// Note: 未知尺寸不得判成竖屏，否则连播会把横屏掰回竖屏 — 见
+  /// .agents/notes/implemented/bug-fix/2026-09-11-player-orientation-on-auto-advance.md
+  List<DeviceOrientation>? get _orientationsForVideo {
+    final size = _playerVideoSize;
+    if (size.width <= 0 || size.height <= 0) return null;
+    return size.width > size.height
+        ? const [
+            DeviceOrientation.landscapeLeft,
+            DeviceOrientation.landscapeRight,
+          ]
+        : const [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown];
+  }
+
+  /// Applies the video's orientation once its size is known.
+  ///
+  /// Called from [didUpdateWidget], which runs on the rebuild the size event
+  /// triggers. Without it a fullscreen episode would keep whatever orientation
+  /// was in effect while its size was still unknown.
+  void _adoptVideoOrientation() {
+    if (!_fullScreen || _locked) return;
+    final orientations = _orientationsForVideo;
+    if (orientations == null) return;
+    if (_playerVideoSize == _appliedVideoSize &&
+        listEquals(orientations, _appliedOrientations)) {
+      return;
+    }
+    unawaited(_applySystemUi());
   }
 
   Future<void> _restoreSystemUi() async {
