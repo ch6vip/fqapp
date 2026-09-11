@@ -417,7 +417,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       showDragHandle: true,
       backgroundColor: _preferences.themePreset.panelColor,
       builder: (context) => SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.7,
+        // The official panel opens at 90% of the screen
+        // (`para_comment_dialog_config_v671.initViewHeightPercent`).
+        height: MediaQuery.sizeOf(context).height * 0.9,
         child: ReaderIdeasSheet(
           ideas: ideaSnapshot,
           paragraphTexts: texts,

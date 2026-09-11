@@ -122,11 +122,13 @@ void main() {
       expect(find.byKey(const ValueKey('reader-idea-2')), findsOneWidget);
       // Paragraph 1 has no ideas, so it must not appear.
       expect(find.byKey(const ValueKey('reader-idea-1')), findsNothing);
-      expect(find.text('12 条段评'), findsOneWidget);
-      expect(find.text('3 条段评'), findsOneWidget);
+      expect(find.text('第 1 段 · 12'), findsOneWidget);
+      expect(find.text('第 3 段 · 3'), findsOneWidget);
     });
 
-    testWidgets('loads bodies lazily and shows them', (tester) async {
+    testWidgets('opens on the first paragraph and shows its comments', (
+      tester,
+    ) async {
       final requested = <int>[];
       await pumpSheet(
         tester,
@@ -144,30 +146,89 @@ void main() {
           );
         },
       );
-      expect(requested, isEmpty);
-
-      await tester.tap(find.byKey(const ValueKey('reader-idea-0')));
-      await tester.pumpAndSettle();
+      // The official panel is a single paragraph's list, so the selected one
+      // loads as soon as it opens rather than waiting for a tap.
       expect(requested, [0]);
       expect(find.text('这段太真实了'), findsOneWidget);
       expect(find.text('读者甲'), findsOneWidget);
       expect(find.text('赞 4'), findsOneWidget);
+      // The paragraph itself is quoted above the list for context.
+      expect(find.byKey(const Key('reader-ideas-quote')), findsOneWidget);
 
-      // Collapsing and re-expanding must not re-request the same paragraph.
+      // Switching paragraphs loads that one, and returning reuses the cache.
+      await tester.tap(find.byKey(const ValueKey('reader-idea-2')));
+      await tester.pumpAndSettle();
+      expect(requested, [0, 2]);
       await tester.tap(find.byKey(const ValueKey('reader-idea-0')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('reader-idea-0')));
-      await tester.pumpAndSettle();
-      expect(requested, [0]);
+      expect(requested, [0, 2]);
     });
 
-    testWidgets('reports a failed load without losing the list', (
+    testWidgets('opens on the tapped paragraph', (tester) async {
+      final requested = <int>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ReaderIdeasSheet(
+              ideas: _ideas(),
+              paragraphTexts: const {0: '第一段', 2: '第三段'},
+              preset: ReaderThemePreset.light,
+              initialParaIndex: 2,
+              loadComments: (paragraph) async {
+                requested.add(paragraph.paraIndex);
+                return const BookCommentPage();
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(requested, [2]);
+    });
+
+    testWidgets('the 全部/最新 filters reorder without refetching', (tester) async {
+      final requested = <int>[];
+      await pumpSheet(
+        tester,
+        load: (paragraph) async {
+          requested.add(paragraph.paraIndex);
+          return BookCommentPage(
+            comments: [
+              BookComment(
+                id: 'old',
+                text: '较早的评论',
+                createdAt: DateTime(2026, 1, 1),
+              ),
+              BookComment(
+                id: 'new',
+                text: '最新的评论',
+                createdAt: DateTime(2026, 9, 1),
+              ),
+            ],
+          );
+        },
+      );
+      // 全部 keeps the upstream order.
+      expect(find.text('较早的评论'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('reader-ideas-filter-newest')),
+      );
+      await tester.pumpAndSettle();
+      // 最新 sorts by publish time, and does not hit the loader again.
+      expect(requested, [0]);
+      final newest = tester.getTopLeft(find.text('最新的评论')).dy;
+      final older = tester.getTopLeft(find.text('较早的评论')).dy;
+      expect(newest, lessThan(older));
+    });
+
+    testWidgets('reports a failed load without losing the strip', (
       tester,
     ) async {
       await pumpSheet(tester, load: (_) async => throw StateError('offline'));
-      await tester.tap(find.byKey(const ValueKey('reader-idea-0')));
       await tester.pumpAndSettle();
       expect(find.text('段评暂时无法加载'), findsOneWidget);
+      // The other paragraph is still selectable.
       expect(find.byKey(const ValueKey('reader-idea-2')), findsOneWidget);
     });
 
