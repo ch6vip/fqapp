@@ -122,6 +122,16 @@ Future<_Attempt<T>> _attempt<T>(Future<T> future) async {
   }
 }
 
+/// The manju group of the combined feed, with the search cursor state that
+/// continues it once the uncursored recommendation stream runs out.
+typedef _AllManjuGroup = ({
+  List<MediaItem> items,
+  int? searchOffset,
+  bool searchCanAdvance,
+  bool searchExhausted,
+  bool hasMore,
+});
+
 /// Loads and pages the homepage feeds. Each async operation captures its tab
 /// and feed before the first await, so switching tabs can never redirect a
 /// late response into a different tab's cache.
@@ -334,7 +344,7 @@ class HomeNotifier extends Notifier<HomeState> {
   Future<_FetchedFeed> _loadAllInitial() async {
     final recommendationFuture = _attempt(_loadInitial(1));
     final videoFuture = _attempt(_searchLoader('短剧'));
-    final manjuFuture = _attempt(_manjuSearchLoader());
+    final manjuFuture = _attempt(_loadAllManju());
     final mangaFuture = _attempt(_mangaSearchLoader());
     final audioFuture = _attempt(_searchLoader('听书'));
 
@@ -356,13 +366,8 @@ class HomeNotifier extends Notifier<HomeState> {
           StateError('首页加载失败');
     }
 
-    final manjuItems = _searchItems(manju.value ?? [], '漫剧', 'manju');
-    final manjuProgress = _searchProgress(
-      manju.value ?? [],
-      '漫剧',
-      manjuItems,
-      offset: 0,
-    );
+    final manjuGroup = manju.value;
+    final manjuItems = manjuGroup?.items ?? const <MediaItem>[];
     final mangaItems = _searchItems(manga.value ?? [], '漫画', 'manga');
     final mangaProgress = _searchProgress(
       manga.value ?? [],
@@ -390,18 +395,56 @@ class HomeNotifier extends Notifier<HomeState> {
         if (audio.value != null) '听书': 1,
       },
       searchOffsets: {
-        if (manjuProgress.nextOffset != null) '漫剧': manjuProgress.nextOffset!,
+        if (manjuGroup?.searchOffset != null) '漫剧': manjuGroup!.searchOffset!,
         if (mangaProgress.nextOffset != null) '漫画': mangaProgress.nextOffset!,
       },
-      searchCanAdvance: manjuProgress.hasCursor || mangaProgress.hasCursor,
-      manjuSearchExhausted: manju.value != null && !manjuProgress.hasMore,
+      searchCanAdvance:
+          (manjuGroup?.searchCanAdvance ?? false) || mangaProgress.hasCursor,
+      manjuSearchExhausted: manjuGroup?.searchExhausted ?? false,
       mangaSearchExhausted: manga.value != null && !mangaProgress.hasMore,
       recommendExhausted: page?.recommendExhausted ?? true,
       hasMore:
           items.isNotEmpty ||
           page?.nextOffset != null ||
-          manjuProgress.hasMore ||
+          (manjuGroup?.hasMore ?? false) ||
           mangaProgress.hasMore,
+    );
+  }
+
+  /// The manju group of the combined feed.
+  ///
+  /// Prefers the dedicated manju stream (`tab_type=24`) over search, for the
+  /// same reason the 漫剧 tab already does: the upstream attaches cover badges
+  /// to that stream's cards, while search cells carry mostly uncoloured genre
+  /// labels. The stream has no page cursor, so search still serves the pages
+  /// after the first.
+  Future<_AllManjuGroup> _loadAllManju() async {
+    try {
+      final page = await _homepageLoader(tabType: tabTypes['漫剧']!);
+      final items = _forceKind(page.items, 'manju');
+      if (items.isNotEmpty) {
+        return (
+          items: items,
+          // Search has not been consulted yet, so paging starts at its first
+          // page and there is still a source to advance to.
+          searchOffset: 0,
+          searchCanAdvance: true,
+          searchExhausted: false,
+          hasMore: true,
+        );
+      }
+    } catch (_) {
+      // Older backends may not expose the stream; fall through to search.
+    }
+    final tabs = await _manjuSearchLoader();
+    final items = _searchItems(tabs, '漫剧', 'manju');
+    final progress = _searchProgress(tabs, '漫剧', items, offset: 0);
+    return (
+      items: items,
+      searchOffset: progress.nextOffset,
+      searchCanAdvance: progress.hasCursor,
+      searchExhausted: !progress.hasMore,
+      hasMore: progress.hasMore,
     );
   }
 

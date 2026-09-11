@@ -277,12 +277,22 @@ void main() {
         final provider = NotifierProvider<HomeNotifier, HomeState>(
           () => HomeNotifier(
             homepageLoader:
-                ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                    HomepagePage(
-                      items: [_item('book-$offset')],
-                      nextOffset: offset + 1,
+                ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                  // Manju prefers its own stream; return nothing for it so this
+                  // test keeps exercising the search fallback and its cursor.
+                  if (tabType == 24) {
+                    return const HomepagePage(
+                      items: [],
+                      nextOffset: null,
                       sessionId: null,
-                    ),
+                    );
+                  }
+                  return HomepagePage(
+                    items: [_item('book-$offset')],
+                    nextOffset: offset + 1,
+                    sessionId: null,
+                  );
+                },
             searchLoader: (query, {int page = 1}) async => [],
             manjuSearchLoader: ({int offset = 0}) async {
               offsets.add(offset);
@@ -411,6 +421,16 @@ void main() {
             () => HomeNotifier(
               homepageLoader:
                   ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                    // The combined feed reads the manju stream (24) for its
+                    // manju group. Keep it empty here so this test tracks only
+                    // the novel stream's cursor.
+                    if (tabType != 2) {
+                      return const HomepagePage(
+                        items: [],
+                        nextOffset: null,
+                        sessionId: null,
+                      );
+                    }
                     offsets.add(offset);
                     sessions.add(sessionId);
                     return HomepagePage(
@@ -476,6 +496,16 @@ void main() {
           () => HomeNotifier(
             homepageLoader:
                 ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                  // Manju reads its own stream (24); leave it empty so the manju
+                  // group falls back to search and this test keeps tracking the
+                  // novel stream's cursor.
+                  if (tabType != 2) {
+                    return const HomepagePage(
+                      items: [],
+                      nextOffset: null,
+                      sessionId: null,
+                    );
+                  }
                   offsets.add(offset);
                   final atInvalidCursor = offset == scenario.requestedOffset;
                   return HomepagePage(
@@ -734,7 +764,8 @@ void main() {
         homepageLoader:
             ({int tabType = 2, int offset = 0, String? sessionId}) async =>
                 HomepagePage(
-                  items: [_item('book-1', tag: _newTag)],
+                  // Tag per stream so a drop in either group is visible.
+                  items: [_item('stream-$tabType', tag: _newTag)],
                   nextOffset: null,
                   sessionId: null,
                 ),
@@ -755,6 +786,9 @@ void main() {
 
     final items = container.read(provider).items;
     expect(items, isNotEmpty);
+    // Both recommendation streams feed the combined feed, so both ids must be
+    // present and neither may lose its badge.
+    expect(items.map((i) => i.id), containsAll(['stream-2', 'stream-24']));
     for (final item in items) {
       expect(
         item.tag?.text,
@@ -763,6 +797,116 @@ void main() {
       );
     }
   });
+
+  test(
+    'the combined feed takes manju from its own stream, not search',
+    () async {
+      final manjuStreamOffsets = <int>[];
+      final manjuSearchOffsets = <int>[];
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                if (tabType != 24) {
+                  return const HomepagePage(
+                    items: [],
+                    nextOffset: null,
+                    sessionId: null,
+                  );
+                }
+                manjuStreamOffsets.add(offset);
+                return HomepagePage(
+                  items: [_item('manju-stream', kind: 'manju', tag: _newTag)],
+                  nextOffset: null,
+                  sessionId: null,
+                );
+              },
+          searchLoader: (query, {int page = 1}) async => [],
+          mangaSearchLoader: ({int offset = 0}) async => [],
+          manjuSearchLoader: ({int offset = 0}) async {
+            manjuSearchOffsets.add(offset);
+            return [
+              SearchTab(
+                title: '漫剧',
+                items: [_item('manju-search-$offset', kind: 'manju')],
+                hasMore: offset == 0,
+                nextOffset: 17,
+              ),
+            ];
+          },
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      await _loadTab(notifier, 0);
+
+      // The stream serves the first screen; search is not consulted for it.
+      expect(manjuStreamOffsets, [0]);
+      expect(manjuSearchOffsets, isEmpty);
+      expect(
+        container.read(provider).items.map((i) => i.id),
+        contains('manju-stream'),
+      );
+      // The badge from the stream survives into the combined feed.
+      final streamed = container
+          .read(provider)
+          .items
+          .firstWhere((i) => i.id == 'manju-stream');
+      expect(streamed.tag?.text, '上新');
+
+      // The 24 stream has no cursor, so paging continues through search.
+      await notifier.loadMore();
+      expect(manjuSearchOffsets, [0]);
+      expect(
+        container.read(provider).items.map((i) => i.id),
+        contains('manju-search-0'),
+      );
+    },
+  );
+
+  test(
+    'the combined feed falls back to manju search when the stream fails',
+    () async {
+      final manjuSearchOffsets = <int>[];
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                if (tabType == 24) throw StateError('stream unavailable');
+                return const HomepagePage(
+                  items: [],
+                  nextOffset: null,
+                  sessionId: null,
+                );
+              },
+          searchLoader: (query, {int page = 1}) async => [],
+          mangaSearchLoader: ({int offset = 0}) async => [],
+          manjuSearchLoader: ({int offset = 0}) async {
+            manjuSearchOffsets.add(offset);
+            return [
+              SearchTab(
+                title: '漫剧',
+                items: [_item('manju-search', kind: 'manju')],
+                hasMore: false,
+                nextOffset: null,
+              ),
+            ];
+          },
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      await _loadTab(notifier, 0);
+
+      expect(manjuSearchOffsets, [0]);
+      expect(
+        container.read(provider).items.map((i) => i.id),
+        contains('manju-search'),
+      );
+    },
+  );
 }
 
 Future<void> _loadTab(HomeNotifier notifier, int tabIndex) async {

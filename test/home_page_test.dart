@@ -137,9 +137,12 @@ void main() {
             () => HomeNotifier(
               homepageLoader:
                   ({int tabType = 2, int offset = 0, String? sessionId}) async {
-                    homepageRequests++;
+                    // Count the novel stream only: the combined feed also asks
+                    // the manju stream (24) for its manju group, which is not
+                    // what this retry assertion is about.
+                    if (tabType == 2) homepageRequests++;
                     if (failing) throw ApiException(message);
-                    return HomepagePage(
+                    return const HomepagePage(
                       items: [],
                       nextOffset: null,
                       sessionId: null,
@@ -205,6 +208,15 @@ void main() {
             () => HomeNotifier(
               homepageLoader:
                   ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                    // Manju has its own stream (24) in the combined feed; keep
+                    // it out of this test's cursor tracking.
+                    if (tabType != 2) {
+                      return const HomepagePage(
+                        items: [],
+                        nextOffset: null,
+                        sessionId: null,
+                      );
+                    }
                     offsets.add(offset);
                     if (offset == 1) return secondPage.future;
                     return HomepagePage(
@@ -263,6 +275,16 @@ void main() {
             () => HomeNotifier(
               homepageLoader:
                   ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                    // The combined feed also reads the manju stream (24) for its
+                    // manju group; keep it empty so this test tracks the novel
+                    // stream's cursor only.
+                    if (tabType != 2) {
+                      return const HomepagePage(
+                        items: [],
+                        nextOffset: null,
+                        sessionId: null,
+                      );
+                    }
                     offsets.add(offset);
                     return HomepagePage(
                       items: [
