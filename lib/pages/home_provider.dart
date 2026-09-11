@@ -656,21 +656,11 @@ class HomeNotifier extends Notifier<HomeState> {
   }
 
   List<MediaItem> _forceKind(List<MediaItem> items, String kind) {
+    // copyWith rather than a hand-written rebuild: rebuilding by hand dropped
+    // the cover badge (and would drop any future field) on every home tab.
     return items
         .where((item) => item.kind != 'manju' || kind == 'manju')
-        .map(
-          (item) => MediaItem(
-            id: item.id,
-            title: item.title,
-            cover: item.cover,
-            author: item.author,
-            badge: item.badge,
-            ep: item.ep,
-            kind: kind,
-            seriesId: item.seriesId,
-            episodeId: item.episodeId,
-          ),
-        )
+        .map((item) => item.copyWith(kind: kind))
         .toList(growable: false);
   }
 

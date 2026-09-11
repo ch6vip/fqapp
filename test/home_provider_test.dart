@@ -696,6 +696,73 @@ void main() {
     expect(container.read(provider).items.single.id, 'fresh-book');
     expect(container.read(provider).items.single.kind, 'book');
   });
+
+  test('the home feed keeps the upstream corner badge', () async {
+    // The 漫剧 tab is where the upstream ships badges, and it is also the tab
+    // that rewrites every item's kind. The rewrite used to rebuild MediaItem by
+    // hand and drop the badge, so nothing ever rendered on the home page.
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                HomepagePage(
+                  items: [_item('manju-1', kind: 'manju', tag: _newTag)],
+                  nextOffset: null,
+                  sessionId: null,
+                ),
+        searchLoader: (query, {int page = 1}) async => [],
+        manjuSearchLoader: ({int offset = 0}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(provider.notifier);
+    await _loadTab(notifier, HomeNotifier.tabs.indexOf('漫剧'));
+
+    final items = container.read(provider).items;
+    expect(items, isNotEmpty);
+    final tag = items.first.tag;
+    expect(tag, isNotNull, reason: 'the kind rewrite must not drop the badge');
+    expect(tag!.text, '上新');
+    expect(tag.lightColors, ['#00B876', '#15D791']);
+    expect(tag.darkColors, ['#009962', '#11B279']);
+  });
+
+  test('the combined feed keeps badges from every source', () async {
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                HomepagePage(
+                  items: [_item('book-1', tag: _newTag)],
+                  nextOffset: null,
+                  sessionId: null,
+                ),
+        searchLoader: (query, {int page = 1}) async => [
+          SearchTab(
+            title: query,
+            items: [_item('$query-1', kind: 'video', tag: _newTag)],
+          ),
+        ],
+        mangaSearchLoader: ({int offset = 0}) async => [],
+        manjuSearchLoader: ({int offset = 0}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(provider.notifier);
+    await _loadTab(notifier, 0);
+
+    final items = container.read(provider).items;
+    expect(items, isNotEmpty);
+    for (final item in items) {
+      expect(
+        item.tag?.text,
+        '上新',
+        reason: '${item.id} (${item.kind}) lost its badge',
+      );
+    }
+  });
 }
 
 Future<void> _loadTab(HomeNotifier notifier, int tabIndex) async {
@@ -712,7 +779,7 @@ Future<void> _flushMicrotasks() async {
   await Future<void>.delayed(Duration.zero);
 }
 
-MediaItem _item(String id, {String kind = 'book'}) => MediaItem(
+MediaItem _item(String id, {String kind = 'book', MediaTag? tag}) => MediaItem(
   id: id,
   title: id,
   cover: '',
@@ -720,4 +787,12 @@ MediaItem _item(String id, {String kind = 'book'}) => MediaItem(
   badge: '',
   ep: '',
   kind: kind,
+  tag: tag,
+);
+
+/// The upstream badge, as the home feed ships it.
+const _newTag = MediaTag(
+  text: '上新',
+  lightColors: ['#00B876', '#15D791'],
+  darkColors: ['#009962', '#11B279'],
 );

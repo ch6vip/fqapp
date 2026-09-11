@@ -60,6 +60,38 @@ class MediaItem {
     this.episodeId,
   });
 
+  /// Copy with selected fields replaced.
+  ///
+  /// Callers that need to rebuild an item with one field changed (the home feed
+  /// forcing a category's kind, for instance) must use this instead of calling
+  /// the constructor by hand: a hand-written rebuild silently drops any field
+  /// added later, which is exactly how the cover badge went missing on the home
+  /// feed. Nullable fields cannot be cleared through this method, which is fine
+  /// for its callers and keeps the signature free of sentinels.
+  MediaItem copyWith({
+    String? id,
+    String? title,
+    String? cover,
+    String? author,
+    String? badge,
+    String? ep,
+    String? kind,
+    MediaTag? tag,
+    String? seriesId,
+    String? episodeId,
+  }) => MediaItem(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    cover: cover ?? this.cover,
+    author: author ?? this.author,
+    badge: badge ?? this.badge,
+    ep: ep ?? this.ep,
+    kind: kind ?? this.kind,
+    tag: tag ?? this.tag,
+    seriesId: seriesId ?? this.seriesId,
+    episodeId: episodeId ?? this.episodeId,
+  );
+
   factory MediaItem.fromRaw(Map<String, dynamic> item) {
     final bd = _mapFrom(item['book_data']) ?? item;
     final titleObj = item['title'];
