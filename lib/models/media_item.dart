@@ -37,6 +37,11 @@ class MediaItem {
   final String badge;
   final String ep;
   final String kind; // 'book' | 'video' | 'manju' | 'manga' | 'audio'
+
+  /// Decorative corner tag the upstream attaches to some cards, e.g. `上新` or
+  /// `爆款`. Null when the card carries none.
+  final MediaTag? tag;
+
   /// For short dramas, seriesId is the ID accepted by the pseries directory
   /// endpoint and episodeId is an optional individual video ID.
   final String? seriesId;
@@ -50,6 +55,7 @@ class MediaItem {
     required this.badge,
     required this.ep,
     required this.kind,
+    this.tag,
     this.seriesId,
     this.episodeId,
   });
@@ -126,6 +132,10 @@ class MediaItem {
       _ => ['book_id', 'item_id', 'id', 'cell_id'],
     };
 
+    // Corner tag. It rides on the card object itself, alongside title/cover,
+    // and carries its own label and both light/dark gradients.
+    final tagInfo = _mapFrom(item['tag_info']) ?? _mapFrom(bd['tag_info']);
+
     return MediaItem(
       id:
           seriesId ??
@@ -135,6 +145,7 @@ class MediaItem {
       kind: kind,
       seriesId: seriesId,
       episodeId: episodeId,
+      tag: MediaTag.fromRaw(tagInfo),
       title:
           highlightTitle ??
           _firstString(item, ['title', 'name', 'raw_book_name']) ??
@@ -430,6 +441,66 @@ class MediaItem {
       if (value is num && value != 0) return value.toString();
     }
     return null;
+  }
+}
+
+/// A decorative corner chip the upstream attaches to a card (e.g. `上新`).
+///
+/// The label and its gradient both come from the payload: `上新` is green while
+/// `爆款` is red, so neither can be hardcoded. Colours are kept as hex strings
+/// to keep this model free of Flutter types.
+class MediaTag {
+  final String text;
+  final List<String> lightColors;
+  final List<String> darkColors;
+
+  const MediaTag({
+    required this.text,
+    this.lightColors = const [],
+    this.darkColors = const [],
+  });
+
+  /// Colours to use for [dark], falling back to the other set and then to none
+  /// so a payload that only ships one variant still renders.
+  List<String> colorsFor({required bool dark}) {
+    if (dark) {
+      return darkColors.isNotEmpty ? darkColors : lightColors;
+    }
+    return lightColors.isNotEmpty ? lightColors : darkColors;
+  }
+
+  /// Whether the upstream supplied a gradient.
+  ///
+  /// This is what separates a promotional badge from a plain label: on the
+  /// home feed `tag_info` is only ever `上新`/`爆款` (both coloured), while in
+  /// search results the same field also carries the kind label (`漫剧`,
+  /// `小说改编`) with no colours. Cards already show the kind, so only coloured
+  /// tags are rendered as a badge.
+  bool get hasColors => lightColors.isNotEmpty || darkColors.isNotEmpty;
+
+  static MediaTag? fromRaw(Map<String, dynamic>? raw) {
+    if (raw == null) return null;
+    final text = raw['text'];
+    final label = text is String ? text.trim() : '';
+    if (label.isEmpty) return null;
+    return MediaTag(
+      text: label,
+      lightColors: _hexList(raw['bg_color']),
+      darkColors: _hexList(raw['dark_bg_color']),
+    );
+  }
+
+  /// Keeps only well-formed `#RRGGBB` values, so a malformed payload cannot
+  /// produce an unparseable colour later.
+  static List<String> _hexList(dynamic value) {
+    if (value is! List) return const [];
+    final out = <String>[];
+    for (final entry in value) {
+      if (entry is! String) continue;
+      final hex = entry.trim();
+      if (RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(hex)) out.add(hex);
+    }
+    return List.unmodifiable(out);
   }
 }
 

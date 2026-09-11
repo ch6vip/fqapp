@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../cover_tag_chip.dart';
 import 'home_design.dart';
 
 String homeKindLabel(String kind) => switch (kind) {
@@ -172,25 +173,25 @@ class HomeMediaCard extends StatelessWidget {
                       Positioned(
                         left: 7,
                         top: 7,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(
-                              0xFF1C1B1A,
-                            ).withValues(alpha: 0.65),
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: Text(
-                            homeKindLabel(item.kind),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              height: 1.2,
-                            ),
-                          ),
+                        right: 7,
+                        child: Row(
+                          children: [
+                            CoverTagChip(label: homeKindLabel(item.kind)),
+                            // Only coloured tags are badges; see MediaTag.hasColors.
+                            if (item.tag case final MediaTag tag
+                                when tag.hasColors) ...[
+                              const SizedBox(width: 4),
+                              // Flexible so a long upstream label ellipsizes
+                              // instead of overflowing the cover.
+                              Flexible(
+                                child: CoverTagChip(
+                                  key: const Key('home_card_tag'),
+                                  label: tag.text,
+                                  colors: tag.colorsFor(dark: palette.dark),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                       if (item.ep.isNotEmpty)
@@ -265,7 +266,6 @@ class HomeMediaCard extends StatelessWidget {
 class HomeSectionHeader extends StatelessWidget {
   final String title;
   final String subtitle;
-
   const HomeSectionHeader({
     super.key,
     required this.title,

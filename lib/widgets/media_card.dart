@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
+import 'cover_tag_chip.dart';
 
 const kindLabels = {
   'book': '小说',
@@ -126,6 +127,26 @@ class MediaCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                // The upstream corner badge (上新 / 热门 / 爆款). Search results
+                // carry it too, so showing it here keeps the same work labelled
+                // the same way wherever it appears. Only coloured tags render:
+                // search's tag field also carries the kind label, which this
+                // card already shows on the right.
+                if (item.tag case final MediaTag tag when tag.hasColors)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 96),
+                      child: CoverTagChip(
+                        key: const Key('media_card_tag'),
+                        label: tag.text,
+                        colors: tag.colorsFor(
+                          dark: Theme.of(context).brightness == Brightness.dark,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
