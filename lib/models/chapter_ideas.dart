@@ -39,18 +39,20 @@ class ParagraphIdeas {
 
   /// Whether the reader should draw an in-text bubble for this paragraph.
   ///
-  /// The official client gates the bubble on `bubble_data[3].count > 0` and then
-  /// prints the paragraph's total [count] inside it, so a paragraph with ideas
-  /// does not automatically get a bubble. On a live chapter that gate passes for
-  /// 21 of 48 paragraphs — without it nearly every paragraph would sprout one.
+  /// Any paragraph with ideas gets one. The official client also carries a
+  /// narrower gate — `bubble_data[3].count > 0`, applied only while its
+  /// `para_comment_featured_v697` switch is on (off by default) — but following
+  /// it here was wrong: the flag is off in the shipped app, and the gate is far
+  /// stricter than it looks, since a paragraph can carry ideas on another
+  /// channel while `bubble_data[3].count` is 0. On real chapters it passed 21 of
+  /// 48 paragraphs for one book and 1 of 36 for another, which is exactly the
+  /// "why does only the first paragraph have comments" symptom.
   ///
-  /// A payload that carries no `bubble_data` at all cannot be gated; those fall
-  /// back to "has ideas". See
-  /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
-  bool get showsBubble =>
-      channelCounts.isEmpty ? hasIdeas : countForChannel(bubbleGateChannel) > 0;
+  /// See .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+  bool get showsBubble => hasIdeas;
 
-  /// The `bubble_data` key the official client reads as its gate.
+  /// The `bubble_data` key the official gate reads. Kept for reference so the
+  /// channel semantics stay documented next to the decision.
   static const bubbleGateChannel = 3;
 }
 

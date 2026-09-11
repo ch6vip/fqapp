@@ -1,4 +1,8 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -83,15 +87,17 @@ void main() {
   });
 
   group('bubble gating', () {
-    test('only paragraphs passing the channel-3 gate bubble', () {
+    test('every paragraph with ideas bubbles, whatever its channels', () {
       final ideas = _ideas();
-      // 42 passes; 7 and 0 do not, even though 7 has ideas on channel 1.
-      expect(ideas.bubbleCounts, {0: 42});
-      expect(ideas.forParagraph(1)!.hasIdeas, isTrue);
-      expect(ideas.forParagraph(1)!.showsBubble, isFalse);
+      // 42, 7 and 0 respectively. The middle one carries its ideas on channel 1
+      // with bubble_data[3] at 0 — under the official AB-gated variant it would
+      // have been hidden, which is the bug this covers.
+      expect(ideas.bubbleCounts, {0: 42, 1: 7});
+      expect(ideas.bubbleCounts.containsKey(2), isFalse);
+      expect(ideas.forParagraph(1)!.showsBubble, isTrue);
     });
 
-    test('a payload without bubble_data falls back to having ideas', () {
+    test('a payload without bubble_data still bubbles', () {
       final ideas = ChapterIdeas.fromPayload(const {
         'code': 0,
         'data': {
@@ -103,7 +109,7 @@ void main() {
       expect(ideas.bubbleCounts, {5: 3});
     });
 
-    test('the bubble prints the total, not the gated channel count', () {
+    test('the bubble prints the paragraph total', () {
       expect(_ideas().bubbleCounts[0], 42);
     });
   });
@@ -112,40 +118,50 @@ void main() {
     test('picks the size class from the effective font size', () {
       expect(
         ReaderBubbleMetrics.forFontSize(18),
-        const ReaderBubbleMetrics(textSize: 8, width: 26, height: 24),
+        const ReaderBubbleMetrics(textSize: 8, diameter: 24),
       );
       expect(
         ReaderBubbleMetrics.forFontSize(19),
-        const ReaderBubbleMetrics(textSize: 8, width: 26, height: 24),
+        const ReaderBubbleMetrics(textSize: 8, diameter: 24),
       );
       expect(
         ReaderBubbleMetrics.forFontSize(20),
-        const ReaderBubbleMetrics(textSize: 9, width: 28, height: 26),
+        const ReaderBubbleMetrics(textSize: 9, diameter: 26),
       );
       expect(
         ReaderBubbleMetrics.forFontSize(29),
-        const ReaderBubbleMetrics(textSize: 9, width: 28, height: 26),
+        const ReaderBubbleMetrics(textSize: 9, diameter: 26),
       );
       expect(
         ReaderBubbleMetrics.forFontSize(30),
-        const ReaderBubbleMetrics(textSize: 10, width: 32, height: 30),
+        const ReaderBubbleMetrics(textSize: 10, diameter: 30),
       );
     });
 
-    test('a four-digit count shrinks the font and squares the box', () {
+    test('the bubble is a circle: width equals height', () {
+      for (final size in [18.0, 24.0, 34.0]) {
+        final metrics = ReaderBubbleMetrics.forFontSize(size);
+        expect(metrics.width, metrics.diameter);
+        expect(metrics.height, metrics.diameter);
+      }
+    });
+
+    test('a large count steps the label down one size', () {
       final large = ReaderBubbleMetrics.forFontSize(30).forCount(1000);
       expect(large.textSize, 9);
-      expect(large.width, large.height);
-      // Three digits and below keep the class untouched.
+      expect(large.diameter, 30);
+      // Small is already at the floor.
+      expect(ReaderBubbleMetrics.forFontSize(18).forCount(1000).textSize, 8);
+      // The overflow threshold and below keep the class untouched.
       expect(
-        ReaderBubbleMetrics.forFontSize(30).forCount(999),
+        ReaderBubbleMetrics.forFontSize(30).forCount(99),
         ReaderBubbleMetrics.forFontSize(30),
       );
     });
   });
 
   group('bubble label', () {
-    testWidgets('shows the count and clamps at 999+', (tester) async {
+    testWidgets('shows the count and caps the label at 99+', (tester) async {
       Future<void> pump(int count) => tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -160,15 +176,100 @@ void main() {
       await pump(42);
       expect(find.text('42'), findsOneWidget);
 
-      await pump(999);
-      expect(find.text('999'), findsOneWidget);
+      await pump(99);
+      expect(find.text('99'), findsOneWidget);
 
-      await pump(1000);
-      expect(find.text('999+'), findsOneWidget);
-      expect(find.text('1000'), findsNothing);
+      // Beyond 99 the label caps, which is what the official client renders
+      // while its inline switch is off.
+      await pump(100);
+      expect(find.text('99+'), findsOneWidget);
+      expect(find.text('100'), findsNothing);
 
       await pump(12800);
-      expect(find.text('999+'), findsOneWidget);
+      expect(find.text('99+'), findsOneWidget);
+    });
+  });
+
+  group('bubble appearance', () {
+    testWidgets('is a hollow ring, not a filled disc', (tester) async {
+      // The official bubble is a stroked circle with a transparent centre, so
+      // the paragraph text stays visible through it. Painting pixels is the only
+      // way to assert that: a decoration assertion would pass for a filled one.
+      final boundary = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(
+              child: RepaintBoundary(
+                key: boundary,
+                child: ReaderParagraphBubble(
+                  count: 42,
+                  metrics: ReaderBubbleMetrics.forFontSize(18),
+                  preset: ReaderThemePreset.light,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final painted = await tester.runAsync(() async {
+        final object =
+            boundary.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+        final image = await object.toImage();
+        final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        final result = (
+          size: image.width,
+          pixels: Uint8List.fromList(data!.buffer.asUint8List()),
+        );
+        image.dispose();
+        return result;
+      });
+      final (size: width, pixels: bytes) = painted!;
+      final height = bytes.length ~/ 4 ~/ width;
+      int alphaAt(int x, int y) => bytes[(y * width + x) * 4 + 3];
+
+      final metrics = ReaderBubbleMetrics.forFontSize(18);
+      final d = metrics.diameter;
+      // The ring sits after the leading gap, vertically centred.
+      final centreX = (ReaderBubbleMetrics.gap + d / 2).round();
+      final centreY = height ~/ 2;
+
+      // A point inside the circle but clear of the label glyph must be page
+      // colour: that is what "hollow" means for this bubble.
+      expect(
+        alphaAt(centreX, centreY - 8),
+        0,
+        reason: 'inside the ring, above the glyph, must stay transparent',
+      );
+      // The top of the ring itself is painted.
+      expect(
+        alphaAt(centreX, centreY - d ~/ 2),
+        greaterThan(0),
+        reason: 'the ring outline must be painted',
+      );
+
+      // A ring paints a small fraction of its disc; a filled bubble would paint
+      // essentially all of it.
+      var paintedInsideDisc = 0;
+      for (var y = 0; y < height; y++) {
+        for (var x = 0; x < width; x++) {
+          final dx = x - centreX;
+          final dy = y - centreY;
+          if (dx * dx + dy * dy > (d / 2) * (d / 2)) continue;
+          if (alphaAt(x, y) > 0) paintedInsideDisc++;
+        }
+      }
+      final discArea = 3.14159 * (d / 2) * (d / 2);
+      expect(paintedInsideDisc, greaterThan(0));
+      expect(
+        paintedInsideDisc / discArea,
+        lessThan(0.6),
+        reason: 'a ring covers far less of the disc than a filled bubble',
+      );
     });
   });
 
@@ -205,11 +306,15 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('draws a bubble only for the gated paragraph', (tester) async {
+    testWidgets('draws a bubble for every paragraph that has ideas', (
+      tester,
+    ) async {
       await pumpReader(tester, ideas: _ideas());
       expect(find.text('42'), findsOneWidget);
-      // The paragraph with 7 ideas on another channel gets no bubble.
-      expect(find.text('7'), findsNothing);
+      // The paragraph whose ideas sit on channel 1 still gets one.
+      expect(find.text('7'), findsOneWidget);
+      // The paragraph with no ideas gets none.
+      expect(find.byType(ReaderParagraphBubble), findsNWidgets(2));
       expect(tester.takeException(), isNull);
     });
 
@@ -286,7 +391,7 @@ void main() {
 
     testWidgets('a huge count does not break the layout', (tester) async {
       await pumpReader(tester, ideas: _overCountIdeas());
-      expect(find.text('999+'), findsOneWidget);
+      expect(find.text('99+'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

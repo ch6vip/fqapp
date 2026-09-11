@@ -5,51 +5,64 @@ import 'reader_theme.dart';
 
 /// Geometry of an in-text paragraph-comment bubble.
 ///
-/// Note: these numbers are the official client's, decompiled from
-/// `n02/e.java` — see
+/// Note: these numbers and the ring shape are the official client's, decompiled
+/// from `n02/e.java` and measured from its own drawable assets — see
 /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
 @immutable
 class ReaderBubbleMetrics {
-  const ReaderBubbleMetrics({
-    required this.textSize,
-    required this.width,
-    required this.height,
-  });
+  const ReaderBubbleMetrics({required this.textSize, required this.diameter});
 
   final double textSize;
-  final double width;
-  final double height;
 
-  /// Horizontal gap between the paragraph's last glyph and the bubble.
-  static const gap = 6.0;
+  /// Outer diameter. The official bubble is a circle, so width and height are
+  /// the same; the skin drawable is 26x24dp only because it leaves room for the
+  /// label to be laid out wider than the ring.
+  final double diameter;
+
+  double get width => diameter;
+  double get height => diameter;
+
+  /// Border width. The official drawable's ring measures 4px at 3x.
+  static const strokeWidth = 4 / 3;
+
+  /// Horizontal gap between the paragraph's last glyph and the bubble. This is
+  /// `ParaBubbleInlineConfig.margin`, whose default is 8dp.
+  static const gap = 8.0;
 
   /// Picks the size class from the reader's effective font size, exactly as the
   /// official client does: <=19sp small, <=29sp normal, above that large.
   factory ReaderBubbleMetrics.forFontSize(double fontSize) => fontSize <= 19
-      ? const ReaderBubbleMetrics(textSize: 8, width: 26, height: 24)
+      ? const ReaderBubbleMetrics(textSize: 8, diameter: 24)
       : fontSize <= 29
-      ? const ReaderBubbleMetrics(textSize: 9, width: 28, height: 26)
-      : const ReaderBubbleMetrics(textSize: 10, width: 32, height: 30);
+      ? const ReaderBubbleMetrics(textSize: 9, diameter: 26)
+      : const ReaderBubbleMetrics(textSize: 10, diameter: 30);
 
-  /// A three-digit-plus count no longer fits the normal text size, so the
-  /// official client steps the font down one and widens the box to the square
-  /// size. Both changes are reproduced from the same source.
+  /// Three digits no longer fit, so the official client steps the label down one
+  /// size for the larger classes. Small is already at the floor.
   ReaderBubbleMetrics forCount(int count) {
-    if (count <= 999) return this;
+    if (count <= overflowThreshold) return this;
     return ReaderBubbleMetrics(
       textSize: textSize > 8 ? textSize - 1 : textSize,
-      width: height,
-      height: height,
+      diameter: diameter,
     );
   }
+
+  /// Counts above this are shown as `99+`.
+  static const overflowThreshold = 99;
 }
 
 /// The count bubble drawn at the end of a paragraph that has paragraph
 /// comments.
 ///
-/// The official bubble contains only the number — no avatar and no comment
-/// text — which is all the idea list can supply anyway (it returns counts and
-/// comment ids, not bodies).
+/// The official bubble is a **hollow ring** — its skin drawable is a black alpha
+/// mask measuring 24dp across with a ~1.3dp stroke, tinted with the theme text
+/// colour, and the paragraph's own text colour is used for the label inside. A
+/// filled bubble would be a different control entirely.
+///
+/// The label is the count up to [ReaderBubbleMetrics.overflowThreshold] and
+/// `99+` beyond it, which is what the official client renders while its
+/// `para_bubble_inline_config_v645` switch is off (it is off by default; when
+/// enabled the label becomes a compact `1.2万` form instead).
 class ReaderParagraphBubble extends StatelessWidget {
   final int count;
   final ReaderBubbleMetrics metrics;
@@ -64,36 +77,36 @@ class ReaderParagraphBubble extends StatelessWidget {
     this.onTap,
   });
 
-  /// Counts at or above this become `999+`, as the official client does.
-  static const overflowThreshold = 1000;
-
-  String get label =>
-      count >= overflowThreshold ? '${overflowThreshold - 1}+' : '$count';
+  String get label => count > ReaderBubbleMetrics.overflowThreshold
+      ? '${ReaderBubbleMetrics.overflowThreshold}+'
+      : '$count';
 
   @override
   Widget build(BuildContext context) {
     final size = metrics.forCount(count);
-    final bubble = Container(
-      width: size.width,
-      height: size.height,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        // Tinted from the reader theme so the bubble reads correctly on all four
-        // backgrounds and in night mode; the official one is skinned the same
-        // way rather than using a fixed colour.
-        color: preset.mutedTextColor.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(size.height / 2),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: preset.mutedTextColor,
-          fontSize: size.textSize,
-          height: 1,
-          fontWeight: FontWeight.w600,
-          fontFeatures: const [FontFeature.tabularFigures()],
+    final color = preset.mutedTextColor;
+    final bubble = SizedBox.square(
+      dimension: size.diameter,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: color,
+            width: ReaderBubbleMetrics.strokeWidth,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            maxLines: 1,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: color,
+              fontSize: size.textSize,
+              height: 1,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
         ),
       ),
     );
