@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../models/media_id.dart';
+import '../models/search_discovery.dart';
 import '../services/api_client.dart';
 import '../services/search_history_store.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/media_card.dart';
+import '../widgets/search/search_discovery.dart';
 import 'detail_page.dart';
 
 typedef SearchPageLoader =
@@ -16,11 +19,27 @@ typedef SearchPageLoader =
       required int offset,
     });
 
+/// Query suggestions for the search field.
+///
+/// Note: 联想词取 `query_result`、热搜词两层嵌套且有空 cell — 见
+/// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
+typedef SearchSuggestLoader =
+    Future<List<SearchSuggestion>> Function(String query);
+
+/// The hot search board.
+typedef HotSearchLoader = Future<HotSearch> Function();
+
 class SearchPage extends StatefulWidget {
   final String? initialQuery;
   final SearchPageLoader? searchLoader;
   final Future<MediaItem?> Function(String id)? idSearchLoader;
   final SearchHistoryRepository? historyStore;
+
+  /// Optional discovery sources. Leaving them null fetches from the backend
+  /// unless another loader was injected, which marks the caller as offline (the
+  /// rule the other pages follow).
+  final SearchSuggestLoader? suggestLoader;
+  final HotSearchLoader? hotSearchLoader;
 
   const SearchPage({
     super.key,
@@ -28,6 +47,8 @@ class SearchPage extends StatefulWidget {
     this.searchLoader,
     this.idSearchLoader,
     this.historyStore,
+    this.suggestLoader,
+    this.hotSearchLoader,
   });
 
   @override
@@ -51,19 +72,75 @@ class _SearchPageState extends State<SearchPage> {
   bool _historyLoading = true;
   int _historyGeneration = 0;
 
+  /// Live text in the field, which differs from [_query] while it is edited.
+  String _draft = '';
+  HotSearch _hot = HotSearch.empty;
+  List<SearchSuggestion> _suggestions = const [];
+  Timer? _suggestDebounce;
+  int _suggestGeneration = 0;
+
   SearchHistoryRepository get _historyStore =>
       widget.historyStore ?? SearchHistoryStore.instance;
+
+  /// Suggestions are only useful while the text differs from the executed
+  /// query, i.e. the user is refining rather than reading results.
+  bool get _showSuggestions =>
+      _suggestions.isNotEmpty && _draft.trim() != _query;
+
+  SearchSuggestLoader get _suggestLoader =>
+      widget.suggestLoader ??
+      (widget.searchLoader != null || widget.idSearchLoader != null
+          ? (_) async => const <SearchSuggestion>[]
+          : ApiClient.instance.searchSuggestions);
+
+  HotSearchLoader get _hotLoader =>
+      widget.hotSearchLoader ??
+      (widget.searchLoader != null || widget.idSearchLoader != null
+          ? () async => HotSearch.empty
+          : ApiClient.instance.hotSearch);
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
     _loadHistory();
+    unawaited(_loadHotSearch());
     final initial = widget.initialQuery?.trim() ?? '';
     if (initial.isNotEmpty) {
       _ctrl.text = initial;
+      _draft = initial;
       _search(initial);
     }
+  }
+
+  Future<void> _loadHotSearch() async {
+    final hot = await _hotLoader();
+    if (!mounted || hot.isEmpty) return;
+    setState(() => _hot = hot);
+  }
+
+  /// Debounced so a fast typist does not issue a request per keystroke.
+  void _onQueryChanged(String value) {
+    setState(() => _draft = value);
+    _suggestDebounce?.cancel();
+    final query = value.trim();
+    if (query.isEmpty) {
+      ++_suggestGeneration;
+      if (_suggestions.isNotEmpty) setState(() => _suggestions = const []);
+      return;
+    }
+    _suggestDebounce = Timer(
+      const Duration(milliseconds: 250),
+      () => unawaited(_fetchSuggestions(query)),
+    );
+  }
+
+  Future<void> _fetchSuggestions(String query) async {
+    final generation = ++_suggestGeneration;
+    final suggestions = await _suggestLoader(query);
+    // A late response must not overwrite a newer query's suggestions.
+    if (!mounted || generation != _suggestGeneration) return;
+    setState(() => _suggestions = suggestions);
   }
 
   Future<void> _loadHistory() async {
@@ -94,8 +171,14 @@ class _SearchPageState extends State<SearchPage> {
     FocusManager.instance.primaryFocus?.unfocus();
     _rememberQuery(query);
     ++_requestGeneration;
+    // Picking a suggestion runs a different query than the text typed so far, so
+    // the draft follows the executed query; otherwise the suggestion panel would
+    // linger over the results it just produced.
+    ++_suggestGeneration;
     setState(() {
       _query = query;
+      _draft = query;
+      _suggestions = const [];
       _idQuery = asKeyword ? null : mediaIdFromSearch(query);
       _tabIndex = 0;
       _feeds = [for (final _ in _categories) _SearchFeed()];
@@ -309,6 +392,8 @@ class _SearchPageState extends State<SearchPage> {
   @override
   void dispose() {
     ++_requestGeneration;
+    ++_suggestGeneration;
+    _suggestDebounce?.cancel();
     _scrollController.dispose();
     _ctrl.dispose();
     super.dispose();
@@ -348,9 +433,7 @@ class _SearchPageState extends State<SearchPage> {
               ),
             ),
           ),
-          onChanged: (_) {
-            if (_query.isEmpty) setState(() {});
-          },
+          onChanged: _onQueryChanged,
           onSubmitted: _search,
         ),
       ),
@@ -389,8 +472,26 @@ class _SearchPageState extends State<SearchPage> {
               ),
             ),
           Expanded(
-            child: _query.isEmpty
-                ? _historyView(context)
+            child: _showSuggestions
+                ? SearchSuggestionList(
+                    suggestions: _suggestions,
+                    onSelect: _search,
+                  )
+                : _query.isEmpty
+                ? Column(
+                    children: [
+                      if (_hot.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        HotSearchBoard(hot: _hot, onSelect: _search),
+                        const SizedBox(height: 4),
+                        Divider(
+                          height: 24,
+                          color: HomePalette.of(context).line,
+                        ),
+                      ],
+                      Expanded(child: _historyView(context)),
+                    ],
+                  )
                 : _resultsView(context, feed),
           ),
         ],

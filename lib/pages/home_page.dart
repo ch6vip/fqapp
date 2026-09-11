@@ -12,6 +12,7 @@ import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
 import 'detail_page.dart';
+import 'rank_page.dart';
 import 'search_page.dart';
 import 'home_provider.dart';
 
@@ -113,6 +114,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                             SliverToBoxAdapter(
                               child: HomeHero(
                                 onSearch: _openSearch,
+                                onRanks: _openRanks,
                                 onRefresh: notifier.load,
                                 refreshing: state.isLoading,
                               ),
@@ -230,6 +232,18 @@ class _HomePageState extends ConsumerState<HomePage> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const SearchPage()),
+    );
+  }
+
+  /// The rank board. Its catalogue (and the rank id the entries endpoint needs)
+  /// only exist inside the novel homepage response the app already fetches.
+  ///
+  /// Note: 榜单目录与 rank_id 的来源 — 见
+  /// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
+  void _openRanks() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const RankPage()),
     );
   }
 

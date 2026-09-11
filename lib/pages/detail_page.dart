@@ -6,6 +6,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/book_comment.dart';
 import '../models/book_detail.dart';
+import '../models/chapter_summary.dart';
 import '../models/media_item.dart';
 import '../models/media_description.dart';
 import '../models/series_detail.dart';
@@ -29,6 +30,7 @@ import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/media_card.dart';
 import 'audio_page.dart';
+import 'author_page.dart';
 import 'comic_reader_page.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
@@ -46,6 +48,17 @@ class DetailExtras {
 }
 
 typedef DetailExtrasLoader = Future<DetailExtras> Function(String bookId);
+
+/// Loads opening excerpts for the given chapter item ids in one request.
+///
+/// Note: 上游 `summary` 实际是正文开头，故按试读预览呈现 — 见
+/// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
+typedef ChapterPreviewLoader =
+    Future<ChapterSummary> Function(List<String> itemIds);
+
+/// How many chapter rows the detail preview block shows, and therefore how many
+/// excerpts it requests.
+const _previewChapterCount = 3;
 
 Future<DetailExtras> _defaultExtras(String bookId) async {
   try {
@@ -82,6 +95,10 @@ class DetailPage extends StatefulWidget {
   directoryLoader;
   final DetailExtrasLoader? extrasLoader;
 
+  /// Opening excerpts for the preview block's chapters. Injectable like the
+  /// rest; leaving it null for an offline caller disables the excerpts.
+  final ChapterPreviewLoader? previewLoader;
+
   /// Series detail (cast list) for short dramas and manju. Only consulted for
   /// video kinds; other content has no cast.
   final Future<SeriesDetail> Function(String seriesId)? seriesLoader;
@@ -93,6 +110,7 @@ class DetailPage extends StatefulWidget {
     this.detailLoader,
     this.directoryLoader,
     this.extrasLoader,
+    this.previewLoader,
     this.seriesLoader,
     this.readerStore,
   });
@@ -106,6 +124,7 @@ class _DetailPageState extends State<DetailPage> {
   BookDetail? _bookDetail;
   SeriesDetail _series = SeriesDetail.empty;
   BookCommentPage _comments = const BookCommentPage();
+  ChapterSummary _chapterPreviews = ChapterSummary.empty;
   List<Chapter> _allChapters = [];
   final _scroll = ScrollController();
   final _compactTitle = ValueNotifier(false);
@@ -241,6 +260,7 @@ class _DetailPageState extends State<DetailPage> {
       _loading = false;
     });
     unawaited(_refreshResume());
+    unawaited(_loadChapterPreviews(generation));
 
     final extras = await extrasFuture;
     if (!mounted || generation != _loadGeneration) return;
@@ -269,6 +289,49 @@ class _DetailPageState extends State<DetailPage> {
       return Future.value(const DetailExtras());
     }
     return _defaultExtras(bookId);
+  }
+
+  /// Reply fetching is opt-in for the same reason as [_loadExtras]: a caller
+  /// that injected its own loaders is offline, so the review list must not
+  /// reach for the network when a row is tapped.
+  ReviewReplyLoader? _replyLoader(String bookId) {
+    if (widget.detailLoader != null || widget.directoryLoader != null) {
+      return null;
+    }
+    if (bookId.isEmpty) return null;
+    return (commentId) =>
+        ApiClient.instance.commentReplies(bookId, commentId, groupId: bookId);
+  }
+
+  /// Loads opening excerpts for the chapters the preview block shows.
+  ///
+  /// One request covers all of them. The upstream field is named `summary`, but
+  /// what it actually returns is the start of the chapter's own text, so the UI
+  /// labels it a preview rather than a synopsis.
+  Future<void> _loadChapterPreviews(int generation) async {
+    final loader = _previewLoader();
+    if (loader == null) return;
+    final ids = _allChapters
+        .take(_previewChapterCount)
+        .map((chapter) => chapter.itemId)
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (ids.isEmpty) return;
+    final previews = await loader(ids);
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() => _chapterPreviews = previews);
+  }
+
+  /// Null for offline callers, same rule as [_loadExtras].
+  ChapterPreviewLoader? _previewLoader() {
+    final injected = widget.previewLoader;
+    if (injected != null) return injected;
+    if (widget.detailLoader != null || widget.directoryLoader != null) {
+      return null;
+    }
+    if (_contentId.isEmpty) return null;
+    return (itemIds) =>
+        ApiClient.instance.chapterSummaries(_contentId, itemIds);
   }
 
   /// Same offline rule as [_loadExtras]: an injected loader means the caller
@@ -444,7 +507,12 @@ class _DetailPageState extends State<DetailPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (author != null && author.name.isNotEmpty) ...[
-          DetailAuthorRow(author: author),
+          DetailAuthorRow(
+            author: author,
+            onOpenAuthor: author.id.isEmpty
+                ? null
+                : () => _openAuthor(author.id, author.name),
+          ),
           const SizedBox(height: 18),
         ],
         DetailStatsRow(stats: stats),
@@ -469,7 +537,12 @@ class _DetailPageState extends State<DetailPage> {
           const SizedBox(height: 22),
           Divider(height: 1, color: palette.line),
           const SizedBox(height: 22),
-          DetailReviews(page: _comments, detail: detail),
+          DetailReviews(
+            page: _comments,
+            detail: detail,
+            bookId: _contentId,
+            replyLoader: _replyLoader(_contentId),
+          ),
         ],
       ],
     );
@@ -555,7 +628,9 @@ class _DetailPageState extends State<DetailPage> {
         retry: true,
       );
     }
-    final preview = _allChapters.take(3).toList(growable: false);
+    final preview = _allChapters
+        .take(_previewChapterCount)
+        .toList(growable: false);
     return Container(
       key: const Key('detail_preview_chapters'),
       decoration: BoxDecoration(
@@ -566,18 +641,36 @@ class _DetailPageState extends State<DetailPage> {
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          for (var index = 0; index < preview.length; index++)
+          for (var index = 0; index < preview.length; index++) ...[
             DetailChapterRow(
               key: ValueKey('detail_preview_chapter_${preview[index].itemId}'),
               chapter: preview[index],
               index: index,
               current: index == _resumeIndex,
-              divider: index < preview.length - 1,
+              divider:
+                  index < preview.length - 1 ||
+                  _chapterPreviews.forItem(preview[index].itemId) != null,
               onTap: () => _openChapter(preview[index]),
             ),
+            if (_chapterPreviews.forItem(preview[index].itemId)
+                case final String excerpt)
+              _ChapterExcerpt(
+                key: ValueKey(
+                  'detail_preview_excerpt_${preview[index].itemId}',
+                ),
+                text: excerpt,
+                divider: index < preview.length - 1,
+              ),
+          ],
         ],
       ),
     );
+  }
+
+  /// Opens the author's home. The author id is required; the row hides the
+  /// affordance when the payload carried none.
+  Future<void> _openAuthor(String authorId, String name) async {
+    await _push(AuthorPage(authorId: authorId, fallbackName: name));
   }
 
   Future<void> _openDirectory() async {
@@ -766,5 +859,40 @@ class _DetailPageState extends State<DetailPage> {
       MaterialPageRoute<void>(builder: (_) => page),
     );
     if (mounted) unawaited(_refreshResume());
+  }
+}
+
+/// Opening lines of a chapter, shown under its row in the preview block.
+///
+/// The upstream field is named `summary`, but what it returns is the chapter's
+/// own opening text, so it is presented as a preview rather than a synopsis and
+/// clipped to a few lines.
+class _ChapterExcerpt extends StatelessWidget {
+  final String text;
+  final bool divider;
+
+  const _ChapterExcerpt({super.key, required this.text, required this.divider});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            text,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: palette.muted, fontSize: 12, height: 1.7),
+          ),
+          if (divider) ...[
+            const SizedBox(height: 12),
+            Divider(height: 1, color: palette.line.withValues(alpha: 0.5)),
+          ],
+        ],
+      ),
+    );
   }
 }

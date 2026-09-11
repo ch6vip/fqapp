@@ -8,9 +8,13 @@ import '../home/home_design.dart';
 /// Author row: avatar, pen name, level badge, tagline and follow action.
 class DetailAuthorRow extends StatelessWidget {
   final BookAuthor author;
-  final VoidCallback? onFollow;
 
-  const DetailAuthorRow({super.key, required this.author, this.onFollow});
+  /// Opens the author's home. The backend exposes no follow endpoint, so this
+  /// row offers a route to the author rather than a follow action that could
+  /// not work.
+  final VoidCallback? onOpenAuthor;
+
+  const DetailAuthorRow({super.key, required this.author, this.onOpenAuthor});
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +37,6 @@ class DetailAuthorRow extends StatelessWidget {
               ),
       ),
     );
-    final follow = _FollowButton(onTap: onFollow);
     final identity = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -61,7 +64,7 @@ class DetailAuthorRow extends StatelessWidget {
         ),
         const SizedBox(height: 3),
         Text(
-          '关注我，掌握书籍最新动态',
+          onOpenAuthor == null ? '关注我，掌握书籍最新动态' : '查看作者主页和全部作品',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(color: palette.muted, fontSize: 11.5, height: 1.3),
@@ -69,14 +72,24 @@ class DetailAuthorRow extends StatelessWidget {
       ],
     );
 
-    return Row(
+    final row = Row(
       children: [
         avatar,
         const SizedBox(width: 11),
         Expanded(child: identity),
-        const SizedBox(width: 10),
-        follow,
+        if (onOpenAuthor != null) ...[
+          const SizedBox(width: 10),
+          _AuthorLinkChip(),
+        ],
       ],
+    );
+    if (onOpenAuthor == null) return row;
+    return HomePressable(
+      key: const Key('detail_author_row'),
+      semanticLabel: '查看 ${author.name} 的主页',
+      onTap: onOpenAuthor!,
+      borderRadius: BorderRadius.circular(12),
+      child: row,
     );
   }
 }
@@ -113,40 +126,35 @@ class _LevelBadge extends StatelessWidget {
   }
 }
 
-class _FollowButton extends StatelessWidget {
-  final VoidCallback? onTap;
-
-  const _FollowButton({this.onTap});
-
+/// Trailing affordance that opens the author's home.
+///
+/// The official client shows a 关注 button here, but the backend exposes no
+/// follow endpoint, so a button that looked like 关注 would be a dead control.
+/// This offers the one action that actually works.
+class _AuthorLinkChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return HomePressable(
-      key: const Key('detail_follow_button'),
-      semanticLabel: '关注作者',
-      onTap: onTap ?? () {},
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: palette.accentText.withValues(alpha: 0.5)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(LucideIcons.plus, size: 13, color: palette.accentText),
-            const SizedBox(width: 3),
-            Text(
-              '关注',
-              style: TextStyle(
-                color: palette.accentText,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.accentText.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '主页',
+            style: TextStyle(
+              color: palette.accentText,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 2),
+          Icon(LucideIcons.chevron_right, size: 14, color: palette.accentText),
+        ],
       ),
     );
   }

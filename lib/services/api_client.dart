@@ -5,12 +5,17 @@ import 'dart:isolate';
 import 'package:http/http.dart' as http;
 
 import '../models/audio_extra.dart';
+import '../models/author_profile.dart';
 import '../models/book_comment.dart';
 import '../models/book_detail.dart';
 import '../models/chapter_ideas.dart';
 import '../models/chapter_media.dart';
+import '../models/chapter_summary.dart';
+import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../models/media_id.dart';
+import '../models/rank.dart';
+import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
 import 'backend_service.dart';
 import 'chapter_text_formatter.dart';
@@ -79,11 +84,19 @@ class ApiClient {
     return Isolate.run(() => _decodeEnvelope(statusCode, bodyBytes));
   }
 
-  /// Sends a GET to the local backend with a timeout.
-  Future<http.Response> _get(String url, {Duration? timeout}) async {
+  /// Sends a request to the local backend with a timeout.
+  ///
+  /// [method] exists for the few bridge endpoints that are POST-only upstream
+  /// (comment replies); callers still pass their arguments as query parameters,
+  /// which the backend reads from the URL either way.
+  Future<http.Response> _get(
+    String url, {
+    Duration? timeout,
+    String method = 'GET',
+  }) async {
     final abort = Completer<void>();
     final request = http.AbortableRequest(
-      'GET',
+      method,
       Uri.parse(url),
       abortTrigger: abort.future,
     );
@@ -444,8 +457,142 @@ class ApiClient {
     );
   }
 
-  /// Resolves specific comment bodies by id.
-  ///
+  // --- Discovery: suggestions, hot search, authors, ranks ------------------
+
+  /// Query suggestions for the text being typed. Returns an empty list on
+  /// failure: the field is an aid, never a blocker to searching.
+  Future<List<SearchSuggestion>> searchSuggestions(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return const [];
+    try {
+      final response = await _get(
+        _url('/api/v1/search/suggest', {'q': trimmed}),
+        timeout: const Duration(seconds: 10),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return Isolate.run(
+        () => SearchSuggestion.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return const [];
+    }
+  }
+
+  /// The hot search board, used to fill the empty search screen.
+  Future<HotSearch> hotSearch() async {
+    try {
+      final response = await _get(_url('/api/v1/search/hot', {}));
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return Isolate.run(
+        () => HotSearch.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return HotSearch.empty;
+    }
+  }
+
+  /// Author profile plus their catalogue. Returns [AuthorProfile.empty] on
+  /// failure so the page can show a retry instead of crashing.
+  Future<AuthorProfile> authorProfile(String authorId) async {
+    final response = await _get(
+      _url('/api/v1/authors/${Uri.encodeComponent(authorId)}', {}),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => AuthorProfile.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
+  /// The rank catalogue, which the upstream ships inside the novel homepage
+  /// payload rather than on an endpoint of its own.
+  Future<RankCatalog> rankCatalog() async {
+    try {
+      final response = await _get(_homepageUrl(2, 0, null));
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return Isolate.run(
+        () => RankCatalog.fromHomepagePayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return RankCatalog.empty;
+    }
+  }
+
+  /// One page of a rank. [algo] is the catalogue's `rank_algo`, [categoryId] its
+  /// `info_id` (0 = 全部).
+  Future<RankBoard> rankBoard({
+    required String rankId,
+    required int algo,
+    int categoryId = 0,
+    int offset = 0,
+    int startAt = 1,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/rank/${Uri.encodeComponent(rankId)}', {
+        'algo_type': '$algo',
+        'rank_sub_info_id': '$categoryId',
+        if (offset > 0) 'offset': '$offset',
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => RankCatalog.parsePage(
+        _decodeEnvelope(status, bytes),
+        startAt: startAt,
+      ),
+    );
+  }
+
+  /// Replies to one review. All three ids are required by the backend.
+  Future<CommentReplyPage> commentReplies(
+    String bookId,
+    String commentId, {
+    required String groupId,
+    int count = 10,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/comments/${Uri.encodeComponent(commentId)}/replies', {
+        'comment_id': commentId,
+        'group_id': groupId,
+        'book_id': bookId,
+        'count': '$count',
+      }),
+      method: 'POST',
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => CommentReplyPage.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
+  /// Chapter previews for the given chapter item ids.
+  Future<ChapterSummary> chapterSummaries(
+    String bookId,
+    List<String> itemIds,
+  ) async {
+    if (itemIds.isEmpty) return ChapterSummary.empty;
+    try {
+      final response = await _get(
+        _url('/api/v1/books/${Uri.encodeComponent(bookId)}/chapters/summary', {
+          'item_ids': itemIds.join(','),
+        }),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return Isolate.run(
+        () => ChapterSummary.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return ChapterSummary.empty;
+    }
+  }
+
+  /// Resolves specific comment bodies by id.  ///
   /// The idea list returns comment ids without bodies, so this is the second
   /// hop of the chapter-ideas chain: `insert_comment_ids` asks the comment list
   /// for exactly those entries. The container stays the chapter item id, which

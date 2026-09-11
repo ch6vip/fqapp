@@ -6,12 +6,14 @@ import 'home_design.dart';
 /// A compact masthead leaves the first screen to the actual stories.
 class HomeHero extends StatelessWidget {
   final VoidCallback onSearch;
+  final VoidCallback onRanks;
   final Future<void> Function() onRefresh;
   final bool refreshing;
 
   const HomeHero({
     super.key,
     required this.onSearch,
+    required this.onRanks,
     required this.onRefresh,
     this.refreshing = false,
   });
@@ -133,6 +135,24 @@ class HomeHero extends StatelessWidget {
                       ],
                     ),
                   ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Tooltip(
+                message: '排行榜',
+                child: IconButton(
+                  key: const Key('home_ranks_button'),
+                  onPressed: onRanks,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(48, 50),
+                    foregroundColor: palette.ink,
+                    backgroundColor: palette.surface,
+                    side: BorderSide(color: palette.line),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  icon: const Icon(LucideIcons.trophy, size: 19),
                 ),
               ),
               const SizedBox(width: 10),
