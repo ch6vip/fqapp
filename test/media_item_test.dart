@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/services/chapter_cache_store.dart';
 
 void main() {
   test('parses list-shaped chapterListWithVolume', () {
@@ -49,6 +52,99 @@ void main() {
     };
     final chapters = parseDirectory(payload).expand((v) => v).toList();
     expect(chapters.map((c) => c.itemId), ['c1', 'c2']);
+  });
+
+  group('novel item_data_list', () {
+    // Live shape: the reading directory nests chapters under `item_data_list`,
+    // each with its own volume_name and content version.
+    Map<String, dynamic> payload() => {
+      'code': 0,
+      'data': {
+        'item_data_list': [
+          {
+            'item_id': 'c1',
+            'title': '第1章',
+            'volume_name': '第一卷：默认',
+            'version': 'abc_1_def',
+          },
+          {
+            'item_id': 'c2',
+            'title': '第2章',
+            'volume_name': '第一卷：默认',
+            'version': 'ghi_1_jkl',
+          },
+        ],
+      },
+    };
+
+    test('keeps the chapter version the paragraph comments need', () {
+      final chapters = parseDirectory(payload()).expand((v) => v).toList();
+      expect(chapters.map((c) => c.version), ['abc_1_def', 'ghi_1_jkl']);
+    });
+
+    test('keeps the real volume name instead of the drama placeholder', () {
+      // This list used to be read with the episode parser, which hardcodes
+      // `剧集` and drops the version — so novels lost both.
+      final chapters = parseDirectory(payload()).expand((v) => v).toList();
+      expect(chapters.map((c) => c.volumeName), ['第一卷：默认', '第一卷：默认']);
+    });
+
+    test('a chapter without a version still parses', () {
+      final chapters = parseDirectory({
+        'data': {
+          'item_data_list': [
+            {'item_id': 'c1', 'title': '第1章'},
+          ],
+        },
+      }).expand((v) => v).toList();
+      expect(chapters.single.version, '');
+      expect(chapters.single.itemId, 'c1');
+    });
+
+    test('drama episodes keep their numbered volume', () {
+      final chapters = parseDirectory({
+        'data': {
+          'episodes': [
+            {'item_id': 'e1', 'title': '第1集'},
+          ],
+        },
+      }).expand((v) => v).toList();
+      expect(chapters.single.volumeName, '剧集');
+    });
+
+    test('the version survives a cache round trip', () {
+      final chapters = parseDirectory(payload()).expand((v) => v).toList();
+      final restored = CachedBook.fromMap(
+        jsonDecode(
+          jsonEncode(
+            CachedBook(
+              id: 'book',
+              title: 't',
+              cover: '',
+              chapters: chapters,
+            ).toMap(),
+          ),
+        ),
+      );
+      expect(restored, isNotNull);
+      expect(restored!.chapters.map((c) => c.version), [
+        'abc_1_def',
+        'ghi_1_jkl',
+      ]);
+    });
+
+    test('a cache written before the version was kept restores empty', () {
+      final restored = CachedBook.fromMap({
+        'id': 'book',
+        'title': 't',
+        'chapters': [
+          {'itemId': 'c1', 'title': '第1章', 'volumeName': '正文'},
+        ],
+      });
+      expect(restored, isNotNull);
+      expect(restored!.chapters.single.version, '');
+      expect(restored.chapters.single.itemId, 'c1');
+    });
   });
 
   test('omits non-addressable rows from every supported directory shape', () {

@@ -453,14 +453,28 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   Future<ChapterIdeas> _defaultIdeas(String itemId) =>
       ApiClient.instance.chapterIdeas(itemId);
 
+  /// Loads one paragraph's comments.
+  ///
+  /// Note: the upstream wants `server_channel=39` here, not the 43 the official
+  /// presenter assigns, and it needs the chapter version — see
+  /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
   Future<BookCommentPage> _defaultComments(
     String itemId,
     ParagraphIdeas paragraph,
-  ) => ApiClient.instance.commentsByIds(
-    widget.bookId,
-    itemId,
-    paragraph.commentIds,
-  );
+  ) {
+    final version = _chapter.version;
+    if (version.isEmpty) {
+      // Without the version the upstream rejects the request, so there is
+      // nothing to show; an empty page renders as the panel's empty state.
+      return Future.value(const BookCommentPage());
+    }
+    return ApiClient.instance.paragraphComments(
+      widget.bookId,
+      itemId,
+      itemVersion: version,
+      paraIndex: paragraph.paraIndex,
+    );
+  }
 
   Future<_LoadedChapter> _chapterText(Chapter chapter) async {
     final id = chapter.itemId;

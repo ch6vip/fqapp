@@ -40,6 +40,9 @@ class CachedBook {
           'itemId': chapter.itemId,
           'title': chapter.title,
           'volumeName': chapter.volumeName,
+          // Needed to list paragraph comments; a cache written before this was
+          // kept restores an empty version, which only costs that chapter's 段评.
+          'version': chapter.version,
         },
     ],
   };
@@ -58,6 +61,7 @@ class CachedBook {
           itemId: id,
           title: value['title']?.toString() ?? '',
           volumeName: value['volumeName']?.toString() ?? '',
+          version: value['version']?.toString() ?? '',
         ),
       );
     }

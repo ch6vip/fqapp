@@ -193,6 +193,13 @@ BookCommentPage parseParagraphComments(Map<String, dynamic> payload) {
   );
 }
 
+/// Builds one comment from a `data_list[]` entry.
+///
+/// Note: the counters live inside `comment.stat` — see
+/// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+///
+/// The counters live **inside** `comment.stat`, not beside it; reading a sibling
+/// `stat` silently reported zero likes for every paragraph comment.
 BookComment? _paragraphComment(dynamic comment, dynamic stat) {
   if (comment is! Map) return null;
   final common = comment['common'];
@@ -205,15 +212,23 @@ BookComment? _paragraphComment(dynamic comment, dynamic stat) {
   final userMap = user is Map ? user : const {};
   final base = userMap['base_info'];
   final baseMap = base is Map ? base : const {};
-  final statMap = stat is Map ? stat : const {};
+  // Prefer the comment's own counters, and keep the sibling form working for
+  // any payload that puts them there.
+  final statMap = (comment['stat'] ?? stat) is Map
+      ? (comment['stat'] ?? stat) as Map
+      : const {};
+  final tag = userMap['user_tag'];
+  final tagMap = tag is Map ? tag : const {};
   return BookComment(
     id: _string(comment['comment_id']),
     text: text,
     diggCount: _int(statMap['digg_count']),
     replyCount: _int(statMap['reply_count']),
+    readSeconds: _int(statMap['read_duration']),
     createdAt: _timestamp(commonMap['create_timestamp']),
     userName: _string(baseMap['user_name']),
     userAvatar: _string(baseMap['user_avatar']),
+    isAuthor: tagMap['is_author'] == true,
   );
 }
 

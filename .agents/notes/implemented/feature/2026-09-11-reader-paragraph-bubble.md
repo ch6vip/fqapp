@@ -16,6 +16,42 @@ Status: implemented
 
 在段落**末行末尾**内联一个**空心圆圈**气泡，圈内是段评数，点它直接打开该段的段评面板。
 
+### 评论正文：卡了很久，根因是一个枚举值
+
+**第一版认定「取不到」，这是错的。** 当时的推理是：官方 presenter（`ParaCommentListPresenter` 构造器）把 `server_channel` 设成 43，照抄之后 `code=0` 但恒 `total=0`，于是判断为"匿名设备被限制"。真机反馈「面板里应该有内容」迫使重查，才找到真正的根因。
+
+**`server_channel` 必须是 39（`NovelShortStoryParaList`），不是官方 presenter 里的 43。**
+
+| 试验 | 结果 |
+|---|---|
+| `server_channel=43`（照抄 presenter） | `code=0`，**total=0** |
+| **`server_channel=39`** | **`code=0`，total=5**（与该段 idea 计数一致） |
+| 33/34/35/36/45/28/14/8 | `103001` 被拒 |
+| 去掉 `item_version` | `103001` |
+| 去掉 `para_index` / `book_id` / `group_type` / `comment_type` / `comment_source` | `103001` |
+
+实证：同一段 idea 列表报 `count=5`，`server_channel=39` 恰好返回 5 条；`para_index=0` 报 24 条时返回 20 条 + `has_more=true`。
+
+有意思的是，43 正是从官方 `ParaCommentListPresenter` 里读出来的，而它对我们无效 —— 这与 [章节评论端点](2026-09-10-chapter-ideas-endpoint.md) 的教训一致：**反编译能给出配方，但配方对不对必须用真实响应验证**。当时正是因为 `code=0` 看起来"请求被接受了"，才误判成权限问题；实际上"被接受"与"有数据"是两回事。
+
+拿到正文的关键参数一共五个，缺任一即 `103001`：`book_id`（真实书 id）、`group_id`（**章节** item_id，不是书 id）、`para_index`（`<p idx>` 值）、`item_version`（章节版本）、以及上面那个 `server_channel=39`。
+
+### 章节版本必须一路带到阅读器
+
+`item_version` 只出现在**目录**响应里（`item_data_list[i].version`），正文和详情都没有。而阅读器的 `Chapter` 模型此前没有这个字段，于是补上，并在缓存里持久化（旧缓存恢复为空串，只影响那一章的段评）。
+
+补字段时发现一个**既有缺陷**：小说目录走的是 `_findDirectoryEntries` → `Episode.fromRaw(...).toChapter()`，而 `Episode.toChapter()` 把 `volumeName` 写死成 `剧集`：
+
+```dart
+Chapter toChapter() => Chapter(itemId: itemId, title: title, volumeName: '剧集');
+```
+
+`Episode` 是给短剧用的。小说目录被它解析后，**真实的 `volume_name`（如「第一卷：默认」）被丢弃、版本也无从携带**。改为按来源分流：`episodes` 仍走 `Episode`（短剧，卷名「剧集」），`item_data_list`／`lists`／`item_list` 走 `Chapter.fromRaw`（小说，保留 `volume_name` 与 `version`）。实测 592 章从 0 章有版本变为 592 章有版本，卷名也恢复为真实值。
+
+### 点赞数一直是 0
+
+`parseParagraphComments` 读的是 `data_list[i].stat`，但真实响应把计数器放在 **`data_list[i].comment.stat`** 里。同级那个永远是 `null`，于是每条段评的点赞与回复数都是 0。改为优先读 comment 自己的 `stat`，同时保留同级形式以兼容。顺带补上 `is_author`（来自 `user_info.user_tag`）与 `read_duration`，让面板的「作者」徽章和在读时长有数据。
+
 ### 面板按官方版式：单段落的评论列表
 
 **第一版面板也做错了。** 我做成了「本章所有有段评的段落」列表，点开某段再展开看评论。官方面板不是这样：它展示**被打的那一段的评论列表**。
@@ -36,38 +72,22 @@ Status: implemented
 
 **底部发布栏没有做。** 后端没有写接口（发评论/回复），做出来就是一个点了没反应的控件 —— 与之前作者行那个死掉的「关注」按钮是同一类问题。宁可缺，不做假的。
 
-### 评论正文取不到（已穷尽验证）
+### 一条被推翻的中间结论（保留，因为它解释了为什么差点走错）
 
-官方取正文的配方（`ParaCommentListPresenter` 构造器）已完整还原：
+在找到 39 之前，我照抄官方 presenter 的 43，得到 `code=0` 但恒 `total=0`，于是**判断为"匿名设备被上游限制"**，并列了 20 余次实测当证据：
 
-```
-comment_source = 2   NovelParaComment
-comment_type   = 1   Paragraph
-group_type     = 15  Item
-server_channel = 43  NovelParaUserCommentList
-sort           = 1   SmartHot
-group_id       = 章节 item_id
-para_index     = 段落 id（与 <p idx> 同一空间）
-item_version   = 章节版本（目录 item_data_list[i].version）
-```
-
-路由也与官方一致（`$POST /novel/commentapi/comment/list/:group_id/v1/`，见 `saas/ugc/rpc/CommentApiService`）。实测结果：
-
-| 试验 | 结果 |
+| 当时试验（`server_channel=43`） | 结果 |
 |---|---|
 | 官方全配方 | `code=0`，**0 条** |
 | 该配方配**有 287 条段评**的段落 | `code=0`，**0 条** |
 | `para_index` 扫 0..120 | 全部 0 条 |
-| 去掉 `server_channel` / `group_type` / `item_version` 任一 | `103001`（被拒） |
 | `comment_source` 2/3/4 × `server_channel` 7/43 × `group_type` 1/15 | 只有 `2/43/15` 被接受，且仍 0 条 |
 | 请求体补 `aid`（官方 `GetCommentListRequest.aid`） | 仍 0 条 |
 | 请求体补 `business_param.item_id` | 仍 0 条 |
 | 用正文响应的 `group_id` 当容器 | 仍 0 条 |
 | 对照：同接口的书评（默认参数） | `total=6539` |
 
-结论：**配方正确、参数被校验通过，但对匿名设备返回空**。唯一能拿到正文的路径是 `insert_comment_ids`（用书评参数集），而它需要评论 id —— idea 列表的 `infos` 在两本书上分别是 46/48 与 36/36 段为空。最可能的解释是官方客户端处于登录态，而本项目的设备池是匿名的。
-
-因此：**面板结构与官方一致，内容取决于上游是否给出正文**；取不到时按空态呈现，不伪造内容。
+这些数字**本身没错**，错的是结论：它们只证明「43 拿不到数据」，我却推成了「谁也拿不到」，并且因为 `code=0` 看起来"请求被接受"而转向了权限假设。真正的信息在枚举列表里 —— `UgcCommentChannelEnum` 有一长串通道，43 只是其中一条，穷举一遍就能发现 39。
 
 ### 哪些段落有气泡：只要 `count > 0`
 
@@ -173,7 +193,9 @@ int i2 = paraIdeaData.count;                                    // 画的是这�
 - 滚动的 maxScroll、分页的高、插图、位置保存与恢复均未改变语义（既有阅读器测试全绿）。
 - 大字号（1.8 倍）与 `99+` 已覆盖，无溢出。
 - 段评仍**不影响正文可用性**：加载失败或为空时一个气泡都不画，正文照常。
-- **评论正文是否显示取决于上游**。匿名设备下段落评论接口返回空，面板会显示「这段还没有可显示的段评」；这不是渲染缺陷，而是数据限制（见上文验证表）。
+- **评论正文来自 `server_channel=39`**，面板展示该段真实段评（头像、昵称、时间、正文、赞/回复数、作者徽章）。实测第 32 段 6 条、第 0 段 287 条，计数与 idea 列表逐段一致。
+- 阅读器需要章节版本才能列出段评；`Chapter.version` 从目录解析并随缓存持久化。旧缓存恢复为空串，只影响那一章的段评（该段显示空态而非报错）。
+- 小说目录改用 `Chapter.fromRaw`，因此**恢复了真实的 `volume_name`**（此前被短剧解析器写成「剧集」）并带上了版本。
 - `ParagraphIdeas.showsBubble` 是新的公开判据；`ChapterIdeas.bubbleCounts` 给出「段号 → 显示数字」。
 - 气泡增加了一个 `WidgetSpan`，段落测量的占位符数量从 1 变为 1~2，行内偏移换算多了一个常量；这是该方法主要的可读性成本，已就地注明。
 
@@ -184,8 +206,10 @@ int i2 = paraIdeaData.count;                                    // 画的是这�
 - `test/reader_ideas_test.dart` 更新为面板的新语义：**打开即加载所选段落**（不再等待展开）、段落条只列有段评的段落、切换段落各请求一次、**全部/最新 只重排不重复请求**（并断言「最新」确实把新评论排在前面）、失败态保留其它段落可选、无段评时的空态。
 - 用真机那本书的真实数据复跑完整链路：36 段中可见的 24 段各有一个气泡（滚动模式懒加载，只渲染可见项），标签值与上游一致（24/6/3/1/5/1…）。
 - 官方素材结论来自对 `m94/d.java` → `public.xml` → `cnq.webp` 等的逐像素解码（描边 4px@3x、中心透明、15.8% 不透明），而非目测。该探针为一次性脚本，已删除。
-- 官方配方与匿名设备限制来自 20 余次实测（配方变体、`para_index` 0..120 全扫、补 `aid`、补 `business_param.item_id`、换容器），逐条记录在上文表格中；`` 的实验性改动已全部回退（`git status` 干净）。
+- 通道与配方通过实测确定：`server_channel` 逐值穷举（**39 命中**，33/34/35/36/45/28/14/8 被拒），`para_index` 与 idea 计数逐段比对（第 32 段 5 条、第 0 段 24 条）。`` 的实验性改动已全部回退 —— 后端本来就接受 `server_channel` 参数，**本次无需改后端**。
+- 端到端复验（跑 App 自己的 `ApiClient.paragraphComments` 打真实后端）：章节 `第1章合着，我是出生头子！？` 版本解析成功、卷名 `第一卷：默认`、第 32 段返回 6 条（赞 57/19/8…）、第 0 段返回 287 条中的 20 条且 `hasMore=true`，正文为真实内容。该探针为一次性脚本，已删除。
+- 新增模型测试：`test/book_comment_test.dart` 的 `parseParagraphComments` 组（4 项，覆盖 `comment.stat` 计数、同级 `stat` 兼容、作者标记、在读时长、业务错误与空正文）与 `test/media_item_test.dart` 的 `novel item_data_list` 组（6 项，覆盖版本解析、真实卷名、短剧卷名不受影响、缓存往返、旧缓存降级）。
 - 回归：`reader_chapter_layout_test.dart`、`reader_pagination_test.dart`、`reader_page_test.dart`、`reader_interface_test.dart`、`reader_illustrations_test.dart` 全部通过，分页、插图、位置恢复与两种模式的切换行为未变。
 - 截图核对：`build/validation/reader-bubble-20260911/bubble_preview_test.dart`（正文气泡 3 张）与 `build/validation/ideas-panel-20260911/panel_preview_test.dart`（面板 3 张，含夜间与另一段落），全部无布局异常。
-- `flutter analyze` 无问题；`flutter test` **794 项通过**。
-- 未做真机验证（本次结论即来自真机反馈，修复后待复验）。
+- `flutter analyze` 无问题；`flutter test` **804 项通过**。
+- 未做真机验证（本轮的修正即来自真机反馈，待复验）。

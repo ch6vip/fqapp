@@ -542,16 +542,28 @@ class Chapter {
   final String title;
   final String volumeName;
 
+  /// Chapter content version from the directory (`item_data_list[i].version`).
+  ///
+  /// Paragraph comments cannot be listed without it: the upstream answers
+  /// `103001 book_id, item_version, or para_index invalid` when it is missing.
+  /// Empty for chapters restored from a cache written before it was kept.
+  ///
+  /// Note: why a novel directory must be read with [Chapter.fromRaw] — see
+  /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+  final String version;
+
   Chapter({
     required this.itemId,
     required this.title,
     required this.volumeName,
+    this.version = '',
   });
 
   factory Chapter.fromRaw(Map<String, dynamic> m, {int? index}) => Chapter(
     itemId: _entryId(m),
     title: _entryTitle(m, index: index),
     volumeName: (m['volume_name'] ?? m['volumeName'] ?? '').toString(),
+    version: (m['version'] ?? '').toString(),
   );
 }
 
@@ -631,6 +643,7 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
             volumeName: chapter.volumeName.isEmpty
                 ? volumeName
                 : chapter.volumeName,
+            version: chapter.version,
           ),
         );
       }
@@ -642,11 +655,17 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
   // bridge also exposes them under chapterListWithVolume, but accepting both
   // keeps the client compatible with older local binaries.
   if (volumes.isEmpty) {
-    final episodes = _findDirectoryEntries(inner);
-    if (episodes != null) {
+    final found = _findDirectoryEntries(inner);
+    if (found != null) {
       final chapters = <Chapter>[];
-      for (var i = 0; i < episodes.length; i++) {
-        final chapter = Episode.fromRaw(episodes[i], index: i).toChapter();
+      for (var i = 0; i < found.entries.length; i++) {
+        // `episodes` are drama-shaped (numbered, one implicit volume) while
+        // `item_data_list` is novel-shaped and carries `volume_name` plus the
+        // `version` the paragraph-comment endpoint needs. Reading a novel list
+        // with the episode parser dropped both.
+        final chapter = found.drama
+            ? Episode.fromRaw(found.entries[i], index: i).toChapter()
+            : Chapter.fromRaw(found.entries[i], index: i);
         if (chapter.itemId.isNotEmpty) chapters.add(chapter);
       }
       if (chapters.isNotEmpty) volumes.add(chapters);
@@ -655,7 +674,9 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
   return volumes;
 }
 
-List<Map<String, dynamic>>? _findDirectoryEntries(
+/// Directory entries plus whether they came from the drama-shaped `episodes`
+/// key, so each shape can be read by the parser that understands it.
+({List<Map<String, dynamic>> entries, bool drama})? _findDirectoryEntries(
   dynamic value, [
   int depth = 0,
 ]) {
@@ -663,11 +684,13 @@ List<Map<String, dynamic>>? _findDirectoryEntries(
   if (value is Map) {
     for (final key in ['episodes', 'item_data_list', 'lists', 'item_list']) {
       final found = _asMapList(value[key]);
-      if (found != null && found.isNotEmpty) return found;
+      if (found != null && found.isNotEmpty) {
+        return (entries: found, drama: key == 'episodes');
+      }
     }
     for (final nested in value.values) {
       final found = _findDirectoryEntries(nested, depth + 1);
-      if (found != null && found.isNotEmpty) return found;
+      if (found != null && found.entries.isNotEmpty) return found;
     }
   }
   return null;

@@ -149,4 +149,105 @@ void main() {
     expect(isUnavailableCode(0), isFalse);
     expect(isUnavailableCode(null), isFalse);
   });
+
+  group('parseParagraphComments', () {
+    /// Mirrors a live paragraph-comment response: a flat `data_list` whose
+    /// entries nest everything under `comment`, counters included.
+    Map<String, dynamic> paragraphPayload() => {
+      'code': 0,
+      'data': {
+        'common_list_info': {'cursor': '400', 'has_more': false, 'total': 5},
+        'data_list': [
+          {
+            'comment': {
+              'comment_id': '7673571582642570046',
+              'common': {
+                'comment_type': 0,
+                'content': {'text': '只为了自己'},
+                'create_timestamp': 1786646180,
+                'user_info': {
+                  'base_info': {
+                    'user_name': '星空、℡',
+                    'user_avatar': 'https://example.test/u.heic',
+                  },
+                  'user_tag': {'is_author': true},
+                },
+              },
+              'stat': {'digg_count': 9, 'reply_count': 2, 'read_duration': 61},
+            },
+          },
+        ],
+      },
+    };
+
+    test('reads the body, author and counters', () {
+      final page = parseParagraphComments(paragraphPayload());
+      expect(page.totalCount, 5);
+      expect(page.hasMore, isFalse);
+      expect(page.comments, hasLength(1));
+      final comment = page.comments.single;
+      expect(comment.text, '只为了自己');
+      expect(comment.userName, '星空、℡');
+      expect(comment.createdAt, isNotNull);
+      // The counters live inside `comment`; reading a sibling `stat` reported
+      // zero likes for every paragraph comment.
+      expect(comment.diggCount, 9);
+      expect(comment.replyCount, 2);
+      expect(comment.readSeconds, 61);
+      expect(comment.isAuthor, isTrue);
+    });
+
+    test('still accepts counters beside the comment', () {
+      final page = parseParagraphComments({
+        'code': 0,
+        'data': {
+          'data_list': [
+            {
+              'comment': {
+                'comment_id': '1',
+                'common': {
+                  'content': {'text': '兄弟形式'},
+                },
+              },
+              'stat': {'digg_count': 4},
+            },
+          ],
+        },
+      });
+      expect(page.comments.single.diggCount, 4);
+    });
+
+    test('a business error yields an empty page', () {
+      expect(parseParagraphComments({'code': 103001}).isEmpty, isTrue);
+      expect(parseParagraphComments({'code': 0, 'data': {}}).isEmpty, isTrue);
+    });
+
+    test('entries without a body are dropped', () {
+      final page = parseParagraphComments({
+        'code': 0,
+        'data': {
+          'data_list': [
+            {
+              'comment': {
+                'comment_id': '1',
+                'common': {
+                  'content': {'text': ''},
+                },
+              },
+            },
+            {
+              'comment': {
+                'comment_id': '2',
+                'common': {
+                  'content': {'text': '保留'},
+                },
+              },
+            },
+          ],
+        },
+      });
+      expect(page.comments, hasLength(1));
+      expect(page.comments.single.text, '保留');
+    });
+  });
 }

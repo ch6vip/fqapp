@@ -425,11 +425,21 @@ class ApiClient {
 
   /// Comment bodies for one paragraph.
   ///
-  /// This is the official client's paragraph-comment recipe: the container is
-  /// the **chapter item id** while `business_param.book_id` stays the real book
-  /// id, and the upstream rejects the request with
-  /// `103001 book_id, item_version, or para_index invalid` unless all three of
-  /// `book_id`, [itemVersion] and [paraIndex] are usable.
+  /// Note: `server_channel` must be 39, not the 43 the official presenter
+  /// assigns — see
+  /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+  ///
+  /// This is the official client's paragraph-comment recipe, with one field
+  /// corrected against live data: `server_channel` must be **39**
+  /// (`NovelShortStoryParaList`), not the 43 the decompiled presenter assigns.
+  /// With 43 the request is accepted (`code=0`) but always answers `total=0`;
+  /// with 39 it returns the paragraph's comments, matching the count the idea
+  /// list reports for that paragraph.
+  ///
+  /// The container is the **chapter item id** while `business_param.book_id`
+  /// stays the real book id. All three of `book_id`, [itemVersion] and
+  /// [paraIndex] are required: the upstream rejects the request with
+  /// `103001 book_id, item_version, or para_index invalid` unless each is usable.
   Future<BookCommentPage> paragraphComments(
     String bookId,
     String itemId, {
@@ -444,7 +454,10 @@ class ApiClient {
         'group_type': '15',
         'comment_source': '2',
         'comment_type': '1',
-        'server_channel': '43',
+        // 39 = NovelShortStoryParaList. 43 (the value the official presenter
+        // assigns) is accepted but always yields an empty list — verified
+        // against a paragraph with 24 comments.
+        'server_channel': '39',
         'para_index': '$paraIndex',
         'item_version': itemVersion,
         'count': '$count',
