@@ -21,6 +21,7 @@ import '../widgets/detail/detail_chapter_row.dart';
 import '../widgets/detail/detail_description.dart';
 import '../widgets/detail/detail_directory_sheet.dart';
 import '../widgets/detail/detail_hero.dart';
+import '../widgets/detail/detail_id_row.dart';
 import '../widgets/detail/detail_read_bar.dart';
 import '../widgets/detail/detail_reviews.dart';
 import '../widgets/detail/detail_sections.dart';
@@ -457,6 +458,10 @@ class _DetailPageState extends State<DetailPage> {
           const SizedBox(height: 18),
           DetailTagChips(tags: detail.tags),
         ],
+        const SizedBox(height: 18),
+        // The id the page itself loads the work with, so it can be pasted into
+        // the `id:` search to reopen the same work.
+        DetailIdRow(id: _contentId),
         const SizedBox(height: 6),
         DetailDirectoryRow(trailing: trailing, onTap: _openDirectory),
         _directoryPreview(palette),
