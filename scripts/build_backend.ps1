@@ -127,7 +127,7 @@ Remove-Item (Join-Path $configDir 'device_pool.json') -ErrorAction SilentlyConti
 function Sync-RuntimeDirectory {
     param([string]$Name, [string]$Destination)
     $sourceDirectory = (Resolve-Path -LiteralPath (Join-Path $SourceDir $Name)).ProviderPath
-    Get-ChildItem -LiteralPath $sourceDirectory -Recurse -File | ForEach-Object {
+    Get-ChildItem -LiteralPath $sourceDirectory -Recurse -Force -File | ForEach-Object {
         $relative = $_.FullName.Substring($sourceDirectory.Length).TrimStart('\', '/')
         $target = Join-Path $Destination $relative
         if ($ForceRuntime -or -not (Test-Path -LiteralPath $target)) {
@@ -176,9 +176,21 @@ if ($Jni) {
         default { throw "unsupported NDK host platform: $($hostTarget[0])" }
     }
     $prebuilt = Join-Path $ndkRoot "toolchains\llvm\prebuilt\$hostTag"
-    $cc = Join-Path $prebuilt 'bin\aarch64-linux-android21-clang.cmd'
-    if (-not (Test-Path $cc)) { $cc = Join-Path $prebuilt 'bin\aarch64-linux-android21-clang' }
-    if (-not (Test-Path $cc)) { throw "Android clang not found under $prebuilt" }
+    # Prefer the real clang binary: Go quotes CC with CommandLineToArgvW rules,
+    # which cmd.exe does not follow, so a .cmd wrapper whose path has spaces is
+    # split at the space. Keep the wrapper as the last resort for minimal NDK
+    # layouts that do not ship the bare clang executable.
+    $cc = Join-Path $prebuilt 'bin\clang.exe'
+    if (-not (Test-Path -LiteralPath $cc)) { $cc = Join-Path $prebuilt 'bin\clang' }
+    $ccExtra = ' --target=aarch64-linux-android21'
+    if (-not (Test-Path -LiteralPath $cc)) {
+        $cc = Join-Path $prebuilt 'bin\aarch64-linux-android21-clang'
+        $ccExtra = ''
+        if (-not (Test-Path -LiteralPath $cc)) {
+            $cc = Join-Path $prebuilt 'bin\aarch64-linux-android21-clang.cmd'
+        }
+    }
+    if (-not (Test-Path -LiteralPath $cc)) { throw "Android clang not found under $prebuilt" }
     $sysroot = Join-Path $prebuilt 'sysroot'
     if (-not (Test-Path -LiteralPath $sysroot -PathType Container)) { throw "Android sysroot not found at $sysroot" }
     $jniDir = Join-Path $AppDir 'android\app\src\main\jniLibs\arm64-v8a'
@@ -192,8 +204,11 @@ if ($Jni) {
         $env:GOOS = 'android'
         $env:GOARCH = 'arm64'
         $env:CGO_ENABLED = '1'
-        $env:CC = '"' + $cc.Replace('\', '/') + '"'
-        $env:CGO_CFLAGS = '-I"' + $sysroot.Replace('\', '/') + '/usr/include"'
+        $env:CC = '"' + $cc.Replace('\', '/') + '"' + $ccExtra
+        # Go's quoted.Split only opens a quoted field when the quote is the
+        # first byte, so the spaced sysroot must be wrapped as "-I<path>";
+        # -I"<path>" would split it into several arguments.
+        $env:CGO_CFLAGS = '"-I' + $sysroot.Replace('\', '/') + '/usr/include"'
         Push-Location -LiteralPath $SourceDir
         try {
             go build -buildmode=c-shared -trimpath -ldflags '-s -w' -o $buildSo .

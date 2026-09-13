@@ -281,8 +281,10 @@
             try {
                 const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(current.id)}&tab=${encodeURIComponent(tab)}&source=${encodeURIComponent(source)}&cmd=${encodeURIComponent(cmd)}`);
                 if (generation !== chapterGeneration) return;
-                const html = decodeBase64Maybe(String(payload.data?.images || ""));
-                const images = extractImages(html);
+                const rawImages = payload.data?.images;
+                const images = Array.isArray(rawImages)
+                    ? rawImages.map(value => String(value || "").trim()).filter(Boolean)
+                    : extractImages(decodeBase64Maybe(String(rawImages ?? payload.data?.content ?? "")));
                 if (!images.length) throw new Error("没有获取到漫画图片");
                 imageListEl.innerHTML = "";
                 images.forEach((src, index) => {

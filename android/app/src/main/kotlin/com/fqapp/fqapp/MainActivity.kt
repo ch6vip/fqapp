@@ -9,6 +9,11 @@ import java.util.concurrent.atomic.AtomicInteger
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "fqapp/backend"
+
+        // 每次启动尝试的自增代号，进程级共享：Activity 重建后新实例继续用
+        // 同一计数器，滞留的旧轮询线程才能识别自己已过期，避免把新一次
+        // 启动的后端误杀掉。
+        private val startAttempts = AtomicInteger(0)
     }
 
     private lateinit var native: BackendNativeApi
@@ -16,10 +21,6 @@ class MainActivity : FlutterActivity() {
     //JNI 调用可能阻塞（如 Go 运行时冷启动、等待在途请求排空的 Shutdown），
     // 统统丢到线程池；stop/status 与 start 的轮询可并发，故不用单线程池。
     private val executor by lazy { Executors.newCachedThreadPool() }
-
-    // 每次启动尝试的自增代号：Dart 侧超时重试后，滞留的旧轮询线程靠它
-    // 识别自己已过期，避免把新一次启动的后端误杀掉。
-    private val startAttempts = AtomicInteger(0)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -63,8 +64,9 @@ class MainActivity : FlutterActivity() {
                                 Thread.sleep(200)
                                 st = native.status()
                             }
-                            if (st == "starting" && attempt == startAttempts.get()) {
-                                // 只有仍是最新的尝试才有权停止后端。
+                            // CAS 认领停止权：若期间已有更新的启动尝试，计数器
+                            // 已被抬高，这里必然失败，旧线程就不会误杀新后端。
+                            if (st == "starting" && startAttempts.compareAndSet(attempt, attempt + 1)) {
                                 native.stopBackend()
                                 st = "failed: JNI startup timeout"
                             }
@@ -103,5 +105,12 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onDestroy() {
+        // Activity 重建时结束本实例的线程池：旧轮询线程随即被中断，不会再用
+        // 陈旧的实例状态调用 JNI 去干涉新实例的后端启动。
+        executor.shutdownNow()
+        super.onDestroy()
     }
 }

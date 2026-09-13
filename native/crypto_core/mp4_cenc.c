@@ -389,6 +389,45 @@ static sp_status parse_encrypted_entry(parse_context *context, const mp4_box *en
     return SP_OK;
 }
 
+/* A clear sample entry must not carry residual CENC protection metadata.
+ * Child boxes follow a media-kind-specific fixed prefix; probe the standard
+ * visual and audio prefixes and reject a fully consistent child list that
+ * contains a protection scheme box. */
+static sp_status check_clear_entry(parse_context *context, const mp4_box *entry) {
+    static const size_t prefixes[] = {78, 44, 28};
+    size_t i;
+    for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+        size_t position;
+        int complete = 1;
+        int has_sinf = 0;
+        if (prefixes[i] > entry->end - entry->payload) continue;
+        position = entry->payload + prefixes[i];
+        while (position < entry->end) {
+            uint64_t size;
+            size_t header = 8;
+            if (entry->end - position < 8) { complete = 0; break; }
+            size = read_u32(context->data + position);
+            if (size == 1) {
+                if (entry->end - position < 16) { complete = 0; break; }
+                header = 16;
+                size = read_u64(context->data + position + 8);
+            } else if (size == 0) {
+                size = entry->end - position;
+            }
+            if (size < header || size > entry->end - position) { complete = 0; break; }
+            if (read_u32(context->data + position + 4) == FOURCC('s', 'i', 'n', 'f')) {
+                has_sinf = 1;
+            }
+            position += (size_t)size;
+        }
+        if (complete && has_sinf) {
+            return box_error(context, entry, SP_ERR_FORMAT,
+                             "clear sample entry carries protection scheme information");
+        }
+    }
+    return SP_OK;
+}
+
 static sp_status parse_stsd(parse_context *context, const mp4_box *box,
                             protection_info *protection) {
     uint8_t version;
@@ -415,6 +454,8 @@ static sp_status parse_stsd(parse_context *context, const mp4_box *box,
                                  "multiple descriptions on an encrypted track");
             }
             TRY(parse_encrypted_entry(context, &entry, protection));
+        } else {
+            TRY(check_clear_entry(context, &entry));
         }
     }
     if (position != box->end) {
@@ -826,6 +867,12 @@ static sp_status parse_stbl(parse_context *context, const mp4_box *stbl,
         if (tables.senc.present) {
             return box_error(context, &tables.senc, SP_ERR_FORMAT,
                              "encryption records exist without a protected sample entry");
+        }
+        if (tables.saiz.present || tables.saio.present) {
+            return box_error(context,
+                             tables.saiz.present ? &tables.saiz : &tables.saio,
+                             SP_ERR_FORMAT,
+                             "auxiliary encryption tables exist without a protected sample entry");
         }
     }
     TRY(parse_table_view(context, &tables, &view));

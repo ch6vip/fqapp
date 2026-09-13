@@ -45,13 +45,15 @@ function locate(fixture, type, index = 0) {
   return entry;
 }
 
-function reject(name, options, change) {
+function reject(name, options, change, expected) {
   const fixture = makeFixture(options);
   let damaged = Buffer.from(fixture.encrypted);
   damaged = change(damaged, fixture) || damaged;
   const input = path.join(artifacts, `${name}.invalid.mp4`);
   fs.writeFileSync(input, damaged);
-  assert.match(run(['reject', input]), /^REJECT -\d+ /);
+  const output = run(['reject', input]);
+  assert.match(output, /^REJECT -\d+ /);
+  if (expected) assert.match(output, expected);
 }
 
 test('progressive CENC whole samples with 8-byte IVs match independent plaintext', () => {
@@ -193,7 +195,7 @@ const invalidCases = [
   }],
   ['invalid IV length is rejected', {}, (data, fixture) => {
     data[locate(fixture, 'tenc').payload + 7] = 12;
-  }],
+  }, /only per-sample 8- or 16-byte IVs/],
   ['CBCS encryption is unsupported', {}, (data, fixture) => {
     data.write('cbcs', locate(fixture, 'schm').payload + 4, 4, 'latin1');
   }],
@@ -288,8 +290,8 @@ const invalidCases = [
   }],
 ];
 
-for (const [index, [name, options, change]] of invalidCases.entries()) {
-  test(`rejects ${name}`, () => reject(`invalid-${index}`, options, change));
+for (const [index, [name, options, change, expected]] of invalidCases.entries()) {
+  test(`rejects ${name}`, () => reject(`invalid-${index}`, options, change, expected));
 }
 
 test('4000 deterministic malformed and truncated mutations preserve stream ownership and memory safety', () => {

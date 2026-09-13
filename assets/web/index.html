@@ -369,8 +369,9 @@
 
         const sources = ["番茄"];
         const fanqieTabs = ["小说", "漫画", "听书", "短剧"];
+        const searchTabTypes = { "小说": 3, "漫画": 8, "听书": 2, "短剧": 11 };
         const defaultTabs = ["小说"];
-        const pageSizeMap = { "番茄": 9 };
+        const pageSizeMap = { "番茄": 10 };
 
         const state = { source: "番茄", tab: "小说", query: "", page: 0, hasMore: false, loading: false };
         let searchGeneration = 0;
@@ -516,23 +517,32 @@
             resultsEl.replaceChildren(hint);
         }
 
-        function extractItemsBySource(source, tab, payload) {
+        function extractItemsBySource(source, tab, payload, tabType) {
             const list = [];
             if (source === "番茄") {
-                const tabs = payload?.data?.search_tabs || [];
-                const target = tabs.find(item => item.title === (tab === "小说" ? "书籍" : tab));
+                const tabs = payload?.search_tabs || payload?.data?.search_tabs || [];
+                const target = (tabType == null ? null : tabs.find(item => Number(item?.tab_type) === Number(tabType)))
+                    || tabs.find(item => item.title === (tab === "小说" ? "书籍" : tab));
                 if (!target) return [];
                 (target.data || []).forEach(item => {
                     if (tab === "短剧") {
-                        const detail = item?.video_data?.[0]?.video_detail || {};
-                        list.push({ title: detail.series_title, author: item?.video_data?.[0]?.copyright || "未知作者", desc: detail.series_intro || "", cover: detail.series_cover || "", tags: detail.role ? detail.role.split(",") : [], id: item.book_id, source, tab });
+                        const video = item?.video_data?.[0];
+                        if (!video) return;
+                        const detail = video.video_detail || {};
+                        const id = String(video.series_id || video.pseries_id || "").trim();
+                        if (!id) return;
+                        list.push({ title: detail.series_title || video.title, author: video.copyright || "未知作者", desc: detail.series_intro || "", cover: detail.series_cover || video.cover || "", tags: detail.role ? detail.role.split(",") : [], id, source, tab });
                         return;
                     }
-                    const book = item?.book_data?.[0] || {};
-                    list.push({ title: book.book_name, author: book.author || "未知作者", desc: book.abstract || "", cover: book.thumb_url || "", tags: book.pure_category_tags ? book.pure_category_tags.split(",") : [], id: book.book_id, source, tab });
+                    const book = item?.book_data?.[0];
+                    if (!book) return;
+                    const id = String(book.book_id || "").trim();
+                    if (!id) return;
+                    list.push({ title: book.book_name, author: book.author || "未知作者", desc: book.abstract || "", cover: book.thumb_url || "", tags: book.pure_category_tags ? book.pure_category_tags.split(",") : [], id, source, tab });
                 });
                 return list;
             }
+            return list;
         }
 
         function renderResults(items, append) {
@@ -669,20 +679,24 @@
             state.loading = true;
             statusBar.textContent = "正在加载…";
             try {
-                const cacheKey = `${source}:${tab}:${page}:${query}`;
+                const tabType = source === "番茄" ? (searchTabTypes[tab] ?? null) : null;
+                const pageSize = pageSizeMap[source] || 10;
+                const cacheKey = `${source}:${tab}:${pageSize}:${page}:${query}`;
                 let payload = readCache("search", cacheKey);
                 if (!payload) {
-                    const response = await fetch(`/api/search?source=${encodeURIComponent(source)}&page=${page}&query=${encodeURIComponent(query)}&tab=${encodeURIComponent(tab)}`);
+                    const response = tabType == null
+                        ? await fetch(`/api/search?source=${encodeURIComponent(source)}&page=${page}&query=${encodeURIComponent(query)}&tab=${encodeURIComponent(tab)}`)
+                        : await fetch(`/api/v1/search?query=${encodeURIComponent(query)}&tab_type=${tabType}&count=${pageSize}&offset=${(page - 1) * pageSize}&page=${page}`);
                     payload = await response.json();
                     if (generation !== searchGeneration) return;
                     if (!response.ok || (payload.code && payload.code !== 200)) throw new Error(payload.message || "搜索失败");
                     writeCache("search", cacheKey, payload);
                 }
                 if (generation !== searchGeneration) return;
-                const items = extractItemsBySource(source, tab, payload);
+                const items = extractItemsBySource(source, tab, payload, tabType);
                 renderResults(items, append);
                 state.page = page;
-                state.hasMore = items.length >= (pageSizeMap[source] || 10);
+                state.hasMore = items.length >= pageSize;
                 statusBar.textContent = state.hasMore ? "" : "没有更多内容了";
             } catch (error) {
                 if (generation !== searchGeneration) return;

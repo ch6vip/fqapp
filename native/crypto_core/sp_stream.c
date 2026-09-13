@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define SP_READ_BYTES (64u * 1024u)
+#define SP_MAX_SCAN_BYTES (4u * 1024u * 1024u)
 #define SP_MAX_TOP_BOXES 4096u
 
 typedef struct {
@@ -108,9 +109,16 @@ sp_stream *sp_stream_open(const sp_io *io, const uint8_t key[16], sp_error *erro
     size_t media_count = 0;
     unsigned box_count = 0;
     uint64_t position = 0;
+    uint64_t scanned_bytes = 0;
+    uint8_t *scan = malloc(SP_READ_BYTES);
+    if (scan == NULL) {
+        sp_error_set(error, SP_ERR_MEMORY, "Cannot allocate MP4 header window");
+        goto fail;
+    }
     while (position < stream->size) {
         uint8_t header[16];
         size_t header_length = 8;
+        int payload_read = 0;
         if (++box_count > SP_MAX_TOP_BOXES) {
             sp_error_set(error, SP_ERR_UNSUPPORTED, "Too many MP4 top-level boxes");
             goto fail;
@@ -151,6 +159,7 @@ sp_stream *sp_stream_open(const sp_io *io, const uint8_t key[16], sp_error *erro
             memcpy(stream->moov, header, header_length);
             if (read_exact(stream, position + header_length, stream->moov + header_length,
                            stream->moov_length - header_length, error) != SP_OK) goto fail;
+            payload_read = 1;
         } else if (memcmp(header + 4, "mdat", 4) == 0) {
             media[media_count].start = position + header_length;
             media[media_count].end = position + box_length;
@@ -164,6 +173,17 @@ sp_stream *sp_stream_open(const sp_io *io, const uint8_t key[16], sp_error *erro
                 }
             }
             stream->pssh_types[stream->pssh_count++] = position + 4;
+        }
+        /* Consume short payloads of boxes we do not otherwise read, keeping
+         * the byte stream contiguous for the next header. A file full of
+         * short boxes must not issue one HTTP range request per box. mdat
+         * payloads are still skipped so open never downloads movie data. */
+        if (!payload_read && memcmp(header + 4, "mdat", 4) != 0 &&
+            box_length - header_length <= SP_READ_BYTES &&
+            scanned_bytes + (box_length - header_length) <= SP_MAX_SCAN_BYTES) {
+            if (read_exact(stream, position + header_length, scan,
+                           (size_t)(box_length - header_length), error) != SP_OK) goto fail;
+            scanned_bytes += box_length - header_length;
         }
         position += box_length;
     }
@@ -186,10 +206,12 @@ sp_stream *sp_stream_open(const sp_io *io, const uint8_t key[16], sp_error *erro
         }
     }
     free(media);
+    free(scan);
     return stream;
 
 fail:
     free(media);
+    free(scan);
     destroy_stream(stream, 0);
     return NULL;
 }

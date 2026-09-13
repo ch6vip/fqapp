@@ -281,6 +281,7 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
             val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             val target = File(directory, "$hash.font")
             if (!target.exists()) check(temporary.renameTo(target)) { "无法保存字体文件" }
+            pruneImportedFonts(directory, target)
             return mapOf("path" to target.absolutePath, "name" to name)
         } finally {
             temporary.delete()
@@ -292,7 +293,19 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
         pendingFont = null
     }
 
+    // 导入字体按内容寻址，历史文件不会自动消失；仅保留最近导入的少量
+    // 字体，删除更旧的 .font 文件，避免 app 私有存储随导入次数无限增长。
+    private fun pruneImportedFonts(directory: File, keep: File) {
+        val files = directory.listFiles()?.filter { it.isFile && it.name.endsWith(".font") } ?: return
+        files.asSequence()
+            .filter { it != keep }
+            .sortedByDescending { it.lastModified() }
+            .drop(MAX_RETAINED_FONTS - 1)
+            .forEach { it.delete() }
+    }
+
     companion object {
         private const val FONT_REQUEST = 0x4651
+        private const val MAX_RETAINED_FONTS = 4
     }
 }

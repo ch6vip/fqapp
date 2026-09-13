@@ -95,7 +95,13 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         activity = null
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
-        players.keys.toList().forEach { disposePlayer(it) }
+        players.keys.toList().forEach { id ->
+            try {
+                disposePlayer(id)
+            } catch (error: Throwable) {
+                android.util.Log.w("NativePlayerPlugin", "dispose failed for player $id", error)
+            }
+        }
         handler.removeCallbacksAndMessages(null)
         pendingPlayerIds.clear()
         eventSink = null
@@ -235,12 +241,22 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         } catch (error: Throwable) {
             players.remove(playerId)
             if (output != null) {
-                output.release()
+                try {
+                    output.release()
+                } catch (releaseError: Throwable) {
+                    android.util.Log.w("NativePlayerPlugin", "output cleanup failed", releaseError)
+                }
             } else {
                 try {
                     player?.release()
+                } catch (releaseError: Throwable) {
+                    android.util.Log.w("NativePlayerPlugin", "player cleanup failed", releaseError)
                 } finally {
-                    producer?.release()
+                    try {
+                        producer?.release()
+                    } catch (releaseError: Throwable) {
+                        android.util.Log.w("NativePlayerPlugin", "producer cleanup failed", releaseError)
+                    }
                 }
             }
             sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
@@ -364,7 +380,12 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         pendingPlayerIds.remove(id)
         val instance = players.remove(id) ?: return
         instance.positionUpdater?.let(handler::removeCallbacks)
-        instance.videoOutput.release()
+        // A throwing release must not abort the remaining teardown steps.
+        try {
+            instance.videoOutput.release()
+        } catch (error: Throwable) {
+            android.util.Log.w("NativePlayerPlugin", "release failed for player $id", error)
+        }
     }
 
     internal class CryptoDataSource(

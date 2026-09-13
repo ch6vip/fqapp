@@ -509,6 +509,35 @@
             return payload;
         }
 
+        async function fetchPlaybackURL(itemId, requestedToneId) {
+            if (!bookId) return "";
+            let payload;
+            try {
+                const response = await fetch(`/api/v1/audio/play?book_id=${encodeURIComponent(bookId)}&item_ids=${encodeURIComponent(itemId)}&tone_id=${encodeURIComponent(requestedToneId)}`, { cache: "no-store" });
+                payload = JSON.parse(await response.text());
+                if (!response.ok) return "";
+            } catch (_) {
+                return "";
+            }
+            const rows = payload?.video_info?.data?.video_model_datas;
+            if (!Array.isArray(rows)) return "";
+            const row = rows.find(entry => String(entry?.item_id || "") === String(itemId)) || rows[0];
+            if (!row || (row.item_status != null && row.item_status !== 0)) return "";
+            let model = row.video_model;
+            if (typeof model === "string") {
+                try { model = JSON.parse(model); } catch (_) { return ""; }
+            }
+            if (!model || model.media_type !== "audio") return "";
+            const streams = model.video_list;
+            if (!Array.isArray(streams)) return "";
+            for (const stream of streams) {
+                if (stream?.encrypt_info?.encrypt === true) continue;
+                const url = stream?.main_url || stream?.backup_url;
+                if (url) return url;
+            }
+            return "";
+        }
+
         function renderSpeed() {
             const speed = Number(localStorage.getItem(SPEED_KEY) || "1");
             audio.playbackRate = speed;
@@ -613,7 +642,7 @@
             try {
                 const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(current.id)}&tab=${encodeURIComponent("听书")}&tone_id=${encodeURIComponent(requestedToneId)}&source=${encodeURIComponent(source)}`);
                 if (generation !== chapterGeneration) return;
-                const url = payload.data?.audio_url;
+                const url = payload.data?.audio_url || await fetchPlaybackURL(current.id, requestedToneId);
                 if (!url) throw new Error("未获取到音频地址");
                 const saved = Number(localStorage.getItem(progressKey(current.id)) || "0");
                 metadataHandler = () => {

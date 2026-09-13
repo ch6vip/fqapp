@@ -185,8 +185,20 @@ if [ "$BUILD_JNI" -eq 1 ]; then
     *) echo "错误：不支持当前 NDK 主机平台。" >&2; exit 1 ;;
   esac
   TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG/bin"
-  CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang"
-  if [ ! -f "$CC_PATH" ]; then CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang.cmd"; fi
+  # Go execs CC directly, but the aarch64-...-clang.cmd wrapper is a batch file
+  # that cmd.exe mis-parses when Go quotes an NDK path containing spaces. Use
+  # the real clang binary and pass the --target the wrapper would have added.
+  case "$HOST_TAG" in
+    windows-*) CC_PATH="$TOOLCHAIN/clang.exe" ;;
+    *)         CC_PATH="$TOOLCHAIN/clang" ;;
+  esac
+  CC_TARGET=""
+  if [ -f "$CC_PATH" ]; then
+    CC_TARGET=" --target=aarch64-linux-android21"
+  else
+    CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang"
+    if [ ! -f "$CC_PATH" ]; then CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang.cmd"; fi
+  fi
   if [ ! -f "$CC_PATH" ]; then
     echo "错误：在 $TOOLCHAIN 下找不到 aarch64 clang。" >&2
     exit 1
@@ -217,8 +229,8 @@ if [ "$BUILD_JNI" -eq 1 ]; then
   echo "    sysroot: $SYSROOT_WIN"
 
   ( cd "$LEGACY_DIR" && \
-    CC="\"$CC_WIN\"" \
-    CGO_CFLAGS="-I\"$SYSROOT_WIN/usr/include\"" \
+    CC="\"$CC_WIN\"$CC_TARGET" \
+    CGO_CFLAGS="\"-I$SYSROOT_WIN/usr/include\"" \
     GOOS=android GOARCH=arm64 CGO_ENABLED=1 \
     go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o "$GO_SO" . )
 

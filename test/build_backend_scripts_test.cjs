@@ -43,6 +43,8 @@ function fixture(t, options = {}) {
   const prebuilt = path.join(ndk, 'toolchains', 'llvm', 'prebuilt', hostTag);
   const compiler = path.join(prebuilt, 'bin', `aarch64-linux-android21-clang${hostOS === 'windows' ? '.cmd' : ''}`);
   write(compiler, 'fixture compiler');
+  const realClang = path.join(prebuilt, 'bin', hostOS === 'windows' ? 'clang.exe' : 'clang');
+  if (options.realClang) write(realClang, 'fixture real clang');
   fs.mkdirSync(path.join(prebuilt, 'sysroot', 'usr', 'include'), { recursive: true });
   for (const name of ['build_backend.ps1', 'build_backend.sh']) {
     write(path.join(app, 'scripts', name), fs.readFileSync(path.join(root, 'scripts', name), 'utf8').replaceAll('\r\n', '\n'));
@@ -151,7 +153,7 @@ function fixture(t, options = {}) {
     assert.deepEqual(fs.readdirSync(path.dirname(binary)), ['']);
     assert.deepEqual(fs.readdirSync(path.dirname(library)), ['liblegacy.so']);
   }
-  return { app, source, hostOS, hostArch, hostTag, compiler, prebuilt, binary, library, runPowershell, runBash, checkRuntime, checkNoBuildTemps };
+  return { app, source, hostOS, hostArch, hostTag, compiler, realClang, prebuilt, binary, library, runPowershell, runBash, checkRuntime, checkNoBuildTemps };
 }
 
 for (const [shell, available, runName] of [['PowerShell', hasPowershell, 'runPowershell'], ['Bash', hasBash, 'runBash']]) {
@@ -165,7 +167,9 @@ for (const [shell, available, runName] of [['PowerShell', hasPowershell, 'runPow
     ]);
     const jni = result.builds[1];
     assert.equal(jni.CC, `"${f.compiler.replaceAll('\\', '/')}"`);
-    assert.equal(jni.CGO_CFLAGS, `-I"${f.prebuilt.replaceAll('\\', '/')}/sysroot/usr/include"`);
+    // Go's quoted.Split opens a quoted field only at the first byte, so the
+    // spaced sysroot must be wrapped as "-I<path>", not -I"<path>".
+    assert.equal(jni.CGO_CFLAGS, `"-I${f.prebuilt.replaceAll('\\', '/')}/sysroot/usr/include"`);
     assert.equal(fs.readFileSync(f.binary, 'utf8'), 'built standalone');
     assert.equal(fs.readFileSync(f.library, 'utf8'), 'built jni');
     f.checkRuntime();
@@ -199,6 +203,28 @@ test('PowerShell: discovers NDK from escaped SDK local.properties with spaces', 
   const result = f.runPowershell();
   assert.equal(result.state.failure, null);
   assert.equal(result.builds[1].CC, `"${f.compiler.replaceAll('\\', '/')}"`);
+  assert.equal(result.builds[1].CGO_CFLAGS, `"-I${f.prebuilt.replaceAll('\\', '/')}/sysroot/usr/include"`);
+  f.checkNoBuildTemps();
+});
+
+test('PowerShell: prefers the bare NDK clang for a path with spaces', { skip: !hasPowershell }, t => {
+  const f = fixture(t, { realClang: true });
+  const result = f.runPowershell();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  if (result.state) assert.equal(result.state.failure, null);
+  const jni = result.builds[1];
+    assert.equal(jni.CC, `"${f.realClang.replaceAll('\\', '/')}" --target=aarch64-linux-android21`);
+    assert.equal(jni.CGO_CFLAGS, `"-I${f.prebuilt.replaceAll('\\', '/')}/sysroot/usr/include"`);
+  f.checkNoBuildTemps();
+});
+
+test('Bash: prefers the bare NDK clang for a path with spaces', { skip: !hasBash }, t => {
+  const f = fixture(t, { realClang: true });
+  const result = f.runBash();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const jni = result.builds[1];
+    assert.equal(jni.CC, `"${f.realClang.replaceAll('\\', '/')}" --target=aarch64-linux-android21`);
+    assert.equal(jni.CGO_CFLAGS, `"-I${f.prebuilt.replaceAll('\\', '/')}/sysroot/usr/include"`);
   f.checkNoBuildTemps();
 });
 
