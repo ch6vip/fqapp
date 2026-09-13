@@ -445,10 +445,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _onFirstFrame(player, generation);
       _updatePrefetch();
       _syncWatchClock();
-      _progressTimer = Timer.periodic(
-        const Duration(seconds: 2),
-        (_) => unawaited(_persistProgress()),
-      );
+      _progressTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        // A paused episode must not keep re-stamping its history record.
+        if (_playing) unawaited(_persistProgress());
+      });
     } catch (error) {
       if (_current(generation)) {
         _fail(error, generation);

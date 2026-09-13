@@ -694,7 +694,16 @@ class _DetailPageState extends State<DetailPage> {
     final generation = ++_openGeneration;
     setState(() => _opening = true);
     try {
-      final saved = await _readSavedRecord();
+      // Listening progress lives in the audio scope, even when the entry
+      // being browsed is the text edition of the same book.
+      final store = widget.readerStore ?? LibraryStore.instance;
+      Map<String, dynamic>? saved;
+      try {
+        saved = await AudioHistory(store).load(_contentId);
+      } catch (_) {
+        // History is optional. Its absence must not block opening a book.
+        saved = null;
+      }
       if (!mounted || generation != _openGeneration || _allChapters.isEmpty) {
         return;
       }

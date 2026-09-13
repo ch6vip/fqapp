@@ -205,6 +205,40 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('a book resumes listening from the audio-scoped record', (
+    tester,
+  ) async {
+    final observer = _RouteObserver();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [observer],
+        home: DetailPage(
+          item: _book,
+          readerStore: MemoryReaderStore(
+            entry: {
+              'id': 'audio:book',
+              'kind': 'audio',
+              'chapterId': 'second',
+              'episode': 0,
+              'position': 240.0,
+            },
+          ),
+          detailLoader: (id, {String tab = '小说'}) async => {},
+          directoryLoader: (id, {String tab = '小说'}) async => [_chapters],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final context = tester.element(find.byType(DetailPage));
+    await tester.tap(find.byKey(const Key('detail_action_听书')));
+    await tester.idle();
+    final page = (observer.lastRoute! as MaterialPageRoute).builder(context);
+    expect(page, isA<AudioPage>());
+    expect((page as AudioPage).startIndex, 1);
+    // Inspect the navigation result before mounting the audio player.
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final media in [
     (kind: 'audio', tab: '听书', action: '开始收听'),
     (kind: 'manga', tab: '漫画', action: '开始阅读'),

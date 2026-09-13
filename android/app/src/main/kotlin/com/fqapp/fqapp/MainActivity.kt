@@ -3,6 +3,8 @@ package com.fqapp.fqapp
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -10,6 +12,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private lateinit var native: BackendNativeApi
+
+    //JNI 调用可能阻塞（如 Go 运行时冷启动、等待在途请求排空的 Shutdown），
+    // 统统丢到线程池；stop/status 与 start 的轮询可并发，故不用单线程池。
+    private val executor by lazy { Executors.newCachedThreadPool() }
+
+    // 每次启动尝试的自增代号：Dart 侧超时重试后，滞留的旧轮询线程靠它
+    // 识别自己已过期，避免把新一次启动的后端误杀掉。
+    private val startAttempts = AtomicInteger(0)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -41,19 +51,20 @@ class MainActivity : FlutterActivity() {
                     val config = call.argument<String>("config") ?: ""
                     val pool = call.argument<String>("pool") ?: ""
                     val filter = call.argument<String>("filter") ?: ""
-                    // Run on a background thread so the JNI call never blocks
-                    // the platform thread.
-                    Thread {
+                    val attempt = startAttempts.incrementAndGet()
+                    executor.execute {
                         try {
                             native.startBackend(config, pool, filter)
-                            // Poll status until running or failed, up to 15s.
+                            // JNI 冷启动本身可能超过 deadline，轮询从调用返回后
+                            // 重新计时，且至少读一次状态再判定。
+                            var st = native.status()
                             val deadline = System.currentTimeMillis() + 15_000
-                            var st = "starting"
-                            while (System.currentTimeMillis() < deadline && st == "starting") {
+                            while (st == "starting" && System.currentTimeMillis() < deadline) {
+                                Thread.sleep(200)
                                 st = native.status()
-                                if (st == "starting") Thread.sleep(200)
                             }
-                            if (st == "starting") {
+                            if (st == "starting" && attempt == startAttempts.get()) {
+                                // 只有仍是最新的尝试才有权停止后端。
                                 native.stopBackend()
                                 st = "failed: JNI startup timeout"
                             }
@@ -67,21 +78,26 @@ class MainActivity : FlutterActivity() {
                                 )
                             }
                         }
-                    }.start()
-                }
-                "stopBackend" -> {
-                    try {
-                        native.stopBackend()
-                        result.success(null)
-                    } catch (e: Throwable) {
-                        result.error("JNI_STOP_ERROR", e.message ?: e.javaClass.simpleName, null)
                     }
                 }
-                "status" -> {
+                "stopBackend" -> executor.execute {
                     try {
-                        result.success(native.status())
+                        native.stopBackend()
+                        runOnUiThread { result.success(null) }
                     } catch (e: Throwable) {
-                        result.error("JNI_STATUS_ERROR", e.message ?: e.javaClass.simpleName, null)
+                        runOnUiThread {
+                            result.error("JNI_STOP_ERROR", e.message ?: e.javaClass.simpleName, null)
+                        }
+                    }
+                }
+                "status" -> executor.execute {
+                    try {
+                        val st = native.status()
+                        runOnUiThread { result.success(st) }
+                    } catch (e: Throwable) {
+                        runOnUiThread {
+                            result.error("JNI_STATUS_ERROR", e.message ?: e.javaClass.simpleName, null)
+                        }
                     }
                 }
                 else -> result.notImplemented()
