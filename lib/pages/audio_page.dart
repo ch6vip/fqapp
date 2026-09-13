@@ -272,6 +272,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     Duration? position,
     String? toneId,
     bool autoplay = true,
+    bool? completed,
   }) async {
     if (!mounted || index < 0 || index >= widget.chapters.length) return;
     final generation = ++_generation;
@@ -313,7 +314,8 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       final savedDuration = sameChapter
           ? _savedDuration(saved?['duration'])
           : Duration.zero;
-      final wasCompleted = sameChapter && saved?['completed'] == true;
+      final wasCompleted =
+          completed ?? (sameChapter && saved?['completed'] == true);
       final itemId = widget.chapters[index].itemId;
       final source =
           await (widget.sourceLoader?.call(itemId, toneId: _toneId) ??
@@ -720,6 +722,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       position: _player?.position ?? _position,
       toneId: voice.id,
       autoplay: _wantPlay,
+      completed: _completed,
     );
   }
 
@@ -1082,6 +1085,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         position: _player?.position ?? _position,
         toneId: toneId,
         autoplay: _wantPlay,
+        completed: _completed,
       ),
     );
   }
@@ -1166,8 +1170,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   /// Sleep timer: pauses playback when the countdown elapses.
   Future<void> _showSleepTimer() async {
     final palette = HomePalette.of(context);
-    const options = <int?>[null, 15, 30, 60];
-    final selected = await showModalBottomSheet<int?>(
+    // -1 is the explicit 关闭定时 choice; a null result means the sheet was
+    // dismissed and must leave any active timer untouched.
+    const options = <int>[-1, 15, 30, 60];
+    final selected = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
@@ -1177,8 +1183,8 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
             const ListTile(title: Text('定时关闭')),
             for (final minutes in options)
               ListTile(
-                title: Text(minutes == null ? '关闭定时' : '$minutes 分钟后'),
-                trailing: _sleepMinutes == minutes
+                title: Text(minutes == -1 ? '关闭定时' : '$minutes 分钟后'),
+                trailing: (_sleepMinutes ?? -1) == minutes
                     ? const Icon(LucideIcons.check, color: HomePalette.accent)
                     : null,
                 onTap: () => Navigator.pop(context, minutes),
@@ -1188,11 +1194,11 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         ),
       ),
     );
-    if (!mounted) return;
-    _applySleepTimer(selected);
+    if (!mounted || selected == null) return;
+    _applySleepTimer(selected == -1 ? null : selected);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(selected == null ? '已关闭定时' : '将在 $selected 分钟后停止播放'),
+        content: Text(selected == -1 ? '已关闭定时' : '将在 $selected 分钟后停止播放'),
         duration: const Duration(seconds: 2),
       ),
     );

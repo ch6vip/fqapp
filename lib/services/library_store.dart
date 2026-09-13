@@ -38,6 +38,7 @@ class LibraryStore implements ReaderStore {
   late Box<dynamic> _histBox;
   late Box<dynamic> _readTimeBox;
   Future<void> _readTimeWrites = Future<void>.value();
+  Future<void> _historyWrites = Future<void>.value();
 
   /// Hive-backed notifications for retained tabs. Visible pages update after
   /// writes; hidden pages defer their snapshots until the next visit.
@@ -152,7 +153,14 @@ class LibraryStore implements ReaderStore {
   }
 
   @override
-  Future<void> addHistory(Map<String, dynamic> entry) async {
+  Future<void> addHistory(Map<String, dynamic> entry) {
+    // Serialize history mutations so a clear cannot overtake a pending write.
+    final write = _historyWrites.then((_) => _addHistoryInWrite(entry));
+    _historyWrites = write.catchError((Object _) {});
+    return write;
+  }
+
+  Future<void> _addHistoryInWrite(Map<String, dynamic> entry) async {
     final record = _historyRecord(entry);
     if (record == null) return;
     final id = record['id'] as String;
@@ -170,7 +178,9 @@ class LibraryStore implements ReaderStore {
     // we don't prune on every single write).
     if (_histBox.length > 100) {
       // Legacy backups must not make fifty books look like a hundred books.
-      final retained = historySnapshot().take(50).map(_historyIdentity).toSet();
+      final retained = historySnapshot().take(50).map(_historyIdentity).toSet()
+        // Never trim the record this write just inserted, even without a time.
+        ..add(_historyIdentity(record));
       final oldestKeys = <dynamic>[];
       for (final key in _histBox.keys) {
         final record = _historyRecord(_histBox.get(key), id: key.toString());
@@ -205,8 +215,25 @@ class LibraryStore implements ReaderStore {
     }
   }
 
-  Future<void> clearHistory() async {
-    await _histBox.clear();
+  Future<void> clearHistory() {
+    // Enqueue after any pending history write so the clear is durable.
+    final write = _historyWrites.then<void>((_) async {
+      await _histBox.clear();
+    });
+    _historyWrites = write.catchError((Object _) {});
+    return write;
+  }
+
+  /// Removes saved history together with the per-day reading/playback time
+  /// shown on the statistics page.
+  Future<void> clearReadingData() {
+    final write = _historyWrites.then<void>((_) async {
+      await _readTimeWrites;
+      await _histBox.clear();
+      await _readTimeBox.clear();
+    });
+    _historyWrites = write.catchError((Object _) {});
+    return write;
   }
 
   Map<String, Map<String, double>> readTimeSnapshot() {

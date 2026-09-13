@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -298,8 +300,19 @@ class AudioRelatedRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     if (works.isEmpty) return const SizedBox.shrink();
+    final textScaler = MediaQuery.textScalerOf(context);
+    // A horizontal list forces a tight height on its cards, so derive the row
+    // height from the scaled title/label instead of a fixed 76px.
+    final rowHeight = math.max(
+      76.0,
+      textScaler.scale(12.5) * 1.35 * 2 +
+          textScaler.scale(11) * 1.4 +
+          5 +
+          16 +
+          4,
+    );
     return SizedBox(
-      height: 76,
+      height: rowHeight,
       child: ListView.separated(
         key: const Key('audio_related_row'),
         scrollDirection: Axis.horizontal,
@@ -651,6 +664,16 @@ class AudioToneSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final textScaler = MediaQuery.textScalerOf(context);
+    // Tone and read-along cards live in a fixed-height horizontal list; derive
+    // that height from the scaled text instead of a hard-coded 72px.
+    final cardHeight = math.max(
+      72.0,
+      math.max(
+        textScaler.scale(12) * 1.6 + textScaler.scale(11) * 1.6 + 5 + 16,
+        textScaler.scale(12) * 1.35 * 2 + 20 + 4,
+      ),
+    );
     final ordered = [...tones];
     // The selected voice is shown first so the active choice is visible.
     ordered.sort((a, b) {
@@ -694,7 +717,7 @@ class AudioToneSection extends StatelessWidget {
               Expanded(
                 flex: 3,
                 child: SizedBox(
-                  height: 72,
+                  height: cardHeight,
                   child: ListView.separated(
                     key: const Key('audio_tone_list'),
                     scrollDirection: Axis.horizontal,
@@ -792,7 +815,7 @@ class AudioToneSection extends StatelessWidget {
                 onTap: onReadAlong,
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
-                  height: 72,
+                  height: cardHeight,
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: palette.surface,

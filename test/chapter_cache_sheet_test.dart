@@ -132,7 +132,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(requested, ['2', '3']);
     expect(await cache.cachedChapterIds('book'), {'2', '3'});
-    expect(find.textContaining('缓存完成'), findsOneWidget);
+    expect(find.textContaining('插图未更新'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -165,7 +165,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(await cache.cachedChapterIds('downloaded'), {'2', '3'});
       expect(cache.catalogs['downloaded']!.chapters, hasLength(3));
-      expect(find.textContaining('缓存完成'), findsOneWidget);
+      expect(find.textContaining('插图未更新'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );

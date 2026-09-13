@@ -87,7 +87,7 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
           if (!mounted || job != _job) return;
           final fetched = ChapterContent.isStructuredCache(text)
               ? ChapterContent.fromCacheText(text)
-              : ChapterContent.fromPlainText(text, illustrationsChecked: true);
+              : ChapterContent.fromPlainText(text, illustrationsChecked: false);
           if (fetched.withoutLeadingTitle(chapter.title).isEmpty) {
             throw StateError('章节正文为空');
           }

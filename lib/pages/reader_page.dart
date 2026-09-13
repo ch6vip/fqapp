@@ -112,11 +112,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (_paged) {
       if (event.logicalKey == LogicalKeyboardKey.audioVolumeDown) {
         _pauseListenFollow();
+        _stopAutoTurn();
+        unawaited(_stopTtsRead());
         unawaited(_turnPage(1));
         return true;
       }
       if (event.logicalKey == LogicalKeyboardKey.audioVolumeUp) {
         _pauseListenFollow();
+        _stopAutoTurn();
+        unawaited(_stopTtsRead());
         unawaited(_turnPage(-1));
         return true;
       }
@@ -160,6 +164,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!mounted ||
         !_preferences.listeningFollow ||
         _autoTurnTimer != null ||
+        _ttsActive ||
         _controlsVisible ||
         _loading ||
         _error != null) {
@@ -185,6 +190,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   FlutterTts? _tts;
   bool _ttsActive = false;
 
+  /// Bumped whenever a start begins or is stopped. An in-flight startup that
+  /// resumes after a platform await checks it, so it can neither install
+  /// handlers nor setState/speak after the reader moved on or was disposed.
+  int _ttsGeneration = 0;
+
   Future<void> _toggleTtsRead() async {
     if (_ttsActive) {
       await _stopTtsRead();
@@ -192,19 +202,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
     _controlsVisible = false;
     _stopAutoTurn();
+    final generation = ++_ttsGeneration;
     final tts = _tts ??= FlutterTts();
     try {
       await tts.setLanguage('zh-CN');
       await tts.setSpeechRate(0.5);
       await tts.awaitSpeakCompletion(true);
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(content: Text('当前设备没有可用的中文语音引擎')),
-        );
+      if (mounted && generation == _ttsGeneration) {
+        ScaffoldMessenger.maybeOf(
+          context,
+        )?.showSnackBar(const SnackBar(content: Text('当前设备没有可用的中文语音引擎')));
       }
       return;
     }
+    if (!mounted || generation != _ttsGeneration) return;
     tts.setCompletionHandler(() {
       if (!_ttsActive || !mounted) return;
       // The page finished narrating: flip forward and keep going. Loading
@@ -235,7 +247,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       await _stopTtsRead();
       return;
     }
-    final text = page.fragments.map((f) => f.text).join('\n');
+    final text = page.fragments
+        .where((f) => !f.block.isImage)
+        .map((f) => f.text)
+        .join('\n');
     if (text.trim().isEmpty) {
       // An illustration-only page has nothing to narrate: keep the chain
       // moving instead of stalling until the next completion event.
@@ -255,6 +270,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   Future<void> _stopTtsRead() async {
     if (!_ttsActive && _tts == null) return;
+    ++_ttsGeneration;
     _ttsActive = false;
     try {
       await _tts?.stop();
@@ -279,6 +295,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       );
     }
   }
+
   double? _chapterSeekValue;
   int _loadGeneration = 0;
   // Legado-style reading time: deltas are settled at scroll stops, chapter
@@ -320,7 +337,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   Map<String, dynamic>? _savedPosition;
   bool _needsRestore = true;
   bool _requestedStartAtEnd = false;
-
 
   Chapter get _chapter => widget.chapters[_index];
   ReaderStore get _readerStore => widget.readerStore ?? LibraryStore.instance;
@@ -465,6 +481,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     HardwareKeyboard.instance.removeHandler(_handleVolumeKey);
     ListeningSession.instance.removeListener(_onListeningTick);
     _autoTurnTimer?.cancel();
+    ++_ttsGeneration;
     unawaited(_tts?.stop());
     WidgetsBinding.instance.removeObserver(this);
     ++_deviceGeneration;
@@ -1560,10 +1577,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   /// 章末页: shown as the trailing page of a finished chapter — the chapter's
-  /// comment entry (the busiest paragraph) plus the next-chapter action, the
-  /// official 章末章评 landing without its circle/ad modules.
+  /// comment entry (the ideas response's end bucket) plus the next-chapter
+  /// action, the official 章末章评 landing without its circle/ad modules.
   Widget _buildChapterEndPage(ReaderThemePreset preset) {
-    final hottest = _hottestParagraph();
+    final endBucket = _chapterEndParagraph();
     final commentCount = _ideas.total;
     return ColoredBox(
       color: preset.backgroundColor,
@@ -1576,11 +1593,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               style: TextStyle(color: preset.mutedTextColor, fontSize: 13),
             ),
             const SizedBox(height: 20),
-            if (commentCount > 0 && hottest != null)
+            if (commentCount > 0 && endBucket != null)
               FilledButton.tonal(
                 key: const ValueKey('reader-chapter-comments'),
                 onPressed: () =>
-                    unawaited(_showIdeas(focusParaIndex: hottest)),
+                    unawaited(_showIdeas(focusParaIndex: endBucket)),
                 child: Text('查看本章评论 · $commentCount'),
               ),
             const SizedBox(height: 12),
@@ -1608,14 +1625,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     ),
   );
 
-  int? _hottestParagraph() {
-    ParagraphIdeas? best;
-    for (final paragraph in _ideas.paragraphs) {
-      if (!paragraph.showsBubble) continue;
-      if (best == null || paragraph.count > best.count) best = paragraph;
-    }
-    return best?.paraIndex;
-  }
+  /// The chapter-end aggregate bucket: the ideas response's greatest paragraph
+  /// key (e.g. para 10000), which the official client opens for 章末章评.
+  int? _chapterEndParagraph() =>
+      _ideas.paragraphs.isEmpty ? null : _ideas.paragraphs.last.paraIndex;
 
   void _hideControlsOnDrag() {
     _stopAutoTurn();
@@ -1696,7 +1709,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                     ),
                     onPressed: () => unawaited(
-                      _showIdeas(focusParaIndex: _hottestParagraph()),
+                      _showIdeas(focusParaIndex: _chapterEndParagraph()),
                     ),
                     icon: const Icon(Icons.forum_outlined, size: 18),
                     label: Text(

@@ -254,6 +254,8 @@ class RelatedWork {
     if (id.isEmpty && title.isEmpty) return null;
     final cover = _string(raw['thumb_url']).isNotEmpty
         ? _string(raw['thumb_url'])
+        : _string(raw['cover']).isNotEmpty
+        ? _string(raw['cover'])
         : _string(raw['cover_url']).isNotEmpty
         ? _string(raw['cover_url'])
         : _string(raw['poster_url']);
@@ -295,7 +297,7 @@ String _string(dynamic value) => value == null ? '' : '$value'.trim();
 
 int _int(dynamic value) {
   if (value is int) return value;
-  if (value is num) return value.toInt();
+  if (value is num) return value.isFinite ? value.toInt() : 0;
   if (value is String) return int.tryParse(value.trim()) ?? 0;
   return 0;
 }

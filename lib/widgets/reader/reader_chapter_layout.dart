@@ -228,8 +228,7 @@ class ReaderChapterLayout {
           : paragraphBubbles[paraIndex];
       final bubbleVariant = paraIndex == null
           ? ParagraphBubbleVariant.plain
-          : paragraphBubbleVariants[paraIndex] ??
-          ParagraphBubbleVariant.plain;
+          : paragraphBubbleVariants[paraIndex] ?? ParagraphBubbleVariant.plain;
       final bubble = bubbleCount == null || bubbleBuilder == null
           ? null
           : bubbleBuilder(paraIndex!, bubbleCount, bubbleVariant);
@@ -462,9 +461,13 @@ class ReaderChapterLayout {
           // overlap.
           if (metrics != null)
             PlaceholderDimensions(
+              // RenderParagraph wraps the WidgetSpan child in an auto-scaling
+              // box (the same `scale` the indent placeholder already uses), so
+              // the measured box must be scaled too or the last line is
+              // measured short and the bubble is clipped.
               size: Size(
-                metrics.width + ReaderBubbleMetrics.gap,
-                metrics.height,
+                (metrics.width + ReaderBubbleMetrics.gap) * scale,
+                metrics.height * scale,
               ),
               alignment: PlaceholderAlignment.middle,
             ),

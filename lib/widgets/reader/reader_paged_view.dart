@@ -57,8 +57,7 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
   bool _edgeNotified = false;
   double _overscroll = 0;
 
-  double get _viewportWidth =>
-      _controller.position.viewportDimension > 0
+  double get _viewportWidth => _controller.position.viewportDimension > 0
       ? _controller.position.viewportDimension
       : 1;
 
@@ -90,6 +89,20 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
     _controller.dispose();
     super.dispose();
   }
+
+  /// Cancels the deferred chapter advance armed when a boundary page lands.
+  ///
+  /// Any touch on the 章末/章首 page counts as interacting with it, so the
+  /// pending auto-advance is dropped instead of firing 600 ms later — e.g. the
+  /// 查看本章评论 button would otherwise swap chapters while its sheet is open.
+  void cancelBoundaryLanding() => _boundaryLandingTimer?.cancel();
+
+  /// Wraps a boundary page so its first touch cancels the deferred advance.
+  Widget _boundaryInteractionGuard(Widget child) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerDown: (_) => cancelBoundaryLanding(),
+    child: child,
+  );
 
   Future<void> turnPage(int direction) async {
     if (_turning || _boundaryPending || !_controller.hasClients) return;
@@ -196,14 +209,17 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
             // deferred briefly instead — the buttons work during the window,
             // and swiping straight through still advances.
             _boundaryLandingTimer?.cancel();
-            _boundaryLandingTimer = Timer(const Duration(milliseconds: 600), () {
-              if (!mounted || !_controller.hasClients) return;
-              // The user flipped away during the window: leave them be.
-              // (Compare rounded: the settle may stop a hair short.)
-              final current = _controller.page ?? index.toDouble();
-              if (current.round() != index) return;
-              unawaited(_requestBoundary(page < 0 ? -1 : 1));
-            });
+            _boundaryLandingTimer = Timer(
+              const Duration(milliseconds: 600),
+              () {
+                if (!mounted || !_controller.hasClients) return;
+                // The user flipped away during the window: leave them be.
+                // (Compare rounded: the settle may stop a hair short.)
+                final current = _controller.page ?? index.toDouble();
+                if (current.round() != index) return;
+                unawaited(_requestBoundary(page < 0 ? -1 : 1));
+              },
+            );
             return;
           }
           _boundaryLandingTimer?.cancel();
@@ -212,12 +228,26 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
         itemBuilder: (context, index) {
           final page = index - _leading;
           if (page < 0) {
-            return widget.startPage ??
-                Center(child: Text('上一章', style: TextStyle(color: widget.backgroundColor)));
+            return _boundaryInteractionGuard(
+              widget.startPage ??
+                  Center(
+                    child: Text(
+                      '上一章',
+                      style: TextStyle(color: widget.backgroundColor),
+                    ),
+                  ),
+            );
           }
           if (page >= widget.layout.pages.length) {
-            return widget.endPage ??
-                Center(child: Text('下一章', style: TextStyle(color: widget.backgroundColor)));
+            return _boundaryInteractionGuard(
+              widget.endPage ??
+                  Center(
+                    child: Text(
+                      '下一章',
+                      style: TextStyle(color: widget.backgroundColor),
+                    ),
+                  ),
+            );
           }
           Widget content = ReaderPageContent(
             key: ValueKey('reader-text-page-$page'),
@@ -244,7 +274,10 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
                     }
                   }
                 }
-                return Transform.translate(offset: Offset(shift, 0), child: child);
+                return Transform.translate(
+                  offset: Offset(shift, 0),
+                  child: child,
+                );
               },
               child: ColoredBox(color: widget.backgroundColor, child: content),
             );

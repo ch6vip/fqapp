@@ -222,7 +222,7 @@ class SettingsPage extends StatelessWidget {
       context,
       '清空历史',
       '确定清空全部阅读/播放历史吗？',
-      LibraryStore.instance.clearHistory,
+      LibraryStore.instance.clearReadingData,
     ),
   );
 

@@ -98,6 +98,7 @@ class ChapterCacheStore implements ChapterCache {
     HiveInterface? hive,
     this.maxEntries = 500,
     this.maxBytes = 80 * 1024 * 1024,
+    this.catalogTtl = const Duration(days: 30),
   }) : _hive = hive ?? Hive;
 
   static final ChapterCacheStore instance = ChapterCacheStore();
@@ -106,6 +107,9 @@ class ChapterCacheStore implements ChapterCache {
   final HiveInterface _hive;
   final int maxEntries;
   final int maxBytes;
+
+  /// Detached (catalogue-only) records untouched for this long are dropped.
+  final Duration catalogTtl;
   final ValueNotifier<int> changes = ValueNotifier(0);
   Future<Box<dynamic>>? _opening;
   Future<void> _writes = Future<void>.value();
@@ -218,7 +222,10 @@ class ChapterCacheStore implements ChapterCache {
   @override
   Future<void> saveBook(CachedBook book) => _serialize((box) async {
     if (book.id.isEmpty || book.chapters.isEmpty) return;
-    await box.put('book:${book.id}', book.toMap());
+    final record = book.toMap();
+    record['cachedAt'] = DateTime.now().millisecondsSinceEpoch;
+    await box.put('book:${book.id}', record);
+    await _sweepCatalogues(box, keepBook: book.id);
   });
 
   @override
@@ -248,6 +255,7 @@ class ChapterCacheStore implements ChapterCache {
     final counts = <String, int>{};
     final bytes = <String, int>{};
     final accessed = <String, num>{};
+    final chaptersByBook = <String, List<Chapter>>{};
     for (final value in box.values) {
       if (!_isChapter(value)) continue;
       final id = value['bookId'] as String;
@@ -255,18 +263,28 @@ class ChapterCacheStore implements ChapterCache {
       bytes[id] = (bytes[id] ?? 0) + _bytes(value as Map);
       final time = _accessedAt(value);
       if (time > (accessed[id] ?? 0)) accessed[id] = time;
+      (chaptersByBook[id] ??= <Chapter>[]).add(
+        Chapter(
+          itemId: value['chapterId'] as String,
+          title: value['title']?.toString() ?? '',
+          volumeName: '',
+        ),
+      );
     }
     final books = <CachedBookSummary>[];
     for (final id in counts.keys) {
-      final book = CachedBook.fromMap(box.get('book:$id'));
-      if (book != null) {
-        books.add(
-          CachedBookSummary(
-            book,
-            ChapterCacheStats(chapterCount: counts[id]!, byteCount: bytes[id]!),
-          ),
-        );
-      }
+      // A batch's catalogue can be evicted while later chapters for the same
+      // book still land; rebuild the summary from those chapters so the
+      // offline entry stays discoverable instead of orphaning them.
+      final book =
+          CachedBook.fromMap(box.get('book:$id')) ??
+          CachedBook(id: id, title: id, chapters: chaptersByBook[id]!);
+      books.add(
+        CachedBookSummary(
+          book,
+          ChapterCacheStats(chapterCount: counts[id]!, byteCount: bytes[id]!),
+        ),
+      );
     }
     books.sort(
       (a, b) => (accessed[b.book.id] ?? 0).compareTo(accessed[a.book.id] ?? 0),
@@ -293,7 +311,7 @@ class ChapterCacheStore implements ChapterCache {
   });
 
   Future<void> _trim(Box<dynamic> box, {required String keepBook}) async {
-    final entries = <({dynamic key, int bytes, num accessedAt, String bookId})>[];
+    final entries = <({dynamic key, int bytes, num accessedAt})>[];
     var totalBytes = 0;
     for (final key in box.keys) {
       final raw = box.get(key);
@@ -304,43 +322,75 @@ class ChapterCacheStore implements ChapterCache {
         key: key,
         bytes: bytes,
         accessedAt: _accessTimes[key] ?? _accessedAt(raw),
-        bookId: raw['bookId'] as String,
       ));
     }
     entries.sort((a, b) => a.accessedAt.compareTo(b.accessedAt));
     final removed = <dynamic>[];
-    // Catalogues may be saved before the first chapter download starts, so a
-    // book must only be garbage-collected when this pass evicted its last
-    // surviving chapter — never while it is still catalogue-only.
-    // Note: 目录先于章节落盘是有意设计，GC 不能按"当前无章节"判定。
-    // 见 .agents/notes/implemented/bug-fix/2026-09-13-code-review-fixes.md
-    final evictedBooks = <String>{};
     var remaining = entries.length;
     for (final entry in entries) {
       if (remaining <= maxEntries && totalBytes <= maxBytes) break;
       removed.add(entry.key);
-      evictedBooks.add(entry.bookId);
       remaining--;
       totalBytes -= entry.bytes;
     }
-    if (removed.isEmpty) return;
-    await box.deleteAll(removed);
-    for (final key in removed) {
-      _accessTimes.remove(key);
+    if (removed.isNotEmpty) {
+      await box.deleteAll(removed);
+      for (final key in removed) {
+        _accessTimes.remove(key);
+      }
     }
-    final retainedBooks = <String>{
-      keepBook,
+    // Catalogue records are not chapters, so a trim pass never removes one
+    // just because it evicted a chapter: the catalogue is written before the
+    // first chapter of a batch lands, and a later chapter for the same book
+    // would otherwise be orphaned from the offline entry.
+    await _sweepCatalogues(box, keepBook: keepBook);
+  }
+
+  /// Drops catalogue records whose book has no cached chapters. A detached
+  /// catalogue younger than [catalogTtl] may belong to a download still in
+  /// progress, so it is kept; the rest age out, and the survivors are capped at
+  /// [maxEntries] so browsing books online cannot grow Hive without bound.
+  Future<void> _sweepCatalogues(Box<dynamic> box, {String? keepBook}) async {
+    final liveBooks = <String>{
       for (final value in box.values)
         if (_isChapter(value)) value['bookId'] as String,
     };
-    await box.deleteAll([
-      for (final key in box.keys)
-        if (key is String &&
-            key.startsWith('book:') &&
-            evictedBooks.contains(key.substring(5)) &&
-            !retainedBooks.contains(key.substring(5)))
-          key,
-    ]);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final ttl = catalogTtl.inMilliseconds;
+    final detached = <({dynamic key, int cachedAt})>[];
+    for (final key in box.keys) {
+      if (key is! String || !key.startsWith('book:')) continue;
+      if (liveBooks.contains(key.substring(5))) continue;
+      final raw = box.get(key);
+      detached.add((
+        key: key,
+        cachedAt:
+            raw is Map &&
+                raw['cachedAt'] is num &&
+                (raw['cachedAt'] as num).isFinite
+            ? (raw['cachedAt'] as num).toInt()
+            : 0,
+      ));
+    }
+    if (detached.isEmpty) return;
+    detached.sort((a, b) => a.cachedAt.compareTo(b.cachedAt));
+    final keepKey = keepBook == null ? null : 'book:$keepBook';
+    final doomed = <dynamic>{};
+    var living = detached.length;
+    for (final entry in detached) {
+      if (entry.key != keepKey && now - entry.cachedAt >= ttl) {
+        doomed.add(entry.key);
+        living--;
+      }
+    }
+    for (final entry in detached) {
+      if (living <= maxEntries) break;
+      if (entry.key == keepKey || doomed.contains(entry.key)) continue;
+      doomed.add(entry.key);
+      living--;
+    }
+    if (doomed.isEmpty) return;
+    await box.deleteAll(doomed);
   }
 }
 

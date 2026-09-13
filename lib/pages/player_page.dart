@@ -370,6 +370,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       trace.source = request.origin.name;
       final source = await request.future;
       if (!_current(generation)) return;
+      final sourceUri = Uri.tryParse(source.url);
+      if (sourceUri == null ||
+          (sourceUri.scheme != 'http' && sourceUri.scheme != 'https') ||
+          sourceUri.host.isEmpty) {
+        throw const ApiException('获取播放地址失败');
+      }
       trace.stage('releaseWait');
       await release;
       if (!_current(generation)) return;

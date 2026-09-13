@@ -19,10 +19,14 @@ class EpisodeSource {
         .trim();
     if (rawUrl.isEmpty) rawUrl = _extractVideoUrl(response);
     if (rawUrl.isEmpty) throw ApiException('获取播放地址失败');
-    return EpisodeSource(
-      ApiClient.instance.absoluteUrl(rawUrl),
-      (data['key_hex'] ?? '').toString().trim(),
-    );
+    final url = ApiClient.instance.absoluteUrl(rawUrl);
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
+      throw ApiException('获取播放地址失败');
+    }
+    return EpisodeSource(url, (data['key_hex'] ?? '').toString().trim());
   }
 }
 

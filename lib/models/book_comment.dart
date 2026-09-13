@@ -282,6 +282,7 @@ DateTime? _timestamp(dynamic value) {
   final raw = value is int ? value : int.tryParse('$value');
   if (raw == null || raw <= 0) return null;
   final milliseconds = raw > 100000000000 ? raw : raw * 1000;
+  if (milliseconds > 8640000000000000) return null;
   return DateTime.fromMillisecondsSinceEpoch(milliseconds);
 }
 
@@ -289,7 +290,7 @@ String _string(dynamic value) => value == null ? '' : '$value'.trim();
 
 int _int(dynamic value) {
   if (value is int) return value;
-  if (value is num) return value.toInt();
+  if (value is num) return value.isFinite ? value.toInt() : 0;
   if (value is String) return int.tryParse(value.trim()) ?? 0;
   return 0;
 }

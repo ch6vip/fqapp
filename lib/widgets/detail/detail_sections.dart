@@ -406,6 +406,8 @@ class DetailCastRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     if (cast.isEmpty) return const SizedBox.shrink();
+    final textScaler = MediaQuery.textScalerOf(context);
+    final castRowHeight = 118 + (textScaler.scale(12) - 12) * 3;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -429,7 +431,7 @@ class DetailCastRow extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         SizedBox(
-          height: 118,
+          height: castRowHeight,
           child: ListView.separated(
             key: const Key('detail_cast_row'),
             scrollDirection: Axis.horizontal,

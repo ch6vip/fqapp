@@ -121,6 +121,7 @@ class NativePlayer {
   Future<void>? _disposeFuture;
   Future<void>? _nativeRelease;
   int _seekGeneration = 0;
+  int _appliedSeekGeneration = 0;
   int _playWhenReadyGeneration = 0;
 
   int? get textureId => _textureId;
@@ -262,7 +263,11 @@ class NativePlayer {
   Future<void> seek(Duration position) async {
     final generation = ++_seekGeneration;
     await _invoke('seek', {'positionMs': position.inMilliseconds});
-    if (_disposed || generation != _seekGeneration) return;
+    // Record every natively acknowledged seek, not just the newest call. If a
+    // later overlapping seek fails, the position ExoPlayer actually accepted
+    // must survive instead of reverting to the stale pre-seek value.
+    if (_disposed || generation <= _appliedSeekGeneration) return;
+    _appliedSeekGeneration = generation;
     // ExoPlayer acknowledges seek before its next position tick. Preserve the
     // accepted position for immediate exit/reentry and during initial buffering.
     _position = position;

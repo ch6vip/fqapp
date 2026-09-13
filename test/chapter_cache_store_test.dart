@@ -57,24 +57,30 @@ void main() {
     'a catalogue saved before its first chapter survives other evictions',
     () async {
       final store = ChapterCacheStore(maxEntries: 2);
-      // The download sheet saves the catalogue before any chapter lands.
+      // The download sheet saves the catalogues before any chapter lands.
       await store.saveBook(_book('a'));
+      await store.saveBook(_book('x'));
       await _write(store, 'x', '1', '正文一');
       await _write(store, 'x', '2', '正文二');
-      // Another book's write evicts a chapter while 'a' is catalogue-only.
+      // Another book's write evicts a chapter while 'x' still has text cached.
       await _write(store, 'x', '3', '正文三');
+      final box = Hive.box('chapter_cache_v1');
+      // A catalogue survives while any of its chapters is still cached.
+      expect(box.containsKey('book:x'), isTrue);
       // The interrupted download of 'a' resumes and fills its chapters.
       await _write(store, 'a', '1', '正文一');
+      expect(box.containsKey('book:x'), isTrue);
       expect(
         (await store.books()).map((entry) => entry.book.id),
         contains('a'),
       );
-      // A book whose every chapter was evicted is collected with its
-      // catalogue; 'a' keeps growing and stays listed.
+      // A detached catalogue is kept while it is young and within the
+      // detached cap; only the TTL sweep or the cap collects it (both are
+      // covered by review_fix_b02_test.dart). 'a' keeps growing and stays
+      // listed, while x has no chapters left to be listed.
       await _write(store, 'a', '2', '正文二');
       await _write(store, 'a', '3', '正文三');
-      final box = Hive.box('chapter_cache_v1');
-      expect(box.containsKey('book:x'), isFalse);
+      expect(box.containsKey('book:x'), isTrue);
       expect(box.containsKey('book:a'), isTrue);
       expect((await store.books()).map((entry) => entry.book.id), ['a']);
     },

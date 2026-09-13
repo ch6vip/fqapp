@@ -43,6 +43,7 @@ class _RankPageState extends State<RankPage> {
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
+  String? _loadMoreError;
   int _rankIndex = 0;
   int _categoryIndex = 0;
   int _generation = 0;
@@ -114,6 +115,8 @@ class _RankPageState extends State<RankPage> {
   Future<void> _loadFirst(int generation) async {
     setState(() {
       _loading = true;
+      _loadingMore = false;
+      _loadMoreError = null;
       _error = null;
     });
     try {
@@ -136,7 +139,10 @@ class _RankPageState extends State<RankPage> {
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || !_page.hasMore || _page.isEmpty) return;
     final generation = _generation;
-    setState(() => _loadingMore = true);
+    setState(() {
+      _loadingMore = true;
+      _loadMoreError = null;
+    });
     try {
       final next = await _fetch(
         offset: _page.entries.length,
@@ -150,9 +156,12 @@ class _RankPageState extends State<RankPage> {
         );
         _loadingMore = false;
       });
-    } catch (_) {
+    } catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _loadingMore = false);
+        setState(() {
+          _loadingMore = false;
+          _loadMoreError = '$error';
+        });
       }
     }
   }
@@ -318,9 +327,24 @@ class _RankPageState extends State<RankPage> {
       child: ListView.builder(
         key: const Key('rank_list'),
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-        itemCount: _page.entries.length + (_loadingMore ? 1 : 0),
+        itemCount:
+            _page.entries.length +
+            (_loadingMore || _loadMoreError != null ? 1 : 0),
         itemBuilder: (context, index) {
           if (index >= _page.entries.length) {
+            if (_loadMoreError != null) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Center(
+                  child: TextButton.icon(
+                    key: const Key('rank_load_more_retry'),
+                    onPressed: () => unawaited(_loadMore()),
+                    icon: const Icon(LucideIcons.refresh_cw, size: 16),
+                    label: const Text('加载失败，点击重试'),
+                  ),
+                ),
+              );
+            }
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 18),
               child: Center(

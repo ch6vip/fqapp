@@ -187,6 +187,7 @@ class _DetailPageState extends State<DetailPage> {
         _series = SeriesDetail.empty;
         _comments = const BookCommentPage();
         _allChapters = const [];
+        _chapterPreviews = ChapterSummary.empty;
         _opening = false;
         _resumeIndex = null;
       });
@@ -317,7 +318,13 @@ class _DetailPageState extends State<DetailPage> {
         .where((id) => id.isNotEmpty)
         .toList(growable: false);
     if (ids.isEmpty) return;
-    final previews = await loader(ids);
+    final ChapterSummary previews;
+    try {
+      previews = await loader(ids);
+    } catch (_) {
+      // Excerpts are decoration; a failed request must not surface an error.
+      return;
+    }
     if (!mounted || generation != _loadGeneration) return;
     setState(() => _chapterPreviews = previews);
   }
@@ -736,11 +743,6 @@ class _DetailPageState extends State<DetailPage> {
       cover: widget.item.cover,
       chapters: _allChapters,
     );
-    try {
-      await cache.saveBook(book);
-    } on Exception {
-      // A cache index failure must not block opening the download sheet.
-    }
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,

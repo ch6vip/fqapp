@@ -28,6 +28,12 @@ class _DetailDescriptionState extends State<DetailDescription> {
     final palette = HomePalette.of(context);
     final reducedMotion = MediaQuery.disableAnimationsOf(context);
     final style = TextStyle(color: palette.ink, fontSize: 13.5, height: 1.85);
+    final defaultTextStyle = DefaultTextStyle.of(context);
+    final effectiveStyle = MediaQuery.boldTextOf(context)
+        ? defaultTextStyle.style
+              .merge(style)
+              .merge(const TextStyle(fontWeight: FontWeight.bold))
+        : defaultTextStyle.style.merge(style);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -47,7 +53,7 @@ class _DetailDescriptionState extends State<DetailDescription> {
           LayoutBuilder(
             builder: (context, constraints) {
               final measure = TextPainter(
-                text: TextSpan(text: widget.text, style: style),
+                text: TextSpan(text: widget.text, style: effectiveStyle),
                 textDirection: Directionality.of(context),
                 textScaler: MediaQuery.textScalerOf(context),
                 maxLines: 3,

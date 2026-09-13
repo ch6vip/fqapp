@@ -71,6 +71,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   final _panelExpanded = ValueNotifier<bool>(false);
   final _position = ValueNotifier<Duration>(Duration.zero);
   final _seekValue = ValueNotifier<double?>(null);
+
+  /// Latest target of a relative +/-10s seek whose native call has not settled
+  /// yet; back-to-back taps accumulate onto it instead of reusing the last
+  /// acknowledged position.
+  Duration? _pendingSeek;
   late final _timeline = Listenable.merge([_position, _seekValue]);
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<bool>? _playWhenReadySubscription;
@@ -214,6 +219,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     unawaited(_positionSubscription?.cancel());
     unawaited(_playWhenReadySubscription?.cancel());
     final player = widget.player;
+    _pendingSeek = null;
     _position.value = player?.position ?? Duration.zero;
     // The native 200ms ticks belong to the timeline only. In particular, they
     // must not rebuild the episode pager, description or the video texture.
@@ -385,12 +391,25 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   void _seekBy(int seconds) {
     if (_locked) return;
-    final milliseconds = (_position.value.inMilliseconds + seconds * 1000)
-        .clamp(0, math.max(0, widget.duration.inMilliseconds));
+    final base = _pendingSeek ?? _position.value;
+    final milliseconds = (base.inMilliseconds + seconds * 1000).clamp(
+      0,
+      math.max(0, widget.duration.inMilliseconds),
+    );
+    final target = Duration(milliseconds: milliseconds.toInt());
+    // Remember the optimistic target before awaiting the native seek so the
+    // next relative tap accumulates on top of it.
+    _pendingSeek = target;
     unawaited(
-      _control(
-        (player) => player.seek(Duration(milliseconds: milliseconds.toInt())),
-      ),
+      _control((player) async {
+        try {
+          await player.seek(target);
+        } finally {
+          if (identical(widget.player, player) && _pendingSeek == target) {
+            _pendingSeek = null;
+          }
+        }
+      }),
     );
     _scheduleHide();
   }
@@ -885,26 +904,29 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   rect: layout.viewport,
                   child: IgnorePointer(
                     child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.play_arrow_rounded,
-                            size: 86,
-                            color: Colors.white.withValues(alpha: .2),
-                          ),
-                          const SizedBox(height: 12),
-                          ValueListenableBuilder<Duration>(
-                            valueListenable: _position,
-                            builder: (context, position, child) => Text(
-                              '${_time(position)} / ${_time(widget.duration)}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.play_arrow_rounded,
+                              size: 86,
+                              color: Colors.white.withValues(alpha: .2),
+                            ),
+                            const SizedBox(height: 12),
+                            ValueListenableBuilder<Duration>(
+                              valueListenable: _position,
+                              builder: (context, position, child) => Text(
+                                '${_time(position)} / ${_time(widget.duration)}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),

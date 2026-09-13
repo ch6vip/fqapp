@@ -72,7 +72,13 @@ class ApiClient {
     final raw = value.trim();
     if (raw.isEmpty) return raw;
     final parsed = Uri.tryParse(raw);
-    if (parsed != null && parsed.hasScheme) return raw;
+    if (parsed != null && parsed.hasScheme) {
+      if ((parsed.scheme != 'http' && parsed.scheme != 'https') ||
+          parsed.host.isEmpty) {
+        return '';
+      }
+      return raw;
+    }
     return Uri.parse(_base).resolve(raw).toString();
   }
 
@@ -834,9 +840,29 @@ class ApiClient {
   }
 }
 
+String? _errorMessageFromBody(List<int> bodyBytes) {
+  if (bodyBytes.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(utf8.decode(bodyBytes));
+    if (decoded is Map) {
+      final payload = Map<String, dynamic>.from(decoded);
+      for (final key in ['error', 'message']) {
+        final value = payload[key];
+        if (value is String && value.trim().isNotEmpty) return value.trim();
+      }
+    }
+  } catch (_) {
+    // Not a JSON error envelope; keep the HTTP status as the message.
+  }
+  return null;
+}
+
 Map<String, dynamic> _decodeEnvelope(int statusCode, List<int> bodyBytes) {
   if (statusCode != 200) {
-    throw ApiException('HTTP $statusCode', statusCode: statusCode);
+    throw ApiException(
+      _errorMessageFromBody(bodyBytes) ?? 'HTTP $statusCode',
+      statusCode: statusCode,
+    );
   }
   final decoded = jsonDecode(utf8.decode(bodyBytes));
   if (decoded is! Map) throw ApiException('响应格式错误');

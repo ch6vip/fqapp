@@ -125,8 +125,7 @@ class _SearchPageState extends State<SearchPage> {
     _suggestDebounce?.cancel();
     final query = value.trim();
     if (query.isEmpty) {
-      ++_suggestGeneration;
-      if (_suggestions.isNotEmpty) setState(() => _suggestions = const []);
+      _showHistory();
       return;
     }
     _suggestDebounce = Timer(
@@ -249,10 +248,14 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void _showHistory() {
+    _suggestDebounce?.cancel();
     ++_requestGeneration;
+    ++_suggestGeneration;
     setState(() {
       _query = '';
       _idQuery = null;
+      _draft = '';
+      _suggestions = const [];
       _feeds = [for (final _ in _categories) _SearchFeed()];
       _tabIndex = 0;
     });

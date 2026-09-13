@@ -84,6 +84,7 @@ class _SuggestionText extends StatelessWidget {
     }
     return RichText(
       maxLines: 1,
+      textScaler: MediaQuery.textScalerOf(context),
       overflow: TextOverflow.ellipsis,
       text: TextSpan(
         style: base,

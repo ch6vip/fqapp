@@ -128,9 +128,16 @@ class ChapterContent {
     final deadline =
         (now ?? DateTime.now()).millisecondsSinceEpoch ~/ 1000 + 60;
     return images.any((image) {
-      final expires = int.tryParse(
-        Uri.parse(image.url).queryParameters['x-expires'] ?? '',
-      );
+      int? expires;
+      try {
+        expires = int.tryParse(
+          Uri.parse(image.url).queryParameters['x-expires'] ?? '',
+        );
+      } on FormatException {
+        // A malformed escape (for example %FF) fails the UTF-8 query decode,
+        // so treat the unusable signature as having no expiry.
+        expires = null;
+      }
       return expires != null && expires > 0 && expires <= deadline;
     });
   }
@@ -298,7 +305,6 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
       }
       final paragraph = _paragraphTags.contains(tag);
       if (paragraph || tag == 'br' || tag == 'hr') flush();
-      final outerIndex = activeIndex;
       if (paragraph) {
         final attribute = int.tryParse(node.attributes['idx']?.trim() ?? '');
         if (attribute != null) activeIndex = attribute;
@@ -307,7 +313,6 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
         append(child);
       }
       if (paragraph) flush();
-      activeIndex = outerIndex;
       if (tag == 'td' || tag == 'th') pending.write(' ');
     }
   }

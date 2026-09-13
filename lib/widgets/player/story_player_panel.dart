@@ -373,7 +373,12 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
                       ),
                     ),
                     onChanged: (value) {
-                      setState(() => _query = value.trim());
+                      setState(() {
+                        _query = value.trim();
+                        // Clearing the filter must re-locate the current
+                        // episode instead of leaving the list at the top.
+                        if (_query.isEmpty) _needsLocate = true;
+                      });
                       if (widget.scrollController.hasClients) {
                         widget.scrollController.jumpTo(0);
                       }
