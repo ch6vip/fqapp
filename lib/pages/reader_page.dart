@@ -418,6 +418,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final family = await ReaderFonts.load(path);
       if (!mounted || generation != _fontGeneration) return;
       setState(() => _fontFamily = family);
+    } on ReaderFontLimitException {
+      if (!mounted || generation != _fontGeneration) return;
+      setState(() => _fontFamily = null);
+      _showMessage('已导入字体过多，重启应用后可继续更换字体');
     } catch (_) {
       if (!mounted || generation != _fontGeneration) return;
       setState(() {
@@ -431,7 +435,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   Future<ReaderFont?> _pickFont() async {
     final font = await _device.pickFont();
-    if (font != null) await ReaderFonts.load(font.path);
+    if (font == null) return null;
+    try {
+      await ReaderFonts.load(font.path);
+    } on ReaderFontLimitException {
+      if (mounted) _showMessage('已导入字体过多，重启应用后可继续更换字体');
+      return null;
+    }
     return font;
   }
 

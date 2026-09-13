@@ -247,8 +247,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   void _mergeToneVoices(AudioExtras loaded, Map<String, AudioVoice> byId) {
-    // Real tone names beat the CSV fallback's placeholder labels.
-    for (final tone in loaded.tones.ttsTones) {
+    // Real tone names beat the CSV fallback's placeholder labels. 真人讲书
+    // narrators only arrive here; their ids were resolved exactly by
+    // AudioToneSet.fromPayload, which drops any unresolved narrator.
+    for (final tone in [
+      ...loaded.tones.ttsTones,
+      ...loaded.tones.narratorTones,
+    ]) {
       if (tone.id.trim().isNotEmpty && tone.title.trim().isNotEmpty) {
         byId[tone.id] = AudioVoice(id: tone.id, label: tone.title);
       }

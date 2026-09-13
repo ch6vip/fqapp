@@ -58,7 +58,16 @@ class ChapterParagraph extends ChapterBlock {
   /// markup that carries no attribute.
   final int? paraIndex;
 
-  const ChapterParagraph(this.text, {this.paraIndex});
+  /// True for the `<img alt="...">` caption emitted when an image URL is
+  /// unusable. It is real rendered text, but it must never be mistaken for the
+  /// leading chapter title when the title is stripped.
+  final bool isImageCaption;
+
+  const ChapterParagraph(
+    this.text, {
+    this.paraIndex,
+    this.isImageCaption = false,
+  });
 }
 
 class ChapterImage extends ChapterBlock {
@@ -143,23 +152,34 @@ class ChapterContent {
   }
 
   ChapterContent withoutLeadingTitle(String title) {
-    final firstText = blocks.indexWhere((block) => block is ChapterParagraph);
+    final wanted = title.replaceAll(_titleSpaces, '');
+    // The upstream title is the first ordinary paragraph; image-alt captions
+    // and standalone image blocks may precede it without shifting the match.
+    // Only that leading paragraph is removed, never a later body paragraph
+    // that happens to repeat the title (kept contract).
+    var candidate = -1;
+    for (var i = 0; i < blocks.length; i++) {
+      final block = blocks[i];
+      if (block is! ChapterParagraph) continue;
+      if (block.isImageCaption) continue;
+      candidate = i;
+      break;
+    }
     final body = [...blocks];
-    if (firstText >= 0 &&
-        title.trim().isNotEmpty &&
-        (blocks[firstText] as ChapterParagraph).text.replaceAll(
+    var legacy = legacyText;
+    if (candidate >= 0 &&
+        wanted.isNotEmpty &&
+        (blocks[candidate] as ChapterParagraph).text.replaceAll(
               _titleSpaces,
               '',
             ) ==
-            title.replaceAll(_titleSpaces, '')) {
-      body.removeAt(firstText);
+            wanted) {
+      body.removeAt(candidate);
+      legacy = _dropLeadingTitleParagraph(legacyText, blocks, candidate);
     }
     return ChapterContent(
       blocks: body,
-      legacyText: splitChapterParagraphs(
-        legacyText,
-        chapterTitle: title,
-      ).join('\n'),
+      legacyText: legacy,
       illustrationsChecked: illustrationsChecked,
       paragraphIdsChecked: paragraphIdsChecked,
     );
@@ -179,6 +199,7 @@ class ChapterContent {
                 'type': 'text',
                 'text': block.text,
                 if (block.paraIndex != null) 'idx': block.paraIndex,
+                if (block.isImageCaption) 'caption': true,
               },
               ChapterImage() => {
                 'type': 'image',
@@ -210,12 +231,14 @@ class ChapterContent {
         // Never infer upstream ids from display order: titles and pictures can
         // shift it. Older caches without ids can be refreshed from the source.
         final paraIndex = raw['idx'] is int ? raw['idx'] as int : null;
+        final isCaption = raw['caption'] == true;
         final paragraphs = splitChapterParagraphs(raw['text'] as String);
         for (var i = 0; i < paragraphs.length; i++) {
           blocks.add(
             ChapterParagraph(
               paragraphs[i],
               paraIndex: i == 0 ? paraIndex : null,
+              isImageCaption: isCaption,
             ),
           );
         }
@@ -299,7 +322,7 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
             ),
           );
         } else if (alt.isNotEmpty) {
-          blocks.add(ChapterParagraph(alt));
+          blocks.add(ChapterParagraph(alt, isImageCaption: true));
         }
         return;
       }
@@ -323,7 +346,11 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
   flush();
   return ChapterContent(
     blocks: blocks,
-    legacyText: normalizeChapterText(source),
+    legacyText: normalizeChapterText(
+      source,
+      baseUrl: baseUrl,
+      includeImageAlt: true,
+    ),
   );
 }
 
@@ -363,7 +390,43 @@ double? _imageDimension(Object? value) {
 /// Converts an upstream chapter to plain text once, before it is cached.
 /// Block elements and explicit breaks carry paragraph boundaries; inline
 /// elements do not. Entity decoding belongs here, never in the reader.
-String normalizeChapterText(String source) {
+/// Removes the legacy paragraph that corresponds to the leading title block
+/// [candidate] from [text]. Image-alt captions and standalone images may precede
+/// it; counting the legacy paragraphs they contribute locates the title without
+/// ever deleting a later body paragraph that merely repeats the title.
+String _dropLeadingTitleParagraph(
+  String text,
+  List<ChapterBlock> blocks,
+  int candidate,
+) {
+  final paragraphs = [...splitChapterParagraphs(text)];
+  var offset = 0;
+  for (var i = 0; i < candidate; i++) {
+    final block = blocks[i];
+    if (block is ChapterParagraph) {
+      offset += splitChapterParagraphs(block.text).length;
+    }
+  }
+  final candidateText = (blocks[candidate] as ChapterParagraph).text.replaceAll(
+    _titleSpaces,
+    '',
+  );
+  if (offset >= paragraphs.length ||
+      paragraphs[offset].replaceAll(_titleSpaces, '') != candidateText) {
+    // The legacy stream cannot be aligned with the block stream (for example
+    // an inline image split one paragraph); leave it untouched rather than
+    // deleting an unrelated line.
+    return text;
+  }
+  paragraphs.removeAt(offset);
+  return paragraphs.join('\n');
+}
+
+String normalizeChapterText(
+  String source, {
+  String? baseUrl,
+  bool includeImageAlt = false,
+}) {
   final output = StringBuffer();
 
   void append(dom.Node node) {
@@ -372,6 +435,22 @@ String normalizeChapterText(String source) {
     } else if (node is dom.Element) {
       final tag = node.localName;
       if (_hiddenTags.contains(tag)) return;
+      if (tag == 'img') {
+        if (includeImageAlt) {
+          String? url;
+          for (final key in ['data-src', 'data-original', 'src']) {
+            url = _chapterImageUrl(node.attributes[key], baseUrl: baseUrl);
+            if (url != null) break;
+          }
+          final alt = node.attributes['alt']?.trim() ?? '';
+          if (url == null && alt.isNotEmpty) {
+            output.write('\n');
+            output.write(alt);
+            output.write('\n');
+          }
+        }
+        return;
+      }
       final paragraph = _paragraphTags.contains(tag);
       if (paragraph || tag == 'br' || tag == 'hr') output.write('\n');
       for (final child in node.nodes) {

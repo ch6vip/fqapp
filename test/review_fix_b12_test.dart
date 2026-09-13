@@ -136,6 +136,28 @@ void main() {
     );
   });
 
+  testWidgets('真人讲书 narrators become selectable with their exact id', (
+    tester,
+  ) async {
+    final session = _Session(
+      extras: (_) async => const AudioExtras(
+        tones: AudioToneSet(
+          narratorTones: [AudioTone(id: '7239243941252598845', title: '主播：测试')],
+        ),
+      ),
+    );
+    await _mount(tester, session);
+    await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
+    await tester.tap(find.byKey(const ValueKey('audio-voice')));
+    await tester.pumpAndSettle();
+    expect(find.text('主播：测试'), findsOneWidget);
+
+    await tester.tap(find.text('主播：测试'));
+    await _flush(tester);
+    expect(session.requests.last, '1:7239243941252598845');
+    expect(find.text('真人讲书'), findsOneWidget);
+  });
+
   testWidgets('a saved extras-only tone cannot block playback forever', (
     tester,
   ) async {

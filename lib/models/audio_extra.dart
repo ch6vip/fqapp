@@ -96,8 +96,7 @@ class AudioToneSet {
     return AudioToneSet(
       ttsTones: _toneList(data['tts_tones']),
       offlineTones: _toneList(data['offline_tts_tones']),
-      // 真人讲书 entries carry `abook_id` instead of `id`.
-      narratorTones: _toneList(data['audio_tones'], idKey: 'abook_id'),
+      narratorTones: _narratorTones(data),
     );
   }
 }
@@ -267,6 +266,106 @@ class RelatedWork {
       label: label,
     );
   }
+}
+
+/// 真人讲书 narrators identify themselves with `abook_id`, a large int64 the
+/// upstream JSON serialises as a number and therefore rounds. Recover the exact
+/// value from `book_infos` when it can be matched unambiguously; when it cannot,
+/// drop the narrator instead of ever sending a wrong tone id to /audio/play.
+List<AudioTone> _narratorTones(Map<String, dynamic> data) {
+  final raw = data['audio_tones'];
+  if (raw is! List) return const [];
+  final exact = _exactBookIds(data['book_infos']);
+  final tones = <AudioTone>[];
+  for (final entry in raw) {
+    if (entry is! Map) continue;
+    final id = _narratorId(entry, exact);
+    if (id == null || id.isEmpty) continue;
+    final patched = Map<String, dynamic>.from(entry)..['id'] = id;
+    final tone = AudioTone.fromRaw(patched);
+    if (tone != null) tones.add(tone);
+  }
+  return List.unmodifiable(tones);
+}
+
+String? _narratorId(Map entry, List<_ExactBook> exact) {
+  for (final key in ['abook_id_str', 'book_id']) {
+    final value = _string(entry[key]);
+    if (value.isNotEmpty) return value;
+  }
+  final abook = entry['abook_id'];
+  if (abook is! num || !abook.isFinite) return null;
+  final rounded = abook.toDouble();
+  // A double keeps every integer up to 2^53 exactly; beyond that the upstream
+  // number is already lossy and the exact string must come from book_infos.
+  if (rounded.abs() <= 9007199254740992) {
+    return abook is int ? '$abook' : rounded.truncate().toString();
+  }
+  return _matchExactBookId(rounded, _string(entry['title']), exact);
+}
+
+String? _matchExactBookId(
+  double rounded,
+  String title,
+  List<_ExactBook> exact,
+) {
+  // Only a book whose exact string rounds back to the same double can be the
+  // value the upstream rounded away; never guess from the narrator name alone.
+  final bucket = <_ExactBook>[
+    for (final book in exact)
+      if (double.tryParse(book.id) case final parsed?)
+        if (parsed == rounded) book,
+  ];
+  if (bucket.isEmpty) return null;
+  final wanted = _normalizeNarratorName(title);
+  if (wanted.isEmpty) return null;
+  var matches = bucket
+      .where((book) => _normalizeNarratorName(book.author) == wanted)
+      .toList();
+  if (matches.length > 1) {
+    final audio = matches.where((book) => book.isAudioBook).toList();
+    if (audio.isNotEmpty) matches = audio;
+  }
+  final ids = matches.map((book) => book.id).toSet();
+  return ids.length == 1 ? ids.single : null;
+}
+
+List<_ExactBook> _exactBookIds(dynamic raw) {
+  if (raw is! List) return const [];
+  final books = <_ExactBook>[];
+  final seen = <String>{};
+  for (final entry in raw) {
+    if (entry is! Map) continue;
+    final id = _string(entry['book_id']);
+    if (id.isEmpty || !seen.add(id)) continue;
+    books.add(
+      _ExactBook(
+        id: id,
+        author: _string(entry['author']),
+        isAudioBook: _isAudioBookType(entry['book_type']),
+      ),
+    );
+  }
+  return List.unmodifiable(books);
+}
+
+bool _isAudioBookType(Object? value) => value == 1 || value == '1';
+
+String _normalizeNarratorName(String value) => value
+    .replaceFirst(RegExp(r'^主播[:：]\s*'), '')
+    .replaceAll(RegExp(r'\s+'), '')
+    .trim();
+
+class _ExactBook {
+  const _ExactBook({
+    required this.id,
+    required this.author,
+    required this.isAudioBook,
+  });
+
+  final String id;
+  final String author;
+  final bool isAudioBook;
 }
 
 List<AudioTone> _toneList(dynamic raw, {String idKey = 'id'}) {

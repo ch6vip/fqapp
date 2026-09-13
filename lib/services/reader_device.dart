@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class ReaderDeviceStatus {
@@ -135,37 +136,109 @@ class ReaderDevice {
   }
 }
 
+/// Thrown when the process has already imported [ReaderFonts.maxFamilies]
+/// distinct fonts. Flutter's font collection has no unload API, so refusing to
+/// import more is the only way to keep engine memory bounded.
+class ReaderFontLimitException implements Exception {
+  const ReaderFontLimitException();
+
+  @override
+  String toString() => '已导入字体数量达到上限';
+}
+
 /// Each imported file has a content-addressed path, so loaded families can be
 /// reused across chapters and subsequent visits to the reader.
 class ReaderFonts {
+  /// Bound on the path -> family cache so it cannot grow for the whole process
+  /// lifetime. Evicting a path does not unload the engine family, but the next
+  /// load of the same file simply creates a new family (counted below).
+  static const int maxCachedPaths = 8;
+
+  /// Flutter cannot unload a loaded family, so cap how many may be created.
+  static const int maxFamilies = 16;
+
   static final Map<String, Future<String>> _families = {};
+  static final List<String> _order = [];
   static int _nextFamily = 0;
+  static int _loadedFamilies = 0;
+
+  /// Test seam: replaces the real file/FontLoader path in unit tests.
+  @visibleForTesting
+  static Future<void> Function(String path)? debugLoader;
 
   static Future<String?> load(String path) async {
     if (path.isEmpty) return null;
     final pending = _families[path];
-    if (pending != null) return pending;
+    if (pending != null) {
+      _touch(path);
+      return pending;
+    }
+    if (_loadedFamilies >= maxFamilies) {
+      throw const ReaderFontLimitException();
+    }
+    // Reserve the slot synchronously so concurrent loads cannot all pass the
+    // check before any of them finishes.
+    _loadedFamilies++;
     final request = _load(path);
     _families[path] = request;
+    _order.add(path);
+    _evict();
     try {
       return await request;
     } catch (_) {
-      _families.remove(path);
+      _loadedFamilies--;
+      // Only drop the entry when it is still this request: the path may have
+      // been evicted and re-requested while this one was in flight.
+      if (identical(_families[path], request)) {
+        _families.remove(path);
+        _order.remove(path);
+      }
       rethrow;
     }
   }
 
+  static void _touch(String path) {
+    _order.remove(path);
+    _order.add(path);
+  }
+
+  static void _evict() {
+    while (_order.length > maxCachedPaths) {
+      _families.remove(_order.removeAt(0));
+    }
+  }
+
   static Future<String> _load(String path) async {
+    final family = 'ReaderImported${_nextFamily++}';
+    final debug = debugLoader;
+    if (debug != null) {
+      await debug(path);
+      return family;
+    }
     final file = File(path);
     final length = await file.length();
     if (length < 12 || length > 32 * 1024 * 1024) {
       throw const FormatException('字体文件大小不受支持');
     }
-    final family = 'ReaderImported${_nextFamily++}';
     final bytes = await file.readAsBytes();
     final loader = FontLoader(family)
       ..addFont(Future.value(ByteData.sublistView(bytes)));
     await loader.load();
     return family;
+  }
+
+  @visibleForTesting
+  static int get debugLoadedFamilies => _loadedFamilies;
+
+  @visibleForTesting
+  static int get debugCachedPaths => _families.length;
+
+  @visibleForTesting
+  static void debugReset() {
+    _families.clear();
+    _order.clear();
+    _nextFamily = 0;
+    _loadedFamilies = 0;
+    debugLoader = null;
   }
 }

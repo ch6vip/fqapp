@@ -26,7 +26,7 @@ void main() {
           },
         ],
         'audio_tones': [
-          {'abook_id': 7521039556003499000, 'title': '主播：水丘声工厂'},
+          {'abook_id': 7521039556003499, 'title': '主播：水丘声工厂'},
         ],
         'offline_tts_tones': [
           {'id': 118, 'title': '成熟大叔离线版', 'description': '经典'},
@@ -48,8 +48,139 @@ void main() {
     test('reads 真人讲书 narrators from abook_id', () {
       final tones = AudioToneSet.fromPayload(payload);
       expect(tones.narratorTones, hasLength(1));
-      expect(tones.narratorTones.single.id, '7521039556003499000');
+      expect(tones.narratorTones.single.id, '7521039556003499');
       expect(tones.narratorTones.single.title, '主播：水丘声工厂');
+    });
+
+    test('recovers an exact narrator id from book_infos', () {
+      final tones = AudioToneSet.fromPayload({
+        'data': {
+          'audio_tones': [
+            {'abook_id': 7239243941252599000, 'title': '主播：水丘声工厂'},
+          ],
+          'book_infos': [
+            {
+              'book_id': '7239243941252598845',
+              'author': '主播：水丘声工厂',
+              'book_type': 1,
+            },
+            // The upstream payload repeats the same audio book.
+            {
+              'book_id': '7239243941252598845',
+              'author': '主播：水丘声工厂',
+              'book_type': 1,
+            },
+            {
+              'book_id': '7180279419959774247',
+              'author': '钢铁洪流',
+              'book_type': 0,
+            },
+          ],
+        },
+      });
+      expect(tones.narratorTones, hasLength(1));
+      expect(tones.narratorTones.single.id, '7239243941252598845');
+      expect(tones.narratorTones.single.title, '主播：水丘声工厂');
+    });
+
+    test('prefers an explicit string id when upstream provides one', () {
+      final tones = AudioToneSet.fromPayload({
+        'data': {
+          'audio_tones': [
+            {
+              'abook_id': 7239243941252599000,
+              'abook_id_str': '7239243941252598845',
+              'title': '主播：水丘声工厂',
+            },
+          ],
+        },
+      });
+      expect(tones.narratorTones.single.id, '7239243941252598845');
+    });
+
+    test('drops a unique numeric candidate whose narrator does not match', () {
+      final tones = AudioToneSet.fromPayload({
+        'data': {
+          'audio_tones': [
+            {'abook_id': 7239243941252599000, 'title': '主播：真实主播'},
+          ],
+          'book_infos': [
+            {
+              'book_id': '7239243941252598845',
+              'author': '完全不同',
+              'book_type': 1,
+            },
+          ],
+        },
+      });
+      expect(tones.narratorTones, isEmpty);
+    });
+
+    test('drops a name match that does not share the rounded value', () {
+      final tones = AudioToneSet.fromPayload({
+        'data': {
+          'audio_tones': [
+            {'abook_id': 7239243941252599000, 'title': '主播：水丘声工厂'},
+          ],
+          'book_infos': [
+            {
+              'book_id': '7651059634186243134',
+              'author': '主播：水丘声工厂',
+              'book_type': 1,
+            },
+          ],
+        },
+      });
+      expect(tones.narratorTones, isEmpty);
+    });
+
+    test('narrows a shared double bucket by name and string book_type', () {
+      final tones = AudioToneSet.fromPayload({
+        'data': {
+          'audio_tones': [
+            {'abook_id': 7239243941252599000, 'title': '主播：甲'},
+          ],
+          'book_infos': [
+            {
+              'book_id': '7239243941252598845',
+              'author': '主播：甲',
+              'book_type': '1',
+            },
+            {
+              'book_id': '7239243941252598846',
+              'author': '主播：乙',
+              'book_type': '1',
+            },
+          ],
+        },
+      });
+      expect(tones.narratorTones.single.id, '7239243941252598845');
+    });
+
+    test('drops an unresolvable rounded narrator id', () {
+      final tones = AudioToneSet.fromPayload({
+        'data': {
+          'audio_tones': [
+            {'abook_id': 7521039556003499000, 'title': '主播：水丘声工厂'},
+          ],
+        },
+      });
+      expect(tones.narratorTones, isEmpty);
+    });
+
+    test('drops a narrator whose exact id is ambiguous', () {
+      final tones = AudioToneSet.fromPayload({
+        'data': {
+          'audio_tones': [
+            {'abook_id': 7239243941252599000, 'title': '主播：水丘声工厂'},
+          ],
+          'book_infos': [
+            {'book_id': '7239243941252598845', 'author': '甲', 'book_type': 1},
+            {'book_id': '7239243941252598846', 'author': '乙', 'book_type': 1},
+          ],
+        },
+      });
+      expect(tones.narratorTones, isEmpty);
     });
 
     test('reads offline voices', () {
