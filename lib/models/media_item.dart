@@ -608,7 +608,12 @@ class SearchTab {
 
 /// Parses the normalized directory payload into chapter lists grouped by
 /// volume. Both the app bridge shape and raw upstream shapes are accepted.
+///
+/// Note: the bridge's `chapterListWithVolume` entries carry no `version`, so it
+/// is merged in from the raw `item_data_list` in the same payload — see
+/// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
 List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
+  final versions = _directoryVersions(payload);
   final inner = _directoryInner(payload);
   if (inner is List) {
     final entries = _asMapList(inner);
@@ -616,7 +621,10 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
       final chapters = [
         for (var i = 0; i < entries.length; i++)
           Chapter.fromRaw(entries[i], index: i),
-      ].where((chapter) => chapter.itemId.isNotEmpty).toList();
+      ]
+          .map((chapter) => _withVersion(chapter, versions))
+          .where((chapter) => chapter.itemId.isNotEmpty)
+          .toList();
       return chapters.isEmpty ? [] : [chapters];
     }
   }
@@ -643,7 +651,7 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
             volumeName: chapter.volumeName.isEmpty
                 ? volumeName
                 : chapter.volumeName,
-            version: chapter.version,
+            version: _withVersion(chapter, versions).version,
           ),
         );
       }
@@ -666,12 +674,48 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
         final chapter = found.drama
             ? Episode.fromRaw(found.entries[i], index: i).toChapter()
             : Chapter.fromRaw(found.entries[i], index: i);
-        if (chapter.itemId.isNotEmpty) chapters.add(chapter);
+        if (chapter.itemId.isNotEmpty) {
+          chapters.add(_withVersion(chapter, versions));
+        }
       }
       if (chapters.isNotEmpty) volumes.add(chapters);
     }
   }
   return volumes;
+}
+
+/// Fills in a chapter's missing `version` from the raw `item_data_list` of the
+/// same payload; the bridge-normalized entries omit it entirely.
+Chapter _withVersion(Chapter chapter, Map<String, String> versions) =>
+    chapter.version.isEmpty && versions[chapter.itemId]?.isNotEmpty == true
+    ? Chapter(
+        itemId: chapter.itemId,
+        title: chapter.title,
+        volumeName: chapter.volumeName,
+        version: versions[chapter.itemId]!,
+      )
+    : chapter;
+
+/// Indexes `item_id → version` from the first raw `item_data_list` found in
+/// the payload. The normalized bridge chapters have no `version`, but the same
+/// response always also embeds the raw upstream list, which does.
+Map<String, String> _directoryVersions(dynamic value, [int depth = 0]) {
+  final versions = <String, String>{};
+  if (depth > 6 || value is! Map) return versions;
+  final raw = value['item_data_list'];
+  if (raw is List) {
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final id = (entry['item_id'] ?? entry['itemId'] ?? '').toString();
+      final version = (entry['version'] ?? '').toString();
+      if (id.isNotEmpty && version.isNotEmpty) versions[id] = version;
+    }
+    if (versions.isNotEmpty) return versions;
+  }
+  for (final child in value.values) {
+    if (child is Map) versions.addAll(_directoryVersions(child, depth + 1));
+  }
+  return versions;
 }
 
 /// Directory entries plus whether they came from the drama-shaped `episodes`
@@ -1041,5 +1085,34 @@ extension MediaItemJson on MediaItem {
     'kind': kind,
     if (seriesId != null) 'seriesId': seriesId,
     if (episodeId != null) 'episodeId': episodeId,
+    // The promotional badge must survive a round-trip; the keys reuse
+    // [MediaTag.fromRaw]'s payload shape so both paths stay lossless.
+    if (tag != null)
+      'tag': {
+        'text': tag!.text,
+        'bg_color': tag!.lightColors,
+        'dark_bg_color': tag!.darkColors,
+      },
   };
+
+  /// Restores what [toJson] wrote; `null` when required fields are missing.
+  static MediaItem? fromJson(Map<String, dynamic> map) {
+    String field(String key) => map[key]?.toString() ?? '';
+    final id = field('id');
+    final title = field('title');
+    final kind = field('kind');
+    if (id.isEmpty || title.isEmpty || kind.isEmpty) return null;
+    return MediaItem(
+      id: id,
+      title: title,
+      cover: field('cover'),
+      author: field('author'),
+      badge: field('badge'),
+      ep: field('ep'),
+      kind: kind,
+      tag: MediaTag.fromRaw(map['tag'] is Map ? (map['tag'] as Map).cast<String, dynamic>() : null),
+      seriesId: (map['seriesId'] as String?),
+      episodeId: (map['episodeId'] as String?),
+    );
+  }
 }

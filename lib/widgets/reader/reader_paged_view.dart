@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../services/reader_preferences.dart';
 import 'reader_chapter_layout.dart';
 import 'reader_illustration.dart';
 
@@ -15,6 +16,18 @@ class ReaderPagedView extends StatefulWidget {
   final VoidCallback onDragStart;
   final ReaderImageProviderFactory? imageProviderFactory;
 
+  /// Page-turn animation; see [ReaderPageTurnStyle]. The widgets for the
+  /// boundary pages beyond the chapter (章末 / 上一章) are optional.
+  final ReaderPageTurnStyle turnStyle;
+  final Color backgroundColor;
+  final Widget? endPage;
+  final Widget? startPage;
+
+  /// Fired when a turn lands on a chapter boundary page (direction -1 start /
+  /// 1 end). The 章末页 is a stop point: the reader stops narration here while
+  /// the deferred advance below may still swap chapters.
+  final ValueChanged<int>? onBoundaryLanded;
+
   const ReaderPagedView({
     super.key,
     required this.layout,
@@ -24,6 +37,11 @@ class ReaderPagedView extends StatefulWidget {
     required this.onPageChanged,
     required this.onBoundary,
     required this.onDragStart,
+    required this.turnStyle,
+    required this.backgroundColor,
+    this.endPage,
+    this.startPage,
+    this.onBoundaryLanded,
     this.imageProviderFactory,
   });
 
@@ -34,9 +52,15 @@ class ReaderPagedView extends StatefulWidget {
 class ReaderPagedViewState extends State<ReaderPagedView> {
   late PageController _controller = _newController();
   bool _turning = false;
+  Timer? _boundaryLandingTimer;
   bool _boundaryPending = false;
   bool _edgeNotified = false;
   double _overscroll = 0;
+
+  double get _viewportWidth =>
+      _controller.position.viewportDimension > 0
+      ? _controller.position.viewportDimension
+      : 1;
 
   int get _leading => widget.hasPreviousChapter ? 1 : 0;
   int get _itemCount =>
@@ -51,6 +75,7 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
     if (!identical(oldWidget.layout, widget.layout) ||
         oldWidget.hasPreviousChapter != widget.hasPreviousChapter ||
         oldWidget.hasNextChapter != widget.hasNextChapter) {
+      _boundaryLandingTimer?.cancel();
       final oldController = _controller;
       _controller = _newController();
       _turning = false;
@@ -61,6 +86,7 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
 
   @override
   void dispose() {
+    _boundaryLandingTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -78,14 +104,32 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
     final controller = _controller;
     _turning = true;
     try {
-      await controller.animateToPage(
-        target,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
+      if (widget.turnStyle == ReaderPageTurnStyle.none) {
+        controller.jumpToPage(target);
+      } else {
+        await controller.animateToPage(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
     } finally {
       if (identical(controller, _controller)) _turning = false;
     }
+  }
+
+  /// 听书跟随翻页: lands on the page holding the estimated narration
+  /// position. Jumps without animation — the narration keeps moving, an
+  /// animated chase would lag behind forever.
+  void followProgress(double progress) {
+    if (_turning || _boundaryPending || !_controller.hasClients) return;
+    final pages = widget.layout.pages.length;
+    if (pages == 0) return;
+    final target = (progress * pages).floor().clamp(0, pages - 1);
+    final current = _controller.page ?? _controller.initialPage.toDouble();
+    final targetItem = target + _leading;
+    if ((current - targetItem).abs() < 1) return;
+    _controller.jumpToPage(targetItem);
   }
 
   Future<void> _requestBoundary(int direction) async {
@@ -144,25 +188,68 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
         itemCount: _itemCount,
         onPageChanged: (index) {
           final page = index - _leading;
-          if (page < 0) {
-            unawaited(_requestBoundary(-1));
-          } else if (page >= widget.layout.pages.length) {
-            unawaited(_requestBoundary(1));
-          } else {
-            widget.onPageChanged(page);
+          if (page < 0 || page >= widget.layout.pages.length) {
+            widget.onBoundaryLanded?.call(page < 0 ? -1 : 1);
+            // 章末/章首边界页是停靠点: advancing immediately on landing made
+            // the boundary buttons untouchable (they flashed for tens of
+            // milliseconds before the chapter swapped). The request is
+            // deferred briefly instead — the buttons work during the window,
+            // and swiping straight through still advances.
+            _boundaryLandingTimer?.cancel();
+            _boundaryLandingTimer = Timer(const Duration(milliseconds: 600), () {
+              if (!mounted || !_controller.hasClients) return;
+              // The user flipped away during the window: leave them be.
+              // (Compare rounded: the settle may stop a hair short.)
+              final current = _controller.page ?? index.toDouble();
+              if (current.round() != index) return;
+              unawaited(_requestBoundary(page < 0 ? -1 : 1));
+            });
+            return;
           }
+          _boundaryLandingTimer?.cancel();
+          widget.onPageChanged(page);
         },
         itemBuilder: (context, index) {
           final page = index - _leading;
-          if (page < 0 || page >= widget.layout.pages.length) {
-            return Center(child: Text(page < 0 ? '上一章' : '下一章'));
+          if (page < 0) {
+            return widget.startPage ??
+                Center(child: Text('上一章', style: TextStyle(color: widget.backgroundColor)));
           }
-          return ReaderPageContent(
+          if (page >= widget.layout.pages.length) {
+            return widget.endPage ??
+                Center(child: Text('下一章', style: TextStyle(color: widget.backgroundColor)));
+          }
+          Widget content = ReaderPageContent(
             key: ValueKey('reader-text-page-$page'),
             page: widget.layout.pages[page],
             spec: widget.layout.spec,
             imageProviderFactory: widget.imageProviderFactory,
           );
+          if (widget.turnStyle == ReaderPageTurnStyle.cover) {
+            // 覆盖: the outgoing page stays pinned while the incoming one
+            // slides over it. PageView already slides the incoming page in
+            // from the right, so only the page *behind* the fractional
+            // position is translated to cancel its own slide.
+            content = AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                var shift = 0.0;
+                if (_controller.hasClients &&
+                    _controller.position.haveDimensions) {
+                  final current = _controller.page;
+                  if (current != null) {
+                    final delta = current - (page + _leading);
+                    if (delta > 0 && delta < 1) {
+                      shift = delta * _viewportWidth;
+                    }
+                  }
+                }
+                return Transform.translate(offset: Offset(shift, 0), child: child);
+              },
+              child: ColoredBox(color: widget.backgroundColor, child: content),
+            );
+          }
+          return content;
         },
       ),
     ),

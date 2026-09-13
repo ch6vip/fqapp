@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.BatteryManager
+import android.view.WindowManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -96,6 +97,20 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         if (call.method == "pickFont") {
             pickFont(result)
+            return
+        }
+        if (call.method == "keepScreenOn") {
+            val window = binding?.activity?.window
+            if (window == null) {
+                result.error("NO_ACTIVITY", "阅读界面尚未就绪", null)
+                return
+            }
+            if (call.argument<Boolean>("on") == true) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            result.success(true)
             return
         }
         val id = call.argument<String>("session")

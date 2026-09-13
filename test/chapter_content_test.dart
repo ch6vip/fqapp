@@ -63,6 +63,40 @@ void main() {
     expect(content.images, isEmpty);
     expect(_sequence(content), text.split('\n'));
     expect(content.needsImageRefresh(), isTrue);
+    expect(content.paragraphIdsChecked, isFalse);
+  });
+
+  test('legacy structured caches need paragraph ids only when absent', () {
+    String legacyCache(List<Map<String, Object>> blocks) =>
+        '\u001efqapp:chapter:2\n${jsonEncode({'version': 2, 'illustrationsChecked': true, 'legacyText': '第一章\n正文', 'blocks': blocks})}';
+    final missing = ChapterContent.fromCacheText(
+      legacyCache([
+        {'type': 'text', 'text': '第一章'},
+        {'type': 'text', 'text': '正文'},
+      ]),
+    );
+    expect(missing.illustrationsChecked, isTrue);
+    expect(missing.paragraphIdsChecked, isFalse);
+    expect(missing.withoutLeadingTitle('第一章').paragraphIdsChecked, isFalse);
+    expect(
+      missing.blocks.whereType<ChapterParagraph>().map((p) => p.paraIndex),
+      everyElement(isNull),
+    );
+    final indexed = ChapterContent.fromCacheText(
+      legacyCache([
+        {'type': 'text', 'text': '正文', 'idx': 9},
+      ]),
+    );
+    expect(indexed.paragraphIdsChecked, isTrue);
+    expect((indexed.blocks.single as ChapterParagraph).paraIndex, 9);
+  });
+
+  test('fresh markup without ids stays checked across cache round trips', () {
+    final content = parseChapterContent('<h1>第一章</h1><p>正文</p>');
+    final restored = ChapterContent.fromCacheText(content.toCacheText());
+    expect(restored.paragraphIdsChecked, isTrue);
+    expect(restored.withoutLeadingTitle('第一章').paragraphIdsChecked, isTrue);
+    expect((restored.blocks.last as ChapterParagraph).paraIndex, isNull);
   });
 
   test('lazy sources, relative URLs and absent dimensions are supported', () {

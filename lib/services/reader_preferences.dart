@@ -7,6 +7,12 @@ enum ReaderTitleAlignment { start, center }
 
 enum ReaderPageMode { paged, scroll }
 
+/// Page-turn animation for paged mode, mirroring the official 翻页方式 row:
+/// the new page slides in normally (平移), slides over a pinned outgoing page
+/// (覆盖), or appears instantly (无). See
+/// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+enum ReaderPageTurnStyle { cover, slide, none }
+
 @immutable
 class ReaderPreferences {
   static Future<void>? _writes;
@@ -26,6 +32,11 @@ class ReaderPreferences {
   static const _fontPathKey = 'reader_font_path';
   static const _fontNameKey = 'reader_font_name';
   static const _pageModeKey = 'reader_page_mode';
+  static const _pageTurnStyleKey = 'reader_page_turn_style';
+  static const _volumeKeyTurnKey = 'reader_volume_key_turn';
+  static const _keepScreenOnKey = 'reader_keep_screen_on';
+  static const _autoTurnSecondsKey = 'reader_auto_turn_seconds';
+  static const _listeningFollowKey = 'reader_listening_follow';
 
   final double fontSize;
   final int fontWeight;
@@ -43,6 +54,14 @@ class ReaderPreferences {
   final String fontPath;
   final String fontName;
   final ReaderPageMode pageMode;
+  final ReaderPageTurnStyle pageTurnStyle;
+  final bool volumeKeyTurn;
+  final bool keepScreenOn;
+  final int autoTurnSeconds;
+
+  /// While the audio page narrates this chapter, the reader follows the
+  /// playback (听书跟随翻页).
+  final bool listeningFollow;
 
   const ReaderPreferences({
     this.fontSize = 18,
@@ -61,6 +80,11 @@ class ReaderPreferences {
     this.fontPath = '',
     this.fontName = '',
     this.pageMode = ReaderPageMode.paged,
+    this.pageTurnStyle = ReaderPageTurnStyle.slide,
+    this.volumeKeyTurn = false,
+    this.keepScreenOn = false,
+    this.autoTurnSeconds = 10,
+    this.listeningFollow = true,
   });
 
   ReaderPreferences copyWith({
@@ -80,6 +104,11 @@ class ReaderPreferences {
     String? fontPath,
     String? fontName,
     ReaderPageMode? pageMode,
+    ReaderPageTurnStyle? pageTurnStyle,
+    bool? volumeKeyTurn,
+    bool? keepScreenOn,
+    int? autoTurnSeconds,
+    bool? listeningFollow,
   }) {
     return ReaderPreferences(
       fontSize: fontSize ?? this.fontSize,
@@ -99,6 +128,11 @@ class ReaderPreferences {
       fontPath: fontPath ?? this.fontPath,
       fontName: fontName ?? this.fontName,
       pageMode: pageMode ?? this.pageMode,
+      pageTurnStyle: pageTurnStyle ?? this.pageTurnStyle,
+      volumeKeyTurn: volumeKeyTurn ?? this.volumeKeyTurn,
+      keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+      autoTurnSeconds: autoTurnSeconds ?? this.autoTurnSeconds,
+      listeningFollow: listeningFollow ?? this.listeningFollow,
     ).normalized();
   }
 
@@ -128,6 +162,13 @@ class ReaderPreferences {
       fontPath: fontPath,
       fontName: fontPath.isEmpty ? '' : fontName,
       pageMode: pageMode,
+      pageTurnStyle: pageTurnStyle,
+      volumeKeyTurn: volumeKeyTurn,
+      keepScreenOn: keepScreenOn,
+      autoTurnSeconds: autoTurnSeconds.isFinite
+          ? autoTurnSeconds.round().clamp(3, 60)
+          : 10,
+      listeningFollow: listeningFollow,
     );
   }
 
@@ -165,6 +206,15 @@ class ReaderPreferences {
         (value) => value.name == preferences.get(_pageModeKey),
         orElse: () => ReaderPageMode.paged,
       ),
+      pageTurnStyle: ReaderPageTurnStyle.values.firstWhere(
+        (value) => value.name == preferences.get(_pageTurnStyleKey),
+        orElse: () => ReaderPageTurnStyle.slide,
+      ),
+      volumeKeyTurn: _boolean(preferences, _volumeKeyTurnKey) ?? false,
+      keepScreenOn: _boolean(preferences, _keepScreenOnKey) ?? false,
+      autoTurnSeconds:
+          (_number(preferences, _autoTurnSecondsKey) ?? 10).round().clamp(3, 60),
+      listeningFollow: _boolean(preferences, _listeningFollowKey) ?? true,
     ).normalized();
   }
 
@@ -202,6 +252,11 @@ class ReaderPreferences {
       preferences.setString(_fontPathKey, value.fontPath),
       preferences.setString(_fontNameKey, value.fontName),
       preferences.setString(_pageModeKey, value.pageMode.name),
+      preferences.setString(_pageTurnStyleKey, value.pageTurnStyle.name),
+      preferences.setBool(_volumeKeyTurnKey, value.volumeKeyTurn),
+      preferences.setBool(_keepScreenOnKey, value.keepScreenOn),
+      preferences.setInt(_autoTurnSecondsKey, value.autoTurnSeconds),
+      preferences.setBool(_listeningFollowKey, value.listeningFollow),
     ]);
   }
 

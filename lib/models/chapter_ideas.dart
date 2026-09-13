@@ -9,6 +9,13 @@
 /// exposes counts and ids rather than pretending to have the text.
 library;
 
+/// Which official skin mask the in-text bubble uses for a paragraph — the
+/// official view picks it from the idea bucket, not from the reading theme:
+/// `userCount > 0` draws the checkmark bubble, an author comment the pen-nib
+/// bubble, and everything else the plain one.
+/// See .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+enum ParagraphBubbleVariant { plain, users, author }
+
 /// Ideas anchored to one paragraph of a chapter.
 class ParagraphIdeas {
   const ParagraphIdeas({
@@ -16,6 +23,8 @@ class ParagraphIdeas {
     this.count = 0,
     this.commentIds = const [],
     this.channelCounts = const {},
+    this.userCount = 0,
+    this.isAuthor = false,
   });
 
   /// The paragraph ordinal used as the key in the upstream response.
@@ -32,7 +41,23 @@ class ParagraphIdeas {
   /// while the paragraph-comment channel reports `0`.
   final Map<int, int> channelCounts;
 
+  /// Distinct users that commented on this paragraph (`user_count`); the
+  /// official bubble draws its checkmark variant when this is positive.
+  final int userCount;
+
+  /// Whether the paragraph carries the book author's own comment
+  /// (`is_author_comment`); the official bubble marks it with a pen nib.
+  final bool isAuthor;
+
   bool get hasIdeas => count > 0;
+
+  /// Which official bubble mask this paragraph gets; see
+  /// [ParagraphBubbleVariant].
+  ParagraphBubbleVariant get bubbleVariant => isAuthor
+      ? ParagraphBubbleVariant.author
+      : userCount > 0
+      ? ParagraphBubbleVariant.users
+      : ParagraphBubbleVariant.plain;
 
   /// Count for one channel, or 0 when the upstream did not report it.
   int countForChannel(int channel) => channelCounts[channel] ?? 0;
@@ -85,6 +110,12 @@ class ChapterIdeas {
       if (p.showsBubble) p.paraIndex: p.count,
   };
 
+  /// Which official mask each bubble uses, keyed like [bubbleCounts].
+  Map<int, ParagraphBubbleVariant> get bubbleVariants => {
+    for (final p in paragraphs)
+      if (p.showsBubble) p.paraIndex: p.bubbleVariant,
+  };
+
   /// Total idea count across the chapter.
   int get total {
     var sum = 0;
@@ -120,6 +151,8 @@ class ChapterIdeas {
           count: _int(value['count']),
           commentIds: _commentIds(value['infos']),
           channelCounts: _channelCounts(value['bubble_data']),
+          userCount: _int(value['user_count']),
+          isAuthor: value['is_author_comment'] == true,
         ),
       );
     }

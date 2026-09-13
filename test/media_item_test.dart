@@ -101,6 +101,42 @@ void main() {
       expect(chapters.single.itemId, 'c1');
     });
 
+    test('bridge chapters get the version from the raw list beside them', () {
+      // Live shape of /api/directory: the bridge's normalized
+      // chapterListWithVolume entries carry no version, and the raw
+      // item_data_list with versions sits one level up in the same payload.
+      // Reading only the normalized shape left every Chapter.version empty,
+      // which the paragraph-comment sheet surfaced as 评论加载失败.
+      final payload = {
+        'code': 0,
+        'data': {
+          'item_data_list': [
+            {
+              'item_id': 'c1',
+              'title': '第1章',
+              'volume_name': '第一卷：默认',
+              'version': 'abc_1_def',
+            },
+          ],
+          'data': {
+            'chapterListWithVolume': [
+              [
+                {
+                  'itemId': 'c1',
+                  'title': '第1章',
+                  'volume_name': '第一卷：默认',
+                },
+              ],
+            ],
+          },
+        },
+      };
+      final chapters = parseDirectory(payload).expand((v) => v).toList();
+      expect(chapters.map((c) => c.itemId), ['c1']);
+      expect(chapters.single.version, 'abc_1_def');
+      expect(chapters.single.volumeName, '第一卷：默认');
+    });
+
     test('drama episodes keep their numbered volume', () {
       final chapters = parseDirectory({
         'data': {
@@ -637,5 +673,36 @@ void main() {
     });
     expect(items.single.id, 'b1');
     expect(items.single.title, '推荐小说');
+  });
+
+  test('item JSON round-trip keeps the promotional tag', () {
+    final item = MediaItem(
+      id: 'b2',
+      title: '标签小说',
+      cover: 'https://example.test/cover.jpg',
+      author: '作者',
+      badge: '',
+      ep: '',
+      kind: 'book',
+      tag: MediaTag(
+        text: '上新',
+        lightColors: ['#FF5500'],
+        darkColors: ['#FF7A33'],
+      ),
+      seriesId: 's1',
+      episodeId: 'e1',
+    );
+    final restored = MediaItemJson.fromJson(item.toJson());
+    expect(restored, isNotNull);
+    expect(restored!.id, item.id);
+    expect(restored.title, item.title);
+    expect(restored.kind, item.kind);
+    expect(restored.seriesId, 's1');
+    expect(restored.episodeId, 'e1');
+    expect(restored.tag, isNotNull);
+    expect(restored.tag!.text, '上新');
+    expect(restored.tag!.colorsFor(dark: true), ['#FF7A33']);
+    // Required-field integrity: a truncated map cannot resurrect an item.
+    expect(MediaItemJson.fromJson({'id': 'b3'}), isNull);
   });
 }

@@ -58,6 +58,22 @@ class BookComment {
     return '${seconds ~/ (86400 * 365)}年前';
   }
 
+  /// Paragraph lists show recent times, then MM-dd or yyyy-MM-dd for older
+  /// comments, matching the date line beneath each comment in the reader.
+  String paragraphTime({DateTime? now}) {
+    final created = createdAt;
+    if (created == null) return '';
+    final reference = now ?? DateTime.now();
+    if (reference.difference(created) < const Duration(days: 1)) {
+      return relativeTime(now: reference);
+    }
+    final month = created.month.toString().padLeft(2, '0');
+    final day = created.day.toString().padLeft(2, '0');
+    return created.year == reference.year
+        ? '$month-$day'
+        : '${created.year}-$month-$day';
+  }
+
   /// `阅读14小时后点评` style caption, omitted when the reader did not read.
   String get readDurationLabel {
     if (readSeconds <= 0) return '';
@@ -236,7 +252,10 @@ BookComment? _paragraphComment(dynamic comment, dynamic stat) {
 /// offset so callers can page without parsing it themselves.
 int _cursorOffset(String cursor) {
   final match = RegExp(r'"offset"\s*:\s*(\d+)').firstMatch(cursor);
-  return match == null ? 0 : int.tryParse(match.group(1)!) ?? 0;
+  if (match != null) return int.tryParse(match.group(1)!) ?? 0;
+  // The live comment list answers with a plain numeric string (`"cursor":"20"`),
+  // not the offset object some endpoints use.
+  return int.tryParse(cursor.trim()) ?? 0;
 }
 
 /// Business error carried inside a 200 response. The timeline endpoint answers

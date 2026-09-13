@@ -178,6 +178,57 @@ void main() {
       expect(entry.metaLabel, '安岳的白沐潼 · 传统玄幻 · 连载中');
     });
 
+    test("unwraps the board's group cells one level down", () {
+      // Live shape of the rank board: cell_view.cell_data holds GROUP cells
+      // (月榜 / 男生榜 / …) whose own cell_data carries the work cells. The
+      // parser used to read only one level, so every board answered empty
+      // (该榜单暂无内容).
+      final page = RankCatalog.parsePage({
+        'code': 0,
+        'data': {
+          'has_more': false,
+          'cell_view': {
+            'cell_data': [
+              {
+                'cell_name': '月榜',
+                'cell_data': [
+                  {
+                    'book_data': [
+                      {
+                        'book_id': '7276384138653862966',
+                        'book_name': '我不是戏神',
+                        'author': '三九音域',
+                        'category': '都市,高武',
+                        'creation_status': 1,
+                        'word_number': 3124695,
+                      },
+                    ],
+                  },
+                  {
+                    'book_data': [
+                      {
+                        'book_id': '7109042094553765447',
+                        'book_name': '十日终焉',
+                        'author': '杀虫队队员',
+                        'category': '悬疑,脑洞',
+                        'creation_status': 1,
+                        'word_number': 2834234,
+                      },
+                    ],
+                  },
+                ],
+              },
+              {'cell_name': '男生榜', 'cell_data': <dynamic>[]},
+            ],
+          },
+        },
+      });
+      expect(page.entries.map((e) => e.title), ['我不是戏神', '十日终焉']);
+      expect(page.entries.map((e) => e.position), [1, 2]);
+      expect(page.entries.first.id, '7276384138653862966');
+      expect(page.hasMore, isFalse);
+    });
+
     test('accepts an inline book instead of a book_data list', () {
       final page = RankCatalog.parsePage({
         'code': 0,

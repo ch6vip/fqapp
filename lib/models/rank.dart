@@ -170,12 +170,33 @@ class RankCatalog {
     if (cells is! List) return RankBoard.empty;
 
     final entries = <RankEntry>[];
+    final seenIds = <String>{};
+    void addBook(Map<String, dynamic> book) {
+      final entry = _entry(book, startAt + entries.length);
+      if (entry == null) return;
+      // A group cell can carry both an inline work and nested cells; keep the
+      // first occurrence of every work instead of duplicating it. Some cells
+      // have no book_id, so the title backs the key up.
+      final key = entry.id.isEmpty ? 't:${entry.title}' : entry.id;
+      if (!seenIds.add(key)) return;
+      entries.add(entry);
+    }
+
     for (final cell in cells) {
       if (cell is! Map) continue;
+      // The board's cells are GROUP cells (月榜 / 男生榜 / …) whose own
+      // `cell_data` holds the ranked works one level down. A work may also
+      // arrive directly under the group, so try both shapes for every cell.
       final book = _firstBook(cell);
-      if (book == null) continue;
-      final entry = _entry(book, startAt + entries.length);
-      if (entry != null) entries.add(entry);
+      if (book != null) addBook(book);
+      final nested = cell['cell_data'];
+      if (nested is! List) continue;
+      for (final sub in nested) {
+        if (sub is! Map) continue;
+        final subBook = _firstBook(sub);
+        if (subBook == null) continue;
+        addBook(subBook);
+      }
     }
     return RankBoard(
       entries: List.unmodifiable(entries),

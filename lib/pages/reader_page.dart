@@ -3,6 +3,7 @@ import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
@@ -12,6 +13,7 @@ import '../services/chapter_cache_store.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
 import '../services/reader_history.dart';
+import '../services/listening_session.dart';
 import '../services/reader_device.dart';
 import '../services/reader_preferences.dart';
 import '../widgets/chapter_cache_sheet.dart';
@@ -31,9 +33,14 @@ typedef _LoadedChapter = ({String text, bool fetched});
 /// Loads a chapter's paragraph ideas (段评).
 typedef ChapterIdeasLoader = Future<ChapterIdeas> Function(String itemId);
 
-/// Resolves the comment bodies for one paragraph's idea bucket.
+/// Resolves the comment bodies for one paragraph's idea bucket. [cursor] is
+/// the previous page's offset while paging, null on the first request.
 typedef ParagraphCommentResolver =
-    Future<BookCommentPage> Function(String itemId, ParagraphIdeas paragraph);
+    Future<BookCommentPage> Function(
+      String itemId,
+      ParagraphIdeas paragraph,
+      String? cursor,
+    );
 
 class ReaderPage extends StatefulWidget {
   final String bookId;
@@ -91,6 +98,187 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ReaderPreferences _preferences = const ReaderPreferences();
   ReaderThemePreset _dayTheme = ReaderThemePreset.light;
   bool _controlsVisible = false;
+
+  /// 自动翻页: a repeating timer flips forward every [ReaderPreferences.autoTurnSeconds]
+  /// seconds; any tap or drag stops it. See
+  /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+  Timer? _autoTurnTimer;
+
+  bool get _paged => _preferences.pageMode == ReaderPageMode.paged;
+
+  bool _handleVolumeKey(KeyEvent event) {
+    if (!_preferences.volumeKeyTurn || _controlsVisible) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    if (_paged) {
+      if (event.logicalKey == LogicalKeyboardKey.audioVolumeDown) {
+        _pauseListenFollow();
+        unawaited(_turnPage(1));
+        return true;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.audioVolumeUp) {
+        _pauseListenFollow();
+        unawaited(_turnPage(-1));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _toggleAutoTurn() {
+    if (_autoTurnTimer != null) {
+      _stopAutoTurn();
+      return;
+    }
+    unawaited(_stopTtsRead());
+    _controlsVisible = false;
+    _autoTurnTimer = Timer.periodic(
+      Duration(seconds: _preferences.autoTurnSeconds),
+      (_) => _autoTurnStep(),
+    );
+    if (mounted) setState(() {});
+  }
+
+  void _stopAutoTurn() {
+    _autoTurnTimer?.cancel();
+    _autoTurnTimer = null;
+    if (mounted) setState(() {});
+  }
+
+  /// 听书跟随翻页: the audio page is narrating this chapter, so land on the
+  /// page holding the estimated playback position. Instant jumps — the
+  /// narration keeps moving and an animated chase would always lag.
+  ///
+  /// 用户接管闩锁: a manual page turn pauses following briefly, so the reader
+  /// does not yank the page back within a second.
+  DateTime _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _pauseListenFollow() {
+    _listenFollowPausedUntil = DateTime.now().add(const Duration(seconds: 15));
+  }
+
+  void _onListeningTick() {
+    if (!mounted ||
+        !_preferences.listeningFollow ||
+        _autoTurnTimer != null ||
+        _controlsVisible ||
+        _loading ||
+        _error != null) {
+      return;
+    }
+    if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
+    final session = ListeningSession.instance;
+    if (!session.matches(widget.bookId, _chapter.itemId)) return;
+    final progress = session.progress;
+    if (_paged) {
+      _pagedKey.currentState?.followProgress(progress);
+    } else if (_scrollController.hasClients) {
+      final position = _scrollController.position;
+      if (position.maxScrollExtent > 0) {
+        _scrollController.jumpTo(progress * position.maxScrollExtent);
+      }
+    }
+  }
+
+  /// 边走边读: system TTS narrates the reader page by page and flips forward
+  /// on completion — the official AudioTtsDepend behaviour with our own
+  /// engine. Any tap/drag/chapter change stops it.
+  FlutterTts? _tts;
+  bool _ttsActive = false;
+
+  Future<void> _toggleTtsRead() async {
+    if (_ttsActive) {
+      await _stopTtsRead();
+      return;
+    }
+    _controlsVisible = false;
+    _stopAutoTurn();
+    final tts = _tts ??= FlutterTts();
+    try {
+      await tts.setLanguage('zh-CN');
+      await tts.setSpeechRate(0.5);
+      await tts.awaitSpeakCompletion(true);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('当前设备没有可用的中文语音引擎')),
+        );
+      }
+      return;
+    }
+    tts.setCompletionHandler(() {
+      if (!_ttsActive || !mounted) return;
+      // The page finished narrating: flip forward and keep going. Loading
+      // windows and the chapter end (本章完 / 最后一章) stop the chain.
+      unawaited(
+        _turnPage(1).then((_) {
+          if (!_ttsActive || !mounted) return null;
+          if (_loading || _chapterLayout == null) return _stopTtsRead();
+          return _speakCurrentPage();
+        }),
+      );
+    });
+    setState(() => _ttsActive = true);
+    await _speakCurrentPage();
+  }
+
+  Future<void> _speakCurrentPage() async {
+    final tts = _tts;
+    final layout = _chapterLayout;
+    if (tts == null || layout == null || !_paged) {
+      await _stopTtsRead();
+      return;
+    }
+    final page = _pageIndex < layout.pages.length
+        ? layout.pages[_pageIndex]
+        : null;
+    if (page == null) {
+      await _stopTtsRead();
+      return;
+    }
+    final text = page.fragments.map((f) => f.text).join('\n');
+    if (text.trim().isEmpty) {
+      // An illustration-only page has nothing to narrate: keep the chain
+      // moving instead of stalling until the next completion event.
+      unawaited(
+        _turnPage(1).then((_) {
+          if (_ttsActive && mounted) return _speakCurrentPage();
+        }),
+      );
+      return;
+    }
+    try {
+      await tts.speak(text);
+    } catch (_) {
+      await _stopTtsRead();
+    }
+  }
+
+  Future<void> _stopTtsRead() async {
+    if (!_ttsActive && _tts == null) return;
+    _ttsActive = false;
+    try {
+      await _tts?.stop();
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  void _autoTurnStep() {
+    if (!mounted) return _stopAutoTurn();
+    if (_paged) {
+      unawaited(_turnPage(1));
+    } else if (_scrollController.hasClients) {
+      final position = _scrollController.position;
+      final target = (position.pixels + position.viewportDimension * 0.85)
+          .clamp(0.0, position.maxScrollExtent);
+      unawaited(
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    }
+  }
   double? _chapterSeekValue;
   int _loadGeneration = 0;
   // Legado-style reading time: deltas are settled at scroll stops, chapter
@@ -133,7 +321,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   bool _needsRestore = true;
   bool _requestedStartAtEnd = false;
 
-  bool get _paged => _preferences.pageMode == ReaderPageMode.paged;
 
   Chapter get _chapter => widget.chapters[_index];
   ReaderStore get _readerStore => widget.readerStore ?? LibraryStore.instance;
@@ -149,6 +336,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleVolumeKey);
+    ListeningSession.instance.addListener(_onListeningTick);
     WidgetsBinding.instance.addObserver(this);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
@@ -203,6 +392,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (mounted && _appActive) setState(() => _deviceStatus = status);
       }, onError: (Object _) {});
     }
+    // 进入阅读器即按偏好应用常亮(否则只有动过设置才生效)。
+    unawaited(_device.keepScreenOn(_preferences.keepScreenOn));
   }
 
   Future<void> _loadFont(String path) async {
@@ -228,7 +419,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     return font;
   }
 
-  Future<void> _savePreferences() async {
+  Future<void> _savePreferences({bool applyKeepScreenOn = true}) async {
+    if (applyKeepScreenOn) {
+      unawaited(_device.keepScreenOn(_preferences.keepScreenOn));
+    }
     if (!_preferencesReady || !_preferencesDirty) return;
     final snapshot = _preferences;
     _preferencesDirty = false;
@@ -268,11 +462,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleVolumeKey);
+    ListeningSession.instance.removeListener(_onListeningTick);
+    _autoTurnTimer?.cancel();
+    unawaited(_tts?.stop());
     WidgetsBinding.instance.removeObserver(this);
     ++_deviceGeneration;
     unawaited(_deviceSubscription?.cancel());
+    // The save must not re-apply keepScreenOn after the explicit clear below,
+    // or the screen would stay awake after leaving the reader.
+    unawaited(_savePreferences(applyKeepScreenOn: false));
+    unawaited(_device.keepScreenOn(false));
     unawaited(_device.close());
-    unawaited(_savePreferences());
     _saveTimer?.cancel();
     _settleReadTime();
     _sessionActive = false;
@@ -285,6 +486,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final resumed = state == AppLifecycleState.resumed;
     if (!resumed && _appActive) {
+      _stopAutoTurn();
+      unawaited(_stopTtsRead());
       ++_deviceGeneration;
       unawaited(_device.suspend());
       _settleReadTime();
@@ -383,6 +586,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _ideas = ideas;
         ++_ideasRevision;
       });
+      // Note: Old image-aware caches can still lack paragraph ids. Refresh
+      // only when ideas need them; never fabricate ids from display order.
+      // .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
+      if (!_chapterContent.paragraphIdsChecked &&
+          ideas.paragraphs.any((paragraph) => paragraph.showsBubble)) {
+        unawaited(_refreshCachedChapter(chapter));
+      }
     } catch (_) {
       // Keep the section hidden rather than surfacing a failure. Catches Error
       // as well as Exception: ideas are decoration, not a page-level failure.
@@ -394,59 +604,62 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ///
   /// Note: 气泡的门槛与几何规格取自官方客户端 — 见
   /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
-  Widget _buildParagraphBubble(int paraIndex, int count) =>
-      ReaderParagraphBubble(
-        count: count,
-        metrics: ReaderBubbleMetrics.forFontSize(
-          MediaQuery.textScalerOf(context).scale(_preferences.fontSize),
-        ),
-        preset: _preferences.themePreset,
-        onTap: () => unawaited(_showIdeas(focusParaIndex: paraIndex)),
-      );
+  Widget _buildParagraphBubble(
+    int paraIndex,
+    int count,
+    ParagraphBubbleVariant variant,
+  ) => ReaderParagraphBubble(
+    count: count,
+    metrics: ReaderBubbleMetrics.forFontSize(
+      MediaQuery.textScalerOf(context).scale(_preferences.fontSize),
+      variant: variant,
+    ),
+    preset: _preferences.themePreset,
+    onTap: () => unawaited(_showIdeas(focusParaIndex: paraIndex)),
+  );
 
   Future<void> _showIdeas({int? focusParaIndex}) async {
     if (_ideas.isEmpty) return;
     setState(() => _controlsVisible = false);
-    final texts = _paragraphTexts();
     final ideaSnapshot = _ideas;
     final chapter = widget.chapters[_index];
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
-      backgroundColor: _preferences.themePreset.panelColor,
-      builder: (context) => SizedBox(
-        // The official panel opens at 90% of the screen
-        // (`para_comment_dialog_config_v671.initViewHeightPercent`).
-        height: MediaQuery.sizeOf(context).height * 0.9,
+      showDragHandle: false,
+      backgroundColor: _preferences.themePreset.isDark
+          ? _preferences.themePreset.panelColor
+          : Colors.white,
+      barrierColor: Colors.black.withValues(alpha: 0.4),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      builder: (context) => FractionallySizedBox(
+        // Match the supplied official screenshot, keeping the paragraph visible
+        // above the comments. Note: 2026-09-11-reader-paragraph-bubble.md.
+        heightFactor: 0.69,
         child: ReaderIdeasSheet(
           ideas: ideaSnapshot,
-          paragraphTexts: texts,
           preset: _preferences.themePreset,
-          // Tapping a bubble in the text opens the panel with that paragraph
-          // already expanded, so the tap lands on the comments it promised.
+          // Each bubble opens only that paragraph's comments.
           initialParaIndex: focusParaIndex,
-          loadComments: (paragraph) async {
+          loadComments: (paragraph, cursor) async {
             final resolver = widget.commentResolver;
-            if (resolver != null) return resolver(chapter.itemId, paragraph);
-            return _defaultComments(chapter.itemId, paragraph);
+            if (resolver != null) {
+              return resolver(chapter.itemId, paragraph, cursor);
+            }
+            return _defaultComments(
+              chapter,
+              paragraph,
+              ideaSnapshot.itemVersion,
+              cursor,
+            );
           },
         ),
       ),
     );
-  }
-
-  /// Paragraph id to text, so the sheet can show each comment's context.
-  /// Ids come from the upstream `<p idx>` attribute and match the idea keys.
-  Map<int, String> _paragraphTexts() {
-    final texts = <int, String>{};
-    for (final block in _chapterContent.blocks) {
-      if (block is ChapterParagraph && block.paraIndex != null) {
-        texts.putIfAbsent(block.paraIndex!, () => block.text);
-      }
-    }
-    return texts;
   }
 
   /// Default idea fetch and comment resolution; see [ReaderPage.ideasLoader].
@@ -455,24 +668,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// Loads one paragraph's comments.
   ///
-  /// Note: the upstream wants `server_channel=39` here, not the 43 the official
+  /// Note: the upstream wants `server_channel=38` here, not the 43 the official
   /// presenter assigns, and it needs the chapter version — see
   /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
   Future<BookCommentPage> _defaultComments(
-    String itemId,
+    Chapter chapter,
     ParagraphIdeas paragraph,
+    String ideaVersion,
+    String? cursor,
   ) {
-    final version = _chapter.version;
-    if (version.isEmpty) {
-      // Without the version the upstream rejects the request, so there is
-      // nothing to show; an empty page renders as the panel's empty state.
-      return Future.value(const BookCommentPage());
-    }
     return ApiClient.instance.paragraphComments(
       widget.bookId,
-      itemId,
-      itemVersion: version,
+      chapter.itemId,
+      itemVersion: chapter.version.isNotEmpty ? chapter.version : ideaVersion,
       paraIndex: paragraph.paraIndex,
+      cursor: cursor,
     );
   }
 
@@ -737,6 +947,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             content: _chapterContent,
             spec: spec,
             paragraphBubbles: _ideas.bubbleCounts,
+            paragraphBubbleVariants: _ideas.bubbleVariants,
             bubbleBuilder: _buildParagraphBubble,
           );
     _layoutIdeasRevision = _ideasRevision;
@@ -846,7 +1057,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         await _prev(startAtEnd: true);
       }
     } else {
+      final canAdvance = _index < widget.chapters.length - 1;
       await _next();
+      // Only stop when the book truly has no next chapter — entering the last
+      // chapter must NOT cut narration short.
+      if (_ttsActive && !canAdvance) {
+        await _stopTtsRead();
+      }
     }
   }
 
@@ -991,6 +1208,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   void _toggleControls() {
+    _stopAutoTurn();
+    unawaited(_stopTtsRead());
     if (!_controlsVisible) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
     }
@@ -1295,12 +1514,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           key: const ValueKey('reader-page-surface'),
           behavior: HitTestBehavior.translucent,
           onTapUp: (details) {
-            if (_controlsVisible) {
+            if (_autoTurnTimer != null || _ttsActive) {
+              _stopAutoTurn();
+              unawaited(_stopTtsRead());
+            } else if (_controlsVisible) {
               _toggleControls();
             } else if (details.localPosition.dx < constraints.maxWidth / 3) {
+              _pauseListenFollow();
               _turnPage(-1);
             } else if (details.localPosition.dx >
                 constraints.maxWidth * 2 / 3) {
+              _pauseListenFollow();
               _turnPage(1);
             } else {
               _toggleControls();
@@ -1316,6 +1540,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   onPageChanged: _onPageChanged,
                   onBoundary: _pageBoundary,
                   onDragStart: _hideControlsOnDrag,
+                  turnStyle: _preferences.pageTurnStyle,
+                  backgroundColor: preset.backgroundColor,
+                  endPage: _buildChapterEndPage(preset),
+                  startPage: _buildChapterStartPage(preset),
+                  onBoundaryLanded: (direction) {
+                    // 章末是朗读的终点: land on it stops the TTS chain even
+                    // though _pageIndex never reports boundary pages.
+                    if (direction > 0 && _ttsActive) {
+                      unawaited(_stopTtsRead());
+                    }
+                  },
                   imageProviderFactory: widget.imageProviderFactory,
                 )
               : _buildScrollContent(layout),
@@ -1324,7 +1559,68 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     );
   }
 
+  /// 章末页: shown as the trailing page of a finished chapter — the chapter's
+  /// comment entry (the busiest paragraph) plus the next-chapter action, the
+  /// official 章末章评 landing without its circle/ad modules.
+  Widget _buildChapterEndPage(ReaderThemePreset preset) {
+    final hottest = _hottestParagraph();
+    final commentCount = _ideas.total;
+    return ColoredBox(
+      color: preset.backgroundColor,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '本章完',
+              style: TextStyle(color: preset.mutedTextColor, fontSize: 13),
+            ),
+            const SizedBox(height: 20),
+            if (commentCount > 0 && hottest != null)
+              FilledButton.tonal(
+                key: const ValueKey('reader-chapter-comments'),
+                onPressed: () =>
+                    unawaited(_showIdeas(focusParaIndex: hottest)),
+                child: Text('查看本章评论 · $commentCount'),
+              ),
+            const SizedBox(height: 12),
+            if (_index < widget.chapters.length - 1)
+              FilledButton(
+                onPressed: () => unawaited(_next()),
+                child: const Text('下一章'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 章首页: landing page for flipping backwards past the first page.
+  Widget _buildChapterStartPage(ReaderThemePreset preset) => ColoredBox(
+    color: preset.backgroundColor,
+    child: Center(
+      child: _index > 0
+          ? FilledButton(
+              onPressed: () => unawaited(_prev(startAtEnd: true)),
+              child: const Text('上一章'),
+            )
+          : null,
+    ),
+  );
+
+  int? _hottestParagraph() {
+    ParagraphIdeas? best;
+    for (final paragraph in _ideas.paragraphs) {
+      if (!paragraph.showsBubble) continue;
+      if (best == null || paragraph.count > best.count) best = paragraph;
+    }
+    return best?.paraIndex;
+  }
+
   void _hideControlsOnDrag() {
+    _stopAutoTurn();
+    unawaited(_stopTtsRead());
+    _pauseListenFollow();
     if (_controlsVisible) setState(() => _controlsVisible = false);
   }
 
@@ -1393,6 +1689,24 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   ),
                 ),
                 const SizedBox(width: 16),
+                if (_ideas.isNotEmpty)
+                  OutlinedButton.icon(
+                    key: const ValueKey('reader-scroll-chapter-comments'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: () => unawaited(
+                      _showIdeas(focusParaIndex: _hottestParagraph()),
+                    ),
+                    icon: const Icon(Icons.forum_outlined, size: 18),
+                    label: Text(
+                      '本章评论 ${_ideas.total}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 14, height: 1.4),
+                    ),
+                  ),
+                if (_ideas.isNotEmpty) const SizedBox(width: 16),
                 Expanded(
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
@@ -1452,8 +1766,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       onNight: _toggleNightTheme,
       onAppearance: _showAppearanceSettings,
       onCache: _showCache,
-      onIdeas: _ideas.isEmpty ? null : _showIdeas,
-      ideaCount: _ideas.total,
+      autoTurnActive: _autoTurnTimer != null,
+      onAutoTurn: _toggleAutoTurn,
+      ttsActive: _ttsActive,
+      onTtsRead: _toggleTtsRead,
     );
   }
 

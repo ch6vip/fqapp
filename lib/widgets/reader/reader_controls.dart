@@ -23,10 +23,14 @@ class ReaderControls extends StatelessWidget {
   final VoidCallback onAppearance;
   final VoidCallback onCache;
 
-  /// Chapter ideas (段评). Null while the chapter has none to show, which
-  /// disables the action instead of opening an empty sheet.
-  final VoidCallback? onIdeas;
-  final int ideaCount;
+  /// 自动翻页 toggle and the chapter-comment entry (章末章评). The comment
+  /// action is null while the chapter has no ideas.
+  final bool autoTurnActive;
+  final VoidCallback onAutoTurn;
+
+  /// 边走边读: system-TTS narration inside the reader.
+  final bool ttsActive;
+  final VoidCallback onTtsRead;
 
   const ReaderControls({
     super.key,
@@ -48,8 +52,10 @@ class ReaderControls extends StatelessWidget {
     required this.onNight,
     required this.onAppearance,
     required this.onCache,
-    this.onIdeas,
-    this.ideaCount = 0,
+    this.autoTurnActive = false,
+    required this.onAutoTurn,
+    this.ttsActive = false,
+    required this.onTtsRead,
   });
 
   @override
@@ -207,33 +213,68 @@ class ReaderControls extends StatelessWidget {
                       ),
                     ],
                   ),
-                  // Ideas get their own row so the count badge has room and the
-                  // four primary actions keep their size.
-                  if (onIdeas != null) ...[
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton.icon(
-                            key: const ValueKey('reader-ideas'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: preset.accentColor,
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                            ),
-                            onPressed: onIdeas,
-                            icon: const Icon(Icons.forum_outlined, size: 19),
-                            label: Text(
-                              ideaCount > 0 ? '段评 · $ideaCount' : '段评',
-                              style: const TextStyle(fontSize: 13),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton.icon(
+                          key: const ValueKey('reader-auto-turn'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: autoTurnActive
+                                ? preset.accentColor
+                                : preset.textColor,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
                             ),
                           ),
+                          onPressed: onAutoTurn,
+                          icon: Icon(
+                            autoTurnActive
+                                ? Icons.pause_circle_outline_rounded
+                                : Icons.play_circle_outline_rounded,
+                            size: 19,
+                          ),
+                          label: Text(
+                            autoTurnActive ? '停止自动翻页' : '自动翻页',
+                            style: const TextStyle(fontSize: 13),
+                          ),
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton.icon(
+                          key: const ValueKey('reader-tts-read'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: ttsActive
+                                ? preset.accentColor
+                                : preset.textColor,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: onTtsRead,
+                          icon: Icon(
+                            ttsActive
+                                ? Icons.pause_circle_outline_rounded
+                                : Icons.record_voice_over_outlined,
+                            size: 19,
+                          ),
+                          label: Text(
+                            ttsActive ? '停止朗读' : '边走边读',
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  // Ideas get their own row so the count badge has room and the
+                  // four primary actions keep their size.
                 ],
               ),
             ),

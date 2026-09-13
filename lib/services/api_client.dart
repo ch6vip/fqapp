@@ -425,16 +425,18 @@ class ApiClient {
 
   /// Comment bodies for one paragraph.
   ///
-  /// Note: `server_channel` must be 39, not the 43 the official presenter
+  /// Note: `server_channel` must be **38**, not the 43 the official presenter
   /// assigns — see
   /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
   ///
   /// This is the official client's paragraph-comment recipe, with one field
-  /// corrected against live data: `server_channel` must be **39**
-  /// (`NovelShortStoryParaList`), not the 43 the decompiled presenter assigns.
-  /// With 43 the request is accepted (`code=0`) but always answers `total=0`;
-  /// with 39 it returns the paragraph's comments, matching the count the idea
-  /// list reports for that paragraph.
+  /// corrected against live data. 43 (the decompiled presenter's value) is
+  /// accepted (`code=0`) but always answers `total=0`. Channel 39 was the first
+  /// fix — it matched the idea count on the two books verified then — but on
+  /// other books (e.g. 7276384138653862966, 我不是戏神) it returns `total=0`
+  /// while the idea list reports 77519. Channel **38** matches the idea count
+  /// on every book tested, including those two, so it is the real paragraph
+  /// channel and 39 was a partial mirror.
   ///
   /// The container is the **chapter item id** while `business_param.book_id`
   /// stays the real book id. All three of `book_id`, [itemVersion] and
@@ -446,7 +448,23 @@ class ApiClient {
     required String itemVersion,
     required int paraIndex,
     int count = 20,
+    String? cursor,
   }) async {
+    // Old saved catalogues have no version. Refresh it on demand instead of
+    // turning a paragraph with a nonzero bubble count into an empty page.
+    var version = itemVersion.trim();
+    if (version.isEmpty) {
+      final volumes = await directoryChapters(bookId);
+      for (final chapter in volumes.expand((volume) => volume)) {
+        if (chapter.itemId == itemId) {
+          version = chapter.version.trim();
+          break;
+        }
+      }
+      if (version.isEmpty) {
+        throw const ApiException('章节信息暂时无法加载');
+      }
+    }
     final response = await _get(
       _url('/api/v1/books/${Uri.encodeComponent(bookId)}/reviews', {
         'book_id': bookId,
@@ -454,13 +472,17 @@ class ApiClient {
         'group_type': '15',
         'comment_source': '2',
         'comment_type': '1',
-        // 39 = NovelShortStoryParaList. 43 (the value the official presenter
-        // assigns) is accepted but always yields an empty list — verified
-        // against a paragraph with 24 comments.
-        'server_channel': '39',
+        // 38 is the paragraph-comment channel that matches the idea count on
+        // every book tested. 43 (the official presenter's value) is accepted
+        // but always yields an empty list; 39 matched only some books.
+        'server_channel': '38',
         'para_index': '$paraIndex',
-        'item_version': itemVersion,
+        'item_version': version,
         'count': '$count',
+        // Pagination token: the numeric `common_list_info.cursor` of the
+        // previous page. Omitted on the first request so it stays byte for
+        // byte identical with the verified recipe.
+        if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
       }),
     );
     final status = response.statusCode;

@@ -402,6 +402,109 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                           ),
                         ),
                         const SizedBox(height: 8),
+                        _section(
+                          preset,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                '阅读体验',
+                                style: TextStyle(
+                                  color: preset.mutedTextColor,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              // 翻页方式: mirrors the official 覆盖/平移/无 row;
+                              // 仿真 (curl) and 上下 (scroll) live elsewhere.
+                              Row(
+                                children: [
+                                  for (final style in ReaderPageTurnStyle.values)
+                                    Expanded(
+                                      child: _choice(
+                                        switch (style) {
+                                          ReaderPageTurnStyle.cover => '覆盖',
+                                          ReaderPageTurnStyle.slide => '平移',
+                                          ReaderPageTurnStyle.none => '无',
+                                        },
+                                        selected:
+                                            _value.pageTurnStyle == style,
+                                        onTap: () => _update(
+                                          _value.copyWith(
+                                            pageTurnStyle: style,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              // 自动翻页间隔; start/stop lives in the reader menu.
+                              Row(
+                                children: [
+                                  for (final seconds in const [3, 5, 10, 20, 30])
+                                    Expanded(
+                                      child: _choice(
+                                        '$seconds秒',
+                                        selected:
+                                            _value.autoTurnSeconds == seconds,
+                                        onTap: () => _update(
+                                          _value.copyWith(
+                                            autoTurnSeconds: seconds,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              SwitchListTile.adaptive(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                title: const Text(
+                                  '听书跟随翻页',
+                                  style: TextStyle(fontSize: 14),
+                                ),
+                                subtitle: const Text(
+                                  '听书页播放本章时，阅读器按播放进度自动翻页',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                                value: _value.listeningFollow,
+                                onChanged: (value) => _update(
+                                  _value.copyWith(listeningFollow: value),
+                                ),
+                              ),
+                              SwitchListTile.adaptive(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                title: const Text(
+                                  '音量键翻页',
+                                  style: TextStyle(fontSize: 14),
+                                ),
+                                subtitle: const Text(
+                                  '音量下 = 下一页，音量上 = 上一页',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                                value: _value.volumeKeyTurn,
+                                onChanged: (value) => _update(
+                                  _value.copyWith(volumeKeyTurn: value),
+                                ),
+                              ),
+                              SwitchListTile.adaptive(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                title: const Text(
+                                  '阅读时保持屏幕常亮',
+                                  style: TextStyle(fontSize: 14),
+                                ),
+                                value: _value.keepScreenOn,
+                                onChanged: (value) => _update(
+                                  _value.copyWith(keepScreenOn: value),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
                         SwitchListTile.adaptive(
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 4,
@@ -572,6 +675,30 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
           ],
         ),
       ],
+    ),
+  );
+
+  Widget _choice(
+    String label, {
+    required bool selected,
+    required VoidCallback onTap,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 3),
+    child: OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        foregroundColor: selected
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).textTheme.bodySmall?.color,
+        side: BorderSide(
+          color: selected
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).dividerColor,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      onPressed: onTap,
+      child: Text(label, style: const TextStyle(fontSize: 13)),
     ),
   );
 }

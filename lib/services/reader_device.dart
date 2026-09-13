@@ -95,6 +95,19 @@ class ReaderDevice {
     }
   }
 
+  /// Keeps the screen on while the reader is open (阅读时保持常亮). Window
+  /// flag scoped to the activity, so it clears itself when the reader closes
+  /// even if the Dart side never calls this again.
+  Future<void> keepScreenOn(bool on) async {
+    try {
+      await _channel.invokeMethod<void>('keepScreenOn', {'on': on});
+    } on MissingPluginException {
+      // No Android bridge (desktop): nothing to hold awake.
+    } on PlatformException {
+      // Activity detachment clears the flag with the window.
+    }
+  }
+
   Future<void> suspend() => _finish('suspend');
 
   Future<void> close() {

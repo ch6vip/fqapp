@@ -6,6 +6,7 @@ import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_preferences.dart';
 import 'reader_bubble.dart';
 import 'reader_illustration.dart';
+import '../../models/chapter_ideas.dart';
 import 'reader_theme.dart';
 
 /// Layout inputs exclude brightness and page mode, which do not change text.
@@ -116,6 +117,9 @@ class ReaderContentBlock {
   /// null when the paragraph has none or the upstream gate did not pass.
   final int? bubbleCount;
 
+  /// Which official mask the bubble uses; see [bubbleCount].
+  final ParagraphBubbleVariant? bubbleVariant;
+
   const ReaderContentBlock({
     required this.index,
     required this.text,
@@ -129,6 +133,7 @@ class ReaderContentBlock {
     this.illustration,
     this.paraIndex,
     this.bubbleCount,
+    this.bubbleVariant,
   });
 
   int get end => start + text.length;
@@ -196,7 +201,9 @@ class ReaderChapterLayout {
     required ChapterContent content,
     required ReaderLayoutSpec spec,
     Map<int, int> paragraphBubbles = const {},
-    Widget Function(int paraIndex, int count)? bubbleBuilder,
+    Map<int, ParagraphBubbleVariant> paragraphBubbleVariants = const {},
+    Widget Function(int paraIndex, int count, ParagraphBubbleVariant variant)?
+    bubbleBuilder,
   }) {
     final body = content.withoutLeadingTitle(title);
     final legacyText = [
@@ -219,9 +226,13 @@ class ReaderChapterLayout {
       final bubbleCount = paraIndex == null
           ? null
           : paragraphBubbles[paraIndex];
+      final bubbleVariant = paraIndex == null
+          ? ParagraphBubbleVariant.plain
+          : paragraphBubbleVariants[paraIndex] ??
+          ParagraphBubbleVariant.plain;
       final bubble = bubbleCount == null || bubbleBuilder == null
           ? null
-          : bubbleBuilder(paraIndex!, bubbleCount);
+          : bubbleBuilder(paraIndex!, bubbleCount, bubbleVariant);
       final block = element is ChapterImage
           ? _measureImage(
               element,
@@ -240,6 +251,7 @@ class ReaderChapterLayout {
               spec: spec,
               paraIndex: paraIndex,
               bubbleCount: bubbleCount,
+              bubbleVariant: bubbleVariant,
               bubble: bubble,
             );
       blocks.add(block);
@@ -379,6 +391,7 @@ class ReaderChapterLayout {
     required ReaderLayoutSpec spec,
     int? paraIndex,
     int? bubbleCount,
+    ParagraphBubbleVariant? bubbleVariant,
     Widget? bubble,
   }) {
     final title = index == 0;
@@ -396,6 +409,7 @@ class ReaderChapterLayout {
         ? null
         : ReaderBubbleMetrics.forFontSize(
             spec.textScaler.scale(style.fontSize!),
+            variant: bubbleVariant ?? ParagraphBubbleVariant.plain,
           ).forCount(bubbleCount!);
     final bubbleSpan = bubble == null || metrics == null
         ? null
@@ -403,6 +417,11 @@ class ReaderChapterLayout {
     final span = TextSpan(
       style: style,
       children: [
+        // RenderParagraph wraps inline children in an auto-scaling box
+        // (_AutoScaleInlineWidget) using the surrounding span's font size, so
+        // the child stays in unscaled em and still paints at indent * scale.
+        // Note: 别把这里改成 indent * scale——会双重缩放。
+        // 见 .agents/notes/implemented/bug-fix/2026-09-13-code-review-fixes.md
         if (!title) WidgetSpan(child: SizedBox(width: indent, height: 0)),
         TextSpan(text: text),
         ?bubbleSpan,
@@ -421,6 +440,7 @@ class ReaderChapterLayout {
         lines: const [],
         paraIndex: paraIndex,
         bubbleCount: bubbleCount,
+        bubbleVariant: bubbleVariant,
       );
     }
     final painter = TextPainter(
@@ -515,6 +535,7 @@ class ReaderChapterLayout {
         ]),
         paraIndex: paraIndex,
         bubbleCount: bubbleCount,
+        bubbleVariant: bubbleVariant,
       );
     } finally {
       painter.dispose();

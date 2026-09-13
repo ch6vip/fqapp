@@ -97,14 +97,13 @@ void main() {
   group('ReaderIdeasSheet', () {
     Future<void> pumpSheet(
       WidgetTester tester, {
-      required Future<BookCommentPage> Function(ParagraphIdeas) load,
+      required Future<BookCommentPage> Function(ParagraphIdeas, String?) load,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: ReaderIdeasSheet(
               ideas: _ideas(),
-              paragraphTexts: const {0: '“对不起......”', 2: '耳边传来稀奇古怪的声音。'},
               preset: ReaderThemePreset.light,
               loadComments: load,
             ),
@@ -114,16 +113,17 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('lists only paragraphs that carry ideas', (tester) async {
-      await pumpSheet(tester, load: (_) async => const BookCommentPage());
-      expect(find.text('段评'), findsOneWidget);
-      expect(find.text('共 15 条 · 2 段'), findsOneWidget);
-      expect(find.byKey(const ValueKey('reader-idea-0')), findsOneWidget);
-      expect(find.byKey(const ValueKey('reader-idea-2')), findsOneWidget);
-      // Paragraph 1 has no ideas, so it must not appear.
-      expect(find.byKey(const ValueKey('reader-idea-1')), findsNothing);
-      expect(find.text('第 1 段 · 12'), findsOneWidget);
-      expect(find.text('第 3 段 · 3'), findsOneWidget);
+    testWidgets('shows the selected count above a direct comment list', (
+      tester,
+    ) async {
+      await pumpSheet(tester, load: (_, _) async => const BookCommentPage());
+      expect(find.text('12条评论'), findsOneWidget);
+      expect(find.text('共 15 条 · 2 段'), findsNothing);
+      expect(find.text('全部'), findsNothing);
+      expect(find.text('最新'), findsNothing);
+      expect(find.text('第 1 段 · 12'), findsNothing);
+      expect(find.text('“对不起......”'), findsNothing);
+      expect(find.text('暂无评论'), findsOneWidget);
     });
 
     testWidgets('opens on the first paragraph and shows its comments', (
@@ -132,15 +132,16 @@ void main() {
       final requested = <int>[];
       await pumpSheet(
         tester,
-        load: (paragraph) async {
+        load: (paragraph, _) async {
           requested.add(paragraph.paraIndex);
-          return const BookCommentPage(
+          return BookCommentPage(
             comments: [
               BookComment(
                 id: 'a1',
                 text: '这段太真实了',
                 userName: '读者甲',
                 diggCount: 4,
+                createdAt: DateTime(2024, 2, 29),
               ),
             ],
           );
@@ -151,17 +152,18 @@ void main() {
       expect(requested, [0]);
       expect(find.text('这段太真实了'), findsOneWidget);
       expect(find.text('读者甲'), findsOneWidget);
-      expect(find.text('赞 4'), findsOneWidget);
-      // The paragraph itself is quoted above the list for context.
-      expect(find.byKey(const Key('reader-ideas-quote')), findsOneWidget);
-
-      // Switching paragraphs loads that one, and returning reuses the cache.
-      await tester.tap(find.byKey(const ValueKey('reader-idea-2')));
-      await tester.pumpAndSettle();
-      expect(requested, [0, 2]);
-      await tester.tap(find.byKey(const ValueKey('reader-idea-0')));
-      await tester.pumpAndSettle();
-      expect(requested, [0, 2]);
+      expect(find.text('4'), findsOneWidget);
+      expect(find.text('回复'), findsOneWidget);
+      expect(find.text('2024-02-29'), findsOneWidget);
+      // The date belongs below the body, aligned with the reply affordance.
+      expect(
+        tester.getTopLeft(find.text('2024-02-29')).dy,
+        greaterThan(tester.getBottomLeft(find.text('这段太真实了')).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text('2024-02-29')).dy,
+        tester.getTopLeft(find.text('回复')).dy,
+      );
     });
 
     testWidgets('opens on the tapped paragraph', (tester) async {
@@ -171,10 +173,9 @@ void main() {
           home: Scaffold(
             body: ReaderIdeasSheet(
               ideas: _ideas(),
-              paragraphTexts: const {0: '第一段', 2: '第三段'},
               preset: ReaderThemePreset.light,
               initialParaIndex: 2,
-              loadComments: (paragraph) async {
+              loadComments: (paragraph, _) async {
                 requested.add(paragraph.paraIndex);
                 return const BookCommentPage();
               },
@@ -184,52 +185,169 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(requested, [2]);
+      expect(find.text('3条评论'), findsOneWidget);
     });
 
-    testWidgets('the 全部/最新 filters reorder without refetching', (tester) async {
+    testWidgets(
+      'keeps upstream order and shows the total rather than page size',
+      (tester) async {
+        final requested = <int>[];
+        await pumpSheet(
+          tester,
+          load: (paragraph, _) async {
+            requested.add(paragraph.paraIndex);
+            return BookCommentPage(
+              totalCount: 522,
+              comments: [
+                BookComment(
+                  id: 'old',
+                  text: '较早的评论',
+                  createdAt: DateTime(2026, 1, 1),
+                ),
+                BookComment(
+                  id: 'new',
+                  text: '最新的评论',
+                  createdAt: DateTime(2026, 9, 1),
+                ),
+              ],
+            );
+          },
+        );
+        expect(requested, [0]);
+        expect(find.text('522条评论'), findsOneWidget);
+        final newest = tester.getTopLeft(find.text('最新的评论')).dy;
+        final older = tester.getTopLeft(find.text('较早的评论')).dy;
+        expect(older, lessThan(newest));
+      },
+    );
+
+    testWidgets('retries a failed load for the same paragraph', (tester) async {
       final requested = <int>[];
       await pumpSheet(
         tester,
-        load: (paragraph) async {
+        load: (paragraph, _) async {
           requested.add(paragraph.paraIndex);
-          return BookCommentPage(
-            comments: [
-              BookComment(
-                id: 'old',
-                text: '较早的评论',
-                createdAt: DateTime(2026, 1, 1),
-              ),
-              BookComment(
-                id: 'new',
-                text: '最新的评论',
-                createdAt: DateTime(2026, 9, 1),
-              ),
-            ],
+          if (requested.length == 1) throw StateError('offline');
+          return const BookCommentPage(
+            comments: [BookComment(id: 'retry', text: '重新加载的评论')],
           );
         },
       );
-      // 全部 keeps the upstream order.
-      expect(find.text('较早的评论'), findsOneWidget);
-
-      await tester.tap(
-        find.byKey(const ValueKey('reader-ideas-filter-newest')),
-      );
       await tester.pumpAndSettle();
-      // 最新 sorts by publish time, and does not hit the loader again.
-      expect(requested, [0]);
-      final newest = tester.getTopLeft(find.text('最新的评论')).dy;
-      final older = tester.getTopLeft(find.text('较早的评论')).dy;
-      expect(newest, lessThan(older));
+      expect(find.text('评论加载失败'), findsOneWidget);
+      expect(find.text('12条评论'), findsOneWidget);
+      await tester.tap(find.text('重试'));
+      await tester.pumpAndSettle();
+      expect(requested, [0, 0]);
+      expect(find.text('重新加载的评论'), findsOneWidget);
+      expect(find.text('评论加载失败'), findsNothing);
     });
 
-    testWidgets('reports a failed load without losing the strip', (
+    testWidgets('pages in more comments as the list reaches the bottom', (
       tester,
     ) async {
-      await pumpSheet(tester, load: (_) async => throw StateError('offline'));
+      final cursors = <String?>[];
+      final firstPage = BookCommentPage(
+        comments: [
+          for (var i = 0; i < 30; i++) BookComment(id: 'p1-$i', text: '第一页 $i'),
+        ],
+        totalCount: 35,
+        hasMore: true,
+        nextOffset: 20,
+      );
+      await pumpSheet(tester, load: (paragraph, cursor) async {
+        cursors.add(cursor);
+        if (cursor == null) return firstPage;
+        return const BookCommentPage(
+          comments: [BookComment(id: 'p2', text: '第二页的唯一评论')],
+          totalCount: 35,
+          nextOffset: 40,
+        );
+      });
       await tester.pumpAndSettle();
-      expect(find.text('段评暂时无法加载'), findsOneWidget);
-      // The other paragraph is still selectable.
-      expect(find.byKey(const ValueKey('reader-idea-2')), findsOneWidget);
+      expect(cursors, [null]);
+      expect(find.text('第二页的唯一评论'), findsNothing);
+
+      await tester.drag(
+        find.byKey(const Key('reader-ideas-comments')),
+        const Offset(0, -3000),
+      );
+      await tester.pumpAndSettle();
+      expect(cursors, [null, '20']);
+      expect(find.text('第二页的唯一评论'), findsOneWidget);
+
+      // Exhausted: scrolling further issues no more requests.
+      await tester.drag(
+        find.byKey(const Key('reader-ideas-comments')),
+        const Offset(0, -3000),
+      );
+      await tester.pumpAndSettle();
+      expect(cursors, [null, '20']);
+    });
+
+    testWidgets('a failed next page offers a retry that appends', (
+      tester,
+    ) async {
+      var allowSecondPage = false;
+      final firstPage = BookCommentPage(
+        comments: [
+          for (var i = 0; i < 30; i++) BookComment(id: 'p1-$i', text: '第一页 $i'),
+        ],
+        totalCount: 31,
+        hasMore: true,
+        nextOffset: 20,
+      );
+      await pumpSheet(tester, load: (paragraph, cursor) async {
+        if (cursor == null) return firstPage;
+        // Fails until the test allows it, so the auto-retry that further
+        // scroll events trigger cannot heal the list before the tap.
+        if (!allowSecondPage) throw StateError('offline');
+        return const BookCommentPage(
+          comments: [BookComment(id: 'p2', text: '重试后的第二页')],
+          nextOffset: 40,
+        );
+      });
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byKey(const Key('reader-ideas-comments')),
+        const Offset(0, -3000),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('加载失败，点击重试'), findsOneWidget);
+      expect(find.text('重试后的第二页'), findsNothing);
+
+      allowSecondPage = true;
+      await tester.tap(find.text('加载失败，点击重试'));
+      await tester.pumpAndSettle();
+      expect(find.text('重试后的第二页'), findsOneWidget);
+    });
+
+    testWidgets('a short first page preloads the next one without scrolling', (
+      tester,
+    ) async {
+      final cursors = <String?>[];
+      await pumpSheet(tester, load: (paragraph, cursor) async {
+        cursors.add(cursor);
+        if (cursor == null) {
+          return const BookCommentPage(
+            comments: [BookComment(id: 'p1', text: '只有一条的第一页')],
+            totalCount: 2,
+            hasMore: true,
+            nextOffset: 20,
+          );
+        }
+        return const BookCommentPage(
+          comments: [
+            BookComment(id: 'p2', text: '补进来的第二条'),
+          ],
+          totalCount: 2,
+          nextOffset: 40,
+        );
+      });
+      await tester.pumpAndSettle();
+      expect(cursors, [null, '20']);
+      expect(find.text('只有一条的第一页'), findsOneWidget);
+      expect(find.text('补进来的第二条'), findsOneWidget);
     });
 
     testWidgets('says so when the chapter has no ideas', (tester) async {
@@ -238,15 +356,15 @@ void main() {
           home: Scaffold(
             body: ReaderIdeasSheet(
               ideas: ChapterIdeas.empty,
-              paragraphTexts: const {},
               preset: ReaderThemePreset.light,
-              loadComments: (_) async => const BookCommentPage(),
+              loadComments: (_, _) async => const BookCommentPage(),
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
       expect(find.text('本章还没有段评'), findsOneWidget);
+      expect(find.text('0条评论'), findsOneWidget);
     });
   });
 
@@ -269,7 +387,7 @@ void main() {
             // Injected so the reader neither touches Hive nor (per the offline
             // rule) fetches ideas on its own.
             chapterCache: MemoryChapterCache(),
-            chapterLoader: (_) async => _html,
+            chapterLoader: (_) async => parseChapterContent(_html).toCacheText(),
             ideasLoader: ideasLoader,
             commentResolver: commentResolver,
           ),
@@ -283,40 +401,45 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('shows the idea count and opens the sheet', (tester) async {
+    testWidgets('opens the sheet from the in-text bubble', (tester) async {
       final resolved = <String>[];
       await pumpReader(
         tester,
         ideasLoader: (_) async => _ideas(),
-        commentResolver: (itemId, paragraph) async {
+        commentResolver: (itemId, paragraph, _) async {
           resolved.add('$itemId:${paragraph.paraIndex}');
           return const BookCommentPage(
             comments: [BookComment(id: 'a1', text: '第一段的段评')],
           );
         },
       );
-      await openControls(tester);
-      final ideas = find.byKey(const ValueKey('reader-ideas'));
-      expect(ideas, findsOneWidget);
-      expect(find.text('段评 · 15'), findsOneWidget);
-
-      await tester.ensureVisible(ideas);
-      await tester.tap(ideas);
+      // The in-text bubble is the only entry point now; the menu row was
+      // removed once bubbles carried the same information.
+      await tester.tap(find.text('12'));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('reader-idea-0')), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('reader-idea-0')));
-      await tester.pumpAndSettle();
+      expect(find.text('12条评论'), findsOneWidget);
       expect(resolved, ['c1:0']);
       expect(find.text('第一段的段评'), findsOneWidget);
+      final panel = tester.getRect(find.byType(BottomSheet));
+      // The reference leaves roughly the upper third of the reader visible.
+      expect(panel.top, inInclusiveRange(230, 270));
+      expect(
+        tester.getCenter(find.byKey(const Key('reader-ideas-title'))).dx,
+        closeTo(200, 1),
+      );
+      await tester.tap(find.byKey(const Key('reader-ideas-close')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReaderIdeasSheet), findsNothing);
+      expect(find.byType(ReaderPage), findsOneWidget);
     });
 
-    testWidgets('hides the action when the chapter has no ideas', (
-      tester,
-    ) async {
+    testWidgets('the control menu has no ideas entry any more', (tester) async {
       await pumpReader(tester, ideasLoader: (_) async => ChapterIdeas.empty);
       await openControls(tester);
-      expect(find.byKey(const ValueKey('reader-ideas')), findsNothing);
+      // Bubbles replaced the menu row; the four primary actions remain.
+      expect(find.text('段评'), findsNothing);
+      expect(find.text('目录'), findsOneWidget);
+      expect(find.text('缓存'), findsOneWidget);
     });
 
     testWidgets('a failed idea load leaves the reader usable', (tester) async {
@@ -325,7 +448,7 @@ void main() {
         ideasLoader: (_) async => throw StateError('offline'),
       );
       await openControls(tester);
-      expect(find.byKey(const ValueKey('reader-ideas')), findsNothing);
+      expect(find.text('段评'), findsNothing);
       expect(tester.takeException(), isNull);
       // The four primary actions stay available.
       expect(find.text('目录'), findsOneWidget);

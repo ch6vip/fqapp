@@ -54,6 +54,33 @@ void main() {
   });
 
   test(
+    'a catalogue saved before its first chapter survives other evictions',
+    () async {
+      final store = ChapterCacheStore(maxEntries: 2);
+      // The download sheet saves the catalogue before any chapter lands.
+      await store.saveBook(_book('a'));
+      await _write(store, 'x', '1', '正文一');
+      await _write(store, 'x', '2', '正文二');
+      // Another book's write evicts a chapter while 'a' is catalogue-only.
+      await _write(store, 'x', '3', '正文三');
+      // The interrupted download of 'a' resumes and fills its chapters.
+      await _write(store, 'a', '1', '正文一');
+      expect(
+        (await store.books()).map((entry) => entry.book.id),
+        contains('a'),
+      );
+      // A book whose every chapter was evicted is collected with its
+      // catalogue; 'a' keeps growing and stays listed.
+      await _write(store, 'a', '2', '正文二');
+      await _write(store, 'a', '3', '正文三');
+      final box = Hive.box('chapter_cache_v1');
+      expect(box.containsKey('book:x'), isFalse);
+      expect(box.containsKey('book:a'), isTrue);
+      expect((await store.books()).map((entry) => entry.book.id), ['a']);
+    },
+  );
+
+  test(
     'clear is ordered after pending writes and preserves reading history',
     () async {
       final store = ChapterCacheStore();

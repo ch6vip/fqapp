@@ -40,8 +40,8 @@ class CachedBook {
           'itemId': chapter.itemId,
           'title': chapter.title,
           'volumeName': chapter.volumeName,
-          // Needed to list paragraph comments; a cache written before this was
-          // kept restores an empty version, which only costs that chapter's 段评.
+          // Older catalogues restore an empty version; opening paragraph
+          // comments resolves it from the online directory on demand.
           'version': chapter.version,
         },
     ],
@@ -293,7 +293,7 @@ class ChapterCacheStore implements ChapterCache {
   });
 
   Future<void> _trim(Box<dynamic> box, {required String keepBook}) async {
-    final entries = <({dynamic key, int bytes, num accessedAt})>[];
+    final entries = <({dynamic key, int bytes, num accessedAt, String bookId})>[];
     var totalBytes = 0;
     for (final key in box.keys) {
       final raw = box.get(key);
@@ -304,14 +304,22 @@ class ChapterCacheStore implements ChapterCache {
         key: key,
         bytes: bytes,
         accessedAt: _accessTimes[key] ?? _accessedAt(raw),
+        bookId: raw['bookId'] as String,
       ));
     }
     entries.sort((a, b) => a.accessedAt.compareTo(b.accessedAt));
     final removed = <dynamic>[];
+    // Catalogues may be saved before the first chapter download starts, so a
+    // book must only be garbage-collected when this pass evicted its last
+    // surviving chapter — never while it is still catalogue-only.
+    // Note: 目录先于章节落盘是有意设计，GC 不能按"当前无章节"判定。
+    // 见 .agents/notes/implemented/bug-fix/2026-09-13-code-review-fixes.md
+    final evictedBooks = <String>{};
     var remaining = entries.length;
     for (final entry in entries) {
       if (remaining <= maxEntries && totalBytes <= maxBytes) break;
       removed.add(entry.key);
+      evictedBooks.add(entry.bookId);
       remaining--;
       totalBytes -= entry.bytes;
     }
@@ -329,6 +337,7 @@ class ChapterCacheStore implements ChapterCache {
       for (final key in box.keys)
         if (key is String &&
             key.startsWith('book:') &&
+            evictedBooks.contains(key.substring(5)) &&
             !retainedBooks.contains(key.substring(5)))
           key,
     ]);

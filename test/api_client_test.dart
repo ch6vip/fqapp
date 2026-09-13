@@ -9,6 +9,153 @@ import 'package:http/testing.dart';
 void main() {
   const special = 'id &mode=changed#+/中文%';
 
+  group('paragraph comments from saved catalogues', () {
+    for (final savedVersion in ['', 'saved-version']) {
+      test(
+        'resolves only missing versions before loading comments ($savedVersion)',
+        () async {
+          final requests = <Uri>[];
+          final transport = MockClient((request) async {
+            requests.add(request.url);
+            final payload = request.url.path == '/api/directory'
+                ? {
+                    'code': 200,
+                    'data': {
+                      'item_data_list': [
+                        {
+                          'item_id': 'other',
+                          'title': '第一章',
+                          'version': 'other-version',
+                        },
+                        {
+                          'item_id': 'chapter',
+                          'title': '第二章',
+                          'version': 'fresh-version',
+                        },
+                      ],
+                    },
+                  }
+                : {
+                    'code': 0,
+                    'data': {
+                      'common_list_info': {'total': 522},
+                      'data_list': [
+                        {
+                          'comment': {
+                            'comment_id': 'c1',
+                            'common': {
+                              'content': {'text': '实际段评'},
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  };
+            return http.Response.bytes(utf8.encode(jsonEncode(payload)), 200);
+          });
+          addTearDown(transport.close);
+          final api = ApiClient(
+            client: transport,
+            baseUrl: 'http://localhost:9000',
+          );
+          final page = await api.paragraphComments(
+            'book',
+            'chapter',
+            itemVersion: savedVersion,
+            paraIndex: 4,
+          );
+          expect(requests.length, savedVersion.isEmpty ? 2 : 1);
+          expect(
+            requests.last.queryParameters['item_version'],
+            savedVersion.isEmpty ? 'fresh-version' : savedVersion,
+          );
+          expect(requests.last.queryParameters['group_id'], 'chapter');
+          expect(requests.last.queryParameters['para_index'], '4');
+          // 38 is the paragraph-comment channel that matches the idea count
+          // on every tested book; 43/39 are empty or partial.
+          expect(requests.last.queryParameters['server_channel'], '38');
+          // The first page sends no cursor: the request must stay byte for
+          // byte identical with the verified recipe.
+          expect(requests.last.queryParameters.containsKey('cursor'), isFalse);
+          expect(page.totalCount, 522);
+          expect(page.comments.single.text, '实际段评');
+        },
+      );
+    }
+
+    test(
+      'a missing chapter version is retryable failure, not an empty list',
+      () async {
+        final requests = <Uri>[];
+        final transport = MockClient((request) async {
+          requests.add(request.url);
+          return http.Response('{"code":200,"data":{}}', 200);
+        });
+        addTearDown(transport.close);
+        final api = ApiClient(
+          client: transport,
+          baseUrl: 'http://localhost:9000',
+        );
+        await expectLater(
+          api.paragraphComments(
+            'book',
+            'missing',
+            itemVersion: '',
+            paraIndex: 0,
+          ),
+          throwsA(isA<ApiException>()),
+        );
+        expect(requests.single.path, '/api/directory');
+      },
+    );
+
+    test('the cursor token is forwarded so the panel can page', () async {
+      final requests = <Uri>[];
+      final transport = MockClient((request) async {
+        requests.add(request.url);
+        return http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'common_list_info': {
+                  'total': 522,
+                  'has_more': false,
+                  'cursor': '40',
+                },
+                'data_list': [
+                  {
+                    'comment': {
+                      'comment_id': 'c2',
+                      'common': {'content': {'text': '第二页的段评'}},
+                    },
+                  },
+                ],
+              },
+            }),
+          ),
+          200,
+        );
+      });
+      addTearDown(transport.close);
+      final api = ApiClient(
+        client: transport,
+        baseUrl: 'http://localhost:9000',
+      );
+      final page = await api.paragraphComments(
+        'book',
+        'chapter',
+        itemVersion: 'v',
+        paraIndex: 0,
+        cursor: '20',
+      );
+      expect(requests.single.queryParameters['cursor'], '20');
+      expect(page.comments.single.text, '第二页的段评');
+      expect(page.hasMore, isFalse);
+      expect(page.nextOffset, 40);
+    });
+  });
+
   for (final wrapped in [false, true]) {
     test(
       'typed search isolates its source before splitting manju ($wrapped)',

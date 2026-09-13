@@ -88,10 +88,15 @@ class ChapterContent {
   final String legacyText;
   final bool illustrationsChecked;
 
+  /// Whether the original markup was checked for upstream paragraph ids.
+  /// A checked source may legitimately contain no ids; do not keep refetching it.
+  final bool paragraphIdsChecked;
+
   ChapterContent({
     required List<ChapterBlock> blocks,
     String? legacyText,
     this.illustrationsChecked = true,
+    this.paragraphIdsChecked = true,
   }) : blocks = List.unmodifiable(blocks),
        legacyText =
            legacyText ??
@@ -104,6 +109,7 @@ class ChapterContent {
     blocks: [for (final p in splitChapterParagraphs(text)) ChapterParagraph(p)],
     legacyText: splitChapterParagraphs(text).join('\n'),
     illustrationsChecked: illustrationsChecked,
+    paragraphIdsChecked: false,
   );
 
   bool get isEmpty => blocks.isEmpty;
@@ -148,6 +154,7 @@ class ChapterContent {
         chapterTitle: title,
       ).join('\n'),
       illustrationsChecked: illustrationsChecked,
+      paragraphIdsChecked: paragraphIdsChecked,
     );
   }
 
@@ -156,6 +163,7 @@ class ChapterContent {
       jsonEncode({
         'version': 2,
         'illustrationsChecked': illustrationsChecked,
+        'paragraphIdsChecked': paragraphIdsChecked,
         'legacyText': legacyText,
         'blocks': [
           for (final block in blocks)
@@ -192,7 +200,8 @@ class ChapterContent {
     for (final raw in data['blocks'] as List) {
       if (raw is! Map) throw const FormatException('章节缓存内容无效');
       if (raw['type'] == 'text' && raw['text'] is String) {
-        // Older caches carry no `idx`; ideas simply stay unavailable for them.
+        // Never infer upstream ids from display order: titles and pictures can
+        // shift it. Older caches without ids can be refreshed from the source.
         final paraIndex = raw['idx'] is int ? raw['idx'] as int : null;
         final paragraphs = splitChapterParagraphs(raw['text'] as String);
         for (var i = 0; i < paragraphs.length; i++) {
@@ -222,6 +231,11 @@ class ChapterContent {
       blocks: blocks,
       legacyText: data['legacyText'] as String,
       illustrationsChecked: data['illustrationsChecked'] as bool,
+      paragraphIdsChecked: data['paragraphIdsChecked'] is bool
+          ? data['paragraphIdsChecked'] as bool
+          : blocks.whereType<ChapterParagraph>().any(
+              (p) => p.paraIndex != null,
+            ),
     );
   }
 }

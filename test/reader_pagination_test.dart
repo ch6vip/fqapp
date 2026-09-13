@@ -129,9 +129,15 @@ void main() {
       expect(_pager(tester).pageIndex, _pager(tester).layout.pages.length - 1);
       final loaded = requests;
       await _swipe(tester, 1);
+      // The boundary page defers the chapter swap briefly so its 章末 buttons
+      // stay tappable; give the fake clock that window.
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
       expect(store.entry?['chapterId'], 'chapter-2');
       expect(_pager(tester).pageIndex, 0);
       await _swipe(tester, -1);
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
       expect(store.entry?['chapterId'], 'chapter-1');
       expect(_pager(tester).pageIndex, _pager(tester).layout.pages.length - 1);
       expect(
@@ -164,6 +170,10 @@ void main() {
       await tester.pumpAndSettle();
       final saved = Map<String, dynamic>.of(store.entry!);
       await _swipe(tester, -1);
+      // Boundary landing defers the previous-chapter request; see the swipe
+      // test above.
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
       expect(find.textContaining('上一章暂时不可用'), findsOneWidget);
       expect(store.entry?['chapterId'], saved['chapterId']);
       expect(store.entry?['textOffset'], saved['textOffset']);

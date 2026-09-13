@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -115,48 +117,89 @@ void main() {
   });
 
   group('bubble metrics', () {
-    test('picks the size class from the effective font size', () {
+    test('the plain bubble is square at every size class', () {
+      // cni 72x72 (24x24dp), cnj 78x78 (26x26dp), cnk 90x90 (30x30dp).
+      expect(ReaderBubbleMetrics.forFontSize(18).width, 24);
+      expect(ReaderBubbleMetrics.forFontSize(18).height, 24);
+      expect(ReaderBubbleMetrics.forFontSize(20).width, 26);
+      expect(ReaderBubbleMetrics.forFontSize(29).height, 26);
+      expect(ReaderBubbleMetrics.forFontSize(30).width, 30);
+      expect(ReaderBubbleMetrics.forFontSize(30).height, 30);
       expect(
-        ReaderBubbleMetrics.forFontSize(18),
-        const ReaderBubbleMetrics(textSize: 8, diameter: 24),
-      );
-      expect(
-        ReaderBubbleMetrics.forFontSize(19),
-        const ReaderBubbleMetrics(textSize: 8, diameter: 24),
-      );
-      expect(
-        ReaderBubbleMetrics.forFontSize(20),
-        const ReaderBubbleMetrics(textSize: 9, diameter: 26),
-      );
-      expect(
-        ReaderBubbleMetrics.forFontSize(29),
-        const ReaderBubbleMetrics(textSize: 9, diameter: 26),
-      );
-      expect(
-        ReaderBubbleMetrics.forFontSize(30),
-        const ReaderBubbleMetrics(textSize: 10, diameter: 30),
+        ReaderBubbleMetrics.forFontSize(29).asset,
+        'assets/images/bubble/para_bubble_plain_normal.webp',
       );
     });
 
-    test('the bubble is a circle: width equals height', () {
-      for (final size in [18.0, 24.0, 34.0]) {
-        final metrics = ReaderBubbleMetrics.forFontSize(size);
-        expect(metrics.width, metrics.diameter);
-        expect(metrics.height, metrics.diameter);
+    test('the checkmark and pen-nib masks are wider than tall', () {
+      // cnq 78x72 (26x24dp), cnr 84x78 (28x26dp), cns 97x90 (32.3x30dp);
+      // the author group shares the geometry (cne/cnf/cng).
+      for (final variant in [
+        ParagraphBubbleVariant.users,
+        ParagraphBubbleVariant.author,
+      ]) {
+        expect(ReaderBubbleMetrics.forFontSize(18, variant: variant).width, 26);
+        expect(
+          ReaderBubbleMetrics.forFontSize(18, variant: variant).height,
+          24,
+        );
+        expect(ReaderBubbleMetrics.forFontSize(29, variant: variant).width, 28);
+        expect(
+          ReaderBubbleMetrics.forFontSize(30, variant: variant).width,
+          variant == ParagraphBubbleVariant.users ? closeTo(97 / 3, 0.01) : 32.0,
+        );
+        expect(
+          ReaderBubbleMetrics.forFontSize(30, variant: variant).height,
+          30,
+        );
       }
+      expect(
+        ReaderBubbleMetrics.forFontSize(19, variant: ParagraphBubbleVariant.users)
+            .asset,
+        'assets/images/bubble/para_bubble_users_small.webp',
+      );
+      expect(
+        ReaderBubbleMetrics.forFontSize(19, variant: ParagraphBubbleVariant.author)
+            .asset,
+        'assets/images/bubble/para_bubble_author_small.webp',
+      );
     });
 
     test('a large count steps the label down one size', () {
       final large = ReaderBubbleMetrics.forFontSize(30).forCount(1000);
       expect(large.textSize, 9);
-      expect(large.diameter, 30);
+      expect(large.width, ReaderBubbleMetrics.forFontSize(30).width);
+      expect(large.height, ReaderBubbleMetrics.forFontSize(30).height);
       // Small is already at the floor.
       expect(ReaderBubbleMetrics.forFontSize(18).forCount(1000).textSize, 8);
       // The overflow threshold and below keep the class untouched.
-      expect(
-        ReaderBubbleMetrics.forFontSize(30).forCount(99),
-        ReaderBubbleMetrics.forFontSize(30),
-      );
+      final untouched = ReaderBubbleMetrics.forFontSize(30).forCount(99);
+      expect(untouched.textSize, ReaderBubbleMetrics.forFontSize(30).textSize);
+      expect(untouched.asset, ReaderBubbleMetrics.forFontSize(30).asset);
+    });
+  });
+
+  group('bubble variant gating', () {
+    test('plain for ordinary comments, checkmark for many users, nib for the author', () {
+      // Build the three buckets directly through the parsed payload.
+      final parsed = ChapterIdeas.fromPayload(const {
+        'code': 0,
+        'data': {
+          'data': {
+            '0': {'count': 5, 'user_count': 0, 'is_author_comment': false},
+            '1': {'count': 5, 'user_count': 3, 'is_author_comment': false},
+            '2': {'count': 5, 'user_count': 0, 'is_author_comment': true},
+          },
+        },
+      });
+      expect(parsed.forParagraph(0)!.bubbleVariant, ParagraphBubbleVariant.plain);
+      expect(parsed.forParagraph(1)!.bubbleVariant, ParagraphBubbleVariant.users);
+      expect(parsed.forParagraph(2)!.bubbleVariant, ParagraphBubbleVariant.author);
+      expect(parsed.bubbleVariants, {
+        0: ParagraphBubbleVariant.plain,
+        1: ParagraphBubbleVariant.users,
+        2: ParagraphBubbleVariant.author,
+      });
     });
   });
 
@@ -191,10 +234,12 @@ void main() {
   });
 
   group('bubble appearance', () {
-    testWidgets('is a hollow ring, not a filled disc', (tester) async {
-      // The official bubble is a stroked circle with a transparent centre, so
-      // the paragraph text stays visible through it. Painting pixels is the only
-      // way to assert that: a decoration assertion would pass for a filled one.
+    testWidgets('paints the official mask: outlined body, hollow interior', (
+      tester,
+    ) async {
+      // The official artwork is a black alpha mask of a speech-bubble outline
+      // tinted at draw time. Painting pixels is the only way to assert the
+      // tinted bitmap really is an outline with a transparent interior.
       final boundary = GlobalKey();
       await tester.pumpWidget(
         MaterialApp(
@@ -214,6 +259,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // The asset decodes on a real async loader the fake clock does not drive;
+      // give it a beat of real time, then pump the delivered image in.
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
 
       final painted = await tester.runAsync(() async {
         final object =
@@ -232,43 +283,44 @@ void main() {
       final height = bytes.length ~/ 4 ~/ width;
       int alphaAt(int x, int y) => bytes[(y * width + x) * 4 + 3];
 
-      final metrics = ReaderBubbleMetrics.forFontSize(18);
-      final d = metrics.diameter;
-      // The ring sits after the leading gap, vertically centred.
-      final centreX = (ReaderBubbleMetrics.gap + d / 2).round();
+      // Measured from cni.webp: the body's top stroke sits ~4.5-5.5dp below
+      // the top of the 24x24dp square box, above the label column (12dp from
+      // the box's left edge).
+      const centreX = ReaderBubbleMetrics.gap + 12;
       final centreY = height ~/ 2;
+      // Small box: 24x24dp.
+      final boxTop = centreY - 12;
 
-      // A point inside the circle but clear of the label glyph must be page
-      // colour: that is what "hollow" means for this bubble.
+      // The outline is painted where the body's top stroke must be.
       expect(
-        alphaAt(centreX, centreY - 8),
-        0,
-        reason: 'inside the ring, above the glyph, must stay transparent',
-      );
-      // The top of the ring itself is painted.
-      expect(
-        alphaAt(centreX, centreY - d ~/ 2),
+        alphaAt(centreX.round(), (boxTop + 5).round()),
         greaterThan(0),
-        reason: 'the ring outline must be painted',
+        reason: 'the bubble outline must be painted',
+      );
+      // A point inside the body between the top stroke (~5.5dp) and the label
+      // glyphs (~8dp) must stay page colour: that is what "outlined, not
+      // filled" means for this bubble.
+      // 6dp sits at the stroke's antialiased tail edge, so accept near-zero:
+      // a filled bubble would paint 255 here.
+      expect(
+        alphaAt(centreX.round(), boxTop + 6),
+        lessThan(32),
+        reason: 'inside the bubble body, above the glyph, must stay near-transparent',
       );
 
-      // A ring paints a small fraction of its disc; a filled bubble would paint
-      // essentially all of it.
-      var paintedInsideDisc = 0;
+      // The mask is mostly transparent (15.8% opaque); a filled bubble would
+      // paint essentially the whole box.
+      var paintedInBox = 0;
       for (var y = 0; y < height; y++) {
         for (var x = 0; x < width; x++) {
-          final dx = x - centreX;
-          final dy = y - centreY;
-          if (dx * dx + dy * dy > (d / 2) * (d / 2)) continue;
-          if (alphaAt(x, y) > 0) paintedInsideDisc++;
+          if (alphaAt(x, y) > 0) paintedInBox++;
         }
       }
-      final discArea = 3.14159 * (d / 2) * (d / 2);
-      expect(paintedInsideDisc, greaterThan(0));
+      expect(paintedInBox, greaterThan(0));
       expect(
-        paintedInsideDisc / discArea,
+        paintedInBox / (width * height),
         lessThan(0.6),
-        reason: 'a ring covers far less of the disc than a filled bubble',
+        reason: 'the official outline covers a small fraction of its box',
       );
     });
   });
@@ -299,7 +351,7 @@ void main() {
             chapterLoader: (_) async =>
                 parseChapterContent(_html).toCacheText(),
             ideasLoader: (_) async => ideas ?? ChapterIdeas.empty,
-            commentResolver: (_, _) async => const BookCommentPage(),
+            commentResolver: (_, _, _) async => const BookCommentPage(),
           ),
         ),
       );
@@ -323,6 +375,109 @@ void main() {
       expect(find.byType(ReaderParagraphBubble), findsNothing);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+      'old caches acquire real paragraph ids and keep them on reopen',
+      (tester) async {
+        final cache = MemoryChapterCache();
+        cache.content['book'] = {'c1': _legacyCache()};
+        final fresh = Completer<String>();
+        var requests = 0;
+        final history = MemoryReaderStore();
+        Widget app() => MaterialApp(
+          home: ReaderPage(
+            bookId: 'book',
+            title: '测试书',
+            chapters: _chapters,
+            startIndex: 0,
+            readerStore: history,
+            chapterCache: cache,
+            chapterLoader: (_) {
+              requests++;
+              return fresh.future;
+            },
+            ideasLoader: (_) async => _ideas(),
+            commentResolver: (_, _, _) async => const BookCommentPage(),
+          ),
+        );
+        await tester.pumpWidget(app());
+        await tester.pumpAndSettle();
+        expect(requests, 1);
+        expect(
+          find.textContaining('第一段话。', findRichText: true),
+          findsOneWidget,
+        );
+        expect(find.byType(ReaderParagraphBubble), findsNothing);
+
+        fresh.complete(parseChapterContent(_html).toCacheText());
+        await tester.pumpAndSettle();
+        expect(find.text('42'), findsOneWidget);
+        expect(find.text('7'), findsOneWidget);
+        final saved = ChapterContent.fromCacheText(
+          cache.content['book']!['c1']!,
+        );
+        expect(saved.paragraphIdsChecked, isTrue);
+        expect(
+          saved
+              .withoutLeadingTitle('第一章')
+              .blocks
+              .whereType<ChapterParagraph>()
+              .map((p) => p.paraIndex),
+          [0, 1, 2],
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(app());
+        await tester.pumpAndSettle();
+        expect(requests, 1);
+        expect(find.text('42'), findsOneWidget);
+        expect(find.text('7'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    for (final hasIdeas in [false, true]) {
+      testWidgets(
+        hasIdeas
+            ? 'failed paragraph-id refresh preserves readable cached text'
+            : 'old caches without ideas do not request paragraph ids',
+        (tester) async {
+          final cache = MemoryChapterCache();
+          final old = _legacyCache();
+          cache.content['book'] = {'c1': old};
+          var requests = 0;
+          await tester.pumpWidget(
+            MaterialApp(
+              home: ReaderPage(
+                bookId: 'book',
+                title: '测试书',
+                chapters: _chapters,
+                startIndex: 0,
+                readerStore: MemoryReaderStore(),
+                chapterCache: cache,
+                chapterLoader: (_) async {
+                  requests++;
+                  throw Exception('offline');
+                },
+                ideasLoader: (_) async =>
+                    hasIdeas ? _ideas() : ChapterIdeas.empty,
+                commentResolver: (_, _, _) async => const BookCommentPage(),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(requests, hasIdeas ? 1 : 0);
+          expect(cache.content['book']!['c1'], old);
+          expect(
+            find.textContaining('第一段话。', findRichText: true),
+            findsOneWidget,
+          );
+          expect(find.byType(ReaderParagraphBubble), findsNothing);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
 
     testWidgets('draws bubbles in scroll mode too', (tester) async {
       await pumpReader(tester, ideas: _ideas(), mode: ReaderPageMode.scroll);
@@ -361,7 +516,7 @@ void main() {
             chapterLoader: (_) async =>
                 parseChapterContent(_html).toCacheText(),
             ideasLoader: (_) async => _ideas(),
-            commentResolver: (_, paragraph) async {
+            commentResolver: (_, paragraph, _) async {
               requested.add(paragraph.paraIndex);
               return const BookCommentPage(
                 comments: [BookComment(id: 'x', text: '这段太真实了')],
@@ -413,3 +568,14 @@ void main() {
     });
   });
 }
+
+// Image-aware caches written before paragraph ids were retained.
+String _legacyCache() =>
+    '\u001efqapp:chapter:2\n${jsonEncode({
+      'version': 2,
+      'illustrationsChecked': true,
+      'legacyText': '第一章\n第一段话。\n第二段话。\n第三段话。',
+      'blocks': [
+        for (final text in ['第一章', '第一段话。', '第二段话。', '第三段话。']) {'type': 'text', 'text': text},
+      ],
+    })}';

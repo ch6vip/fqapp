@@ -42,7 +42,9 @@ Status: implemented
 - `rank_with_category_data.rank_algo_list[]`（**不是 `rank_list`**）给出榜单：`推荐榜101 / 完本榜100 / 巅峰榜200 / 新书榜108 / 漫剧榜550 / 短剧榜502`；
 - `rank_with_category_data.sub_info_list[]` 给出分类：`全部0 / 穿越37 / 系统19 / 都市1 …`（16 个）。
 
-`rank_algo` 回传为 `algo_type`，`info_id` 回传为 `rank_sub_info_id`，实测可正确切换榜单与分类。
+`rank_algo` 回传为 `algo_type`，`info_id` 回传为 `rank_sub_info_id`。
+
+**2026-09-12 补：当时「实测可正确切换榜单与分类」的结论是错的。** 端点参数确实对（只有 `algo_type=200` 巅峰榜返回真实内容，其余 algo 返回 30 个空分组），但 `parsePage` 从没匹配过响应形状：榜单页的 `cell_view.cell_data[]` 是**分组单元**（月榜 / 男生榜 / 女生榜），作品在第二层 `cell_data[].book_data`，而解析器只扒了一层、把分组单元当作品单元找 `book_data`，自然全军覆没 —— 所有榜单一直显示「该榜单暂无内容」。这类「`code=0` 但页面为空」又一次不是接口问题，而是形状假设错了；修复是解析时先看本层 `book_data`，没有就下钻一层 `cell_data`。教训同 39 通道与段评版本：**验证「接口通」必须跑应用自己的解析器拿到条目，只看 `code=0` 不算数**。
 
 **`rank_id` 必须是真实的榜单卡片 id**（`cell_id_str`）。用占位值不行：`rank/1?algo_type=200` 返回 `code=0` 但 **0 本书**（静默失败），`rank/0` 报 `100103`。所以 `RankCatalog` 一定要把卡片 id 一起解析出来，不能只留榜单名与 algo。
 

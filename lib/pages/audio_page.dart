@@ -12,6 +12,7 @@ import '../services/api_client.dart';
 import '../services/audio_history.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
+import '../services/listening_session.dart';
 import '../services/native_player.dart';
 import '../widgets/audio/audio_sections.dart';
 import '../widgets/chapter_cache_sheet.dart';
@@ -235,11 +236,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    ListeningSession.instance.clear();
     WidgetsBinding.instance.removeObserver(this);
     ++_generation;
     ++_seekGeneration;
     _saveTimer?.cancel();
     _sleepTimer?.cancel();
+    _sleepTimerTick?.cancel();
     _listenTime.stop();
     unawaited(_persistProgress());
     unawaited(_releasePlayer());
@@ -399,6 +402,21 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     return Duration(milliseconds: milliseconds.round());
   }
 
+  /// Publishes the current narration state so an open reader can follow the
+  /// playback (听书跟随翻页).
+  void _publishListeningSession({bool playing = true}) {
+    if (_index < 0 || _index >= widget.chapters.length) return;
+    final chapter = widget.chapters[_index];
+    ListeningSession.instance.update(
+      bookId: widget.bookId,
+      chapterId: chapter.itemId,
+      chapterTitle: chapter.title,
+      position: _boundedPosition(_player?.position ?? _position, _duration),
+      duration: _duration,
+      playing: playing && !_completed,
+    );
+  }
+
   static Duration _boundedPosition(Duration position, Duration duration) {
     if (position < Duration.zero) return Duration.zero;
     return duration > Duration.zero && position > duration
@@ -411,6 +429,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       player.positionStream.listen((position) {
         if (!_current(generation, player)) return;
         setState(() => _position = _boundedPosition(position, _duration));
+        // Publish the REAL playing state: a paused seek also fires this
+        // stream, and publishing playing=true would yank the reader back to
+        // the narrated page while paused.
+        _publishListeningSession(playing: player.playing);
       }),
       player.durationStream.listen((duration) {
         if (!_current(generation, player) || duration <= Duration.zero) return;
@@ -433,6 +455,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
           unawaited(_persistProgress());
         }
         _syncListenClock();
+        _publishListeningSession(playing: playing && _wantPlay);
         setState(() {});
       }),
       player.bufferingStream.listen((_) {
@@ -460,6 +483,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         } else {
           unawaited(_pause(player, generation));
         }
+        _publishListeningSession();
       }),
       player.errorStream.listen((error) => _fail(error, generation)),
     ]);
@@ -545,6 +569,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   void _fail(Object error, int generation) {
+    ListeningSession.instance.clear();
     if (!_current(generation)) return;
     ++_generation;
     _saveTimer?.cancel();
@@ -573,6 +598,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   Future<void> _pause(NativePlayer player, int generation) async {
+    _publishListeningSession(playing: false);
     try {
       await player.pause();
       if (_current(generation, player)) await _persistProgress();
@@ -1179,6 +1205,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     _sleepTimer?.cancel();
     _sleepTimer = null;
     if (minutes == null) {
+      _sleepTimerTick?.cancel();
       setState(() => _sleepRemaining = null);
       return;
     }
