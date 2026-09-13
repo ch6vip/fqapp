@@ -131,11 +131,12 @@ class _StatsPageState extends State<StatsPage> {
     final store = LibraryStore.instance;
     final history = store.historySnapshot();
     final timeMap = store.readTimeSnapshot();
+    final kinds = store.readTimeKindSnapshot();
     setState(() {
       _history = history;
       _readTimeMap = timeMap;
       _dayMinutes = _computeDayMinutes(history, timeMap);
-      _rankItems = _computeRankItems(history, timeMap);
+      _rankItems = _computeRankItems(history, timeMap, kinds);
       _loading = false;
     });
   }
@@ -216,6 +217,7 @@ class _StatsPageState extends State<StatsPage> {
   List<_RankItem> _computeRankItems(
     List<Map<String, dynamic>> history,
     Map<String, Map<String, double>> readTimeMap,
+    Map<String, String> readTimeKinds,
   ) {
     final byBook = <String, _RankItem>{};
     // Real recorded reading time.
@@ -224,7 +226,7 @@ class _StatsPageState extends State<StatsPage> {
       if (totalMin <= 0) return;
       final entry = history.firstWhere(
         (e) => historyStatisticsId(e) == bookId,
-        orElse: () => _historyForStatisticsId(bookId),
+        orElse: () => _historyForStatisticsId(bookId, readTimeKinds[bookId]),
       );
       byBook[bookId] = _RankItem(entry: entry, minutes: totalMin, index: 0);
     });
@@ -369,7 +371,7 @@ class _StatsPageState extends State<StatsPage> {
   }
 }
 
-Map<String, dynamic> _historyForStatisticsId(String id) {
+Map<String, dynamic> _historyForStatisticsId(String id, [String? storedKind]) {
   for (final kind in const {'audio': '听书', 'manga': '漫画'}.entries) {
     final prefix = '${kind.key}:';
     if (!id.startsWith(prefix) || id.length == prefix.length) continue;
@@ -382,7 +384,13 @@ Map<String, dynamic> _historyForStatisticsId(String id) {
       'title': '${kind.value} $contentId',
     };
   }
-  return {'id': id, 'bookId': id, 'title': id};
+  final kind = storedKind?.trim();
+  return {
+    'id': id,
+    'bookId': id,
+    'title': id,
+    if (kind != null && kind.isNotEmpty) 'kind': kind,
+  };
 }
 
 // ---------- shared helpers ----------

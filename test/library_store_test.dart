@@ -171,6 +171,10 @@ void main() {
       ]);
       expect(store.readTimeSnapshot()['damaged'], {'2026-9-8': 30.0});
       expect(store.readTimeSnapshot().containsKey('ignored'), isFalse);
+      // A numeric media kind is metadata, not a reading day.
+      await store.accumulateReadTime('numeric-kind', '123', 60, at: today);
+      expect(store.readTimeSnapshot()['numeric-kind'], {'2026-9-8': 60.0});
+      expect(store.readTimeKindSnapshot()['numeric-kind'], '123');
     },
   );
 
@@ -316,7 +320,10 @@ void main() {
       });
       // Preservation keeps the original counters; it does not destructively
       // rewrite them or rely on deleting a source after copying its seconds.
-      expect(Hive.box('read_time').get('shared'), {'2026-9-8': 60.0});
+      expect(Hive.box('read_time').get('shared'), {
+        '2026-9-8': 60.0,
+        '_media_kind_v1': 'audio',
+      });
     },
   );
 

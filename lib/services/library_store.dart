@@ -34,6 +34,7 @@ class LibraryStore implements ReaderStore {
   static const _readTimeBoxName = 'read_time';
   static const _legacyTimeKey = '_legacy_media_time_v1';
   static const _newTimeKey = '_new_media_time_v1';
+  static const _kindKey = '_media_kind_v1';
 
   late Box<dynamic> _histBox;
   late Box<dynamic> _readTimeBox;
@@ -277,6 +278,20 @@ class LibraryStore implements ReaderStore {
   Future<Map<String, Map<String, double>>> readTimeMap() async =>
       readTimeSnapshot();
 
+  /// The media kind recorded with each read-time identity, when known. Used by
+  /// statistics to open read-time-only rows with the right content type.
+  Map<String, String> readTimeKindSnapshot() {
+    final out = <String, String>{};
+    for (final key in _readTimeBox.keys) {
+      final raw = _readTimeBox.get(key);
+      final kind = raw is Map ? raw[_kindKey] : null;
+      if (kind is String && kind.trim().isNotEmpty) {
+        out[key.toString()] = kind.trim();
+      }
+    }
+    return out;
+  }
+
   @override
   Future<void> accumulateReadTime(
     String bookId,
@@ -301,6 +316,8 @@ class LibraryStore implements ReaderStore {
       final perBook = _readTimeStorage(raw);
       final days = _readTimeRecord(raw);
       perBook[day] = (days[day] ?? 0) + seconds;
+      final kindLabel = kind.trim();
+      if (kindLabel.isNotEmpty) perBook[_kindKey] = kindLabel;
       if (newTime) {
         final newDays = _newReadTime(raw);
         newDays[day] = (newDays[day] ?? 0) + seconds;
@@ -384,6 +401,7 @@ class LibraryStore implements ReaderStore {
     if (raw is Map && raw[_legacyTimeKey] is Map)
       _legacyTimeKey: raw[_legacyTimeKey],
     if (raw is Map && raw[_newTimeKey] is Map) _newTimeKey: raw[_newTimeKey],
+    if (raw is Map && raw[_kindKey] is String) _kindKey: raw[_kindKey],
   };
 
   static Map<String, double> _newReadTime(dynamic raw) =>
@@ -464,8 +482,11 @@ class LibraryStore implements ReaderStore {
     if (raw is! Map) return {};
     return {
       for (final entry in raw.entries)
-        if (_finiteNumber(entry.value) case final seconds?)
-          if (seconds >= 0) entry.key.toString(): seconds.toDouble(),
+        // The stored media-kind is metadata, not a day counter; a numeric
+        // String kind must never be parsed into a fake reading day.
+        if (entry.key != _kindKey)
+          if (_finiteNumber(entry.value) case final seconds?)
+            if (seconds >= 0) entry.key.toString(): seconds.toDouble(),
     };
   }
 }

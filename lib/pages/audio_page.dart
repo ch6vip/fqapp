@@ -187,14 +187,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         return <AudioVoice>[_defaultVoice];
       }
     }();
-    // Decorations load alongside the settings and never gate playback.
-    final extras = () async {
-      try {
-        return await _loadExtras().timeout(const Duration(seconds: 10));
-      } catch (_) {
-        return const AudioExtras();
-      }
-    }();
+    final extras = _loadExtrasSafely();
     final saved = await history;
     final available = await voices;
     if (!mounted) return;
@@ -204,18 +197,26 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         byId[voice.id] = voice;
       }
     }
-    final loaded = await extras;
-    // Real tone names beat the CSV fallback's `音色 82` placeholders.
-    for (final tone in loaded.tones.ttsTones) {
-      if (tone.id.trim().isNotEmpty && tone.title.trim().isNotEmpty) {
-        byId[tone.id] = AudioVoice(id: tone.id, label: tone.title);
-      }
-    }
-    if (!mounted) return;
     final savedTone = saved?['toneId'];
     final savedRate = saved?['rate'];
+    // Only a saved voice that the decorations endpoint knows is worth waiting
+    // for before the first source request. Letting /tones, /related or /detail
+    // gate playback for everyone else is the p09 defect; the wait is bounded
+    // so a slow or hung decorations call can never block playback forever.
+    AudioExtras? resolved;
+    if (savedTone is String &&
+        savedTone.trim().isNotEmpty &&
+        !byId.containsKey(savedTone)) {
+      try {
+        resolved = await extras.timeout(const Duration(seconds: 3));
+      } catch (_) {
+        resolved = null;
+      }
+      if (!mounted) return;
+      if (resolved != null) _mergeToneVoices(resolved, byId);
+    }
     setState(() {
-      _extras = loaded;
+      if (resolved != null) _extras = resolved;
       _voices = List.unmodifiable(byId.values);
       if (savedTone is String && byId.containsKey(savedTone)) {
         _toneId = savedTone;
@@ -231,6 +232,44 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       if (saved?['inShelf'] case final bool shelf) {
         _inShelf = shelf;
       }
+    });
+    // Publish decorations whenever they arrive (including after the bounded
+    // wait above) without touching the tone already chosen for playback.
+    unawaited(_publishExtras(extras));
+  }
+
+  Future<AudioExtras> _loadExtrasSafely() async {
+    try {
+      return await _loadExtras().timeout(const Duration(seconds: 10));
+    } catch (_) {
+      return const AudioExtras();
+    }
+  }
+
+  void _mergeToneVoices(AudioExtras loaded, Map<String, AudioVoice> byId) {
+    // Real tone names beat the CSV fallback's placeholder labels.
+    for (final tone in loaded.tones.ttsTones) {
+      if (tone.id.trim().isNotEmpty && tone.title.trim().isNotEmpty) {
+        byId[tone.id] = AudioVoice(id: tone.id, label: tone.title);
+      }
+    }
+  }
+
+  Future<void> _publishExtras(Future<AudioExtras> extras) async {
+    AudioExtras loaded;
+    try {
+      loaded = await extras;
+    } catch (_) {
+      loaded = const AudioExtras();
+    }
+    if (!mounted) return;
+    final byId = <String, AudioVoice>{
+      for (final voice in _voices) voice.id: voice,
+    };
+    _mergeToneVoices(loaded, byId);
+    setState(() {
+      _extras = loaded;
+      _voices = List.unmodifiable(byId.values);
     });
   }
 

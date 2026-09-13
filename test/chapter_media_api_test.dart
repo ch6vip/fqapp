@@ -73,37 +73,18 @@ void main() {
     },
   );
 
-  test('audio API uses the listening bridge and default tone', () async {
-    late Uri sent;
+  test('audio API requires a book ID instead of the speech bridge', () async {
     final transport = MockClient((request) async {
-      sent = request.url;
-      return _json({
-        'code': 200,
-        'data': {'audio_url': '/src/audio.mp3'},
-      });
+      fail('audioSource must not issue a request without a book ID');
     });
     addTearDown(transport.close);
     final api = ApiClient(client: transport, baseUrl: base);
-
-    final source = await api.audioSource(special);
-    expect(sent.path, '/api/content');
-    expect(sent.queryParameters, {
-      'source': '番茄',
-      'item_id': special,
-      'tab': '听书',
-      'tone_id': '1',
-    });
-    expect(sent.fragment, isEmpty);
-    expect(source.itemId, special);
-    expect(source.toneId, '1');
-    expect(source.url, '$base/src/audio.mp3');
-    expect(source.duration, isNull);
-
-    final alternate = await api.audioSource(special, toneId: special);
-    expect(sent.queryParameters['tone_id'], special);
-    expect(alternate.toneId, special);
-    await api.audioSource(special, toneId: '  ');
-    expect(sent.queryParameters['tone_id'], '1');
+    await expectLater(
+      api.audioSource(special),
+      throwsA(
+        isA<ArgumentError>().having((error) => error.name, 'name', 'bookId'),
+      ),
+    );
   });
 
   test(
@@ -226,7 +207,7 @@ void main() {
     final expected = throwsA(
       isA<ApiException>().having((error) => error.message, 'message', '章节暂不可用'),
     );
-    await expectLater(api.audioSource('chapter'), expected);
+    await expectLater(api.audioSource('chapter', bookId: 'book'), expected);
     await expectLater(api.comicImages('chapter'), expected);
   });
 
@@ -242,7 +223,7 @@ void main() {
       addTearDown(transport.close);
       final api = ApiClient(client: transport, baseUrl: base);
       await expectLater(
-        api.audioSource('chapter'),
+        api.audioSource('chapter', bookId: 'book'),
         throwsA(
           isA<ApiException>().having((e) => e.message, 'message', '未获取到音频地址'),
         ),

@@ -145,6 +145,52 @@ void main() {
       },
     );
   }
+
+  testWidgets('read-time-only statistics reopen with the recorded kind', (
+    tester,
+  ) async {
+    await tester.runAsync(
+      () =>
+          LibraryStore.instance.accumulateReadTime('orphan-video', 'video', 60),
+    );
+    final observer = _StatsRouteObserver();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [observer],
+        home: const Scaffold(body: StatsPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final context = tester.element(find.byType(StatsPage));
+    final showAll = find.widgetWithText(TextButton, '查看全部');
+    await tester.scrollUntilVisible(
+      showAll,
+      400,
+      scrollable: find
+          .descendant(
+            of: find.byType(StatsPage),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(showAll);
+    await tester.pumpAndSettle();
+    await tester.tap(showAll.hitTestable());
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(SimpleDialog),
+        matching: find.text('orphan-video'),
+      ),
+    );
+    final page =
+        (observer.lastRoute! as MaterialPageRoute).builder(context)
+            as DetailPage;
+    expect(page.item.id, 'orphan-video');
+    expect(page.item.kind, 'video');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 class _StatsRouteObserver extends NavigatorObserver {

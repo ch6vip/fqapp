@@ -257,26 +257,35 @@ class ApiClient {
     return _decodeAsync(r);
   }
 
-  /// With a book ID, resolve the real playback model directly. The speech
-  /// bridge often contains only subtitles and remains a legacy fallback for
-  /// callers that do not have a book ID.
+  /// Resolve the playable audio model for [itemId].
+  ///
+  /// A book ID is required: the `/api/content` speech bridge returns subtitles
+  /// only (`speech_text`) and can never yield a playable URL (see
+  /// docs/native-media-api-validation-20260908.md), so silently querying it
+  /// would fail with a misleading error.
   Future<AudioSource> audioSource(
     String itemId, {
     String? toneId,
     String? bookId,
   }) async {
-    final usePlayback = bookId != null && bookId.trim().isNotEmpty;
+    final trimmedBookId = bookId?.trim() ?? '';
+    if (trimmedBookId.isEmpty) {
+      throw ArgumentError.value(
+        bookId,
+        'bookId',
+        'audioSource requires a book ID; the speech-text bridge does not '
+            'return a playable audio URL',
+      );
+    }
     final selectedTone = toneId == null || toneId.trim().isEmpty
-        ? (usePlayback ? '0' : '1')
+        ? '0'
         : toneId.trim();
     final response = await _get(
-      usePlayback
-          ? _url('/api/v1/audio/play', {
-              'book_id': bookId,
-              'item_ids': itemId,
-              'tone_id': selectedTone,
-            })
-          : _contentUrl(itemId, tab: '听书', toneId: selectedTone),
+      _url('/api/v1/audio/play', {
+        'book_id': trimmedBookId,
+        'item_ids': itemId,
+        'tone_id': selectedTone,
+      }),
     );
     final statusCode = response.statusCode;
     final bodyBytes = response.bodyBytes;
