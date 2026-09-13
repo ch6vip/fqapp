@@ -35,6 +35,17 @@ class LibraryStore implements ReaderStore {
   static const _legacyTimeKey = '_legacy_media_time_v1';
   static const _newTimeKey = '_new_media_time_v1';
   static const _kindKey = '_media_kind_v1';
+  static const _touchedKey = '_last_touched_v1';
+
+  /// Most recent day buckets kept per read-time identity. Older days are
+  /// dropped, so a long-lived install cannot grow without bound.
+  @visibleForTesting
+  int readTimeRetentionDays = 730;
+
+  /// Upper bound on retained read-time identities, evicted least-recently
+  /// touched first.
+  @visibleForTesting
+  int maxReadTimeIdentities = 5000;
 
   late Box<dynamic> _histBox;
   late Box<dynamic> _readTimeBox;
@@ -62,6 +73,65 @@ class LibraryStore implements ReaderStore {
         // Saving that media or replacing its key retries the preservation.
       }
     }
+    // Upgrade path: bound records written before retention existed, and enforce
+    // the identity cap on an already oversized box.
+    await _sweepReadTime();
+  }
+
+  /// Prunes every over-limit read-time record at startup and enforces the
+  /// identity cap. Records already within the limits are left untouched.
+  Future<void> _sweepReadTime() async {
+    final updated = <dynamic, dynamic>{};
+    final empty = <dynamic>[];
+    for (final key in _readTimeBox.keys) {
+      final raw = _readTimeBox.get(key);
+      if (raw is! Map || !_hasReadTimeData(raw)) {
+        empty.add(key);
+        continue;
+      }
+      if (!_readTimeNeedsPrune(raw)) continue;
+      final record = _readTimeStorage(raw);
+      _pruneRecordDays(record);
+      updated[key] = record;
+    }
+    if (updated.isNotEmpty) await _readTimeBox.putAll(updated);
+    if (empty.isNotEmpty) await _readTimeBox.deleteAll(empty);
+    await _trimReadTimeIdentities();
+  }
+
+  static bool _hasReadTimeData(dynamic raw) {
+    if (raw is! Map) return false;
+    if (_readTimeRecord(raw).isNotEmpty) return true;
+    final newDays = raw[_newTimeKey];
+    if (newDays is Map && _readTimeRecord(newDays).isNotEmpty) return true;
+    final legacy = raw[_legacyTimeKey];
+    if (legacy is Map && _readTimeRecord(legacy['days']).isNotEmpty) {
+      return true;
+    }
+    return false;
+  }
+
+  bool _readTimeNeedsPrune(Map<dynamic, dynamic> raw) {
+    final own = _datedCount(raw);
+    if (own > readTimeRetentionDays) return true;
+    final newDays = raw[_newTimeKey];
+    if (newDays is Map && _datedCount(newDays) > readTimeRetentionDays) {
+      return true;
+    }
+    final legacy = raw[_legacyTimeKey];
+    if (legacy is Map) {
+      final days = legacy['days'];
+      if (days is Map && _datedCount(days) > readTimeRetentionDays) return true;
+    }
+    return false;
+  }
+
+  static int _datedCount(dynamic raw) {
+    var count = 0;
+    for (final entry in _readTimeRecord(raw).entries) {
+      if (_parseDayKey(entry.key) != null) count++;
+    }
+    return count;
   }
 
   Future<void> _migrateFromSp() async {
@@ -108,8 +178,11 @@ class LibraryStore implements ReaderStore {
                 current[day.key] = day.value + newSeconds;
               }
             }
+            current[_touchedKey] = DateTime.now().millisecondsSinceEpoch;
+            _pruneRecordDays(current);
             await _readTimeBox.put(id, current);
           }
+          await _trimReadTimeIdentities();
           await sp.remove('read_time_map');
         }
       } catch (_) {
@@ -272,7 +345,33 @@ class LibraryStore implements ReaderStore {
       _subtractDays(remaining, days);
       if (remaining.isEmpty) out.remove(id);
     }
-    return out;
+    // A migrated identity can merge an allocation with its own days; cap the
+    // user-visible window so every identity reports at most the retention.
+    return {
+      for (final entry in out.entries) entry.key: _keepNewestDays(entry.value),
+    };
+  }
+
+  Map<String, double> _keepNewestDays(Map<String, double> days) {
+    if (days.length <= readTimeRetentionDays) return days;
+    final dated = <String, DateTime>{};
+    final undated = <String>[];
+    for (final key in days.keys) {
+      final date = _parseDayKey(key);
+      if (date == null) {
+        undated.add(key);
+      } else {
+        dated[key] = date;
+      }
+    }
+    if (dated.length <= readTimeRetentionDays) return days;
+    final keys = dated.keys.toList()
+      ..sort((a, b) => dated[a]!.compareTo(dated[b]!));
+    final kept = keys.sublist(keys.length - readTimeRetentionDays);
+    return {
+      for (final key in kept) key: days[key]!,
+      for (final key in undated) key: days[key]!,
+    };
   }
 
   Future<Map<String, Map<String, double>>> readTimeMap() async =>
@@ -324,7 +423,10 @@ class LibraryStore implements ReaderStore {
         // Persist the counter and its classification atomically.
         perBook[_newTimeKey] = newDays;
       }
+      perBook[_touchedKey] = (at ?? DateTime.now()).millisecondsSinceEpoch;
+      _pruneRecordDays(perBook);
       await _readTimeBox.put(bookId, perBook);
+      await _trimReadTimeIdentities();
     });
     // Keep the serialization chain usable after an individual Hive error,
     // while still returning that error to the original caller.
@@ -378,10 +480,33 @@ class LibraryStore implements ReaderStore {
     for (final day in days.entries) {
       allocated[day.key] = (allocated[day.key] ?? 0) + day.value;
     }
-    await _readTimeBox.put(target, {
+    final nextRecord = <String, dynamic>{
       ..._readTimeStorage(current),
       _legacyTimeKey: {'sourceId': id, 'days': allocated},
-    });
+      _touchedKey: DateTime.now().millisecondsSinceEpoch,
+    };
+    _pruneRecordDays(nextRecord);
+    if (_hasReadTimeData(nextRecord)) {
+      await _readTimeBox.put(target, nextRecord);
+    } else if (_readTimeBox.containsKey(target)) {
+      // Never keep an empty preservation artifact: it would count against the
+      // identity cap and could evict a record that holds real seconds.
+      await _readTimeBox.delete(target);
+    }
+    if (source is Map) {
+      // The source keeps its own copy of the days; prune it too so the
+      // allocation above does not re-credit an over-window bucket.
+      final sourceRecord = _readTimeStorage(source);
+      _pruneRecordDays(sourceRecord);
+      final touched = _finiteNumber(source[_touchedKey]);
+      if (touched != null) sourceRecord[_touchedKey] = touched;
+      if (_hasReadTimeData(sourceRecord)) {
+        await _readTimeBox.put(id, sourceRecord);
+      } else if (_readTimeBox.containsKey(id)) {
+        await _readTimeBox.delete(id);
+      }
+    }
+    await _trimReadTimeIdentities();
   }
 
   static (String, Map<String, double>)? _legacyTimeAllocation(dynamic raw) {
@@ -396,13 +521,81 @@ class LibraryStore implements ReaderStore {
     return id.isEmpty ? null : (id, _readTimeRecord(value['days']));
   }
 
-  static Map<String, dynamic> _readTimeStorage(dynamic raw) => {
-    ..._readTimeRecord(raw),
-    if (raw is Map && raw[_legacyTimeKey] is Map)
-      _legacyTimeKey: raw[_legacyTimeKey],
-    if (raw is Map && raw[_newTimeKey] is Map) _newTimeKey: raw[_newTimeKey],
-    if (raw is Map && raw[_kindKey] is String) _kindKey: raw[_kindKey],
-  };
+  static Map<String, dynamic> _readTimeStorage(dynamic raw) {
+    final out = <String, dynamic>{..._readTimeRecord(raw)};
+    if (raw is Map) {
+      if (raw[_legacyTimeKey] is Map) out[_legacyTimeKey] = raw[_legacyTimeKey];
+      if (raw[_newTimeKey] is Map) out[_newTimeKey] = raw[_newTimeKey];
+      if (raw[_kindKey] is String) out[_kindKey] = raw[_kindKey];
+      final touched = _finiteNumber(raw[_touchedKey]);
+      if (touched != null) out[_touchedKey] = touched;
+    }
+    return out;
+  }
+
+  /// Keeps only the most recent [readTimeRetentionDays] day buckets, including
+  /// the nested legacy/new-media day maps, so every record stays bounded.
+  void _pruneRecordDays(Map<String, dynamic> record) {
+    _pruneDayMap(record);
+    final newDays = record[_newTimeKey];
+    if (newDays is Map) _pruneDayMap(newDays);
+    final legacy = record[_legacyTimeKey];
+    if (legacy is Map && legacy['days'] is Map) {
+      // Each stored map is bounded independently. The merged window is capped
+      // in readTimeSnapshot(), which avoids dropping overlapping seconds.
+      _pruneDayMap(legacy['days'] as Map);
+    }
+  }
+
+  void _pruneDayMap(Map<dynamic, dynamic> days) {
+    final keep = readTimeRetentionDays;
+    if (days.length <= keep) return;
+    final dated = <dynamic, DateTime>{};
+    for (final key in days.keys) {
+      final date = key is String ? _parseDayKey(key) : null;
+      if (date != null) dated[key] = date;
+    }
+    if (dated.length <= keep) return;
+    final keys = dated.keys.toList()
+      ..sort((a, b) => dated[a]!.compareTo(dated[b]!));
+    for (final key in keys.take(keys.length - keep)) {
+      days.remove(key);
+    }
+  }
+
+  Future<void> _trimReadTimeIdentities() async {
+    if (_readTimeBox.length <= maxReadTimeIdentities) return;
+    final entries = <({dynamic key, num touched, bool hasData})>[];
+    for (final key in _readTimeBox.keys) {
+      final raw = _readTimeBox.get(key);
+      entries.add((
+        key: key,
+        touched: raw is Map ? (_finiteNumber(raw[_touchedKey]) ?? 0) : 0,
+        hasData: _hasReadTimeData(raw),
+      ));
+    }
+    entries.sort((a, b) {
+      if (a.hasData != b.hasData) return a.hasData ? 1 : -1;
+      return a.touched.compareTo(b.touched);
+    });
+    final removeCount = entries.length - maxReadTimeIdentities;
+    if (removeCount <= 0) return;
+    await _readTimeBox.deleteAll(
+      entries.take(removeCount).map((entry) => entry.key),
+    );
+  }
+
+  static DateTime? _parseDayKey(String key) {
+    final parts = key.split('-');
+    if (parts.length != 3) return null;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) return null;
+    if (year < 1 || year > 9999) return null;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return DateTime(year, month, day);
+  }
 
   static Map<String, double> _newReadTime(dynamic raw) =>
       raw is Map ? _readTimeRecord(raw[_newTimeKey]) : {};
@@ -484,7 +677,7 @@ class LibraryStore implements ReaderStore {
       for (final entry in raw.entries)
         // The stored media-kind is metadata, not a day counter; a numeric
         // String kind must never be parsed into a fake reading day.
-        if (entry.key != _kindKey)
+        if (entry.key != _kindKey && entry.key != _touchedKey)
           if (_finiteNumber(entry.value) case final seconds?)
             if (seconds >= 0) entry.key.toString(): seconds.toDouble(),
     };

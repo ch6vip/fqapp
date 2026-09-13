@@ -323,6 +323,7 @@ void main() {
       expect(Hive.box('read_time').get('shared'), {
         '2026-9-8': 60.0,
         '_media_kind_v1': 'audio',
+        '_last_touched_v1': today.millisecondsSinceEpoch,
       });
     },
   );
