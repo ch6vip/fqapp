@@ -23,8 +23,15 @@ void main() {
       voices: () async => const [AudioVoice(id: '2', label: '温柔女声')],
     );
     await _mount(tester, session);
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('audio-auto-next')));
     await tester.tap(find.byKey(const ValueKey('audio-auto-next')));
+    await tester.pumpAndSettle();
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('audio-auto-next'))),
+    ).pop();
+    await tester.pumpAndSettle();
     await _flush(tester);
     session.players.single.emitCompleted();
     await _flush(tester);
@@ -156,6 +163,28 @@ void main() {
     await _flush(tester);
     expect(session.requests.last, '1:7239243941252598845');
     expect(find.text('真人讲书'), findsOneWidget);
+  });
+
+  testWidgets('voices that share an upstream name stay distinguishable', (
+    tester,
+  ) async {
+    final session = _Session(
+      extras: (_) async => const AudioExtras(
+        tones: AudioToneSet(
+          ttsTones: [
+            AudioTone(id: '10', title: '智能朗读', description: '自然流畅'),
+            AudioTone(id: '11', title: '智能朗读', description: '声临其境'),
+          ],
+        ),
+      ),
+    );
+    await _mount(tester, session);
+    await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
+    await tester.tap(find.byKey(const ValueKey('audio-voice')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('智能朗读 · 自然流畅'), findsWidgets);
+    expect(find.text('智能朗读 · 声临其境'), findsWidgets);
   });
 
   testWidgets('a saved extras-only tone cannot block playback forever', (

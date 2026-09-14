@@ -116,6 +116,37 @@ void main() {
     }
   });
 
+  testWidgets('the voice section mirrors the official cards and works', (
+    tester,
+  ) async {
+    var shownVoices = 0;
+    var readAlong = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AudioToneSection(
+            tones: const [
+              AudioTone(id: 'a', title: '温柔女声', description: '自然流畅'),
+            ],
+            selectedId: 'a',
+            currentChapterTitle: '第一章 初入江湖',
+            onSelect: (_) {},
+            onReadAlong: () => readAlong++,
+            onShowVoices: () => shownVoices++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('智能朗读'), findsOneWidget);
+    expect(find.text('边听边读'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('audio-voice')));
+    await tester.tap(find.byKey(const Key('audio_read_along')));
+    expect(shownVoices, 1);
+    expect(readAlong, 1);
+  });
+
   testWidgets('clearing the episode search re-locates the current episode', (
     tester,
   ) async {

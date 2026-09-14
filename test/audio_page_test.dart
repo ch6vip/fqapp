@@ -195,8 +195,16 @@ void main() {
     (tester) async {
       final session = _Session();
       await _mount(tester, session);
+      // The official page keeps 自动下一章 in the overflow sheet.
+      await tester.tap(find.byTooltip('更多'));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const ValueKey('audio-auto-next')));
       await tester.tap(find.byKey(const ValueKey('audio-auto-next')));
+      await tester.pumpAndSettle();
+      Navigator.of(
+        tester.element(find.byKey(const ValueKey('audio-auto-next'))),
+      ).pop();
+      await tester.pumpAndSettle();
       await _flush(tester);
       session.players.single.emitCompleted();
       await _flush(tester);
@@ -286,7 +294,7 @@ void main() {
       await _mount(tester, session);
       expect(session.requests.single, '1:0');
       expect(session.players.single.isPlaying, true);
-      expect(find.text('默认音色'), findsOneWidget);
+      expect(find.byKey(const ValueKey('audio-voice')), findsOneWidget);
     },
   );
 
@@ -653,17 +661,13 @@ void main() {
     expect(session.requests, isEmpty);
   });
 
-  testWidgets('the review action is labelled 书评 and opens a review sheet', (
-    tester,
-  ) async {
-    // The official page calls this 章评 (chapter-end discussion), but the
-    // backend exposes no chapter-comment list, so the label must describe what
-    // the action actually shows.
+  testWidgets('the 章评 action opens the review sheet', (tester) async {
+    // The official page labels this 章评; the sheet behind it shows the work's
+    // reviews because the backend exposes no chapter-comment list here.
     final session = _Session();
     await _mount(tester, session);
     expect(find.byKey(const ValueKey('audio_chapter_comment')), findsOneWidget);
-    expect(find.text('书评'), findsOneWidget);
-    expect(find.text('章评'), findsNothing);
+    expect(find.text('章评'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('audio_chapter_comment')));
     await tester.pumpAndSettle();
     // Without an injected comment loader the sheet states the outage rather

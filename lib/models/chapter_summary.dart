@@ -5,6 +5,39 @@
 /// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
 library;
 
+/// Upstream preview fragments can carry inline content markers, for example
+/// the audio-book marker `{!-- PGC_VOICE:{...}--}` or an HTML comment, plus
+/// stray HTML tags. Only the readable text belongs in the UI.
+final _previewMarkerPatterns = <RegExp>[
+  RegExp(r'\{!--.*?--\}', dotAll: true),
+  RegExp(r'<!--.*?-->', dotAll: true),
+  // A truncated audio marker whose JSON never closes: drop only the marker so
+  // any readable text that follows it survives.
+  RegExp(r'\{!--\s*PGC_[A-Z_]+:\{[^{}]*\}\s*-?\}?', dotAll: true),
+  // Last resort for a malformed marker: drop from the marker to the end.
+  RegExp(r'\{!--.*$', dotAll: true),
+  RegExp(r'<!--.*$', dotAll: true),
+];
+final _previewTagPattern = RegExp(r'</?[a-zA-Z][^>]*>');
+final _previewSpacePattern = RegExp(r'\s+');
+
+String _cleanPreview(String raw) {
+  var text = raw;
+  for (final pattern in _previewMarkerPatterns) {
+    text = text.replaceAll(pattern, ' ');
+  }
+  text = text.replaceAll(_previewTagPattern, ' ');
+  text = text
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&apos;', "'")
+      .replaceAll('&amp;', '&');
+  return text.replaceAll(_previewSpacePattern, ' ').trim();
+}
+
 /// Chapter preview text keyed by chapter item id.
 class ChapterSummary {
   const ChapterSummary({this.byItemId = const {}});
@@ -35,9 +68,9 @@ class ChapterSummary {
       final itemId = entry['item_id'] == null
           ? ''
           : '${entry['item_id']}'.trim();
-      final summary = entry['summary'] == null
-          ? ''
-          : '${entry['summary']}'.trim();
+      final summary = _cleanPreview(
+        entry['summary'] == null ? '' : '${entry['summary']}',
+      );
       if (itemId.isEmpty || summary.isEmpty) continue;
       byItemId[itemId] = summary;
     }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fqapp/models/chapter_summary.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
@@ -214,6 +215,40 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('找到 1 章'), findsOneWidget);
   });
+
+  testWidgets('audio content markers never reach the preview excerpt', (
+    tester,
+  ) async {
+    await _pumpBook(
+      tester,
+      previewLoader: (ids) async => ChapterSummary.fromPayload({
+        'code': 0,
+        'data': {
+          'summary_item_data': [
+            {
+              'item_id': 'chapter-1',
+              'summary':
+                  '{!-- PGC_VOICE:{"content":"","duration":"664.79",'
+                  '"source_provider":"audiobook"}--}第一章的正文开头',
+            },
+            {'item_id': 'chapter-2', 'summary': '{!-- PGC_VOICE:{"content":""'},
+          ],
+        },
+      }),
+    );
+
+    expect(
+      find.byKey(const Key('detail_preview_excerpt_chapter-1')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('PGC_VOICE'), findsNothing);
+    expect(find.textContaining('第一章的正文开头'), findsOneWidget);
+    // A marker-only preview is dropped instead of shown as raw JSON.
+    expect(
+      find.byKey(const Key('detail_preview_excerpt_chapter-2')),
+      findsNothing,
+    );
+  });
 }
 
 Future<void> _pumpBook(
@@ -225,6 +260,7 @@ Future<void> _pumpBook(
   int chapterCount = 146,
   MemoryReaderStore? store,
   NavigatorObserver? observer,
+  ChapterPreviewLoader? previewLoader,
 }) async {
   await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -246,6 +282,7 @@ Future<void> _pumpBook(
       home: DetailPage(
         item: _book,
         readerStore: store ?? MemoryReaderStore(),
+        previewLoader: previewLoader,
         detailLoader: (id, {String tab = '小说'}) async => {
           'data': {'abstract': _description},
         },

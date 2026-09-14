@@ -14,6 +14,7 @@ import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/native_player.dart';
+import '../services/transient_retry.dart';
 import '../widgets/audio/audio_sections.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/home/home_design.dart';
@@ -39,6 +40,10 @@ class AudioPage extends StatefulWidget {
   /// because the backend only answers for a real tone.
   final SubtitleLoader? subtitleLoader;
 
+  /// Current-chapter opening excerpt shown under the cover, mirroring the
+  /// official listening page. Defaults to `/chapters/summary`.
+  final Future<String?> Function(String itemId)? excerptLoader;
+
   const AudioPage({
     super.key,
     required this.bookId,
@@ -52,6 +57,7 @@ class AudioPage extends StatefulWidget {
     this.voicesLoader,
     this.extrasLoader,
     this.subtitleLoader,
+    this.excerptLoader,
   });
 
   @override
@@ -116,6 +122,11 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   bool _autoAdvance = true;
   String? _error;
   String _toneId = '0';
+
+  /// `tts` = 智能朗读, `narrator` = 真人讲书. Mirrors the official mode tabs.
+  String _mode = 'tts';
+  String _excerpt = '';
+  int _excerptGeneration = 0;
   double _rate = 1;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -246,17 +257,78 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     }
   }
 
+  /// Upstream can offer several voices under the same display name (for
+  /// example two different ids both titled 智能朗读). Give every duplicate a
+  /// stable qualifier so the tone cards and the voice picker never show two
+  /// identical rows.
+  List<AudioTone> _uniqueTones(List<AudioTone> tones) {
+    final counts = <String, int>{};
+    for (final tone in tones) {
+      final title = tone.title.trim();
+      if (title.isNotEmpty) counts[title] = (counts[title] ?? 0) + 1;
+    }
+    final used = <String>{};
+    final out = <AudioTone>[];
+    for (final tone in tones) {
+      final title = tone.title.trim();
+      if (title.isEmpty) {
+        out.add(tone);
+        continue;
+      }
+      var label = title;
+      if ((counts[title] ?? 0) > 1) {
+        final qualifier = tone.description.trim();
+        label = qualifier.isEmpty
+            ? '$title（${tone.id}）'
+            : '$title · $qualifier';
+      }
+      if (!used.add(label)) {
+        label = '$title（${tone.id}）';
+        var bump = 2;
+        while (!used.add(label)) {
+          label = '$title（${tone.id}·${bump++})';
+        }
+      }
+      out.add(_renamedTone(tone, label));
+    }
+    return out;
+  }
+
+  static AudioTone _renamedTone(AudioTone tone, String title) => AudioTone(
+    id: tone.id,
+    title: title,
+    description: tone.description,
+    badge: tone.badge,
+    iconUrl: tone.iconUrl,
+    isMultiTone: tone.isMultiTone,
+    gender: tone.gender,
+  );
+
   void _mergeToneVoices(AudioExtras loaded, Map<String, AudioVoice> byId) {
     // Real tone names beat the CSV fallback's placeholder labels. 真人讲书
     // narrators only arrive here; their ids were resolved exactly by
     // AudioToneSet.fromPayload, which drops any unresolved narrator.
-    for (final tone in [
+    final tones = _uniqueTones([
       ...loaded.tones.ttsTones,
       ...loaded.tones.narratorTones,
-    ]) {
-      if (tone.id.trim().isNotEmpty && tone.title.trim().isNotEmpty) {
-        byId[tone.id] = AudioVoice(id: tone.id, label: tone.title);
+    ]);
+    final labels = <String, String>{
+      for (final voice in byId.values) voice.label: voice.id,
+    };
+    for (final tone in tones) {
+      final id = tone.id.trim();
+      final title = tone.title.trim();
+      if (id.isEmpty || title.isEmpty) continue;
+      var label = title;
+      if (labels.containsKey(label) && labels[label] != id) {
+        label = '$title（$id）';
+        var bump = 2;
+        while (labels.containsKey(label) && labels[label] != id) {
+          label = '$title（$id·${bump++})';
+        }
       }
+      labels[label] = id;
+      byId[id] = AudioVoice(id: id, label: label);
     }
   }
 
@@ -336,6 +408,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       _subtitles = SubtitleTrack.empty;
       _wantPlay = autoplay && _appActive;
     });
+    unawaited(_loadExcerpt(widget.chapters[index].itemId));
     NativePlayer? candidate;
     try {
       await _settingsReady;
@@ -361,14 +434,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       final wasCompleted =
           completed ?? (sameChapter && saved?['completed'] == true);
       final itemId = widget.chapters[index].itemId;
-      final source =
-          await (widget.sourceLoader?.call(itemId, toneId: _toneId) ??
-                  ApiClient.instance.audioSource(
-                    itemId,
-                    bookId: widget.bookId,
-                    toneId: _toneId,
-                  ))
-              .timeout(const Duration(seconds: 30));
+      final source = await _loadSourceWithRetry(itemId);
       if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
       if (source.itemId != itemId ||
@@ -425,6 +491,27 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         await candidate?.dispose();
       }
     }
+  }
+
+  /// Fetches one chapter's audio source.
+  ///
+  /// The backend picks a pooled device per upstream request and the audio
+  /// player host sometimes answers a body-level 403 for it, so the network
+  /// path retries a few draws before the page reports a failure. An injected
+  /// loader is exact and is never multiplied.
+  Future<AudioSource> _loadSourceWithRetry(String itemId) {
+    final loader = widget.sourceLoader;
+    if (loader != null) {
+      return loader(
+        itemId,
+        toneId: _toneId,
+      ).timeout(const Duration(seconds: 30));
+    }
+    return retryTransient(
+      () => ApiClient.instance
+          .audioSource(itemId, bookId: widget.bookId, toneId: _toneId)
+          .timeout(const Duration(seconds: 30)),
+    );
   }
 
   /// Loads the 边听边读 track for a chapter and publishes it if the chapter is
@@ -801,60 +888,63 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         ),
       );
     }
+    final chapter = widget.chapters[_index];
+    final tones = _mode == 'narrator' ? _narratorTones : _ttsTones;
     return Scaffold(
       backgroundColor: palette.canvas,
       body: SafeArea(
         child: Column(
           children: [
             AudioTopBar(
-              modeLabel: _modeLabel,
+              mode: _mode,
+              narratorAvailable: _narratorTones.isNotEmpty,
               onCollapse: () => Navigator.maybePop(context),
               onMore: _showMore,
-              onSwitchMode: _showVoices,
+              onInspire: _showMore,
+              onSelectMode: _selectMode,
             ),
             Expanded(
               child: SingleChildScrollView(
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 560),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 28),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          AudioBookCard(
-                            title: widget.title,
-                            subtitle: _bookSubtitle,
-                            onCatalog: _showCatalog,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SizedBox(height: 10),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: AudioBookCard(
+                            cover: widget.cover,
+                            bookTitle: widget.title,
+                            chapterTitle: chapter.title,
+                            onSwitch: _showVoices,
+                            onOpenBook: _showCatalog,
                           ),
-                          if (_intro.isNotEmpty || _tags.isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            AudioIntroSection(text: _intro, tags: _tags),
-                          ],
-                          if (_extras.related.isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            AudioRelatedRow(
-                              works: _extras.related,
-                              onTap: _openRelated,
-                            ),
-                          ],
-                          if (_subtitles.isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            AudioSubtitleView(
-                              track: _subtitles,
-                              position: _seekPreview == null
-                                  ? _position
-                                  : Duration(
-                                      milliseconds: _seekPreview!.round(),
-                                    ),
-                            ),
-                          ],
-                          const SizedBox(height: 16),
-                          AudioActionRow(actions: _actions),
-                          const SizedBox(height: 4),
-                          _statusLine(palette),
-                          const SizedBox(height: 4),
-                          AudioProgressRow(
+                        ),
+                        if (_excerpt.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          AudioExcerpt(text: _excerpt, onTap: _showExcerpt),
+                        ],
+                        if (_error != null ||
+                            _loading ||
+                            (_player?.buffering ?? false) ||
+                            _completed) ...[
+                          const SizedBox(height: 8),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: _statusLine(palette),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: AudioActionRow(actions: _actions),
+                        ),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: AudioProgressRow(
                             position: _position,
                             duration: _duration,
                             preview: _seekPreview,
@@ -874,23 +964,34 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
                                   )
                                 : null,
                           ),
-                          const SizedBox(height: 6),
-                          _transport(),
-                          const SizedBox(height: 12),
-                          _settingsRow(),
-                          if (_extras.tones.ttsTones.isNotEmpty) ...[
-                            const SizedBox(height: 20),
-                            AudioToneSection(
-                              tones: _extras.tones.ttsTones,
-                              selectedId: _toneId,
-                              currentChapterTitle:
-                                  widget.chapters[_index].title,
-                              onSelect: (tone) => _selectTone(tone.id),
-                              onReadAlong: _showCatalog,
+                        ),
+                        const SizedBox(height: 6),
+                        _transport(),
+                        const SizedBox(height: 16),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: AudioToneSection(
+                            title: _mode == 'narrator' ? '真人讲书' : '智能朗读',
+                            tones: tones,
+                            selectedId: _toneId,
+                            currentChapterTitle: chapter.title,
+                            onSelect: (tone) => _selectTone(tone.id),
+                            onReadAlong: _showReadAlong,
+                            onShowVoices: _showVoices,
+                          ),
+                        ),
+                        if (_extras.related.isNotEmpty) ...[
+                          const SizedBox(height: 18),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: AudioRelatedRow(
+                              works: _extras.related,
+                              onTap: _openRelated,
                             ),
-                          ],
+                          ),
                         ],
-                      ),
+                        const SizedBox(height: 28),
+                      ],
                     ),
                   ),
                 ),
@@ -902,26 +1003,106 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     );
   }
 
-  /// `已完结 · 6.1万人收听`, built from the audio detail record.
-  String get _bookSubtitle {
-    final detail = _extras.detail;
-    if (detail == null) return '';
-    return [
-      if (detail.statusLabel.isNotEmpty) detail.statusLabel,
-      if (detail.readLabel.isNotEmpty) '${detail.readLabel}人收听',
-    ].join(' · ');
+  List<AudioTone> get _ttsTones => _extras.tones.ttsTones;
+  List<AudioTone> get _narratorTones => _extras.tones.narratorTones;
+
+  /// Official top tabs: switching the mode switches the visible voice family.
+  void _selectMode(String mode) {
+    if (mode == 'narrator' && _narratorTones.isEmpty) return;
+    if (mode == _mode) return;
+    setState(() => _mode = mode);
+    final tones = mode == 'narrator' ? _narratorTones : _ttsTones;
+    if (tones.isEmpty) return;
+    final currentInMode = tones.any((tone) => tone.id == _toneId);
+    if (!currentInMode) {
+      _selectTone(tones.first.id);
+    }
   }
 
-  String get _modeLabel =>
-      _extras.tones.narratorTones.any((tone) => tone.id == _toneId)
-      ? '真人讲书'
-      : '智能朗读';
+  Future<void> _loadExcerpt(String itemId) async {
+    final generation = ++_excerptGeneration;
+    String? text;
+    if (widget.excerptLoader != null) {
+      try {
+        text = await widget.excerptLoader!(itemId);
+      } catch (_) {
+        text = null;
+      }
+    } else if (!_offline) {
+      try {
+        final summary = await ApiClient.instance.chapterSummaries(
+          widget.bookId,
+          [itemId],
+        );
+        text = summary.forItem(itemId);
+      } catch (_) {
+        text = null;
+      }
+    }
+    if (!mounted || generation != _excerptGeneration) return;
+    setState(() => _excerpt = text?.trim() ?? '');
+  }
 
-  String get _intro => _extras.detail?.abstract ?? '';
+  bool get _offline =>
+      widget.sourceLoader != null ||
+      widget.voicesLoader != null ||
+      widget.playerFactory != null ||
+      widget.extrasLoader != null;
 
-  List<String> get _tags => _extras.detail?.tags ?? const [];
+  Future<void> _showExcerpt() async {
+    if (_excerpt.isEmpty) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: SingleChildScrollView(
+            child: Text(
+              _excerpt,
+              style: TextStyle(
+                color: HomePalette.of(context).ink,
+                fontSize: 15,
+                height: 1.7,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-  /// Icon row: 语速 / 加入书架 / 下载 / 书评 / 更多.
+  /// 边听边读 entry: the official page switches to the read-along view; here the
+  /// subtitle track opens in a sheet instead of pushing a route.
+  Future<void> _showReadAlong() async {
+    final palette = HomePalette.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.6,
+          child: _subtitles.isEmpty
+              ? Center(
+                  child: Text(
+                    '本章暂无同步字幕',
+                    style: TextStyle(color: palette.muted, fontSize: 13),
+                  ),
+                )
+              : AudioSubtitleView(
+                  track: _subtitles,
+                  position: _seekPreview == null
+                      ? _position
+                      : Duration(milliseconds: _seekPreview!.round()),
+                ),
+        ),
+      ),
+    );
+  }
+
+  /// Icon row: 语速 / 加入书架 / 下载 / 章评 / 更多.
   List<AudioAction> get _actions => [
     AudioAction(
       key: 'audio-speed',
@@ -945,12 +1126,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     AudioAction(
       key: 'audio_chapter_comment',
       icon: LucideIcons.message_circle,
-      // The official listening page labels this 章评 (chapter-end discussion),
-      // but chapter ideas belong to a chapter, not to a book being listened to.
-      // This sheet shows the work's book reviews, so it is labelled 书评 to
-      // match what it actually displays. Chapter/paragraph ideas are available
-      // through ApiClient.chapterIdeas for the reader.
-      label: '书评',
+      // The official listening page labels this 章评 (chapter-end discussion).
+      // The closest sheet we have today shows the work's book reviews; the
+      // reader keeps the real chapter/paragraph ideas.
+      label: '章评',
       onTap: _showBookReviews,
     ),
     AudioAction(
@@ -980,15 +1159,14 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         ),
         Semantics(
           button: true,
-          child: IconButton.filled(
+          child: IconButton(
             tooltip: playing ? '暂停' : '播放',
             onPressed: _ready ? _togglePlayback : null,
-            padding: const EdgeInsets.all(16),
-            iconSize: 34,
+            padding: const EdgeInsets.all(11),
+            iconSize: 38,
             style: IconButton.styleFrom(
-              backgroundColor: HomePalette.accent,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: palette.line,
+              foregroundColor: palette.ink,
+              disabledForegroundColor: palette.muted.withValues(alpha: 0.5),
             ),
             icon: Icon(playing ? LucideIcons.pause : LucideIcons.play),
           ),
@@ -1005,71 +1183,6 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
           tooltip: '定时',
           active: _sleepRemaining != null,
           onTap: _showSleepTimer,
-        ),
-      ],
-    );
-  }
-
-  /// Voice picker plus the auto-advance toggle. Both stay in the page body so
-  /// they remain reachable without opening a sheet.
-  Widget _settingsRow() {
-    final palette = HomePalette.of(context);
-    final voice = _voices.firstWhere(
-      (item) => item.id == _toneId,
-      orElse: () => _defaultVoice,
-    );
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                key: const ValueKey('audio-voice'),
-                onPressed: _ready && _voices.length > 1 ? _showVoices : null,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: palette.ink,
-                  side: BorderSide(color: palette.line),
-                  minimumSize: const Size(0, 44),
-                ),
-                icon: const Icon(LucideIcons.audio_lines, size: 16),
-                label: Text(
-                  voice.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: OutlinedButton.icon(
-                key: const ValueKey('audio-rate-inline'),
-                onPressed: _ready ? _showRates : null,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: palette.ink,
-                  side: BorderSide(color: palette.line),
-                  minimumSize: const Size(0, 44),
-                ),
-                icon: const Icon(LucideIcons.gauge, size: 16),
-                label: Text(
-                  '${_rateLabel(_rate)}×',
-                  style: const TextStyle(fontSize: 12.5),
-                ),
-              ),
-            ),
-          ],
-        ),
-        SwitchListTile.adaptive(
-          key: const ValueKey('audio-auto-next'),
-          contentPadding: EdgeInsets.zero,
-          title: const Text('自动下一章'),
-          value: _autoAdvance,
-          onChanged: _loading
-              ? null
-              : (enabled) {
-                  setState(() => _autoAdvance = enabled);
-                  unawaited(_persistProgress());
-                },
         ),
       ],
     );
@@ -1325,6 +1438,18 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
                 Navigator.pop(context);
                 unawaited(_showCatalog());
               },
+            ),
+            SwitchListTile.adaptive(
+              key: const ValueKey('audio-auto-next'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('自动下一章'),
+              value: _autoAdvance,
+              onChanged: _loading
+                  ? null
+                  : (enabled) {
+                      setState(() => _autoAdvance = enabled);
+                      unawaited(_persistProgress());
+                    },
             ),
             const SizedBox(height: 8),
           ],

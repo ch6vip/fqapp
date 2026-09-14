@@ -86,5 +86,82 @@ void main() {
         isTrue,
       );
     });
+
+    test('audio content markers are stripped from the preview', () {
+      final summary = ChapterSummary.fromPayload({
+        'code': 0,
+        'data': {
+          'summary_item_data': [
+            {
+              'item_id': 'a',
+              'summary':
+                  '{!-- PGC_VOICE:{"content":"","duration":"664.79",'
+                  '"source_provider":"audiobook"}--}第一章的正文开头',
+            },
+            {
+              'item_id': 'b',
+              'summary': '<!-- PGC_VOICE:{"duration":"1"} -->第二章的正文',
+            },
+          ],
+        },
+      });
+      expect(summary.forItem('a'), '第一章的正文开头');
+      expect(summary.forItem('b'), '第二章的正文');
+    });
+
+    test('a marker-only preview is dropped instead of shown raw', () {
+      final summary = ChapterSummary.fromPayload({
+        'code': 0,
+        'data': {
+          'summary_item_data': [
+            {
+              'item_id': 'a',
+              'summary': '{!-- PGC_VOICE:{"content":"","duration":"664.79"',
+            },
+          ],
+        },
+      });
+      expect(summary.forItem('a'), isNull);
+      expect(summary.isEmpty, isTrue);
+    });
+
+    test('html tags and entities are cleaned', () {
+      final summary = ChapterSummary.fromPayload({
+        'code': 0,
+        'data': {
+          'summary_item_data': [
+            {'item_id': 'a', 'summary': '<p>你好&amp;世界</p>\n第二行'},
+          ],
+        },
+      });
+      expect(summary.forItem('a'), '你好&世界 第二行');
+    });
+
+    test('a truncated audio marker keeps the text that follows it', () {
+      final summary = ChapterSummary.fromPayload({
+        'code': 0,
+        'data': {
+          'summary_item_data': [
+            {
+              'item_id': 'a',
+              'summary': '{!-- PGC_VOICE:{"content":"","duration":"664.79"}正文',
+            },
+          ],
+        },
+      });
+      expect(summary.forItem('a'), '正文');
+    });
+
+    test('plain comparison characters are not treated as html', () {
+      final summary = ChapterSummary.fromPayload({
+        'code': 0,
+        'data': {
+          'summary_item_data': [
+            {'item_id': 'a', 'summary': '当 1 < 2 > 0 时'},
+          ],
+        },
+      });
+      expect(summary.forItem('a'), '当 1 < 2 > 0 时');
+    });
   });
 }
