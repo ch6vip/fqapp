@@ -74,6 +74,28 @@ void main() {
     expect(picked?.id, 't2');
   });
 
+  testWidgets('a hearing-native album shows only the narrator section', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(useMaterial3: true),
+        home: Scaffold(
+          body: VoiceSettingsSheet(
+            selectedId: 'n1',
+            narrators: const [VoiceOption(id: 'n1', title: '主播：佚名')],
+            onSelect: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('真人讲书'), findsOneWidget);
+    expect(find.text('智能朗读'), findsNothing);
+    expect(find.text('离线朗读'), findsNothing);
+  });
+
   testWidgets('offline cards expose the download action', (tester) async {
     VoiceOption? downloaded;
     await pump(

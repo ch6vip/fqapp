@@ -872,7 +872,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     final narratorIds = {
       for (final tone in _extras.tones.narratorTones) tone.id,
     };
-    final options = <VoiceOption>[const VoiceOption(id: '0', title: '默认音色')];
+    final options = <VoiceOption>[];
     for (final tone in tones) {
       if (!ids.add(tone.id)) continue;
       options.add(
@@ -886,8 +886,17 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       );
     }
     for (final voice in _voices) {
-      if (narratorIds.contains(voice.id) || !ids.add(voice.id)) continue;
+      if (voice.id == '0' ||
+          narratorIds.contains(voice.id) ||
+          !ids.add(voice.id)) {
+        continue;
+      }
       options.add(VoiceOption(id: voice.id, title: voice.label));
+    }
+    // A hearing-native album has no 智能朗读 voices at all; only offer the
+    // default fallback when there is another voice to switch away from.
+    if (options.isNotEmpty) {
+      options.insert(0, const VoiceOption(id: '0', title: '默认音色'));
     }
     return options;
   }
