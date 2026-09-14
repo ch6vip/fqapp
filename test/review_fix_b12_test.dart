@@ -132,10 +132,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('audio-voice')));
     await tester.pumpAndSettle();
 
-    final tile = find.ancestor(
-      of: find.text('沉稳大叔音'),
-      matching: find.byType(ListTile),
-    );
+    final tile = find.byKey(const ValueKey('voice_option_96'));
     expect(tile, findsOneWidget);
     expect(
       find.descendant(of: tile, matching: find.byIcon(Icons.check)),
@@ -160,9 +157,12 @@ void main() {
     expect(find.text('主播：测试'), findsOneWidget);
 
     await tester.tap(find.text('主播：测试'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
     await _flush(tester);
     expect(session.requests.last, '1:7239243941252598845');
-    expect(find.text('真人讲书'), findsOneWidget);
+    // The top mode tab and the voice card header both follow the narrator.
+    expect(find.text('真人讲书'), findsWidgets);
   });
 
   testWidgets('voices that share an upstream name stay distinguishable', (
@@ -223,10 +223,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
     await tester.tap(find.byKey(const ValueKey('audio-voice')));
     await tester.pumpAndSettle();
-    final tile = find.ancestor(
-      of: find.text('沉稳大叔音'),
-      matching: find.byType(ListTile),
-    );
+    final tile = find.byKey(const ValueKey('voice_option_96'));
     expect(tile, findsOneWidget);
     expect(
       find.descendant(of: tile, matching: find.byIcon(Icons.check)),

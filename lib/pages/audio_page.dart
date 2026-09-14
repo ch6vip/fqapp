@@ -16,6 +16,7 @@ import '../services/listening_session.dart';
 import '../services/native_player.dart';
 import '../services/transient_retry.dart';
 import '../widgets/audio/audio_sections.dart';
+import '../widgets/audio/voice_settings_sheet.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/home/home_design.dart';
 import 'detail_page.dart';
@@ -122,9 +123,6 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   bool _autoAdvance = true;
   String? _error;
   String _toneId = '0';
-
-  /// `tts` = 智能朗读, `narrator` = 真人讲书. Mirrors the official mode tabs.
-  String _mode = 'tts';
   String _excerpt = '';
   int _excerptGeneration = 0;
   double _rate = 1;
@@ -829,32 +827,86 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   Future<void> _showVoices() async {
-    final voice = await showModalBottomSheet<AudioVoice>(
+    final selected = await showModalBottomSheet<VoiceOption>(
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('选择音色')),
-            for (final voice in _voices)
-              ListTile(
-                title: Text(voice.label),
-                trailing: voice.id == _toneId ? const Icon(Icons.check) : null,
-                onTap: () => Navigator.pop(context, voice),
-              ),
-          ],
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.72,
+        child: VoiceSettingsSheet(
+          selectedId: _toneId,
+          narrators: _narratorOptions(),
+          online: _onlineOptions(),
+          offline: _offlineOptions(),
+          onSelect: (option) => Navigator.pop(context, option),
+          onDownload: _downloadOfflineTone,
         ),
       ),
     );
-    if (!mounted || voice == null || voice.id == _toneId) return;
+    if (!mounted || selected == null || selected.id == _toneId) return;
     await _openChapter(
       _index,
       position: _player?.position ?? _position,
-      toneId: voice.id,
+      toneId: selected.id,
       autoplay: _wantPlay,
       completed: _completed,
     );
+  }
+
+  List<VoiceOption> _narratorOptions() => [
+    for (final tone in _uniqueTones(_extras.tones.narratorTones))
+      VoiceOption(
+        id: tone.id,
+        title: tone.title,
+        description: tone.description,
+        badge: tone.badge,
+      ),
+  ];
+
+  /// 智能朗读 grid: the backend tones, then any voice the CSV loader knows that
+  /// the tone endpoint did not cover. The default voice stays selectable so a
+  /// listener can always step back to it.
+  List<VoiceOption> _onlineOptions() {
+    final tones = _uniqueTones(_extras.tones.ttsTones);
+    final ids = <String>{'0'};
+    final narratorIds = {
+      for (final tone in _extras.tones.narratorTones) tone.id,
+    };
+    final options = <VoiceOption>[const VoiceOption(id: '0', title: '默认音色')];
+    for (final tone in tones) {
+      if (!ids.add(tone.id)) continue;
+      options.add(
+        VoiceOption(
+          id: tone.id,
+          title: tone.title,
+          description: tone.description,
+          badge: tone.badge,
+          isMultiTone: tone.isMultiTone,
+        ),
+      );
+    }
+    for (final voice in _voices) {
+      if (narratorIds.contains(voice.id) || !ids.add(voice.id)) continue;
+      options.add(VoiceOption(id: voice.id, title: voice.label));
+    }
+    return options;
+  }
+
+  List<VoiceOption> _offlineOptions() => [
+    for (final tone in _uniqueTones(_extras.tones.offlineTones))
+      VoiceOption(
+        id: tone.id,
+        title: tone.title,
+        description: tone.description,
+        badge: tone.badge,
+        offline: true,
+      ),
+  ];
+
+  void _downloadOfflineTone(VoiceOption option) {
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text('离线音色「${option.title}」需在官方客户端下载')));
   }
 
   Future<void> _showCatalog() async {
@@ -1006,15 +1058,18 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   List<AudioTone> get _ttsTones => _extras.tones.ttsTones;
   List<AudioTone> get _narratorTones => _extras.tones.narratorTones;
 
-  /// Official top tabs: switching the mode switches the visible voice family.
+  /// Current family, derived from the selected tone so the top tabs always
+  /// describe what is actually playing: `tts` (智能朗读) or `narrator` (真人讲书).
+  String get _mode =>
+      _narratorTones.any((tone) => tone.id == _toneId) ? 'narrator' : 'tts';
+
+  /// Official top tabs: switching the mode selects the first voice of that
+  /// family, which flips [_mode].
   void _selectMode(String mode) {
-    if (mode == 'narrator' && _narratorTones.isEmpty) return;
     if (mode == _mode) return;
-    setState(() => _mode = mode);
     final tones = mode == 'narrator' ? _narratorTones : _ttsTones;
     if (tones.isEmpty) return;
-    final currentInMode = tones.any((tone) => tone.id == _toneId);
-    if (!currentInMode) {
+    if (!tones.any((tone) => tone.id == _toneId)) {
       _selectTone(tones.first.id);
     }
   }
