@@ -757,14 +757,13 @@ class AudioProgressRow extends StatelessWidget {
       maximum > 0 ? maximum : 1.0,
     );
     final active = enabled && maximum > 0;
-    return Row(
+    return Column(
       children: [
-        _SkipLabel(label: '-15s', tooltip: '后退15秒', onTap: onBack15),
-        Expanded(
-          child: Stack(
-            alignment: Alignment.centerLeft,
-            children: [
-              SliderTheme(
+        Row(
+          children: [
+            _SkipLabel(label: '-15s', tooltip: '后退15秒', onTap: onBack15),
+            Expanded(
+              child: SliderTheme(
                 data: SliderTheme.of(context).copyWith(
                   trackHeight: 3,
                   activeTrackColor: palette.accentText,
@@ -786,34 +785,22 @@ class AudioProgressRow extends StatelessWidget {
                   onChangeEnd: active ? onChangeEnd : null,
                 ),
               ),
-              Positioned(
-                left: 8,
-                child: IgnorePointer(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: palette.soft,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '${time(Duration(milliseconds: value.round()))}/${time(duration)}',
-                      key: const ValueKey('audio-position-label'),
-                      style: TextStyle(
-                        color: palette.ink.withValues(alpha: 0.66),
-                        fontSize: 10.5,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            ),
+            _SkipLabel(label: '+15s', tooltip: '前进15秒', onTap: onForward15),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            '${time(Duration(milliseconds: value.round()))}/${time(duration)}',
+            key: const ValueKey('audio-position-label'),
+            style: TextStyle(
+              color: palette.muted,
+              fontSize: 12,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
           ),
         ),
-        _SkipLabel(label: '+15s', tooltip: '前进15秒', onTap: onForward15),
       ],
     );
   }
