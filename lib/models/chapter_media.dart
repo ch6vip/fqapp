@@ -17,12 +17,20 @@ class AudioSource {
     required this.url,
     this.toneId = '0',
     this.duration,
+    this.keyHex = '',
   });
 
   final String itemId;
   final String url;
   final String toneId;
   final Duration? duration;
+
+  /// 16-byte CENC content key in hex, empty for plain streams.
+  ///
+  /// Hearing-native albums are answered with cenc-aes-ctr streams; the backend
+  /// derives this key from `encrypt_info.spade_a` and the native player feeds
+  /// it to the same AES-CTR path the short-play episodes already use.
+  final String keyHex;
 }
 
 /// A comic page in reading order. URL-only responses leave dimensions unset.
@@ -99,8 +107,8 @@ AudioSource _parseAudioPlayback(
       if (streams is! List) continue;
       for (final stream in streams) {
         if (stream is! Map) continue;
-        final encryption = stream['encrypt_info'];
-        if (encryption is Map && encryption['encrypt'] == true) continue;
+        final keyHex = _streamContentKey(stream['encrypt_info']);
+        if (keyHex == null) continue;
         final url =
             _mediaUrl(stream['main_url'], baseUrl) ??
             _mediaUrl(stream['backup_url'], baseUrl);
@@ -121,6 +129,7 @@ AudioSource _parseAudioPlayback(
           url: url,
           toneId: toneId,
           duration: duration,
+          keyHex: keyHex,
         );
       }
     }
@@ -199,6 +208,30 @@ List<Map<dynamic, dynamic>> _checkedMediaObjects(Map<String, dynamic> payload) {
     current = next;
   }
   throw const FormatException('媒体响应嵌套过深');
+}
+
+final _contentKeyPattern = RegExp(r'^[0-9a-f]{32}$');
+
+/// Resolves one stream's CENC content key, or `null` when the stream must be
+/// skipped.
+///
+/// A plain stream needs no key and yields an empty string. An encrypted stream
+/// is only playable once the backend derived `encrypt_info.key_hex` from
+/// `spade_a`; without it the native player has no AES-CTR key, so the stream
+/// still has to be skipped and the caller falls back to the next one — or
+/// reports "未获取到音频地址" when none is left.
+String? _streamContentKey(dynamic encryption) {
+  if (encryption is! Map) return '';
+  if (encryption['encrypt'] != true) return '';
+  // The native core implements the cenc AES-CTR scheme only.
+  final method = encryption['encryption_method'];
+  if (method is String && method.isNotEmpty && method != 'cenc-aes-ctr') {
+    return null;
+  }
+  final raw = encryption['key_hex'];
+  if (raw is! String) return null;
+  final key = raw.trim().toLowerCase();
+  return _contentKeyPattern.hasMatch(key) ? key : null;
 }
 
 String? _mediaUrl(dynamic value, String baseUrl) {

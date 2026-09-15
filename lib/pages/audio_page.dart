@@ -445,7 +445,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       if (!_current(generation)) return;
       final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
       _player = player;
-      await player.create(source.url, '');
+      await player.create(source.url, source.keyHex);
       if (!_current(generation, player)) {
         await player.dispose();
         return;

@@ -708,6 +708,22 @@ void main() {
     expect(player.isPlaying, false);
     expect(session.store.entry?['position'], isNotNull);
   });
+
+  testWidgets('hands an encrypted chapter key to the native player', (
+    tester,
+  ) async {
+    const key = '61826b7eceb342a9ad4fd9d7556be625';
+    final session = _Session(
+      loader: (id, {toneId}) async => AudioSource(
+        itemId: id,
+        url: 'https://cdn.example/encrypted.m4a',
+        toneId: toneId ?? '0',
+        keyHex: key,
+      ),
+    );
+    await _mount(tester, session);
+    expect(session.players.single.keys, [key]);
+  });
 }
 
 AudioSource _source(String id, String? toneId) => AudioSource(

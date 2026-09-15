@@ -37,7 +37,7 @@ void main() {
   });
 
   test(
-    'audio playback skips encrypted streams and uses a plain backup URL',
+    'audio playback skips encrypted streams that carry no derived key',
     () {
       final encrypted = <String, dynamic>{
         'main_url': 'https://cdn.example/encrypted.m4a',
@@ -56,6 +56,7 @@ void main() {
       );
       expect(source.url, 'https://cdn.example/plain.m4a');
       expect(source.toneId, '2');
+      expect(source.keyHex, isEmpty);
       expect(
         () => parseAudioSource(
           audioPlayFixture(streams: [encrypted]),
@@ -66,6 +67,86 @@ void main() {
       );
     },
   );
+
+  test('encrypted audio plays once the backend derives its content key', () {
+    final source = parseAudioSource(
+      audioPlayFixture(
+        streams: [
+          {
+            'main_url': 'https://cdn.example/encrypted.m4a',
+            'backup_url': 'https://cdn.example/encrypted-backup.m4a',
+            'encrypt_info': {
+              'encrypt': true,
+              'kid': '692e7c06f8818b927094fff40092363a',
+              'spade_a': 'l7wZ+1azG8pUsS7NVIcYzWKCGvlWhCrVV5sa1lWsK+NnqC+2tg==',
+              'encryption_method': 'cenc-aes-ctr',
+              'key_hex': '61826B7ECEB342A9AD4FD9D7556BE625',
+            },
+          },
+        ],
+      ),
+      itemId: 'chapter',
+      baseUrl: base,
+    );
+    expect(source.url, 'https://cdn.example/encrypted.m4a');
+    expect(source.keyHex, '61826b7eceb342a9ad4fd9d7556be625');
+  });
+
+  test('an unusable content key still skips the stream', () {
+    for (final info in <Map<String, dynamic>>[
+      // No key at all.
+      {'encrypt': true, 'encryption_method': 'cenc-aes-ctr'},
+      // Wrong key length.
+      {
+        'encrypt': true,
+        'encryption_method': 'cenc-aes-ctr',
+        'key_hex': '61826b7e',
+      },
+      // Not hex.
+      {
+        'encrypt': true,
+        'encryption_method': 'cenc-aes-ctr',
+        'key_hex': 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz',
+      },
+      // A scheme the native core does not implement.
+      {
+        'encrypt': true,
+        'encryption_method': 'cbcs',
+        'key_hex': '61826b7eceb342a9ad4fd9d7556be625',
+      },
+    ]) {
+      expect(
+        () => parseAudioSource(
+          audioPlayFixture(
+            streams: [
+              {
+                'main_url': 'https://cdn.example/encrypted.m4a',
+                'encrypt_info': info,
+              },
+            ],
+          ),
+          itemId: 'chapter',
+          baseUrl: base,
+        ),
+        throwsA(isA<FormatException>()),
+        reason: 'encrypt_info $info must not be treated as playable',
+      );
+    }
+  });
+
+  test('a stream without encrypt_info stays plain', () {
+    final source = parseAudioSource(
+      audioPlayFixture(
+        streams: [
+          {'main_url': 'https://cdn.example/plain.m4a', 'encrypt_info': null},
+        ],
+      ),
+      itemId: 'chapter',
+      baseUrl: base,
+    );
+    expect(source.url, 'https://cdn.example/plain.m4a');
+    expect(source.keyHex, isEmpty);
+  });
 
   test('invalid and overflowing playback durations remain unknown', () {
     for (final duration in [null, -1, 0, 'unknown', 1e308, 1e20]) {
