@@ -65,6 +65,8 @@ class AudioToneSet {
     this.ttsTones = const [],
     this.offlineTones = const [],
     this.narratorTones = const [],
+    this.genreType = 0,
+    this.relatedNovel,
   });
 
   /// 智能朗读 voices (the 多角色对话 / 成熟大叔音 family).
@@ -75,6 +77,26 @@ class AudioToneSet {
 
   /// 真人讲书 narrators, whose `title` is already `主播：…`.
   final List<AudioTone> narratorTones;
+
+  /// `req_book_genre_type` from the tones endpoint.
+  ///
+  /// `1` marks an audio book (有声书 / 有声剧): its playinfo answer ignores
+  /// `tone_id` and always returns the same recording when requested with that
+  /// book's own chapter IDs. Verified against 7 books — `genre_type == 1`
+  /// always coincided with `tone_id=0` being playable and with all voices
+  /// resolving to one TOS object id, while `0` always meant one distinct
+  /// stream per voice.
+  final int genreType;
+
+  /// Whether this book's chapters serve a fixed recording. TTS choices may
+  /// still be available through [relatedNovel], with that novel's chapters.
+  bool get hasFixedTone => genreType == 1;
+
+  /// The exact ebook identity used by the intelligent-reading voices.
+  ///
+  /// Note: A fixed recording can have TTS versions under another book ID — see
+  /// .agents/notes/implemented/bug-fix/2026-09-16-linked-audio-voices.md.
+  final RelatedWork? relatedNovel;
 
   bool get isEmpty =>
       ttsTones.isEmpty && offlineTones.isEmpty && narratorTones.isEmpty;
@@ -97,8 +119,51 @@ class AudioToneSet {
       ttsTones: _toneList(data['tts_tones']),
       offlineTones: _toneList(data['offline_tts_tones']),
       narratorTones: _narratorTones(data),
+      genreType: _int(data['req_book_genre_type']),
+      relatedNovel: _relatedNovel(data),
     );
   }
+}
+
+RelatedWork? _relatedNovel(Map<String, dynamic> data) {
+  final books = data['book_infos'];
+  final entries = books is List ? books.whereType<Map>().toList() : <Map>[];
+  final raw = data['relate_novel_bookid'];
+  var id =
+      _decimalBookId(data['relate_novel_bookid_str']) ?? _decimalBookId(raw);
+  if (id == null && raw is num && raw.isFinite && raw > 0) {
+    // The Go JSON bridge can round int64 IDs. Only an unambiguous ebook in
+    // the same numeric bucket can restore an exact identity from book_infos.
+    final candidates = <String>{};
+    for (final entry in entries) {
+      final candidate = _decimalBookId(entry['book_id']);
+      if (_string(entry['is_ebook']) == '1' &&
+          candidate != null &&
+          double.tryParse(candidate) == raw.toDouble()) {
+        candidates.add(candidate);
+      }
+    }
+    if (candidates.length == 1) {
+      id = candidates.single;
+    } else if (candidates.isEmpty &&
+        raw <= 9007199254740992 &&
+        raw == raw.truncateToDouble()) {
+      id = raw.toInt().toString();
+    }
+  }
+  if (id == null) return null;
+  for (final entry in entries) {
+    if (_string(entry['book_id']) == id) {
+      return RelatedWork._work(entry, kind: 'book', label: '原著小说');
+    }
+  }
+  return RelatedWork(kind: 'book', id: id, title: '', label: '原著小说');
+}
+
+String? _decimalBookId(dynamic raw) {
+  if (raw is! String) return null;
+  final value = raw.trim();
+  return RegExp(r'^[1-9][0-9]*$').hasMatch(value) ? value : null;
 }
 
 /// One spoken subtitle line with its start offset.

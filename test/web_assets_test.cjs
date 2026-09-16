@@ -415,6 +415,34 @@ test('late book tones reload the selected audio chapter without losing the play 
   assert.equal(audio.playCalls, 1);
 });
 
+test('late audio fallback cannot replace the selected chapter or its progress', async () => {
+  const p = page('assets/web/listen.html');
+  p.run('chapters = [{ id: "a", title: "Alpha" }, { id: "b", title: "Beta" }]');
+  const first = p.run('loadChapter(false)');
+  p.respond(contentRequests(p)[0], { code: 200, data: {} });
+  await new Promise(setImmediate);
+  const fallback = p.requests.find(request => request.url.startsWith('/api/v1/audio/play?'));
+  assert.ok(fallback, 'the first chapter started its fallback request');
+
+  const second = p.run('goToIndex(1)');
+  p.respond(contentRequests(p)[1], { code: 200, data: { audio_url: 'https://example.test/b' } });
+  await second;
+  const audio = p.elements.get('audioPlayer');
+  audio.metadata();
+  audio.currentTime = 23;
+  p.respond(fallback, { video_info: { data: { video_model_datas: [{
+    item_id: 'a', item_status: 0,
+    video_model: JSON.stringify({ media_type: 'audio', video_list: [{ main_url: 'https://example.test/a' }] }),
+  }] } } });
+  await first;
+
+  assert.equal(audio.src, 'https://example.test/b');
+  assert.equal(audio.currentTime, 23);
+  assert.equal(p.run('itemId'), 'b');
+  assert.equal(p.run('activeItemId'), 'b');
+  assert.equal(audio.listeners.get('loadedmetadata')?.length || 0, 0);
+});
+
 test('plugin video selection tracks the requested ID and ignores late responses', async () => {
   const p = page('assets/plugins/player.html');
   p.run('player.playlist = [{ item_id: "a", title: "Alpha" }, { item_id: "b", title: "Beta" }]');

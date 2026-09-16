@@ -63,7 +63,14 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
 
   int get _leading => widget.hasPreviousChapter ? 1 : 0;
   int get _itemCount =>
-      widget.layout.pages.length + _leading + (widget.hasNextChapter ? 1 : 0);
+      widget.layout.pages.length +
+      _leading +
+      (widget.hasNextChapter || widget.endPage != null ? 1 : 0);
+
+  bool get isAtEndPage =>
+      _controller.hasClients &&
+      (_controller.page ?? _controller.initialPage.toDouble()) >=
+          widget.layout.pages.length + _leading - .01;
 
   PageController _newController() =>
       PageController(initialPage: widget.pageIndex + _leading, keepPage: false);
@@ -147,6 +154,11 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
 
   Future<void> _requestBoundary(int direction) async {
     if (_boundaryPending) return;
+    // The final chapter's comments page is a stable stop, with no next chapter
+    // to request and no text page to bounce back to.
+    if (direction > 0 && !widget.hasNextChapter && widget.endPage != null) {
+      return;
+    }
     setState(() => _boundaryPending = true);
     final layout = widget.layout;
     try {
@@ -209,6 +221,9 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
             // deferred briefly instead — the buttons work during the window,
             // and swiping straight through still advances.
             _boundaryLandingTimer?.cancel();
+            if (page >= widget.layout.pages.length && !widget.hasNextChapter) {
+              return;
+            }
             _boundaryLandingTimer = Timer(
               const Duration(milliseconds: 600),
               () {

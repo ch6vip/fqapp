@@ -18,10 +18,13 @@ class AudioHistory {
   }
 
   Future<void> save(Map<String, dynamic> entry, {double listenedSeconds = 0}) {
+    final guard = ReadingDataWriteGuard(store);
     final snapshot = {...entry, 'kind': 'audio'};
     final previous = _writes[store] ?? Future<void>.value();
     final write = previous.then((_) async {
-      if (listenedSeconds.isFinite && listenedSeconds > 0) {
+      if (guard.canWriteReadTime &&
+          listenedSeconds.isFinite &&
+          listenedSeconds > 0) {
         try {
           await store.accumulateReadTime(
             snapshot['id'] as String,
@@ -32,6 +35,7 @@ class AudioHistory {
           // Statistics must not prevent saving the listening position.
         }
       }
+      if (!guard.canWriteHistory) return;
       try {
         await store.addHistory(snapshot);
       } catch (_) {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
@@ -254,7 +255,11 @@ void main() {
             'rate': 1.5,
           },
         ),
-        voices: () async => const [AudioVoice(id: '2', label: '温柔女声')],
+        voices: () async => const [
+          AudioVoice(id: '2', label: '温柔女声'),
+          AudioVoice(id: '3', label: '清亮男声'),
+          AudioVoice(id: '0', label: '默认音色'),
+        ],
       );
       await _mount(tester, session);
       expect(session.requests.single, '1:2');
@@ -264,10 +269,13 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
       await tester.tap(find.byKey(const ValueKey('audio-voice')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('默认音色'));
+      // Only voices playinfo can actually serve are offered: the synthetic
+      // 默认音色 row (tone 0) is not a choice.
+      expect(find.text('默认音色'), findsNothing);
+      await tester.tap(find.text('清亮男声'));
       await _flush(tester);
       await tester.pumpAndSettle();
-      expect(session.requests, ['1:2', '1:0']);
+      expect(session.requests, ['1:2', '1:3']);
       expect(session.players.first.disposed, true);
       expect(session.players.last.position, const Duration(seconds: 45));
       expect(session.players.last.isPlaying, false);
@@ -278,7 +286,7 @@ void main() {
       await tester.ensureVisible(find.byTooltip('播放'));
       await tester.tap(find.byTooltip('播放'));
       await _flush(tester);
-      expect(session.store.entry?['toneId'], '0');
+      expect(session.store.entry?['toneId'], '3');
     },
   );
 
@@ -297,6 +305,65 @@ void main() {
       expect(find.byKey(const ValueKey('audio-voice')), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'a fixed recording without an associated novel offers no TTS voices',
+    (tester) async {
+      // genre_type 1 = 有声书: playinfo answers the same recording for every
+      // tone_id. Without an associated novel, no TTS version can be opened.
+      final session = _Session(
+        extras: (_) async => const AudioExtras(
+          tones: AudioToneSet(
+            genreType: 1,
+            ttsTones: [AudioTone(id: '96', title: '多角色对话升级版')],
+          ),
+        ),
+      );
+      await _mount(tester, session);
+      expect(find.text('暂无可选音色'), findsOneWidget);
+      expect(find.text('多角色对话升级版'), findsNothing);
+      await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
+      await tester.tap(find.byKey(const ValueKey('audio-voice')));
+      await tester.pumpAndSettle();
+      // The sheet must not offer it either.
+      expect(find.text('多角色对话升级版'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'the same book without the fixed-tone flag still lists its voices',
+    (tester) async {
+      final session = _Session(
+        extras: (_) async => const AudioExtras(
+          tones: AudioToneSet(
+            ttsTones: [AudioTone(id: '96', title: '多角色对话升级版')],
+          ),
+        ),
+      );
+      await _mount(tester, session);
+      expect(find.text('多角色对话升级版'), findsOneWidget);
+    },
+  );
+
+  testWidgets('an audio book opens on 真人讲书 with its narrator voice', (
+    tester,
+  ) async {
+    // A fixed recording's voice card describes its narrator; intelligent
+    // reading, if available, belongs to a separate associated novel.
+    final session = _Session(
+      extras: (_) async => const AudioExtras(
+        tones: AudioToneSet(
+          genreType: 1,
+          ttsTones: [AudioTone(id: '96', title: '多角色对话升级版')],
+          narratorTones: [AudioTone(id: '7239243941252598845', title: '主播：老恒')],
+        ),
+      ),
+    );
+    await _mount(tester, session);
+    expect(find.text('真人讲书'), findsWidgets);
+    expect(find.text('主播：老恒'), findsOneWidget);
+    expect(find.text('暂无可选音色'), findsNothing);
+  });
 
   testWidgets('a chosen speed is applied to later chapters and saved', (
     tester,
@@ -792,6 +859,7 @@ class _Session {
   final ControlledReaderStore store;
   final Future<AudioSource> Function(String, {String? toneId})? loader;
   final Future<List<AudioVoice>> Function()? voices;
+  final AudioExtrasLoader? extras;
   final _AudioPlayer Function()? factory;
   final List<Chapter> chapters;
   final players = <_AudioPlayer>[];
@@ -801,6 +869,7 @@ class _Session {
     ControlledReaderStore? store,
     this.loader,
     this.voices,
+    this.extras,
     this.factory,
     List<Chapter>? chapters,
   }) : store = store ?? ControlledReaderStore(),
@@ -823,6 +892,7 @@ class _Session {
             Future.value(_source(id, toneId));
       },
       voicesLoader: voices ?? () async => const [],
+      extrasLoader: extras,
       playerFactory: () {
         final player = factory?.call() ?? _AudioPlayer();
         players.add(player);

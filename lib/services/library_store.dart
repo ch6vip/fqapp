@@ -26,6 +26,42 @@ abstract interface class ReaderStore {
   });
 }
 
+/// Captures the clear boundary before a history wrapper waits for older saves.
+/// History and statistics have separate generations because clearing history
+/// intentionally leaves reading time intact.
+/// See .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
+class ReadingDataWriteGuard {
+  static final _generations = Expando<_ReadingDataGeneration>(
+    'reading data clear generations',
+  );
+
+  static _ReadingDataGeneration _forStore(ReaderStore store) =>
+      _generations[store] ??= _ReadingDataGeneration();
+
+  /// Scoped media writes share the underlying store's clear boundary.
+  static void shareScope(ReaderStore scope, ReaderStore store) {
+    _generations[scope] = _forStore(store);
+  }
+
+  ReadingDataWriteGuard(ReaderStore store) : this._(_forStore(store));
+
+  ReadingDataWriteGuard._(this._generation)
+    : _history = _generation.history,
+      _readTime = _generation.readTime;
+
+  final _ReadingDataGeneration _generation;
+  final int _history;
+  final int _readTime;
+
+  bool get canWriteHistory => _history == _generation.history;
+  bool get canWriteReadTime => _readTime == _generation.readTime;
+}
+
+class _ReadingDataGeneration {
+  int history = 0;
+  int readTime = 0;
+}
+
 class LibraryStore implements ReaderStore {
   LibraryStore._();
   static final LibraryStore instance = LibraryStore._();
@@ -49,8 +85,14 @@ class LibraryStore implements ReaderStore {
 
   late Box<dynamic> _histBox;
   late Box<dynamic> _readTimeBox;
-  Future<void> _readTimeWrites = Future<void>.value();
-  Future<void> _historyWrites = Future<void>.value();
+  Future<void> _writes = Future<void>.value();
+
+  Future<void> _serialize(Future<void> Function() action) {
+    final write = _writes.then<void>((_) => action());
+    // Return a failure to its caller without poisoning subsequent mutations.
+    _writes = write.catchError((Object _) {});
+    return write;
+  }
 
   /// Hive-backed notifications for retained tabs. Visible pages update after
   /// writes; hidden pages defer their snapshots until the next visit.
@@ -228,10 +270,7 @@ class LibraryStore implements ReaderStore {
 
   @override
   Future<void> addHistory(Map<String, dynamic> entry) {
-    // Serialize history mutations so a clear cannot overtake a pending write.
-    final write = _historyWrites.then((_) => _addHistoryInWrite(entry));
-    _historyWrites = write.catchError((Object _) {});
-    return write;
+    return _serialize(() => _addHistoryInWrite(entry));
   }
 
   Future<void> _addHistoryInWrite(Map<String, dynamic> entry) async {
@@ -243,7 +282,7 @@ class LibraryStore implements ReaderStore {
     final previous = _historyRecord(_histBox.get(originalId), id: originalId);
     if (previous != null &&
         (record['contentId'] != null || previous['kind'] != record['kind'])) {
-      await _preserveLegacyMedia(previous);
+      await _preserveLegacyMediaInWrite(previous);
     }
 
     await _histBox.put(id, record);
@@ -274,7 +313,7 @@ class LibraryStore implements ReaderStore {
     String? chapterId,
     double? position,
     double? maxScroll,
-  }) async {
+  }) => _serialize(() async {
     final map = _historyRecord(_histBox.get(id), id: id);
     // Partial novel updates cannot establish their kind after a failed insert.
     // Scoped media first copies its legacy record, then updates the scoped key.
@@ -287,27 +326,28 @@ class LibraryStore implements ReaderStore {
       map['time'] = DateTime.now().millisecondsSinceEpoch;
       await _histBox.put(id, _historyRecord(map));
     }
-  }
+  });
 
   Future<void> clearHistory() {
-    // Enqueue after any pending history write so the clear is durable.
-    final write = _historyWrites.then<void>((_) async {
+    // Invalidate delayed wrapper saves synchronously, before they can enqueue.
+    ReadingDataWriteGuard._forStore(this).history++;
+    return _serialize(() async {
       await _histBox.clear();
     });
-    _historyWrites = write.catchError((Object _) {});
-    return write;
   }
 
   /// Removes saved history together with the per-day reading/playback time
   /// shown on the statistics page.
   Future<void> clearReadingData() {
-    final write = _historyWrites.then<void>((_) async {
-      await _readTimeWrites;
+    final generation = ReadingDataWriteGuard._forStore(this);
+    generation.history++;
+    generation.readTime++;
+    // One queue keeps newer statistics behind the clear as well as history.
+    // Legacy preservation can touch both boxes, so separate queues can cycle.
+    return _serialize(() async {
       await _histBox.clear();
       await _readTimeBox.clear();
     });
-    _historyWrites = write.catchError((Object _) {});
-    return write;
   }
 
   Map<String, Map<String, double>> readTimeSnapshot() {
@@ -402,7 +442,7 @@ class LibraryStore implements ReaderStore {
       return Future<void>.value();
     }
     final day = _dayKey(at ?? DateTime.now());
-    final write = _readTimeWrites.then((_) async {
+    return _serialize(() async {
       final history = _historyRecord(_histBox.get(bookId), id: bookId);
       final legacy = history != null && _legacyMediaKey(history) != null;
       final newTime = !legacy || history['kind'] != kind;
@@ -428,10 +468,6 @@ class LibraryStore implements ReaderStore {
       await _readTimeBox.put(bookId, perBook);
       await _trimReadTimeIdentities();
     });
-    // Keep the serialization chain usable after an individual Hive error,
-    // while still returning that error to the original caller.
-    _readTimeWrites = write.catchError((_) {});
-    return write;
   }
 
   static (String, String) _historyIdentity(Map<String, dynamic> record) => (
@@ -449,11 +485,7 @@ class LibraryStore implements ReaderStore {
 
   Future<void> _preserveLegacyMedia(Map<String, dynamic> record) {
     if (_legacyMediaKey(record) == null) return Future<void>.value();
-    final write = _readTimeWrites.then(
-      (_) => _preserveLegacyMediaInWrite(record),
-    );
-    _readTimeWrites = write.catchError((Object _) {});
-    return write;
+    return _serialize(() => _preserveLegacyMediaInWrite(record));
   }
 
   Future<void> _preserveLegacyMediaInWrite(Map<String, dynamic> record) async {

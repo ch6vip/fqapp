@@ -643,6 +643,9 @@
                 const payload = await fetchJSON(`/api/content?item_id=${encodeURIComponent(current.id)}&tab=${encodeURIComponent("听书")}&tone_id=${encodeURIComponent(requestedToneId)}&source=${encodeURIComponent(source)}`);
                 if (generation !== chapterGeneration) return;
                 const url = payload.data?.audio_url || await fetchPlaybackURL(current.id, requestedToneId);
+                // A fallback request can finish after another chapter was selected.
+                // See .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
+                if (generation !== chapterGeneration) return;
                 if (!url) throw new Error("未获取到音频地址");
                 const saved = Number(localStorage.getItem(progressKey(current.id)) || "0");
                 metadataHandler = () => {

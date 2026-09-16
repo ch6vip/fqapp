@@ -338,7 +338,8 @@ void main() {
       expect(_pager(tester).pageIndex, 0);
       expect(_pager(tester).layout.pages.length, 1);
       await _swipe(tester, 1);
-      expect(find.text('已是最后一章'), findsOneWidget);
+      expect(find.text('本章完').hitTestable(), findsOneWidget);
+      expect(find.text('已是最后一章'), findsNothing);
       expect(store.entry?['chapterId'], 'chapter-3');
       expect(_pager(tester).pageIndex, 0);
       expect(tester.takeException(), isNull);

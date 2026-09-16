@@ -6,6 +6,70 @@ import 'support/audio_play_fixture.dart';
 void main() {
   const base = 'http://127.0.0.1:8080';
 
+  test('playinfo video_model yields the url, derived key and tone', () {
+    final source = parsePlayinfoSource(
+      {
+        'code': 0,
+        'data': [
+          {
+            'main_url': 'https://v11-fq-tts.fqnovelvod.com/x',
+            'backup_url': 'https://v26-fq-tts.fqnovelvod.com/y',
+            'item_id': '7181453438667096588',
+            'indate': 86400,
+            'video_model':
+                '{"status":10,"media_type":"audio","video_duration":664.741,'
+                '"video_list":[{"main_url":"https://v11-fq-tts.fqnovelvod.com/x",'
+                '"encrypt_info":{"encrypt":true,'
+                '"kid":"677752d8f8818bb4b2223c0e00f7a81a",'
+                '"spade_a":"nbwTwF23F/5phBHDb4Qjz3KBC/lBtzrJcLI4y2qGEc9dhRWhoQ==",'
+                '"key_hex":"0f7a32fda0f04388ba27cf1d0a95b024",'
+                '"encryption_method":"cenc-aes-ctr"}}]}',
+          },
+        ],
+      },
+      itemId: '7181453438667096588',
+      toneId: '57',
+      baseUrl: base,
+    );
+    expect(source.url, 'https://v11-fq-tts.fqnovelvod.com/x');
+    expect(source.toneId, '57');
+    expect(source.keyHex, '0f7a32fda0f04388ba27cf1d0a95b024');
+  });
+
+  test('encrypted playinfo without a derived key is not a plain stream', () {
+    expect(
+      () => parsePlayinfoSource(
+        {
+          'code': 0,
+          'data': [
+            {
+              'main_url': 'https://cdn.example/a.m4a',
+              'item_id': 'x',
+              'video_model':
+                  '{"status":10,"media_type":"audio",'
+                  '"video_list":[{"main_url":"https://cdn.example/a.m4a",'
+                  '"encrypt_info":{"encrypt":true,"kid":"aa"}}]}',
+            },
+          ],
+        },
+        itemId: 'x',
+        baseUrl: base,
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test('playinfo without usable streams is an explicit error', () {
+    expect(
+      () => parsePlayinfoSource(
+        {'code': 0, 'data': []},
+        itemId: 'x',
+        baseUrl: base,
+      ),
+      throwsFormatException,
+    );
+  });
+
   test(
     'real audio playback shape yields a plain URL and duration in seconds',
     () {
@@ -36,37 +100,34 @@ void main() {
     }
   });
 
-  test(
-    'audio playback skips encrypted streams that carry no derived key',
-    () {
-      final encrypted = <String, dynamic>{
-        'main_url': 'https://cdn.example/encrypted.m4a',
-        'encrypt_info': {'encrypt': true, 'encryption_method': 'cenc-aes-ctr'},
-      };
-      final source = parseAudioSource(
-        audioPlayFixture(
-          streams: [
-            encrypted,
-            {'backup_url': 'https://cdn.example/plain.m4a'},
-          ],
-        ),
+  test('audio playback skips encrypted streams that carry no derived key', () {
+    final encrypted = <String, dynamic>{
+      'main_url': 'https://cdn.example/encrypted.m4a',
+      'encrypt_info': {'encrypt': true, 'encryption_method': 'cenc-aes-ctr'},
+    };
+    final source = parseAudioSource(
+      audioPlayFixture(
+        streams: [
+          encrypted,
+          {'backup_url': 'https://cdn.example/plain.m4a'},
+        ],
+      ),
+      itemId: 'chapter',
+      toneId: '2',
+      baseUrl: base,
+    );
+    expect(source.url, 'https://cdn.example/plain.m4a');
+    expect(source.toneId, '2');
+    expect(source.keyHex, isEmpty);
+    expect(
+      () => parseAudioSource(
+        audioPlayFixture(streams: [encrypted]),
         itemId: 'chapter',
-        toneId: '2',
         baseUrl: base,
-      );
-      expect(source.url, 'https://cdn.example/plain.m4a');
-      expect(source.toneId, '2');
-      expect(source.keyHex, isEmpty);
-      expect(
-        () => parseAudioSource(
-          audioPlayFixture(streams: [encrypted]),
-          itemId: 'chapter',
-          baseUrl: base,
-        ),
-        throwsA(isA<FormatException>()),
-      );
-    },
-  );
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
 
   test('encrypted audio plays once the backend derives its content key', () {
     final source = parseAudioSource(

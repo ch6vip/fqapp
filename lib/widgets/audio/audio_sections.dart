@@ -7,25 +7,17 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../models/audio_extra.dart';
 import '../home/home_design.dart';
 
-/// Collapsible top bar mirroring the official listening page:
-/// `收起 | 智能朗读 ｜ 真人讲书 | 激励 | 更多`.
+/// Listening page title with collapse and additional actions.
 class AudioTopBar extends StatelessWidget {
-  /// `tts` for 智能朗读, `narrator` for 真人讲书.
-  final String mode;
-  final bool narratorAvailable;
   final VoidCallback onCollapse;
   final VoidCallback onMore;
   final VoidCallback? onInspire;
-  final ValueChanged<String>? onSelectMode;
 
   const AudioTopBar({
     super.key,
-    required this.mode,
     required this.onCollapse,
     required this.onMore,
-    this.narratorAvailable = false,
     this.onInspire,
-    this.onSelectMode,
   });
 
   @override
@@ -37,31 +29,16 @@ class AudioTopBar extends StatelessWidget {
         children: [
           Align(
             alignment: Alignment.center,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _AudioModeTab(
-                  key: const Key('audio_mode_tts'),
-                  label: '智能朗读',
-                  selected: mode != 'narrator',
-                  onTap: onSelectMode == null
-                      ? null
-                      : () => onSelectMode!('tts'),
+            child: Semantics(
+              header: true,
+              child: Text(
+                '听书',
+                style: TextStyle(
+                  color: palette.ink,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Container(width: 1, height: 14, color: palette.line),
-                ),
-                _AudioModeTab(
-                  key: const Key('audio_mode_narrator'),
-                  label: '真人讲书',
-                  selected: mode == 'narrator',
-                  enabled: narratorAvailable,
-                  onTap: onSelectMode == null || !narratorAvailable
-                      ? null
-                      : () => onSelectMode!('narrator'),
-                ),
-              ],
+              ),
             ),
           ),
           Align(
@@ -110,45 +87,6 @@ class AudioTopBar extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _AudioModeTab extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final bool enabled;
-  final VoidCallback? onTap;
-
-  const _AudioModeTab({
-    super.key,
-    required this.label,
-    required this.selected,
-    this.enabled = true,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final color = !enabled
-        ? palette.muted.withValues(alpha: 0.4)
-        : (selected ? palette.ink : palette.muted);
-    return HomePressable(
-      semanticLabel: label,
-      onTap: onTap ?? () {},
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: color,
-            fontSize: 15,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
       ),
     );
   }
@@ -222,6 +160,14 @@ class AudioBookCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                // Keep the full-cover catalog target below the two buttons.
+                // See .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: onOpenBook,
+                  ),
+                ),
                 Positioned(
                   left: 0,
                   right: 0,
@@ -281,12 +227,6 @@ class AudioBookCard extends StatelessWidget {
                         color: Colors.white,
                       ),
                     ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTap: onOpenBook,
                   ),
                 ),
               ],

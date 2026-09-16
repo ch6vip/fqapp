@@ -33,7 +33,9 @@ class _MediaHistoryStore implements ReaderStore {
   final ReaderStore delegate;
   final String kind;
 
-  _MediaHistoryStore(this.delegate, this.kind);
+  _MediaHistoryStore(this.delegate, this.kind) {
+    ReadingDataWriteGuard.shareScope(this, delegate);
+  }
 
   String _key(String id) => '$kind:$id';
 
@@ -67,12 +69,14 @@ class _MediaHistoryStore implements ReaderStore {
     double? position,
     double? maxScroll,
   }) async {
+    final guard = ReadingDataWriteGuard(this);
     // A legacy record is copied into the new scope on its first update.
     if (await delegate.historyEntry(_key(id)) == null) {
       final saved = await historyEntry(id);
-      if (saved == null) return;
+      if (saved == null || !guard.canWriteHistory) return;
       await addHistory(saved);
     }
+    if (!guard.canWriteHistory) return;
     await delegate.updateProgress(
       _key(id),
       episode,

@@ -51,3 +51,8 @@ app.*.map.json
 /assets/bin/
 /assets/config/device_pool.json
 /android/app/src/main/jniLibs/*/*.so
+
+# 本地临时文件
+_sessionzip/
+.workbuddy/
+.agents/

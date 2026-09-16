@@ -17,17 +17,14 @@ class AboutPage extends StatelessWidget {
         children: [
           const SizedBox(height: 20),
           Center(
-            child: Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Icon(
-                Icons.local_fire_department,
-                size: 52,
-                color: theme.colorScheme.onPrimaryContainer,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: Image.asset(
+                'assets/images/app_logo.png',
+                width: 96,
+                height: 96,
+                fit: BoxFit.contain,
+                excludeFromSemantics: true,
               ),
             ),
           ),

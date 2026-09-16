@@ -28,6 +28,9 @@ Status: implemented
 2. **字幕端点的默认参数永远失败**。`/api/v1/chapters/{id}/timeline` 在后端默认的 `genre=4, tone_id=99` 下稳定返回 `code=1301008 no available speech text`；实测 `genre=1`（或 `0`）配合任意有效 `tone_id`（1/4/82/90）才返回 `code=0`。因此客户端**必须**显式传 `genre` 与所选音色，且 `1301008` 是「这本书没有字幕」的正常答案，不是错误。
 3. **音色端点用小写键**（`id`/`title`/`description`/`badge`/`is_multi_tone`），与同名的 PascalCase RPC 模型 `ToneInfo` 不一致；真人讲书条目用 `abook_id` 而非 `id`。
 
+有声书的智能朗读选项还可能属于关联小说，需要同时切换书 ID 和章节 ID，不能按录音类型一律隐藏。
+具体契约与验证见[关联小说音色切换](../bug-fix/2026-09-16-linked-audio-voices.md)。
+
 字幕格式是 `[起始毫秒,0]<起始,0,0>文本` 的逐行文本，按行解析成带时间戳的 cue 列表，用二分查找定位当前句，同时展示下一句。
 
 ## 测试注入与离线的边界

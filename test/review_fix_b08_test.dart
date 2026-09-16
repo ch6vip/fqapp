@@ -96,7 +96,8 @@ void main() {
     final languageGate = Completer<Object?>();
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       _ttsChannel,
-      (call) async => call.method == 'setLanguage' ? languageGate.future : null,
+      (call) async =>
+          call.method == 'setLanguage' ? await languageGate.future : 1,
     );
     addTearDown(
       () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -120,7 +121,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
 
-    languageGate.complete(null);
+    languageGate.complete(1);
     await tester.pumpAndSettle();
 
     // The stale startup must bail out instead of calling setState/speak.
@@ -137,7 +138,7 @@ void main() {
       _ttsChannel,
       (call) async {
         calls.add(call.method);
-        return null;
+        return 1;
       },
     );
     addTearDown(
@@ -167,7 +168,7 @@ void main() {
   ) async {
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       _ttsChannel,
-      (call) async => null,
+      (call) async => 1,
     );
     addTearDown(
       () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -250,7 +251,7 @@ void main() {
           final arguments = call.arguments;
           spoken.add(arguments is Map ? '${arguments['text']}' : '$arguments');
         }
-        return null;
+        return 1;
       },
     );
     addTearDown(

@@ -23,12 +23,12 @@ void main() {
       addTearDown(transport.close);
       final api = ApiClient(client: transport, baseUrl: base);
       final source = await api.audioSource(special, bookId: special);
-      expect(sent.single.path, '/api/v1/audio/play');
-      expect(sent.single.queryParameters, {
-        'book_id': special,
-        'item_ids': special,
-        'tone_id': '0',
-      });
+      expect(
+        sent.single.path,
+        '/api/v1/audio/books/id%20%26mode%3Dchanged%23%2B%2F%E4%B8%AD%E6%96%87%25'
+        '/chapters/id%20%26mode%3Dchanged%23%2B%2F%E4%B8%AD%E6%96%87%25',
+      );
+      expect(sent.single.queryParameters, {'tone_id': '0'});
       expect(source.itemId, special);
       expect(source.toneId, '0');
       expect(source.duration, const Duration(milliseconds: 664741));
@@ -40,8 +40,10 @@ void main() {
       expect(sent.last.queryParameters['tone_id'], '2');
       expect(alternate.toneId, '2');
       expect(sent.map((uri) => uri.path), [
-        '/api/v1/audio/play',
-        '/api/v1/audio/play',
+        '/api/v1/audio/books/id%20%26mode%3Dchanged%23%2B%2F%E4%B8%AD%E6%96%87%25'
+            '/chapters/id%20%26mode%3Dchanged%23%2B%2F%E4%B8%AD%E6%96%87%25',
+        '/api/v1/audio/books/id%20%26mode%3Dchanged%23%2B%2F%E4%B8%AD%E6%96%87%25'
+            '/chapters/id%20%26mode%3Dchanged%23%2B%2F%E4%B8%AD%E6%96%87%25',
       ]);
     },
   );
@@ -51,9 +53,8 @@ void main() {
     () async {
       final transport = MockClient(
         (_) async => _json({
-          'code': 0,
-          'message': 'success',
-          'video_info': {'code': 403, 'message': 'invalid aid'},
+          'code': 403,
+          'message': 'invalid aid',
         }),
       );
       addTearDown(transport.close);
@@ -193,22 +194,29 @@ void main() {
   test('typed media APIs surface nested upstream business messages', () async {
     final transport = MockClient(
       (_) async => _json({
-        'code': 200,
-        'data': {
-          'code': 101000,
-          'message': '章节暂不可用',
-          'audio_url': 'https://cdn.example/audio.mp3',
-          'images': ['/src/page.jpg'],
-        },
+        'code': 0,
+        'message': 'success',
+        'data': [
+          {
+            'code': 101000,
+            'message': '章节暂不可用',
+            'audio_url': 'https://cdn.example/audio.mp3',
+          },
+        ],
       }),
     );
     addTearDown(transport.close);
     final api = ApiClient(client: transport, baseUrl: base);
-    final expected = throwsA(
-      isA<ApiException>().having((error) => error.message, 'message', '章节暂不可用'),
+    await expectLater(
+      api.audioSource('chapter', bookId: 'book'),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          '章节暂不可用',
+        ),
+      ),
     );
-    await expectLater(api.audioSource('chapter', bookId: 'book'), expected);
-    await expectLater(api.comicImages('chapter'), expected);
   });
 
   test(
@@ -222,12 +230,6 @@ void main() {
       );
       addTearDown(transport.close);
       final api = ApiClient(client: transport, baseUrl: base);
-      await expectLater(
-        api.audioSource('chapter', bookId: 'book'),
-        throwsA(
-          isA<ApiException>().having((e) => e.message, 'message', '未获取到音频地址'),
-        ),
-      );
       await expectLater(
         api.comicImages('chapter'),
         throwsA(

@@ -1,0 +1,126 @@
+{
+  "code": 0,
+  "data": {
+    "req_book_genre_type": 1,
+    "relate_novel_bookid": 7180279419959774000,
+    "relate_novel_bookid_str": "7180279419959774247",
+    "tts_tones": [
+      {
+        "id": 85,
+        "title": "多角色对话新旁白",
+        "description": "著名配音老师旁白音色",
+        "badge": "最新",
+        "is_multi_tone": true,
+        "tone_gender": 0
+      },
+      {
+        "id": 96,
+        "title": "多角色对话升级版",
+        "description": "自然流畅",
+        "badge": "",
+        "is_multi_tone": true,
+        "tone_gender": 0
+      },
+      {
+        "id": 57,
+        "title": "多角色对话",
+        "description": "多人演绎",
+        "badge": "",
+        "is_multi_tone": true,
+        "tone_gender": 0
+      },
+      {
+        "id": 74,
+        "title": "成熟大叔音升级版",
+        "description": "超自然",
+        "badge": "",
+        "tone_gender": 1
+      },
+      {
+        "id": 64,
+        "title": "成熟大叔音",
+        "description": "经典",
+        "badge": "",
+        "tone_gender": 1
+      },
+      {
+        "id": 115,
+        "title": "从容淑女音",
+        "description": "自然清晰",
+        "badge": "上新",
+        "tone_gender": 1
+      },
+      {
+        "id": 1,
+        "title": "甜美少女音",
+        "description": "感染力",
+        "badge": "",
+        "tone_gender": 2
+      },
+      {
+        "id": 100,
+        "title": "俏皮御姐音",
+        "description": "灵慧之声",
+        "badge": "上新",
+        "tone_gender": 2
+      },
+      {
+        "id": 5,
+        "title": "开朗青年音",
+        "description": "轻快",
+        "badge": "",
+        "tone_gender": 1
+      },
+      {
+        "id": 2,
+        "title": "清亮青叔音",
+        "description": "活力",
+        "badge": "",
+        "tone_gender": 1
+      },
+      {
+        "id": 6,
+        "title": "温柔淑女音",
+        "description": "温暖",
+        "badge": "",
+        "tone_gender": 2
+      },
+      {
+        "id": 29,
+        "title": "儒雅大叔音",
+        "description": "自然",
+        "badge": "",
+        "tone_gender": 1
+      }
+    ],
+    "audio_tones": [
+      {
+        "abook_id": 7239243941252599000,
+        "title": "主播：老恒；文雀；大虾米；墨茈染；炒冰果"
+      }
+    ],
+    "book_infos": [
+      {
+        "book_id": "7239243941252598845",
+        "book_name": "冰河末世，我囤积了百亿物资",
+        "author": "老恒；文雀；大虾米；墨茈染；炒冰果",
+        "is_ebook": "0",
+        "book_type": "1"
+      },
+      {
+        "book_id": "7180279419959774247",
+        "book_name": "全球冰封：我打造了末日安全屋",
+        "author": "记忆的海",
+        "is_ebook": "1",
+        "book_type": "0"
+      },
+      {
+        "book_id": "7239243941252598845",
+        "book_name": "冰河末世，我囤积了百亿物资",
+        "author": "老恒；文雀；大虾米；墨茈染；炒冰果",
+        "is_ebook": "0",
+        "book_type": "1"
+      }
+    ]
+  }
+}

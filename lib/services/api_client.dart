@@ -280,26 +280,41 @@ class ApiClient {
     final selectedTone = toneId == null || toneId.trim().isEmpty
         ? '0'
         : toneId.trim();
+    // The official single-chapter playback endpoint honours the requested
+    // tone_id — the legacy video_model/mget bridge ignores it, which made
+    // switching 智能朗读 a no-op. A pure-TTS book answers NO_THIS_TONE for
+    // tone 0, so the caller falls back to the first selectable voice.
     final response = await _get(
-      _url('/api/v1/audio/play', {
-        'book_id': trimmedBookId,
-        'item_ids': itemId,
-        'tone_id': selectedTone,
-      }),
+      _url(
+        '/api/v1/audio/books/${Uri.encodeComponent(trimmedBookId)}'
+        '/chapters/${Uri.encodeComponent(itemId)}',
+        {'tone_id': selectedTone},
+      ),
     );
     final statusCode = response.statusCode;
     final bodyBytes = response.bodyBytes;
     final baseUrl = _base;
     return Isolate.run(() {
+      final payload = _decodeEnvelope(statusCode, bodyBytes);
       try {
-        return parseAudioSource(
-          _decodeEnvelope(statusCode, bodyBytes),
+        return parsePlayinfoSource(
+          payload,
           itemId: itemId,
           toneId: selectedTone,
           baseUrl: baseUrl,
         );
       } on FormatException catch (error) {
-        throw ApiException(error.message);
+        // An upstream business error is final — do not fall through to the
+        // legacy mget shape, which can never answer a playinfo payload.
+        if (!error.message.contains('未获取到音频地址')) {
+          throw ApiException(error.message);
+        }
+        return parseAudioSource(
+          payload,
+          itemId: itemId,
+          toneId: selectedTone,
+          baseUrl: baseUrl,
+        );
       }
     });
   }
@@ -395,7 +410,7 @@ class ApiClient {
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return Isolate.run(() {
+      return await Isolate.run(() {
         final payload = _decodeEnvelope(status, bytes);
         // "No speech text" is a normal, expected answer, not a failure.
         if (isUnavailableCode(payload['code'])) return SubtitleTrack.empty;
@@ -427,7 +442,7 @@ class ApiClient {
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return Isolate.run(() {
+      return await Isolate.run(() {
         final payload = _decodeEnvelope(status, bytes);
         if (isUnavailableIdeaCode(payload['code'])) return ChapterIdeas.empty;
         return ChapterIdeas.fromPayload(payload);
@@ -521,7 +536,7 @@ class ApiClient {
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return Isolate.run(
+      return await Isolate.run(
         () => SearchSuggestion.fromPayload(_decodeEnvelope(status, bytes)),
       );
     } on Exception {
@@ -535,7 +550,7 @@ class ApiClient {
       final response = await _get(_url('/api/v1/search/hot', {}));
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return Isolate.run(
+      return await Isolate.run(
         () => HotSearch.fromPayload(_decodeEnvelope(status, bytes)),
       );
     } on Exception {
@@ -563,7 +578,7 @@ class ApiClient {
       final response = await _get(_homepageUrl(2, 0, null));
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return Isolate.run(
+      return await Isolate.run(
         () => RankCatalog.fromHomepagePayload(_decodeEnvelope(status, bytes)),
       );
     } on Exception {
@@ -634,7 +649,7 @@ class ApiClient {
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return Isolate.run(
+      return await Isolate.run(
         () => ChapterSummary.fromPayload(_decodeEnvelope(status, bytes)),
       );
     } on Exception {
@@ -680,7 +695,7 @@ class ApiClient {
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return Isolate.run(
+      return await Isolate.run(
         () => SeriesDetail.fromPayload(_decodeEnvelope(status, bytes)),
       );
     } on Exception {

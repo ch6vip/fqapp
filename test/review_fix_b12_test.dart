@@ -20,7 +20,10 @@ void main() {
     tester,
   ) async {
     final session = _Session(
-      voices: () async => const [AudioVoice(id: '2', label: '温柔女声')],
+      voices: () async => const [
+        AudioVoice(id: '2', label: '温柔女声'),
+        AudioVoice(id: '0', label: '默认音色'),
+      ],
     );
     await _mount(tester, session);
     await tester.tap(find.byTooltip('更多'));
@@ -140,15 +143,25 @@ void main() {
     );
   });
 
-  testWidgets('真人讲书 narrators become selectable with their exact id', (
+  testWidgets("a 真人讲书 row opens that narrator's own audio book", (
     tester,
   ) async {
+    // A narrator row carries an abook_id, i.e. another book: playinfo rejects
+    // it when used as a tone_id, so the row loads that book's directory
+    // instead of asking for another voice.
+    final opened = <String>[];
     final session = _Session(
       extras: (_) async => const AudioExtras(
         tones: AudioToneSet(
           narratorTones: [AudioTone(id: '7239243941252598845', title: '主播：测试')],
         ),
       ),
+      directory: (bookId) async {
+        opened.add(bookId);
+        return [
+          Chapter(itemId: 'ab-1', title: '001 第一章', volumeName: ''),
+        ];
+      },
     );
     await _mount(tester, session);
     await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
@@ -157,12 +170,53 @@ void main() {
     expect(find.text('主播：测试'), findsOneWidget);
 
     await tester.tap(find.text('主播：测试'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(opened, ['7239243941252598845']);
+    expect(
+      session.requests.where((r) => r.endsWith(':7239243941252598845')),
+      isEmpty,
+    );
+    // The page title stays the same when a narrator version is opened.
+    expect(find.text('听书'), findsOneWidget);
+  });
+
+  testWidgets('a narrator version numbered only by episode stays aligned', (
+    tester,
+  ) async {
+    // 《麻衣风水师》的「闲人阿七」版本把章节命名成 `麻衣风水师01`（没有章节标题），
+    // 且前面多一条 `麻衣风水师00片花`：标题主干对不上，按位置兜底会落到片花上，
+    // 必须退回按序号对齐。
+    final session = _Session(
+      chapters: [
+        Chapter(itemId: 'n1', title: '第1章 八鬼抬轿', volumeName: ''),
+        Chapter(itemId: 'n2', title: '第2章 仙女下凡', volumeName: ''),
+        Chapter(itemId: 'n3', title: '第3章 当面悔婚', volumeName: ''),
+      ],
+      extras: (_) async => const AudioExtras(
+        tones: AudioToneSet(
+          narratorTones: [
+            AudioTone(id: '7521688131263794201', title: '主播：闲人阿七'),
+          ],
+        ),
+      ),
+      directory: (bookId) async => [
+        Chapter(itemId: 'ab-teaser', title: '麻衣风水师00片花', volumeName: ''),
+        Chapter(itemId: 'ab-1', title: '麻衣风水师01', volumeName: ''),
+        Chapter(itemId: 'ab-2', title: '麻衣风水师02', volumeName: ''),
+        Chapter(itemId: 'ab-3', title: '麻衣风水师03', volumeName: ''),
+      ],
+    );
+    await _mount(tester, session);
+    await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
+    await tester.tap(find.byKey(const ValueKey('audio-voice')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('主播：闲人阿七'));
     await _flush(tester);
-    expect(session.requests.last, '1:7239243941252598845');
-    // The top mode tab and the voice card header both follow the narrator.
-    expect(find.text('真人讲书'), findsWidgets);
+    await tester.pumpAndSettle();
+
+    expect(session.requests.any((r) => r.startsWith('ab-1:')), isTrue);
+    expect(session.requests.any((r) => r.startsWith('ab-teaser:')), isFalse);
+    expect(session.requests.any((r) => r.startsWith('ab-2:')), isFalse);
   });
 
   testWidgets('voices that share an upstream name stay distinguishable', (
@@ -183,8 +237,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('audio-voice')));
     await tester.pumpAndSettle();
 
-    expect(find.text('智能朗读 · 自然流畅'), findsWidgets);
-    expect(find.text('智能朗读 · 声临其境'), findsWidgets);
+    // The panel mirrors the upstream list: both cards keep the same title and
+    // are distinguished by their descriptions, as the official panel does.
+    expect(find.text('自然流畅'), findsAtLeastNWidgets(1));
+    expect(find.text('声临其境'), findsAtLeastNWidgets(1));
   });
 
   testWidgets('a saved extras-only tone cannot block playback forever', (
@@ -266,6 +322,7 @@ class _Session {
   final ControlledReaderStore store;
   final Future<List<AudioVoice>> Function()? voices;
   final AudioExtrasLoader? extras;
+  final Future<List<Chapter>> Function(String bookId)? directory;
   final List<Chapter> chapters;
   final players = <ControlledNativePlayer>[];
   final requests = <String>[];
@@ -274,6 +331,7 @@ class _Session {
     ControlledReaderStore? store,
     this.voices,
     this.extras,
+    this.directory,
     List<Chapter>? chapters,
   }) : store = store ?? ControlledReaderStore(),
        chapters =
@@ -295,6 +353,7 @@ class _Session {
       },
       voicesLoader: voices ?? () async => const [],
       extrasLoader: extras,
+      directoryLoader: directory,
       playerFactory: () {
         final player = ControlledNativePlayer();
         players.add(player);

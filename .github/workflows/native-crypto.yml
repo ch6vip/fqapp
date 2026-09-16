@@ -5,6 +5,8 @@ on:
     paths:
       - 'native/**'
       - 'test/native_*'
+      - 'scripts/verify_audio_cenc.cjs'
+      - 'test/verify_audio_cenc_test.cjs'
       - 'test/support/cenc_fixture.cjs'
       - 'test/support/native_compile.cjs'
       - '.github/workflows/native-crypto.yml'
@@ -12,6 +14,8 @@ on:
     paths:
       - 'native/**'
       - 'test/native_*'
+      - 'scripts/verify_audio_cenc.cjs'
+      - 'test/verify_audio_cenc_test.cjs'
       - 'test/support/cenc_fixture.cjs'
       - 'test/support/native_compile.cjs'
       - '.github/workflows/native-crypto.yml'
@@ -53,3 +57,5 @@ jobs:
           NATIVE_CC: clang
           NATIVE_JNI_REQUIRED: '1'
         run: node --test --test-concurrency=1 test/native_jni_test.cjs
+      - name: Check bounded downloads and complete audio diagnostics
+        run: node --test test/verify_audio_cenc_test.cjs

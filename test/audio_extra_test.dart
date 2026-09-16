@@ -45,6 +45,27 @@ void main() {
       expect(tones.ttsTones[1].gender, 1);
     });
 
+    /// `req_book_genre_type` 1 marks an audio book (有声书/有声剧), whose
+    /// playinfo answer ignores `tone_id` — every voice plays the same
+    /// recording; TTS needs the associated novel's own chapter IDs.
+    test('flags an audio book as having one fixed recording', () {
+      final plain = AudioToneSet.fromPayload(payload);
+      expect(plain.genreType, 0);
+      expect(plain.hasFixedTone, isFalse);
+
+      final audio = AudioToneSet.fromPayload({
+        'data': {
+          'req_book_genre_type': 1,
+          'tts_tones': [
+            {'id': 96, 'title': '多角色对话升级版'},
+          ],
+        },
+      });
+      expect(audio.genreType, 1);
+      expect(audio.hasFixedTone, isTrue);
+      expect(audio.ttsTones, hasLength(1));
+    });
+
     test('reads 真人讲书 narrators from abook_id', () {
       final tones = AudioToneSet.fromPayload(payload);
       expect(tones.narratorTones, hasLength(1));

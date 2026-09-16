@@ -15,11 +15,12 @@ class PlayerHistory {
   }
 
   Future<void> save(Map<String, dynamic> entry, {double watchedSeconds = 0}) {
+    final guard = ReadingDataWriteGuard(store);
     final snapshot = Map<String, dynamic>.from(entry);
     final previous = _writes[store] ?? Future<void>.value();
     final write = previous
         .then((_) async {
-          if (watchedSeconds > 0) {
+          if (guard.canWriteReadTime && watchedSeconds > 0) {
             try {
               await store.accumulateReadTime(
                 snapshot['id'] as String,
@@ -30,6 +31,7 @@ class PlayerHistory {
               // A statistics failure must not discard the resume position.
             }
           }
+          if (!guard.canWriteHistory) return;
           await store.addHistory(snapshot);
         })
         .catchError((Object _) {});

@@ -114,16 +114,6 @@ class VoiceSettingsSheet extends StatelessWidget {
                       ),
                       const SizedBox(height: 22),
                     ],
-                    if (offline.isNotEmpty) ...[
-                      _SectionTitle('离线朗读'),
-                      const SizedBox(height: 12),
-                      _VoiceGrid(
-                        voices: offline,
-                        selectedId: selectedId,
-                        onSelect: onSelect,
-                        onDownload: onDownload,
-                      ),
-                    ],
                   ],
                 ),
               ),

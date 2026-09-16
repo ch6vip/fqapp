@@ -50,6 +50,123 @@ class ComicImage {
 
 const defaultAudioVoices = [AudioVoice(id: '0', label: '默认音色')];
 
+/// Parses the official playinfo response (GET /reading/reader/audio/playinfo):
+/// a flat array of streams with top-level `main_url` plus a nested
+/// `video_model` JSON string carrying `encrypt_info.key_hex` (the backend
+/// derives it from `spade_a`). This endpoint — unlike the legacy
+/// video_model/mget bridge — honours the requested `tone_id`, so switching
+/// 智能朗读 actually changes the answered stream.
+/// See .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
+AudioSource parsePlayinfoSource(
+  Map<String, dynamic> payload, {
+  required String itemId,
+  required String baseUrl,
+  String toneId = '0',
+}) {
+  final streams = _checkedMediaObjects(payload).last['data'];
+  if (streams is! List) throw const FormatException('未获取到音频地址');
+  for (final stream in streams) {
+    if (stream is! Map) continue;
+    final streamItemId = stream['item_id'];
+    if (streamItemId != null && streamItemId.toString() != itemId) continue;
+    // An upstream business error (code != 0) inside the stream row wins over
+    // an otherwise valid media row, as with the mget bridge.
+    final code = stream['code'];
+    if ((code != null && code != 0 && code != 200) ||
+        stream['success'] == false) {
+      final message = stream['message'];
+      throw FormatException(
+        message is String && message.isNotEmpty ? message : '音频资源暂不可用',
+      );
+    }
+    final rawModel = stream['video_model'];
+    if (rawModel == null) {
+      // Older direct responses need no model, but any supplied encryption
+      // metadata must still be usable. A malformed model is not a plain URL.
+      final keyHex = _streamContentKey(stream['encrypt_info']);
+      final url =
+          _mediaUrl(stream['main_url'], baseUrl) ??
+          _mediaUrl(stream['backup_url'], baseUrl);
+      if (keyHex == null || url == null) continue;
+      return AudioSource(
+        itemId: itemId,
+        url: url,
+        toneId: toneId,
+        keyHex: keyHex,
+      );
+    }
+    final model = _playinfoModel(rawModel);
+    if (model == null) continue;
+    if (model['media_type'] != null && model['media_type'] != 'audio') continue;
+    if (model['status'] != null && model['status'] != 10) {
+      final message = model['message'];
+      throw FormatException(
+        message is String && message.isNotEmpty ? message : '音频资源暂不可用',
+      );
+    }
+    final selected = _playinfoStream(stream, model, baseUrl);
+    if (selected == null) continue;
+    return AudioSource(
+      itemId: itemId,
+      url: selected.url,
+      toneId: toneId,
+      // Only `video_duration` is specified in audio seconds; `indate` is not a
+      // duration fallback (real responses use 86400 beside 664.74 seconds).
+      duration: _playinfoDuration(model['video_duration']),
+      keyHex: selected.keyHex,
+    );
+  }
+  throw const FormatException('未获取到音频地址');
+}
+
+Map<String, dynamic>? _playinfoModel(dynamic raw) {
+  if (raw is! String || raw.trim().isEmpty) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    return decoded is Map<String, dynamic> ? decoded : null;
+  } on FormatException {
+    return null;
+  }
+}
+
+/// Keeps each URL with its own encryption metadata. Prefer the outer URL only
+/// when it exactly matches a usable model stream; otherwise use a model URL.
+({String url, String keyHex})? _playinfoStream(
+  Map<dynamic, dynamic> row,
+  Map<String, dynamic> model,
+  String baseUrl,
+) {
+  final streams = model['video_list'];
+  if (streams is! List) return null;
+  final candidates = <({String url, String keyHex})>[];
+  for (final stream in streams) {
+    if (stream is! Map) continue;
+    final keyHex = _streamContentKey(stream['encrypt_info']);
+    if (keyHex == null) continue;
+    for (final field in ['main_url', 'backup_url']) {
+      final url = _mediaUrl(stream[field], baseUrl);
+      if (url != null) candidates.add((url: url, keyHex: keyHex));
+    }
+  }
+  for (final field in ['main_url', 'backup_url']) {
+    final preferred = _mediaUrl(row[field], baseUrl);
+    if (preferred == null) continue;
+    for (final candidate in candidates) {
+      if (candidate.url == preferred) return candidate;
+    }
+  }
+  return candidates.isEmpty ? null : candidates.first;
+}
+
+Duration? _playinfoDuration(dynamic seconds) {
+  if (seconds is! num || !seconds.isFinite || seconds <= 0) return null;
+  final microseconds = seconds.toDouble() * Duration.microsecondsPerSecond;
+  if (!microseconds.isFinite || microseconds >= 9223372036854775807) {
+    return null;
+  }
+  return Duration(microseconds: microseconds.round());
+}
+
 /// Parses the audio playback model, or an older bridge's direct audio URL.
 /// `video_duration` in the playback model is measured in seconds; no unit is
 /// assumed for unrelated duration fields in the legacy speech response.

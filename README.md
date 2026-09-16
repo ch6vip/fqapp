@@ -143,19 +143,22 @@ fqapp/
 
 ### 1. 编译后端并同步运行时文件
 
+先按[后端准备说明](patches//README.md)检出工作流固定的版本并应用安全依赖补丁，
+得到 `../-app-build`。以下命令用于重建已经准备好的源码。
+
 脚本默认编译当前宿主系统与架构的独立后端，并同步运行时资源。Android 构建必须加
 `--jni` / `-Jni`，同时生成 `android/app/src/main/jniLibs/arm64-v8a/liblegacy.so`：
 
 ```bash
-./scripts/build_backend.sh --jni                  # 默认源码目录 ../
-./scripts/build_backend.sh --jni /path/to/    # 手动指定源码目录
+./scripts/build_backend.sh --jni ../-app-build
+./scripts/build_backend.sh --jni /path/to/prepared/
 ```
 
 Windows PowerShell：
 
 ```powershell
-.\scripts\build_backend.ps1 -Jni                       # 默认 ..\
-.\scripts\build_backend.ps1 -Jni C:\path\to\
+.\scripts\build_backend.ps1 -Jni ../-app-build
+.\scripts\build_backend.ps1 -Jni C:\path\to\prepared\
 ```
 
 NDK 可由 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` 指定，或放在 Android SDK 的 `ndk/` 下。
@@ -210,13 +213,15 @@ NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 r
 构建脚本默认保留本仓库已有的移动端资源。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false` 使用
 官方 Maven 源；本地构建默认仍使用国内镜像。
 
-每次构建先运行 Flutter 静态分析与完整单元/组件测试，再生成并校验 APK。
+每次构建运行 Go、Web 与诊断脚本测试、Flutter 静态分析与完整单元/组件测试，
+并验证 Android JVM 测试和最终 APK。
 
-`` 是私有仓库，CI 固定读取专用 `fqapp-android` 分支上的已提交版本
-[`f667122`](https://github.com/ch6vip//commit/f66712208c305c1c24b98cb4231b9601f7514ea1) 并原样构建，不打任何补丁。
-该提交包含小说图文解密契约、短剧剧集标题索引、章评／段评后端，以及短剧系列详情（演员表）；这些改动曾以
-[配套补丁](patches//README.md) 的形式随 App 保存，现已并入后端历史并退休。
-完整 Go 测试通过后再构建 JNI，构建报告记录该固定提交。
+`` 是私有仓库，CI 以[工作流](.github/workflows/android-apk.yml)中的 `LEGACY_COMMIT`
+作为后端源码版本的唯一来源。该版本包含小说图文解密、短剧剧集标题索引、章评／段评、
+短剧系列详情及音频内容密钥派生契约。原应用兼容补丁已并入后端历史并退休；
+目前另有一个仅升级 `golang.org/x/text` 的固定安全依赖补丁。
+本地构建也须按[后端准备说明](patches//README.md)选择同一源码版本并应用该补丁。
+完整 Go 测试与依赖漏洞扫描通过后再构建 JNI，构建报告记录源码提交和补丁 SHA-256。
 本地其它未提交的后端改动不进入云端构建。
 本仓库已配置以下 Actions secrets，复制工作流到其它仓库时需要配置对应内容：
 
@@ -243,6 +248,11 @@ adb shell am start -n com.fqapp.fqapp/.MainActivity
 已有缓存时也可在启动页面直接进入离线阅读。
 
 ---
+
+## 应用图标
+
+桌面图标、应用内“关于”页和内置网页使用同一份设计，原图与重新生成方法见
+[图标资源说明](assets/branding/README.md)。图标资源已生成并随源码保存，正常构建无需额外步骤。
 
 ## 构建 APK
 
@@ -308,10 +318,11 @@ _proc = await Process.start(bin, [
 Kotlin 通过 `System.loadLibrary("")` 加载，再调用匹配的 JNI 启停入口。
 Android 上 JNI 失败会显示启动错误与重试入口，不回退到 `Process.start`。
 
-安装 NDK（例如 `sdkmanager "ndk;28.2.13676358"`）后编译：
+安装 NDK（例如 `sdkmanager "ndk;28.2.13676358"`）并按[准备说明](patches//README.md)
+检出源码、应用依赖补丁后编译：
 
 ```powershell
-.\scripts\build_backend.ps1 -Jni
+.\scripts\build_backend.ps1 -Jni ../-app-build
 ```
 
 Go JNI 入口会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；HTTP 服务只绑定 `127.0.0.1`。
@@ -354,7 +365,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 **响应信封**：客户端接受 `code=200`（Web 桥接）或 `code=0`（上游兼容接口）的成功响应；
 其他显式状态码或 `success=false` 视为错误。
 
-**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持需要同步 `/internal/endpoints/base.go` 的解密修复，再运行 `scripts/build_backend.ps1 -Jni` 构建 Android 后端；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。旧后端没有解密成功标记时，客户端回退文字。该修复现已在 CI 固定的 `` 提交 [`f667122`](patches//README.md) 中，本地从该提交构建即可，不能复用旧 `liblegacy.so`。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
+**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持需要同步 `/internal/endpoints/base.go` 的解密修复，再运行 `scripts/build_backend.ps1 -Jni ../-app-build` 构建 Android 后端；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。旧后端没有解密成功标记时，客户端回退文字。该修复已并入后端历史；本地应按[后端准备说明](patches//README.md)使用工作流当前固定的源码版本重建，不能复用旧 `liblegacy.so`。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
 
 **搜索分类与分页**：搜索页使用 `/api/v1/search` 请求所选分类，在拆分漫剧之前先选取对应的上游 tab，
 再按条目实际 `kind` 筛选。综合保留全部作品；短剧、漫剧、漫画、听书分别只展示 `video`、`manju`、`manga`、`audio`。
@@ -551,7 +562,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 
 ### 1. 原生库与真机验证
 
-- Android 后端必须使用 JNI。执行 `scripts/build_backend.ps1 -Jni` 或 Bash 版本的 `--jni` 生成 `liblegacy.so`。
+- Android 后端必须使用 JNI。先按[后端准备说明](patches//README.md)准备源码，再执行 `scripts/build_backend.ps1 -Jni ../-app-build` 或 `bash scripts/build_backend.sh --jni ../-app-build` 生成 `liblegacy.so`。
 - 加密播放使用 `native/` 中的 C 源码，Gradle/CMake 自动生成 `libshortplay_crypto.so`。
 - 准备 Go JNI 后端后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。Android 的纯 JVM 测试不会加载这两份库。
 - 本轮审查的修复范围、自动化验证与剩余限制见 [全项目代码审查记录](docs/project-code-review-20260908.md)。

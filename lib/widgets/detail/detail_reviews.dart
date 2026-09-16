@@ -143,7 +143,7 @@ class _ScoreCard extends StatelessWidget {
             ),
             const SizedBox(width: 6),
           ],
-          DetailStarRow(stars: score ?? 0, size: 17),
+          DetailStarRow(stars: (score ?? 0) / 2, size: 17),
         ],
       ),
     );
