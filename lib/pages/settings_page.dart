@@ -187,10 +187,20 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
     );
-    if (selected == null) return;
-    final sp = await SharedPreferences.getInstance();
-    await sp.setString(themeModeKey, selected.name);
+    if (selected == null || !context.mounted) return;
     themeModeNotifier.value = selected;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      if (!await sp.setString(themeModeKey, selected.name)) {
+        throw StateError('Theme preference was not saved');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('外观已更新，但未能保存')));
+      }
+    }
   }
 
   // ── 阅读 ──────────────────────────────────────────────────────────────
@@ -203,12 +213,29 @@ class SettingsPage extends StatelessWidget {
   );
 
   Future<void> _editGoal(BuildContext context) async {
-    final sp = await SharedPreferences.getInstance();
+    var current = 30;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final saved = sp.get('stats_daily_goal_minutes');
+      if (saved is int && saved >= 1 && saved <= 1440) current = saved;
+    } catch (_) {
+      // Keep the editor available so an invalid optional preference can heal.
+      // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+    }
     if (!context.mounted) return;
-    final current = sp.getInt('stats_daily_goal_minutes') ?? 30;
     final value = await showReadingGoalDialog(context, current);
-    if (value != null) {
-      await sp.setInt('stats_daily_goal_minutes', value);
+    if (value == null) return;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      if (!await sp.setInt('stats_daily_goal_minutes', value)) {
+        throw StateError('Reading goal was not saved');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('目标保存失败，请重试')));
+      }
     }
   }
 
@@ -217,11 +244,11 @@ class SettingsPage extends StatelessWidget {
   SettingsItem _clearHistItem() => SettingsItem(
     icon: Icons.history,
     title: '清空历史',
-    subtitle: '删除全部阅读/播放记录',
+    subtitle: '删除全部阅读/播放历史与累计时长',
     onTap: (context, setState) => _confirmClear(
       context,
       '清空历史',
-      '确定清空全部阅读/播放历史吗？',
+      '确定清空全部阅读/播放历史与累计时长吗？',
       LibraryStore.instance.clearReadingData,
     ),
   );
@@ -249,12 +276,19 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
     );
-    if (ok == true) {
+    if (ok != true || !context.mounted) return;
+    try {
       await action();
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('已清空')));
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('清空失败，请重试')));
       }
     }
   }

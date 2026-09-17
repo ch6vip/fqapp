@@ -732,8 +732,8 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  /// Caches the following chapters for offline reading using the same sheet
-  /// the reader exposes.
+  /// Caches from the current chapter for offline reading. Unlike the reader,
+  /// the detail page has not fetched that chapter's body yet.
   Future<void> _showDownload() async {
     if (_allChapters.isEmpty) return;
     final cache = ChapterCacheStore.instance;
@@ -752,6 +752,7 @@ class _DetailPageState extends State<DetailPage> {
       builder: (context) => ChapterCacheSheet(
         book: book,
         currentIndex: _resumeIndex ?? 0,
+        includeCurrentChapter: true,
         cache: cache,
         loader: (chapter) => ApiClient.instance.contentText(chapter.itemId),
       ),

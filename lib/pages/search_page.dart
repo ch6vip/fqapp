@@ -121,8 +121,14 @@ class _SearchPageState extends State<SearchPage> {
 
   /// Debounced so a fast typist does not issue a request per keystroke.
   void _onQueryChanged(String value) {
-    setState(() => _draft = value);
     _suggestDebounce?.cancel();
+    // Invalidate at the edit, before the debounce window. A response for the
+    // previous draft must not become selectable under the new text.
+    final generation = ++_suggestGeneration;
+    setState(() {
+      _draft = value;
+      _suggestions = const [];
+    });
     final query = value.trim();
     if (query.isEmpty) {
       _showHistory();
@@ -130,15 +136,18 @@ class _SearchPageState extends State<SearchPage> {
     }
     _suggestDebounce = Timer(
       const Duration(milliseconds: 250),
-      () => unawaited(_fetchSuggestions(query)),
+      () => unawaited(_fetchSuggestions(query, generation)),
     );
   }
 
-  Future<void> _fetchSuggestions(String query) async {
-    final generation = ++_suggestGeneration;
+  Future<void> _fetchSuggestions(String query, int generation) async {
     final suggestions = await _suggestLoader(query);
     // A late response must not overwrite a newer query's suggestions.
-    if (!mounted || generation != _suggestGeneration) return;
+    if (!mounted ||
+        generation != _suggestGeneration ||
+        query != _draft.trim()) {
+      return;
+    }
     setState(() => _suggestions = suggestions);
   }
 
@@ -161,6 +170,7 @@ class _SearchPageState extends State<SearchPage> {
   Future<void> _search(String q, {bool asKeyword = false}) async {
     final query = normalizeSearchQuery(q);
     if (query.isEmpty) return;
+    _suggestDebounce?.cancel();
     if (_ctrl.text != query) {
       _ctrl.value = TextEditingValue(
         text: query,

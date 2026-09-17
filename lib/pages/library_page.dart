@@ -23,6 +23,7 @@ class _LibraryPageState extends State<LibraryPage> {
   List<_ShelfEntry> _entries = [];
   // Legado layout values: 0 standard list, 1 compact list, 2..6 grid columns.
   int _layout = 3;
+  int _layoutGeneration = 0;
   late final Listenable _historyChanges;
   bool _visible = false;
 
@@ -60,10 +61,22 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   Future<void> _loadLayoutPreference() async {
-    final preferences = await SharedPreferences.getInstance();
-    final saved = preferences.getInt(_bookshelfLayoutPreference);
-    if (!mounted || saved == null || saved < 0 || saved > 6) return;
-    setState(() => _layout = saved);
+    final generation = _layoutGeneration;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final saved = preferences.get(_bookshelfLayoutPreference);
+      if (!mounted ||
+          generation != _layoutGeneration ||
+          saved is! int ||
+          saved < 0 ||
+          saved > 6) {
+        return;
+      }
+      setState(() => _layout = saved);
+    } catch (_) {
+      // A layout preference is optional; retain the default and all history.
+      // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+    }
   }
 
   @override
@@ -251,9 +264,20 @@ class _LibraryPageState extends State<LibraryPage> {
       ),
     );
     if (selected == null || selected == _layout || !mounted) return;
+    final generation = ++_layoutGeneration;
     setState(() => _layout = selected);
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setInt(_bookshelfLayoutPreference, selected);
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      if (!await preferences.setInt(_bookshelfLayoutPreference, selected)) {
+        throw StateError('Bookshelf layout was not saved');
+      }
+    } catch (_) {
+      if (mounted && generation == _layoutGeneration) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('布局已更新，但未能保存')));
+      }
+    }
   }
 
   Future<void> _confirmClear() async {
@@ -274,8 +298,16 @@ class _LibraryPageState extends State<LibraryPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
-    await LibraryStore.instance.clearHistory();
+    if (confirmed != true || !mounted) return;
+    try {
+      await LibraryStore.instance.clearHistory();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('清空失败，请重试')));
+      }
+    }
   }
 }
 

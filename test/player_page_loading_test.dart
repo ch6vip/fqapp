@@ -220,34 +220,47 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a native failure after a cache hit retries fresh while preserving progress',
-    (tester) async {
-      final session = _Session();
-      await _mount(tester, session);
-      session.players.single.emitFirstFrame();
-      await _flush(tester);
-      await tester.pump(const Duration(seconds: 1));
-      await _flush(tester);
-      await _choose(tester, 1);
-      session.players.last.emitPosition(const Duration(seconds: 13));
-      session.players.last.errors.add(StateError('expired stream'));
-      await _flush(tester);
-      expect(session.samples.last.source, 'prefetchHit');
-      expect(session.samples.last.outcome, 'error');
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-      await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
-      await tester.pump(const Duration(milliseconds: 350));
-      await _flush(tester);
-      expect(session.requests, ['1', '2', '2']);
-      expect(session.players.last.position, const Duration(seconds: 13));
-      session.players.last.emitFirstFrame();
-      await _flush(tester);
-      expect(session.samples.last.source, 'network');
-      expect(session.samples.last.trigger, 'retry');
-      expect(session.players.last.isPlaying, true);
-    },
-  );
+  for (final displayed in [false, true]) {
+    testWidgets(
+      'a cached source failure ${displayed ? 'after' : 'before'} the first frame retries fresh with only displayed progress',
+      (tester) async {
+        final session = _Session();
+        await _mount(tester, session);
+        session.players.single.emitFirstFrame();
+        await _flush(tester);
+        await tester.pump(const Duration(seconds: 1));
+        await _flush(tester);
+        await _choose(tester, 1);
+        if (displayed) {
+          session.players.last.emitFirstFrame();
+          await _flush(tester);
+        }
+        session.players.last.emitPosition(const Duration(seconds: 13));
+        session.players.last.errors.add(StateError('expired stream'));
+        await _flush(tester);
+        expect(session.samples.last.source, 'prefetchHit');
+        expect(
+          session.samples.last.outcome,
+          displayed ? 'firstFrame' : 'error',
+        );
+        expect(session.store.entry?['episodeId'], displayed ? '2' : '1');
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
+        await tester.pump(const Duration(milliseconds: 350));
+        await _flush(tester);
+        expect(session.requests, ['1', '2', '2']);
+        expect(
+          session.players.last.position,
+          displayed ? const Duration(seconds: 13) : Duration.zero,
+        );
+        session.players.last.emitFirstFrame();
+        await _flush(tester);
+        expect(session.samples.last.source, 'network');
+        expect(session.samples.last.trigger, 'retry');
+        expect(session.players.last.isPlaying, true);
+      },
+    );
+  }
 
   for (final interruption in ['background', 'pause', 'buffering', 'paging']) {
     testWidgets(

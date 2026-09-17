@@ -69,6 +69,7 @@ class LibraryStore implements ReaderStore {
   static const _histBoxName = 'history';
   static const _readTimeBoxName = 'read_time';
   static const _legacyTimeKey = '_legacy_media_time_v1';
+  static const _allocatedTimeKey = '_allocated_media_time_v1';
   static const _newTimeKey = '_new_media_time_v1';
   static const _kindKey = '_media_kind_v1';
   static const _touchedKey = '_last_touched_v1';
@@ -147,7 +148,7 @@ class LibraryStore implements ReaderStore {
     final newDays = raw[_newTimeKey];
     if (newDays is Map && _readTimeRecord(newDays).isNotEmpty) return true;
     final legacy = raw[_legacyTimeKey];
-    if (legacy is Map && _readTimeRecord(legacy['days']).isNotEmpty) {
+    if (legacy is Map && _visibleLegacyDays(raw).isNotEmpty) {
       return true;
     }
     return false;
@@ -160,10 +161,18 @@ class LibraryStore implements ReaderStore {
     if (newDays is Map && _datedCount(newDays) > readTimeRetentionDays) {
       return true;
     }
+    final allocated = raw[_allocatedTimeKey];
+    if (allocated is Map && _datedCount(allocated) > readTimeRetentionDays) {
+      return true;
+    }
     final legacy = raw[_legacyTimeKey];
     if (legacy is Map) {
       final days = legacy['days'];
       if (days is Map && _datedCount(days) > readTimeRetentionDays) return true;
+      final discarded = legacy['discardedDays'];
+      if (discarded is Map && _datedCount(discarded) > readTimeRetentionDays) {
+        return true;
+      }
     }
     return false;
   }
@@ -332,6 +341,8 @@ class LibraryStore implements ReaderStore {
     // Invalidate delayed wrapper saves synchronously, before they can enqueue.
     ReadingDataWriteGuard._forStore(this).history++;
     return _serialize(() async {
+      final preferences = await SharedPreferences.getInstance();
+      await _removeLegacySource(preferences, 'hist');
       await _histBox.clear();
     });
   }
@@ -345,9 +356,26 @@ class LibraryStore implements ReaderStore {
     // One queue keeps newer statistics behind the clear as well as history.
     // Legacy preservation can touch both boxes, so separate queues can cycle.
     return _serialize(() async {
+      final preferences = await SharedPreferences.getInstance();
+      await _removeLegacySource(preferences, 'hist');
+      await _removeLegacySource(preferences, 'read_time_map');
       await _histBox.clear();
       await _readTimeBox.clear();
     });
+  }
+
+  // Note: Clear retained migration sources before Hive so a restart cannot
+  // resurrect deleted data; see
+  // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
+  Future<void> _removeLegacySource(
+    SharedPreferences preferences,
+    String key,
+  ) async {
+    // remove() updates the preferences cache even if its platform write fails.
+    // Always retry the disk deletion; containsKey() is not proof it succeeded.
+    if (!await preferences.remove(key)) {
+      throw StateError('无法清除旧阅读数据，请重试');
+    }
   }
 
   Map<String, Map<String, double>> readTimeSnapshot() {
@@ -363,9 +391,20 @@ class LibraryStore implements ReaderStore {
     for (final key in _readTimeBox.keys) {
       final allocation = _legacyTimeAllocation(_readTimeBox.get(key));
       if (allocation == null) continue;
-      final (sourceId, days) = allocation;
-      _addDays(out, key.toString(), days);
-      _subtractDays(out[sourceId], days);
+      _addDays(out, key.toString(), _visibleLegacyDays(_readTimeBox.get(key)));
+    }
+    for (final entry in _allocationBaselines().entries) {
+      final sourceId = entry.key;
+      // The source may have been evicted and then recreated for a novel. Only
+      // its old component can belong to an allocation; fresh seconds survive.
+      final oldDays = _readTimeRecord(_readTimeBox.get(sourceId));
+      _subtractDays(oldDays, _newReadTime(_readTimeBox.get(sourceId)));
+      final deductible = <String, double>{
+        for (final day in entry.value.entries)
+          if ((oldDays[day.key] ?? 0) > 0)
+            day.key: day.value.clamp(0, oldDays[day.key]!).toDouble(),
+      };
+      _subtractDays(out[sourceId], deductible);
       if (out[sourceId]?.isEmpty ?? false) out.remove(sourceId);
     }
 
@@ -502,19 +541,35 @@ class LibraryStore implements ReaderStore {
     _subtractDays(days, _newReadTime(source));
     // A retry can find both an existing allocation and newly migrated days.
     // Add only old seconds that have not already been assigned to any media.
-    for (final key in _readTimeBox.keys) {
-      final allocation = _legacyTimeAllocation(_readTimeBox.get(key));
-      if (allocation != null && allocation.$1 == id) {
-        _subtractDays(days, allocation.$2);
+    final live = _liveAllocationBaselines()[id] ?? <String, double>{};
+    final assigned = Map<String, double>.from(live);
+    _mergeMaxDays(assigned, _allocatedReadTime(source));
+    _subtractDays(days, assigned);
+    final allocated = previous?.$1 == id ? previous!.$2 : <String, double>{};
+    final discarded = previous?.$1 == id && current is Map
+        ? _discardedLegacyDays(current)
+        : <String, double>{};
+    if (days.isNotEmpty) {
+      // A retired allocation can be followed by an SP migration backfill.
+      // Carry its high-water mark into the new allocation, without displaying
+      // the retired seconds again. The target write alone is retry-safe.
+      final carry = _allocatedReadTime(source);
+      _subtractDays(carry, live);
+      for (final day in carry.entries) {
+        allocated[day.key] = (allocated[day.key] ?? 0) + day.value;
+        discarded[day.key] = (discarded[day.key] ?? 0) + day.value;
       }
     }
-    final allocated = previous?.$1 == id ? previous!.$2 : <String, double>{};
     for (final day in days.entries) {
       allocated[day.key] = (allocated[day.key] ?? 0) + day.value;
     }
     final nextRecord = <String, dynamic>{
       ..._readTimeStorage(current),
-      _legacyTimeKey: {'sourceId': id, 'days': allocated},
+      _legacyTimeKey: {
+        'sourceId': id,
+        'days': allocated,
+        if (discarded.isNotEmpty) 'discardedDays': discarded,
+      },
       _touchedKey: DateTime.now().millisecondsSinceEpoch,
     };
     _pruneRecordDays(nextRecord);
@@ -553,11 +608,64 @@ class LibraryStore implements ReaderStore {
     return id.isEmpty ? null : (id, _readTimeRecord(value['days']));
   }
 
+  static Map<String, double> _discardedLegacyDays(dynamic raw) {
+    final legacy = raw is Map ? raw[_legacyTimeKey] : null;
+    return legacy is Map ? _readTimeRecord(legacy['discardedDays']) : {};
+  }
+
+  static Map<String, double> _visibleLegacyDays(dynamic raw) {
+    final days = _legacyTimeAllocation(raw)?.$2 ?? <String, double>{};
+    _subtractDays(days, _discardedLegacyDays(raw));
+    return days;
+  }
+
+  static Map<String, double> _allocatedReadTime(dynamic raw) =>
+      raw is Map ? _readTimeRecord(raw[_allocatedTimeKey]) : {};
+
+  Map<String, Map<String, double>> _liveAllocationBaselines() {
+    final baselines = <String, Map<String, double>>{};
+    for (final raw in _readTimeBox.values) {
+      final allocation = _legacyTimeAllocation(raw);
+      if (allocation != null) _addDays(baselines, allocation.$1, allocation.$2);
+    }
+    return baselines;
+  }
+
+  Map<String, Map<String, double>> _allocationBaselines() {
+    final baselines = _liveAllocationBaselines();
+    for (final key in _readTimeBox.keys) {
+      final assigned = _allocatedReadTime(_readTimeBox.get(key));
+      if (assigned.isEmpty) continue;
+      _mergeMaxDays(baselines.putIfAbsent(key.toString(), () => {}), assigned);
+    }
+    return baselines;
+  }
+
+  static void _mergeMaxDays(
+    Map<String, double> target,
+    Map<String, double> days,
+  ) {
+    for (final day in days.entries) {
+      if (day.value > (target[day.key] ?? 0)) target[day.key] = day.value;
+    }
+  }
+
   static Map<String, dynamic> _readTimeStorage(dynamic raw) {
     final out = <String, dynamic>{..._readTimeRecord(raw)};
     if (raw is Map) {
-      if (raw[_legacyTimeKey] is Map) out[_legacyTimeKey] = raw[_legacyTimeKey];
-      if (raw[_newTimeKey] is Map) out[_newTimeKey] = raw[_newTimeKey];
+      final legacy = raw[_legacyTimeKey];
+      if (legacy is Map) {
+        out[_legacyTimeKey] = {
+          ...legacy,
+          'days': _readTimeRecord(legacy['days']),
+          if (legacy['discardedDays'] is Map)
+            'discardedDays': _readTimeRecord(legacy['discardedDays']),
+        };
+      }
+      if (raw[_newTimeKey] is Map) out[_newTimeKey] = _newReadTime(raw);
+      if (raw[_allocatedTimeKey] is Map) {
+        out[_allocatedTimeKey] = _allocatedReadTime(raw);
+      }
       if (raw[_kindKey] is String) out[_kindKey] = raw[_kindKey];
       final touched = _finiteNumber(raw[_touchedKey]);
       if (touched != null) out[_touchedKey] = touched;
@@ -571,11 +679,20 @@ class LibraryStore implements ReaderStore {
     _pruneDayMap(record);
     final newDays = record[_newTimeKey];
     if (newDays is Map) _pruneDayMap(newDays);
+    final allocated = record[_allocatedTimeKey];
+    if (allocated is Map) _pruneDayMap(allocated);
     final legacy = record[_legacyTimeKey];
     if (legacy is Map && legacy['days'] is Map) {
       // Each stored map is bounded independently. The merged window is capped
       // in readTimeSnapshot(), which avoids dropping overlapping seconds.
       _pruneDayMap(legacy['days'] as Map);
+      final discarded = legacy['discardedDays'];
+      if (discarded is Map) {
+        // Discarded seconds are part of the same allocation, not another
+        // independent window that may outlive its high-water day buckets.
+        final days = legacy['days'] as Map;
+        discarded.removeWhere((key, _) => !days.containsKey(key));
+      }
     }
   }
 
@@ -612,9 +729,26 @@ class LibraryStore implements ReaderStore {
     });
     final removeCount = entries.length - maxReadTimeIdentities;
     if (removeCount <= 0) return;
-    await _readTimeBox.deleteAll(
-      entries.take(removeCount).map((entry) => entry.key),
-    );
+    final doomed = entries.take(removeCount).map((entry) => entry.key).toSet();
+    // Note: Allocation/source records can be evicted independently. See
+    // .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
+    // Keep the assigned baseline on surviving sources before removing a
+    // target. A failed delete leaves both copies, combined by max, not sum.
+    final baselines = _allocationBaselines();
+    final sources = <dynamic, dynamic>{};
+    for (final key in doomed) {
+      final allocation = _legacyTimeAllocation(_readTimeBox.get(key));
+      if (allocation == null || doomed.contains(allocation.$1)) continue;
+      final sourceId = allocation.$1;
+      final source = _readTimeBox.get(sourceId);
+      if (source is! Map) continue;
+      final record = _readTimeStorage(source);
+      record[_allocatedTimeKey] = baselines[sourceId]!;
+      _pruneRecordDays(record);
+      sources[sourceId] = record;
+    }
+    if (sources.isNotEmpty) await _readTimeBox.putAll(sources);
+    await _readTimeBox.deleteAll(doomed);
   }
 
   static DateTime? _parseDayKey(String key) {

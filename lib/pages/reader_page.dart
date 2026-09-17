@@ -1322,12 +1322,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       backgroundColor: _preferences.themePreset.panelColor,
       builder: (context) => Theme(
         data: _preferences.themePreset.theme(Theme.of(context)),
-        child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.78,
-          child: _ChapterDirectorySheet(
-            chapters: widget.chapters,
-            currentIndex: _index,
-            cachedIds: cachedIds,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: SizedBox(
+            height:
+                (MediaQuery.sizeOf(context).height -
+                    MediaQuery.viewInsetsOf(context).bottom) *
+                0.78,
+            child: _ChapterDirectorySheet(
+              chapters: widget.chapters,
+              currentIndex: _index,
+              cachedIds: cachedIds,
+            ),
           ),
         ),
       ),

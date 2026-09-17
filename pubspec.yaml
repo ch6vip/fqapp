@@ -55,6 +55,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  shared_preferences_platform_interface: ^2.4.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -74,6 +75,7 @@ flutter:
     - assets/config/device_pool.example.json
     - assets/filters/
     - assets/web/
+    - assets/web/assets/
     - assets/web/assets/css/
     - assets/web/assets/webfonts/
     - assets/plugins/

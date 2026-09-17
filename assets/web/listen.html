@@ -419,6 +419,7 @@
         </div>
     </aside>
 
+    <script src="/assets/storage.js"></script>
     <script>
         const params = new URLSearchParams(location.search);
         const source = params.get("source") || "";
@@ -432,9 +433,9 @@
         const REMEMBER_KEY = "novelapi_audio_remember_v3";
         const LAST_KEY = `novelapi_audio_last:${source}:${bookId}`;
 
-        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
-        let autoNext = localStorage.getItem(AUTO_KEY) !== "false";
-        let rememberProgress = localStorage.getItem(REMEMBER_KEY) !== "false";
+        let currentTheme = appStorage.getItem(THEME_KEY) || "light";
+        let autoNext = appStorage.getItem(AUTO_KEY) !== "false";
+        let rememberProgress = appStorage.getItem(REMEMBER_KEY) !== "false";
         let chapters = [];
         let currentIndex = 0;
         let chapterGeneration = 0;
@@ -521,7 +522,9 @@
             }
             const rows = payload?.video_info?.data?.video_model_datas;
             if (!Array.isArray(rows)) return "";
-            const row = rows.find(entry => String(entry?.item_id || "") === String(itemId)) || rows[0];
+            // A response for another chapter cannot establish this chapter's identity.
+            // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+            const row = rows.find(entry => String(entry?.item_id || "") === String(itemId));
             if (!row || (row.item_status != null && row.item_status !== 0)) return "";
             let model = row.video_model;
             if (typeof model === "string") {
@@ -539,7 +542,8 @@
         }
 
         function renderSpeed() {
-            const speed = Number(localStorage.getItem(SPEED_KEY) || "1");
+            const saved = Number(appStorage.getItem(SPEED_KEY) || "1");
+            const speed = [1, 1.25, 1.5, 2].includes(saved) ? saved : 1;
             audio.playbackRate = speed;
             document.querySelectorAll("#speedGroup .chip").forEach(button => {
                 button.classList.toggle("active", Number(button.dataset.speed) === speed);
@@ -599,7 +603,7 @@
                 title: item.title || "未命名章节"
             })).filter(item => item.id);
             if (!chapters.length) throw new Error("当前作品没有可播放章节");
-            const last = localStorage.getItem(LAST_KEY);
+            const last = appStorage.getItem(LAST_KEY);
             const targetId = itemId || last || chapters[0].id;
             currentIndex = chapters.findIndex(item => item.id === targetId);
             if (currentIndex < 0) currentIndex = 0;
@@ -616,7 +620,7 @@
 
         function saveProgress() {
             if (!rememberProgress || !activeItemId || !Number.isFinite(audio.currentTime) || audio.currentTime <= 0 || audio.ended) return;
-            localStorage.setItem(progressKey(activeItemId), String(audio.currentTime));
+            appStorage.setItem(progressKey(activeItemId), String(audio.currentTime));
         }
 
         async function loadChapter(autoplay = true) {
@@ -635,7 +639,7 @@
             itemId = current.id;
             chapterTitleEl.textContent = current.title;
             setStatus("正在加载音频...");
-            localStorage.setItem(LAST_KEY, itemId);
+            appStorage.setItem(LAST_KEY, itemId);
             updateURL();
             renderList();
 
@@ -647,7 +651,7 @@
                 // See .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
                 if (generation !== chapterGeneration) return;
                 if (!url) throw new Error("未获取到音频地址");
-                const saved = Number(localStorage.getItem(progressKey(current.id)) || "0");
+                const saved = Number(appStorage.getItem(progressKey(current.id)) || "0");
                 metadataHandler = () => {
                     if (generation !== chapterGeneration) return;
                     metadataHandler = null;
@@ -691,13 +695,13 @@
         settingsToggle.addEventListener("click", () => openPanel(settingsPanel));
         themeToggle.addEventListener("click", () => {
             currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
-            localStorage.setItem(THEME_KEY, currentTheme);
+            appStorage.setItem(THEME_KEY, currentTheme);
             applyTheme();
         });
         document.getElementById("speedGroup").addEventListener("click", event => {
             const button = event.target.closest(".chip");
             if (!button) return;
-            localStorage.setItem(SPEED_KEY, button.dataset.speed);
+            appStorage.setItem(SPEED_KEY, button.dataset.speed);
             renderSpeed();
         });
         toneSelect.addEventListener("change", async event => {
@@ -709,11 +713,11 @@
         rememberInput.checked = rememberProgress;
         autoNextInput.addEventListener("change", event => {
             autoNext = event.target.checked;
-            localStorage.setItem(AUTO_KEY, String(autoNext));
+            appStorage.setItem(AUTO_KEY, String(autoNext));
         });
         rememberInput.addEventListener("change", event => {
             rememberProgress = event.target.checked;
-            localStorage.setItem(REMEMBER_KEY, String(rememberProgress));
+            appStorage.setItem(REMEMBER_KEY, String(rememberProgress));
         });
 
         audio.addEventListener("play", () => {
@@ -730,7 +734,7 @@
         });
         audio.addEventListener("ended", () => {
             if (!activeItemId || !audio.ended) return;
-            localStorage.removeItem(progressKey(activeItemId));
+            appStorage.removeItem(progressKey(activeItemId));
             activeItemId = "";
             if (autoNext && currentIndex < chapters.length - 1) goToIndex(currentIndex + 1);
             else setStatus("当前章节播放完成");

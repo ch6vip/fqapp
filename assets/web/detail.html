@@ -373,6 +373,7 @@
         </div>
     </div>
 
+    <script src="/assets/storage.js"></script>
     <script>
         const params = new URLSearchParams(location.search);
         const source = params.get("source") || "";
@@ -401,15 +402,21 @@
         let currentPage = 1;
         let downloadAbort = false;
         let downloadRunning = false;
+        let downloadController = null;
         let downloadHideTimer = null;
         const chapterMemoryCache = new Map();
 
         function readMeta() {
-            try { return JSON.parse(localStorage.getItem(CACHE_META_KEY) || "{}"); } catch { return {}; }
+            try {
+                const raw = JSON.parse(appStorage.getItem(CACHE_META_KEY) || "{}");
+                if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+                return Object.fromEntries(Object.entries(raw).filter(([key, time]) =>
+                    key.startsWith(CACHE_PREFIX) && key !== CACHE_META_KEY && Number.isFinite(time)));
+            } catch { return {}; }
         }
 
         function writeMeta(meta) {
-            localStorage.setItem(CACHE_META_KEY, JSON.stringify(meta));
+            appStorage.setItem(CACHE_META_KEY, JSON.stringify(meta));
         }
 
         function pruneCache() {
@@ -417,14 +424,14 @@
             const now = Date.now();
             Object.keys(meta).forEach(key => {
                 if (now - meta[key] > CACHE_TTL) {
-                    localStorage.removeItem(key);
+                    appStorage.removeItem(key);
                     delete meta[key];
                 }
             });
             const keys = Object.keys(meta).sort((a, b) => meta[a] - meta[b]);
             while (keys.length > CACHE_MAX_ITEMS) {
                 const oldest = keys.shift();
-                localStorage.removeItem(oldest);
+                appStorage.removeItem(oldest);
                 delete meta[oldest];
             }
             writeMeta(meta);
@@ -432,16 +439,16 @@
 
         function clearManagedCache() {
             const meta = readMeta();
-            Object.keys(meta).forEach(key => localStorage.removeItem(key));
-            localStorage.removeItem(CACHE_META_KEY);
+            Object.keys(meta).forEach(key => appStorage.removeItem(key));
+            appStorage.removeItem(CACHE_META_KEY);
             statusBar.textContent = "缓存已清理";
         }
 
         function cleanupLegacyCache() {
             const legacyPrefixes = ["detail:", "directory:", "chapter:", "novelapi_cache:", "novelapi:v1:"];
-            Object.keys(localStorage).forEach(key => {
+            appStorage.keys().forEach(key => {
                 if (legacyPrefixes.some(prefix => key.startsWith(prefix))) {
-                    localStorage.removeItem(key);
+                    appStorage.removeItem(key);
                 }
             });
         }
@@ -450,11 +457,11 @@
             pruneCache();
             const key = `${CACHE_PREFIX}${type}:${value}`;
             try {
-                const raw = localStorage.getItem(key);
+                const raw = appStorage.getItem(key);
                 if (!raw) return null;
                 const payload = JSON.parse(raw);
                 if (!payload || Date.now() - payload.time > CACHE_TTL) {
-                    localStorage.removeItem(key);
+                    appStorage.removeItem(key);
                     return null;
                 }
                 return payload.data;
@@ -469,7 +476,7 @@
             const payload = { time: Date.now(), data };
             if (JSON.stringify(payload).length > 50000) return;
             try {
-                localStorage.setItem(key, JSON.stringify(payload));
+                appStorage.setItem(key, JSON.stringify(payload));
                 const meta = readMeta();
                 meta[key] = payload.time;
                 writeMeta(meta);
@@ -483,7 +490,7 @@
             document.getElementById("themeToggle").innerHTML = theme === "dark"
                 ? '<i class="fas fa-sun"></i>'
                 : '<i class="fas fa-moon"></i>';
-            localStorage.setItem(THEME_KEY, theme);
+            appStorage.setItem(THEME_KEY, theme);
         }
 
         const backBtnEl = document.getElementById("backBtn");
@@ -492,8 +499,8 @@
             backBtnEl.innerHTML = '<i class="fas fa-arrow-left"></i>';
         }
 
-        async function fetchJSON(url) {
-            const response = await fetch(url);
+        async function fetchJSON(url, signal) {
+            const response = await fetch(url, { signal });
             const payload = await response.json();
             if (!response.ok || (payload.code !== undefined && payload.code !== 200)) {
                 throw new Error(payload.message || "请求失败");
@@ -658,11 +665,11 @@
             return paragraphs.join("\n");
         }
 
-        async function fetchChapterText(itemId, chapterTitle) {
+        async function fetchChapterText(itemId, chapterTitle, signal) {
             const cacheKey = `${source}:${bookId}:${itemId}`;
             let payload = chapterMemoryCache.get(cacheKey);
             if (!payload) {
-                payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`);
+                payload = await fetchJSON(`/api/content?source=${encodeURIComponent(source)}&book_id=${encodeURIComponent(bookId)}&item_id=${encodeURIComponent(itemId)}&tab=${encodeURIComponent(tab)}`, signal);
                 rememberChapterCache(cacheKey, payload);
             }
             let content = payload?.data?.content || "";
@@ -670,6 +677,7 @@
             return normalizeDownloadParagraphs(content, chapterTitle);
         }
 
+        // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
         async function frontendDownload() {
             if (tab !== "\u5c0f\u8bf4") return;
             if (downloadRunning) return;
@@ -680,6 +688,8 @@
             }
 
             downloadRunning = true;
+            const controller = new AbortController();
+            downloadController = controller;
             document.getElementById("frontendDownloadBtn").disabled = true;
             clearTimeout(downloadHideTimer);
             downloadAbort = false;
@@ -702,9 +712,12 @@
                         const chapter = allChapters[index];
                         let text;
                         try {
-                            text = await fetchChapterText(chapter.id, chapter.title);
+                            text = await fetchChapterText(chapter.id, chapter.title, controller.signal);
                         } catch (error) {
-                            if (!failure) failure = error;
+                            if (!failure) {
+                                failure = error;
+                                controller.abort();
+                            }
                             return;
                         }
                         if (downloadAbort || failure) return;
@@ -736,6 +749,7 @@
             } catch (error) {
                 progressText.textContent = error.message || "\u4e0b\u8f7d\u5931\u8d25";
             } finally {
+                downloadController = null;
                 downloadRunning = false;
                 document.getElementById("frontendDownloadBtn").disabled = false;
                 downloadHideTimer = setTimeout(() => {
@@ -754,7 +768,10 @@
         document.getElementById("frontendDownloadBtn").addEventListener("click", frontendDownload);
         document.getElementById("backendDownloadBtn").addEventListener("click", backendDownload);
         document.getElementById("clearCacheBtn").addEventListener("click", clearManagedCache);
-        document.getElementById("cancelDownloadBtn").addEventListener("click", () => { downloadAbort = true; });
+        document.getElementById("cancelDownloadBtn").addEventListener("click", () => {
+            downloadAbort = true;
+            downloadController?.abort();
+        });
 
         if (tab !== "小说") {
             document.getElementById("frontendDownloadBtn").disabled = true;
@@ -776,7 +793,7 @@
             }
         }
 
-        applyTheme(localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
+        applyTheme(appStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
         cleanupLegacyCache();
         pruneCache();
         init();

@@ -105,6 +105,12 @@ class MediaElement extends Element {
     this.playbackRate = 1;
     this.playCalls = 0;
   }
+  get playbackRate() { return this._playbackRate; }
+  set playbackRate(value) {
+    if (!Number.isFinite(value)) throw new TypeError('playbackRate must be finite');
+    if (value < 0 || value > 16) throw new Error('Unsupported playbackRate');
+    this._playbackRate = value;
+  }
   load() { this.currentTime = 0; this.duration = NaN; this.ended = false; this.paused = true; }
   pause() { this.paused = true; this.dispatch('pause'); }
   play() {
@@ -123,13 +129,18 @@ function deferred() {
 }
 
 function inlineScripts(file) {
-  return [...fs.readFileSync(path.join(root, file), 'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(m => m[1]);
+  return [...fs.readFileSync(path.join(root, file), 'utf8').matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].map(m => {
+    const source = /\bsrc="([^"]+)"/.exec(m[1]);
+    if (!source) return m[2];
+    assert.ok(source[1].startsWith('/assets/'), `Unexpected script source: ${source[1]}`);
+    return fs.readFileSync(path.join(root, 'assets/web', source[1]), 'utf8');
+  });
 }
 
 function page(file, options = {}) {
   const elements = new Map();
   const requests = [];
-  const storage = new Map();
+  const storage = new Map(Object.entries(options.storage || {}));
   const timers = new Map();
   const createdUrls = [];
   const document = new Element('document');
@@ -152,11 +163,14 @@ function page(file, options = {}) {
     document, location, URL: class extends URL {
       static createObjectURL(blob) { createdUrls.push(blob); return 'blob:download'; }
       static revokeObjectURL() {}
-    }, URLSearchParams, Node: nodeTypes, Blob,
+    }, URLSearchParams, Node: nodeTypes, Blob, AbortController, DOMException,
     history: { replaceState(_state, _title, url) { location.href = url.href; } },
     localStorage: {
       getItem: key => storage.get(key) ?? null,
-      setItem: (key, value) => storage.set(key, String(value)),
+      setItem: (key, value) => {
+        if (options.storageWritesFail) throw new Error('QuotaExceededError');
+        storage.set(key, String(value));
+      },
       removeItem: key => storage.delete(key),
       key: index => [...storage.keys()][index] ?? null,
       get length() { return storage.size; },
@@ -165,6 +179,14 @@ function page(file, options = {}) {
     fetch: (url, fetchOptions) => {
       const pending = deferred();
       requests.push({ url, fetchOptions, ...pending });
+      const signal = fetchOptions?.signal;
+      if (signal) {
+        const abort = () => pending.reject(signal.reason);
+        if (signal.aborted) abort();
+        else signal.addEventListener('abort', abort, { once: true });
+        const cleanup = () => signal.removeEventListener('abort', abort);
+        pending.promise.then(cleanup, cleanup);
+      }
       return pending.promise;
     },
     DOMParser: class { parseFromString() { throw new Error('This test must supply its parsed document fixture'); } },
@@ -178,6 +200,11 @@ function page(file, options = {}) {
     console,
   };
   sandbox.window = sandbox;
+  if (options.storageBlocked) {
+    Object.defineProperty(sandbox, 'localStorage', {
+      get() { throw new Error('SecurityError: persistence is disabled'); },
+    });
+  }
   const context = vm.createContext(sandbox);
   for (const script of inlineScripts(file)) vm.runInContext(script, context, { filename: file });
   const run = code => vm.runInContext(code, context);
@@ -205,6 +232,75 @@ test('all embedded scripts, filters and JSON configs parse', () => {
     JSON.parse(fs.readFileSync(path.join(root, 'assets/config', name), 'utf8'));
   }
 });
+
+for (const name of ['index', 'detail', 'read', 'comic', 'listen', 'video']) {
+  test(`${name} remains usable when browser storage access is denied`, () => {
+    const p = page(`assets/web/${name}.html`, { storageBlocked: true });
+    assert.ok(p.elements.get('themeToggle').listeners.get('click')?.length);
+    if (name !== 'index') assert.ok(p.requests.length > 0, 'initial requests must still start');
+  });
+}
+
+test('storage quota exhaustion does not prevent search results or in-page preferences', async () => {
+  const p = page('assets/web/index.html', { storageWritesFail: true });
+  const searching = p.run('queryInput.value = "book"; runSearch(false)');
+  assert.equal(p.requests.length, 1);
+  p.respond(p.requests[0], searchPayload('书籍', 'Visible result'));
+  await searching;
+  assert.equal(p.elements.get('results').querySelector('h3').textContent, 'Visible result');
+  p.elements.get('themeToggle').click();
+  assert.equal(p.document.body.classList.contains('dark'), true);
+  await p.run('queryInput.value = "book"; runSearch(false)');
+  assert.equal(p.requests.length, 1, 'a failed persistent cache write may use bounded session storage');
+});
+
+test('storage can recover persistence and hide a failed deletion within the page', () => {
+  const options = { storageWritesFail: true, storage: { progress: '50' } };
+  const p = page('assets/web/index.html', options);
+  p.run('appStorage.setItem("speed", "1.5")');
+  assert.equal(p.run('appStorage.getItem("speed")'), '1.5');
+  assert.equal(p.storage.has('speed'), false);
+  options.storageWritesFail = false;
+  p.run('appStorage.setItem("speed", "2")');
+  assert.equal(p.run('appStorage.getItem("speed")'), '2');
+  assert.equal(p.storage.get('speed'), '2');
+  p.context.localStorage.removeItem = () => { throw new Error('SecurityError'); };
+  p.run('appStorage.removeItem("progress")');
+  assert.equal(p.storage.get('progress'), '50');
+  assert.equal(p.run('appStorage.getItem("progress")'), null);
+  assert.equal(p.run('appStorage.keys().includes("progress")'), false);
+  p.context.localStorage.getItem = () => { throw new Error('SecurityError'); };
+  assert.equal(p.run('appStorage.getItem("unavailable")'), null);
+});
+
+test('session storage stays bounded when persistence is disabled', () => {
+  const p = page('assets/web/index.html', { storageBlocked: true });
+  p.run('for (let i = 0; i < 400; i++) appStorage.setItem(`chapter:${i}`, "17")');
+  assert.ok(p.run('appStorage.keys().length') <= 128);
+  assert.equal(p.run('appStorage.getItem("chapter:399")'), '17');
+  p.run('for (let i = 0; i < 20; i++) appStorage.setItem(`cache:${i}`, "x".repeat(100000))');
+  assert.ok(p.run('appStorage.keys().reduce((sum, key) => sum + key.length + appStorage.getItem(key).length, 0)') <= 1024 * 1024);
+  p.run('appStorage.setItem("preference", "dark"); appStorage.setItem("oversized", "x".repeat(2 * 1024 * 1024))');
+  assert.equal(p.run('appStorage.getItem("oversized")'), null);
+  assert.equal(p.run('appStorage.getItem("preference")'), 'dark');
+});
+
+for (const name of ['index', 'detail']) {
+  test(`${name} ignores malformed cache metadata and preserves other preferences on clear`, () => {
+    for (const metadata of ['null', '[]', '"broken"', '{']) {
+      const p = page(`assets/web/${name}.html`, { storage: { 'novelapi_cache_v2:meta': metadata } });
+      assert.ok(p.elements.get('themeToggle').listeners.get('click')?.length);
+    }
+    const p = page(`assets/web/${name}.html`, { storage: {
+      'novelapi_cache_v2:meta': JSON.stringify({ 'other_preference': 0, 'novelapi_cache_v2:search:old': 0 }),
+      'other_preference': 'keep',
+      'novelapi_cache_v2:search:old': 'expired',
+    } });
+    p.run('clearManagedCache()');
+    assert.equal(p.storage.get('other_preference'), 'keep');
+    assert.equal(p.storage.has('novelapi_cache_v2:search:old'), false);
+  });
+}
 
 test('search cards and errors preserve external markup as text', () => {
   const p = page('assets/web/index.html');
@@ -484,6 +580,46 @@ test('plugin manga selection can supersede a pending chapter without losing its 
   assert.equal(p.run('reader.currentChapterIndex'), 1);
 });
 
+for (const boundary of ['next', 'previous']) {
+  test(`plugin manga cancels pending ${boundary} navigation when the reader scrolls away`, () => {
+    const p = page('assets/plugins/manga_reader.html');
+    p.run('reader.chapters = [{ item_id: "a", title: "Alpha" }, { item_id: "b", title: "Beta" }]; reader.currentChapterIndex = 1; reader.ignoreScrollBoundary = false');
+    if (boundary === 'next') p.run('reader.currentChapterIndex = 0');
+    const container = p.elements.get('image-container');
+    container.scrollTop = boundary === 'next' ? 9400 : 0;
+    container.dispatch('scroll');
+    assert.equal(p.timers.size, 1);
+    container.scrollTop = 4000;
+    container.dispatch('scroll');
+    for (const callback of [...p.timers.values()]) callback();
+    assert.equal(p.requests.length, 0);
+    assert.equal(p.run('reader.currentChapterIndex'), boundary === 'next' ? 0 : 1);
+  });
+}
+
+test('plugin manga still advances when it remains at the end', () => {
+  const p = page('assets/plugins/manga_reader.html');
+  p.run('reader.chapters = [{ item_id: "a", title: "Alpha" }, { item_id: "b", title: "Beta" }]; reader.currentChapterIndex = 0');
+  const container = p.elements.get('image-container');
+  container.scrollTop = 9400;
+  container.dispatch('scroll');
+  for (const callback of [...p.timers.values()]) callback();
+  assert.equal(p.requests.length, 1);
+  assert.equal(p.run('reader.currentItemId'), 'b');
+});
+
+test('plugin manga rechecks the end after late image layout changes', () => {
+  const p = page('assets/plugins/manga_reader.html');
+  p.run('reader.chapters = [{ item_id: "a", title: "Alpha" }, { item_id: "b", title: "Beta" }]; reader.currentChapterIndex = 0');
+  const container = p.elements.get('image-container');
+  container.scrollTop = 9400;
+  container.dispatch('scroll');
+  container.scrollHeight = 20000;
+  for (const callback of [...p.timers.values()]) callback();
+  assert.equal(p.requests.length, 0);
+  assert.equal(p.run('reader.currentChapterIndex'), 0);
+});
+
 test('download text keeps nested paragraphs once and retains text beginning with the title', () => {
   const p = page('assets/web/detail.html');
   const body = element('body', element('div', element('p', text('序')), element('p', text('序幕之后')), element('p', text('下一段'), element('br'), text('换行'))), element('script', text('attack()')));
@@ -509,3 +645,118 @@ test('download failure drains active workers before another download can start',
   assert.equal(p.elements.get('frontendDownloadBtn').disabled, false);
   assert.equal(p.elements.get('progressText').textContent, 'chapter fetch failed');
 });
+
+test('download failure aborts stalled peers, preserves its cause, and permits retry', async () => {
+  const p = page('assets/web/detail.html');
+  p.run('chapterData = [{ chapters: Array.from({ length: 8 }, (_, i) => ({ id: String(i), title: String(i) })) }]; normalizeDownloadParagraphs = content => content');
+  const first = p.run('frontendDownload()');
+  const stalled = contentRequests(p);
+  assert.equal(stalled.length, 6);
+  stalled[0].reject(new Error('chapter fetch failed'));
+  await new Promise(setImmediate);
+  assert.ok(stalled.every(request => request.fetchOptions?.signal?.aborted), 'one failure must abort every outstanding chapter request');
+  await first;
+  assert.equal(contentRequests(p).length, 6);
+  assert.equal(p.createdUrls.length, 0);
+  assert.equal(p.elements.get('progressText').textContent, 'chapter fetch failed');
+  assert.equal(p.elements.get('frontendDownloadBtn').disabled, false);
+  assert.ok(p.requests.filter(request => !stalled.includes(request))
+    .every(request => request.fetchOptions?.signal === undefined));
+
+  p.run('chapterData = [{ chapters: [{ id: "retry", title: "Retry" }] }]');
+  const second = p.run('frontendDownload()');
+  const retry = contentRequests(p).at(-1);
+  assert.notEqual(retry.fetchOptions.signal, stalled[0].fetchOptions.signal);
+  assert.equal(retry.fetchOptions.signal.aborted, false);
+  p.respond(retry, { code: 200, data: { content: 'Complete text' } });
+  await second;
+  assert.equal(p.createdUrls.length, 1);
+  assert.equal(p.elements.get('progressText').textContent, '下载完成');
+});
+
+test('cancelling a stalled download aborts its requests and permits a fresh download', async () => {
+  const p = page('assets/web/detail.html');
+  p.run('chapterData = [{ chapters: Array.from({ length: 8 }, (_, i) => ({ id: String(i), title: String(i) })) }]; normalizeDownloadParagraphs = content => content');
+  const first = p.run('frontendDownload()');
+  const stalled = contentRequests(p);
+  assert.equal(stalled.length, 6);
+  const pageRequests = p.requests.filter(request => !stalled.includes(request));
+  assert.ok(pageRequests.length > 0);
+  assert.ok(pageRequests.every(request => request.fetchOptions?.signal === undefined));
+  p.elements.get('cancelDownloadBtn').click();
+  await new Promise(setImmediate);
+  assert.ok(stalled.every(request => request.fetchOptions?.signal?.aborted), 'all active chapter requests must be aborted');
+  await first;
+  assert.equal(p.elements.get('frontendDownloadBtn').disabled, false);
+  assert.equal(p.elements.get('progressText').textContent, '下载已取消');
+  assert.equal(p.createdUrls.length, 0);
+
+  p.run('chapterData = [{ chapters: [{ id: "fresh", title: "Fresh" }] }]');
+  const second = p.run('frontendDownload()');
+  const fresh = contentRequests(p).at(-1);
+  assert.notEqual(fresh.fetchOptions.signal, stalled[0].fetchOptions.signal);
+  assert.equal(fresh.fetchOptions.signal.aborted, false);
+  p.respond(fresh, { code: 200, data: { content: 'Complete text' } });
+  await second;
+  assert.equal(p.createdUrls.length, 1);
+  assert.equal(p.elements.get('progressText').textContent, '下载完成');
+});
+
+test('audio fallback never plays an explicitly different chapter', async () => {
+  const p = page('assets/web/listen.html');
+  p.run('chapters = [{ id: "wanted", title: "Wanted" }]');
+  const loading = p.run('loadChapter(true)');
+  p.respond(contentRequests(p)[0], { code: 200, data: {} });
+  await new Promise(setImmediate);
+  const fallback = p.requests.find(request => request.url.startsWith('/api/v1/audio/play?'));
+  p.respond(fallback, { video_info: { data: { video_model_datas: [{
+    item_id: 'different', item_status: 0,
+    video_model: { media_type: 'audio', video_list: [{ main_url: 'https://example.test/wrong-chapter' }] },
+  }] } } });
+  await loading;
+  assert.equal(p.elements.get('audioPlayer').src, '');
+  assert.equal(p.run('activeItemId'), '');
+  assert.equal(p.elements.get('playerStatus').textContent, '未获取到音频地址');
+});
+
+test('audio fallback finds the matching chapter after an unrelated row', async () => {
+  const p = page('assets/web/listen.html');
+  const loading = p.run('fetchPlaybackURL("wanted", "1")');
+  const fallback = p.requests.find(request => request.url.startsWith('/api/v1/audio/play?'));
+  const row = id => ({ item_id: id, item_status: 0, video_model: {
+    media_type: 'audio', video_list: [{ main_url: `https://example.test/${id}` }],
+  } });
+  p.respond(fallback, { video_info: { data: { video_model_datas: [row('different'), row('wanted')] } } });
+  assert.equal(await loading, 'https://example.test/wanted');
+});
+
+test('audio fallback rejects a singleton row without a chapter identity', async () => {
+  const p = page('assets/web/listen.html');
+  const loading = p.run('fetchPlaybackURL("wanted", "1")');
+  const fallback = p.requests.find(request => request.url.startsWith('/api/v1/audio/play?'));
+  p.respond(fallback, { video_info: { data: { video_model_datas: [{
+    item_status: 0, video_model: { media_type: 'audio', video_list: [{ main_url: 'https://example.test/unidentified' }] },
+  }] } } });
+  assert.equal(await loading, '');
+});
+
+for (const [name, key, mediaId] of [
+  ['listen', 'novelapi_audio_speed_v3', 'audioPlayer'],
+  ['video', 'novelapi_video_speed_v3', 'videoPlayer'],
+]) {
+  test(`${name} recovers invalid persisted speeds without blocking initialization`, () => {
+    for (const value of ['bad', 'Infinity', '-1', '100', '0']) {
+      const p = page(`assets/web/${name}.html`, { storage: { [key]: value } });
+      assert.equal(p.elements.get(mediaId).playbackRate, 1, `invalid speed ${value}`);
+      assert.ok(p.requests.some(request => request.url.startsWith('/api/directory?')));
+    }
+  });
+
+  test(`${name} preserves each supported persisted speed`, () => {
+    for (const value of ['1', '1.25', '1.5', '2']) {
+      const p = page(`assets/web/${name}.html`, { storage: { [key]: value } });
+      assert.equal(p.elements.get(mediaId).playbackRate, Number(value));
+      assert.ok(p.requests.some(request => request.url.startsWith('/api/directory?')));
+    }
+  });
+}

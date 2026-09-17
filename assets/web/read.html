@@ -671,6 +671,7 @@
             <i class="fas fa-chevron-right"></i>
         </button>
     </div>
+    <script src="/assets/storage.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
         const source = params.get("source") || "";
@@ -706,7 +707,7 @@
         let currentIndex = 0;
         let chapterGeneration = 0;
         let chromeHideTimer = null;
-        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
+        let currentTheme = appStorage.getItem(THEME_KEY) || "light";
         let readerSettings = loadReaderSettings();
 
         const readerSurface = document.getElementById("readerSurface");
@@ -741,7 +742,7 @@
 
         function loadReaderSettings() {
             try {
-                const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+                const saved = JSON.parse(appStorage.getItem(SETTINGS_KEY) || "{}");
                 return {
                     fontSize: Number(saved.fontSize) || 20,
                     lineHeight: Number(saved.lineHeight) || 1.95,
@@ -771,19 +772,18 @@
         }
 
         function saveReaderSettings() {
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify(readerSettings));
+            appStorage.setItem(SETTINGS_KEY, JSON.stringify(readerSettings));
         }
 
         function cleanupLegacyReaderCaches() {
             const prefixes = ["chapter_cache_", "novelapi_reader_cache:", "reader_cache:"];
             const keys = [];
-            for (let index = 0; index < localStorage.length; index += 1) {
-                const key = localStorage.key(index);
+            for (const key of appStorage.keys()) {
                 if (key && prefixes.some(prefix => key.startsWith(prefix))) {
                     keys.push(key);
                 }
             }
-            keys.forEach(key => localStorage.removeItem(key));
+            keys.forEach(key => appStorage.removeItem(key));
         }
 
         function applyTheme() {
@@ -1103,7 +1103,7 @@
         }
 
         function rememberLastChapter() {
-            localStorage.setItem(LAST_KEY, itemId);
+            appStorage.setItem(LAST_KEY, itemId);
         }
 
         function renderTOC() {
@@ -1131,7 +1131,7 @@
             if (!chapterList.length) {
                 throw new Error("当前作品没有可读取的章节");
             }
-            const lastItemId = localStorage.getItem(LAST_KEY);
+            const lastItemId = appStorage.getItem(LAST_KEY);
             const targetItemId = itemId || lastItemId || chapterList[0].id;
             currentIndex = chapterList.findIndex(chapter => chapter.id === targetItemId);
             if (currentIndex < 0) {
@@ -1276,7 +1276,7 @@
 
         themeToggleBtn.addEventListener("click", () => {
             currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
-            localStorage.setItem(THEME_KEY, currentTheme);
+            appStorage.setItem(THEME_KEY, currentTheme);
             applyTheme();
             applyReaderSettings();
         });

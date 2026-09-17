@@ -116,6 +116,7 @@
         <button class="btn primary" type="button" id="nextBtn">下一话 <i class="fas fa-chevron-right"></i></button>
     </div>
 
+    <script src="/assets/storage.js"></script>
     <script>
         const params = new URLSearchParams(location.search);
         const source = params.get("source") || "";
@@ -129,13 +130,13 @@
         const LAST_KEY = `novelapi_comic_last:${source}:${bookId}`;
         const sourceKey = source.toLowerCase();
 
-        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
+        let currentTheme = appStorage.getItem(THEME_KEY) || "light";
         let chapters = [];
         let currentIndex = 0;
         let chapterGeneration = 0;
         let chromeHideTimer = null;
         const comicSettings = (() => {
-            try { return { ...{ width: 920, gap: 8 }, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; }
+            try { return { ...{ width: 920, gap: 8 }, ...JSON.parse(appStorage.getItem(SETTINGS_KEY) || "{}") }; }
             catch (_) { return { width: 920, gap: 8 }; }
         })();
 
@@ -204,7 +205,7 @@
             document.documentElement.style.setProperty("--comic-gap", `${comicSettings.gap}px`);
             widthInput.value = String(comicSettings.width);
             gapInput.value = String(comicSettings.gap);
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify(comicSettings));
+            appStorage.setItem(SETTINGS_KEY, JSON.stringify(comicSettings));
             settingStatusEl.textContent = `图片宽度 ${comicSettings.width}px，间距 ${comicSettings.gap}px`;
         }
 
@@ -257,7 +258,7 @@
                 title: item.title || "未命名章节"
             })).filter(item => item.id);
             if (!chapters.length) throw new Error("没有可读取的漫画章节");
-            const last = localStorage.getItem(LAST_KEY);
+            const last = appStorage.getItem(LAST_KEY);
             const targetId = itemId || last || chapters[0].id;
             currentIndex = chapters.findIndex(item => item.id === targetId);
             if (currentIndex < 0) currentIndex = 0;
@@ -274,7 +275,7 @@
             bottomTitleEl.textContent = current.title;
             pageMetaEl.textContent = `${source} · ${tab} · 第 ${currentIndex + 1} 话`;
             imageListEl.innerHTML = '<p class="empty">图片加载中...</p>';
-            localStorage.setItem(LAST_KEY, itemId);
+            appStorage.setItem(LAST_KEY, itemId);
             updateURL();
             renderCatalog();
 
@@ -348,7 +349,7 @@
         themeToggle.addEventListener("click", () => {
             showChrome();
             currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
-            localStorage.setItem(THEME_KEY, currentTheme);
+            appStorage.setItem(THEME_KEY, currentTheme);
             applyTheme();
         });
         document.addEventListener("keydown", event => {

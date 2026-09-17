@@ -7,6 +7,7 @@ import '../services/chapter_text_formatter.dart';
 class ChapterCacheSheet extends StatefulWidget {
   final CachedBook book;
   final int currentIndex;
+  final bool includeCurrentChapter;
   final ChapterCache cache;
   final Future<String> Function(Chapter) loader;
   final void Function(Chapter chapter, String text)? onContentAvailable;
@@ -15,6 +16,7 @@ class ChapterCacheSheet extends StatefulWidget {
     super.key,
     required this.book,
     required this.currentIndex,
+    this.includeCurrentChapter = false,
     required this.cache,
     required this.loader,
     this.onContentAvailable,
@@ -32,6 +34,15 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
   int _incompleteImages = 0;
   int _job = 0;
   String? _message;
+
+  // Detail pages have not loaded the current chapter's body yet. The reader
+  // already has it and keeps its existing "following chapters" behavior.
+  // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+  int get _startIndex =>
+      (widget.currentIndex + (widget.includeCurrentChapter ? 0 : 1)).clamp(
+        0,
+        widget.book.chapters.length,
+      );
 
   @override
   void initState() {
@@ -58,7 +69,7 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
     if (_running) return;
     final job = ++_job;
     final chapters = widget.book.chapters
-        .skip(widget.currentIndex + 1)
+        .skip(_startIndex)
         .take(count)
         .toList(growable: false);
     setState(() {
@@ -160,7 +171,7 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final remaining = widget.book.chapters.length - widget.currentIndex - 1;
+    final remaining = widget.book.chapters.length - _startIndex;
     final choices = <int>{
       for (final count in [20, 50, 100])
         if (remaining > 0) remaining < count ? remaining : count,
@@ -183,7 +194,11 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
             const SizedBox(height: 6),
             Text('已缓存 $cachedCount / ${widget.book.chapters.length} 章'),
             const SizedBox(height: 16),
-            const Text('阅读过的章节会自动保存，也可提前缓存后续章节。插图首次查看需要联网，显示后会自动缓存。'),
+            Text(
+              widget.includeCurrentChapter
+                  ? '从当前章节开始缓存，已有缓存会自动复用。插图首次查看需要联网，显示后会自动缓存。'
+                  : '阅读过的章节会自动保存，也可提前缓存后续章节。插图首次查看需要联网，显示后会自动缓存。',
+            ),
             const SizedBox(height: 16),
             if (remaining == 0)
               const Text('当前已是最后一章')
@@ -195,7 +210,11 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
                   for (final count in choices)
                     OutlinedButton(
                       onPressed: _running ? null : () => _download(count),
-                      child: Text('缓存后 $count 章'),
+                      child: Text(
+                        widget.includeCurrentChapter
+                            ? '缓存 $count 章'
+                            : '缓存后 $count 章',
+                      ),
                     ),
                 ],
               ),

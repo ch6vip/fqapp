@@ -106,6 +106,13 @@ typedef _ReadAlongSnapshot = ({
 
 typedef _MoreSnapshot = ({bool loading, bool autoAdvance, int? sleepMinutes});
 
+typedef _RoutePlayback = ({
+  int index,
+  Duration position,
+  bool completed,
+  bool autoplay,
+});
+
 Future<AudioExtras> _defaultAudioExtras(String bookId) async {
   final tones = await ApiClient.instance
       .bookTones(bookId)
@@ -694,7 +701,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         } else {
           unawaited(_pause(player, generation));
         }
-        _publishListeningSession();
+        // _openChapter resets completion before its source is ready.
+        // The next player's playing event will publish the actual start.
+        _publishListeningSession(playing: false);
       }),
       player.errorStream.listen((error) => _fail(error, generation)),
     ]);
@@ -780,8 +789,8 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   void _fail(Object error, int generation) {
-    ListeningSession.instance.clear();
     if (!_current(generation)) return;
+    ListeningSession.instance.clear();
     ++_generation;
     _saveTimer?.cancel();
     _listenTime.stop();
@@ -1681,6 +1690,38 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     toneId: '0',
   );
 
+  /// Stop playback before a route can open another native player. The restored
+  /// route stays paused at its own position until the user explicitly plays.
+  /// Note: .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
+  Future<_RoutePlayback?> _suspendForRoute(int generation) async {
+    await _persistProgress();
+    if (!_current(generation)) return null;
+    final snapshot = (
+      index: _index,
+      position: _player?.position ?? _position,
+      completed: _completed,
+      autoplay: _wantPlay,
+    );
+    setState(() => _wantPlay = false);
+    _publishListeningSession(playing: false);
+    final suspendedGeneration = ++_generation;
+    ++_seekGeneration;
+    _saveTimer?.cancel();
+    _listenTime.stop();
+    await _releasePlayer();
+    return _current(suspendedGeneration) ? snapshot : null;
+  }
+
+  Future<void> _restoreAfterRoute(_RoutePlayback? snapshot) async {
+    if (!mounted || snapshot == null) return;
+    await _openChapter(
+      snapshot.index,
+      position: snapshot.position,
+      autoplay: false,
+      completed: snapshot.completed,
+    );
+  }
+
   /// Note: Cross-book TTS choices and exact IDs — see
   /// .agents/notes/implemented/bug-fix/2026-09-16-linked-audio-voices.md.
   Future<void> _switchBookVersion(
@@ -1693,10 +1734,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       return;
     }
     final generation = _generation;
-    final previousIndex = _index;
-    var previousPosition = _position;
-    var previousCompleted = _completed;
-    var released = false;
+    _RoutePlayback? suspended;
     setState(() => _switchingVersion = true);
     try {
       final chapters = await (widget.directoryLoader ?? _defaultDirectory)(
@@ -1707,22 +1745,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         throw const FormatException('所选声音版本暂无目录');
       }
       final start = _narratorChapterIndex(chapters);
-      await _persistProgress();
-      if (!_current(generation)) return;
-      previousPosition = _player?.position ?? _position;
-      previousCompleted = _completed;
-      final autoplay = _wantPlay;
-      // Stop the old native player before another route can create one. The
-      // generation also cancels source/create/play work that is still pending.
-      setState(() => _wantPlay = false);
-      _publishListeningSession(playing: false);
-      ++_generation;
-      ++_seekGeneration;
-      _saveTimer?.cancel();
-      _listenTime.stop();
-      released = true;
-      await _releasePlayer();
-      if (!mounted) return;
+      suspended = await _suspendForRoute(generation);
+      if (!mounted || suspended == null) return;
+      final autoplay = suspended.autoplay;
       await Navigator.push(
         context,
         MaterialPageRoute<void>(
@@ -1752,14 +1777,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         context,
       ).showSnackBar(const SnackBar(content: Text('暂时无法切换声音，请稍后重试')));
     } finally {
-      if (mounted && released) {
-        await _openChapter(
-          previousIndex,
-          position: previousPosition,
-          autoplay: false,
-          completed: previousCompleted,
-        );
-      }
+      await _restoreAfterRoute(suspended);
       if (mounted) setState(() => _switchingVersion = false);
     }
   }
@@ -1830,23 +1848,38 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   Future<void> _openRelated(RelatedWork work) async {
-    if (work.id.isEmpty) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute<void>(
-        builder: (_) => DetailPage(
-          item: MediaItem(
-            id: work.id,
-            title: work.title,
-            cover: work.cover,
-            author: '',
-            badge: work.label,
-            ep: '',
-            kind: work.kind == 'video' ? 'video' : 'book',
+    if (work.id.isEmpty || _switchingVersion) return;
+    final generation = _generation;
+    _RoutePlayback? suspended;
+    setState(() => _switchingVersion = true);
+    try {
+      suspended = await _suspendForRoute(generation);
+      if (!mounted || suspended == null) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => DetailPage(
+            item: MediaItem(
+              id: work.id,
+              title: work.title,
+              cover: work.cover,
+              author: '',
+              badge: work.label,
+              ep: '',
+              kind: work.kind == 'video' ? 'video' : 'book',
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('暂时无法打开作品，请稍后重试')));
+    } finally {
+      await _restoreAfterRoute(suspended);
+      if (mounted) setState(() => _switchingVersion = false);
+    }
   }
 }
 

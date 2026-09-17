@@ -1,6 +1,7 @@
 package com.fqapp.fqapp
 
 import android.app.Activity
+import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -30,7 +31,6 @@ import io.flutter.view.TextureRegistry
 import java.io.EOFException
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -40,7 +40,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * an EventChannel.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
+class NativePlayerPlugin internal constructor(
+    private val cryptoStream: CryptoStream = JniCryptoStream,
+    private val playerFactory: (Context) -> ExoPlayer = { ExoPlayer.Builder(it).build() }
+) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
 
     private lateinit var methodChannel: MethodChannel
     private lateinit var eventChannel: EventChannel
@@ -53,7 +56,6 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     private val pendingPlayerIds = ConcurrentHashMap.newKeySet<Int>()
     private val nextId = AtomicInteger(1)
     private val handler = Handler(Looper.getMainLooper())
-    private val backgroundExecutor = Executors.newCachedThreadPool()
 
     private var eventSink: EventChannel.EventSink? = null
 
@@ -105,7 +107,6 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         handler.removeCallbacksAndMessages(null)
         pendingPlayerIds.clear()
         eventSink = null
-        backgroundExecutor.shutdownNow()
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -163,6 +164,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 
     private fun handleCreate(cdnUrl: String, keyHex: String, result: MethodChannel.Result) {
+        // Note: deferred CDN I/O — see .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
         val playerId = nextId.getAndIncrement()
         pendingPlayerIds.add(playerId)
         result.success(mapOf("playerId" to playerId, "textureId" to -1))
@@ -173,23 +175,12 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
             }
         } else {
             try {
-                CryptoNative.ensureInit()
-                backgroundExecutor.execute {
-                    try {
-                        if (!attachedToEngine || !pendingPlayerIds.contains(playerId)) return@execute
-                        // Probe-only open: verifies the CDN + key are playable.
-                        val probeHandle = CryptoNative.nativePlayerStreamOpen(cdnUrl, keyHex)
-                        if (probeHandle == 0L) {
-                            failCreation(playerId, "sp_stream_open failed")
-                            return@execute
-                        }
-                        CryptoNative.nativePlayerStreamClose(probeHandle)
-                        handler.post {
-                            createPlayerWithCrypto(playerId, cdnUrl, keyHex)
-                        }
-                    } catch (error: Throwable) {
-                        failCreation(playerId, error.message ?: error.javaClass.simpleName)
-                    }
+                cryptoStream.ensureInitialized()
+                // Media3 opens and validates the stream on its loader thread.
+                // A separate probe repeats all metadata I/O and cannot be
+                // cancelled while the native open is still obtaining a handle.
+                handler.post {
+                    createPlayerWithCrypto(playerId, cdnUrl, keyHex)
                 }
             } catch (error: Throwable) {
                 failCreation(playerId, error.message ?: error.javaClass.simpleName)
@@ -210,7 +201,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String) {
         createPlayer(playerId) { player ->
             val dataSourceFactory = DataSource.Factory {
-                CryptoDataSource(cdnUrl, keyHex)
+                CryptoDataSource(cdnUrl, keyHex, cryptoStream)
             }
             val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
                 .createMediaSource(MediaItem.fromUri("crypto://$cdnUrl"))
@@ -230,7 +221,7 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
             // MediaCodec supplies the buffer dimensions; don't resize the
             // producer to match the description panel's Flutter rectangle.
             producer = textureRegistry.createSurfaceProducer()
-            player = ExoPlayer.Builder(flutterBinding.applicationContext).build()
+            player = playerFactory(flutterBinding.applicationContext)
             output = NativeVideoOutput(player, producer)
             players[playerId] = PlayerInstance(playerId, player, output)
             output.attach()
@@ -375,8 +366,8 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 
     private fun disposePlayer(id: Int) {
-        // Only a still-pending request may allocate. A slow probe can outlive
-        // any cancellation timeout, so cancellation must never expire.
+        // Only a still-pending request may allocate. A queued create callback
+        // must stay cancelled even if the platform thread stalls.
         pendingPlayerIds.remove(id)
         val instance = players.remove(id) ?: return
         instance.positionUpdater?.let(handler::removeCallbacks)
@@ -437,10 +428,14 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
         override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
             if (length == 0) return 0
             if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
+            // JNI and the C stream return at most 64 KiB per read. A large
+            // extractor request must not retain an equally large scratch array.
+            // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+            val boundedLength = minOf(length, 64 * 1024)
             val toRead = if (bytesRemaining != C.LENGTH_UNSET.toLong()) {
-                minOf(length.toLong(), bytesRemaining).toInt()
+                minOf(boundedLength.toLong(), bytesRemaining).toInt()
             } else {
-                length
+                boundedLength
             }
             var tmp = readBuffer
             if (tmp == null || tmp.size < toRead) {
@@ -483,8 +478,9 @@ class NativePlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activ
     }
 }
 
-/** The JNI boundary is injectable so DataSource range/error behavior can be verified on the JVM. */
+/** Injectable JNI boundary for creation and DataSource range/error checks on the JVM. */
 internal interface CryptoStream {
+    fun ensureInitialized()
     fun open(url: String, keyHex: String): Long
     fun size(handle: Long): Long
     fun seek(handle: Long, position: Long): Long
@@ -493,6 +489,7 @@ internal interface CryptoStream {
 }
 
 private object JniCryptoStream : CryptoStream {
+    override fun ensureInitialized() = CryptoNative.ensureInit()
     override fun open(url: String, keyHex: String) = CryptoNative.nativePlayerStreamOpen(url, keyHex)
     override fun size(handle: Long) = CryptoNative.nativePlayerStreamSize(handle)
     override fun seek(handle: Long, position: Long) = CryptoNative.nativePlayerStreamSeek(handle, position)

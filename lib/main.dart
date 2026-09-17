@@ -14,13 +14,21 @@ import 'services/library_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/home/home_design.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  runApp(const ProviderScope(child: FqApp()));
+}
+
+Future<void> _initializeLocalData() async {
   await Hive.initFlutter();
   await LibraryStore.instance.init();
   final sp = await SharedPreferences.getInstance();
-  themeModeNotifier.value = themeModeFromName(sp.getString(themeModeKey));
-  runApp(const ProviderScope(child: FqApp()));
+  // Note: Optional preference schemas cannot block local data startup; see
+  // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
+  final savedTheme = sp.get(themeModeKey);
+  themeModeNotifier.value = themeModeFromName(
+    savedTheme is String ? savedTheme : null,
+  );
 }
 
 class FqApp extends StatelessWidget {
@@ -37,7 +45,7 @@ class FqApp extends StatelessWidget {
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),
           themeMode: mode,
-          home: const RootShell(),
+          home: const AppBootstrap(child: RootShell()),
         );
       },
     );
@@ -54,6 +62,84 @@ class FqApp extends StatelessWidget {
       scaffoldBackgroundColor: brightness == Brightness.dark
           ? const Color(0xFF121212)
           : const Color(0xFFF5F5F7),
+    );
+  }
+}
+
+/// Opens local data before any page can access LibraryStore's boxes. Failed
+/// initialization is retryable without clearing or replacing the user's data.
+/// See .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
+class AppBootstrap extends StatefulWidget {
+  final Widget child;
+  final Future<void> Function()? initializer;
+
+  const AppBootstrap({super.key, required this.child, this.initializer});
+
+  @override
+  State<AppBootstrap> createState() => _AppBootstrapState();
+}
+
+class _AppBootstrapState extends State<AppBootstrap> {
+  bool _initializing = false;
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    if (_initializing || _ready) return;
+    setState(() {
+      _initializing = true;
+      _failed = false;
+    });
+    try {
+      await (widget.initializer ?? _initializeLocalData)();
+      if (mounted) setState(() => _ready = true);
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      _initializing = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ready) return widget.child;
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_failed)
+                  Icon(
+                    LucideIcons.triangle_alert,
+                    color: Theme.of(context).colorScheme.error,
+                  )
+                else
+                  const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(_failed ? '无法读取本地数据' : '正在读取本地数据…'),
+                if (_failed) ...[
+                  const SizedBox(height: 8),
+                  const Text('请检查设备可用空间后重试。', textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    onPressed: _initialize,
+                    child: const Text('重试'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -91,6 +91,7 @@ class ChapterImage extends ChapterBlock {
 // .agents/notes/implemented/bug-fix/2026-09-10-reader-illustrations.md
 class ChapterContent {
   static const _cachePrefix = '\u001efqapp:chapter:2\n';
+  static const _paragraphParserRevision = 1;
 
   final List<ChapterBlock> blocks;
   // Keep the exact old normalization for migrating saved text-only offsets.
@@ -191,6 +192,7 @@ class ChapterContent {
         'version': 2,
         'illustrationsChecked': illustrationsChecked,
         'paragraphIdsChecked': paragraphIdsChecked,
+        'paragraphParserRevision': _paragraphParserRevision,
         'legacyText': legacyText,
         'blocks': [
           for (final block in blocks)
@@ -261,11 +263,11 @@ class ChapterContent {
       blocks: blocks,
       legacyText: data['legacyText'] as String,
       illustrationsChecked: data['illustrationsChecked'] as bool,
-      paragraphIdsChecked: data['paragraphIdsChecked'] is bool
-          ? data['paragraphIdsChecked'] as bool
-          : blocks.whereType<ChapterParagraph>().any(
-              (p) => p.paraIndex != null,
-            ),
+      // Older parsers could lose ids after an empty break/image. Keep their
+      // content usable offline; the reader refreshes ids only if ideas need it.
+      paragraphIdsChecked:
+          data['paragraphParserRevision'] == _paragraphParserRevision &&
+          data['paragraphIdsChecked'] == true,
     );
   }
 }
@@ -287,7 +289,9 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
       );
     }
     pending = StringBuffer();
-    activeIndex = null;
+    // A leading break/image can flush no text. Its paragraph id still belongs
+    // to the first body paragraph that is eventually emitted.
+    if (paragraphs.isNotEmpty) activeIndex = null;
   }
 
   void append(dom.Node node) {
@@ -329,13 +333,17 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
       final paragraph = _paragraphTags.contains(tag);
       if (paragraph || tag == 'br' || tag == 'hr') flush();
       if (paragraph) {
-        final attribute = int.tryParse(node.attributes['idx']?.trim() ?? '');
-        if (attribute != null) activeIndex = attribute;
+        // Note: Empty flushes preserve ids only inside their own paragraph; see
+        // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
+        activeIndex = int.tryParse(node.attributes['idx']?.trim() ?? '');
       }
       for (final child in node.nodes) {
         append(child);
       }
-      if (paragraph) flush();
+      if (paragraph) {
+        flush();
+        activeIndex = null;
+      }
       if (tag == 'td' || tag == 'th') pending.write(' ');
     }
   }

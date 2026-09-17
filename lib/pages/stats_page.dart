@@ -142,9 +142,17 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Future<void> _load() async {
-    final sp = await SharedPreferences.getInstance();
+    var goal = 30;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final saved = sp.get(_goalKey);
+      if (saved is int && saved >= 1 && saved <= 1440) goal = saved;
+    } catch (_) {
+      // The optional goal must not hide readable history and statistics.
+      // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+    }
     if (!mounted) return;
-    _goalMinutes = sp.getInt(_goalKey) ?? 30;
+    _goalMinutes = goal;
     _preferencesLoaded = true;
     _reloadFromStore();
   }
@@ -161,10 +169,19 @@ class _StatsPageState extends State<StatsPage> {
 
   Future<void> _editGoal() async {
     final value = await showReadingGoalDialog(context, _goalMinutes);
-    if (value != null) {
+    if (value == null || !mounted) return;
+    setState(() => _goalMinutes = value);
+    try {
       final sp = await SharedPreferences.getInstance();
-      await sp.setInt(_goalKey, value);
-      if (mounted) setState(() => _goalMinutes = value);
+      if (!await sp.setInt(_goalKey, value)) {
+        throw StateError('Reading goal was not saved');
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('目标已更新，但未能保存')));
+      }
     }
   }
 

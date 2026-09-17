@@ -35,7 +35,9 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
 
 $mainGo = Join-Path $SourceDir 'main.go'
 $goMod  = Join-Path $SourceDir 'go.mod'
-if (-not (Test-Path $mainGo) -or -not (Test-Path $goMod)) {
+# User-selected paths are literal names, including valid square brackets.
+# Note: .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
+if (-not (Test-Path -LiteralPath $mainGo) -or -not (Test-Path -LiteralPath $goMod)) {
     Write-Error "$SourceDir does not look like an  source tree (main.go / go.mod missing). Usage: .\scripts\build_backend.ps1 [-ForceConfig] <-source-dir>"
     exit 1
 }
@@ -79,7 +81,7 @@ finally {
 }
 
 # Never trust go's exit code alone: it can be 0 while producing no file.
-if (-not (Test-Path $outBin) -or ((Get-Item $outBin).Length -eq 0)) {
+if (-not (Test-Path -LiteralPath $outBin) -or ((Get-Item -LiteralPath $outBin).Length -eq 0)) {
     Write-Error "build produced no output at $outBin (go exited 0 but the file is missing or empty)"
     exit 1
 }
@@ -107,11 +109,11 @@ foreach ($d in @($configDir, $filtersDir, $webDir, $pluginsDir)) {
 function Sync-ConfigFile {
     param([string]$Name)
     $dst = Join-Path $configDir $Name
-    if ((Test-Path $dst) -and -not $ForceConfig) {
+    if ((Test-Path -LiteralPath $dst) -and -not $ForceConfig) {
         Write-Host "    keep $Name (already present, not overwritten)"
         return
     }
-    Copy-Item (Join-Path $SourceDir "config\$Name") $dst -Force
+    Copy-Item -LiteralPath (Join-Path $SourceDir "config\$Name") -Destination $dst -Force
     Write-Host "    write $Name"
 }
 
@@ -120,7 +122,7 @@ function Sync-ConfigFile {
 Sync-ConfigFile 'config.json'
 Sync-ConfigFile 'filter.json'
 Sync-ConfigFile 'device_pool.example.json'
-Remove-Item (Join-Path $configDir 'device_pool.json') -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $configDir 'device_pool.json') -ErrorAction SilentlyContinue
 
 # Bundled runtime code contains app fixes. A backend rebuild must not undo
 # them; explicit -ForceRuntime opts in to replacing it with upstream code.
@@ -142,7 +144,7 @@ Sync-RuntimeDirectory 'plugins' $pluginsDir
 Write-Host '    synced filters\ web\ plugins\ (existing files kept unless -ForceRuntime)'
 
 Write-Host '==> backend binary and runtime files done.'
-Get-Item $outBin | Select-Object FullName, Length | Format-List
+Get-Item -LiteralPath $outBin | Select-Object FullName, Length | Format-List
 
 if ($Jni) {
     Write-Host ''
@@ -156,16 +158,16 @@ if ($Jni) {
     if (-not $sdkRoot) { $sdkRoot = $env:ANDROID_SDK_ROOT }
     if (-not $sdkRoot) {
         $localProps = Join-Path $AppDir 'android\local.properties'
-        if (Test-Path $localProps) {
-            $line = Get-Content $localProps | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
+        if (Test-Path -LiteralPath $localProps) {
+            $line = Get-Content -LiteralPath $localProps | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
             if ($line) { $sdkRoot = ($line -replace '^sdk\.dir=', '').Replace('\:', ':').Replace('\\', '\').Replace('\ ', ' ') }
         }
     }
     if (-not $ndkRoot -and $sdkRoot) {
-        $ndkRoot = Get-ChildItem (Join-Path $sdkRoot 'ndk') -Directory -ErrorAction SilentlyContinue |
+        $ndkRoot = Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'ndk') -Directory -ErrorAction SilentlyContinue |
             Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
     }
-    if (-not $ndkRoot -or -not (Test-Path $ndkRoot)) {
+    if (-not $ndkRoot -or -not (Test-Path -LiteralPath $ndkRoot)) {
         throw 'Android NDK not found. Set ANDROID_NDK_HOME or install an NDK under the Android SDK.'
     }
 
@@ -224,11 +226,11 @@ if ($Jni) {
         $env:GOOS = $oldGoOS; $env:GOARCH = $oldGoArch; $env:CGO_ENABLED = $oldCgo; $env:CC = $oldCC; $env:CGO_CFLAGS = $oldCgoFlags
         Remove-Item -LiteralPath $buildSo, $outHeader -Force -ErrorAction SilentlyContinue
     }
-    if (-not (Test-Path $outSo) -or (Get-Item $outSo).Length -eq 0) { throw "JNI build produced no output at $outSo" }
+    if (-not (Test-Path -LiteralPath $outSo) -or (Get-Item -LiteralPath $outSo).Length -eq 0) { throw "JNI build produced no output at $outSo" }
     # The generated C header is useful during development but is not needed
     # by the Android app and should not be packaged as an asset.
-    if (Test-Path $outHeader) { Remove-Item -LiteralPath $outHeader -Force }
-    Get-Item $outSo | Select-Object FullName, Length | Format-List
+    if (Test-Path -LiteralPath $outHeader) { Remove-Item -LiteralPath $outHeader -Force }
+    Get-Item -LiteralPath $outSo | Select-Object FullName, Length | Format-List
 }
 else {
     Write-Host ''

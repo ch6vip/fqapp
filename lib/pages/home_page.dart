@@ -35,6 +35,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   final ScrollController _scroll = ScrollController();
   Timer? _loadMoreTimer;
+  bool _visible = false;
 
   @override
   void initState() {
@@ -46,6 +47,22 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (_visible == visible) return;
+    _visible = visible;
+    // Muting tickers does not stop this page's pagination timer.
+    // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+    if (!_visible) {
+      _loadMoreTimer?.cancel();
+      _loadMoreTimer = null;
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+    }
+  }
+
+  @override
   void dispose() {
     _loadMoreTimer?.cancel();
     _scroll.dispose();
@@ -53,6 +70,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _onScroll() {
+    if (!mounted || !_visible) return;
     if (!_scroll.hasClients) {
       final state = ref.read(homeProvider);
       if (state.error == null && _visibleItems(state).isEmpty) _maybeLoadMore();
@@ -64,7 +82,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// Short and empty pages must continue even without a user scroll event.
   void _maybeLoadMore() {
-    if (!mounted || _loadMoreTimer != null) return;
+    if (!mounted || !_visible || _loadMoreTimer != null) return;
     final state = ref.read(homeProvider);
     if (state.isLoading || state.isLoadMore || !state.hasMore) return;
     _loadMoreTimer = Timer(const Duration(milliseconds: 500), () {

@@ -121,17 +121,35 @@ class MangaReader {
             }
         }, { passive: true });
         this.imageContainer.addEventListener('scroll', () => {
+            // Note: A delayed turn belongs to the current boundary, not to an
+            // earlier scroll. See .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
+            clearTimeout(this.scrollTimeout);
+            this.scrollTimeout = null;
             const scrollTop = this.imageContainer.scrollTop;
             const clientHeight = this.imageContainer.clientHeight;
             const scrollHeight = this.imageContainer.scrollHeight;
             if (this.ignoreScrollBoundary && scrollTop > 50) { this.ignoreScrollBoundary = false; }
             if (scrollHeight > clientHeight && scrollTop >= scrollHeight - clientHeight - 30) {
-                if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
-                if (!this.changingChapter) { this.scrollTimeout = setTimeout(() => { this.readChapter(this.currentChapterIndex + 1); }, 300); }
+                if (!this.changingChapter) {
+                    this.scrollTimeout = setTimeout(() => {
+                        this.scrollTimeout = null;
+                        const container = this.imageContainer;
+                        if (!this.changingChapter && container.scrollHeight > container.clientHeight &&
+                            container.scrollTop >= container.scrollHeight - container.clientHeight - 30) {
+                            this.readChapter(this.currentChapterIndex + 1);
+                        }
+                    }, 300);
+                }
             }
             else if (scrollTop <= 30 && !this.ignoreScrollBoundary) {
-                if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
-                if (!this.changingChapter) { this.scrollTimeout = setTimeout(() => { this.readChapter(this.currentChapterIndex - 1); }, 300); }
+                if (!this.changingChapter) {
+                    this.scrollTimeout = setTimeout(() => {
+                        this.scrollTimeout = null;
+                        if (!this.changingChapter && !this.ignoreScrollBoundary && this.imageContainer.scrollTop <= 30) {
+                            this.readChapter(this.currentChapterIndex - 1);
+                        }
+                    }, 300);
+                }
             }
         });
     }

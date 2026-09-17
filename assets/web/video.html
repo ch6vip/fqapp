@@ -258,6 +258,7 @@
         <div class="list" id="episodeList"></div>
     </aside>
 
+    <script src="/assets/storage.js"></script>
     <script>
         const params = new URLSearchParams(location.search);
         const source = params.get("source") || "";
@@ -270,7 +271,7 @@
         const SPEED_KEY = "novelapi_video_speed_v3";
         const LAST_KEY = `novelapi_video_last:${source}:${bookId}`;
 
-        let currentTheme = localStorage.getItem(THEME_KEY) || "light";
+        let currentTheme = appStorage.getItem(THEME_KEY) || "light";
         let episodes = [];
         let currentIndex = 0;
         let episodeGeneration = 0;
@@ -331,7 +332,9 @@
         }
 
         function renderSpeed() {
-            const speed = Number(localStorage.getItem(SPEED_KEY) || "1");
+            // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+            const saved = Number(appStorage.getItem(SPEED_KEY) || "1");
+            const speed = [1, 1.25, 1.5, 2].includes(saved) ? saved : 1;
             video.playbackRate = speed;
             document.querySelectorAll("#speedGroup .chip").forEach(button => {
                 button.classList.toggle("active", Number(button.dataset.speed) === speed);
@@ -364,7 +367,7 @@
 
         function saveProgress() {
             if (!activeItemId || !Number.isFinite(video.currentTime) || video.currentTime <= 0 || video.ended) return;
-            localStorage.setItem(progressKey(activeItemId), String(video.currentTime));
+            appStorage.setItem(progressKey(activeItemId), String(video.currentTime));
         }
 
         async function loadDirectory() {
@@ -374,7 +377,7 @@
                 title: item.title || "未命名剧集"
             })).filter(item => item.id);
             if (!episodes.length) throw new Error("没有可播放的剧集");
-            const last = localStorage.getItem(LAST_KEY);
+            const last = appStorage.getItem(LAST_KEY);
             const targetId = itemId || last || episodes[0].id;
             currentIndex = episodes.findIndex(item => item.id === targetId);
             if (currentIndex < 0) currentIndex = 0;
@@ -399,7 +402,7 @@
             pageMetaEl.textContent = `${source} · ${tab}`;
             episodeMetaEl.textContent = `第 ${currentIndex + 1} 集 / 共 ${episodes.length} 集`;
             setStatus("正在加载视频...");
-            localStorage.setItem(LAST_KEY, itemId);
+            appStorage.setItem(LAST_KEY, itemId);
             updateURL();
             renderList();
 
@@ -409,7 +412,7 @@
                 const url = payload.data?.video_url;
                 if (!url) throw new Error("未获取到视频地址");
                 video.classList.remove("is-portrait");
-                const saved = Number(localStorage.getItem(progressKey(current.id)) || "0");
+                const saved = Number(appStorage.getItem(progressKey(current.id)) || "0");
                 metadataHandler = () => {
                     if (generation !== episodeGeneration) return;
                     metadataHandler = null;
@@ -443,13 +446,13 @@
         catalogToggle.addEventListener("click", openCatalog);
         themeToggle.addEventListener("click", () => {
             currentTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
-            localStorage.setItem(THEME_KEY, currentTheme);
+            appStorage.setItem(THEME_KEY, currentTheme);
             applyTheme();
         });
         document.getElementById("speedGroup").addEventListener("click", event => {
             const button = event.target.closest(".chip");
             if (!button) return;
-            localStorage.setItem(SPEED_KEY, button.dataset.speed);
+            appStorage.setItem(SPEED_KEY, button.dataset.speed);
             renderSpeed();
         });
 
@@ -465,7 +468,7 @@
         });
         video.addEventListener("ended", () => {
             if (!activeItemId || !video.ended) return;
-            localStorage.removeItem(progressKey(activeItemId));
+            appStorage.removeItem(progressKey(activeItemId));
             activeItemId = "";
             if (currentIndex < episodes.length - 1) goToIndex(currentIndex + 1, true);
             else setStatus("当前剧集播放完成");

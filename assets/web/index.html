@@ -360,6 +360,7 @@
         <div class="status" id="statusBar"></div>
     </div>
 
+    <script src="/assets/storage.js"></script>
     <script>
         const THEME_KEY = "novelapi_theme_v4";
         const CACHE_PREFIX = "novelapi_cache_v2:";
@@ -384,11 +385,16 @@
         const statusBar = document.getElementById("statusBar");
 
         function readMeta() {
-            try { return JSON.parse(localStorage.getItem(CACHE_META_KEY) || "{}"); } catch { return {}; }
+            try {
+                const raw = JSON.parse(appStorage.getItem(CACHE_META_KEY) || "{}");
+                if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+                return Object.fromEntries(Object.entries(raw).filter(([key, time]) =>
+                    key.startsWith(CACHE_PREFIX) && key !== CACHE_META_KEY && Number.isFinite(time)));
+            } catch { return {}; }
         }
 
         function writeMeta(meta) {
-            localStorage.setItem(CACHE_META_KEY, JSON.stringify(meta));
+            appStorage.setItem(CACHE_META_KEY, JSON.stringify(meta));
         }
 
         function pruneCache() {
@@ -396,14 +402,14 @@
             const now = Date.now();
             Object.keys(meta).forEach(key => {
                 if (now - meta[key] > CACHE_TTL) {
-                    localStorage.removeItem(key);
+                    appStorage.removeItem(key);
                     delete meta[key];
                 }
             });
             const keys = Object.keys(meta).sort((a, b) => meta[a] - meta[b]);
             while (keys.length > CACHE_MAX_ITEMS) {
                 const oldest = keys.shift();
-                localStorage.removeItem(oldest);
+                appStorage.removeItem(oldest);
                 delete meta[oldest];
             }
             writeMeta(meta);
@@ -411,16 +417,16 @@
 
         function clearManagedCache() {
             const meta = readMeta();
-            Object.keys(meta).forEach(key => localStorage.removeItem(key));
-            localStorage.removeItem(CACHE_META_KEY);
+            Object.keys(meta).forEach(key => appStorage.removeItem(key));
+            appStorage.removeItem(CACHE_META_KEY);
             statusBar.textContent = "缓存已清理";
         }
 
         function cleanupLegacyCache() {
             const legacyPrefixes = ["detail:", "directory:", "chapter:", "novelapi_cache:", "novelapi:v1:"];
-            Object.keys(localStorage).forEach(key => {
+            appStorage.keys().forEach(key => {
                 if (legacyPrefixes.some(prefix => key.startsWith(prefix))) {
-                    localStorage.removeItem(key);
+                    appStorage.removeItem(key);
                 }
             });
         }
@@ -429,11 +435,11 @@
             pruneCache();
             const key = `${CACHE_PREFIX}${type}:${value}`;
             try {
-                const raw = localStorage.getItem(key);
+                const raw = appStorage.getItem(key);
                 if (!raw) return null;
                 const payload = JSON.parse(raw);
                 if (!payload || Date.now() - payload.time > CACHE_TTL) {
-                    localStorage.removeItem(key);
+                    appStorage.removeItem(key);
                     return null;
                 }
                 return payload.data;
@@ -447,7 +453,7 @@
             const key = `${CACHE_PREFIX}${type}:${value}`;
             const payload = { time: Date.now(), data };
             try {
-                localStorage.setItem(key, JSON.stringify(payload));
+                appStorage.setItem(key, JSON.stringify(payload));
                 const meta = readMeta();
                 meta[key] = payload.time;
                 writeMeta(meta);
@@ -465,7 +471,7 @@
         function applyTheme(theme) {
             document.body.classList.toggle("dark", theme === "dark");
             document.getElementById("themeToggle").textContent = theme === "dark" ? "☾" : "☀";
-            localStorage.setItem(THEME_KEY, theme);
+            appStorage.setItem(THEME_KEY, theme);
         }
 
         function renderThemeToggle() {
@@ -745,7 +751,7 @@
             }
         });
 
-        applyTheme(localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
+        applyTheme(appStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
         renderThemeToggle();
         cleanupLegacyCache();
         pruneCache();

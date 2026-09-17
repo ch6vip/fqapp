@@ -146,7 +146,9 @@ void main() {
         expect(ReaderBubbleMetrics.forFontSize(29, variant: variant).width, 28);
         expect(
           ReaderBubbleMetrics.forFontSize(30, variant: variant).width,
-          variant == ParagraphBubbleVariant.users ? closeTo(97 / 3, 0.01) : 32.0,
+          variant == ParagraphBubbleVariant.users
+              ? closeTo(97 / 3, 0.01)
+              : 32.0,
         );
         expect(
           ReaderBubbleMetrics.forFontSize(30, variant: variant).height,
@@ -154,13 +156,17 @@ void main() {
         );
       }
       expect(
-        ReaderBubbleMetrics.forFontSize(19, variant: ParagraphBubbleVariant.users)
-            .asset,
+        ReaderBubbleMetrics.forFontSize(
+          19,
+          variant: ParagraphBubbleVariant.users,
+        ).asset,
         'assets/images/bubble/para_bubble_users_small.webp',
       );
       expect(
-        ReaderBubbleMetrics.forFontSize(19, variant: ParagraphBubbleVariant.author)
-            .asset,
+        ReaderBubbleMetrics.forFontSize(
+          19,
+          variant: ParagraphBubbleVariant.author,
+        ).asset,
         'assets/images/bubble/para_bubble_author_small.webp',
       );
     });
@@ -180,27 +186,39 @@ void main() {
   });
 
   group('bubble variant gating', () {
-    test('plain for ordinary comments, checkmark for many users, nib for the author', () {
-      // Build the three buckets directly through the parsed payload.
-      final parsed = ChapterIdeas.fromPayload(const {
-        'code': 0,
-        'data': {
+    test(
+      'plain for ordinary comments, checkmark for many users, nib for the author',
+      () {
+        // Build the three buckets directly through the parsed payload.
+        final parsed = ChapterIdeas.fromPayload(const {
+          'code': 0,
           'data': {
-            '0': {'count': 5, 'user_count': 0, 'is_author_comment': false},
-            '1': {'count': 5, 'user_count': 3, 'is_author_comment': false},
-            '2': {'count': 5, 'user_count': 0, 'is_author_comment': true},
+            'data': {
+              '0': {'count': 5, 'user_count': 0, 'is_author_comment': false},
+              '1': {'count': 5, 'user_count': 3, 'is_author_comment': false},
+              '2': {'count': 5, 'user_count': 0, 'is_author_comment': true},
+            },
           },
-        },
-      });
-      expect(parsed.forParagraph(0)!.bubbleVariant, ParagraphBubbleVariant.plain);
-      expect(parsed.forParagraph(1)!.bubbleVariant, ParagraphBubbleVariant.users);
-      expect(parsed.forParagraph(2)!.bubbleVariant, ParagraphBubbleVariant.author);
-      expect(parsed.bubbleVariants, {
-        0: ParagraphBubbleVariant.plain,
-        1: ParagraphBubbleVariant.users,
-        2: ParagraphBubbleVariant.author,
-      });
-    });
+        });
+        expect(
+          parsed.forParagraph(0)!.bubbleVariant,
+          ParagraphBubbleVariant.plain,
+        );
+        expect(
+          parsed.forParagraph(1)!.bubbleVariant,
+          ParagraphBubbleVariant.users,
+        );
+        expect(
+          parsed.forParagraph(2)!.bubbleVariant,
+          ParagraphBubbleVariant.author,
+        );
+        expect(parsed.bubbleVariants, {
+          0: ParagraphBubbleVariant.plain,
+          1: ParagraphBubbleVariant.users,
+          2: ParagraphBubbleVariant.author,
+        });
+      },
+    );
   });
 
   group('bubble label', () {
@@ -305,7 +323,8 @@ void main() {
       expect(
         alphaAt(centreX.round(), boxTop + 6),
         lessThan(32),
-        reason: 'inside the bubble body, above the glyph, must stay near-transparent',
+        reason:
+            'inside the bubble body, above the glyph, must stay near-transparent',
       );
 
       // The mask is mostly transparent (15.8% opaque); a filled bubble would
@@ -376,11 +395,13 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets(
-      'old caches acquire real paragraph ids and keep them on reopen',
-      (tester) async {
+    for (final previouslyChecked in [false, true]) {
+      testWidgets('old caches (paragraph ids checked: $previouslyChecked) '
+          'acquire real paragraph ids and keep them on reopen', (tester) async {
         final cache = MemoryChapterCache();
-        cache.content['book'] = {'c1': _legacyCache()};
+        cache.content['book'] = {
+          'c1': _legacyCache(previouslyChecked: previouslyChecked),
+        };
         final fresh = Completer<String>();
         var requests = 0;
         final history = MemoryReaderStore();
@@ -434,8 +455,8 @@ void main() {
         expect(find.text('42'), findsOneWidget);
         expect(find.text('7'), findsOneWidget);
         expect(tester.takeException(), isNull);
-      },
-    );
+      });
+    }
 
     for (final hasIdeas in [false, true]) {
       testWidgets(
@@ -569,11 +590,12 @@ void main() {
   });
 }
 
-// Image-aware caches written before paragraph ids were retained.
-String _legacyCache() =>
+// Image-aware caches written before the current paragraph parser revision.
+String _legacyCache({bool previouslyChecked = false}) =>
     '\u001efqapp:chapter:2\n${jsonEncode({
       'version': 2,
       'illustrationsChecked': true,
+      if (previouslyChecked) 'paragraphIdsChecked': true,
       'legacyText': '第一章\n第一段话。\n第二段话。\n第三段话。',
       'blocks': [
         for (final text in ['第一章', '第一段话。', '第二段话。', '第三段话。']) {'type': 'text', 'text': text},

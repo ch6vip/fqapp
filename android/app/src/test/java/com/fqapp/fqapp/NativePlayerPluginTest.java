@@ -56,7 +56,7 @@ public class NativePlayerPluginTest {
                 plugin.onMethodCall(new MethodCall("dispose", Map.of("id", 1)),
                         mock(MethodChannel.Result.class));
 
-                // Model a stalled creation/probe that returns after every
+                // Model a stalled create callback that returns after every
                 // disposal timer has fired, without waiting in wall-clock time.
                 for (Runnable callback : List.copyOf(delayed)) callback.run();
                 for (Runnable callback : List.copyOf(queued)) callback.run();

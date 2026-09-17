@@ -54,6 +54,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late int _index;
   late String _historyKind = widget.kind;
   int? _activeIndex;
+  bool _hasDisplayed = false;
   NativePlayer? _player;
   Timer? _progressTimer;
   bool _initVideo = false;
@@ -297,6 +298,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _loadTrace?.firstFrame();
     if (!_initVideo && _activeIndex == _index) {
       _loadTrace?.finish('firstFrame');
+      if (!_hasDisplayed) {
+        // Native create acknowledges preparation, not a usable CDN/decoder.
+        // Keep the previous resume record until this episode is visible.
+        // Note: .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
+        _hasDisplayed = true;
+        unawaited(_persistProgress());
+        _syncWatchClock();
+      }
     }
     _updatePrefetch();
   }
@@ -305,6 +314,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final old = _player;
     _player = null;
     _activeIndex = null;
+    _hasDisplayed = false;
     _pendingAutoplay = null;
     _pendingCompletion = null;
     final cancellations = [
@@ -443,8 +453,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _initVideo = false;
       });
       trace.stage('autoplayWait');
-      final history = _historyEntry(index, player);
-      unawaited(_history.save(history));
+      _onFirstFrame(player, generation);
       _pendingAutoplay = player;
       await _tryAutoplay(generation);
       if (!_current(generation, player)) return;
@@ -513,9 +522,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (!_current(generation, player) || _activeIndex != _index) {
           return;
         }
-        if (!completed || !_autoAdvance) {
+        if (!completed) {
           _pendingCompletion = null;
-          if (completed) unawaited(_persistProgress());
+          return;
+        }
+        // Completion must persist even when there is no next episode or a
+        // paging gesture delays it. Each snapshot settles only new watch time.
+        // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
+        unawaited(_persistProgress());
+        if (!_autoAdvance) {
+          _pendingCompletion = null;
           return;
         }
         if (_paging) {
@@ -531,7 +547,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _syncWatchClock() {
     final state = WidgetsBinding.instance.lifecycleState;
     final active = state == null || state == AppLifecycleState.resumed;
-    if (active && _playing && !(_player?.buffering ?? true) && _error == null) {
+    if (active &&
+        _hasDisplayed &&
+        _playing &&
+        !(_player?.buffering ?? true) &&
+        _error == null) {
       _watchTime.start();
     } else {
       _watchTime.stop();
@@ -569,7 +589,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Future<void> _persistProgress() {
     final player = _player;
     final index = _activeIndex;
-    if (player == null || index == null) return Future<void>.value();
+    if (player == null || index == null || !_hasDisplayed) {
+      return Future<void>.value();
+    }
     // Capture identity and progress before any await. All writes (including a
     // new episode's history entry) share this queue to preserve their order.
     final history = _historyEntry(index, player);

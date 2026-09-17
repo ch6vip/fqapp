@@ -32,10 +32,10 @@ function fixture(t, options = {}) {
     // This is the single verified temporary fixture, never the real app tree.
     fs.rmSync(resolved, { recursive: true, force: true });
   });
-  const app = path.join(directory, 'app with spaces');
-  const source = path.join(directory, 'backend source');
+  const app = path.join(directory, options.bracketPaths ? 'app [with spaces]' : 'app with spaces');
+  const source = path.join(directory, options.bracketPaths ? 'backend [source]' : 'backend source');
   const fakeBin = path.join(directory, 'fake tools');
-  const sdk = path.join(directory, 'sdk with spaces');
+  const sdk = path.join(directory, options.bracketPaths ? 'sdk [with spaces]' : 'sdk with spaces');
   const ndk = path.join(sdk, 'ndk', '29.0.1');
   const hostOS = options.hostOS || (process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'darwin' : 'linux');
   const hostArch = options.hostArch || 'amd64';
@@ -206,6 +206,25 @@ test('PowerShell: discovers NDK from escaped SDK local.properties with spaces', 
   assert.equal(result.builds[1].CGO_CFLAGS, `"-I${f.prebuilt.replaceAll('\\', '/')}/sysroot/usr/include"`);
   f.checkNoBuildTemps();
 });
+
+for (const force of [false, true]) {
+  test(`PowerShell: literal brackets in app, source, and SDK paths work with force=${force}`, { skip: !hasPowershell }, t => {
+    const f = fixture(t, { bracketPaths: true, localProperties: true, realClang: true, force });
+    const privatePool = path.join(f.app, 'assets', 'config', 'device_pool.json');
+    write(privatePool, 'fixture that must not be bundled');
+    const result = f.runPowershell();
+    assert.equal(result.state.failure, null);
+    assert.deepEqual(result.builds.map(build => [build.kind, build.GOOS, build.GOARCH, build.CGO_ENABLED]), [
+      ['standalone', f.hostOS, f.hostArch, '0'], ['jni', 'android', 'arm64', '1'],
+    ]);
+    assert.equal(result.builds[1].CC, `"${f.realClang.replaceAll('\\', '/')}" --target=aarch64-linux-android21`);
+    assert.equal(fs.readFileSync(f.binary, 'utf8'), 'built standalone');
+    assert.equal(fs.readFileSync(f.library, 'utf8'), 'built jni');
+    assert.equal(fs.existsSync(privatePool), false);
+    f.checkRuntime(force);
+    f.checkNoBuildTemps();
+  });
+}
 
 test('PowerShell: prefers the bare NDK clang for a path with spaces', { skip: !hasPowershell }, t => {
   const f = fixture(t, { realClang: true });

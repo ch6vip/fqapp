@@ -15,7 +15,7 @@ class DetailReadBar extends StatelessWidget {
   /// Opens the listening page. Hidden when the work has no audio version.
   final VoidCallback? onListen;
 
-  /// Downloads the following chapters. Hidden when caching is unsupported.
+  /// Downloads from the current chapter. Hidden when caching is unsupported.
   final VoidCallback? onDownload;
 
   const DetailReadBar({

@@ -66,7 +66,7 @@ void main() {
     expect(content.paragraphIdsChecked, isFalse);
   });
 
-  test('legacy structured caches need paragraph ids only when absent', () {
+  test('legacy structured caches retain ids while allowing parser refresh', () {
     String legacyCache(List<Map<String, Object>> blocks) =>
         '\u001efqapp:chapter:2\n${jsonEncode({'version': 2, 'illustrationsChecked': true, 'legacyText': '第一章\n正文', 'blocks': blocks})}';
     final missing = ChapterContent.fromCacheText(
@@ -87,7 +87,7 @@ void main() {
         {'type': 'text', 'text': '正文', 'idx': 9},
       ]),
     );
-    expect(indexed.paragraphIdsChecked, isTrue);
+    expect(indexed.paragraphIdsChecked, isFalse);
     expect((indexed.blocks.single as ChapterParagraph).paraIndex, 9);
   });
 
