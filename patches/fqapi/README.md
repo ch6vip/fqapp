@@ -1,10 +1,17 @@
-# App 配套后端源码与依赖补丁
+# App 配套后端源码与固定补丁
 
-原 `app-compat.patch` 已退休。当前构建仅应用
-[`x-text-security.patch`](x-text-security.patch)，将 `golang.org/x/text` 从 `v0.3.8`
-升级到 `v0.39.0`，修复 [GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970)。
-该补丁只修改 `go.mod` / `go.sum`，不改后端业务源码。工作流同时核对源码提交、
-运行只读依赖模式的 Go 测试与漏洞扫描，并记录补丁 SHA-256。
+原 `app-compat.patch` 已退休。当前构建在工作流固定提交上应用两个独立补丁：
+
+- [`x-text-security.patch`](x-text-security.patch) 只修改 `go.mod` / `go.sum`，
+  将 `golang.org/x/text` 从 `v0.3.8` 升级到 `v0.39.0`，修复
+  [GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970)。
+- [`web-business-errors.patch`](web-business-errors.patch) 修改 Web 桥接接口及其回归测试，
+  保留上游 HTTP 200 响应内的数值业务错误码和消息。搜索、详情、目录和正文遇到此类失败时，
+  客户端能够进入错误态；正常空目录仍保持成功空结果，短剧目录回退路径继续适用。
+
+工作流核对源码提交、检查并应用两个补丁，再运行只读依赖模式的 Go 测试与漏洞扫描，
+并分别记录两个补丁的 SHA-256。未应用第二个补丁的旧后端会将某些业务错误包装成成功，
+例如把不可用作品的目录显示为“暂无目录”；该页面已有的重试入口不受影响。
 
 ## 现在怎么取后端源码
 
@@ -23,20 +30,25 @@ b237911 → ... → f667122 → ...               (后续提交以 LEGACY_COMMIT
 嵌在 App 目录内构建时可能把后端版本误记为外层 App 的提交。
 
 ```powershell
-$pinLine = Select-String -Path .github/workflows/android-apk.yml -Pattern "^\s*LEGACY_COMMIT: '([0-9a-f]{40})'$"
+$pinLine = Select-String -LiteralPath .github/workflows/android-apk.yml -Pattern "^\s*LEGACY_COMMIT: '([0-9a-f]{40})'$"
 $Commit = $pinLine.Matches.Groups[1].Value
 if (-not $Commit) { throw 'LEGACY_COMMIT is missing or invalid' }
-$securityPatch = (Resolve-Path patches//x-text-security.patch).Path
+$backendPatches = @(
+    (Resolve-Path -LiteralPath patches//x-text-security.patch).Path
+    (Resolve-Path -LiteralPath patches//web-business-errors.patch).Path
+)
 git -C ../ fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'Backend fetch failed' }
 git clone --no-hardlinks --no-checkout ../ ../-app-build
 if ($LASTEXITCODE -ne 0) { throw 'Backend clone failed' }
 git -C ../-app-build checkout --detach $Commit
 if ($LASTEXITCODE -ne 0) { throw 'Pinned backend checkout failed' }
-git -C ../-app-build apply --check $securityPatch
-if ($LASTEXITCODE -ne 0) { throw 'Security patch does not match the pinned source' }
-git -C ../-app-build apply $securityPatch
-if ($LASTEXITCODE -ne 0) { throw 'Security patch failed' }
+git -C ../-app-build apply --check @backendPatches
+if ($LASTEXITCODE -ne 0) { throw 'Backend patches do not match the pinned source' }
+git -C ../-app-build apply @backendPatches
+if ($LASTEXITCODE -ne 0) { throw 'Backend patches failed' }
+git -C ../-app-build diff --check
+if ($LASTEXITCODE -ne 0) { throw 'Backend patch whitespace check failed' }
 Push-Location ../-app-build
 try {
     go test -mod=readonly -count=1 ./...
@@ -53,12 +65,16 @@ Linux / macOS / Git Bash 对应的首次准备命令如下，仍从 App 根目�
 set -euo pipefail
 _commit="$(tr -d '\r' < .github/workflows/android-apk.yml | sed -n "s/^  LEGACY_COMMIT: '\([0-9a-f]\{40\}\)'$/\1/p")"
 [[ "$_commit" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid LEGACY_COMMIT' >&2; exit 1; }
-security_patch="$(pwd)/patches//x-text-security.patch"
+backend_patches=(
+  "$(pwd)/patches//x-text-security.patch"
+  "$(pwd)/patches//web-business-errors.patch"
+)
 git -C ../ fetch origin
 git clone --no-hardlinks --no-checkout ../ ../-app-build
 git -C ../-app-build checkout --detach "$_commit"
-git -C ../-app-build apply --check "$security_patch"
-git -C ../-app-build apply "$security_patch"
+git -C ../-app-build apply --check "${backend_patches[@]}"
+git -C ../-app-build apply "${backend_patches[@]}"
+git -C ../-app-build diff --check
 (
   cd ../-app-build
   go test -mod=readonly -count=1 ./...
@@ -67,10 +83,12 @@ git -C ../-app-build apply "$security_patch"
 bash scripts/build_backend.sh --jni ../-app-build
 ```
 
-升级后端固定提交时，先在干净克隆中执行 `git apply --check`。如果新提交已经升级该依赖，
-应同时移除安全补丁、CI 应用步骤与此处说明，不能静默忽略补丁失败。
+升级后端固定提交时，先在干净克隆中对两个补丁执行 `git apply --check`。如果新提交已经
+包含其中一项修复，应移除对应补丁，并同步更新 CI 应用步骤、补丁摘要和此处说明；不能
+静默忽略补丁失败，也不能因一个补丁已合入而遗漏另一个。
 
-决策与验证见[本轮审查记录](../../.agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md)。
+依赖修复的决策与验证见[前轮审查记录](../../.agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md)；
+Web 业务错误修复见[本轮审查报告](../../docs/review-2026-09-17-followup/README.md)。
 
 ## 为什么曾经有应用兼容补丁
 
@@ -107,7 +125,7 @@ bash scripts/build_backend.sh --jni ../-app-build
 
 - **生成补丁时必须按文件列举，不要用整仓 `git diff`**。本地可能存在不属于补丁的
   改动，历史上 `internal/endpoints/full.go` 就只出现过行尾差异。
-- 在固定基础提交的临时 worktree 中应用并跑完整 Go 测试，再更新 `LEGACY_COMMIT`。
+- 在固定基础提交的独立克隆中应用并跑完整 Go 测试，再更新 `LEGACY_COMMIT`。
 - 不能把补丁冲突当作可忽略错误。
 
 相关决策见

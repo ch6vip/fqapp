@@ -1,0 +1,295 @@
+diff --git a/internal/endpoints/web_business_errors_test.go b/internal/endpoints/web_business_errors_test.go
+new file mode 100644
+index 0000000..f4c4ebb
+--- /dev/null
++++ b/internal/endpoints/web_business_errors_test.go
+@@ -0,0 +1,192 @@
++package endpoints
++
++import (
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"reflect"
++	"testing"
++)
++
++type webBusinessFixture struct {
++	result interface{}
++	err    error
++	calls  int
++}
++
++func (f *webBusinessFixture) Handle(url.Values) (interface{}, error) {
++	f.calls++
++	return f.result, f.err
++}
++
++func webBusinessRequest(t *testing.T, s *Server, action, tab string) (int, map[string]interface{}) {
++	t.Helper()
++	q := url.Values{
++		"source": {"番茄"}, "book_id": {"book"}, "item_id": {"chapter"},
++		"query": {"query"}, "tab": {tab},
++	}
++	recorder := httptest.NewRecorder()
++	s.handleWebAPI(recorder, httptest.NewRequest(http.MethodGet, "/api/"+action+"?"+q.Encode(), nil))
++	var result map[string]interface{}
++	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
++		t.Fatalf("invalid bridge response: %v: %s", err, recorder.Body.String())
++	}
++	return recorder.Code, result
++}
++
++func webBusinessServer(fixture *webBusinessFixture) *Server {
++	return &Server{routes: map[string]Endpoint{
++		"search": fixture, "book_detail_legacy": fixture,
++		"directory": fixture, "content": fixture,
++	}}
++}
++
++func TestWebBridgePreservesUpstreamBusinessErrors(t *testing.T) {
++	for _, fixture := range []struct {
++		name string
++		code interface{}
++		data interface{}
++	}{
++		{"missing_book", float64(101104), nil},
++		{"failure_with_data", 101104, map[string]interface{}{"item_data_list": []interface{}{map[string]interface{}{"item_id": "rejected"}}}},
++		{"integer_status", int64(101104), nil},
++		{"json_number_status", json.Number("101104"), nil},
++		{"fraction_beside_zero", float64(0.5), nil},
++		{"fraction_beside_success", float64(200.5), nil},
++		{"json_number_fraction", json.Number("0.5"), nil},
++	} {
++		for _, action := range []string{"search", "detail", "directory", "content"} {
++			t.Run(fixture.name+"/"+action, func(t *testing.T) {
++				failure := map[string]interface{}{
++					"code": fixture.code, "message": "BOOK_NOT_EXIST_ERROR", "data": fixture.data,
++				}
++				endpoint := &webBusinessFixture{result: failure}
++				status, got := webBusinessRequest(t, webBusinessServer(endpoint), action, "小说")
++				if status != http.StatusOK {
++					t.Fatalf("business error HTTP status = %d, want 200 with original envelope", status)
++				}
++				// Normalize only the Go number representation for comparison; the
++				// entire failure envelope must survive without a data projection.
++				expectedJSON, err := json.Marshal(failure)
++				if err != nil {
++					t.Fatal(err)
++				}
++				var expected map[string]interface{}
++				if err := json.Unmarshal(expectedJSON, &expected); err != nil {
++					t.Fatal(err)
++				}
++				if !reflect.DeepEqual(got, expected) {
++					t.Fatalf("bridge erased business failure: got %#v, want %#v", got, expected)
++				}
++			})
++		}
++	}
++}
++
++func TestWebBridgeKeepsExistingSuccessEnvelopes(t *testing.T) {
++	for _, fixture := range []struct {
++		name string
++		code interface{}
++		omit bool
++	}{
++		{"upstream_zero", float64(0), false},
++		{"bridge_200", float64(200), false},
++		{"integer_zero", 0, false},
++		{"integer_200", int64(200), false},
++		{"json_number_zero", json.Number("0"), false},
++		{"json_number_200", json.Number("200"), false},
++		{"absent_code", nil, true},
++		{"null_code", nil, false},
++	} {
++		for _, action := range []string{"search", "detail", "directory", "content"} {
++			t.Run(fixture.name+"/"+action, func(t *testing.T) {
++				data := map[string]interface{}{"item_data_list": []interface{}{}}
++				upstream := map[string]interface{}{"data": data}
++				if !fixture.omit {
++					upstream["code"] = fixture.code
++				}
++				status, got := webBusinessRequest(t, webBusinessServer(&webBusinessFixture{result: upstream}), action, "小说")
++				if status != http.StatusOK || got["code"] != float64(200) || !reflect.DeepEqual(got["data"], data) {
++					t.Fatalf("valid empty payload changed: status %d, %#v", status, got)
++				}
++			})
++		}
++	}
++}
++
++func TestWebBridgeStillNormalizesSuccessfulDirectories(t *testing.T) {
++	for _, wrapped := range []bool{false, true} {
++		name := "unwrapped"
++		if wrapped {
++			name = "wrapped"
++		}
++		t.Run(name, func(t *testing.T) {
++			data := map[string]interface{}{"item_data_list": []interface{}{
++				map[string]interface{}{"item_id": "chapter-1", "title": "Chapter 1"},
++			}}
++			var result interface{} = data
++			if wrapped {
++				result = map[string]interface{}{"code": float64(0), "data": data}
++			}
++			status, got := webBusinessRequest(t, webBusinessServer(&webBusinessFixture{result: result}), "directory", "小说")
++			if status != http.StatusOK || got["code"] != float64(200) {
++				t.Fatalf("directory failed: status %d, %#v", status, got)
++			}
++			chapters := extractChapterList(got)
++			if len(chapters) != 1 || chapters[0]["id"] != "chapter-1" || chapters[0]["title"] != "Chapter 1" {
++				t.Fatalf("normalized directory changed: %#v", got)
++			}
++		})
++	}
++}
++
++func TestWebBridgePreservesTransportErrors(t *testing.T) {
++	for _, action := range []string{"search", "detail", "directory", "content"} {
++		t.Run(action, func(t *testing.T) {
++			status, got := webBusinessRequest(t, webBusinessServer(&webBusinessFixture{err: errors.New("upstream unavailable")}), action, "小说")
++			if status != http.StatusInternalServerError || got["code"] != float64(500) || got["message"] != "upstream unavailable" {
++				t.Fatalf("transport error changed: status %d, %#v", status, got)
++			}
++		})
++	}
++}
++
++func TestWebDirectoryChecksTheSelectedShortDramaResult(t *testing.T) {
++	failure := map[string]interface{}{"code": float64(101104), "message": "BOOK_NOT_EXIST_ERROR", "data": nil}
++	success := map[string]interface{}{"code": float64(0), "data": map[string]interface{}{"episodes": []interface{}{
++		map[string]interface{}{"video_id": "episode-1"},
++	}}}
++	for _, fixture := range []struct {
++		name          string
++		primary       interface{}
++		primaryErr    error
++		fallback      interface{}
++		wantCode      float64
++		wantFallbacks int
++	}{
++		{"primary_success", success, nil, failure, 200, 0},
++		{"primary_business_failure_falls_back", failure, nil, success, 200, 1},
++		{"primary_transport_failure_falls_back", nil, errors.New("directory unavailable"), success, 200, 1},
++		{"both_business_failures", failure, nil, failure, 101104, 1},
++	} {
++		t.Run(fixture.name, func(t *testing.T) {
++			primary := &webBusinessFixture{result: fixture.primary, err: fixture.primaryErr}
++			fallback := &webBusinessFixture{result: fixture.fallback}
++			s := &Server{routes: map[string]Endpoint{"directory": primary, "pseries": fallback}}
++			status, got := webBusinessRequest(t, s, "directory", "短剧")
++			if status != http.StatusOK || got["code"] != fixture.wantCode || fallback.calls != fixture.wantFallbacks {
++				t.Fatalf("selected result changed: status %d, response %#v, fallback calls %d", status, got, fallback.calls)
++			}
++			if fixture.wantCode == 200 {
++				chapters := extractChapterList(got)
++				if len(chapters) != 1 || chapters[0]["id"] != "episode-1" {
++					t.Fatalf("fallback episode lost: %#v", got)
++				}
++			} else if !reflect.DeepEqual(got, failure) {
++				t.Fatalf("final failure was not preserved: %#v", got)
++			}
++		})
++	}
++}
+diff --git a/internal/endpoints/webui.go b/internal/endpoints/webui.go
+index 8d1cec6..07140ef 100644
+--- a/internal/endpoints/webui.go
++++ b/internal/endpoints/webui.go
+@@ -67,6 +67,45 @@ func extractUpstreamData(result interface{}) interface{} {
+ 	return result
+ }
+ 
++// writeWebUpstreamResult checks the status before removing the upstream
++// envelope. HTTP 200 can still carry a business failure; keep its code, message,
++// and data intact so clients cannot mistake it for a successful empty result.
++// App note: fqapp/.agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
++func writeWebUpstreamResult(w http.ResponseWriter, result interface{}, transform func(interface{}) interface{}) {
++	if webUpstreamFailed(result) {
++		writeJSON(w, http.StatusOK, result)
++		return
++	}
++	data := extractUpstreamData(result)
++	if transform != nil {
++		data = transform(data)
++	}
++	writeJSON(w, http.StatusOK, webOK(data))
++}
++
++func webUpstreamFailed(result interface{}) bool {
++	envelope := asMap(result)
++	if envelope == nil {
++		return false
++	}
++	// Keep unwrapped payloads and the existing numeric success codes working.
++	// Compare fractional numbers directly: truncating 0.5 or 200.5 to int64
++	// would silently turn another explicit status into success.
++	switch code := envelope["code"].(type) {
++	case float64:
++		return code != 0 && code != 200
++	case int:
++		return code != 0 && code != 200
++	case int64:
++		return code != 0 && code != 200
++	case json.Number:
++		number, err := code.Float64()
++		return err != nil || (number != 0 && number != 200)
++	default:
++		return false
++	}
++}
++
+ // --- Search ---
+ // /api/search?source=番茄&query=xxx&page=1&tab=小说
+ func (s *Server) handleWebSearch(w http.ResponseWriter, q url.Values) {
+@@ -99,9 +138,7 @@ func (s *Server) handleWebSearch(w http.ResponseWriter, q url.Values) {
+ 		return
+ 	}
+ 
+-	data := extractUpstreamData(result)
+-	data = normalizeSearchTabs(data)
+-	writeJSON(w, http.StatusOK, webOK(data))
++	writeWebUpstreamResult(w, result, normalizeSearchTabs)
+ }
+ 
+ // normalizeSearchTabs copies "综合" tab data into individual content tabs
+@@ -198,7 +235,7 @@ func (s *Server) handleWebDetail(w http.ResponseWriter, q url.Values) {
+ 		return
+ 	}
+ 
+-	writeJSON(w, http.StatusOK, webOK(extractUpstreamData(result)))
++	writeWebUpstreamResult(w, result, nil)
+ }
+ 
+ // --- Directory ---
+@@ -236,15 +273,13 @@ func (s *Server) handleWebDirectory(w http.ResponseWriter, q url.Values) {
+ 		return
+ 	}
+ 
+-	data := extractUpstreamData(result)
+ 	if tab == "短剧" {
+ 		// Both the directory fallback and the pseries fallback produce
+ 		// episode lists; normalize either shape into the stable projection.
+-		data = transformSeriesData(data)
++		writeWebUpstreamResult(w, result, transformSeriesData)
+ 	} else {
+-		data = transformDirectoryData(data)
++		writeWebUpstreamResult(w, result, transformDirectoryData)
+ 	}
+-	writeJSON(w, http.StatusOK, webOK(data))
+ }
+ 
+ // seriesDataHasEpisodes reports whether an endpoint result contains at least
+@@ -496,7 +531,7 @@ func (s *Server) handleWebContent(w http.ResponseWriter, q url.Values) {
+ 		return
+ 	}
+ 
+-	writeJSON(w, http.StatusOK, webOK(extractUpstreamData(result)))
++	writeWebUpstreamResult(w, result, nil)
+ }
+ 
+ // --- Resolve ---
