@@ -228,13 +228,27 @@ NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 r
 | Secret | 用途 |
 | --- | --- |
 | `LEGACY_READONLY_SSH_KEY` | 仅授予 `` 读取权限的独立 SSH deploy key |
-| `ANDROID_DEBUG_KEYSTORE_BASE64` | 固定测试 keystore 的 Base64 内容，保持各次 APK 的签名一致 |
+| `RELEASE_KEYSTORE_BASE64` | 正式 keystore 的 Base64 内容 |
+| `RELEASE_STORE_PASSWORD` | 正式 keystore 的 storePassword |
+| `RELEASE_KEY_ALIAS` | 正式密钥别名（`fqapp`） |
+| `RELEASE_KEY_PASSWORD` | 正式密钥的 keyPassword |
 
-云端 APK 使用与当前本地验证包一致的**调试签名**，可以覆盖安装同签名的测试版本。
-CI 通过 `FQAPP_DEBUG_KEYSTORE` 显式传入临时 keystore 的绝对路径，并在编译前及 APK
-生成后核对预期证书指纹，避免使用 runner 其它默认目录中的调试证书。
-正式发布需要另行配置正式签名，并同步更新预期证书指纹。
-ELF/ZIP 的 16 KiB 对齐检查通过后，仍需在对应 Android 设备上验证实际播放。
+（`ANDROID_DEBUG_KEYSTORE_BASE64` 已不再被工作流使用：release 不再用调试密钥签名，
+JVM 单测也不需要签名。可以保留，也可以删除。）
+
+云端 APK 使用**正式 release 签名**，并开启 R8 混淆与资源裁剪。CI 先把 keystore 还原到
+临时目录并核对证书指纹，再在 APK 生成后由 `scripts/verify_android_apk.py` 比对
+`RELEASE_SIGNER_SHA256`；证书不符或根本没有签名都会直接失败，不会把错误签名的包发出去。
+完整设计、密钥存放位置、JNI keep 规则的理由以及换 R8 后必做的真机清单，见
+[正式签名与 R8 混淆](docs/release-signing.md)。
+
+> ⚠️ 正式密钥取代了早先的测试密钥，两者**不能互相覆盖安装**。已发布的
+> `v1.0.0-debug.20260906`、`v1.0.17` 都是旧签名的包，升级到正式签名版本需要**先卸载**
+> （会清除阅读历史；`device_pool.json` 会按上文自动重新注册）。`debug` 构建仍然使用
+> 调试签名，本地测试流程不受影响。
+
+ELF/ZIP 的 16 KiB 对齐检查通过后，仍需在对应 Android 设备上验证实际播放；
+开启 R8 后还必须额外确认 JNI 符号没被改名破坏，清单见上面那份签名文档。
 
 ### 4. 安装运行
 
@@ -627,7 +641,7 @@ adb logcat -s flutter
 - [x] 听书前台播放、目录、倍速和进度恢复
 - [x] 小说章节下载/离线缓存
 - [x] 发现类入口：搜索联想词与热搜、作者主页、排行榜、书评回复、章节试读预览
-- [ ] Release 签名配置
+- [x] Release 签名配置与 R8 混淆（见 [正式签名与 R8 混淆](docs/release-signing.md)）
 - [ ] 整本 TXT 导出
 
 ---

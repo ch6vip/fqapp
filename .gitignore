@@ -52,6 +52,13 @@ app.*.map.json
 /assets/config/device_pool.json
 /android/app/src/main/jniLibs/*/*.so
 
+# 正式签名材料：真品放在仓库之外，见 docs/release-signing.md。
+# android/keystore.properties 只是本机构建用的副本，绝不能入库。
+/android/keystore.properties
+*.jks
+*.keystore
+*.pepk
+
 # 本地临时文件
 _sessionzip/
 .workbuddy/

@@ -1,11 +1,43 @@
 import java.io.DataInputStream
 import java.io.IOException
+import java.util.Properties
 
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Release signing material is deliberately optional: without it the release
+// build still succeeds but produces an UNSIGNED package, so the task stays
+// usable for someone who only wants to inspect the build. What must never
+// happen is a release silently signed with the public debug key, so the
+// expected certificate is pinned in CI as RELEASE_SIGNER_SHA256 instead.
+//
+// Local builds read android/keystore.properties, which is git-ignored and kept
+// outside version control. CI supplies the same four values as environment
+// variables. See docs/release-signing.md.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.isFile) file.inputStream().use { load(it) }
+}
+
+fun signingValue(key: String, vararg environmentNames: String): String? =
+    keystoreProperties.getProperty(key)?.takeIf { it.isNotBlank() }
+        ?: environmentNames.firstNotNullOfOrNull { name ->
+            System.getenv(name)?.takeIf { it.isNotBlank() }
+        }
+
+val releaseStoreFile = signingValue("storeFile", "RELEASE_KEYSTORE_FILE")
+val releaseStorePassword = signingValue("storePassword", "RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "RELEASE_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "RELEASE_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it != null }
 
 android {
     namespace = "com.fqapp.fqapp"
@@ -55,13 +87,36 @@ android {
                 storeFile = file(keystorePath)
             }
         }
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                // minSdk is 24, so V2 alone installs on every supported device;
+                // V1 stays enabled because some OEM installers on Android 7
+                // still verify it.
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // The release APK carries its own signing identity. Debug builds
+            // keep the debug key so `flutter run` and overwrite-installing a
+            // local test build keep working. A package signed by the older test
+            // key cannot be overwritten by these -- it must be uninstalled.
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
