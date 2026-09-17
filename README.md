@@ -143,7 +143,7 @@ fqapp/
 
 ### 1. 编译后端并同步运行时文件
 
-先按[后端准备说明](patches//README.md)检出工作流固定的版本并应用安全依赖补丁，
+先按[后端准备说明](patches//README.md)检出工作流固定的版本并应用依赖安全与 Web 业务错误补丁，
 得到 `../-app-build`。以下命令用于重建已经准备好的源码。
 
 脚本默认编译当前宿主系统与架构的独立后端，并同步运行时资源。Android 构建必须加
@@ -219,9 +219,9 @@ NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 r
 `` 是私有仓库，CI 以[工作流](.github/workflows/android-apk.yml)中的 `LEGACY_COMMIT`
 作为后端源码版本的唯一来源。该版本包含小说图文解密、短剧剧集标题索引、章评／段评、
 短剧系列详情及音频内容密钥派生契约。原应用兼容补丁已并入后端历史并退休；
-目前另有一个仅升级 `golang.org/x/text` 的固定安全依赖补丁。
-本地构建也须按[后端准备说明](patches//README.md)选择同一源码版本并应用该补丁。
-完整 Go 测试与依赖漏洞扫描通过后再构建 JNI，构建报告记录源码提交和补丁 SHA-256。
+目前应用两个固定补丁：升级 `golang.org/x/text`，以及保留 Web 桥接接口的上游业务错误。
+本地构建也须按[后端准备说明](patches//README.md)选择同一源码版本并应用这两个补丁。
+完整 Go 测试与依赖漏洞扫描通过后再构建 JNI，构建报告记录源码提交和两个补丁的 SHA-256。
 本地其它未提交的后端改动不进入云端构建。
 本仓库已配置以下 Actions secrets，复制工作流到其它仓库时需要配置对应内容：
 
@@ -319,7 +319,7 @@ Kotlin 通过 `System.loadLibrary("")` 加载，再调用匹配的 JNI 启停入
 Android 上 JNI 失败会显示启动错误与重试入口，不回退到 `Process.start`。
 
 安装 NDK（例如 `sdkmanager "ndk;28.2.13676358"`）并按[准备说明](patches//README.md)
-检出源码、应用依赖补丁后编译：
+检出源码、应用两个固定补丁后编译：
 
 ```powershell
 .\scripts\build_backend.ps1 -Jni ../-app-build
