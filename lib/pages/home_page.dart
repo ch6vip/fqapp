@@ -33,9 +33,22 @@ class _HomePageState extends ConsumerState<HomePage> {
     '让好故事，陪你走过日常',
   ];
 
+  static const _gridPadding = 20.0;
+
   final ScrollController _scroll = ScrollController();
   Timer? _loadMoreTimer;
   bool _visible = false;
+
+  /// Item keys whose entrance animation already played. A sliver disposes the
+  /// children that leave its cache extent, so without this each scroll back up
+  /// the feed replays a fade layer for every card it re-mounts.
+  final _entered = <String>{};
+
+  /// The card grid, reused while it still describes the same feed.
+  Widget? _gridSliver;
+  List<MediaItem>? _gridItems;
+  int? _gridTabIndex;
+  double? _gridWidth;
 
   @override
   void initState() {
@@ -122,31 +135,44 @@ class _HomePageState extends ConsumerState<HomePage> {
                         color: HomePalette.accent,
                         backgroundColor: palette.surface,
                         onRefresh: notifier.load,
-                        child: CustomScrollView(
-                          key: const Key('home_feed'),
-                          controller: _scroll,
-                          physics: const BouncingScrollPhysics(
-                            parent: AlwaysScrollableScrollPhysics(),
+                        // The grid used to measure itself from inside a sliver
+                        // (SliverLayoutBuilder). A sliver's constraints carry
+                        // the scroll offset, so they differ on every scroll
+                        // frame -- which re-ran the builder, handed the sliver
+                        // a fresh SliverChildBuilderDelegate, and rebuilt every
+                        // visible card for the whole duration of the scroll.
+                        // Measuring once here keeps the grid out of the scroll
+                        // path completely.
+                        child: LayoutBuilder(
+                          builder: (context, constraints) => CustomScrollView(
+                            key: const Key('home_feed'),
+                            controller: _scroll,
+                            physics: const BouncingScrollPhysics(
+                              parent: AlwaysScrollableScrollPhysics(),
+                            ),
+                            slivers: [
+                              SliverToBoxAdapter(
+                                child: HomeHero(
+                                  onSearch: _openSearch,
+                                  onRanks: _openRanks,
+                                  onRefresh: notifier.load,
+                                  refreshing: state.isLoading,
+                                ),
+                              ),
+                              SliverPersistentHeader(
+                                pinned: true,
+                                delegate: HomeTabBarDelegate(
+                                  selectedIndex: state.tabIndex,
+                                  onSelect: notifier.selectTab,
+                                  extent: 60 + (textScale - 1).clamp(0, 2) * 24,
+                                ),
+                              ),
+                              ..._contentSlivers(
+                                state,
+                                constraints.maxWidth - _gridPadding * 2,
+                              ),
+                            ],
                           ),
-                          slivers: [
-                            SliverToBoxAdapter(
-                              child: HomeHero(
-                                onSearch: _openSearch,
-                                onRanks: _openRanks,
-                                onRefresh: notifier.load,
-                                refreshing: state.isLoading,
-                              ),
-                            ),
-                            SliverPersistentHeader(
-                              pinned: true,
-                              delegate: HomeTabBarDelegate(
-                                selectedIndex: state.tabIndex,
-                                onSelect: notifier.selectTab,
-                                extent: 60 + (textScale - 1).clamp(0, 2) * 24,
-                              ),
-                            ),
-                            ..._contentSlivers(state),
-                          ],
                         ),
                       ),
               ),
@@ -157,7 +183,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  List<Widget> _contentSlivers(HomeState state) {
+  List<Widget> _contentSlivers(HomeState state, double gridWidth) {
     final items = _visibleItems(state);
     if (items.isEmpty) {
       if (state.isLoading || state.hasMore) {
@@ -200,28 +226,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             subtitle: _captions[state.tabIndex],
           ),
         ),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          sliver: SliverLayoutBuilder(
-            builder: (context, constraints) => SliverGrid(
-              gridDelegate: homeGridDelegate(
-                context,
-                constraints.crossAxisExtent,
-              ),
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final item = rest[index];
-                return HomeEntrance(
-                  key: ValueKey('${item.kind}:${item.id}'),
-                  index: index,
-                  child: HomeMediaCard(
-                    item: item,
-                    onTap: () => _openItem(item),
-                  ),
-                );
-              }, childCount: rest.length),
-            ),
-          ),
-        ),
+        _gridSliverFor(state, rest, gridWidth),
       ],
       if (state.isLoadMore)
         const SliverToBoxAdapter(
@@ -244,6 +249,56 @@ class _HomePageState extends ConsumerState<HomePage> {
       else
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
     ];
+  }
+
+  /// The card grid, reused verbatim while it still describes the same feed.
+  ///
+  /// Widgets are immutable descriptions, so handing the framework back the
+  /// identical instance lets it skip the whole visible card subtree when a
+  /// rebuild only carries a new loading flag. Everything the grid depends on
+  /// that is *not* the item list -- theme, text scale, device pixel ratio --
+  /// reaches the cards through inherited widgets, which mark them dirty on
+  /// their own, so reusing the instance cannot pin a stale layout.
+  ///
+  /// Note: 网格曾在 sliver 内部量宽度，导致每帧重建全部可见卡片；见
+  /// .agents/notes/implemented/bug-fix/2026-09-18-home-scroll-cost.md
+  Widget _gridSliverFor(
+    HomeState state,
+    List<MediaItem> rest,
+    double gridWidth,
+  ) {
+    final cached = _gridSliver;
+    if (cached != null &&
+        identical(_gridItems, state.items) &&
+        _gridTabIndex == state.tabIndex &&
+        _gridWidth == gridWidth) {
+      return cached;
+    }
+    _gridItems = state.items;
+    _gridTabIndex = state.tabIndex;
+    _gridWidth = gridWidth;
+    final cardWidth = homeCardWidth(context, gridWidth);
+    return _gridSliver = SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: _gridPadding),
+      sliver: SliverGrid(
+        gridDelegate: homeGridDelegate(context, gridWidth),
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final item = rest[index];
+          final key = '${item.kind}:${item.id}';
+          return HomeEntrance(
+            key: ValueKey(key),
+            index: index,
+            // Only the first appearance of an item animates; see HomeEntrance.
+            animate: _entered.add(key),
+            child: HomeMediaCard(
+              item: item,
+              coverWidth: cardWidth,
+              onTap: () => _openItem(item),
+            ),
+          );
+        }, childCount: rest.length),
+      ),
+    );
   }
 
   void _openSearch() {

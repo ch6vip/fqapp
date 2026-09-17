@@ -25,10 +25,10 @@ IconData homeKindIcon(String kind) => switch (kind) {
 };
 
 /// Fixed cover proportions, with a measured text allowance for large fonts.
-SliverGridDelegate homeGridDelegate(BuildContext context, double width) {
+int _homeColumns(BuildContext context, double width) {
   final scaler = MediaQuery.textScalerOf(context);
   final largeType = scaler.scale(14) > 21;
-  final columns = largeType && width < 560
+  return largeType && width < 560
       ? 2
       : width < 300
       ? 2
@@ -37,9 +37,21 @@ SliverGridDelegate homeGridDelegate(BuildContext context, double width) {
       : width < 740
       ? 4
       : 5;
-  final cardWidth = (width - (columns - 1) * 14) / columns;
+}
+
+/// The laid-out width of one cover cell. Shared with the cards so the decoded
+/// cover size matches the cell exactly, which lets a card skip a
+/// [LayoutBuilder] of its own.
+double homeCardWidth(BuildContext context, double width) {
+  final columns = _homeColumns(context, width);
+  return (width - (columns - 1) * 14) / columns;
+}
+
+SliverGridDelegate homeGridDelegate(BuildContext context, double width) {
+  final scaler = MediaQuery.textScalerOf(context);
+  final cardWidth = homeCardWidth(context, width);
   return SliverGridDelegateWithFixedCrossAxisCount(
-    crossAxisCount: columns,
+    crossAxisCount: _homeColumns(context, width),
     crossAxisSpacing: 14,
     mainAxisSpacing: 22,
     mainAxisExtent:
@@ -144,15 +156,25 @@ class HomeMediaCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
 
-  const HomeMediaCard({super.key, required this.item, required this.onTap});
+  /// Laid-out cell width. The feed already knows it (it sized the grid
+  /// delegate with it), and passing it in avoids a [LayoutBuilder] per card.
+  final double? coverWidth;
+
+  const HomeMediaCard({
+    super.key,
+    required this.item,
+    required this.onTap,
+    this.coverWidth,
+  });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final scaler = MediaQuery.textScalerOf(context);
-    return LayoutBuilder(
-      builder: (context, constraints) => HomePressable(
+    return _CardWidth(
+      width: coverWidth,
+      builder: (width) => HomePressable(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Column(
@@ -168,7 +190,7 @@ class HomeMediaCard extends StatelessWidget {
                     children: [
                       StoryCover(
                         item: item,
-                        cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
+                        cacheWidth: (width * pixelRatio).ceil(),
                       ),
                       Positioned(
                         left: 7,
@@ -316,6 +338,24 @@ class HomeSectionHeader extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Hands the child its available width, either measured here or supplied by a
+/// caller that already knows it.
+class _CardWidth extends StatelessWidget {
+  final double? width;
+  final Widget Function(double width) builder;
+
+  const _CardWidth({required this.width, required this.builder});
+
+  @override
+  Widget build(BuildContext context) {
+    final known = width;
+    if (known != null) return builder(known);
+    return LayoutBuilder(
+      builder: (context, constraints) => builder(constraints.maxWidth),
     );
   }
 }

@@ -92,15 +92,27 @@ class _HomePressableState extends State<HomePressable>
   );
 }
 
+/// Fades and lifts a newly arrived child into place.
+///
+/// The fade costs an [Opacity] layer for as long as it runs, and a sliver
+/// disposes the children that leave its cache extent, so a child that is
+/// re-mounted by scrolling back up the feed must opt out ([animate] false) or
+/// every scroll past the first screenful replays a layer per card.
 class HomeEntrance extends StatelessWidget {
   final int index;
+  final bool animate;
   final Widget child;
 
-  const HomeEntrance({super.key, this.index = 0, required this.child});
+  const HomeEntrance({
+    super.key,
+    this.index = 0,
+    this.animate = true,
+    required this.child,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) return child;
+    if (!animate || MediaQuery.disableAnimationsOf(context)) return child;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: 380 + index.clamp(0, 5) * 45),
