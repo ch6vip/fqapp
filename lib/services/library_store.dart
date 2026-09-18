@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'reader_underline_store.dart';
+
 abstract interface class ReaderStore {
   Future<Map<String, dynamic>?> historyEntry(String id);
 
@@ -104,6 +106,8 @@ class LibraryStore implements ReaderStore {
   Future<void> init() async {
     _histBox = await Hive.openBox(_histBoxName);
     _readTimeBox = await Hive.openBox(_readTimeBoxName);
+    // Hive has a directory now, so optional boxes may be opened too.
+    ReaderUnderlineStore.hiveReady = true;
     await _migrateFromSp();
     // Copy typed legacy media before a novel can reuse its original key.
     // The originals remain available if a write fails or migration is retried.

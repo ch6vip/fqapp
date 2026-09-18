@@ -11,10 +11,11 @@ import '../services/api_client.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
-import '../services/reader_history.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
+import '../services/reader_history.dart';
 import '../services/reader_preferences.dart';
+import '../services/reader_underline_store.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
 import '../widgets/reader/reader_bubble.dart';
@@ -23,6 +24,7 @@ import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_illustration.dart';
 import '../widgets/reader/reader_ideas_sheet.dart';
 import '../widgets/reader/reader_paged_view.dart';
+import '../widgets/reader/reader_paragraph_menu.dart';
 import '../widgets/reader/reader_status_bar.dart';
 import '../widgets/reader/reader_theme.dart';
 import 'audio_page.dart';
@@ -54,6 +56,9 @@ class ReaderPage extends StatefulWidget {
   final ReaderDevice? readerDevice;
   final ReaderImageProviderFactory? imageProviderFactory;
 
+  /// Local 划线 storage. Defaults to the device-wide box.
+  final ReaderUnderlineStore? underlineStore;
+
   /// Paragraph ideas for the current chapter. When both this and
   /// [commentResolver] are null the reader fetches them itself, unless a
   /// [chapterCache] was injected (an injected cache marks the caller as
@@ -75,6 +80,7 @@ class ReaderPage extends StatefulWidget {
     this.imageProviderFactory,
     this.ideasLoader,
     this.commentResolver,
+    this.underlineStore,
   });
 
   @override
@@ -237,6 +243,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// arrive even though the text, font and viewport are unchanged.
   int _ideasRevision = 0;
   int _layoutIdeasRevision = -1;
+
+  /// Paragraph ids of this chapter carrying a locally saved 划线.
+  Set<int> _underlines = const {};
+  int _underlineRevision = 0;
+  int _layoutUnderlineRevision = -1;
   int _textOffset = 0;
   int _pageIndex = 0;
   Map<String, dynamic>? _savedPosition;
@@ -371,6 +382,101 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Long-press actions on a paragraph: 复制 / 从本段听 / 划线.
+  ///
+  /// Note: .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
+  Future<void> _showParagraphActions(ReaderContentBlock block) async {
+    final paraIndex = block.paraIndex;
+    if (paraIndex == null) return;
+    final action = await ReaderParagraphMenu.show(
+      context,
+      preset: _preferences.themePreset,
+      underlined: _underlines.contains(paraIndex),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case ReaderParagraphAction.copy:
+        await Clipboard.setData(ClipboardData(text: block.text));
+        if (mounted) _showMessage('已复制');
+      case ReaderParagraphAction.listen:
+        await _openListening();
+      case ReaderParagraphAction.underline:
+        await _toggleUnderline(block, add: true);
+      case ReaderParagraphAction.removeUnderline:
+        await _toggleUnderline(block, add: false);
+    }
+  }
+
+  Future<void> _toggleUnderline(
+    ReaderContentBlock block, {
+    required bool add,
+  }) async {
+    final paraIndex = block.paraIndex;
+    if (paraIndex == null) return;
+    final store = widget.underlineStore ?? ReaderUnderlineStore.instance;
+    try {
+      if (add) {
+        await store.add(
+          ReaderUnderline(
+            bookId: widget.bookId,
+            chapterId: _chapter.itemId,
+            paraIndex: paraIndex,
+            blockIndex: block.index - 1,
+            text: block.text,
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+      } else {
+        await store.remove(
+          ReaderUnderlineStore.keyFor(
+            bookId: widget.bookId,
+            chapterId: _chapter.itemId,
+            paraIndex: paraIndex,
+            blockIndex: block.index - 1,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) _showMessage(add ? '划线保存失败，请重试' : '取消划线失败，请重试');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      final next = Set<int>.of(_underlines);
+      if (add) {
+        next.add(paraIndex);
+      } else {
+        next.remove(paraIndex);
+      }
+      _underlines = next;
+      ++_underlineRevision;
+    });
+    _showMessage(add ? '已划线' : '已取消划线');
+  }
+
+  /// Loads the saved 划线 ids of this chapter.
+  Future<void> _loadUnderlines() async {
+    final generation = _loadGeneration;
+    final chapterId = _chapter.itemId;
+    final store = widget.underlineStore ?? ReaderUnderlineStore.instance;
+    Set<int> ids;
+    try {
+      final saved = await store.load(widget.bookId, chapterId);
+      ids = {
+        for (final entry in saved.values)
+          if (entry.paraIndex != null) entry.paraIndex!,
+      };
+    } catch (_) {
+      ids = const {};
+    }
+    if (!mounted || generation != _loadGeneration) return;
+    if (chapterId != _chapter.itemId) return;
+    setState(() {
+      _underlines = ids;
+      ++_underlineRevision;
+    });
+  }
+
   void _changeBrightness(double value, {bool followSystem = false}) {
     _preferencesDirty = true;
     final generation = ++_brightnessGeneration;
@@ -417,7 +523,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final resumed = state == AppLifecycleState.resumed;
     if (!resumed && _appActive) {
       _stopAutoTurn();
-        ++_deviceGeneration;
+      ++_deviceGeneration;
       unawaited(_device.suspend());
       _settleReadTime();
       _sessionActive = false;
@@ -480,12 +586,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _chapterContent = content;
         _savedPosition = saved;
         _loading = false;
-        // Ideas belong to the chapter, so they are dropped on every load and
-        // fetched again; a stale count would otherwise point at another chapter.
+        // Ideas and 划线 belong to the chapter, so they are dropped on every
+        // load and fetched again; a stale entry would point at another chapter.
         _ideas = ChapterIdeas.empty;
+        _underlines = const {};
       });
       unawaited(_prefetchAround(_index));
       unawaited(_loadIdeas(chapter, generation));
+      unawaited(_loadUnderlines());
       if (!loaded.fetched && content.needsImageRefresh()) {
         unawaited(_refreshCachedChapter(chapter));
       }
@@ -861,14 +969,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     );
     if (_chapterLayout?.spec == spec &&
         _layoutMode == _preferences.pageMode &&
-        _layoutIdeasRevision == _ideasRevision) {
+        _layoutIdeasRevision == _ideasRevision &&
+        _layoutUnderlineRevision == _underlineRevision) {
       return _chapterLayout!;
     }
     // Reuse the measured text layout only when nothing that feeds it changed.
     // Switching page mode keeps the same spec and page-insensitive measurements,
-    // so it must not re-measure — but a change in paragraph bubbles must.
+    // so it must not re-measure — but bubbles or 划线 must.
     final reusable =
-        _chapterLayout?.spec == spec && _layoutIdeasRevision == _ideasRevision;
+        _chapterLayout?.spec == spec &&
+        _layoutIdeasRevision == _ideasRevision &&
+        _layoutUnderlineRevision == _underlineRevision;
     final layout = reusable
         ? _chapterLayout!
         : ReaderChapterLayout(
@@ -877,9 +988,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             spec: spec,
             paragraphBubbles: _ideas.bubbleCounts,
             paragraphBubbleVariants: _ideas.bubbleVariants,
+            underlinedParagraphs: _underlines,
             bubbleBuilder: _buildParagraphBubble,
           );
     _layoutIdeasRevision = _ideasRevision;
+    _layoutUnderlineRevision = _underlineRevision;
     final initialRestore = _needsRestore;
     final restored = initialRestore
         ? layout.restore(
@@ -1495,12 +1608,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   onBoundaryLanded: (direction) {
                     // _pageIndex never reports boundary pages, so the book end
                     // stops auto turn from here.
-                    if (direction > 0 &&
-                        _index == widget.chapters.length - 1) {
+                    if (direction > 0 && _index == widget.chapters.length - 1) {
                       _stopAutoTurn();
                     }
                   },
                   imageProviderFactory: widget.imageProviderFactory,
+                  onParagraphLongPress: (block) =>
+                      unawaited(_showParagraphActions(block)),
                 )
               : _buildScrollContent(layout),
         );
@@ -1607,6 +1721,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 block: layout.blocks[itemIndex],
                 spec: spec,
                 imageProviderFactory: widget.imageProviderFactory,
+                onParagraphLongPress: (block) =>
+                    unawaited(_showParagraphActions(block)),
               ),
             );
           }

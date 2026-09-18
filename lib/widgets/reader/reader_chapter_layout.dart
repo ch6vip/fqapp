@@ -120,6 +120,9 @@ class ReaderContentBlock {
   /// Which official mask the bubble uses; see [bubbleCount].
   final ParagraphBubbleVariant? bubbleVariant;
 
+  /// Whether this paragraph carries a locally saved 划线.
+  final bool underlined;
+
   const ReaderContentBlock({
     required this.index,
     required this.text,
@@ -134,6 +137,7 @@ class ReaderContentBlock {
     this.paraIndex,
     this.bubbleCount,
     this.bubbleVariant,
+    this.underlined = false,
   });
 
   int get end => start + text.length;
@@ -202,6 +206,7 @@ class ReaderChapterLayout {
     required ReaderLayoutSpec spec,
     Map<int, int> paragraphBubbles = const {},
     Map<int, ParagraphBubbleVariant> paragraphBubbleVariants = const {},
+    Set<int> underlinedParagraphs = const {},
     Widget Function(int paraIndex, int count, ParagraphBubbleVariant variant)?
     bubbleBuilder,
   }) {
@@ -232,10 +237,13 @@ class ReaderChapterLayout {
       final bubble = bubbleCount == null || bubbleBuilder == null
           ? null
           : bubbleBuilder(paraIndex!, bubbleCount, bubbleVariant);
+      final blockIndex = blocks.length;
+      final underlined =
+          paraIndex != null && underlinedParagraphs.contains(paraIndex);
       final block = element is ChapterImage
           ? _measureImage(
               element,
-              index: blocks.length,
+              index: blockIndex,
               start: offset,
               legacyStart: legacyStart,
               top: top,
@@ -243,7 +251,7 @@ class ReaderChapterLayout {
             )
           : _measureBlock(
               text,
-              index: blocks.length,
+              index: blockIndex,
               start: offset,
               legacyStart: legacyStart,
               top: top,
@@ -252,6 +260,7 @@ class ReaderChapterLayout {
               bubbleCount: bubbleCount,
               bubbleVariant: bubbleVariant,
               bubble: bubble,
+              underlined: underlined,
             );
       blocks.add(block);
       // An absent title contributes neither text nor a leading newline.
@@ -392,9 +401,19 @@ class ReaderChapterLayout {
     int? bubbleCount,
     ParagraphBubbleVariant? bubbleVariant,
     Widget? bubble,
+    bool underlined = false,
   }) {
     final title = index == 0;
     final style = title ? spec.titleStyle : spec.bodyStyle;
+    final decoration = underlined && !title
+        ? TextDecoration.underline
+        : TextDecoration.none;
+    final bodyStyle = style.copyWith(
+      decoration: decoration,
+      decorationColor: style.color,
+      decorationStyle: TextDecorationStyle.solid,
+      decorationThickness: 1.6,
+    );
     final align = title ? spec.titleAlign : TextAlign.justify;
     final scale = spec.textScaler.scale(style.fontSize!) / style.fontSize!;
     final indent = math.min(
@@ -414,7 +433,7 @@ class ReaderChapterLayout {
         ? null
         : WidgetSpan(alignment: PlaceholderAlignment.middle, child: bubble);
     final span = TextSpan(
-      style: style,
+      style: underlined && !title ? bodyStyle : style,
       children: [
         // RenderParagraph wraps inline children in an auto-scaling box
         // (_AutoScaleInlineWidget) using the surrounding span's font size, so
@@ -440,6 +459,7 @@ class ReaderChapterLayout {
         paraIndex: paraIndex,
         bubbleCount: bubbleCount,
         bubbleVariant: bubbleVariant,
+        underlined: underlined,
       );
     }
     final painter = TextPainter(
@@ -645,23 +665,35 @@ class ReaderBlockContent extends StatelessWidget {
   final ReaderLayoutSpec spec;
   final ReaderImageProviderFactory? imageProviderFactory;
 
+  /// Long-press target for a text paragraph (复制 / 从本段听 / 划线).
+  final void Function(ReaderContentBlock block)? onParagraphLongPress;
+
   const ReaderBlockContent({
     super.key,
     required this.block,
     required this.spec,
     this.imageProviderFactory,
+    this.onParagraphLongPress,
   });
 
   @override
   Widget build(BuildContext context) {
     final image = block.illustration;
-    return image != null
-        ? ReaderIllustration(
-            key: ValueKey('reader-illustration-${block.index}'),
-            image: image,
-            providerFactory: imageProviderFactory,
-          )
-        : ReaderBlockText(block: block, spec: spec);
+    if (image != null) {
+      return ReaderIllustration(
+        key: ValueKey('reader-illustration-${block.index}'),
+        image: image,
+        providerFactory: imageProviderFactory,
+      );
+    }
+    final text = ReaderBlockText(block: block, spec: spec);
+    if (block.isTitle || onParagraphLongPress == null) return text;
+    return GestureDetector(
+      key: ValueKey('reader-paragraph-press-${block.index - 1}'),
+      behavior: HitTestBehavior.translucent,
+      onLongPress: () => onParagraphLongPress!(block),
+      child: text,
+    );
   }
 }
 

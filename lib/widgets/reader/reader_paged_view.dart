@@ -16,6 +16,9 @@ class ReaderPagedView extends StatefulWidget {
   final VoidCallback onDragStart;
   final ReaderImageProviderFactory? imageProviderFactory;
 
+  /// Long-press target for a text paragraph (复制 / 从本段听 / 划线).
+  final void Function(ReaderContentBlock block)? onParagraphLongPress;
+
   /// Page-turn animation; see [ReaderPageTurnStyle]. The widgets for the
   /// boundary pages beyond the chapter (章末 / 上一章) are optional.
   final ReaderPageTurnStyle turnStyle;
@@ -43,6 +46,7 @@ class ReaderPagedView extends StatefulWidget {
     this.startPage,
     this.onBoundaryLanded,
     this.imageProviderFactory,
+    this.onParagraphLongPress,
   });
 
   @override
@@ -308,12 +312,14 @@ class ReaderPageContent extends StatelessWidget {
   final ReaderTextPage page;
   final ReaderLayoutSpec spec;
   final ReaderImageProviderFactory? imageProviderFactory;
+  final void Function(ReaderContentBlock block)? onParagraphLongPress;
 
   const ReaderPageContent({
     super.key,
     required this.page,
     required this.spec,
     this.imageProviderFactory,
+    this.onParagraphLongPress,
   });
 
   @override
@@ -338,16 +344,22 @@ class ReaderPageContent extends StatelessWidget {
                   : Semantics(
                       label: fragment.text,
                       excludeSemantics: true,
-                      child: ClipRect(
-                        child: OverflowBox(
-                          alignment: Alignment.topLeft,
-                          minHeight: fragment.block.height,
-                          maxHeight: fragment.block.height,
-                          child: Transform.translate(
-                            offset: Offset(0, -fragment.sourceTop),
-                            child: ReaderBlockText(
-                              block: fragment.block,
-                              spec: spec,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onLongPress: onParagraphLongPress == null
+                            ? null
+                            : () => onParagraphLongPress!(fragment.block),
+                        child: ClipRect(
+                          child: OverflowBox(
+                            alignment: Alignment.topLeft,
+                            minHeight: fragment.block.height,
+                            maxHeight: fragment.block.height,
+                            child: Transform.translate(
+                              offset: Offset(0, -fragment.sourceTop),
+                              child: ReaderBlockText(
+                                block: fragment.block,
+                                spec: spec,
+                              ),
                             ),
                           ),
                         ),
