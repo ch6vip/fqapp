@@ -32,10 +32,6 @@ class ReaderControls extends StatefulWidget {
   final bool autoTurnActive;
   final VoidCallback onAutoTurn;
 
-  /// 系统朗读: in-reader TTS narration.
-  final bool ttsActive;
-  final VoidCallback onTtsRead;
-
   const ReaderControls({
     super.key,
     required this.preferences,
@@ -59,8 +55,6 @@ class ReaderControls extends StatefulWidget {
     required this.onListen,
     this.autoTurnActive = false,
     required this.onAutoTurn,
-    this.ttsActive = false,
-    required this.onTtsRead,
   });
 
   @override
@@ -265,27 +259,6 @@ class _ReaderControlsState extends State<ReaderControls> {
                   ),
                   label: Text(
                     widget.autoTurnActive ? '停止自动翻页' : '自动翻页',
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: TextButton.icon(
-                  key: const ValueKey('reader-tts-read'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: widget.ttsActive
-                        ? preset.accentColor
-                        : preset.textColor,
-                  ),
-                  onPressed: widget.onTtsRead,
-                  icon: Icon(
-                    widget.ttsActive
-                        ? Icons.pause_circle_outline_rounded
-                        : Icons.record_voice_over_outlined,
-                    size: 18,
-                  ),
-                  label: Text(
-                    widget.ttsActive ? '停止朗读' : '系统朗读',
                     style: const TextStyle(fontSize: 13),
                   ),
                 ),

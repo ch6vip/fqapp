@@ -44,7 +44,6 @@ dependencies:
   flutter_riverpod: ^3.4.3
   html: 0.15.6
   flutter_lucide: ^1.43.0
-  flutter_tts: ^4.2.5
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -3,7 +3,6 @@ import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 
 import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
@@ -120,14 +119,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       if (event.logicalKey == LogicalKeyboardKey.audioVolumeDown) {
         _pauseListenFollow();
         _stopAutoTurn();
-        unawaited(_stopTtsRead());
         unawaited(_turnPage(1));
         return true;
       }
       if (event.logicalKey == LogicalKeyboardKey.audioVolumeUp) {
         _pauseListenFollow();
         _stopAutoTurn();
-        unawaited(_stopTtsRead());
         unawaited(_turnPage(-1));
         return true;
       }
@@ -140,7 +137,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       _stopAutoTurn();
       return;
     }
-    unawaited(_stopTtsRead());
     _controlsVisible = false;
     _autoTurnTimer = Timer.periodic(
       Duration(seconds: _preferences.autoTurnSeconds),
@@ -171,8 +167,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!mounted ||
         !_preferences.listeningFollow ||
         _autoTurnTimer != null ||
-        _ttsStarting ||
-        _ttsActive ||
         _controlsVisible ||
         _loading ||
         _error != null) {
@@ -190,120 +184,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _scrollController.jumpTo(progress * position.maxScrollExtent);
       }
     }
-  }
-
-  /// 边走边读: system TTS narrates the reader page by page and flips forward
-  /// on completion — the official AudioTtsDepend behaviour with our own
-  /// engine. Any tap/drag/chapter change stops it.
-  FlutterTts? _tts;
-  bool _ttsStarting = false;
-  bool _ttsActive = false;
-
-  /// Bumped whenever a start begins or is stopped. An in-flight startup that
-  /// resumes after a platform await checks it, so it can neither install
-  /// handlers nor setState/speak after the reader moved on or was disposed.
-  int _ttsGeneration = 0;
-
-  Future<void> _toggleTtsRead() async {
-    if (_ttsActive || _ttsStarting) {
-      await _stopTtsRead();
-      return;
-    }
-    _ttsStarting = true;
-    _controlsVisible = false;
-    _stopAutoTurn();
-    final generation = ++_ttsGeneration;
-    final tts = _tts ??= FlutterTts();
-    try {
-      // Android reports unavailable languages as 0 instead of throwing. Keep
-      // startup exclusive with listening-follow and cancel after every await.
-      // See .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
-      final language = await tts.setLanguage('zh-CN');
-      if (!mounted || generation != _ttsGeneration) return;
-      if (language != 1 && language != true) {
-        throw StateError('Chinese voice unavailable');
-      }
-      await tts.setSpeechRate(0.5);
-      if (!mounted || generation != _ttsGeneration) return;
-      await tts.awaitSpeakCompletion(true);
-    } catch (_) {
-      if (mounted && generation == _ttsGeneration) {
-        setState(() => _ttsStarting = false);
-        ScaffoldMessenger.maybeOf(
-          context,
-        )?.showSnackBar(const SnackBar(content: Text('当前设备没有可用的中文语音引擎')));
-      }
-      return;
-    }
-    if (!mounted || generation != _ttsGeneration) return;
-    tts.setCompletionHandler(() {
-      if (!_ttsActive || !mounted || generation != _ttsGeneration) return;
-      // The page finished narrating: flip forward and keep going. Loading
-      // windows and the chapter end (本章完 / 最后一章) stop the chain.
-      unawaited(
-        _turnPage(1).then((_) {
-          if (!_ttsActive || !mounted || generation != _ttsGeneration) {
-            return null;
-          }
-          if (_loading || _chapterLayout == null) return _stopTtsRead();
-          return _speakCurrentPage();
-        }),
-      );
-    });
-    setState(() {
-      _ttsStarting = false;
-      _ttsActive = true;
-    });
-    await _speakCurrentPage();
-  }
-
-  Future<void> _speakCurrentPage() async {
-    final generation = _ttsGeneration;
-    final tts = _tts;
-    final layout = _chapterLayout;
-    if (tts == null || layout == null || !_paged) {
-      await _stopTtsRead();
-      return;
-    }
-    final page = _pageIndex < layout.pages.length
-        ? layout.pages[_pageIndex]
-        : null;
-    if (page == null) {
-      await _stopTtsRead();
-      return;
-    }
-    final text = page.fragments
-        .where((f) => !f.block.isImage)
-        .map((f) => f.text)
-        .join('\n');
-    if (text.trim().isEmpty) {
-      // An illustration-only page has nothing to narrate: keep the chain
-      // moving instead of stalling until the next completion event.
-      unawaited(
-        _turnPage(1).then((_) {
-          if (_ttsActive && mounted && generation == _ttsGeneration) {
-            return _speakCurrentPage();
-          }
-        }),
-      );
-      return;
-    }
-    try {
-      await tts.speak(text);
-    } catch (_) {
-      if (generation == _ttsGeneration) await _stopTtsRead();
-    }
-  }
-
-  Future<void> _stopTtsRead() async {
-    if (!_ttsActive && _tts == null) return;
-    ++_ttsGeneration;
-    _ttsStarting = false;
-    _ttsActive = false;
-    try {
-      await _tts?.stop();
-    } catch (_) {}
-    if (mounted) setState(() {});
   }
 
   void _autoTurnStep() {
@@ -516,8 +396,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     HardwareKeyboard.instance.removeHandler(_handleVolumeKey);
     ListeningSession.instance.removeListener(_onListeningTick);
     _autoTurnTimer?.cancel();
-    ++_ttsGeneration;
-    unawaited(_tts?.stop());
     WidgetsBinding.instance.removeObserver(this);
     ++_deviceGeneration;
     unawaited(_deviceSubscription?.cancel());
@@ -539,8 +417,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final resumed = state == AppLifecycleState.resumed;
     if (!resumed && _appActive) {
       _stopAutoTurn();
-      unawaited(_stopTtsRead());
-      ++_deviceGeneration;
+        ++_deviceGeneration;
       unawaited(_device.suspend());
       _settleReadTime();
       _sessionActive = false;
@@ -1109,13 +986,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         await _prev(startAtEnd: true);
       }
     } else {
-      final canAdvance = _index < widget.chapters.length - 1;
       await _next();
-      // Only stop when the book truly has no next chapter — entering the last
-      // chapter must NOT cut narration short.
-      if (_ttsActive && !canAdvance) {
-        await _stopTtsRead();
-      }
     }
   }
 
@@ -1261,7 +1132,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _toggleControls() {
     _stopAutoTurn();
-    unawaited(_stopTtsRead());
     if (!_controlsVisible) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
     }
@@ -1346,7 +1216,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   Future<void> _openListening() async {
     _stopAutoTurn();
-    unawaited(_stopTtsRead());
     await _persistProgress();
     if (!mounted) return;
     setState(() => _controlsVisible = false);
@@ -1594,9 +1463,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           key: const ValueKey('reader-page-surface'),
           behavior: HitTestBehavior.translucent,
           onTapUp: (details) {
-            if (_autoTurnTimer != null || _ttsActive || _ttsStarting) {
+            if (_autoTurnTimer != null) {
               _stopAutoTurn();
-              unawaited(_stopTtsRead());
             } else if (_controlsVisible) {
               _toggleControls();
             } else if (details.localPosition.dx < constraints.maxWidth / 3) {
@@ -1625,15 +1493,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   endPage: _buildChapterEndPage(preset),
                   startPage: _buildChapterStartPage(preset),
                   onBoundaryLanded: (direction) {
-                    // 章末是朗读的终点: land on it stops the TTS chain even
-                    // though _pageIndex never reports boundary pages.
-                    if (direction > 0) {
-                      if (_ttsActive || _ttsStarting) {
-                        unawaited(_stopTtsRead());
-                      }
-                      if (_index == widget.chapters.length - 1) {
-                        _stopAutoTurn();
-                      }
+                    // _pageIndex never reports boundary pages, so the book end
+                    // stops auto turn from here.
+                    if (direction > 0 &&
+                        _index == widget.chapters.length - 1) {
+                      _stopAutoTurn();
                     }
                   },
                   imageProviderFactory: widget.imageProviderFactory,
@@ -1700,7 +1564,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _hideControlsOnDrag() {
     _stopAutoTurn();
-    unawaited(_stopTtsRead());
     _pauseListenFollow();
     if (_controlsVisible) setState(() => _controlsVisible = false);
   }
@@ -1850,8 +1713,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       onListen: () => unawaited(_openListening()),
       autoTurnActive: _autoTurnTimer != null,
       onAutoTurn: _toggleAutoTurn,
-      ttsActive: _ttsActive || _ttsStarting,
-      onTtsRead: _toggleTtsRead,
     );
   }
 
