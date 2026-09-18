@@ -54,15 +54,15 @@ class ReaderParagraphMenu extends StatelessWidget {
   final bool underlined;
   final bool isDark;
 
-  /// True when the bar renders above the touched line, so its up-arrow points
-  /// back down at the paragraph (`wr.xml` keeps both tips and toggles them).
-  final bool arrowAbove;
+  /// True when the bar sits below the touched line, so its tip points up at the
+  /// paragraph (`m.java` shows downArrow instead once the popup flips above).
+  final bool belowAnchor;
 
   const ReaderParagraphMenu({
     super.key,
     this.underlined = false,
     this.isDark = false,
-    this.arrowAbove = false,
+    this.belowAnchor = true,
   });
 
   Color get _background => isDark ? _barColorDark : _barColor;
@@ -113,7 +113,7 @@ class ReaderParagraphMenu extends StatelessWidget {
             child: ReaderParagraphMenu(
               underlined: underlined,
               isDark: isDark,
-              arrowAbove: below,
+              belowAnchor: below,
             ),
           ),
         ],
@@ -131,9 +131,10 @@ class ReaderParagraphMenu extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _Arrow(
+            // Below the anchor the tip points back up at the paragraph.
             pointingUp: true,
             color: _background,
-            visible: arrowAbove,
+            visible: belowAnchor,
           ),
           Container(
             height: _itemHeight + _verticalPadding * 2,
@@ -181,7 +182,7 @@ class ReaderParagraphMenu extends StatelessWidget {
           _Arrow(
             pointingUp: false,
             color: _background,
-            visible: !arrowAbove,
+            visible: !belowAnchor,
           ),
         ],
       ),
