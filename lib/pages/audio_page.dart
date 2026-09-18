@@ -130,9 +130,14 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   static const _rates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
   static const _defaultVoice = AudioVoice(id: '0', label: '默认音色');
 
+  late String _bookId;
+  late String _title;
+  late String _cover;
+  late List<Chapter> _chapters;
   late int _index;
   late final AudioHistory _history;
-  late final Future<void> _settingsReady;
+  int _settingsGeneration = 0;
+  Future<void> _settingsReady = Future<void>.value();
   final _subscriptions = <StreamSubscription<dynamic>>[];
   final _listenTime = Stopwatch();
   Future<void> _releases = Future<void>.value();
@@ -178,13 +183,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   /// Resolves the listening-page decorations. See [AudioExtras].
   Future<AudioExtras> _loadExtras() {
     final loader = widget.extrasLoader;
-    if (loader != null) return loader(widget.bookId);
+    if (loader != null) return loader(_bookId);
     if (widget.sourceLoader != null ||
         widget.voicesLoader != null ||
         widget.playerFactory != null) {
       return Future.value(const AudioExtras());
     }
-    return _defaultAudioExtras(widget.bookId);
+    return _defaultAudioExtras(_bookId);
   }
 
   /// Resolves 边听边读 subtitles. Books without generated speech text answer
@@ -213,11 +218,15 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     _history = AudioHistory(widget.historyStore ?? LibraryStore.instance);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _appActive = lifecycle == null || lifecycle == AppLifecycleState.resumed;
-    _index = widget.chapters.isEmpty
+    _bookId = widget.bookId;
+    _title = widget.title;
+    _cover = widget.cover;
+    _chapters = widget.chapters;
+    _index = _chapters.isEmpty
         ? 0
-        : widget.startIndex.clamp(0, widget.chapters.length - 1);
+        : widget.startIndex.clamp(0, _chapters.length - 1);
     _settingsReady = _prepareSettings();
-    if (widget.chapters.isEmpty) {
+    if (_chapters.isEmpty) {
       _loading = false;
     } else {
       unawaited(
@@ -226,12 +235,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _prepareSettings() async {
-    final history = _history.load(widget.bookId).catchError((Object _) => null);
+  Future<void> _prepareSettings({String? forceToneId}) async {
+    final generation = ++_settingsGeneration;
+    final history = _history.load(_bookId).catchError((Object _) => null);
     final voices = () async {
       try {
         return await (widget.voicesLoader?.call() ??
-                ApiClient.instance.audioVoices(widget.bookId))
+                ApiClient.instance.audioVoices(_bookId))
             .timeout(const Duration(seconds: 8));
       } catch (_) {
         return <AudioVoice>[_defaultVoice];
@@ -240,7 +250,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     final extras = _loadExtrasSafely();
     final saved = await history;
     final available = await voices;
-    if (!mounted) return;
+    if (!mounted || generation != _settingsGeneration) return;
     final byId = <String, AudioVoice>{'0': _defaultVoice};
     for (final voice in available) {
       if (voice.id.trim().isNotEmpty && voice.label.trim().isNotEmpty) {
@@ -264,27 +274,31 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       } catch (_) {
         resolved = null;
       }
-      if (!mounted) return;
+      if (!mounted || generation != _settingsGeneration) return;
       if (resolved != null) _mergeToneVoices(resolved, byId);
     }
     setState(() {
       if (resolved != null) _extras = resolved;
       _voices = List.unmodifiable(byId.values);
-      if (savedTone is String && byId.containsKey(savedTone)) {
-        _toneId = savedTone;
+      if (generation == 1) {
+        if (savedTone is String && byId.containsKey(savedTone)) {
+          _toneId = savedTone;
+        }
+        if (initialTone != null && initialTone.isNotEmpty) {
+          _toneId = initialTone;
+        }
+        if (savedRate is num &&
+            savedRate.isFinite &&
+            _rates.contains(savedRate.toDouble())) {
+          _rate = savedRate.toDouble();
+        }
+        final initialRate = widget.initialRate;
+        if (initialRate != null && _rates.contains(initialRate)) {
+          _rate = initialRate;
+        }
       }
-      if (initialTone != null && initialTone.isNotEmpty) {
-        // An explicit version/voice selection takes priority over its history.
-        _toneId = initialTone;
-      }
-      if (savedRate is num &&
-          savedRate.isFinite &&
-          _rates.contains(savedRate.toDouble())) {
-        _rate = savedRate.toDouble();
-      }
-      final initialRate = widget.initialRate;
-      if (initialRate != null && _rates.contains(initialRate)) {
-        _rate = initialRate;
+      if (forceToneId != null && forceToneId.isNotEmpty) {
+        _toneId = forceToneId;
       }
       if (saved?['autoAdvance'] case final bool enabled) {
         _autoAdvance = enabled;
@@ -294,9 +308,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       }
     });
     _publishMoreState();
-    // Publish decorations whenever they arrive (including after the bounded
-    // wait above) without touching the tone already chosen for playback.
-    unawaited(_publishExtras(extras));
+    unawaited(_publishExtras(extras, generation));
   }
 
   Future<AudioExtras> _loadExtrasSafely() async {
@@ -348,7 +360,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _publishExtras(Future<AudioExtras> extras) async {
+  Future<void> _publishExtras(
+    Future<AudioExtras> extras, [
+    int? generation,
+  ]) async {
     AudioExtras loaded;
     try {
       loaded = await extras;
@@ -356,6 +371,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       loaded = const AudioExtras();
     }
     if (!mounted) return;
+    if (generation != null && generation != _settingsGeneration) return;
     final byId = <String, AudioVoice>{
       for (final voice in _voices) voice.id: voice,
     };
@@ -407,16 +423,18 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     String? toneId,
     bool autoplay = true,
     bool? completed,
+    bool persistCurrent = true,
   }) async {
-    if (!mounted || index < 0 || index >= widget.chapters.length) return;
+    if (!mounted || index < 0 || index >= _chapters.length) return;
     final generation = ++_generation;
     ++_seekGeneration;
     _saveTimer?.cancel();
     _listenTime.stop();
-    unawaited(_persistProgress());
+    if (persistCurrent) unawaited(_persistProgress());
     final released = _releasePlayer();
     setState(() {
       _index = index;
+      _loading = true;
       _loading = true;
       _error = null;
       _completed = false;
@@ -428,7 +446,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     });
     _publishReadAlong();
     _publishMoreState();
-    unawaited(_loadExcerpt(widget.chapters[index].itemId));
+    unawaited(_loadExcerpt(_chapters[index].itemId));
     NativePlayer? candidate;
     try {
       await _settingsReady;
@@ -437,14 +455,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       Map<String, dynamic>? saved;
       if (restoreHistory) {
         try {
-          saved = await _history.load(widget.bookId);
+          saved = await _history.load(_bookId);
         } catch (_) {
           // Listening can still start when local storage is unavailable.
         }
       }
       if (!_current(generation)) return;
-      final sameChapter =
-          resumeAudioChapterIndex(saved, widget.chapters) == index;
+      final sameChapter = resumeAudioChapterIndex(saved, _chapters) == index;
       final resume =
           position ??
           (sameChapter ? _savedDuration(saved?['position']) : Duration.zero);
@@ -453,7 +470,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
           : Duration.zero;
       final wasCompleted =
           completed ?? (sameChapter && saved?['completed'] == true);
-      final itemId = widget.chapters[index].itemId;
+      final itemId = _chapters[index].itemId;
       final source = await _loadSourceWithRetry(itemId);
       if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
@@ -536,7 +553,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     try {
       return await retryTransient(
         () => ApiClient.instance
-            .audioSource(itemId, bookId: widget.bookId, toneId: toneId)
+            .audioSource(itemId, bookId: _bookId, toneId: toneId)
             .timeout(const Duration(seconds: 30)),
       );
     } on ApiException catch (error) {
@@ -550,7 +567,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       final tone = fallback;
       return retryTransient(
         () => ApiClient.instance
-            .audioSource(itemId, bookId: widget.bookId, toneId: tone)
+            .audioSource(itemId, bookId: _bookId, toneId: tone)
             .timeout(const Duration(seconds: 30)),
       );
     }
@@ -589,9 +606,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   void _publishReadAlong() {
-    if (!mounted || _index < 0 || _index >= widget.chapters.length) return;
+    if (!mounted || _index < 0 || _index >= _chapters.length) return;
     _readAlong.value = (
-      chapterTitle: widget.chapters[_index].title,
+      chapterTitle: _chapters[_index].title,
       track: _subtitles,
       position: _seekPreview == null
           ? _position
@@ -620,10 +637,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   /// Publishes the current narration state so an open reader can follow the
   /// playback (听书跟随翻页).
   void _publishListeningSession({bool playing = true}) {
-    if (_index < 0 || _index >= widget.chapters.length) return;
-    final chapter = widget.chapters[_index];
+    if (_index < 0 || _index >= _chapters.length) return;
+    final chapter = _chapters[_index];
     ListeningSession.instance.update(
-      bookId: widget.bookId,
+      bookId: _bookId,
       chapterId: chapter.itemId,
       chapterTitle: chapter.title,
       position: _boundedPosition(_player?.position ?? _position, _duration),
@@ -696,7 +713,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         _publishReadAlong();
         _listenTime.stop();
         unawaited(_persistProgress());
-        if (shouldAdvance && _index + 1 < widget.chapters.length) {
+        if (shouldAdvance && _index + 1 < _chapters.length) {
           unawaited(_openChapter(_index + 1));
         } else {
           unawaited(_pause(player, generation));
@@ -739,13 +756,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         _listenTime.elapsedMicroseconds / Duration.microsecondsPerSecond;
     _listenTime.reset();
     return _history.save({
-      'id': widget.bookId,
-      'bookId': widget.bookId,
+      'id': _bookId,
+      'bookId': _bookId,
       'kind': 'audio',
-      'title': widget.title,
-      'cover': widget.cover,
-      'chapterId': widget.chapters[index].itemId,
-      'episodeId': widget.chapters[index].itemId,
+      'title': _title,
+      'cover': _cover,
+      'chapterId': _chapters[index].itemId,
+      'episodeId': _chapters[index].itemId,
       'episode': index,
       'position': position.inMilliseconds / 1000,
       'duration': duration.inMilliseconds / 1000,
@@ -921,31 +938,54 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   Future<void> _showVoices() async {
     if (_switchingVersion) return;
-    final selected = await showModalBottomSheet<VoiceOption>(
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.72,
+      builder: (sheetContext) => SizedBox(
+        height: MediaQuery.sizeOf(sheetContext).height * 0.72,
         child: VoiceSettingsSheet(
-          selectedId: _extras.tones.hasFixedTone ? widget.bookId : _toneId,
+          selectedId: _extras.tones.hasFixedTone ? _bookId : _toneId,
           narrators: _narratorOptions(),
           online: _onlineOptions(),
           offline: _offlineOptions(),
-          onSelect: (option) => Navigator.pop(context, option),
+          onSelect: (option) {
+            unawaited(_applyVoiceOption(option, fromSheet: sheetContext));
+          },
           onDownload: _downloadOfflineTone,
         ),
       ),
     );
-    if (!mounted || selected == null) return;
-    // A 真人讲书 row names another book rather than a voice.
+  }
+
+  /// A 真人讲书 row names another book. Keep the sheet up for a cross-book
+  /// switch so the recording page never flashes underneath.
+  Future<void> _applyVoiceOption(
+    VoiceOption option, {
+    BuildContext? fromSheet,
+  }) async {
+    if (!mounted || _switchingVersion) return;
     for (final narrator in _narratorTones) {
-      if (narrator.id == selected.id) {
-        await _switchNarrator(narrator);
+      if (narrator.id == option.id) {
+        if (narrator.id == _bookId) {
+          _popSheet(fromSheet);
+          return;
+        }
+        await _switchBookVersion(
+          narrator.id,
+          title: narrator.title,
+          cover: _cover,
+          toneId: '0',
+          replaceContext: fromSheet,
+        );
         return;
       }
     }
-    await _selectTone(selected.id);
+    await _selectTone(option.id, replaceContext: fromSheet);
+  }
+
+  void _popSheet(BuildContext? sheet) {
+    if (sheet != null && sheet.mounted) Navigator.pop(sheet);
   }
 
   List<VoiceOption> _narratorOptions() => [
@@ -1031,7 +1071,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) =>
-          _AudioCatalog(chapters: widget.chapters, currentIndex: _index),
+          _AudioCatalog(chapters: _chapters, currentIndex: _index),
     );
     if (!mounted || selected == null || selected == _index) return;
     await _openChapter(selected);
@@ -1043,8 +1083,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    if (widget.chapters.isEmpty) {
+    if (_chapters.isEmpty) {
       return Scaffold(
+        key: ValueKey('audio_session_$_bookId'),
         backgroundColor: palette.canvas,
         appBar: AppBar(
           backgroundColor: palette.canvas,
@@ -1056,9 +1097,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         ),
       );
     }
-    final chapter = widget.chapters[_index];
+    final chapter = _chapters[_index];
     final tones = _mode == 'narrator' ? _narratorTones : _ttsTones;
     return Scaffold(
+      key: ValueKey('audio_session_$_bookId'),
       backgroundColor: palette.canvas,
       body: SafeArea(
         child: Column(
@@ -1080,8 +1122,8 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: AudioBookCard(
-                            cover: widget.cover,
-                            bookTitle: widget.title,
+                            cover: _cover,
+                            bookTitle: _title,
                             chapterTitle: chapter.title,
                             onSwitch: _showVoices,
                             onOpenBook: _showCatalog,
@@ -1139,7 +1181,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
                             title: _mode == 'narrator' ? '真人讲书' : '智能朗读',
                             tones: tones,
                             selectedId: _extras.tones.hasFixedTone
-                                ? widget.bookId
+                                ? _bookId
                                 : _toneId,
                             currentChapterTitle: chapter.title,
                             onSelect: _onToneSelected,
@@ -1175,9 +1217,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   /// TTS plays on the ebook's chapter IDs, even when the panel was opened
   /// from a fixed recording. Never send its tone to the recording's chapters.
   String? get _ttsBookId {
-    if (!_extras.tones.hasFixedTone) return widget.bookId;
+    if (!_extras.tones.hasFixedTone) return _bookId;
     final id = _extras.tones.relatedNovel?.id;
-    return id != null && id.isNotEmpty && id != widget.bookId ? id : null;
+    return id != null && id.isNotEmpty && id != _bookId ? id : null;
   }
 
   List<AudioTone> get _ttsTones =>
@@ -1206,10 +1248,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       }
     } else if (!_offline) {
       try {
-        final summary = await ApiClient.instance.chapterSummaries(
-          widget.bookId,
-          [itemId],
-        );
+        final summary = await ApiClient.instance.chapterSummaries(_bookId, [
+          itemId,
+        ]);
         text = summary.forItem(itemId);
       } catch (_) {
         text = null;
@@ -1374,7 +1415,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         _TransportButton(
           icon: LucideIcons.skip_forward,
           tooltip: '下一章',
-          onTap: _index + 1 < widget.chapters.length
+          onTap: _index + 1 < _chapters.length
               ? () => _openChapter(_index + 1)
               : null,
         ),
@@ -1434,18 +1475,23 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _selectTone(String toneId) async {
+  Future<void> _selectTone(
+    String toneId, {
+    BuildContext? replaceContext,
+  }) async {
     if (_switchingVersion || !_selectableTone(toneId)) return;
     final novel = _extras.tones.relatedNovel;
-    if (_ttsBookId != widget.bookId && novel != null) {
+    if (_ttsBookId != _bookId && novel != null) {
       await _switchBookVersion(
         novel.id,
-        title: novel.title.isEmpty ? widget.title : novel.title,
-        cover: novel.cover.isEmpty ? widget.cover : novel.cover,
+        title: novel.title.isEmpty ? _title : novel.title,
+        cover: novel.cover.isEmpty ? _cover : novel.cover,
         toneId: toneId,
+        replaceContext: replaceContext,
       );
       return;
     }
+    _popSheet(replaceContext);
     if (toneId == _toneId) return;
     await _openChapter(
       _index,
@@ -1463,14 +1509,14 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     // nothing has been played yet in this session.
     try {
       final existing =
-          await _history.load(widget.bookId) ?? const <String, dynamic>{};
+          await _history.load(_bookId) ?? const <String, dynamic>{};
       await _history.save({
         ...existing,
-        'id': widget.bookId,
-        'bookId': widget.bookId,
+        'id': _bookId,
+        'bookId': _bookId,
         'kind': 'audio',
-        'title': widget.title,
-        'cover': widget.cover,
+        'title': _title,
+        'cover': _cover,
         'inShelf': next,
       });
     } on Exception {
@@ -1489,10 +1535,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   Future<void> _showDownload() async {
     final cache = ChapterCacheStore.instance;
     final book = CachedBook(
-      id: widget.bookId,
-      title: widget.title,
-      cover: widget.cover,
-      chapters: widget.chapters,
+      id: _bookId,
+      title: _title,
+      cover: _cover,
+      chapters: _chapters,
     );
     try {
       await cache.saveBook(book);
@@ -1525,7 +1571,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       useSafeArea: true,
       showDragHandle: true,
       builder: (context) => _AudioCommentsSheet(
-        bookId: widget.bookId,
+        bookId: _bookId,
         loader: widget.sourceLoader != null || widget.playerFactory != null
             ? null
             : ApiClient.instance.bookComments,
@@ -1649,7 +1695,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
               ListTile(
                 leading: const Icon(LucideIcons.list),
                 title: const Text('目录'),
-                subtitle: Text('共 ${widget.chapters.length} 章'),
+                subtitle: Text('共 ${_chapters.length} 章'),
                 onTap: () {
                   Navigator.pop(context);
                   unawaited(_showCatalog());
@@ -1686,7 +1732,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   Future<void> _switchNarrator(AudioTone tone) => _switchBookVersion(
     tone.id,
     title: tone.title,
-    cover: widget.cover,
+    cover: _cover,
     toneId: '0',
   );
 
@@ -1724,17 +1770,19 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   /// Note: Cross-book TTS choices and exact IDs — see
   /// .agents/notes/implemented/bug-fix/2026-09-16-linked-audio-voices.md.
+  /// Note: 真人讲书切智能朗读在同一听书页完成 — 见
+  /// .agents/notes/implemented/bug-fix/2026-09-18-audio-voice-switch-flash.md
   Future<void> _switchBookVersion(
     String targetId, {
     required String title,
     required String cover,
     required String toneId,
+    BuildContext? replaceContext,
   }) async {
-    if (_switchingVersion || targetId.isEmpty || targetId == widget.bookId) {
+    if (_switchingVersion || targetId.isEmpty || targetId == _bookId) {
       return;
     }
     final generation = _generation;
-    _RoutePlayback? suspended;
     setState(() => _switchingVersion = true);
     try {
       final chapters = await (widget.directoryLoader ?? _defaultDirectory)(
@@ -1745,39 +1793,49 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         throw const FormatException('所选声音版本暂无目录');
       }
       final start = _narratorChapterIndex(chapters);
-      suspended = await _suspendForRoute(generation);
-      if (!mounted || suspended == null) return;
-      final autoplay = suspended.autoplay;
-      await Navigator.push(
-        context,
-        MaterialPageRoute<void>(
-          builder: (_) => AudioPage(
-            bookId: targetId,
-            title: title,
-            cover: cover,
-            chapters: chapters,
-            startIndex: start,
-            initialToneId: toneId,
-            initialRate: _rate,
-            autoplay: autoplay,
-            historyStore: widget.historyStore,
-            playerFactory: widget.playerFactory,
-            sourceLoader: widget.sourceLoader,
-            voicesLoader: widget.voicesLoader,
-            extrasLoader: widget.extrasLoader,
-            subtitleLoader: widget.subtitleLoader,
-            excerptLoader: widget.excerptLoader,
-            directoryLoader: widget.directoryLoader,
-          ),
-        ),
+      final autoplay = _wantPlay;
+      if (replaceContext != null && replaceContext.mounted) {
+        Navigator.pop(replaceContext);
+      }
+      await _persistProgress();
+      if (!_current(generation)) return;
+      ++_generation;
+      ++_seekGeneration;
+      _saveTimer?.cancel();
+      _listenTime.stop();
+      await _releasePlayer();
+      if (!mounted) return;
+      setState(() {
+        _bookId = targetId;
+        _title = title;
+        _cover = cover;
+        _chapters = List<Chapter>.unmodifiable(chapters);
+        _index = start;
+        _toneId = toneId;
+        _extras = const AudioExtras();
+        _excerpt = '';
+        _error = null;
+        _position = Duration.zero;
+        _duration = Duration.zero;
+        _subtitles = SubtitleTrack.empty;
+      });
+      _settingsReady = _prepareSettings(forceToneId: toneId);
+      await _openChapter(
+        start,
+        restoreHistory: true,
+        toneId: toneId,
+        autoplay: autoplay,
+        persistCurrent: false,
       );
     } catch (_) {
+      if (replaceContext != null && replaceContext.mounted) {
+        Navigator.pop(replaceContext);
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('暂时无法切换声音，请稍后重试')));
     } finally {
-      await _restoreAfterRoute(suspended);
       if (mounted) setState(() => _switchingVersion = false);
     }
   }
@@ -1798,7 +1856,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   /// `001 合着…`), so the ordinal prefix is stripped before comparing; a
   /// version whose titles do not line up falls back to the same position.
   int _narratorChapterIndex(List<Chapter> chapters) {
-    final want = _chapterCore(widget.chapters[_index].title);
+    final want = _chapterCore(_chapters[_index].title);
     if (want.isNotEmpty) {
       for (var i = 0; i < chapters.length; i++) {
         if (_chapterCore(chapters[i].title) == want) return i;
@@ -1808,7 +1866,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     // (`麻衣风水师01` for `第1章 八鬼抬轿`), often with an extra teaser in
     // front (`麻衣风水师00片花`). A positional fallback would land on the
     // teaser there, so match the ordinal number first.
-    final ordinal = _chapterOrdinal(widget.chapters[_index].title);
+    final ordinal = _chapterOrdinal(_chapters[_index].title);
     if (ordinal != null) {
       for (var i = 0; i < chapters.length; i++) {
         if (_chapterOrdinal(chapters[i].title) == ordinal) return i;

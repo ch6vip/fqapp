@@ -256,6 +256,8 @@ class _CoverImage extends StatelessWidget {
     return CachedNetworkImage(
       imageUrl: url,
       fit: BoxFit.cover,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
       placeholder: (context, _) => Container(color: palette.soft),
       errorWidget: (context, _, _) => Container(
         color: palette.soft,
