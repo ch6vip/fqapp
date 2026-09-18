@@ -39,6 +39,7 @@ Future<void> _startReading(WidgetTester tester) async {
   );
   await tester.tapAt(Offset(surface.center.dx, surface.bottom - 4));
   await tester.pumpAndSettle();
+  await _openSettings(tester);
   await tester.tap(find.byKey(const ValueKey('reader-tts-read')));
   await tester.pump();
 }
@@ -231,4 +232,12 @@ void main() {
       await tester.pumpAndSettle();
     },
   );
+}
+
+/// Expands the 设置 section of the reading menu. The section keeps its state
+/// across chapter changes, so this is a no-op while it is already open.
+Future<void> _openSettings(WidgetTester tester) async {
+  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  await tester.tap(find.byKey(const ValueKey('reader-settings')));
+  await tester.pumpAndSettle();
 }

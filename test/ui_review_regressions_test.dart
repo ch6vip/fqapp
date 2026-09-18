@@ -292,6 +292,7 @@ void main() {
         // consumes it merely to stop automatic reading.
         await _tapReaderCenter(tester);
         await tester.pumpAndSettle();
+        await _openSettings(tester);
         expect(find.byKey(const ValueKey('reader-auto-turn')), findsOneWidget);
         expect(find.text('自动翻页'), findsOneWidget);
       },
@@ -407,6 +408,7 @@ Future<void> _tapReaderCenter(WidgetTester tester) async {
 Future<void> _startAutoTurn(WidgetTester tester) async {
   await _tapReaderCenter(tester);
   await tester.pumpAndSettle();
+  await _openSettings(tester);
   await tester.tap(find.byKey(const ValueKey('reader-auto-turn')));
   await tester.pumpAndSettle();
 }
@@ -445,4 +447,12 @@ class _AudioSession {
       },
     ),
   );
+}
+
+/// Expands the 设置 section of the reading menu. The section keeps its state
+/// across chapter changes, so this is a no-op while it is already open.
+Future<void> _openSettings(WidgetTester tester) async {
+  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  await tester.tap(find.byKey(const ValueKey('reader-settings')));
+  await tester.pumpAndSettle();
 }

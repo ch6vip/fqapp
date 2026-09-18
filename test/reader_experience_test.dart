@@ -15,7 +15,6 @@ import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 
 import 'support/fakes.dart';
 
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -277,6 +276,7 @@ void main() {
       // Start from the menu.
       await tester.tap(find.byKey(const ValueKey('reader-page-surface')));
       await tester.pumpAndSettle();
+      await _openSettings(tester);
       await tester.tap(find.byKey(const ValueKey('reader-auto-turn')));
       await tester.pumpAndSettle();
       final first = pageNumber();
@@ -299,9 +299,7 @@ ReaderChapterLayout _layout() => ReaderChapterLayout(
   content: ChapterContent(
     blocks: [
       for (var i = 0; i < 40; i++)
-        ChapterParagraph(
-          '清晨的风从窗边吹来，带着山间草木的清香。林舟推开木窗。',
-        ),
+        ChapterParagraph('清晨的风从窗边吹来，带着山间草木的清香。林舟推开木窗。'),
     ],
   ),
   spec: ReaderLayoutSpec(
@@ -311,3 +309,11 @@ ReaderChapterLayout _layout() => ReaderChapterLayout(
     fontFamily: null,
   ),
 );
+
+/// Expands the 设置 section of the reading menu. The section keeps its state
+/// across chapter changes, so this is a no-op while it is already open.
+Future<void> _openSettings(WidgetTester tester) async {
+  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  await tester.tap(find.byKey(const ValueKey('reader-settings')));
+  await tester.pumpAndSettle();
+}

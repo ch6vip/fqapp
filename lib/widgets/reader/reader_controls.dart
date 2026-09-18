@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import '../../services/reader_preferences.dart';
 import 'reader_theme.dart';
 
-class ReaderControls extends StatelessWidget {
+/// Official-shape reading menu: a slim bottom bar of 目录 / 夜间 / 听书 / 设置.
+/// Brightness, chapter seek and the secondary actions live behind 设置 so the
+/// bar itself stays short.
+class ReaderControls extends StatefulWidget {
   final ReaderPreferences preferences;
   final int chapterIndex;
   final int chapterCount;
@@ -23,12 +26,13 @@ class ReaderControls extends StatelessWidget {
   final VoidCallback onAppearance;
   final VoidCallback onCache;
 
-  /// 自动翻页 toggle and the chapter-comment entry (章末章评). The comment
-  /// action is null while the chapter has no ideas.
+  /// 听书: opens the listening page for this book.
+  final VoidCallback onListen;
+
   final bool autoTurnActive;
   final VoidCallback onAutoTurn;
 
-  /// 边走边读: system-TTS narration inside the reader.
+  /// 系统朗读: in-reader TTS narration.
   final bool ttsActive;
   final VoidCallback onTtsRead;
 
@@ -52,6 +56,7 @@ class ReaderControls extends StatelessWidget {
     required this.onNight,
     required this.onAppearance,
     required this.onCache,
+    required this.onListen,
     this.autoTurnActive = false,
     required this.onAutoTurn,
     this.ttsActive = false,
@@ -59,227 +64,249 @@ class ReaderControls extends StatelessWidget {
   });
 
   @override
+  State<ReaderControls> createState() => _ReaderControlsState();
+}
+
+class _ReaderControlsState extends State<ReaderControls> {
+  bool _settingsOpen = false;
+
+  @override
   Widget build(BuildContext context) {
-    final preset = preferences.themePreset;
-    final level = preferences.followSystemBrightness
-        ? systemBrightness ?? preferences.brightness
-        : preferences.brightness;
+    final preset = widget.preferences.themePreset;
+    final level = widget.preferences.followSystemBrightness
+        ? widget.systemBrightness ?? widget.preferences.brightness
+        : widget.preferences.brightness;
     return Theme(
       data: preset.theme(Theme.of(context)),
       child: Material(
         color: preset.panelColor,
         elevation: 12,
         shadowColor: Colors.black26,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        clipBehavior: Clip.antiAlias,
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.65,
+            maxHeight: MediaQuery.sizeOf(context).height * 0.62,
           ),
           child: SingleChildScrollView(
             child: SafeArea(
               top: false,
-              minimum: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+              minimum: const EdgeInsets.fromLTRB(8, 8, 8, 6),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          chapterTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: preset.textColor,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        '${chapterIndex + 1} / $chapterCount',
-                        style: TextStyle(
-                          color: preset.mutedTextColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: '上一章',
-                        onPressed: onPrevious,
-                        icon: const Icon(Icons.skip_previous_rounded, size: 23),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          key: const ValueKey('reader-chapter-seek'),
-                          min: 0,
-                          max: (chapterCount - 1).toDouble(),
-                          value: seekValue.clamp(
-                            0,
-                            (chapterCount - 1).toDouble(),
-                          ),
-                          onChanged: chapterCount > 1 ? onSeek : null,
-                          onChangeEnd: chapterCount > 1 ? onSeekEnd : null,
-                          semanticFormatterCallback: (value) =>
-                              '第 ${value.round() + 1} 章',
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: '下一章',
-                        onPressed: onNext,
-                        icon: const Icon(Icons.skip_next_rounded, size: 23),
-                      ),
-                    ],
-                  ),
-                  if (deviceAvailable) ...[
-                    Divider(height: 8, color: preset.borderColor),
-                    Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Icon(
-                            Icons.brightness_6_outlined,
-                            size: 20,
-                            color: preset.mutedTextColor,
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            key: const ValueKey('reader-brightness'),
-                            value: level.clamp(0.02, 1),
-                            min: 0.02,
-                            max: 1,
-                            onChanged: onBrightness,
-                            onChangeEnd: (_) => onBrightnessEnd(),
-                            semanticFormatterCallback: (value) =>
-                                '亮度 ${(value * 100).round()}%',
-                          ),
-                        ),
-                        Semantics(
-                          toggled: preferences.followSystemBrightness,
-                          child: TextButton(
-                            key: const ValueKey('reader-follow-system'),
-                            style: TextButton.styleFrom(
-                              foregroundColor:
-                                  preferences.followSystemBrightness
-                                  ? preset.accentColor
-                                  : preset.mutedTextColor,
-                              backgroundColor:
-                                  preferences.followSystemBrightness
-                                  ? preset.accentColor.withValues(alpha: 0.09)
-                                  : null,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                            ),
-                            onPressed: onFollowSystem,
-                            child: const Text(
-                              '跟随系统',
-                              style: TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                  if (_settingsOpen) ...[
+                    _chapterSeek(preset),
+                    if (widget.deviceAvailable) _brightness(preset, level),
+                    _extraActions(preset),
+                    const SizedBox(height: 4),
                   ],
-                  const SizedBox(height: 4),
                   Row(
                     children: [
                       _Action(
                         icon: Icons.menu_book_outlined,
                         label: '目录',
-                        onTap: onDirectory,
+                        onTap: widget.onDirectory,
                       ),
                       _Action(
                         icon: preset.isDark
                             ? Icons.light_mode_outlined
                             : Icons.dark_mode_outlined,
                         label: preset.isDark ? '日间' : '夜间',
-                        onTap: onNight,
+                        onTap: widget.onNight,
                       ),
                       _Action(
-                        icon: Icons.text_fields_rounded,
-                        label: '排版',
-                        onTap: onAppearance,
+                        icon: Icons.headphones_outlined,
+                        label: '听书',
+                        onTap: widget.onListen,
                       ),
                       _Action(
-                        icon: Icons.download_for_offline_outlined,
-                        label: '缓存',
-                        onTap: onCache,
+                        key: const ValueKey('reader-settings'),
+                        icon: Icons.settings_outlined,
+                        label: '设置',
+                        selected: _settingsOpen,
+                        onTap: () =>
+                            setState(() => _settingsOpen = !_settingsOpen),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextButton.icon(
-                          key: const ValueKey('reader-auto-turn'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: autoTurnActive
-                                ? preset.accentColor
-                                : preset.textColor,
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          onPressed: onAutoTurn,
-                          icon: Icon(
-                            autoTurnActive
-                                ? Icons.pause_circle_outline_rounded
-                                : Icons.play_circle_outline_rounded,
-                            size: 19,
-                          ),
-                          label: Text(
-                            autoTurnActive ? '停止自动翻页' : '自动翻页',
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextButton.icon(
-                          key: const ValueKey('reader-tts-read'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: ttsActive
-                                ? preset.accentColor
-                                : preset.textColor,
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          onPressed: onTtsRead,
-                          icon: Icon(
-                            ttsActive
-                                ? Icons.pause_circle_outline_rounded
-                                : Icons.record_voice_over_outlined,
-                            size: 19,
-                          ),
-                          label: Text(
-                            ttsActive ? '停止朗读' : '边走边读',
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  // Ideas get their own row so the count badge has room and the
-                  // four primary actions keep their size.
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _chapterSeek(ReaderThemePreset preset) {
+    final max = (widget.chapterCount - 1).toDouble();
+    final upper = max < 0 ? 0.0 : max;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.chapterTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: preset.textColor, fontSize: 13),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${widget.chapterIndex + 1} / ${widget.chapterCount}',
+                style: TextStyle(color: preset.mutedTextColor, fontSize: 12),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              IconButton(
+                tooltip: '上一章',
+                onPressed: widget.onPrevious,
+                icon: const Icon(Icons.skip_previous_rounded, size: 22),
+              ),
+              Expanded(
+                child: Slider(
+                  key: const ValueKey('reader-chapter-seek'),
+                  min: 0,
+                  max: upper,
+                  value: widget.seekValue.clamp(0, upper),
+                  onChanged: widget.chapterCount > 1 ? widget.onSeek : null,
+                  onChangeEnd: widget.chapterCount > 1
+                      ? widget.onSeekEnd
+                      : null,
+                  semanticFormatterCallback: (value) =>
+                      '第 ${value.round() + 1} 章',
+                ),
+              ),
+              IconButton(
+                tooltip: '下一章',
+                onPressed: widget.onNext,
+                icon: const Icon(Icons.skip_next_rounded, size: 22),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _brightness(ReaderThemePreset preset, double level) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Icon(
+              Icons.brightness_6_outlined,
+              size: 20,
+              color: preset.mutedTextColor,
+            ),
+          ),
+          Expanded(
+            child: Slider(
+              key: const ValueKey('reader-brightness'),
+              value: level.clamp(0.02, 1),
+              min: 0.02,
+              max: 1,
+              onChanged: widget.onBrightness,
+              onChangeEnd: (_) => widget.onBrightnessEnd(),
+              semanticFormatterCallback: (value) =>
+                  '亮度 ${(value * 100).round()}%',
+            ),
+          ),
+          Semantics(
+            toggled: widget.preferences.followSystemBrightness,
+            child: TextButton(
+              key: const ValueKey('reader-follow-system'),
+              style: TextButton.styleFrom(
+                foregroundColor: widget.preferences.followSystemBrightness
+                    ? preset.accentColor
+                    : preset.mutedTextColor,
+                backgroundColor: widget.preferences.followSystemBrightness
+                    ? preset.accentColor.withValues(alpha: 0.09)
+                    : null,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+              ),
+              onPressed: widget.onFollowSystem,
+              child: const Text('跟随系统', style: TextStyle(fontSize: 12)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _extraActions(ReaderThemePreset preset) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextButton.icon(
+                  key: const ValueKey('reader-auto-turn'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: widget.autoTurnActive
+                        ? preset.accentColor
+                        : preset.textColor,
+                  ),
+                  onPressed: widget.onAutoTurn,
+                  icon: Icon(
+                    widget.autoTurnActive
+                        ? Icons.pause_circle_outline_rounded
+                        : Icons.play_circle_outline_rounded,
+                    size: 18,
+                  ),
+                  label: Text(
+                    widget.autoTurnActive ? '停止自动翻页' : '自动翻页',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: TextButton.icon(
+                  key: const ValueKey('reader-tts-read'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: widget.ttsActive
+                        ? preset.accentColor
+                        : preset.textColor,
+                  ),
+                  onPressed: widget.onTtsRead,
+                  icon: Icon(
+                    widget.ttsActive
+                        ? Icons.pause_circle_outline_rounded
+                        : Icons.record_voice_over_outlined,
+                    size: 18,
+                  ),
+                  label: Text(
+                    widget.ttsActive ? '停止朗读' : '系统朗读',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              _Action(
+                icon: Icons.download_for_offline_outlined,
+                label: '缓存',
+                onTap: widget.onCache,
+              ),
+              _Action(
+                icon: Icons.text_fields_rounded,
+                label: '排版',
+                onTap: widget.onAppearance,
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -289,26 +316,40 @@ class _Action extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final bool selected;
 
-  const _Action({required this.icon, required this.label, required this.onTap});
+  const _Action({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.selected = false,
+  });
 
   @override
-  Widget build(BuildContext context) => Expanded(
-    child: TextButton(
-      style: TextButton.styleFrom(
-        foregroundColor: Theme.of(context).colorScheme.onSurface,
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+  Widget build(BuildContext context) {
+    final color = selected
+        ? Theme.of(context).colorScheme.primary
+        : Theme.of(context).colorScheme.onSurface;
+    return Expanded(
+      child: TextButton(
+        style: TextButton.styleFrom(
+          foregroundColor: color,
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        onPressed: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 22),
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(fontSize: 11)),
+          ],
+        ),
       ),
-      onPressed: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 23),
-          const SizedBox(height: 7),
-          Text(label, style: const TextStyle(fontSize: 12)),
-        ],
-      ),
-    ),
-  );
+    );
+  }
 }

@@ -119,6 +119,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(device.calls, contains('start:true:0.5'));
     await _openMenu(tester);
+    await _openSettings(tester);
     final slider = tester.widget<Slider>(
       find.byKey(const ValueKey('reader-brightness')),
     );
@@ -242,6 +243,7 @@ void main() {
         await _openMenu(tester);
         expect(tester.takeException(), isNull);
         if (layout.name == 'portrait') await _capture(tester, 'menu');
+        await _openSettings(tester);
         await tester.ensureVisible(find.text('排版'));
         await tester.tap(find.text('排版'));
         await tester.pumpAndSettle();
@@ -319,6 +321,7 @@ Future<void> _openMenu(WidgetTester tester) async {
 
 Future<void> _openAppearance(WidgetTester tester) async {
   await _openMenu(tester);
+  await _openSettings(tester);
   await tester.ensureVisible(find.text('排版'));
   await tester.tap(find.text('排版'));
   await tester.pumpAndSettle();
@@ -413,4 +416,12 @@ Future<void> _capture(WidgetTester tester, String name) async {
       image.dispose();
     }
   });
+}
+
+/// Expands the 设置 section of the reading menu. The section keeps its state
+/// across chapter changes, so this is a no-op while it is already open.
+Future<void> _openSettings(WidgetTester tester) async {
+  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  await tester.tap(find.byKey(const ValueKey('reader-settings')));
+  await tester.pumpAndSettle();
 }

@@ -471,7 +471,9 @@ Future<void> _swipe(WidgetTester tester, int direction) async {
 Future<void> _openAppearance(WidgetTester tester) async {
   await tester.tapAt(tester.getRect(_surface).center);
   await tester.pumpAndSettle();
+  await _openSettings(tester);
   await tester.ensureVisible(find.text('排版'));
+  await _openSettings(tester);
   await tester.tap(find.text('排版'));
   await tester.pumpAndSettle();
 }
@@ -548,4 +550,12 @@ Future<void> _capture(WidgetTester tester, String name) async {
       picture.dispose();
     }
   });
+}
+
+/// Expands the 设置 section of the reading menu. The section keeps its state
+/// across chapter changes, so this is a no-op while it is already open.
+Future<void> _openSettings(WidgetTester tester) async {
+  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  await tester.tap(find.byKey(const ValueKey('reader-settings')));
+  await tester.pumpAndSettle();
 }

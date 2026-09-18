@@ -399,6 +399,9 @@ void main() {
     Future<void> openControls(WidgetTester tester) async {
       await tester.tapAt(const Offset(200, 400));
       await tester.pumpAndSettle();
+      // Secondary actions (缓存/排版) live inside 设置.
+      await tester.tap(find.byKey(const ValueKey('reader-settings')));
+      await tester.pumpAndSettle();
     }
 
     testWidgets('opens the sheet from the in-text bubble', (tester) async {

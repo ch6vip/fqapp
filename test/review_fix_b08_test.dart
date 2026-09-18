@@ -71,6 +71,7 @@ Future<void> _openControls(WidgetTester tester) async {
 
 Future<void> _startTts(WidgetTester tester) async {
   await _openControls(tester);
+  await _openSettings(tester);
   await tester.tap(find.byKey(const ValueKey('reader-tts-read')));
   await tester.pumpAndSettle();
 }
@@ -112,6 +113,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await _openControls(tester);
+    await _openSettings(tester);
     await tester.tap(find.byKey(const ValueKey('reader-tts-read')));
     await tester.pump();
     // setLanguage is gated, so the startup is parked mid-await.
@@ -296,4 +298,12 @@ void main() {
     expect(spoken.any((text) => text.contains('\uFFFC')), isFalse);
     expect(spoken.any((text) => text.contains('图后的正文')), isTrue);
   });
+}
+
+/// Expands the 设置 section of the reading menu. The section keeps its state
+/// across chapter changes, so this is a no-op while it is already open.
+Future<void> _openSettings(WidgetTester tester) async {
+  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  await tester.tap(find.byKey(const ValueKey('reader-settings')));
+  await tester.pumpAndSettle();
 }

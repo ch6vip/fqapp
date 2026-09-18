@@ -26,6 +26,7 @@ import '../widgets/reader/reader_ideas_sheet.dart';
 import '../widgets/reader/reader_paged_view.dart';
 import '../widgets/reader/reader_status_bar.dart';
 import '../widgets/reader/reader_theme.dart';
+import 'audio_page.dart';
 
 typedef ChapterTextLoader = Future<String> Function(Chapter chapter);
 typedef _LoadedChapter = ({String text, bool fetched});
@@ -1343,6 +1344,26 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (selected != null && mounted) await _jumpToChapter(selected);
   }
 
+  Future<void> _openListening() async {
+    _stopAutoTurn();
+    unawaited(_stopTtsRead());
+    await _persistProgress();
+    if (!mounted) return;
+    setState(() => _controlsVisible = false);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AudioPage(
+          bookId: widget.bookId,
+          title: widget.title,
+          cover: widget.cover,
+          chapters: widget.chapters,
+          startIndex: _index,
+          historyStore: widget.readerStore,
+        ),
+      ),
+    );
+  }
+
   Future<void> _showCache() {
     setState(() => _controlsVisible = false);
     return showModalBottomSheet<void>(
@@ -1826,6 +1847,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       onNight: _toggleNightTheme,
       onAppearance: _showAppearanceSettings,
       onCache: _showCache,
+      onListen: () => unawaited(_openListening()),
       autoTurnActive: _autoTurnTimer != null,
       onAutoTurn: _toggleAutoTurn,
       ttsActive: _ttsActive || _ttsStarting,
