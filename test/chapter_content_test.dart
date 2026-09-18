@@ -285,6 +285,113 @@ void main() {
     expect((await api.chapterContent('chapter')).images, hasLength(1));
     expect(count, 1);
   });
+
+  // The official 从本段听 needs no extra endpoint: an audio chapter ships the
+  // spoken timeline inline as `<span start_time>`. Verified against the live
+  // backend for 6 chapters x 4 tones; see
+  // .agents/notes/implemented/feature/2026-09-19-listen-from-paragraph.md
+  group('spoken timeline', () {
+    const audioHtml =
+        '<header><div class="tt-title">001 大巴</div></header><article>'
+        '<p idx="0">{!-- PGC_VOICE:{"source_provider":"audiobook","content":"",'
+        '"duration":"696.676","title":"001 大巴"} --}</p><p></p>'
+        '<div class="novel-fm-asr">'
+        '<p idx="1"><span start_time="1760">本节目由番茄畅听出品。</span></p>'
+        '<p idx="3"><span start_time="17030">浓雾中，</span>'
+        '<span start_time="18700">一辆破旧的大巴缓缓驶来。</span></p>'
+        '</div></article>';
+
+    test('a paragraph keeps the first spoken start of its own markup', () {
+      final content = parseChapterContent(audioHtml);
+      final paragraphs = content.blocks.whereType<ChapterParagraph>().toList();
+      // The PGC marker is data, not text, so it never becomes a paragraph.
+      expect(paragraphs.map((p) => p.text), [
+        '001 大巴',
+        '本节目由番茄畅听出品。',
+        '浓雾中，一辆破旧的大巴缓缓驶来。',
+      ]);
+      expect(paragraphs.map((p) => p.paraIndex), [null, 1, 3]);
+      // The paragraph's first span wins; the second one is inside it.
+      expect(paragraphs.map((p) => p.startMs), [null, 1760, 17030]);
+      // Reading the markup means there is nothing left to look for.
+      expect(content.timelineChecked, isTrue);
+    });
+
+    test('start times survive the cache and the leading-title removal', () {
+      final content = parseChapterContent(audioHtml);
+      final restored = ChapterContent.fromCacheText(content.toCacheText());
+      final body = restored.withoutLeadingTitle('001 大巴');
+      expect(body.timelineChecked, isTrue);
+      expect(body.blocks.whereType<ChapterParagraph>().map((p) => p.text), [
+        '本节目由番茄畅听出品。',
+        '浓雾中，一辆破旧的大巴缓缓驶来。',
+      ]);
+      expect(
+        body.blocks.whereType<ChapterParagraph>().map((p) => p.startMs),
+        [1760, 17030],
+      );
+    });
+
+    test('plain text can never claim a checked timeline', () {
+      // There is no markup to read, so such a chapter must be looked at again
+      // if it is ever fetched as markup.
+      expect(ChapterContent.fromPlainText('第一段').timelineChecked, isFalse);
+
+    });
+
+    test('chapters without audio carry no start times', () {
+      final content = parseChapterContent('<p idx="0">第一段</p><p idx="1">第二段</p>');
+      expect(content.timelineChecked, isTrue);
+      expect(
+        content.blocks.whereType<ChapterParagraph>().every(
+          (p) => p.startMs == null,
+        ),
+        isTrue,
+      );
+      expect(content.timelineChecked, isTrue);
+    });
+  });
+
+  // The reader used to render `{!-- PGC_VOICE:{...} --}` as the chapter's first
+  // paragraph. The 段评 previews already dropped it.
+  group('inline content markers', () {
+    test('the audiobook header never reaches the page or the legacy text', () {
+      final content = parseChapterContent(
+        '<p idx="0">{!-- PGC_VOICE:{"duration":"696.676"} --}</p>'
+        '<p idx="1">正文第一段。</p>',
+      );
+      expect(_sequence(content), ['正文第一段。']);
+      expect(content.legacyText, '正文第一段。');
+      expect(content.legacyText.contains('PGC_VOICE'), isFalse);
+    });
+
+    test('a truncated marker drops only its own line tail', () {
+      final content = parseChapterContent(
+        '<p idx="0">{!-- PGC_VOICE:{"duration":"696.', // never closes
+      );
+      expect(content.legacyText.contains('PGC_VOICE'), isFalse);
+
+      final kept = parseChapterContent(
+        '<p>前文</p><p>{!-- PGC_VOICE:{"duration":"1"} --}正文</p><p>后文</p>',
+      );
+      expect(_sequence(kept), ['前文', '正文', '后文']);
+
+      // A stray marker in prose must not consume the paragraphs after it.
+      final stray = parseChapterContent(
+        '<p>前文</p><p>{!-- 这里没写完</p><p>后文仍在</p>',
+      );
+      // `{!--` alone carries no PGC signature, so it is prose and stays; the
+      // point is that it must not swallow the paragraphs after it.
+      expect(_sequence(stray), ['前文', '{!-- 这里没写完', '后文仍在']);
+    });
+
+    test('unterminated quoting cannot silently delete a whole chapter', () {
+      // A novel may quote `<!--` as literal text. Unlike the previews, the
+      // reader must not drop everything from there to the end.
+      final content = parseChapterContent('<p>他说&lt;!-- 这里断开</p><p>后半段还在。</p>');
+      expect(_sequence(content), ['他说<!-- 这里断开', '后半段还在。']);
+    });
+  });
 }
 
 List<String> _sequence(ChapterContent content) => [

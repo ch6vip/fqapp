@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,13 +11,31 @@ import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_underline_store.dart';
 
+
 import 'support/fakes.dart';
 
 const _html =
     '<header><div class="tt-title">第一章</div></header><article>'
     '<p idx="0">“对不起......”</p><p></p>'
-    '<p idx="1">“老子是兔子啊！”</p><p></p>'
+    '<p idx="1"><span start_time="4200">“老子是兔子啊！”</span></p><p></p>'
     '</article>';
+
+/// A chapter the reader cached before it ever read the spoken timeline.
+String _legacyHtml() {
+  final content = parseChapterContent(
+    '<header><div class="tt-title">第一章</div></header><article>'
+    '<p idx="0">“对不起......”</p><p></p>'
+    '<p idx="1"><span start_time="4200">“老子是兔子啊！”</span></p><p></p>'
+    '</article>',
+  );
+  final cached =
+      '\u001efqapp:chapter:2\n'
+      '{"version":2,"illustrationsChecked":true,"paragraphIdsChecked":true,'
+      '"paragraphParserRevision":1,"legacyText":${jsonEncode(content.legacyText)},'
+      '"blocks":[{"type":"text","text":"“对不起......”","idx":0},'
+      '{"type":"text","text":"“老子是兔子啊！”","idx":1}]}';
+  return cached;
+}
 
 final List<Chapter> _chapters = [
   Chapter(itemId: 'c1', title: '第一章', volumeName: '正文'),
@@ -188,8 +208,80 @@ void main() {
     expect(audio.startIndex, 0);
     expect(audio.chapters.first.itemId, 'c1');
     expect(audio.chapters, hasLength(2));
+    // Paragraph 1 carries `<span start_time="4200">`, so playback starts there
+    // instead of at the chapter's opening.
+    expect(audio.startPosition, const Duration(milliseconds: 4200));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('a paragraph without a timeline starts at the chapter opening', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_app(_MemoryUnderlines()));
+    await tester.pumpAndSettle();
+
+    // Paragraph 0 has no `<span start_time>`. This is still a paragraph-anchored
+    // request, so it carries an explicit zero: falling back to null would resume
+    // saved history instead of starting the chapter at its opening.
+    await _longPressParagraph(tester, 0);
+    await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
+    await tester.pumpAndSettle();
+
+    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
+    expect(audio.startPosition, Duration.zero);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'a cache written before the timeline is refetched only when asked to listen',
+    (tester) async {
+      final cache = MemoryChapterCache();
+      cache.content['reader-test'] = {'c1': _legacyHtml()};
+      // Only c1 matters: _prefetchAround warms neighbouring chapters, so the
+      // plain request count would not prove anything about this chapter.
+      final requests = <String>[];
+      await tester.binding.setSurfaceSize(const Size(400, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderPage(
+            bookId: 'reader-test',
+            title: '测试书籍',
+            chapters: _chapters,
+            startIndex: 0,
+            readerStore: MemoryReaderStore(),
+            chapterCache: cache,
+            chapterLoader: (chapter) async {
+              requests.add(chapter.itemId);
+              return parseChapterContent(_html).toCacheText();
+            },
+            underlineStore: _MemoryUnderlines(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Reading old text must never wait on the timeline: the cached chapter is
+      // used as-is, so no request is made for it.
+      expect(requests.where((id) => id == 'c1'), isEmpty);
+      expect(
+        find.textContaining('“对不起......”', findRichText: true),
+        findsOneWidget,
+      );
+
+      await _longPressParagraph(tester, 1);
+      await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
+      await tester.pumpAndSettle();
+
+      // Asking to listen from a paragraph pays for the timeline exactly once,
+      // and the resulting position comes from the freshly parsed chapter.
+      expect(requests.where((id) => id == 'c1'), hasLength(1));
+      final audio = tester.widget<AudioPage>(find.byType(AudioPage));
+      expect(audio.startPosition, const Duration(milliseconds: 4200));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   test('underline keys separate chapters and paragraphs', () {
     expect(

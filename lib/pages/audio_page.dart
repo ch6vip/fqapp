@@ -28,6 +28,11 @@ class AudioPage extends StatefulWidget {
   final String cover;
   final List<Chapter> chapters;
   final int startIndex;
+
+  /// Where playback starts inside [startIndex]. 从本段听 sets this to the pressed
+  /// paragraph's place on the chapter's spoken timeline. Null means resume from
+  /// history, else the chapter opening.
+  final Duration? startPosition;
   final String? initialToneId;
   final double? initialRate;
   final bool autoplay;
@@ -58,6 +63,7 @@ class AudioPage extends StatefulWidget {
     required this.title,
     required this.chapters,
     this.startIndex = 0,
+    this.startPosition,
     this.initialToneId,
     this.initialRate,
     this.autoplay = true,
@@ -230,7 +236,12 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       _loading = false;
     } else {
       unawaited(
-        _openChapter(_index, restoreHistory: true, autoplay: widget.autoplay),
+        _openChapter(
+          _index,
+          restoreHistory: true,
+          autoplay: widget.autoplay,
+          position: widget.startPosition,
+        ),
       );
     }
   }
@@ -468,8 +479,15 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       final savedDuration = sameChapter
           ? _savedDuration(saved?['duration'])
           : Duration.zero;
+      // A position handed in from outside is a deliberate start point, not a
+      // resume: the chapter's saved "played to the end" state must not turn it
+      // into a replay-from-zero or a skip to the next chapter.
+      // A start position handed in from outside is a deliberate new start, not
+      // a resume: a chapter saved as "played to the end" must not turn it into
+      // a replay-from-zero on the next play tap, nor skip to the next chapter.
       final wasCompleted =
-          completed ?? (sameChapter && saved?['completed'] == true);
+          completed ??
+          (position == null && sameChapter && saved?['completed'] == true);
       final itemId = _chapters[index].itemId;
       final source = await _loadSourceWithRetry(itemId);
       if (!_current(generation)) return;

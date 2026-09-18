@@ -215,6 +215,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   bool _sessionActive = false;
   bool _appActive = true;
   bool _changingChapter = false;
+
+  /// Set while 从本段听 is waiting on a timeline fetch, so a repeated long-press
+  /// cannot stack a second listening page (and a second player) on top.
+  bool _openingListening = false;
   final LinkedHashMap<String, String> _chapterCache = LinkedHashMap();
   final Map<String, Future<_LoadedChapter>> _chapterRequests = {};
   final Map<String, int> _chapterCacheRevisions = {};
@@ -399,7 +403,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         await Clipboard.setData(ClipboardData(text: block.text));
         if (mounted) _showMessage('已复制');
       case ReaderParagraphAction.listen:
-        await _openListening();
+        await _openListening(fromMs: block.startMs, paraIndex: paraIndex);
       case ReaderParagraphAction.underline:
         await _toggleUnderline(block, add: true);
       case ReaderParagraphAction.removeUnderline:
@@ -535,7 +539,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       if (!_loading && _content.isNotEmpty) {
         _readStart = DateTime.now();
         _sessionActive = true;
-        if (_chapterContent.needsImageRefresh()) {
+        if (_chapterContent.needsRefresh()) {
           unawaited(_refreshCachedChapter(_chapter));
         }
       }
@@ -594,7 +598,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       unawaited(_prefetchAround(_index));
       unawaited(_loadIdeas(chapter, generation));
       unawaited(_loadUnderlines());
-      if (!loaded.fetched && content.needsImageRefresh()) {
+      if (!loaded.fetched && content.needsRefresh()) {
         unawaited(_refreshCachedChapter(chapter));
       }
     } catch (e) {
@@ -1327,23 +1331,74 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (selected != null && mounted) await _jumpToChapter(selected);
   }
 
-  Future<void> _openListening() async {
-    _stopAutoTurn();
-    await _persistProgress();
-    if (!mounted) return;
-    setState(() => _controlsVisible = false);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => AudioPage(
-          bookId: widget.bookId,
-          title: widget.title,
-          cover: widget.cover,
-          chapters: widget.chapters,
-          startIndex: _index,
-          historyStore: widget.readerStore,
+  /// Opens the listening page for the current chapter.
+  ///
+  /// [fromMs] is the pressed paragraph's place on the spoken timeline the
+  /// chapter shipped with (`<span start_time>`), so 从本段听 starts there
+  /// instead of at the chapter's opening. [paraIndex] marks the request as
+  /// paragraph-anchored: if that paragraph has no timeline the page still
+  /// starts at the chapter's beginning rather than resuming old history.
+  ///
+  /// A cache written before the reader read that timeline carries no start
+  /// times. Reading never waits on that; the timeline is fetched here, once,
+  /// because the user asked to listen from a paragraph. The fetch is bounded,
+  /// and a failure still opens the page at the chapter start.
+  Future<void> _openListening({int? fromMs, int? paraIndex}) async {
+    if (_openingListening) return;
+    _openingListening = true;
+    final chapter = _chapter;
+    final chapterIndex = _index;
+    try {
+      _stopAutoTurn();
+      await _persistProgress();
+      if (!mounted) return;
+      var startMs = fromMs;
+      if (startMs == null &&
+          paraIndex != null &&
+          !_chapterContent.timelineChecked) {
+        _showMessage('正在获取本段音频…');
+        await _refreshCachedChapter(chapter).timeout(
+          const Duration(seconds: 12),
+          onTimeout: () {},
+        );
+        // The user may have turned the page while the timeline was in flight.
+        // Serving another chapter's paragraph position would start playback at
+        // a place nobody asked for.
+        if (!mounted || _chapter.itemId != chapter.itemId) return;
+        startMs = _paragraphStartMs(paraIndex);
+      }
+      if (!mounted) return;
+      setState(() => _controlsVisible = false);
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => AudioPage(
+            bookId: widget.bookId,
+            title: widget.title,
+            cover: widget.cover,
+            chapters: widget.chapters,
+            startIndex: chapterIndex,
+            // A paragraph-anchored request always carries an explicit start:
+            // Duration.zero means "this paragraph has no audio, begin at the
+            // chapter opening" and must not fall back to saved history.
+            startPosition: paraIndex == null
+                ? null
+                : Duration(milliseconds: startMs ?? 0),
+            historyStore: widget.readerStore,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _openingListening = false;
+    }
+  }
+
+  /// The spoken start of the paragraph with [paraIndex], when the chapter
+  /// carries a timeline. Upstream paragraph ids are unique within a chapter.
+  int? _paragraphStartMs(int paraIndex) {
+    for (final block in _chapterContent.blocks.whereType<ChapterParagraph>()) {
+      if (block.paraIndex == paraIndex) return block.startMs;
+    }
+    return null;
   }
 
   Future<void> _showCache() {

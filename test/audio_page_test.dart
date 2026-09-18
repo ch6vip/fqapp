@@ -241,6 +241,64 @@ void main() {
     },
   );
 
+  // 从本段听 hands in a paragraph's timeline position. It is a deliberate
+  // start point, so a chapter already marked as played-to-the-end must neither
+  // suppress playback nor turn the next play tap into a replay from zero.
+  testWidgets(
+    'an explicit start position overrides a completed history entry',
+    (tester) async {
+      final session = _Session(
+        startPosition: const Duration(seconds: 30),
+        store: ControlledReaderStore(
+          entry: {
+            'id': 'book',
+            'kind': 'audio',
+            'chapterId': '1',
+            'position': 120,
+            'duration': 120,
+            'completed': true,
+          },
+        ),
+      );
+      await _mount(tester, session);
+      await _flush(tester);
+
+      // The paragraph position wins over history, and the chapter is no longer
+      // treated as finished — so playback starts here instead of the toolbar
+      // offering a replay from zero.
+      expect(session.players.single.position, const Duration(seconds: 30));
+      expect(session.store.entry?['completed'], isNot(true));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a start position at the end of the audio does not look like a finished chapter',
+    (tester) async {
+      // The novel's ASR timeline can run past this recording's audio.
+      final session = _Session(
+        startPosition: const Duration(seconds: 600),
+        store: ControlledReaderStore(
+          entry: {
+            'id': 'book',
+            'kind': 'audio',
+            'chapterId': '1',
+            'position': 120,
+            'duration': 120,
+            'completed': true,
+          },
+        ),
+      );
+      await _mount(tester, session);
+      await _flush(tester);
+
+      // Clamped to the recording's end, and no skip to the next chapter.
+      expect(session.players.single.position, const Duration(seconds: 120));
+      expect(session.players, hasLength(1));
+      expect(session.store.entry?['chapterId'], '1');
+    },
+  );
+
   testWidgets(
     'restores voice and speed and preserves a paused position on voice change',
     (tester) async {
@@ -862,15 +920,16 @@ class _Session {
   final AudioExtrasLoader? extras;
   final _AudioPlayer Function()? factory;
   final List<Chapter> chapters;
+  final Duration? startPosition;
   final players = <_AudioPlayer>[];
   final requests = <String>[];
-
   _Session({
     ControlledReaderStore? store,
     this.loader,
     this.voices,
     this.extras,
     this.factory,
+    this.startPosition,
     List<Chapter>? chapters,
   }) : store = store ?? ControlledReaderStore(),
        chapters =
@@ -885,6 +944,7 @@ class _Session {
       bookId: 'book',
       title: '测试听书',
       chapters: chapters,
+      startPosition: startPosition,
       historyStore: store,
       sourceLoader: (id, {toneId}) {
         requests.add('$id:$toneId');

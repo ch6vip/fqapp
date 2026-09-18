@@ -44,6 +44,53 @@ final _lineBreaks = RegExp(r'\r\n?|[\u0085\u2028\u2029]');
 final _edgeMarkers = RegExp(r'^[\u200B\uFEFF]+|[\u200B\uFEFF]+$');
 final _titleSpaces = RegExp(r'\s+');
 
+/// Inline content markers that are data for other pages, never 正文. The
+/// audiobook header is the loudest one: `{!-- PGC_VOICE:{...} --}` carries the
+/// player's duration and upload id, and the reader used to render that raw JSON
+/// as the chapter's first paragraph. The 段评 previews already drop them.
+///
+/// Removal is strictly line-bounded. Both the block stream (stripped one
+/// paragraph at a time) and the legacy stream (stripped as one whole chapter)
+/// run through [_stripContentMarkers]; a cross-line match would delete
+/// different text in each, and the two streams would drift apart — taking every
+/// saved text offset with them.
+///
+/// Unlike the previews this never drops from a stray marker to the end of the
+/// chapter: a novel that quotes `<!--` as prose would lose everything after it.
+final _contentMarkers = <RegExp>[
+  RegExp(r'\{!--.*?--\}'),
+  RegExp(r'<!--.*?-->'),
+];
+
+/// A truncated marker whose JSON never closes, for example
+/// `{!-- PGC_VOICE:{"duration":"696.` with no `--}`. Upstream emits these
+/// behind `<p>`, so dropping this line's tail removes the fragment.
+///
+/// The `PGC_` signature is required — the same one the 段评 previews match on —
+/// so a stray `{!--` inside a novel's prose is left alone rather than eating the
+/// rest of its line.
+final _truncatedMarker = RegExp(r'\{!--\s*PGC_[A-Z_]+:[^\n]*$', multiLine: true);
+
+String _stripContentMarkers(String text) {
+  // Closed markers first: a stray unterminated `{!--` must not be allowed to
+  // swallow a later, properly closed marker's trailing text.
+  var out = text;
+  for (final pattern in _contentMarkers) {
+    out = out.replaceAll(pattern, ' ');
+  }
+  return out.replaceAll(_truncatedMarker, ' ');
+}
+
+/// Whether any cached paragraph still holds an inline content marker. Old
+/// caches kept them as body text, so this is the precise signal that one
+/// refresh would visibly improve the page.
+bool _holdsContentMarker(String text) {
+  for (final pattern in _contentMarkers) {
+    if (pattern.hasMatch(text)) return true;
+  }
+  return _truncatedMarker.hasMatch(text);
+}
+
 sealed class ChapterBlock {
   const ChapterBlock();
 }
@@ -58,6 +105,17 @@ class ChapterParagraph extends ChapterBlock {
   /// markup that carries no attribute.
   final int? paraIndex;
 
+  /// Start of this paragraph's audio, in milliseconds from the beginning of the
+  /// chapter, taken from the first `<span start_time="N">` inside it.
+  ///
+  /// Audio chapters ship the spoken timeline inline in the same markup that
+  /// carries the text, so 从本段听 needs no extra request. Null for the many
+  /// books without audio.
+  ///
+  /// Note: 段落时间轴就在正文标记里，官方与  都没有独立接口 — 见
+  /// .agents/notes/implemented/feature/2026-09-19-listen-from-paragraph.md
+  final int? startMs;
+
   /// True for the `<img alt="...">` caption emitted when an image URL is
   /// unusable. It is real rendered text, but it must never be mistaken for the
   /// leading chapter title when the title is stripped.
@@ -66,6 +124,7 @@ class ChapterParagraph extends ChapterBlock {
   const ChapterParagraph(
     this.text, {
     this.paraIndex,
+    this.startMs,
     this.isImageCaption = false,
   });
 }
@@ -91,7 +150,7 @@ class ChapterImage extends ChapterBlock {
 // .agents/notes/implemented/bug-fix/2026-09-10-reader-illustrations.md
 class ChapterContent {
   static const _cachePrefix = '\u001efqapp:chapter:2\n';
-  static const _paragraphParserRevision = 1;
+  static const _paragraphParserRevision = 2;
 
   final List<ChapterBlock> blocks;
   // Keep the exact old normalization for migrating saved text-only offsets.
@@ -102,16 +161,25 @@ class ChapterContent {
   /// A checked source may legitimately contain no ids; do not keep refetching it.
   final bool paragraphIdsChecked;
 
+  /// Whether the markup behind this text was already examined for a spoken
+  /// timeline. Like [paragraphIdsChecked], a checked source may legitimately
+  /// carry none — most books have no audio at all — so this only distinguishes
+  /// "nothing there" from "never looked".
+  final bool timelineChecked;
+
   ChapterContent({
     required List<ChapterBlock> blocks,
     String? legacyText,
     this.illustrationsChecked = true,
     this.paragraphIdsChecked = true,
+    this.timelineChecked = true,
   }) : blocks = List.unmodifiable(blocks),
        legacyText =
            legacyText ??
            blocks.whereType<ChapterParagraph>().map((p) => p.text).join('\n');
 
+  /// Plain text carries no markup, so there is no spoken timeline to look for
+  /// and nothing worth refetching later.
   factory ChapterContent.fromPlainText(
     String text, {
     bool illustrationsChecked = false,
@@ -120,6 +188,9 @@ class ChapterContent {
     legacyText: splitChapterParagraphs(text).join('\n'),
     illustrationsChecked: illustrationsChecked,
     paragraphIdsChecked: false,
+    // Plain text carries no markup, so nothing here has been examined for a
+    // timeline yet; a later illustrated fetch may still supply one.
+    timelineChecked: false,
   );
 
   bool get isEmpty => blocks.isEmpty;
@@ -152,6 +223,22 @@ class ChapterContent {
     });
   }
 
+  /// Whether this cached chapter must be fetched once more before the page
+  /// shows everything it knows how to show: missing illustrations, or body text
+  /// that still holds an inline content marker.
+  ///
+  /// The marker check is deliberately narrow. Making every pre-timeline cache
+  /// refresh would break the promise that reading a cached chapter never
+  /// reaches for the network.
+  bool needsRefresh({DateTime? now}) =>
+      illustrationsChecked &&
+          blocks.any(
+            (block) =>
+                block is ChapterParagraph && _holdsContentMarker(block.text),
+          ) ||
+      needsImageRefresh(now: now);
+
+
   ChapterContent withoutLeadingTitle(String title) {
     final wanted = title.replaceAll(_titleSpaces, '');
     // The upstream title is the first ordinary paragraph; image-alt captions
@@ -183,6 +270,7 @@ class ChapterContent {
       legacyText: legacy,
       illustrationsChecked: illustrationsChecked,
       paragraphIdsChecked: paragraphIdsChecked,
+      timelineChecked: timelineChecked,
     );
   }
 
@@ -192,6 +280,7 @@ class ChapterContent {
         'version': 2,
         'illustrationsChecked': illustrationsChecked,
         'paragraphIdsChecked': paragraphIdsChecked,
+        'timelineChecked': timelineChecked,
         'paragraphParserRevision': _paragraphParserRevision,
         'legacyText': legacyText,
         'blocks': [
@@ -201,6 +290,7 @@ class ChapterContent {
                 'type': 'text',
                 'text': block.text,
                 if (block.paraIndex != null) 'idx': block.paraIndex,
+                if (block.startMs != null) 'start': block.startMs,
                 if (block.isImageCaption) 'caption': true,
               },
               ChapterImage() => {
@@ -230,9 +320,10 @@ class ChapterContent {
     for (final raw in data['blocks'] as List) {
       if (raw is! Map) throw const FormatException('章节缓存内容无效');
       if (raw['type'] == 'text' && raw['text'] is String) {
-        // Never infer upstream ids from display order: titles and pictures can
-        // shift it. Older caches without ids can be refreshed from the source.
+        // Never infer upstream ids or start times from display order: titles
+        // and pictures can shift it. Older caches are refreshed from source.
         final paraIndex = raw['idx'] is int ? raw['idx'] as int : null;
+        final startMs = raw['start'] is int ? raw['start'] as int : null;
         final isCaption = raw['caption'] == true;
         final paragraphs = splitChapterParagraphs(raw['text'] as String);
         for (var i = 0; i < paragraphs.length; i++) {
@@ -240,6 +331,7 @@ class ChapterContent {
             ChapterParagraph(
               paragraphs[i],
               paraIndex: i == 0 ? paraIndex : null,
+              startMs: i == 0 ? startMs : null,
               isImageCaption: isCaption,
             ),
           );
@@ -268,6 +360,11 @@ class ChapterContent {
       paragraphIdsChecked:
           data['paragraphParserRevision'] == _paragraphParserRevision &&
           data['paragraphIdsChecked'] == true,
+      // A cache written before this revision never recorded start times, so it
+      // is refreshed once before 从本段听 can seek into it.
+      timelineChecked:
+          data['paragraphParserRevision'] == _paragraphParserRevision &&
+          data['timelineChecked'] == true,
     );
   }
 }
@@ -279,19 +376,31 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
   var pending = StringBuffer();
   // Upstream paragraph id currently in scope, from `<p idx="N">`.
   int? activeIndex;
+  // Start of the spoken audio for the paragraph in scope, from its first
+  // `<span start_time="N">`.
+  int? activeStartMs;
   void flush() {
-    final paragraphs = splitChapterParagraphs(pending.toString());
+    final paragraphs = splitChapterParagraphs(
+      _stripContentMarkers(pending.toString()),
+    );
     for (var i = 0; i < paragraphs.length; i++) {
       // A single upstream paragraph can split into several display paragraphs;
-      // the id belongs to the first of them.
+      // the id and the start time belong to the first of them.
       blocks.add(
-        ChapterParagraph(paragraphs[i], paraIndex: i == 0 ? activeIndex : null),
+        ChapterParagraph(
+          paragraphs[i],
+          paraIndex: i == 0 ? activeIndex : null,
+          startMs: i == 0 ? activeStartMs : null,
+        ),
       );
     }
     pending = StringBuffer();
     // A leading break/image can flush no text. Its paragraph id still belongs
     // to the first body paragraph that is eventually emitted.
-    if (paragraphs.isNotEmpty) activeIndex = null;
+    if (paragraphs.isNotEmpty) {
+      activeIndex = null;
+      activeStartMs = null;
+    }
   }
 
   void append(dom.Node node) {
@@ -336,6 +445,12 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
         // Note: Empty flushes preserve ids only inside their own paragraph; see
         // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
         activeIndex = int.tryParse(node.attributes['idx']?.trim() ?? '');
+        // Cleared per paragraph so nothing leaks into the next one.
+        activeStartMs = null;
+      }
+      if (tag == 'span' && activeStartMs == null) {
+        final raw = node.attributes['start_time']?.trim();
+        activeStartMs = raw == null || raw.isEmpty ? null : int.tryParse(raw);
       }
       for (final child in node.nodes) {
         append(child);
@@ -343,6 +458,7 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
       if (paragraph) {
         flush();
         activeIndex = null;
+        activeStartMs = null;
       }
       if (tag == 'td' || tag == 'th') pending.write(' ');
     }
@@ -472,7 +588,9 @@ String normalizeChapterText(
   for (final node in parseFragment(source).nodes) {
     append(node);
   }
-  return splitChapterParagraphs(output.toString()).join('\n');
+  return splitChapterParagraphs(
+    _stripContentMarkers(output.toString()),
+  ).join('\n');
 }
 
 /// Splits plain text from either the network or an existing offline cache.

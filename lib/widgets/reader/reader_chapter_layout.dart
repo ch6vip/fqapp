@@ -113,6 +113,10 @@ class ReaderContentBlock {
   /// bubbles are keyed by this, not by the block's ordinal position.
   final int? paraIndex;
 
+  /// Start of this paragraph's audio in the chapter, in milliseconds, when the
+  /// chapter shipped a spoken timeline. 从本段听 seeks to this.
+  final int? startMs;
+
   /// Paragraph-comment count rendered as a bubble at the end of the last line;
   /// null when the paragraph has none or the upstream gate did not pass.
   final int? bubbleCount;
@@ -135,6 +139,7 @@ class ReaderContentBlock {
     required this.lines,
     this.illustration,
     this.paraIndex,
+    this.startMs,
     this.bubbleCount,
     this.bubbleVariant,
     this.underlined = false,
@@ -228,6 +233,7 @@ class ReaderChapterLayout {
         legacyCursor = (legacyStart + text.length).clamp(0, legacyText.length);
       }
       final paraIndex = element is ChapterParagraph ? element.paraIndex : null;
+      final startMs = element is ChapterParagraph ? element.startMs : null;
       final bubbleCount = paraIndex == null
           ? null
           : paragraphBubbles[paraIndex];
@@ -257,6 +263,7 @@ class ReaderChapterLayout {
               top: top,
               spec: spec,
               paraIndex: paraIndex,
+              startMs: startMs,
               bubbleCount: bubbleCount,
               bubbleVariant: bubbleVariant,
               bubble: bubble,
@@ -398,6 +405,7 @@ class ReaderChapterLayout {
     required double top,
     required ReaderLayoutSpec spec,
     int? paraIndex,
+    int? startMs,
     int? bubbleCount,
     ParagraphBubbleVariant? bubbleVariant,
     Widget? bubble,
@@ -457,6 +465,7 @@ class ReaderChapterLayout {
         align: align,
         lines: const [],
         paraIndex: paraIndex,
+        startMs: startMs,
         bubbleCount: bubbleCount,
         bubbleVariant: bubbleVariant,
         underlined: underlined,
@@ -557,6 +566,7 @@ class ReaderChapterLayout {
             ),
         ]),
         paraIndex: paraIndex,
+        startMs: startMs,
         bubbleCount: bubbleCount,
         bubbleVariant: bubbleVariant,
       );

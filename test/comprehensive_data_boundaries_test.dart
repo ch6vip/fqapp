@@ -239,13 +239,15 @@ void main() {
     test(
       'old and unknown parser revisions retain content but require checking',
       () {
-        for (final revision in <int?>[null, 0, 2]) {
+        for (final revision in <int?>[null, 0, 1]) {
           final cache =
               '\u001efqapp:chapter:2\n${jsonEncode({
                 'version': 2,
                 'illustrationsChecked': true,
                 'paragraphIdsChecked': true,
                 'paragraphParserRevision': ?revision,
+                // Written before the reader read the spoken timeline.
+                'timelineChecked': false,
                 'legacyText': '标题\n已丢编号的正文\n已有编号',
                 'blocks': [
                   {'type': 'text', 'text': '标题'},
@@ -261,6 +263,7 @@ void main() {
             ChapterContent.fromCacheText(content.toCacheText()),
           ]) {
             expect(value.paragraphIdsChecked, isFalse);
+            expect(value.timelineChecked, isFalse);
             expect(value.images.single.url, 'https://images.test/a');
             final paragraphs = value.blocks.whereType<ChapterParagraph>();
             expect(paragraphs.last.paraIndex, 8);
