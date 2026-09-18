@@ -72,7 +72,7 @@ class _MemoryUnderlines extends ReaderUnderlineStore {
   }
 }
 
-Widget _app(ReaderUnderlineStore store) => MaterialApp(
+Widget _app(ReaderUnderlineStore store, {String? html}) => MaterialApp(
   home: ReaderPage(
     bookId: 'reader-test',
     title: '测试书籍',
@@ -80,7 +80,8 @@ Widget _app(ReaderUnderlineStore store) => MaterialApp(
     startIndex: 0,
     readerStore: MemoryReaderStore(),
     chapterCache: MemoryChapterCache(),
-    chapterLoader: (_) async => parseChapterContent(_html).toCacheText(),
+    chapterLoader: (_) async =>
+        parseChapterContent(html ?? _html).toCacheText(),
     underlineStore: store,
   ),
 );
@@ -102,6 +103,66 @@ void main() {
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
+  });
+
+  // `/api/content` answers with plain text and no `<p idx>`, so those chapters
+  // carry no upstream paragraph ids at all. The menu used to require one and
+  // silently did nothing, which looked like the long press was not working.
+  const plainHtml =
+      '<header><div class="tt-title">第一章</div></header>'
+      '<article><p>“对不起......”</p><p>“老子是兔子啊！”</p></article>';
+
+  testWidgets('a chapter without paragraph ids still offers the menu', (
+    tester,
+  ) async {
+    final store = _MemoryUnderlines();
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_app(store, html: plainHtml));
+    await tester.pumpAndSettle();
+
+    // Upstream gave no ids, so paragraphs fall back to their ordinal.
+    final content = parseChapterContent(plainHtml);
+    expect(
+      content.blocks
+          .whereType<ChapterParagraph>()
+          .every((p) => p.paraIndex == null),
+      isTrue,
+    );
+
+    await _longPressParagraph(tester, 0);
+    expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('reader-action-underline')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('划线 works and is toggled off on an id-less paragraph', (
+    tester,
+  ) async {
+    final store = _MemoryUnderlines();
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_app(store, html: plainHtml));
+    await tester.pumpAndSettle();
+
+    await _longPressParagraph(tester, 0);
+    await tester.tap(find.byKey(const ValueKey('reader-action-underline')));
+    await tester.pumpAndSettle();
+
+    final saved = ReaderUnderline.fromMap(store.entries.values.single)!;
+    expect(saved.paraIndex, isNull);
+    expect(saved.blockIndex, 0);
+    expect(saved.id, paragraphUnderlineId(paraIndex: null, blockIndex: 0));
+
+    // The ordinal is the identity here, so the menu must show the undo state.
+    await _longPressParagraph(tester, 0);
+    expect(find.text('取消划线'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('reader-action-underline')));
+    await tester.pumpAndSettle();
+    expect(store.entries, isEmpty);
   });
 
   testWidgets('long-pressing a paragraph offers 复制 / 从本段听 / 划线', (

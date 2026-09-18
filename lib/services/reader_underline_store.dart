@@ -28,6 +28,12 @@ class ReaderUnderline {
     this.createdAt = 0,
   });
 
+  /// See [paragraphUnderlineId].
+  int get id => paragraphUnderlineId(
+    paraIndex: paraIndex,
+    blockIndex: blockIndex,
+  );
+
   String get key => ReaderUnderlineStore.keyFor(
     bookId: bookId,
     chapterId: chapterId,
@@ -72,8 +78,16 @@ class ReaderUnderline {
   }
 }
 
-/// Local 划线 storage.
+/// Identity of one paragraph inside a chapter, for 划线 and the paragraph menu.
 ///
+/// The upstream `idx` wins whenever the markup carries one. Plenty of chapters
+/// do not: `/api/content` answers with plain text, and that path stores no ids
+/// at all. Those paragraphs are still editable, so they fall back to their
+/// display ordinal, negated to keep the two namespaces from colliding.
+int paragraphUnderlineId({int? paraIndex, required int blockIndex}) =>
+    paraIndex ?? -(blockIndex + 1);
+
+/// Local 划线 storage.
 /// The official client keeps these server-side per account;  has no such
 /// endpoint, so this stays on the device. Identity is (book, chapter,
 /// paragraph), and a paragraph's id wins over its ordinal because titles and

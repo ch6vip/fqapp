@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_preferences.dart';
+import '../../services/reader_underline_store.dart';
 import 'reader_bubble.dart';
 import 'reader_illustration.dart';
 import '../../models/chapter_ideas.dart';
@@ -113,6 +114,11 @@ class ReaderContentBlock {
   /// bubbles are keyed by this, not by the block's ordinal position.
   final int? paraIndex;
 
+  /// Identity of this paragraph for local features (划线, the long-press menu):
+  /// [paraIndex] when the markup carried one, else an ordinal-derived id. The
+  /// title block has none — it is not a paragraph the user edits.
+  final int? textId;
+
   /// Start of this paragraph's audio in the chapter, in milliseconds, when the
   /// chapter shipped a spoken timeline. 从本段听 seeks to this.
   final int? startMs;
@@ -139,6 +145,7 @@ class ReaderContentBlock {
     required this.lines,
     this.illustration,
     this.paraIndex,
+    this.textId,
     this.startMs,
     this.bubbleCount,
     this.bubbleVariant,
@@ -244,8 +251,16 @@ class ReaderChapterLayout {
           ? null
           : bubbleBuilder(paraIndex!, bubbleCount, bubbleVariant);
       final blockIndex = blocks.length;
+      // The title is block 0 and is not an editable paragraph, so the ordinal
+      // used for identity starts at the first body paragraph.
+      final textId = element is ChapterParagraph
+          ? paragraphUnderlineId(
+              paraIndex: paraIndex,
+              blockIndex: blockIndex - 1,
+            )
+          : null;
       final underlined =
-          paraIndex != null && underlinedParagraphs.contains(paraIndex);
+          textId != null && underlinedParagraphs.contains(textId);
       final block = element is ChapterImage
           ? _measureImage(
               element,
@@ -263,6 +278,7 @@ class ReaderChapterLayout {
               top: top,
               spec: spec,
               paraIndex: paraIndex,
+              textId: textId,
               startMs: startMs,
               bubbleCount: bubbleCount,
               bubbleVariant: bubbleVariant,
@@ -405,6 +421,7 @@ class ReaderChapterLayout {
     required double top,
     required ReaderLayoutSpec spec,
     int? paraIndex,
+    int? textId,
     int? startMs,
     int? bubbleCount,
     ParagraphBubbleVariant? bubbleVariant,
@@ -465,6 +482,7 @@ class ReaderChapterLayout {
         align: align,
         lines: const [],
         paraIndex: paraIndex,
+        textId: textId,
         startMs: startMs,
         bubbleCount: bubbleCount,
         bubbleVariant: bubbleVariant,
@@ -566,6 +584,7 @@ class ReaderChapterLayout {
             ),
         ]),
         paraIndex: paraIndex,
+        textId: textId,
         startMs: startMs,
         bubbleCount: bubbleCount,
         bubbleVariant: bubbleVariant,

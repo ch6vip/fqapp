@@ -388,14 +388,19 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// Long-press actions on a paragraph: 复制 / 从本段听 / 划线.
   ///
+  /// Identity comes from [ReaderContentBlock.textId], which falls back to the
+  /// paragraph's ordinal when the markup carried no `idx` (the plain-text
+  /// `/api/content` path). Requiring `idx` here is what used to make a long
+  /// press do literally nothing on those chapters.
+  ///
   /// Note: .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
   Future<void> _showParagraphActions(ReaderContentBlock block) async {
-    final paraIndex = block.paraIndex;
-    if (paraIndex == null) return;
+    final textId = block.textId;
+    if (textId == null) return;
     final action = await ReaderParagraphMenu.show(
       context,
       preset: _preferences.themePreset,
-      underlined: _underlines.contains(paraIndex),
+      underlined: _underlines.contains(textId),
     );
     if (!mounted || action == null) return;
     switch (action) {
@@ -403,7 +408,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         await Clipboard.setData(ClipboardData(text: block.text));
         if (mounted) _showMessage('已复制');
       case ReaderParagraphAction.listen:
-        await _openListening(fromMs: block.startMs, paraIndex: paraIndex);
+        await _openListening(fromMs: block.startMs, textId: textId);
       case ReaderParagraphAction.underline:
         await _toggleUnderline(block, add: true);
       case ReaderParagraphAction.removeUnderline:
@@ -415,17 +420,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     ReaderContentBlock block, {
     required bool add,
   }) async {
-    final paraIndex = block.paraIndex;
-    if (paraIndex == null) return;
+    final textId = block.textId;
+    if (textId == null) return;
     final store = widget.underlineStore ?? ReaderUnderlineStore.instance;
+    final blockIndex = block.index - 1;
     try {
       if (add) {
         await store.add(
           ReaderUnderline(
             bookId: widget.bookId,
             chapterId: _chapter.itemId,
-            paraIndex: paraIndex,
-            blockIndex: block.index - 1,
+            paraIndex: block.paraIndex,
+            blockIndex: blockIndex,
             text: block.text,
             createdAt: DateTime.now().millisecondsSinceEpoch,
           ),
@@ -435,8 +441,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           ReaderUnderlineStore.keyFor(
             bookId: widget.bookId,
             chapterId: _chapter.itemId,
-            paraIndex: paraIndex,
-            blockIndex: block.index - 1,
+            paraIndex: block.paraIndex,
+            blockIndex: blockIndex,
           ),
         );
       }
@@ -448,9 +454,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     setState(() {
       final next = Set<int>.of(_underlines);
       if (add) {
-        next.add(paraIndex);
+        next.add(textId);
       } else {
-        next.remove(paraIndex);
+        next.remove(textId);
       }
       _underlines = next;
       ++_underlineRevision;
@@ -467,8 +473,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     try {
       final saved = await store.load(widget.bookId, chapterId);
       ids = {
-        for (final entry in saved.values)
-          if (entry.paraIndex != null) entry.paraIndex!,
+        for (final entry in saved.values) entry.id,
       };
     } catch (_) {
       ids = const {};
@@ -1335,15 +1340,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ///
   /// [fromMs] is the pressed paragraph's place on the spoken timeline the
   /// chapter shipped with (`<span start_time>`), so 从本段听 starts there
-  /// instead of at the chapter's opening. [paraIndex] marks the request as
-  /// paragraph-anchored: if that paragraph has no timeline the page still
+  /// instead of at the chapter's opening. [textId] non-null marks the request
+  /// as paragraph-anchored: if that paragraph has no timeline the page still
   /// starts at the chapter's beginning rather than resuming old history.
   ///
   /// A cache written before the reader read that timeline carries no start
   /// times. Reading never waits on that; the timeline is fetched here, once,
   /// because the user asked to listen from a paragraph. The fetch is bounded,
   /// and a failure still opens the page at the chapter start.
-  Future<void> _openListening({int? fromMs, int? paraIndex}) async {
+  Future<void> _openListening({int? fromMs, int? textId}) async {
+    final paragraphAnchored = textId != null;
     if (_openingListening) return;
     _openingListening = true;
     final chapter = _chapter;
@@ -1354,7 +1360,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       if (!mounted) return;
       var startMs = fromMs;
       if (startMs == null &&
-          paraIndex != null &&
+          paragraphAnchored &&
           !_chapterContent.timelineChecked) {
         _showMessage('正在获取本段音频…');
         await _refreshCachedChapter(chapter).timeout(
@@ -1365,7 +1371,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         // Serving another chapter's paragraph position would start playback at
         // a place nobody asked for.
         if (!mounted || _chapter.itemId != chapter.itemId) return;
-        startMs = _paragraphStartMs(paraIndex);
+        startMs = _paragraphStartMs(textId);
       }
       if (!mounted) return;
       setState(() => _controlsVisible = false);
@@ -1380,9 +1386,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             // A paragraph-anchored request always carries an explicit start:
             // Duration.zero means "this paragraph has no audio, begin at the
             // chapter opening" and must not fall back to saved history.
-            startPosition: paraIndex == null
-                ? null
-                : Duration(milliseconds: startMs ?? 0),
+            startPosition: paragraphAnchored
+                ? Duration(milliseconds: startMs ?? 0)
+                : null,
             historyStore: widget.readerStore,
           ),
         ),
@@ -1392,11 +1398,23 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
   }
 
-  /// The spoken start of the paragraph with [paraIndex], when the chapter
-  /// carries a timeline. Upstream paragraph ids are unique within a chapter.
-  int? _paragraphStartMs(int paraIndex) {
-    for (final block in _chapterContent.blocks.whereType<ChapterParagraph>()) {
-      if (block.paraIndex == paraIndex) return block.startMs;
+  /// The spoken start of the paragraph identified by [textId], when the chapter
+  /// carries a timeline.
+  ///
+  /// [textId] is [ReaderContentBlock.textId]: the upstream `idx` when present,
+  /// otherwise the paragraph's ordinal. Both are resolved against the same
+  /// block order the reader laid out, so a chapter without ids still maps.
+  int? _paragraphStartMs(int textId) {
+    final paragraphs = _chapterContent.blocks
+        .whereType<ChapterParagraph>()
+        .toList();
+    for (var i = 0; i < paragraphs.length; i++) {
+      final paragraph = paragraphs[i];
+      final id = paragraphUnderlineId(
+        paraIndex: paragraph.paraIndex,
+        blockIndex: i,
+      );
+      if (id == textId) return paragraph.startMs;
     }
     return null;
   }
