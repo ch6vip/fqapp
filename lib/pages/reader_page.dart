@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -64,6 +63,8 @@ class ReaderPage extends StatefulWidget {
   /// [chapterCache] was injected (an injected cache marks the caller as
   /// driving its own data).
   final ChapterIdeasLoader? ideasLoader;
+
+  /// Resolves one paragraph's comment bodies. See [ParagraphCommentResolver].
   final ParagraphCommentResolver? commentResolver;
 
   const ReaderPage({
@@ -394,13 +395,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// press do literally nothing on those chapters.
   ///
   /// Note: .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
-  Future<void> _showParagraphActions(ReaderContentBlock block) async {
+  Future<void> _showParagraphActions(
+    ReaderContentBlock block,
+    Offset position,
+  ) async {
     final textId = block.textId;
     if (textId == null) return;
     final action = await ReaderParagraphMenu.show(
       context,
-      preset: _preferences.themePreset,
       underlined: _underlines.contains(textId),
+      anchor: position,
+      isDark: _preferences.themePreset.isDark,
     );
     if (!mounted || action == null) return;
     switch (action) {
@@ -1686,8 +1691,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                     }
                   },
                   imageProviderFactory: widget.imageProviderFactory,
-                  onParagraphLongPress: (block) =>
-                      unawaited(_showParagraphActions(block)),
+                  onParagraphLongPress: (block, position) =>
+                      unawaited(_showParagraphActions(block, position)),
                 )
               : _buildScrollContent(layout),
         );
@@ -1794,8 +1799,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 block: layout.blocks[itemIndex],
                 spec: spec,
                 imageProviderFactory: widget.imageProviderFactory,
-                onParagraphLongPress: (block) =>
-                    unawaited(_showParagraphActions(block)),
+                onParagraphLongPress: (block, position) =>
+                    unawaited(_showParagraphActions(block, position)),
               ),
             );
           }

@@ -694,8 +694,11 @@ class ReaderBlockContent extends StatelessWidget {
   final ReaderLayoutSpec spec;
   final ReaderImageProviderFactory? imageProviderFactory;
 
-  /// Long-press target for a text paragraph (复制 / 从本段听 / 划线).
-  final void Function(ReaderContentBlock block)? onParagraphLongPress;
+  /// Long-press target for a text paragraph (复制 / 从本段听 / 划线). The offset is
+  /// the touch point in global coordinates, which the floating action bar
+  /// anchors itself to.
+  final void Function(ReaderContentBlock block, Offset globalPosition)?
+  onParagraphLongPress;
 
   const ReaderBlockContent({
     super.key,
@@ -720,7 +723,8 @@ class ReaderBlockContent extends StatelessWidget {
     return GestureDetector(
       key: ValueKey('reader-paragraph-press-${block.index - 1}'),
       behavior: HitTestBehavior.translucent,
-      onLongPress: () => onParagraphLongPress!(block),
+      onLongPressStart: (details) =>
+          onParagraphLongPress!(block, details.globalPosition),
       child: text,
     );
   }

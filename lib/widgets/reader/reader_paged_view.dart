@@ -16,8 +16,10 @@ class ReaderPagedView extends StatefulWidget {
   final VoidCallback onDragStart;
   final ReaderImageProviderFactory? imageProviderFactory;
 
-  /// Long-press target for a text paragraph (复制 / 从本段听 / 划线).
-  final void Function(ReaderContentBlock block)? onParagraphLongPress;
+  /// Long-press target for a text paragraph (复制 / 从本段听 / 划线). The offset is
+  /// the touch point in global coordinates, for anchoring the action bar.
+  final void Function(ReaderContentBlock block, Offset globalPosition)?
+  onParagraphLongPress;
 
   /// Page-turn animation; see [ReaderPageTurnStyle]. The widgets for the
   /// boundary pages beyond the chapter (章末 / 上一章) are optional.
@@ -317,7 +319,8 @@ class ReaderPageContent extends StatelessWidget {
   final ReaderTextPage page;
   final ReaderLayoutSpec spec;
   final ReaderImageProviderFactory? imageProviderFactory;
-  final void Function(ReaderContentBlock block)? onParagraphLongPress;
+  final void Function(ReaderContentBlock block, Offset globalPosition)?
+  onParagraphLongPress;
 
   const ReaderPageContent({
     super.key,
@@ -356,9 +359,12 @@ class ReaderPageContent extends StatelessWidget {
                           'reader-paragraph-press-${fragment.block.index - 1}',
                         ),
                         behavior: HitTestBehavior.translucent,
-                        onLongPress: onParagraphLongPress == null
+                        onLongPressStart: onParagraphLongPress == null
                             ? null
-                            : () => onParagraphLongPress!(fragment.block),
+                            : (details) => onParagraphLongPress!(
+                                fragment.block,
+                                details.globalPosition,
+                              ),
                         child: ClipRect(
                           child: OverflowBox(
                             alignment: Alignment.topLeft,
