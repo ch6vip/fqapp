@@ -217,6 +217,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   bool _appActive = true;
   bool _changingChapter = false;
 
+  /// Height of the reader's own bottom toolbar (目录/夜间/听书/设置) as measured
+  /// on device, including its safe-area inset. The paragraph action bar keeps
+  /// clear of it so a long press near the page foot flips above the line
+  /// instead of landing on top of the controls.
+  static const _bottomBarHeight = 74.0;
   /// Set while 从本段听 is waiting on a timeline fetch, so a repeated long-press
   /// cannot stack a second listening page (and a second player) on top.
   bool _openingListening = false;
@@ -406,6 +411,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       underlined: _underlines.contains(textId),
       anchor: position,
       isDark: _preferences.themePreset.isDark,
+      // Keep clear of the reader's own bottom toolbar so a long press near the
+      // page foot flips the bar above the line instead of covering the toolbar.
+      avoidBottom: _controlsVisible ? _bottomBarHeight : 0,
     );
     if (!mounted || action == null) return;
     switch (action) {
