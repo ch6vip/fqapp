@@ -112,6 +112,26 @@ void main() {
       '<header><div class="tt-title">第一章</div></header>'
       '<article><p>“对不起......”</p><p>“老子是兔子啊！”</p></article>';
 
+  // Paged mode puts every paragraph behind ReaderPageContent, whose own
+  // GestureDetector needs the callback forwarded from ReaderPagedView. Scroll
+  // mode was the only path covered, so 翻页 readers got no menu at all.
+  testWidgets('paged mode also opens the menu on a long press', (tester) async {
+    SharedPreferences.setMockInitialValues({'reader_page_mode': 'paged'});
+    final store = _MemoryUnderlines();
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_app(store));
+    await tester.pumpAndSettle();
+
+    final finder = find.byKey(const ValueKey('reader-paragraph-press-0'));
+    expect(finder, findsOneWidget);
+    await tester.longPress(finder);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
+  });
+
   testWidgets('a chapter without paragraph ids still offers the menu', (
     tester,
   ) async {

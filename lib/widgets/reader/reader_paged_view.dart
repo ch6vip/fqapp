@@ -273,6 +273,11 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
             page: widget.layout.pages[page],
             spec: widget.layout.spec,
             imageProviderFactory: widget.imageProviderFactory,
+            // Paged mode has to forward this too: without it the inner
+            // GestureDetector has a null onLongPress and a long press does
+            // nothing at all — which is exactly how 翻页 readers saw it, since
+            // scroll mode was the only path that passed it down.
+            onParagraphLongPress: widget.onParagraphLongPress,
           );
           if (widget.turnStyle == ReaderPageTurnStyle.cover) {
             // 覆盖: the outgoing page stays pinned while the incoming one
@@ -345,6 +350,11 @@ class ReaderPageContent extends StatelessWidget {
                       label: fragment.text,
                       excludeSemantics: true,
                       child: GestureDetector(
+                        // Same key the scroll list uses, so both page modes
+                        // expose one stable paragraph target.
+                        key: ValueKey(
+                          'reader-paragraph-press-${fragment.block.index - 1}',
+                        ),
                         behavior: HitTestBehavior.translucent,
                         onLongPress: onParagraphLongPress == null
                             ? null
