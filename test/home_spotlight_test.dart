@@ -160,6 +160,73 @@ void main() {
     semantics.dispose();
   });
 
+  test('the pinned tab bar rebuilds when brightness changes', () {
+    void ignore(int _) {}
+    final light = HomeTabBarDelegate(
+      selectedIndex: 0,
+      onSelect: ignore,
+      dark: false,
+    );
+    final dark = HomeTabBarDelegate(
+      selectedIndex: 0,
+      onSelect: ignore,
+      dark: true,
+    );
+    expect(dark.shouldRebuild(light), isTrue);
+    expect(
+      light.shouldRebuild(
+        HomeTabBarDelegate(selectedIndex: 0, onSelect: ignore),
+      ),
+      isFalse,
+    );
+  });
+
+  testWidgets('the pinned tab bar follows the theme without changing tabs', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    void select(int _) {}
+    Widget app(Brightness brightness) {
+      return MaterialApp(
+        theme: ThemeData(brightness: brightness),
+        home: CustomScrollView(
+          slivers: [
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: HomeTabBarDelegate(
+                selectedIndex: 0,
+                onSelect: select,
+                dark: brightness == Brightness.dark,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Color canvasOf() {
+      final box = tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: find.byKey(const ValueKey('home_category_0')),
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .first;
+      return (box.decoration as BoxDecoration).color!;
+    }
+
+    await tester.pumpWidget(app(Brightness.light));
+    await tester.pumpAndSettle();
+    expect(canvasOf(), const HomePalette(false).canvas);
+
+    await tester.pumpWidget(app(Brightness.dark));
+    await tester.pumpAndSettle();
+    expect(canvasOf(), const HomePalette(true).canvas);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('reduced motion leaves press and page changes settled', (
     tester,
   ) async {

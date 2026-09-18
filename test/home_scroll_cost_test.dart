@@ -27,7 +27,11 @@ void main() {
     kind: 'book',
   );
 
-  Future<void> pumpFeed(WidgetTester tester, {int count = 40}) async {
+  Future<void> pumpFeed(
+    WidgetTester tester, {
+    int count = 40,
+    double textScale = 1.0,
+  }) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -37,20 +41,39 @@ void main() {
           homeProvider.overrideWith(
             () => HomeNotifier(
               homepageLoader:
-                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                      HomepagePage(
-                        items: [for (var i = 0; i < count; i++) item(i)],
-                        nextOffset: null,
-                        sessionId: null,
-                      ),
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [for (var i = 0; i < count; i++) item(i)],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
               searchLoader: (query, {int page = 1}) async => const [],
             ),
           ),
         ],
-        child: const MaterialApp(home: HomePage()),
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+          home: const HomePage(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  int gridColumns(WidgetTester tester) {
+    final grid = tester.widget<SliverGrid>(
+      find.byType(SliverGrid, skipOffstage: false),
+    );
+    return (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+        .crossAxisCount;
   }
 
   Map<Key, HomeEntrance> entrances(WidgetTester tester) => {
@@ -77,6 +100,62 @@ void main() {
     for (final card in cards) {
       expect(card.coverWidth, isNotNull);
     }
+  });
+
+  testWidgets('changing text scale rebuilds the cached grid geometry', (
+    tester,
+  ) async {
+    final textScale = ValueNotifier(1.0);
+    addTearDown(textScale.dispose);
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [for (var i = 0; i < 40; i++) item(i)],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
+              searchLoader: (query, {int page = 1}) async => const [],
+            ),
+          ),
+        ],
+        child: ValueListenableBuilder<double>(
+          valueListenable: textScale,
+          builder: (context, scale, _) => MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(scale)),
+              child: child!,
+            ),
+            home: const HomePage(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(gridColumns(tester), 3);
+
+    textScale.value = 1.8;
+    await tester.pumpAndSettle();
+    expect(
+      gridColumns(tester),
+      2,
+      reason:
+          'a 1.8× scale on a 400-wide phone must drop to two columns; '
+          'reusing the sliver instance would keep the old 3-column delegate',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('scrolling the feed does not rebuild the mounted cards', (

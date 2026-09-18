@@ -9,6 +9,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/widgets/home/home_design.dart';
 
 void main() {
   testWidgets(
@@ -330,6 +331,75 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('小说 3'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the home tab bar follows theme changes from HomePage', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    final mode = ValueNotifier(ThemeMode.light);
+    addTearDown(mode.dispose);
+    await tester.pumpWidget(
+      ValueListenableBuilder<ThemeMode>(
+        valueListenable: mode,
+        builder: (context, themeMode, _) => ProviderScope(
+          overrides: [
+            homeProvider.overrideWith(
+              () => HomeNotifier(
+                homepageLoader:
+                    ({
+                      int tabType = 2,
+                      int offset = 0,
+                      String? sessionId,
+                    }) async => HomepagePage(
+                      items: [
+                        MediaItem(
+                          id: '1',
+                          title: '小说 1',
+                          cover: '',
+                          author: '',
+                          badge: '',
+                          ep: '',
+                          kind: 'book',
+                        ),
+                      ],
+                      nextOffset: null,
+                      sessionId: null,
+                    ),
+                searchLoader: (query, {int page = 1}) async => const [],
+              ),
+            ),
+          ],
+          child: MaterialApp(
+            theme: ThemeData(brightness: Brightness.light),
+            darkTheme: ThemeData(brightness: Brightness.dark),
+            themeMode: themeMode,
+            home: const HomePage(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Color canvasOf() {
+      final box = tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: find.byKey(const ValueKey('home_category_0')),
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .first;
+      return (box.decoration as BoxDecoration).color!;
+    }
+
+    expect(canvasOf(), const HomePalette(false).canvas);
+    mode.value = ThemeMode.dark;
+    await tester.pumpAndSettle();
+    expect(canvasOf(), const HomePalette(true).canvas);
     expect(tester.takeException(), isNull);
   });
 }

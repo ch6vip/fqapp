@@ -49,6 +49,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   List<MediaItem>? _gridItems;
   int? _gridTabIndex;
   double? _gridWidth;
+  double? _gridTitleScale;
+  double? _gridMetaScale;
 
   @override
   void initState() {
@@ -165,6 +167,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   selectedIndex: state.tabIndex,
                                   onSelect: notifier.selectTab,
                                   extent: 60 + (textScale - 1).clamp(0, 2) * 24,
+                                  dark: palette.dark,
                                 ),
                               ),
                               ..._contentSlivers(
@@ -254,29 +257,37 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// The card grid, reused verbatim while it still describes the same feed.
   ///
   /// Widgets are immutable descriptions, so handing the framework back the
-  /// identical instance lets it skip the whole visible card subtree when a
-  /// rebuild only carries a new loading flag. Everything the grid depends on
-  /// that is *not* the item list -- theme, text scale, device pixel ratio --
-  /// reaches the cards through inherited widgets, which mark them dirty on
-  /// their own, so reusing the instance cannot pin a stale layout.
+  /// identical instance lets it skip the visible cards when a rebuild only
+  /// carries a new loading flag. Column count, cell height and coverWidth are
+  /// baked into that instance, so the cache key also includes the text scales
+  /// those values were computed from. Theme colors and device pixel ratio still
+  /// reach the cards through inherited widgets.
   ///
-  /// Note: 网格曾在 sliver 内部量宽度，导致每帧重建全部可见卡片；见
+  /// Note: 网格曾在 sliver 内部量宽度，导致每帧重建全部可见卡片；字号变化
+  /// 必须使这份缓存失效 — 见
   /// .agents/notes/implemented/bug-fix/2026-09-18-home-scroll-cost.md
   Widget _gridSliverFor(
     HomeState state,
     List<MediaItem> rest,
     double gridWidth,
   ) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final titleScale = scaler.scale(14);
+    final metaScale = scaler.scale(11);
     final cached = _gridSliver;
     if (cached != null &&
         identical(_gridItems, state.items) &&
         _gridTabIndex == state.tabIndex &&
-        _gridWidth == gridWidth) {
+        _gridWidth == gridWidth &&
+        _gridTitleScale == titleScale &&
+        _gridMetaScale == metaScale) {
       return cached;
     }
     _gridItems = state.items;
     _gridTabIndex = state.tabIndex;
     _gridWidth = gridWidth;
+    _gridTitleScale = titleScale;
+    _gridMetaScale = metaScale;
     final cardWidth = homeCardWidth(context, gridWidth);
     return _gridSliver = SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: _gridPadding),

@@ -23,11 +23,13 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   final int selectedIndex;
   final ValueChanged<int> onSelect;
   final double extent;
+  final bool dark;
 
   HomeTabBarDelegate({
     required this.selectedIndex,
     required this.onSelect,
     this.extent = 60,
+    this.dark = false,
   });
 
   @override
@@ -127,9 +129,12 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     );
   }
 
+  // Note: pinned header 必须把主题算进 shouldRebuild — 见
+  // .agents/notes/implemented/bug-fix/2026-09-18-home-geometry-and-backup.md
   @override
   bool shouldRebuild(HomeTabBarDelegate oldDelegate) =>
       selectedIndex != oldDelegate.selectedIndex ||
       extent != oldDelegate.extent ||
-      onSelect != oldDelegate.onSelect;
+      onSelect != oldDelegate.onSelect ||
+      dark != oldDelegate.dark;
 }
