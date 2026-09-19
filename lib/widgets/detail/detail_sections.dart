@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -27,10 +28,13 @@ class DetailAuthorRow extends StatelessWidget {
                 color: palette.soft,
                 child: Icon(LucideIcons.user, size: 20, color: palette.muted),
               )
-            : Image.network(
-                author.avatar,
+            : CachedNetworkImage(
+                imageUrl: author.avatar,
                 fit: BoxFit.cover,
-                errorBuilder: (context, _, _) => ColoredBox(
+                // 38dp avatar; decode at 2×. CachedNetworkImage also adds
+                // the disk cache a bare Image.network lacks.
+                memCacheWidth: 76,
+                errorWidget: (context, _, _) => ColoredBox(
                   color: palette.soft,
                   child: Icon(LucideIcons.user, size: 20, color: palette.muted),
                 ),
@@ -513,12 +517,15 @@ class _CastAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final fallback = _InitialAvatar(member: member, palette: palette);
     if (member.avatar.isEmpty) return fallback;
-    return Image.network(
-      member.avatar,
+    return CachedNetworkImage(
+      imageUrl: member.avatar,
       fit: BoxFit.cover,
-      errorBuilder: (context, _, _) => fallback,
-      loadingBuilder: (context, child, progress) =>
-          progress == null ? child : fallback,
+      // 56dp avatar; decode at 2×. The cast row scrolls horizontally, so the
+      // disk cache that CachedNetworkImage adds over a bare Image.network
+      // keeps tiles from being re-downloaded every time they scroll back.
+      memCacheWidth: 112,
+      placeholder: (context, _) => fallback,
+      errorWidget: (context, _, _) => fallback,
     );
   }
 }

@@ -78,7 +78,7 @@ flutter:
     - assets/web/assets/css/
     - assets/web/assets/webfonts/
     - assets/plugins/
-    - assets/images/app_logo.png
+    - assets/images/app_logo.webp
     - assets/images/bubble/
 
   # To add assets to your application, add an assets section, like this:

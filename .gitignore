@@ -63,3 +63,4 @@ app.*.map.json
 _sessionzip/
 .workbuddy/
 .agents/
+.zcode/

@@ -23,11 +23,28 @@ ADAPTIVE_SIZE = 108
 ARTWORK_SIZE = 60
 VISIBLE_SIZE = 72
 
+# The about page draws the in-app logo at 96dp, so 384px covers 4x DPI with
+# headroom to spare. WebP keeps the bundled file an order of magnitude smaller
+# than the same picture as a PNG.
+LOGO_SIZE = 384
+LOGO_QUALITY = 88
+
 
 def save_png(image: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path, optimize=True)
     print(f"{path.relative_to(ROOT).as_posix()} ({image.width}x{image.height})")
+
+
+def save_webp(image: Image.Image, path: Path, *, quality: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Drop the alpha channel: the design master's alpha is fully opaque, and
+    # carrying it into WebP only makes the encoder store a 255 plane.
+    image.convert("RGB").save(path, "WEBP", quality=quality, method=6)
+    print(
+        f"{path.relative_to(ROOT).as_posix()} "
+        f"({image.width}x{image.height}, q{quality})"
+    )
 
 
 def place_artwork(source: Image.Image, size: int, artwork_size: int,
@@ -86,8 +103,8 @@ def main() -> None:
         f'<resources>\n    <color name="ic_launcher_background">{paper_hex}</color>\n'
         '</resources>\n', encoding="utf-8")
 
-    save_png(source.resize((512, 512), Image.Resampling.LANCZOS),
-             ROOT / "assets/images/app_logo.png")
+    save_webp(source.resize((LOGO_SIZE, LOGO_SIZE), Image.Resampling.LANCZOS),
+              ROOT / "assets/images/app_logo.webp", quality=LOGO_QUALITY)
     save_png(source.resize((64, 64), Image.Resampling.LANCZOS),
              ROOT / "assets/web/favicon.png")
 

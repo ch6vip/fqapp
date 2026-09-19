@@ -12,6 +12,12 @@ class AboutPage extends StatelessWidget {
   /// build check when the two drift apart after a version bump.
   static const versionText = '1.0.33 (34)';
 
+  /// Pixel width of the bundled logo (assets/images/app_logo.webp). The logo
+  /// is displayed at 96dp, so it only needs re-decoding above 4× DPI; clamping
+  /// to the asset's real width keeps a high-DPI device from asking the decoder
+  /// to upscale a surface the asset does not have.
+  static const _logoPixelWidth = 384;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -26,9 +32,15 @@ class AboutPage extends StatelessWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(22),
               child: Image.asset(
-                'assets/images/app_logo.png',
+                'assets/images/app_logo.webp',
                 width: 96,
                 height: 96,
+                // Decode at the display size rather than the whole 384²
+                // surface, which would hold ~590 KB in the image cache for a
+                // 96dp logo.
+                cacheWidth: (96 * MediaQuery.devicePixelRatioOf(context))
+                    .round()
+                    .clamp(96, _logoPixelWidth),
                 fit: BoxFit.contain,
                 excludeFromSemantics: true,
               ),
