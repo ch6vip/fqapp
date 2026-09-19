@@ -66,7 +66,10 @@ extension ReaderThemeColors on ReaderThemePreset {
     panelColor,
   );
   Color get borderColor => textColor.withValues(alpha: 0.09);
-  Color get sheetColor => panelColor;
+  /// 排版面板表面 = 阅读页背景本身(官方 bottombar/t.java 直接把面板根
+  /// View 设为 readerConfig.getBackgroundColor(),面板与页面同色);chip/
+  /// 控件底色另走 fieldColor(官方是白色 5% 叠加,x4 色表)。
+  Color get sheetColor => backgroundColor;
 
   /// Built themes per preset, keyed by the base theme's identity. `fromSeed`
   /// runs a full HCT palette build and `textTheme.apply` copies ~90 text
