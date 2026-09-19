@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/user_facing_error.dart';
 
 typedef HomepageLoader =
     Future<HomepagePage> Function({int tabType, int offset, String? sessionId});
@@ -234,7 +235,7 @@ class HomeNotifier extends Notifier<HomeState> {
       }
       feed.hasMore = false;
       state = state.copyWith(
-        error: '$error',
+        error: userFacingError(error),
         isLoading: false,
         isLoadMore: false,
         hasMore: false,

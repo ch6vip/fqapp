@@ -7,6 +7,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/media_item.dart';
 import '../models/rank.dart';
 import '../services/api_client.dart';
+import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
 import 'detail_page.dart';
 
@@ -82,7 +83,7 @@ class _RankPageState extends State<RankPage> {
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
-        _error = '$error';
+        _error = userFacingError(error);
         _loading = false;
       });
     }
@@ -130,7 +131,7 @@ class _RankPageState extends State<RankPage> {
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
-        _error = '$error';
+        _error = userFacingError(error);
         _loading = false;
       });
     }
@@ -160,7 +161,7 @@ class _RankPageState extends State<RankPage> {
       if (mounted && generation == _generation) {
         setState(() {
           _loadingMore = false;
-          _loadMoreError = '$error';
+          _loadMoreError = userFacingError(error);
         });
       }
     }
@@ -441,6 +442,8 @@ class _RankRow extends StatelessWidget {
                     : CachedNetworkImage(
                         imageUrl: entry.cover,
                         fit: BoxFit.cover,
+                        // 56x78 logical tile; decode at 2×.
+                        memCacheWidth: 120,
                         errorWidget: (context, url, error) => ColoredBox(
                           color: palette.soft,
                           child: Icon(

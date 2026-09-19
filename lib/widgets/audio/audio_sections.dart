@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/audio_extra.dart';
+import '../../services/playback_format.dart';
 import '../home/home_design.dart';
 
 /// Listening page title with collapse and additional actions.
@@ -256,6 +257,9 @@ class _CoverImage extends StatelessWidget {
     return CachedNetworkImage(
       imageUrl: url,
       fit: BoxFit.cover,
+      // The big cover renders at ~293 logical px; decode at 2× instead of the
+      // original resolution (typically 600-1000px wide).
+      memCacheWidth: 640,
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
       placeholder: (context, _) => Container(color: palette.soft),
@@ -295,134 +299,6 @@ class AudioExcerpt extends StatelessWidget {
             height: 1.5,
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// `简介` block with genre tags, a clamped summary and an inline `更多`.
-class AudioIntroSection extends StatefulWidget {
-  final String text;
-  final List<String> tags;
-
-  const AudioIntroSection({
-    super.key,
-    required this.text,
-    this.tags = const [],
-  });
-
-  @override
-  State<AudioIntroSection> createState() => _AudioIntroSectionState();
-}
-
-class _AudioIntroSectionState extends State<AudioIntroSection> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    if (widget.text.isEmpty && widget.tags.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final style = TextStyle(color: palette.muted, fontSize: 13, height: 1.8);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: palette.line.withValues(alpha: 0.8)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                '简介',
-                style: TextStyle(
-                  color: palette.ink,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final tag in widget.tags.take(5))
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: palette.soft,
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: Text(
-                          tag,
-                          style: TextStyle(
-                            color: palette.muted,
-                            fontSize: 11,
-                            height: 1.3,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (widget.text.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final measure = TextPainter(
-                  text: TextSpan(text: widget.text, style: style),
-                  textDirection: Directionality.of(context),
-                  textScaler: MediaQuery.textScalerOf(context),
-                  maxLines: 3,
-                )..layout(maxWidth: constraints.maxWidth);
-                final canExpand = measure.didExceedMaxLines;
-                measure.dispose();
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.text,
-                      key: const Key('audio_intro_text'),
-                      maxLines: _expanded ? null : 3,
-                      overflow: _expanded
-                          ? TextOverflow.visible
-                          : TextOverflow.ellipsis,
-                      style: style,
-                    ),
-                    if (canExpand)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          key: const Key('audio_intro_toggle'),
-                          onPressed: () =>
-                              setState(() => _expanded = !_expanded),
-                          style: TextButton.styleFrom(
-                            foregroundColor: palette.accentText,
-                            minimumSize: const Size(48, 40),
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                          ),
-                          child: Text(
-                            _expanded ? '收起' : '更多',
-                            style: const TextStyle(fontSize: 12.5),
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ],
-        ],
       ),
     );
   }
@@ -493,6 +369,8 @@ class AudioRelatedRow extends StatelessWidget {
                           : Image.network(
                               work.cover,
                               fit: BoxFit.cover,
+                              // 44x58 logical thumbnail; decode at 2×.
+                              cacheWidth: 96,
                               errorBuilder: (context, _, _) => ColoredBox(
                                 color: palette.soft,
                                 child: Icon(
@@ -684,11 +562,7 @@ class AudioProgressRow extends StatelessWidget {
     this.onForward15,
   });
 
-  static String time(Duration value) {
-    final seconds = value.inSeconds.clamp(0, 0x7fffffff);
-    final minutes = (seconds ~/ 60).toString().padLeft(2, '0');
-    return '$minutes:${(seconds % 60).toString().padLeft(2, '0')}';
-  }
+  static String time(Duration value) => formatPlaybackTime(value);
 
   @override
   Widget build(BuildContext context) {

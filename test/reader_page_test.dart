@@ -481,7 +481,8 @@ void main() {
     expect((selectedTiles.single.title as Text).data, '第一章');
 
     await tester.enterText(find.byType(TextField), '尾声');
-    await tester.pump();
+    // The directory filters on a 200ms debounce; settle past it.
+    await tester.pump(const Duration(milliseconds: 250));
     final filteredTiles = tester.widgetList<ListTile>(find.byType(ListTile));
     expect(filteredTiles, hasLength(1));
     expect((filteredTiles.single.title as Text).data, '尾声');

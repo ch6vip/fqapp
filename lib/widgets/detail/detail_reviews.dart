@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -220,10 +221,13 @@ class _CommentTileState extends State<_CommentTile> {
                             color: palette.muted,
                           ),
                         )
-                      : Image.network(
-                          comment.userAvatar,
+                      : CachedNetworkImage(
+                          imageUrl: comment.userAvatar,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, _, _) => ColoredBox(
+                          // 30dp avatar; decode at 2×. CachedNetworkImage also
+                          // adds the disk cache a bare Image.network lacks.
+                          memCacheWidth: 64,
+                          errorWidget: (context, _, _) => ColoredBox(
                             color: palette.soft,
                             child: Icon(
                               LucideIcons.user,
@@ -442,10 +446,12 @@ class _ReplyTile extends StatelessWidget {
                         color: palette.muted,
                       ),
                     )
-                  : Image.network(
-                      reply.userAvatar,
+                  : CachedNetworkImage(
+                      imageUrl: reply.userAvatar,
                       fit: BoxFit.cover,
-                      errorBuilder: (context, _, _) => ColoredBox(
+                      // 22dp avatar; decode at 2×.
+                      memCacheWidth: 48,
+                      errorWidget: (context, _, _) => ColoredBox(
                         color: palette.surface,
                         child: Icon(
                           LucideIcons.user,

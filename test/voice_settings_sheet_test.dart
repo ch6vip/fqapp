@@ -8,7 +8,6 @@ void main() {
     WidgetTester tester, {
     required String selectedId,
     required ValueChanged<VoiceOption> onSelect,
-    ValueChanged<VoiceOption>? onDownload,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -28,7 +27,6 @@ void main() {
               VoiceOption(id: 't2', title: '成熟大叔音', description: '超自然'),
             ],
             onSelect: onSelect,
-            onDownload: onDownload,
           ),
         ),
       ),

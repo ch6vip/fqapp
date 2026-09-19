@@ -11,6 +11,7 @@ import '../services/comic_page_layout.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
+import '../services/user_facing_error.dart';
 
 typedef ComicChapterLoader = Future<List<ComicImage>> Function(Chapter chapter);
 typedef ComicImageProviderFactory =
@@ -168,7 +169,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     } catch (error) {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _error = error.toString();
+        _error = userFacingError(error);
         _loading = false;
       });
     }

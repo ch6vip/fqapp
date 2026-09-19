@@ -14,6 +14,7 @@ import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/native_player.dart';
+import '../services/playback_format.dart';
 import '../services/transient_retry.dart';
 import '../widgets/audio/audio_sections.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
@@ -163,9 +164,12 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   String _excerpt = '';
   int _excerptGeneration = 0;
   double _rate = 1;
-  Duration _position = Duration.zero;
+  // The narration position ticks ~5×/s and feeds only the progress row, so
+  // both are ValueNotifiers: the 5Hz stream rebuilds that row instead of the
+  // whole page (cover image, tone cards, related-works list and all).
+  final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
+  final ValueNotifier<double?> _seekPreview = ValueNotifier(null);
   Duration _duration = Duration.zero;
-  double? _seekPreview;
   List<AudioVoice> _voices = const [_defaultVoice];
   AudioExtras _extras = const AudioExtras();
   SubtitleTrack _subtitles = SubtitleTrack.empty;
@@ -407,6 +411,8 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     unawaited(_releasePlayer());
     _readAlong.dispose();
     _moreState.dispose();
+    _position.dispose();
+    _seekPreview.dispose();
     super.dispose();
   }
 
@@ -446,12 +452,11 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     setState(() {
       _index = index;
       _loading = true;
-      _loading = true;
       _error = null;
       _completed = false;
-      _position = position ?? Duration.zero;
+      _position.value = position ?? Duration.zero;
       _duration = Duration.zero;
-      _seekPreview = null;
+      _seekPreview.value = null;
       _subtitles = SubtitleTrack.empty;
       _wantPlay = autoplay && _appActive;
     });
@@ -525,7 +530,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         _activeIndex = index;
         _toneId = source.toneId;
         _duration = duration;
-        _position = _boundedPosition(player.position, duration);
+        _position.value = _boundedPosition(player.position, duration);
         _completed = wasCompleted;
         if (wasCompleted) _wantPlay = false;
         _loading = false;
@@ -625,12 +630,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   void _publishReadAlong() {
     if (!mounted || _index < 0 || _index >= _chapters.length) return;
+    final preview = _seekPreview.value;
     _readAlong.value = (
       chapterTitle: _chapters[_index].title,
       track: _subtitles,
-      position: _seekPreview == null
-          ? _position
-          : Duration(milliseconds: _seekPreview!.round()),
+      position: preview == null
+          ? _position.value
+          : Duration(milliseconds: preview.round()),
     );
   }
 
@@ -661,7 +667,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       bookId: _bookId,
       chapterId: chapter.itemId,
       chapterTitle: chapter.title,
-      position: _boundedPosition(_player?.position ?? _position, _duration),
+      position: _boundedPosition(_player?.position ?? _position.value, _duration),
       duration: _duration,
       playing: playing && !_completed,
     );
@@ -678,7 +684,8 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     _subscriptions.addAll([
       player.positionStream.listen((position) {
         if (!_current(generation, player)) return;
-        setState(() => _position = _boundedPosition(position, _duration));
+        // Notifier-only: the 5Hz tick rebuilds the progress row, not the page.
+        _position.value = _boundedPosition(position, _duration);
         _publishReadAlong();
         // Publish the REAL playing state: a paused seek also fires this
         // stream, and publishing playing=true would yank the reader back to
@@ -689,7 +696,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         if (!_current(generation, player) || duration <= Duration.zero) return;
         setState(() {
           _duration = duration;
-          _position = _boundedPosition(_position, duration);
+          _position.value = _boundedPosition(_position.value, duration);
         });
         _publishReadAlong();
       }),
@@ -726,7 +733,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         setState(() {
           _completed = true;
           _wantPlay = false;
-          _position = _boundedPosition(player.position, _duration);
+          _position.value = _boundedPosition(player.position, _duration);
         });
         _publishReadAlong();
         _listenTime.stop();
@@ -880,7 +887,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         await player.seek(Duration.zero);
         if (!_current(generation, player)) return;
         setState(() {
-          _position = Duration.zero;
+          _position.value = Duration.zero;
           _completed = false;
         });
         _publishReadAlong();
@@ -898,7 +905,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     final generation = _generation;
     final seekGeneration = ++_seekGeneration;
     final target = _boundedPosition(position, _duration);
-    setState(() => _seekPreview = target.inMilliseconds.toDouble());
+    _seekPreview.value = target.inMilliseconds.toDouble();
     _publishReadAlong();
     try {
       await player.seek(target);
@@ -906,10 +913,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         return;
       }
       setState(() {
-        _seekPreview = null;
-        _position = target;
         _completed = false;
       });
+      _seekPreview.value = null;
+      _position.value = target;
       _publishReadAlong();
       await _persistProgress();
     } catch (error) {
@@ -966,11 +973,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
           selectedId: _extras.tones.hasFixedTone ? _bookId : _toneId,
           narrators: _narratorOptions(),
           online: _onlineOptions(),
-          offline: _offlineOptions(),
           onSelect: (option) {
             unawaited(_applyVoiceOption(option, fromSheet: sheetContext));
           },
-          onDownload: _downloadOfflineTone,
         ),
       ),
     );
@@ -1066,23 +1071,6 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     return true;
   }
 
-  List<VoiceOption> _offlineOptions() => [
-    for (final tone in _uniqueTones(_extras.tones.offlineTones))
-      VoiceOption(
-        id: tone.id,
-        title: tone.title,
-        description: tone.description,
-        badge: tone.badge,
-        offline: true,
-      ),
-  ];
-
-  void _downloadOfflineTone(VoiceOption option) {
-    ScaffoldMessenger.maybeOf(
-      context,
-    )?.showSnackBar(SnackBar(content: Text('离线音色「${option.title}」需在官方客户端下载')));
-  }
-
   Future<void> _showCatalog() async {
     final selected = await showModalBottomSheet<int>(
       context: context,
@@ -1095,8 +1083,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     await _openChapter(selected);
   }
 
-  static String _rateLabel(double rate) =>
-      rate == rate.roundToDouble() ? rate.toInt().toString() : rate.toString();
+  static String _rateLabel(double rate) => formatPlaybackRate(rate);
 
   @override
   Widget build(BuildContext context) {
@@ -1169,25 +1156,36 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
                         const SizedBox(height: 12),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: AudioProgressRow(
-                            position: _position,
-                            duration: _duration,
-                            preview: _seekPreview,
-                            enabled: _ready,
-                            onChanged: (value) =>
-                                setState(() => _seekPreview = value),
-                            onChangeEnd: (value) =>
-                                _seekTo(Duration(milliseconds: value.round())),
-                            onBack15: _ready
-                                ? () => _seekTo(
-                                    _position - const Duration(seconds: 15),
-                                  )
-                                : null,
-                            onForward15: _ready
-                                ? () => _seekTo(
-                                    _position + const Duration(seconds: 15),
-                                  )
-                                : null,
+                          child: ValueListenableBuilder<Duration>(
+                            valueListenable: _position,
+                            builder: (context, position, _) =>
+                                ValueListenableBuilder<double?>(
+                              valueListenable: _seekPreview,
+                              builder: (context, seekPreview, _) =>
+                                  AudioProgressRow(
+                                position: position,
+                                duration: _duration,
+                                preview: seekPreview,
+                                enabled: _ready,
+                                onChanged: (value) =>
+                                    _seekPreview.value = value,
+                                onChangeEnd: (value) => _seekTo(
+                                  Duration(milliseconds: value.round()),
+                                ),
+                                onBack15: _ready
+                                    ? () => _seekTo(
+                                        _position.value -
+                                            const Duration(seconds: 15),
+                                      )
+                                    : null,
+                                onForward15: _ready
+                                    ? () => _seekTo(
+                                        _position.value +
+                                            const Duration(seconds: 15),
+                                      )
+                                    : null,
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -1513,7 +1511,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     if (toneId == _toneId) return;
     await _openChapter(
       _index,
-      position: _player?.position ?? _position,
+      position: _player?.position ?? _position.value,
       toneId: toneId,
       autoplay: _wantPlay,
       completed: _completed,
@@ -1762,7 +1760,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     if (!_current(generation)) return null;
     final snapshot = (
       index: _index,
-      position: _player?.position ?? _position,
+      position: _player?.position ?? _position.value,
       completed: _completed,
       autoplay: _wantPlay,
     );
@@ -1833,7 +1831,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         _extras = const AudioExtras();
         _excerpt = '';
         _error = null;
-        _position = Duration.zero;
+        _position.value = Duration.zero;
         _duration = Duration.zero;
         _subtitles = SubtitleTrack.empty;
       });
@@ -1962,7 +1960,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 /// Reviews sheet opened from the 书评 action.
 class _AudioCommentsSheet extends StatefulWidget {
   final String bookId;
-  final Future<BookCommentPage> Function(String bookId)? loader;
+  final Future<BookCommentPage> Function(String bookId, {int offset})? loader;
 
   const _AudioCommentsSheet({required this.bookId, this.loader});
 
@@ -1972,7 +1970,11 @@ class _AudioCommentsSheet extends StatefulWidget {
 
 class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
   BookCommentPage? _page;
+  List<BookComment> _comments = const [];
   bool _failed = false;
+  bool _loadingMore = false;
+  bool _hasMore = false;
+  int _nextOffset = 0;
 
   @override
   void initState() {
@@ -1988,9 +1990,35 @@ class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
     }
     try {
       final page = await loader(widget.bookId);
-      if (mounted) setState(() => _page = page);
+      if (mounted) {
+        setState(() {
+          _page = page;
+          _comments = page.comments;
+          _hasMore = page.hasMore;
+          _nextOffset = page.nextOffset;
+        });
+      }
     } on Exception {
       if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    final loader = widget.loader;
+    if (loader == null || _loadingMore || !_hasMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final page = await loader(widget.bookId, offset: _nextOffset);
+      if (!mounted) return;
+      setState(() {
+        _comments = [..._comments, ...page.comments];
+        _hasMore = page.hasMore;
+        _nextOffset = page.nextOffset;
+        _loadingMore = false;
+      });
+    } on Exception {
+      // The appended list stays; the footer flips back so it can be retried.
+      if (mounted) setState(() => _loadingMore = false);
     }
   }
 
@@ -1998,6 +2026,7 @@ class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final page = _page;
+    final hasMore = _hasMore && widget.loader != null;
     return SizedBox(
       height: MediaQuery.sizeOf(context).height * 0.6,
       child: Column(
@@ -2035,7 +2064,7 @@ class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
                 ? const Center(
                     child: CircularProgressIndicator(color: HomePalette.accent),
                   )
-                : page.comments.isEmpty
+                : _comments.isEmpty
                 ? Center(
                     child: Text(
                       '还没有书评',
@@ -2044,9 +2073,35 @@ class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
-                    itemCount: page.comments.length,
+                    itemCount: _comments.length + (hasMore ? 1 : 0),
                     itemBuilder: (context, index) {
-                      final comment = page.comments[index];
+                      if (index >= _comments.length) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Center(
+                            child: _loadingMore
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: HomePalette.accent,
+                                    ),
+                                  )
+                                : TextButton(
+                                    key: const Key('audio_comments_more'),
+                                    onPressed: _loadMore,
+                                    child: Text(
+                                      '加载更多书评',
+                                      style: TextStyle(
+                                        color: palette.accentText,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        );
+                      }
+                      final comment = _comments[index];
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         child: Column(

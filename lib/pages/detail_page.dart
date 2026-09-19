@@ -17,6 +17,7 @@ import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/player_history.dart';
 import '../services/reader_history.dart';
+import '../services/user_facing_error.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/detail/detail_chapter_row.dart';
 import '../widgets/detail/detail_description.dart';
@@ -124,6 +125,7 @@ class _DetailPageState extends State<DetailPage> {
   BookDetail? _bookDetail;
   SeriesDetail _series = SeriesDetail.empty;
   BookCommentPage _comments = const BookCommentPage();
+  bool _commentsLoadingMore = false;
   ChapterSummary _chapterPreviews = ChapterSummary.empty;
   List<Chapter> _allChapters = [];
   final _scroll = ScrollController();
@@ -243,7 +245,7 @@ class _DetailPageState extends State<DetailPage> {
 
     if (volumes.isEmpty && directoryResult.error != null) {
       setState(() {
-        _error = '${directoryResult.error}';
+        _error = userFacingError(directoryResult.error!);
         _loading = false;
       });
       return;
@@ -256,7 +258,7 @@ class _DetailPageState extends State<DetailPage> {
       _allChapters = volumes.expand((volume) => volume).toList(growable: false);
       // A missing optional detail response should not hide a usable list.
       _error = detail == null && detailResult.error != null && volumes.isEmpty
-          ? '${detailResult.error}'
+          ? userFacingError(detailResult.error!)
           : null;
       _loading = false;
     });
@@ -302,6 +304,47 @@ class _DetailPageState extends State<DetailPage> {
     if (bookId.isEmpty) return null;
     return (commentId) =>
         ApiClient.instance.commentReplies(bookId, commentId, groupId: bookId);
+  }
+
+  /// Offset-based review paging, under the same offline rule as
+  /// [_replyLoader]: injected-loader callers drive their own data, and the
+  /// 「全部书评」 affordance stays hidden for them.
+  Future<BookCommentPage> Function(int offset)? _commentsLoader() {
+    if (widget.detailLoader != null ||
+        widget.directoryLoader != null ||
+        widget.extrasLoader != null) {
+      return null;
+    }
+    if (_contentId.isEmpty) return null;
+    return (offset) =>
+        ApiClient.instance.bookComments(_contentId, offset: offset);
+  }
+
+  /// Appends the next review page. A failure keeps the loaded list and just
+  /// re-enables the affordance so it can be retried.
+  Future<void> _loadMoreComments() async {
+    final loader = _commentsLoader();
+    if (loader == null || _commentsLoadingMore || !_comments.hasMore) return;
+    setState(() => _commentsLoadingMore = true);
+    try {
+      final next = await loader(_comments.nextOffset);
+      if (!mounted) return;
+      setState(() {
+        _comments = BookCommentPage(
+          comments: [..._comments.comments, ...next.comments],
+          totalCount: next.totalCount > 0
+              ? next.totalCount
+              : _comments.totalCount,
+          scoreCount: _comments.scoreCount,
+          scoreContext: _comments.scoreContext,
+          hasMore: next.hasMore,
+          nextOffset: next.nextOffset,
+        );
+        _commentsLoadingMore = false;
+      });
+    } on Exception {
+      if (mounted) setState(() => _commentsLoadingMore = false);
+    }
   }
 
   /// Loads opening excerpts for the chapters the preview block shows.
@@ -549,6 +592,8 @@ class _DetailPageState extends State<DetailPage> {
             detail: detail,
             bookId: _contentId,
             replyLoader: _replyLoader(_contentId),
+            onLoadMore: _comments.hasMore ? _loadMoreComments : null,
+            loadingMore: _commentsLoadingMore,
           ),
         ],
       ],

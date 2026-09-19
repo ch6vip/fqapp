@@ -7,6 +7,7 @@ import '../models/media_id.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
 import '../services/search_history_store.dart';
+import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/media_card.dart';
 import '../widgets/search/search_discovery.dart';
@@ -310,7 +311,7 @@ class _SearchPageState extends State<SearchPage> {
       setState(() {
         for (final feed in _feeds) {
           feed.loading = false;
-          feed.error = '$error';
+          feed.error = userFacingError(error);
         }
       });
     }
@@ -376,7 +377,7 @@ class _SearchPageState extends State<SearchPage> {
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
         feed.loading = false;
-        feed.error = '$e';
+        feed.error = userFacingError(e);
       });
     }
   }

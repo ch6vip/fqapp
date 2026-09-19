@@ -227,7 +227,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('下一章'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('chapter unavailable'), findsOneWidget);
+    // The raw loader error (StateError('chapter unavailable')) must not reach
+    // the screen; the mapped user-facing text proves the error view rendered.
+    expect(find.text('加载失败，请稍后重试'), findsOneWidget);
     expect(store.records['manga:comic-test']!['chapterId'], 'chapter-1');
     expect(
       store.records['manga:comic-test']!['position'],

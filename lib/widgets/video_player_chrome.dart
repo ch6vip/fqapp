@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/native_player.dart';
+import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
@@ -1359,12 +1360,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   );
 }
 
-String _rateLabel(double rate) =>
-    rate == rate.roundToDouble() ? rate.toInt().toString() : rate.toString();
+// Both formatters are shared with the audio page (services/playback_format.dart)
+// so the two players can never drift apart again.
+String _rateLabel(double rate) => formatPlaybackRate(rate);
 
-String _time(Duration value) {
-  final seconds = math.max(0, value.inSeconds);
-  final minutes = (seconds ~/ 60).toString().padLeft(2, '0');
-  final rest = (seconds % 60).toString().padLeft(2, '0');
-  return '$minutes:$rest';
-}
+String _time(Duration value) => formatPlaybackTime(value);

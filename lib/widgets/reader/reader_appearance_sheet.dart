@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -26,9 +28,43 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
   bool _importing = false;
   String? _fontError;
 
+  /// Applies the pending value to the reader page. The reader re-measures the
+  /// whole chapter synchronously on the UI isolate, so a slider firing
+  /// `onChanged` per tick used to re-typeset the chapter ten-plus times per
+  /// drag and dropped frames all the way down. The sheet keeps its own thumb
+  /// and label instant, coalesces the page updates (120ms trailing), and
+  /// flushes the final value on release/dispose so nothing is lost.
+  Timer? _notifyDebounce;
+  bool _notifyPending = false;
+
   void _update(ReaderPreferences value) {
     setState(() => _value = value.normalized());
+    _notifyPending = true;
+    _notifyDebounce?.cancel();
+    _notifyDebounce = Timer(const Duration(milliseconds: 120), _notifyParent);
+  }
+
+  void _notifyParent() {
+    _notifyDebounce = null;
+    if (!mounted || !_notifyPending) return;
+    _notifyPending = false;
     widget.onChanged(_value);
+  }
+
+  void _flushNotify() {
+    _notifyDebounce?.cancel();
+    _notifyDebounce = null;
+    if (!mounted || !_notifyPending) return;
+    _notifyPending = false;
+    widget.onChanged(_value);
+  }
+
+  @override
+  void dispose() {
+    // The sheet may close mid-drag; the last value must still reach the
+    // reader page or the saved preference would trail the visible one.
+    _flushNotify();
+    super.dispose();
   }
 
   Future<void> _importFont() async {
@@ -658,6 +694,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                 divisions: ((max - min) / step).round(),
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 onChanged: (value) => _update(update(value)),
+                onChangeEnd: (value) => _flushNotify(),
                 semanticFormatterCallback: (value) =>
                     '$label ${value.toStringAsFixed(decimals)}',
               ),

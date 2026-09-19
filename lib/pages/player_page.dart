@@ -716,16 +716,3 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 }
-
-/// Returns only a normal playback-position delta. Restore/seek/app-resume
-/// jumps are deliberately rejected so historical progress is never counted
-/// as newly watched time.
-double countablePlaybackDelta({
-  required bool playing,
-  required double previousSeconds,
-  required double currentSeconds,
-}) {
-  if (!playing) return 0;
-  final delta = currentSeconds - previousSeconds;
-  return delta > 0.5 && delta <= 10 ? delta : 0;
-}

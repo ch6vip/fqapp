@@ -152,7 +152,10 @@ class ChapterCacheStore implements ChapterCache {
       (value['text'] as String).trim().isNotEmpty;
 
   int _bytes(Map entry) {
-    // Validate each stored record once; stale byte metadata cannot bypass caps.
+    // Re-measure even when a stored 'bytes' field claims otherwise: damaged
+    // or hostile metadata must not under-report its way past the capacity
+    // caps (chapter_cache_store_test locks this). The post-restart trim cost
+    // of re-encoding is the deliberate price of that validation.
     return _byteCounts[entry] ??= utf8.encode(entry['text'] as String).length;
   }
 

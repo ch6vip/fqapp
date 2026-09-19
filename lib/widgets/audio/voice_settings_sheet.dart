@@ -11,7 +11,6 @@ class VoiceOption {
     this.description = '',
     this.badge = '',
     this.isMultiTone = false,
-    this.offline = false,
   });
 
   final String id;
@@ -19,28 +18,28 @@ class VoiceOption {
   final String description;
   final String badge;
   final bool isMultiTone;
-  final bool offline;
 }
 
 /// 声音设置 panel mirroring the official client: 真人讲书 rows, then a
-/// two-column 智能朗读 grid, then a two-column 离线朗读 grid with download
-/// affordances.
+/// two-column 智能朗读 grid.
+///
+/// The official panel also has an 离线朗读 grid with download affordances.
+/// It was never rendered here (the download affordance is a stub telling the
+/// user to download in the official client), so the unreachable offline
+/// parameter chain was removed rather than half-kept; playinfo rejects
+/// offline tone ids outright and the selection filter still excludes them.
 class VoiceSettingsSheet extends StatelessWidget {
   final String selectedId;
   final List<VoiceOption> narrators;
   final List<VoiceOption> online;
-  final List<VoiceOption> offline;
   final ValueChanged<VoiceOption> onSelect;
-  final ValueChanged<VoiceOption>? onDownload;
 
   const VoiceSettingsSheet({
     super.key,
     required this.selectedId,
     this.narrators = const [],
     this.online = const [],
-    this.offline = const [],
     required this.onSelect,
-    this.onDownload,
   });
 
   @override
@@ -110,7 +109,6 @@ class VoiceSettingsSheet extends StatelessWidget {
                         voices: online,
                         selectedId: selectedId,
                         onSelect: onSelect,
-                        onDownload: onDownload,
                       ),
                       const SizedBox(height: 22),
                     ],
@@ -197,13 +195,11 @@ class _VoiceGrid extends StatelessWidget {
   final List<VoiceOption> voices;
   final String selectedId;
   final ValueChanged<VoiceOption> onSelect;
-  final ValueChanged<VoiceOption>? onDownload;
 
   const _VoiceGrid({
     required this.voices,
     required this.selectedId,
     required this.onSelect,
-    this.onDownload,
   });
 
   @override
@@ -219,7 +215,6 @@ class _VoiceGrid extends StatelessWidget {
                 voice: voices[index],
                 selected: voices[index].id == selectedId,
                 onSelect: onSelect,
-                onDownload: onDownload,
               ),
             ),
             const SizedBox(width: 12),
@@ -229,7 +224,6 @@ class _VoiceGrid extends StatelessWidget {
                       voice: voices[index + 1],
                       selected: voices[index + 1].id == selectedId,
                       onSelect: onSelect,
-                      onDownload: onDownload,
                     )
                   : const SizedBox(),
             ),
@@ -246,13 +240,11 @@ class _VoiceCard extends StatelessWidget {
   final VoiceOption voice;
   final bool selected;
   final ValueChanged<VoiceOption> onSelect;
-  final ValueChanged<VoiceOption>? onDownload;
 
   const _VoiceCard({
     required this.voice,
     required this.selected,
     required this.onSelect,
-    this.onDownload,
   });
 
   @override
@@ -331,19 +323,7 @@ class _VoiceCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (voice.offline && onDownload != null)
-                    IconButton(
-                      key: ValueKey('voice_download_${voice.id}'),
-                      tooltip: '下载离线音色',
-                      onPressed: () => onDownload!(voice),
-                      visualDensity: VisualDensity.compact,
-                      style: IconButton.styleFrom(foregroundColor: palette.ink),
-                      icon: const Icon(
-                        LucideIcons.arrow_down_to_line,
-                        size: 18,
-                      ),
-                    )
-                  else if (selected)
+                  if (selected)
                     Icon(Icons.check, size: 16, color: palette.accentText),
                 ],
               ),

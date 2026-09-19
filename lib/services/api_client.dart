@@ -726,8 +726,12 @@ class ApiClient {
 
   /// Text-reader variant that combines JSON decode, nested content lookup and
   /// HTML cleanup in one background-isolate pass.
-  Future<String> contentText(String itemId, {String tab = '小说'}) async {
-    final r = await _get(_contentUrl(itemId, tab: tab));
+  Future<String> contentText(
+    String itemId, {
+    String tab = '小说',
+    Duration? timeout,
+  }) async {
+    final r = await _get(_contentUrl(itemId, tab: tab), timeout: timeout);
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
     return Isolate.run(() {
@@ -739,6 +743,7 @@ class ApiClient {
   // Note: 图文接口的解密标记与旧缓存升级见
   // .agents/notes/implemented/bug-fix/2026-09-10-reader-illustrations.md
   Future<ChapterContent> chapterContent(String itemId) async {
+    final stopwatch = Stopwatch()..start();
     try {
       final response = await _get(
         _url('/api/v1/chapters/${Uri.encodeComponent(itemId)}/novel', {}),
@@ -766,7 +771,17 @@ class ApiClient {
     } on Exception {
       // Keep text available if the illustrated source is temporarily down.
       // The cache records this as incomplete, allowing a later visit to retry.
-      final text = await contentText(itemId);
+      // A slow illustrated answer must not stack a second full timeout on top:
+      // the fallback inherits the remaining budget (floored so a fast failure
+      // still gets a real attempt), keeping the worst case near one timeout
+      // instead of two.
+      final remaining = _timeout - stopwatch.elapsed;
+      final text = await contentText(
+        itemId,
+        timeout: remaining > const Duration(seconds: 5)
+            ? remaining
+            : const Duration(seconds: 5),
+      );
       if (text.trim().isEmpty) throw const ApiException('正文为空');
       return ChapterContent.fromPlainText(text);
     }

@@ -6,6 +6,12 @@ import 'package:url_launcher/url_launcher.dart';
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
 
+  /// Display version, kept in lockstep with pubspec.yaml's
+  /// `version: 1.0.33+34`. Without a package_info dependency the value is
+  /// static, so test/about_version_test.dart parses the pubspec and fails the
+  /// build check when the two drift apart after a version bump.
+  static const versionText = '1.0.33 (34)';
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -46,7 +52,7 @@ class AboutPage extends StatelessWidget {
               _AboutRow(
                 icon: Icons.commit_outlined,
                 title: '当前版本',
-                trailingText: '1.0.31 (32)',
+                trailingText: AboutPage.versionText,
               ),
             ],
           ),

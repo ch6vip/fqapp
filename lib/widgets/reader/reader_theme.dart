@@ -56,7 +56,23 @@ extension ReaderThemeColors on ReaderThemePreset {
   Color get borderColor => textColor.withValues(alpha: 0.09);
   Color get sheetColor => panelColor;
 
+  /// Built themes per preset, keyed by the base theme's identity. `fromSeed`
+  /// runs a full HCT palette build and `textTheme.apply` copies ~90 text
+  /// styles, and the reader calls this on every setState (selection drags,
+  /// sliders re-run it per frame) — rebuilding identical instances each time
+  /// is pure waste. The app's base theme is a constant instance between hot
+  /// reloads, so an identity check recomputes only when it actually changes.
+  static final Map<ReaderThemePreset, (ThemeData, ThemeData)> _themeCache = {};
+
   ThemeData theme(ThemeData base) {
+    final cached = _themeCache[this];
+    if (cached != null && identical(cached.$1, base)) return cached.$2;
+    final built = _buildTheme(base);
+    _themeCache[this] = (base, built);
+    return built;
+  }
+
+  ThemeData _buildTheme(ThemeData base) {
     final scheme =
         ColorScheme.fromSeed(
           seedColor: accentColor,

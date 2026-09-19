@@ -7,6 +7,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/author_profile.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/media_card.dart';
 import 'detail_page.dart';
@@ -67,7 +68,7 @@ class _AuthorPageState extends State<AuthorPage> {
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
-        _error = '$error';
+        _error = userFacingError(error);
         _loading = false;
       });
     }
@@ -219,6 +220,8 @@ class _AuthorPageState extends State<AuthorPage> {
                       : CachedNetworkImage(
                           imageUrl: profile.avatar,
                           fit: BoxFit.cover,
+                          // 58dp avatar; decode at 2×.
+                          memCacheWidth: 128,
                           errorWidget: (context, url, error) => ColoredBox(
                             color: palette.soft,
                             child: Icon(
