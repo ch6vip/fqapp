@@ -281,8 +281,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   bool _selectionBarOpen = false;
 
   /// The anchor (window coordinates) the bar was opened with: the long-press
-  /// point or the handle position at drag end.
+  /// point or the handle position at drag end, with y re-based onto the
+  /// selection's bottom so the bar can never cover the selected lines.
   Offset _selectionBarAnchor = Offset.zero;
+
+  /// The selection's top edge (window coordinates) — the flip reference when
+  /// the bar has to move above the selection instead of below it.
+  Offset? _selectionBarTopAnchor;
+
+  /// Gap between the selection's last line bottom and the bar's arrow tip:
+  /// the end caret's dot protrudes 6dp, plus 4dp of air.
+  static const _barSelectionClearance = 10.0;
 
   /// True while a long-press drag is reshaping the selection without the
   /// finger ever having grabbed a handle (官方不抬手拖动).
@@ -525,11 +534,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// page's own overlay Stack — non-modal, like the official PopupWindow — so
   /// the drag handles stay touchable while it is up, and a tap outside it
   /// reaches the page surface, which cancels the selection.
+  ///
+  /// 官方条子锚在整个选区上,绝不遮选区([yd5.j] 的条子几何): y 取选区
+  /// 末端行的行底再让开末端圆点,x 跟手指;选区顶端作为翻转参考传下去。
   void _openSelectionBar({required Offset anchor}) {
     final selection = _selection;
     if (selection == null || !selection.isValid) return;
+    final bottom = _selectionBoundGlobal(isStart: false);
+    final top = _selectionBoundGlobal(isStart: true);
     setState(() {
-      _selectionBarAnchor = anchor;
+      _selectionBarAnchor = Offset(
+        anchor.dx,
+        bottom == null ? anchor.dy : bottom.dy + _barSelectionClearance,
+      );
+      _selectionBarTopAnchor = top;
       _selectionBarOpen = true;
     });
   }
@@ -563,6 +581,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final media = MediaQuery.of(context);
     final underlined = _selectionUnderlined;
     var anchor = _selectionBarAnchor;
+    var topAnchor = _selectionBarTopAnchor;
     var view = media.size;
     var safeArea = media.padding;
     var avoidBottom = _controlsVisible ? _bottomBarHeight : 0.0;
@@ -570,6 +589,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _selectionOverlayKey.currentContext?.findRenderObject() as RenderBox?;
     if (overlayBox != null && overlayBox.attached) {
       anchor = overlayBox.globalToLocal(_selectionBarAnchor);
+      topAnchor = _selectionBarTopAnchor == null
+          ? null
+          : overlayBox.globalToLocal(_selectionBarTopAnchor!);
       view = overlayBox.size;
       // The system insets are already consumed by the outer SafeArea, so the
       // overlay only needs a margin of its own; the reader's bottom toolbar
@@ -579,9 +601,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         0.0,
         double.infinity,
       );
+    } else {
+      // No overlay box (loading/error fallback): the top anchor would be in a
+      // different coordinate space than the bar maths — drop the flip
+      // reference rather than flip to a wrong place.
+      topAnchor = null;
     }
     final (position, below) = ReaderParagraphMenu.resolvePosition(
       anchor: anchor,
+      topAnchor: topAnchor,
       paragraphScoped: selection.isWholeParagraph,
       view: view,
       safeArea: safeArea,
@@ -2066,7 +2094,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         geometry: ReaderSelectionGeometry(),
         washColor: preset.selectionWashColor,
         handleColor: preset.selectionHandleColor,
-        underlineColor: preset.textColor,
+        underlineColor: preset.selectionUnderlineColor,
       );
       _marksScopeLayout = layout;
     }
@@ -2080,23 +2108,30 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   List<Widget> _selectionHandles(ReaderSelectionScope scope) {
     final selection = _selection;
     if (selection == null || !selection.isValid) return const [];
-    final start = _handleOverlayPosition(isStart: true);
-    final end = _handleOverlayPosition(isStart: false);
+    final start = _handleCaretOverlay(isStart: true);
+    final end = _handleCaretOverlay(isStart: false);
     if (start == null && end == null) return const [];
-    final fontSize = _chapterLayout?.spec.bodyStyle.fontSize ?? 16;
-    Widget handle(bool isStart, Offset position) {
+
+    // Ink layout (官方 yd5.j.I()): the 1dp bar runs the selected line's full
+    // height; the dot protrudes 6dp beyond the line edge. Start ink hugs the
+    // widget top, end ink hugs the bottom — the touch margin sits on the far
+    // side of the line.
+    Widget handle(bool isStart, ({double x, double top, double bottom}) caret) {
+      final lineHeight = caret.bottom - caret.top;
       final widget = ReaderSelectionHandle(
         isStart: isStart,
         color: scope.handleColor,
-        fontSize: fontSize,
+        lineHeight: lineHeight,
         onDragStart: _onHandleDragStart,
         onDragUpdate: (global) => _onHandleDrag(isStart, global),
         onDragEnd: (global) => _onHandleDragEnd(isStart, global),
       );
       return Positioned(
         key: ValueKey('reader-selection-handle-${isStart ? 'start' : 'end'}'),
-        left: position.dx - ReaderSelectionHandle.touchWidth / 2,
-        top: isStart ? position.dy - widget.height : position.dy,
+        left: caret.x - ReaderSelectionHandle.touchWidth / 2,
+        top: isStart
+            ? caret.top - ReaderSelectionHandle.dotOverhang
+            : caret.top - ReaderSelectionHandle.touchMargin,
         child: widget,
       );
     }
@@ -2107,9 +2142,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     ];
   }
 
-  /// Overlay-local position of one selection bound's handle anchor, or null
-  /// when the bound's block is not mounted (an off-screen page).
-  Offset? _handleOverlayPosition({required bool isStart}) {
+  /// Overlay-local caret of one selection bound — the glyph edge x plus the
+  /// selected line's vertical extent — or null when the bound's block is not
+  /// mounted (an off-screen page).
+  ({double x, double top, double bottom})? _handleCaretOverlay({
+    required bool isStart,
+  }) {
     final selection = _selection;
     final layout = _chapterLayout;
     final scope = _marksScope;
@@ -2119,7 +2157,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (block == null) return null;
     final entry = scope.geometry.entryFor(block.index);
     if (entry == null) return null;
-    final anchor = selectionAnchor(
+    final caret = selectionCaret(
       block: block,
       painter: entry.painter,
       textOffset: _boundOffsetInBlock(textOffset, block, isStart: isStart),
@@ -2129,7 +2167,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final overlayBox =
         _selectionOverlayKey.currentContext?.findRenderObject() as RenderBox?;
     if (overlayBox == null || !overlayBox.attached) return null;
-    return overlayBox.globalToLocal(entry.box.localToGlobal(anchor));
+    final origin = overlayBox.globalToLocal(
+      entry.box.localToGlobal(Offset(caret.x, caret.top)),
+    );
+    return (x: origin.dx, top: origin.dy, bottom: origin.dy + caret.bottom - caret.top);
   }
 
   /// [offset] (chapter space) resolved into [block]'s text space, snapping a

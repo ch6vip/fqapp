@@ -99,16 +99,24 @@ class ReaderParagraphMenu extends StatelessWidget {
   /// `selection/m.java#l` applies to its PopupWindow: centred on the anchor
   /// with a 10dp screen margin, flipping above when there is no room below.
   ///
+  /// [anchor] sits at the selection's last line bottom (plus clearance for
+  /// the end caret's dot); [topAnchor] is the selection's first line top.
+  /// The flip places the whole bar — arrow included — above [topAnchor], so
+  /// a tall selection is never covered by its own bar; without a top anchor
+  /// the flip falls back to the anchor point.
+  ///
   /// The reader page calls this per build, so the bar never sits on the
   /// system bars or on the reader's own bottom toolbar ([avoidBottom]).
   static (Offset, bool) resolvePosition({
     required Offset anchor,
+    Offset? topAnchor,
     required bool paragraphScoped,
     required Size view,
     required EdgeInsets safeArea,
     required bool underlined,
     double avoidBottom = 0,
   }) {
+    const flipClearance = 10.0;
     final count = itemCount(
       underlined: underlined,
       paragraphScoped: paragraphScoped,
@@ -132,10 +140,14 @@ class ReaderParagraphMenu extends StatelessWidget {
     final maxTop = (bottomLimit - barHeight).clamp(minTop, double.infinity);
     final belowTop = anchor.dy + _arrowHeight;
     final below = belowTop + barHeight <= bottomLimit;
-    final top = (below ? belowTop : anchor.dy - barHeight - _arrowHeight).clamp(
-      minTop,
-      maxTop,
-    );
+    // Flipped above a selection: the bar's bottom (its down arrow) must sit
+    // above the selection's first line top — the start caret's dot protrudes
+    // 6dp above it, hence the extra clearance.
+    final flippedTop = (topAnchor?.dy ?? anchor.dy) -
+        barHeight -
+        _arrowHeight -
+        (topAnchor == null ? 0 : flipClearance);
+    final top = (below ? belowTop : flippedTop).clamp(minTop, maxTop);
     return (Offset(left, top), below);
   }
 

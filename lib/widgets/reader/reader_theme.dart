@@ -34,16 +34,28 @@ extension ReaderThemeColors on ReaderThemePreset {
 
   Color get mutedTextColor => textColor.withValues(alpha: 0.6);
 
-  /// The wash behind a text selection (long-pressed paragraph or a dragged
-  /// handle range). The official reader tints its selection with the brand
-  /// orange at 16% (`getHighlightColor` → `#FA6725`, alpha 41), identically
-  /// across themes — replicated here instead of a per-preset tint.
-  Color get selectionWashColor => const Color(0x29FA6725);
+  /// 官方每个阅读主题一个选区强调色(un4.j.t / ReaderCommonColor.getHighlightColor
+  /// 的 b4e-b4i 资源表):light #FA6725、parchment(纸) #CC8114、eyeCare(绿)
+  /// #65992E;官方另有蓝色主题 #3D85CC,我们暂无对应预设。夜间走同一橙。
+  Color get selectionAccentColor => switch (this) {
+    ReaderThemePreset.parchment => const Color(0xFFCC8114),
+    ReaderThemePreset.eyeCare => const Color(0xFF65992E),
+    _ => const Color(0xFFFA6725),
+  };
 
-  /// The solid colour of the selection drag handles; official night theme
-  /// drops the same orange to 60% (`b4e` `#99FA6725`).
+  /// The wash behind a text selection. 官方 markingConfig.b()(ReaderViewLayout
+  /// 的 ie5.a 实现)= un4.j.C(theme, 0.16f) —— 强调色 @ 16%,C 会整体重设
+  /// alpha,所以夜间也是 16% 橙。
+  Color get selectionWashColor =>
+      selectionAccentColor.withValues(alpha: 0.16);
+
+  /// 控点实色(un4.j.t):夜间降到 60% 的橙,其余主题用强调色原色。
   Color get selectionHandleColor =>
-      isDark ? const Color(0x99FA6725) : const Color(0xFFFA6725);
+      isDark ? const Color(0x99FA6725) : selectionAccentColor;
+
+  /// 划线下划线 = 强调色实色(官方 markingConfig.d() = un4.j.B(theme)),
+  /// 不是正文色;夜间自带 60% alpha。
+  Color get selectionUnderlineColor => selectionHandleColor;
 
   Color get panelColor => Color.alphaBlend(
     isDark ? const Color(0x0DFFFFFF) : const Color(0x99FFFFFF),

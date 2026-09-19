@@ -121,9 +121,11 @@ int snapToCharacter(String text, int offset) {
   return consumed <= target ? text.length : boundary;
 }
 
-/// Where a handle attaches for the selection bound at block-text [offset]:
-/// the glyph box's outer edge on that line, in the block's coordinate space.
-Offset selectionAnchor({
+/// Where the selection caret attaches for the bound at block-text [offset]:
+/// the glyph edge x on that line plus the measured line's vertical extent, in
+/// the block's coordinate space. 官方画法(yd5.j.I())是贴着选区行的 1dp 竖杆
+/// (行顶到行底)+ 齐边圆点(圆心在线边外 3dp),不是悬在行外的水滴杆。
+({double x, double top, double bottom}) selectionCaret({
   required ReaderContentBlock block,
   required TextPainter painter,
   required int textOffset,
@@ -140,7 +142,26 @@ Offset selectionAnchor({
   if (boxes.isNotEmpty) {
     x = isStart ? boxes.first.left : boxes.first.right;
   }
-  return Offset(x, isStart ? line.top : line.bottom);
+  return (x: x, top: line.top, bottom: line.bottom);
+}
+
+/// Where a handle attaches for the selection bound at block-text [offset]:
+/// the glyph box's outer edge on that line, in the block's coordinate space.
+Offset selectionAnchor({
+  required ReaderContentBlock block,
+  required TextPainter painter,
+  required int textOffset,
+  required bool isStart,
+  required double columnWidth,
+}) {
+  final caret = selectionCaret(
+    block: block,
+    painter: painter,
+    textOffset: textOffset,
+    isStart: isStart,
+    columnWidth: columnWidth,
+  );
+  return Offset(caret.x, isStart ? caret.top : caret.bottom);
 }
 
 /// One mounted block's hit-test assets, registered by [ReaderBlockMarkLayer].
@@ -362,14 +383,19 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
   }
 }
 
-/// The official droplet: a 3dp-radius circle with a 1dp stem of roughly
-/// 1.4em, hanging above (start) or below (end) the selected line. The stem
-/// tip is the anchor; the touch target is far larger than the ink, with the
-/// spare space on the far side of the anchor (`n.java` inflates to 24x16dp).
+/// The official selection caret (`yd5.j.I()`): a 1dp vertical bar running the
+/// full height of the selected line at the glyph edge, with a 3dp circle
+/// tangent to the line edge (centre 3dp outside it) — start above, end below.
+/// The ink never leaves the line's own row by more than the 6dp dot, so it
+/// never covers the neighbouring lines' text. The touch area is far larger
+/// than the ink, with the spare space on the far side of the line.
 class ReaderSelectionHandle extends StatelessWidget {
   final bool isStart;
   final Color color;
-  final double fontSize;
+
+  /// The selected line's measured height — the bar runs exactly this tall.
+  final double lineHeight;
+
   final VoidCallback onDragStart;
   final void Function(Offset globalPosition) onDragUpdate;
   final void Function(Offset globalPosition) onDragEnd;
@@ -378,20 +404,23 @@ class ReaderSelectionHandle extends StatelessWidget {
     super.key,
     required this.isStart,
     required this.color,
-    required this.fontSize,
+    required this.lineHeight,
     required this.onDragStart,
     required this.onDragUpdate,
     required this.onDragEnd,
   });
 
   static const _circleRadius = 3.0;
+  static const _caretWidth = 1.0;
 
   /// Horizontal touch/ink span; the overlay positions the widget by this.
   static const touchWidth = 24.0;
-  static const _touchMargin = 16.0;
+  static const touchMargin = 16.0;
 
-  double get stemLength => fontSize * 1.4 + 2;
-  double get height => stemLength + _circleRadius * 2 + _touchMargin;
+  /// The dot protrudes 6dp beyond the line edge (centre 3dp out, radius 3).
+  static const dotOverhang = _circleRadius * 2;
+
+  double get height => lineHeight + dotOverhang + touchMargin;
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -401,50 +430,54 @@ class ReaderSelectionHandle extends StatelessWidget {
     onPanEnd: (details) => onDragEnd(details.globalPosition),
     child: CustomPaint(
       size: Size(touchWidth, height),
-      painter: _HandlePainter(
+      painter: _CaretPainter(
         isStart: isStart,
         color: color,
-        stemLength: stemLength,
+        lineHeight: lineHeight,
       ),
     ),
   );
 }
 
-class _HandlePainter extends CustomPainter {
+class _CaretPainter extends CustomPainter {
   final bool isStart;
   final Color color;
-  final double stemLength;
+  final double lineHeight;
 
-  static const _circleRadius = 3.0;
+  static const _circleRadius = ReaderSelectionHandle._circleRadius;
+  static const touchMargin = ReaderSelectionHandle.touchMargin;
 
-  const _HandlePainter({
+  const _CaretPainter({
     required this.isStart,
     required this.color,
-    required this.stemLength,
+    required this.lineHeight,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..color = color;
-    // Ink occupies the far side of the widget from the anchor: the start
-    // handle hangs above its line top, the end one below its line bottom,
-    // each with the touch margin clear of the glyphs. The stem tip (the
-    // anchor edge) is what touches the text.
-    final (Offset circleCenter, Offset stemTip) = isStart
-        ? (
-            Offset(size.width / 2, size.height - stemLength - _circleRadius),
-            Offset(size.width / 2, size.height),
-          )
-        : (
-            Offset(size.width / 2, stemLength + _circleRadius),
-            Offset(size.width / 2, 0),
-          );
-    canvas.drawLine(circleCenter, stemTip, paint..strokeWidth = 1);
-    canvas.drawCircle(circleCenter, _circleRadius, paint);
+    // Bar: 1dp wide along the selected line's full height. Start ink hugs the
+    // top of the widget (dot above the line, touch margin below); end ink
+    // hugs the bottom (touch margin above, dot below).
+    final barTop = isStart ? _circleRadius * 2 : touchMargin;
+    final barBottom = barTop + lineHeight;
+    canvas.drawLine(
+      Offset(size.width / 2, barTop),
+      Offset(size.width / 2, barBottom),
+      paint..strokeWidth = ReaderSelectionHandle._caretWidth,
+    );
+    // Dot: centre 3dp outside the line edge, tangent to it.
+    final dotCentre = isStart
+        ? barTop - _circleRadius
+        : barBottom + _circleRadius;
+    canvas.drawCircle(Offset(size.width / 2, dotCentre), _circleRadius, paint);
   }
 
   @override
-  bool shouldRepaint(_HandlePainter old) => old.color != color;
+  bool shouldRepaint(_CaretPainter old) =>
+      old.color != color ||
+      old.isStart != isStart ||
+      old.lineHeight != lineHeight;
 }
 
 /// Paints, behind the text: the selection wash (per-line rounded rects around
