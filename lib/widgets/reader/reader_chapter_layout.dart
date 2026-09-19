@@ -8,6 +8,7 @@ import '../../services/reader_underline_store.dart';
 import 'reader_bubble.dart';
 import 'reader_illustration.dart';
 import '../../models/chapter_ideas.dart';
+import 'reader_text_selection.dart';
 import 'reader_theme.dart';
 
 /// Layout inputs exclude brightness and page mode, which do not change text.
@@ -415,6 +416,155 @@ class ReaderChapterLayout {
     return (textOffset: textOffsetAtScroll(scroll), scroll: scroll);
   }
 
+  /// First-line indent width. Shared by [_measureBlock] and [blockPainter] so
+  /// hit-testing and glyph boxes wrap exactly like the rendered text.
+  static double _indentWidth(TextStyle style, ReaderLayoutSpec spec) {
+    final scale = spec.textScaler.scale(style.fontSize!) / style.fontSize!;
+    return math.min(
+      (style.fontSize! + (style.letterSpacing ?? 0)) * 2,
+      math.max(0.0, spec.width / scale - style.fontSize!),
+    );
+  }
+
+  /// The indent placeholder: one per body block, bottom-aligned with zero
+  /// height (the indent only eats width).
+  static PlaceholderDimensions _indentPlaceholder(
+    TextStyle style,
+    ReaderLayoutSpec spec,
+  ) {
+    final scale = spec.textScaler.scale(style.fontSize!) / style.fontSize!;
+    return PlaceholderDimensions(
+      size: Size(_indentWidth(style, spec) * scale, 0),
+      alignment: PlaceholderAlignment.bottom,
+    );
+  }
+
+  /// The bubble placeholder sized so the trailing glyph and the bubble never
+  /// overlap; null when the block carries no bubble.
+  static PlaceholderDimensions? _bubblePlaceholder({
+    required TextStyle style,
+    required ReaderLayoutSpec spec,
+    required ParagraphBubbleVariant? variant,
+    required int? count,
+  }) {
+    if (count == null) return null;
+    final scale = spec.textScaler.scale(style.fontSize!) / style.fontSize!;
+    final metrics = ReaderBubbleMetrics.forFontSize(
+      spec.textScaler.scale(style.fontSize!),
+      variant: variant ?? ParagraphBubbleVariant.plain,
+    ).forCount(count);
+    // The bubble's own left gap is inside the widget, so its placeholder
+    // width has to include it. RenderParagraph wraps the WidgetSpan child in
+    // an auto-scaling box (the same `scale` the indent placeholder uses), so
+    // the measured box must be scaled too or the last line is measured short
+    // and the bubble is clipped.
+    return PlaceholderDimensions(
+      size: Size(
+        (metrics.width + ReaderBubbleMetrics.gap) * scale,
+        metrics.height * scale,
+      ),
+      alignment: PlaceholderAlignment.middle,
+    );
+  }
+
+  /// A laid-out painter matching what [ReaderBlockText] renders, for
+  /// selection hit-testing and per-glyph boxes. Placeholders mirror the
+  /// measured span exactly (indent, plus the bubble when the block carries
+  /// one) — [TextPainter.setPlaceholderDimensions] asserts the counts match.
+  /// The caller owns and disposes the painter.
+  static TextPainter blockPainter(
+    ReaderContentBlock block,
+    ReaderLayoutSpec spec,
+  ) {
+    final title = block.isTitle;
+    final style = title ? spec.titleStyle : spec.bodyStyle;
+    var placeholders = 0;
+    block.span.visitChildren((span) {
+      if (span is PlaceholderSpan) placeholders++;
+      return true;
+    });
+    final painter = TextPainter(
+      text: block.span,
+      textAlign: block.align,
+      textDirection: TextDirection.ltr,
+      textScaler: spec.textScaler,
+      locale: const Locale('zh', 'CN'),
+    );
+    if (!title) {
+      painter.setPlaceholderDimensions([
+        _indentPlaceholder(style, spec),
+        if (placeholders >= 2)
+          ?_bubblePlaceholder(
+            style: style,
+            spec: spec,
+            variant: block.bubbleVariant,
+            count: block.bubbleCount,
+          ),
+      ]);
+    }
+    painter.layout(minWidth: spec.width, maxWidth: spec.width);
+    return painter;
+  }
+
+  /// Chapter display text inside [start]..[end], assembled block by block.
+  /// Image placeholders (`\uFFFC`, one per illustration for offset math only)
+  /// are dropped so copied or underlined text is what a reader would quote.
+  String textInRange(int start, int end) {
+    final buffer = StringBuffer();
+    for (final block in blocks) {
+      if (block.start >= end) break;
+      if (block.end <= start) continue;
+      final from = math.max(start, block.start) - block.start;
+      final to = math.min(end, block.end) - block.start;
+      if (to <= from) continue;
+      buffer.write(block.text.substring(from, to).replaceAll('\uFFFC', ''));
+    }
+    return buffer.toString();
+  }
+
+  /// Bounds a selection may move within: the first editable text block's
+  /// start through the last one's end (the title and image-only chapters are
+  /// excluded — a selection cannot begin on a title).
+  (int, int)? get selectableTextRange {
+    for (final block in blocks) {
+      if (block.isTitle || block.isImage || block.lines.isEmpty) continue;
+      var last = block;
+      for (final candidate in blocks.reversed) {
+        if (candidate.isTitle || candidate.isImage || candidate.lines.isEmpty) {
+          continue;
+        }
+        last = candidate;
+        break;
+      }
+      return (block.start, last.end);
+    }
+    return null;
+  }
+
+  /// The text block holding [offset], or null past the last block.
+  ReaderContentBlock? blockAtOffset(int offset) {
+    for (final block in blocks) {
+      if (block.start <= offset && offset < block.end) return block;
+    }
+    return null;
+  }
+
+  /// The text block a selection bound at [offset] anchors its handle to: the
+  /// block holding [offset], or — when [offset] sits on the '\n' separator
+  /// between two blocks — the next block for a start bound, the previous one
+  /// for an end bound.
+  ReaderContentBlock? blockForAnchor(int offset, {required bool isStart}) {
+    final holding = blockAtOffset(offset);
+    if (holding != null) return holding;
+    ReaderContentBlock? previous;
+    for (final block in blocks) {
+      if (block.isTitle || block.isImage || block.lines.isEmpty) continue;
+      if (block.start >= offset) return isStart ? block : previous;
+      previous = block;
+    }
+    return previous;
+  }
+
   static ReaderContentBlock _measureBlock(
     String text, {
     required int index,
@@ -442,21 +592,11 @@ class ReaderChapterLayout {
       decorationThickness: 1.6,
     );
     final align = title ? spec.titleAlign : TextAlign.justify;
-    final scale = spec.textScaler.scale(style.fontSize!) / style.fontSize!;
-    final indent = math.min(
-      (style.fontSize! + (style.letterSpacing ?? 0)) * 2,
-      math.max(0.0, spec.width / scale - style.fontSize!),
-    );
+    final indent = _indentWidth(style, spec);
     // The bubble rides at the very end of the paragraph's text, so it follows
     // the last line and wraps only when that line has no room left. Measuring it
     // as a placeholder keeps paint and measurement in agreement.
-    final metrics = bubble == null
-        ? null
-        : ReaderBubbleMetrics.forFontSize(
-            spec.textScaler.scale(style.fontSize!),
-            variant: bubbleVariant ?? ParagraphBubbleVariant.plain,
-          ).forCount(bubbleCount!);
-    final bubbleSpan = bubble == null || metrics == null
+    final bubbleSpan = bubble == null || bubbleCount == null
         ? null
         : WidgetSpan(alignment: PlaceholderAlignment.middle, child: bubble);
     final span = TextSpan(
@@ -501,25 +641,13 @@ class ReaderChapterLayout {
     try {
       if (!title) {
         painter.setPlaceholderDimensions([
-          PlaceholderDimensions(
-            size: Size(indent * scale, 0),
-            alignment: PlaceholderAlignment.bottom,
+          _indentPlaceholder(style, spec),
+          ?_bubblePlaceholder(
+            style: style,
+            spec: spec,
+            variant: bubbleVariant,
+            count: bubbleCount,
           ),
-          // The bubble's own left gap is inside the widget, so its placeholder
-          // width has to include it or the trailing glyph and the bubble would
-          // overlap.
-          if (metrics != null)
-            PlaceholderDimensions(
-              // RenderParagraph wraps the WidgetSpan child in an auto-scaling
-              // box (the same `scale` the indent placeholder already uses), so
-              // the measured box must be scaled too or the last line is
-              // measured short and the bubble is clipped.
-              size: Size(
-                (metrics.width + ReaderBubbleMetrics.gap) * scale,
-                metrics.height * scale,
-              ),
-              alignment: PlaceholderAlignment.middle,
-            ),
         ]);
       }
       painter.layout(minWidth: spec.width, maxWidth: spec.width);
@@ -529,7 +657,7 @@ class ReaderChapterLayout {
       // One placeholder per `\uFFFC`: the paragraph indent, then the bubble.
       final leading = title ? 0 : 1;
       final plainText =
-          '${title ? '' : '\uFFFC'}$text${metrics == null ? '' : '\uFFFC'}';
+          '${title ? '' : '\uFFFC'}$text${bubbleSpan == null ? '' : '\uFFFC'}';
       var cursor = 0;
       for (final line in metricsList) {
         // Hit-testing by y can jump into another line's emoji/RTL glyph box.
@@ -702,10 +830,16 @@ class ReaderBlockContent extends StatelessWidget {
   final void Function(ReaderContentBlock block, Offset globalPosition)?
   onParagraphLongPress;
 
-  /// Wash painted behind the paragraph while the action bar is up — the
-  /// equivalent of the official SelectionParagraph highlight. Full width,
-  /// matching the justified column the official line rects cover.
-  final Color? highlight;
+  /// 官方的不抬手拖动: while the finger stays down after a long press these
+  /// deliver its moves and release, so the selection reshapes without ever
+  /// grabbing a handle. Global coordinates.
+  final void Function(Offset globalPosition)? onParagraphLongPressMoveUpdate;
+  final void Function(Offset globalPosition)? onParagraphLongPressEnd;
+
+  /// Selection plumbing. Null = no selection support (marks layer skipped).
+  final ReaderSelectionScope? selectionScope;
+  final ReaderTextSelection? selection;
+  final List<ReaderRangeUnderline> rangeUnderlines;
 
   const ReaderBlockContent({
     super.key,
@@ -713,7 +847,11 @@ class ReaderBlockContent extends StatelessWidget {
     required this.spec,
     this.imageProviderFactory,
     this.onParagraphLongPress,
-    this.highlight,
+    this.onParagraphLongPressMoveUpdate,
+    this.onParagraphLongPressEnd,
+    this.selectionScope,
+    this.selection,
+    this.rangeUnderlines = const [],
   });
 
   @override
@@ -727,9 +865,16 @@ class ReaderBlockContent extends StatelessWidget {
       );
     }
     Widget text = ReaderBlockText(block: block, spec: spec);
-    if (highlight != null && !block.isTitle) {
-      text = DecoratedBox(
-        decoration: BoxDecoration(color: highlight),
+    // Marks live in the block's own coordinate space, so they scroll with the
+    // text; the title never takes part in a selection.
+    if (selectionScope != null && !block.isTitle && block.lines.isNotEmpty) {
+      text = ReaderBlockMarkLayer(
+        key: ValueKey('reader-block-marks-${block.index}'),
+        block: block,
+        spec: spec,
+        scope: selectionScope!,
+        selection: selection,
+        rangeUnderlines: rangeUnderlines,
         child: text,
       );
     }
@@ -739,6 +884,12 @@ class ReaderBlockContent extends StatelessWidget {
       behavior: HitTestBehavior.translucent,
       onLongPressStart: (details) =>
           onParagraphLongPress!(block, details.globalPosition),
+      onLongPressMoveUpdate: onParagraphLongPressMoveUpdate == null
+          ? null
+          : (details) => onParagraphLongPressMoveUpdate!(details.globalPosition),
+      onLongPressEnd: onParagraphLongPressEnd == null
+          ? null
+          : (details) => onParagraphLongPressEnd!(details.globalPosition),
       child: text,
     );
   }

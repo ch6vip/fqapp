@@ -87,6 +87,89 @@ class ReaderUnderline {
 int paragraphUnderlineId({int? paraIndex, required int blockIndex}) =>
     paraIndex ?? -(blockIndex + 1);
 
+/// One locally saved 划线 over a character range inside one chapter — the
+/// selection-model counterpart of [ReaderUnderline], which marks whole
+/// paragraphs. Both shapes share the same Hive box; [ReaderUnderline.fromMap]
+/// rejects range maps (no `blockIndex`) and vice versa, so the two never
+/// collide while scanning.
+@immutable
+class ReaderRangeUnderline {
+  final String bookId;
+  final String chapterId;
+
+  /// Offsets into the chapter's display text — the same space as
+  /// `ReaderContentBlock.start`, see [ReaderUnderlineStore.rangeKeyFor].
+  final int start;
+  final int end;
+  final String text;
+  final int createdAt;
+
+  const ReaderRangeUnderline({
+    required this.bookId,
+    required this.chapterId,
+    required this.start,
+    required this.end,
+    required this.text,
+    this.createdAt = 0,
+  });
+
+  bool get isEmpty => end <= start;
+
+  /// True when this record marks exactly [start]..[end] — the 删除划线 state.
+  bool coversExactly(int start, int end) =>
+      this.start == start && this.end == end;
+
+  /// True when the selection sits entirely inside this mark, so removing it
+  /// cannot cut through an unrelated underline.
+  bool contains(int start, int end) =>
+      this.start <= start && end <= this.end;
+
+  String get key => ReaderUnderlineStore.rangeKeyFor(
+    bookId: bookId,
+    chapterId: chapterId,
+    start: start,
+    end: end,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'bookId': bookId,
+    'chapterId': chapterId,
+    'start': start,
+    'end': end,
+    'text': text,
+    'createdAt': createdAt,
+  };
+
+  static ReaderRangeUnderline? fromMap(dynamic raw) {
+    if (raw is! Map) return null;
+    final bookId = raw['bookId'];
+    final chapterId = raw['chapterId'];
+    final text = raw['text'];
+    final start = raw['start'];
+    final end = raw['end'];
+    if (bookId is! String ||
+        bookId.isEmpty ||
+        chapterId is! String ||
+        chapterId.isEmpty ||
+        text is! String ||
+        text.trim().isEmpty ||
+        start is! num ||
+        end is! num ||
+        end <= start) {
+      return null;
+    }
+    final createdAt = raw['createdAt'];
+    return ReaderRangeUnderline(
+      bookId: bookId,
+      chapterId: chapterId,
+      start: start.toInt(),
+      end: end.toInt(),
+      text: text,
+      createdAt: createdAt is num && createdAt.isFinite ? createdAt.toInt() : 0,
+    );
+  }
+}
+
 /// Local 划线 storage.
 /// The official client keeps these server-side per account;  has no such
 /// endpoint, so this stays on the device. Identity is (book, chapter,
@@ -122,6 +205,20 @@ class ReaderUnderlineStore {
     paraIndex ?? -1,
     paraIndex != null ? -1 : blockIndex,
   ]);
+
+  /// Key space of [ReaderRangeUnderline]: the `r` tag keeps range keys apart
+  /// from the 4-tuple paragraph keys above.
+  static String rangeKeyFor({
+    required String bookId,
+    required String chapterId,
+    required int start,
+    required int end,
+  }) => jsonEncode(['r', bookId, chapterId, start, end]);
+
+  static int _createdAtOf(dynamic raw) =>
+      ReaderUnderline.fromMap(raw)?.createdAt ??
+      ReaderRangeUnderline.fromMap(raw)?.createdAt ??
+      0;
 
   /// Opens the box, or null when storage is unavailable.
   ///
@@ -179,20 +276,52 @@ class ReaderUnderlineStore {
   Future<void> add(ReaderUnderline underline) => _serialize(
     (box) async {
       await box.put(underline.key, underline.toMap());
-      if (box.length > maxEntries) {
-        final oldest = box.keys.toList()
-          ..sort((a, b) {
-            final left = ReaderUnderline.fromMap(box.get(a))?.createdAt ?? 0;
-            final right = ReaderUnderline.fromMap(box.get(b))?.createdAt ?? 0;
-            return left.compareTo(right);
-          });
-        await box.deleteAll(oldest.take(box.length - maxEntries));
-      }
+      await _evictBeyondMax(box);
       changes.value++;
     },
     onUnavailable: null,
     failWhenUnavailable: true,
   );
+
+  Future<void> addRange(ReaderRangeUnderline underline) => _serialize(
+    (box) async {
+      await box.put(underline.key, underline.toMap());
+      await _evictBeyondMax(box);
+      changes.value++;
+    },
+    onUnavailable: null,
+    failWhenUnavailable: true,
+  );
+
+  /// A failed eviction must surface through the surrounding [_serialize]
+  /// chain — a fire-and-forget [Box.deleteAll] escaped it as an unhandled
+  /// async error, and the store would keep treating the cap as recovered.
+  Future<void> _evictBeyondMax(Box<dynamic> box) async {
+    if (box.length <= maxEntries) return;
+    final oldest = box.keys.toList()
+      ..sort(
+        (a, b) => _createdAtOf(
+          box.get(a),
+        ).compareTo(_createdAtOf(box.get(b))),
+      );
+    await box.deleteAll(oldest.take(box.length - maxEntries));
+  }
+
+  /// Every saved range underline of one chapter, ordered by [start].
+  Future<List<ReaderRangeUnderline>> loadRanges(
+    String bookId,
+    String chapterId,
+  ) => _serialize((box) async {
+    final out = <ReaderRangeUnderline>[];
+    for (final raw in box.values) {
+      final entry = ReaderRangeUnderline.fromMap(raw);
+      if (entry == null) continue;
+      if (entry.bookId != bookId || entry.chapterId != chapterId) continue;
+      out.add(entry);
+    }
+    out.sort((a, b) => a.start.compareTo(b.start));
+    return out;
+  }, onUnavailable: const []);
 
   Future<void> remove(String key) => _serialize(
     (box) async {
@@ -206,9 +335,10 @@ class ReaderUnderlineStore {
   Future<void> clearBook(String bookId) => _serialize((box) async {
     final doomed = <dynamic>[];
     for (final key in box.keys) {
-      if (ReaderUnderline.fromMap(box.get(key))?.bookId == bookId) {
-        doomed.add(key);
-      }
+      final raw = box.get(key);
+      final book = ReaderUnderline.fromMap(raw)?.bookId ??
+          ReaderRangeUnderline.fromMap(raw)?.bookId;
+      if (book == bookId) doomed.add(key);
     }
     if (doomed.isNotEmpty) await box.deleteAll(doomed);
     changes.value++;

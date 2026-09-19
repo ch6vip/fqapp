@@ -331,7 +331,10 @@ class ChapterContent {
             ChapterParagraph(
               paragraphs[i],
               paraIndex: i == 0 ? paraIndex : null,
-              startMs: i == 0 ? startMs : null,
+              // A split continuation starts its spoken audio where the
+              // original paragraph starts — null here would strand 从本段听
+              // on the chapter opening for every piece after the first.
+              startMs: startMs,
               isImageCaption: isCaption,
             ),
           );
@@ -385,12 +388,13 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
     );
     for (var i = 0; i < paragraphs.length; i++) {
       // A single upstream paragraph can split into several display paragraphs;
-      // the id and the start time belong to the first of them.
+      // the id belongs to the first of them, but the spoken start is inherited
+      // by every piece (the audio for the whole paragraph begins there).
       blocks.add(
         ChapterParagraph(
           paragraphs[i],
           paraIndex: i == 0 ? activeIndex : null,
-          startMs: i == 0 ? activeStartMs : null,
+          startMs: activeStartMs,
         ),
       );
     }

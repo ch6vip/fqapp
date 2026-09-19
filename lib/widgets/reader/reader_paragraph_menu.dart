@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 /// What the reader can do with a long-pressed paragraph.
 enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
 
-/// Floating action bar for a long-pressed paragraph, matching the official one.
+/// Floating action bar for a long-pressed paragraph or a dragged selection,
+/// matching the official one.
 ///
 /// The official client builds this from three decompiled pieces:
 ///
@@ -16,10 +17,13 @@ enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
 ///   2dp below it, on a #FF303030 (day) / #FF1C1C1C (night) bar with #FFFFFFFF
 ///   text.
 ///
-/// The official bar offers 从本句听 / 写段评 / 一键生图 / 分享 plus 复制 / 划线 /
-/// 查询. 写段评, 一键生图 and 分享 need account-side endpoints  does not
-/// have, so this app shows only the actions it can actually perform and keeps
-/// the official geometry, colours and label placement.
+/// The official paragraph bar offers 从本句听 / 写段评 / 一键生图 / 分享, and its
+/// selection toolbar (a sibling surface, `com/dragon/read/ui/paragraph/i.java`)
+/// offers 复制 / 划线 / 查询 / 写笔记 / 错字反馈. The account- and capability-gated
+/// items need endpoints  does not have, so this bar shows only the
+/// actions it can actually perform: a whole-paragraph selection (long press)
+/// gets 从本段听 / 复制 / 划线, a dragged character range gets 复制 / 划线 — with
+/// the official geometry, colours and label placement throughout.
 ///
 /// Note: 官方长按工具的版式与颜色取自反编译 m.java / wt.xml / wr.xml，见
 /// .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
@@ -59,48 +63,62 @@ class ReaderParagraphMenu extends StatelessWidget {
   final bool underlined;
   final bool isDark;
 
+  /// True for a whole-paragraph selection (long press): the bar keeps
+  /// 从本段听. A dragged character range drops it — the official selection
+  /// toolbar has no listen item either.
+  final bool paragraphScoped;
+
   /// True when the bar sits below the touched line, so its tip points up at the
   /// paragraph (`m.java` shows downArrow instead once the popup flips above).
   final bool belowAnchor;
 
+  /// Fired when an item is tapped. The bar is a plain overlay child of the
+  /// reader page (the official one is a non-modal PopupWindow), so there is
+  /// no route result to pop — the page owns the selection lifecycle.
+  final ValueChanged<ReaderParagraphAction> onAction;
+
   const ReaderParagraphMenu({
     super.key,
+    required this.onAction,
     this.underlined = false,
     this.isDark = false,
+    this.paragraphScoped = true,
     this.belowAnchor = true,
   });
 
   Color get _background => isDark ? _barColorDark : _barColor;
 
   /// Number of items the bar will render; the caller sizes the anchor with it.
-  static int itemCount({required bool underlined}) => 3;
-
-  /// Shows the bar next to [anchor], on the side of the screen that has room,
-  /// the way `m.java#l` positions its PopupWindow.
-  ///
-  /// [anchor] is a `globalPosition` from the long press, i.e. window
-  /// coordinates. The dialog is deliberately shown with `useSafeArea: false`:
-  /// the default wraps the builder in a `SafeArea`, which shifts every
-  /// coordinate by the system insets and floats the bar away from the finger.
-  /// Insets are applied here instead, so the bar still clears the system bars.
-  static Future<ReaderParagraphAction?> show(
-    BuildContext context, {
+  static int itemCount({
     required bool underlined,
+    required bool paragraphScoped,
+  }) => paragraphScoped ? 3 : 2;
+
+  /// Clamped top-left for the bar anchored at [anchor] (window coordinates),
+  /// plus which side of the anchor it ended up on — the geometry
+  /// `selection/m.java#l` applies to its PopupWindow: centred on the anchor
+  /// with a 10dp screen margin, flipping above when there is no room below.
+  ///
+  /// The reader page calls this per build, so the bar never sits on the
+  /// system bars or on the reader's own bottom toolbar ([avoidBottom]).
+  static (Offset, bool) resolvePosition({
     required Offset anchor,
-    bool isDark = false,
+    required bool paragraphScoped,
+    required Size view,
+    required EdgeInsets safeArea,
+    required bool underlined,
     double avoidBottom = 0,
   }) {
-    final count = itemCount(underlined: underlined);
+    final count = itemCount(
+      underlined: underlined,
+      paragraphScoped: paragraphScoped,
+    );
     final barWidth = count * _itemWidth + _multiPadding * 2;
     // Only the tip facing the paragraph is laid out, exactly like `m.java`:
     // it calls `UIKt.gone` on the other arrow, which takes no space. Total
     // height is 8 (tip) + 56 (body) = 64dp, the same 64dp `m.java` uses when
     // it offsets the popup above the anchor.
     final barHeight = _verticalPadding * 2 + _itemHeight + _arrowHeight;
-
-    final media = MediaQuery.of(context);
-    final view = media.size;
-    final safe = media.padding;
 
     final minLeft = _margin;
     final maxLeft = (view.width - barWidth - _margin).clamp(
@@ -109,14 +127,8 @@ class ReaderParagraphMenu extends StatelessWidget {
     );
     final left = (anchor.dx - barWidth / 2).clamp(minLeft, maxLeft);
 
-    // The widget is [arrow][body] below the line and [body][arrow] above it;
-    // `m.java` swaps upArrow for downArrow at the same moment.
-    //
-    // [avoidBottom] reserves space the bar must not cover — the reader's own
-    // bottom toolbar. Without it, a long press near the page foot leaves the
-    // bar sitting on that toolbar instead of flipping above the line.
-    final minTop = safe.top + _margin;
-    final bottomLimit = view.height - safe.bottom - avoidBottom - _margin;
+    final minTop = safeArea.top + _margin;
+    final bottomLimit = view.height - safeArea.bottom - avoidBottom - _margin;
     final maxTop = (bottomLimit - barHeight).clamp(minTop, double.infinity);
     final belowTop = anchor.dy + _arrowHeight;
     final below = belowTop + barHeight <= bottomLimit;
@@ -124,27 +136,7 @@ class ReaderParagraphMenu extends StatelessWidget {
       minTop,
       maxTop,
     );
-
-    return showDialog<ReaderParagraphAction>(
-      context: context,
-      // See above: keep window coordinates exact.
-      useSafeArea: false,
-      // The official bar floats over the page without dimming it.
-      barrierColor: Colors.transparent,
-      builder: (context) => Stack(
-        children: [
-          Positioned(
-            left: left,
-            top: top,
-            child: ReaderParagraphMenu(
-              underlined: underlined,
-              isDark: isDark,
-              belowAnchor: below,
-            ),
-          ),
-        ],
-      ),
-    );
+    return (Offset(left, top), below);
   }
 
   @override
@@ -173,27 +165,28 @@ class ReaderParagraphMenu extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _Item(
-                key: const ValueKey('reader-action-listen'),
-                icon: Icons.headphones_rounded,
-                label: '从本段听',
-                onTap: () =>
-                    Navigator.pop(context, ReaderParagraphAction.listen),
-              ),
+              if (paragraphScoped)
+                _Item(
+                  key: const ValueKey('reader-action-listen'),
+                  icon: Icons.headphones_rounded,
+                  label: '从本段听',
+                  onTap: () => onAction(ReaderParagraphAction.listen),
+                ),
               _Item(
                 key: const ValueKey('reader-action-copy'),
                 icon: Icons.copy_rounded,
                 label: '复制',
-                onTap: () => Navigator.pop(context, ReaderParagraphAction.copy),
+                onTap: () => onAction(ReaderParagraphAction.copy),
               ),
               _Item(
                 key: const ValueKey('reader-action-underline'),
                 icon: underlined
                     ? Icons.format_color_reset_rounded
                     : Icons.draw_rounded,
-                label: underlined ? '取消划线' : '划线',
-                onTap: () => Navigator.pop(
-                  context,
+                label: underlined
+                    ? (paragraphScoped ? '取消划线' : '删除划线')
+                    : '划线',
+                onTap: () => onAction(
                   underlined
                       ? ReaderParagraphAction.removeUnderline
                       : ReaderParagraphAction.underline,

@@ -25,6 +25,7 @@ import '../widgets/reader/reader_ideas_sheet.dart';
 import '../widgets/reader/reader_paged_view.dart';
 import '../widgets/reader/reader_paragraph_menu.dart';
 import '../widgets/reader/reader_status_bar.dart';
+import '../widgets/reader/reader_text_selection.dart';
 import '../widgets/reader/reader_theme.dart';
 import 'audio_page.dart';
 
@@ -257,11 +258,36 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// Paragraph ids of this chapter carrying a locally saved 划线.
   Set<int> _underlines = const {};
 
-  /// The paragraph whose action bar is up, keyed by its `textId`; the
-  /// selection wash behind it follows. Set on long press, cleared wherever
-  /// the bar dismisses — the official equivalent keeps a SelectionParagraph
-  /// highlight alive for exactly the popup's lifetime.
-  int? _pressedParagraphTextId;
+  /// Locally saved character-range 划线 of this chapter (the selection-model
+  /// records; paragraph ones live in [_underlines]).
+  List<ReaderRangeUnderline> _rangeUnderlines = const [];
+
+  /// The live text selection — a whole paragraph right after a long press,
+  /// then reshaped character-by-character by dragging a handle. Cleared on an
+  /// outside tap, a scroll or a page turn, like the official selection.
+  // Note: 选区模型（坐标空间、几何注册表、非模态操作条）—
+  // 见 .agents/notes/implemented/feature/2026-09-19-reader-selection-model.md
+  ReaderTextSelection? _selection;
+
+  /// Palette plus hit-test registry, rebuilt per layout so stale blocks can
+  /// never answer a drag from the previous chapter.
+  ReaderSelectionScope? _marksScope;
+  ReaderChapterLayout? _marksScopeLayout;
+  final _selectionOverlayKey = GlobalKey();
+
+  /// True while the action bar is up in the page overlay. It is non-modal —
+  /// the official PopupWindow is too — so the drag handles stay touchable
+  /// while it shows, and a tap outside it cancels the selection.
+  bool _selectionBarOpen = false;
+
+  /// The anchor (window coordinates) the bar was opened with: the long-press
+  /// point or the handle position at drag end.
+  Offset _selectionBarAnchor = Offset.zero;
+
+  /// True while a long-press drag is reshaping the selection without the
+  /// finger ever having grabbed a handle (官方不抬手拖动).
+  bool _longPressDragging = false;
+
   int _underlineRevision = 0;
   int _layoutUnderlineRevision = -1;
   int _textOffset = 0;
@@ -398,7 +424,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Long-press actions on a paragraph: 复制 / 从本段听 / 划线.
+  /// Long press on a paragraph: select it whole and open the action bar.
   ///
   /// Identity comes from [ReaderContentBlock.textId], which falls back to the
   /// paragraph's ordinal when the markup carried no `idx` (the plain-text
@@ -406,38 +432,294 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// press do literally nothing on those chapters.
   ///
   /// Note: .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
-  Future<void> _showParagraphActions(
+  Future<void> _onParagraphLongPress(
     ReaderContentBlock block,
     Offset position,
   ) async {
-    final textId = block.textId;
-    if (textId == null) return;
-    setState(() => _pressedParagraphTextId = textId);
-    try {
-      final action = await ReaderParagraphMenu.show(
-        context,
-        underlined: _underlines.contains(textId),
-        anchor: position,
-        isDark: _preferences.themePreset.isDark,
-        // Keep clear of the reader's own bottom toolbar so a long press near the
-        // page foot flips the bar above the line instead of covering the toolbar.
-        avoidBottom: _controlsVisible ? _bottomBarHeight : 0,
-      );
-      if (!mounted || action == null) return;
-      switch (action) {
-        case ReaderParagraphAction.copy:
-          await Clipboard.setData(ClipboardData(text: block.text));
-          if (mounted) _showMessage('已复制');
-        case ReaderParagraphAction.listen:
-          await _openListening(fromMs: block.startMs, textId: textId);
-        case ReaderParagraphAction.underline:
-          await _toggleUnderline(block, add: true);
-        case ReaderParagraphAction.removeUnderline:
-          await _toggleUnderline(block, add: false);
+    if (block.isTitle || block.isImage || block.textId == null) return;
+    _longPressDragging = false;
+    // 选中文字,暂停自动翻页 — the official selection helper does the same
+    // (selection/h.java#a).
+    _stopAutoTurn();
+    // A second long press replaces the selection; the old bar pops without
+    // cancelling — the new selection takes over.
+    _closeSelectionBar(clearSelection: false);
+    if (!mounted) return;
+    // 官方 ke5.a.a 的 SelectTextByRange 分支: long-pressing text that already
+    // carries a range underline restores that exact range instead of the
+    // whole paragraph.
+    ReaderRangeUnderline? hit;
+    final pressed = _marksScope?.geometry.chapterOffsetAt(position);
+    if (pressed != null) {
+      for (final underline in _rangeUnderlines) {
+        if (underline.start <= pressed && pressed < underline.end) {
+          hit = underline;
+          break;
+        }
       }
-    } finally {
-      if (mounted) setState(() => _pressedParagraphTextId = null);
     }
+    final selection = ReaderTextSelection(
+      start: hit?.start ?? block.start,
+      end: hit?.end ?? block.end,
+    );
+    setState(() {
+      _selection = selection.copyWith(
+        isWholeParagraph: _isWholeParagraphSelection(selection),
+      );
+    });
+    _updateHandlePositions();
+    _openSelectionBar(anchor: position);
+  }
+
+  /// 官方的不抬手拖动 (TTMarkingHelper 的 MOVE 分支): 长按选中后手指继续
+  /// 移动,选区跟着手指逐字符重算,第一帧起收条;拖哪个点按手指落在选区的
+  /// 上半还是下半推断 (D() 的中点规则),不必精确抓到控点。
+  void _onParagraphLongPressMoveUpdate(Offset global) {
+    final selection = _selection;
+    if (selection == null || !selection.isValid) return;
+    if (!_longPressDragging) {
+      _longPressDragging = true;
+      _closeSelectionBar(clearSelection: false);
+    }
+    _onHandleDrag(_dragIsStartBound(global), global);
+  }
+
+  void _onParagraphLongPressEnd(Offset global) {
+    if (!_longPressDragging) return;
+    _longPressDragging = false;
+    _onHandleDragEnd(false, global);
+  }
+
+  /// 官方 D(): finger above the selection's vertical midpoint drags the start
+  /// bound, below it the end bound.
+  bool _dragIsStartBound(Offset global) {
+    final startTop = _selectionBoundGlobal(isStart: true)?.dy;
+    final endBottom = _selectionBoundGlobal(isStart: false)?.dy;
+    if (startTop == null || endBottom == null) return true;
+    return global.dy < (startTop + endBottom) / 2;
+  }
+
+  /// Global position of one bound's anchor — the start bound's line top or
+  /// the end bound's line bottom — or null when its block is not mounted.
+  Offset? _selectionBoundGlobal({required bool isStart}) {
+    final selection = _selection;
+    final layout = _chapterLayout;
+    final scope = _marksScope;
+    if (selection == null || layout == null || scope == null) return null;
+    final textOffset = isStart ? selection.start : selection.end - 1;
+    final block = layout.blockForAnchor(textOffset, isStart: isStart);
+    if (block == null) return null;
+    final entry = scope.geometry.entryFor(block.index);
+    if (entry == null) return null;
+    final anchor = selectionAnchor(
+      block: block,
+      painter: entry.painter,
+      textOffset: _boundOffsetInBlock(textOffset, block, isStart: isStart),
+      isStart: isStart,
+      columnWidth: layout.spec.width,
+    );
+    return entry.box.localToGlobal(anchor);
+  }
+
+  /// Opens the action bar for the current selection. The bar lives in the
+  /// page's own overlay Stack — non-modal, like the official PopupWindow — so
+  /// the drag handles stay touchable while it is up, and a tap outside it
+  /// reaches the page surface, which cancels the selection.
+  void _openSelectionBar({required Offset anchor}) {
+    final selection = _selection;
+    if (selection == null || !selection.isValid) return;
+    setState(() {
+      _selectionBarAnchor = anchor;
+      _selectionBarOpen = true;
+    });
+  }
+
+  /// Hides the action bar; [clearSelection] also cancels the selection
+  /// (outside tap, scroll, page turn — anything but a handle drag).
+  void _closeSelectionBar({required bool clearSelection}) {
+    if (clearSelection) _clearSelection();
+    if (!_selectionBarOpen) return;
+    setState(() => _selectionBarOpen = false);
+  }
+
+  /// The action bar overlay, or null while no selection is active. Geometry
+  /// re-resolves per build so the bar always clears the system bars and the
+  /// reader's own bottom toolbar.
+  ///
+  // Note: 选区条坐标系、段落时间轴映射与批量审查回退的来龙去脉 —
+  // 见 .agents/notes/implemented/bug-fix/2026-09-19-cross-review-batch-fixes.md
+  /// [windowPadding] is the *window's* safe area, captured above the reader's
+  /// own SafeArea: the anchor is a window coordinate while the bar is
+  /// positioned inside the overlay Stack below that SafeArea (and below the
+  /// reading-info row), so the anchor is converted into overlay-local space
+  /// and the flip/clamp maths run against the overlay's own size. Using the
+  /// window geometry directly shifted the bar one status-bar height down on
+  /// every device whose top inset is non-zero.
+  Widget? _selectionBar(ReaderThemePreset preset, EdgeInsets windowPadding) {
+    final selection = _selection;
+    if (!_selectionBarOpen || selection == null || !selection.isValid) {
+      return null;
+    }
+    final media = MediaQuery.of(context);
+    final underlined = _selectionUnderlined;
+    var anchor = _selectionBarAnchor;
+    var view = media.size;
+    var safeArea = media.padding;
+    var avoidBottom = _controlsVisible ? _bottomBarHeight : 0.0;
+    final overlayBox =
+        _selectionOverlayKey.currentContext?.findRenderObject() as RenderBox?;
+    if (overlayBox != null && overlayBox.attached) {
+      anchor = overlayBox.globalToLocal(_selectionBarAnchor);
+      view = overlayBox.size;
+      // The system insets are already consumed by the outer SafeArea, so the
+      // overlay only needs a margin of its own; the reader's bottom toolbar
+      // height includes the bottom inset, so subtract what SafeArea padded.
+      safeArea = EdgeInsets.zero;
+      avoidBottom = (avoidBottom - windowPadding.bottom).clamp(
+        0.0,
+        double.infinity,
+      );
+    }
+    final (position, below) = ReaderParagraphMenu.resolvePosition(
+      anchor: anchor,
+      paragraphScoped: selection.isWholeParagraph,
+      view: view,
+      safeArea: safeArea,
+      underlined: underlined,
+      avoidBottom: avoidBottom,
+    );
+    return Positioned(
+      key: const ValueKey('reader-selection-bar'),
+      left: position.dx,
+      top: position.dy,
+      child: ReaderParagraphMenu(
+        underlined: underlined,
+        paragraphScoped: selection.isWholeParagraph,
+        isDark: preset.isDark,
+        belowAnchor: below,
+        onAction: (action) {
+          unawaited(() async {
+            await _applySelectionAction(action);
+            // Every action consumes the selection, like the official bar.
+            if (mounted) _closeSelectionBar(clearSelection: true);
+          }());
+        },
+      ),
+    );
+  }
+
+  void _clearSelection() {
+    _longPressDragging = false;
+    if (_selection == null) return;
+    setState(() => _selection = null);
+  }
+
+  bool get _selectionUnderlined {
+    final selection = _selection;
+    if (selection == null) return false;
+    if (selection.isWholeParagraph) {
+      final textId = _chapterLayout?.blockAtOffset(selection.start)?.textId;
+      if (textId != null && _underlines.contains(textId)) return true;
+    }
+    // A range record spanning exactly this selection outranks the paragraph
+    // identity: a whole-paragraph drag can produce one, and only the range
+    // store can ever remove it again.
+    return _rangeUnderlines.any(
+      (underline) => underline.coversExactly(selection.start, selection.end),
+    );
+  }
+
+  Future<void> _applySelectionAction(ReaderParagraphAction action) async {
+    final selection = _selection;
+    final layout = _chapterLayout;
+    if (selection == null || layout == null || !selection.isValid) return;
+    switch (action) {
+      case ReaderParagraphAction.copy:
+        await Clipboard.setData(
+          ClipboardData(
+            text: layout.textInRange(selection.start, selection.end),
+          ),
+        );
+        if (mounted) _showMessage('已复制');
+      case ReaderParagraphAction.listen:
+        final block = layout.blockAtOffset(selection.start);
+        final textId = block?.textId;
+        if (block == null || textId == null) return;
+        await _openListening(fromMs: block.startMs, textId: textId);
+      case ReaderParagraphAction.underline:
+      case ReaderParagraphAction.removeUnderline:
+        await _toggleSelectionUnderline(
+          add: action == ReaderParagraphAction.underline,
+        );
+    }
+  }
+
+  /// 划线 on the current selection. A whole-paragraph selection keeps the
+  /// paragraph-identity store (the pre-selection model, still how saved
+  /// marks render); a dragged character range saves a range record.
+  Future<void> _toggleSelectionUnderline({required bool add}) async {
+    final selection = _selection;
+    final layout = _chapterLayout;
+    if (selection == null || layout == null || !selection.isValid) return;
+    if (selection.isWholeParagraph) {
+      final block = layout.blockAtOffset(selection.start);
+      // A range record exactly spanning the paragraph (a whole-paragraph
+      // drag) must be toggled in the range store — routing to the
+      // paragraph-identity store here would strand it, unreachable for
+      // 删除划线 forever.
+      final hasExactRange = _rangeUnderlines.any(
+        (underline) => underline.coversExactly(selection.start, selection.end),
+      );
+      if (block != null && !hasExactRange) {
+        await _toggleUnderline(block, add: add);
+        return;
+      }
+    }
+    final store = widget.underlineStore ?? ReaderUnderlineStore.instance;
+    final chapterId = _chapter.itemId;
+    final loadGeneration = _loadGeneration;
+    final existing = _rangeUnderlines
+        .where((underline) => underline.coversExactly(selection.start,
+            selection.end))
+        .toList();
+    if (!add && existing.isEmpty) return;
+    final record = ReaderRangeUnderline(
+      bookId: widget.bookId,
+      chapterId: chapterId,
+      start: selection.start,
+      end: selection.end,
+      text: layout.textInRange(selection.start, selection.end),
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    try {
+      if (add) {
+        await store.addRange(record);
+      } else {
+        await store.remove(existing.first.key);
+      }
+    } catch (_) {
+      if (mounted) _showMessage(add ? '划线保存失败，请重试' : '删除划线失败，请重试');
+      return;
+    }
+    // The await can span a chapter switch; appending a record that belongs to
+    // the previous chapter would paint it onto the new one (the same guard
+    // _loadUnderlines applies to its reads).
+    if (!mounted ||
+        loadGeneration != _loadGeneration ||
+        chapterId != _chapter.itemId) {
+      return;
+    }
+    setState(() {
+      if (add) {
+        _rangeUnderlines = [..._rangeUnderlines, record]
+          ..sort((a, b) => a.start.compareTo(b.start));
+      } else {
+        _rangeUnderlines = _rangeUnderlines
+            .where((underline) => underline.key != existing.first.key)
+            .toList();
+      }
+    });
+    _showMessage(add ? '已划线' : '已删除划线');
   }
 
   Future<void> _toggleUnderline(
@@ -448,12 +730,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (textId == null) return;
     final store = widget.underlineStore ?? ReaderUnderlineStore.instance;
     final blockIndex = block.index - 1;
+    final chapterId = _chapter.itemId;
+    final loadGeneration = _loadGeneration;
     try {
       if (add) {
         await store.add(
           ReaderUnderline(
             bookId: widget.bookId,
-            chapterId: _chapter.itemId,
+            chapterId: chapterId,
             paraIndex: block.paraIndex,
             blockIndex: blockIndex,
             text: block.text,
@@ -464,7 +748,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         await store.remove(
           ReaderUnderlineStore.keyFor(
             bookId: widget.bookId,
-            chapterId: _chapter.itemId,
+            chapterId: chapterId,
             paraIndex: block.paraIndex,
             blockIndex: blockIndex,
           ),
@@ -474,7 +758,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       if (mounted) _showMessage(add ? '划线保存失败，请重试' : '取消划线失败，请重试');
       return;
     }
-    if (!mounted) return;
+    // The await can span a chapter switch; the ids belong to the chapter the
+    // underline was toggled in (same guard as _loadUnderlines).
+    if (!mounted ||
+        loadGeneration != _loadGeneration ||
+        chapterId != _chapter.itemId) {
+      return;
+    }
     setState(() {
       final next = Set<int>.of(_underlines);
       if (add) {
@@ -488,24 +778,29 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _showMessage(add ? '已划线' : '已取消划线');
   }
 
-  /// Loads the saved 划线 ids of this chapter.
+  /// Loads the saved 划线 of this chapter: paragraph ids for the layout and
+  /// range records for the mark painter.
   Future<void> _loadUnderlines() async {
     final generation = _loadGeneration;
     final chapterId = _chapter.itemId;
     final store = widget.underlineStore ?? ReaderUnderlineStore.instance;
     Set<int> ids;
+    List<ReaderRangeUnderline> ranges;
     try {
       final saved = await store.load(widget.bookId, chapterId);
       ids = {
         for (final entry in saved.values) entry.id,
       };
+      ranges = await store.loadRanges(widget.bookId, chapterId);
     } catch (_) {
       ids = const {};
+      ranges = const [];
     }
     if (!mounted || generation != _loadGeneration) return;
     if (chapterId != _chapter.itemId) return;
     setState(() {
       _underlines = ids;
+      _rangeUnderlines = ranges;
       ++_underlineRevision;
     });
   }
@@ -623,6 +918,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         // load and fetched again; a stale entry would point at another chapter.
         _ideas = ChapterIdeas.empty;
         _underlines = const {};
+        _rangeUnderlines = const [];
+        _selection = null;
+        _selectionBarOpen = false;
       });
       unawaited(_prefetchAround(_index));
       unawaited(_loadIdeas(chapter, generation));
@@ -1114,6 +1412,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   void _onPageChanged(int page) {
+    // Turning the page cancels the selection: the handles belong to the text,
+    // the action bar's anchor would be stale. Reselecting is one long press.
+    _closeSelectionBar(clearSelection: true);
     if (!_progressReady || _changingChapter || page == _pageIndex) return;
     setState(() {
       _pageIndex = page;
@@ -1426,19 +1727,29 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// carries a timeline.
   ///
   /// [textId] is [ReaderContentBlock.textId]: the upstream `idx` when present,
-  /// otherwise the paragraph's ordinal. Both are resolved against the same
-  /// block order the reader laid out, so a chapter without ids still maps.
+  /// otherwise the paragraph's ordinal. The ordinal fallback is resolved
+  /// against the exact block order the reader laid out — the leading title
+  /// stripped, the synthetic title block occupying index 0, image blocks
+  /// counted — so a chapter without ids still maps. Walking the raw block
+  /// list instead desynced from the layout by one (title) plus however many
+  /// images precede a paragraph, and 从本段听 landed on the previous paragraph.
   int? _paragraphStartMs(int textId) {
-    final paragraphs = _chapterContent.blocks
-        .whereType<ChapterParagraph>()
-        .toList();
-    for (var i = 0; i < paragraphs.length; i++) {
-      final paragraph = paragraphs[i];
-      final id = paragraphUnderlineId(
-        paraIndex: paragraph.paraIndex,
-        blockIndex: i,
-      );
-      if (id == textId) return paragraph.startMs;
+    final body = _chapterContent.withoutLeadingTitle(_chapter.title);
+    // Block 0 is the layout's synthetic title, so the first body element sits
+    // at layout index 1 and its fallback id is -(1 + 0) — the same maths
+    // ReaderChapterLayout uses for textId.
+    var layoutIndex = 1;
+    for (final element in body.blocks) {
+      if (element is ChapterParagraph) {
+        if (paragraphUnderlineId(
+              paraIndex: element.paraIndex,
+              blockIndex: layoutIndex - 1,
+            ) ==
+            textId) {
+          return element.startMs;
+        }
+      }
+      layoutIndex++;
     }
     return null;
   }
@@ -1473,6 +1784,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       );
     }
     final preset = _preferences.themePreset;
+    final windowPadding = MediaQuery.paddingOf(context);
     final overlayStyle = preset.isDark
         ? SystemUiOverlayStyle.light
         : SystemUiOverlayStyle.dark;
@@ -1535,7 +1847,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                       Expanded(
                         child: SizedBox.expand(
                           key: _viewportKey,
-                          child: _buildContent(preset),
+                          child: _buildContent(preset, windowPadding),
                         ),
                       ),
                       if (_preferences.showReadingInfo)
@@ -1654,7 +1966,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     ),
   );
 
-  Widget _buildContent(ReaderThemePreset preset) {
+  Widget _buildContent(ReaderThemePreset preset, EdgeInsets windowPadding) {
     if (_loading || _error != null) {
       return GestureDetector(
         behavior: HitTestBehavior.translucent,
@@ -1669,10 +1981,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     return LayoutBuilder(
       builder: (context, constraints) {
         final layout = _prepareLayout(constraints);
+        final scope = _marksScopeFor(preset, layout);
         return GestureDetector(
           key: const ValueKey('reader-page-surface'),
           behavior: HitTestBehavior.translucent,
           onTapUp: (details) {
+            if (_selection != null) {
+              // A tap outside the selection cancels it without turning the
+              // page — the official reader behaves the same.
+              _closeSelectionBar(clearSelection: true);
+              return;
+            }
             if (_autoTurnTimer != null) {
               _stopAutoTurn();
             } else if (_controlsVisible) {
@@ -1688,37 +2007,230 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               _toggleControls();
             }
           },
-          child: _paged
-              ? ReaderPagedView(
-                  key: _pagedKey,
-                  layout: layout,
-                  pageIndex: _pageIndex,
-                  hasPreviousChapter: _index > 0,
-                  hasNextChapter: _index < widget.chapters.length - 1,
-                  onPageChanged: _onPageChanged,
-                  onBoundary: _pageBoundary,
-                  onDragStart: _hideControlsOnDrag,
-                  turnStyle: _preferences.pageTurnStyle,
-                  backgroundColor: preset.backgroundColor,
-                  endPage: _buildChapterEndPage(preset),
-                  startPage: _buildChapterStartPage(preset),
-                  onBoundaryLanded: (direction) {
-                    // _pageIndex never reports boundary pages, so the book end
-                    // stops auto turn from here.
-                    if (direction > 0 && _index == widget.chapters.length - 1) {
-                      _stopAutoTurn();
-                    }
-                  },
-                  imageProviderFactory: widget.imageProviderFactory,
-                  onParagraphLongPress: (block, position) =>
-                      unawaited(_showParagraphActions(block, position)),
-                  pressedParagraphTextId: _pressedParagraphTextId,
-                  paragraphHighlightColor: preset.selectionHighlightColor,
-                )
-              : _buildScrollContent(layout),
+          child: Stack(
+            key: _selectionOverlayKey,
+            children: [
+              Positioned.fill(
+                child: _paged
+                    ? ReaderPagedView(
+                        key: _pagedKey,
+                        layout: layout,
+                        pageIndex: _pageIndex,
+                        hasPreviousChapter: _index > 0,
+                        hasNextChapter: _index < widget.chapters.length - 1,
+                        onPageChanged: _onPageChanged,
+                        onBoundary: _pageBoundary,
+                        onDragStart: _hideControlsOnDrag,
+                        turnStyle: _preferences.pageTurnStyle,
+                        backgroundColor: preset.backgroundColor,
+                        endPage: _buildChapterEndPage(preset),
+                        startPage: _buildChapterStartPage(preset),
+                        onBoundaryLanded: (direction) {
+                          // _pageIndex never reports boundary pages, so the book end
+                          // stops auto turn from here.
+                          if (direction > 0 &&
+                              _index == widget.chapters.length - 1) {
+                            _stopAutoTurn();
+                          }
+                        },
+                        imageProviderFactory: widget.imageProviderFactory,
+                        onParagraphLongPress: (block, position) =>
+                            unawaited(_onParagraphLongPress(block, position)),
+                        onParagraphLongPressMoveUpdate:
+                            _onParagraphLongPressMoveUpdate,
+                        onParagraphLongPressEnd: _onParagraphLongPressEnd,
+                        selectionScope: scope,
+                        selection: _selection,
+                        rangeUnderlines: _rangeUnderlines,
+                      )
+                    : _buildScrollContent(layout, scope),
+              ),
+              ..._selectionHandles(scope),
+              ?_selectionBar(preset, windowPadding),
+            ],
+          ),
         );
       },
     );
+  }
+
+  /// The selection scope for the current layout: palette from the active
+  /// theme, a fresh hit-test registry per layout so a block from the previous
+  /// chapter can never answer a drag.
+  ReaderSelectionScope _marksScopeFor(
+    ReaderThemePreset preset,
+    ReaderChapterLayout layout,
+  ) {
+    if (_marksScope == null || !identical(_marksScopeLayout, layout)) {
+      _marksScope = ReaderSelectionScope(
+        geometry: ReaderSelectionGeometry(),
+        washColor: preset.selectionWashColor,
+        handleColor: preset.selectionHandleColor,
+        underlineColor: preset.textColor,
+      );
+      _marksScopeLayout = layout;
+    }
+    return _marksScope!;
+  }
+
+  /// The drag handles, floated above the content: handles living inside a
+  /// block would fall outside every ancestor's hit-test box whenever a bound
+  /// sat at the block edge (first line's top, last line's bottom, page foot).
+  /// Positions resolve through the geometry registry after layout.
+  List<Widget> _selectionHandles(ReaderSelectionScope scope) {
+    final selection = _selection;
+    if (selection == null || !selection.isValid) return const [];
+    final start = _handleOverlayPosition(isStart: true);
+    final end = _handleOverlayPosition(isStart: false);
+    if (start == null && end == null) return const [];
+    final fontSize = _chapterLayout?.spec.bodyStyle.fontSize ?? 16;
+    Widget handle(bool isStart, Offset position) {
+      final widget = ReaderSelectionHandle(
+        isStart: isStart,
+        color: scope.handleColor,
+        fontSize: fontSize,
+        onDragStart: _onHandleDragStart,
+        onDragUpdate: (global) => _onHandleDrag(isStart, global),
+        onDragEnd: (global) => _onHandleDragEnd(isStart, global),
+      );
+      return Positioned(
+        key: ValueKey('reader-selection-handle-${isStart ? 'start' : 'end'}'),
+        left: position.dx - ReaderSelectionHandle.touchWidth / 2,
+        top: isStart ? position.dy - widget.height : position.dy,
+        child: widget,
+      );
+    }
+
+    return [
+      if (start != null) handle(true, start),
+      if (end != null) handle(false, end),
+    ];
+  }
+
+  /// Overlay-local position of one selection bound's handle anchor, or null
+  /// when the bound's block is not mounted (an off-screen page).
+  Offset? _handleOverlayPosition({required bool isStart}) {
+    final selection = _selection;
+    final layout = _chapterLayout;
+    final scope = _marksScope;
+    if (selection == null || layout == null || scope == null) return null;
+    final textOffset = isStart ? selection.start : selection.end - 1;
+    final block = layout.blockForAnchor(textOffset, isStart: isStart);
+    if (block == null) return null;
+    final entry = scope.geometry.entryFor(block.index);
+    if (entry == null) return null;
+    final anchor = selectionAnchor(
+      block: block,
+      painter: entry.painter,
+      textOffset: _boundOffsetInBlock(textOffset, block, isStart: isStart),
+      isStart: isStart,
+      columnWidth: layout.spec.width,
+    );
+    final overlayBox =
+        _selectionOverlayKey.currentContext?.findRenderObject() as RenderBox?;
+    if (overlayBox == null || !overlayBox.attached) return null;
+    return overlayBox.globalToLocal(entry.box.localToGlobal(anchor));
+  }
+
+  /// [offset] (chapter space) resolved into [block]'s text space, snapping a
+  /// separator offset onto the block's first or last real character.
+  int _boundOffsetInBlock(
+    int offset,
+    ReaderContentBlock block, {
+    required bool isStart,
+  }) {
+    return isStart
+        ? offset.clamp(block.start, block.end - 1) - block.start
+        : (offset + 1 > block.end ? block.end : offset + 1) - 1 - block.start;
+  }
+
+  /// Recomputes the handle overlay after the frame that (re)mounted the mark
+  /// layers — their registry entries land in a post-frame callback of the
+  /// same build, scheduled ahead of this one.
+  void _updateHandlePositions() {
+    if (_selection == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selection == null) return;
+      setState(() {});
+    });
+  }
+
+  void _onHandleDragStart() {
+    // The bar would sit under the finger; pop it, keep the selection.
+    _closeSelectionBar(clearSelection: false);
+  }
+
+  /// Reshapes the selection to the character under the finger. The drag
+  /// starts on a handle but crosses paragraphs, so the point resolves
+  /// through the geometry registry, not the handle's own block.
+  // Note: 拖动边界对齐官方（非空不变量、分隔符守卫）—
+  // 见 .agents/notes/implemented/bug-fix/2026-09-19-selection-drag-boundary.md
+  void _onHandleDrag(bool isStart, Offset global) {
+    final selection = _selection;
+    final layout = _chapterLayout;
+    if (selection == null || layout == null) return;
+    final offset = _marksScope?.geometry.chapterOffsetAt(global);
+    if (offset == null) return;
+    final range = layout.selectableTextRange;
+    if (range == null) return;
+    var next = selection.withBound(
+      isStart: isStart,
+      offset: offset.clamp(range.$1, range.$2),
+      textLength: range.$2,
+    );
+    // A drag can land a bound on the '\n' separator between two blocks; such
+    // a range paints nothing, so grow it onto the next real character — the
+    // finger must never hold an invisible selection.
+    if (next.isValid &&
+        next.end < range.$2 &&
+        _selectionPaintsNothing(next)) {
+      next = next.copyWith(end: next.end + 1);
+    }
+    if (next == selection) return;
+    setState(() => _selection = next);
+  }
+
+  /// True when no text block overlaps [selection] — a range covering only
+  /// the separators between blocks.
+  bool _selectionPaintsNothing(ReaderTextSelection selection) {
+    final layout = _chapterLayout;
+    if (layout == null) return true;
+    for (final block in layout.blocks) {
+      if (block.isTitle || block.isImage) continue;
+      if (blockSelectionRange(block, selection.start, selection.end) != null) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _onHandleDragEnd(bool isStart, Offset global) {
+    final selection = _selection;
+    if (selection == null || !selection.isValid) {
+      _clearSelection();
+      return;
+    }
+    // Whatever the drag did, the range is no longer necessarily the
+    // long-pressed paragraph: recompute the flag from the geometry so
+    // 从本段听 tracks the real range instead of inheriting the long press.
+    setState(
+      () => _selection = selection.copyWith(
+        isWholeParagraph: _isWholeParagraphSelection(selection),
+      ),
+    );
+    _openSelectionBar(anchor: global);
+  }
+
+  /// True when [selection] covers exactly one non-title text block — the
+  /// shape a long press creates. Computed, not inherited: a drag that happens
+  /// to land on another whole paragraph deserves the same bar.
+  bool _isWholeParagraphSelection(ReaderTextSelection selection) {
+    final block = _chapterLayout?.blockAtOffset(selection.start);
+    return block != null &&
+        !block.isTitle &&
+        !block.isImage &&
+        selection.start == block.start &&
+        selection.end == block.end;
   }
 
   /// 章末页: shown as the trailing page of a finished chapter — the chapter's
@@ -1781,7 +2293,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (_controlsVisible) setState(() => _controlsVisible = false);
   }
 
-  Widget _buildScrollContent(ReaderChapterLayout layout) {
+  Widget _buildScrollContent(
+    ReaderChapterLayout layout,
+    ReaderSelectionScope scope,
+  ) {
     final spec = layout.spec;
     // The scroll list re-renders the measured span, so the bubble is already in
     // it. Its size still depends on this list's own constraints, and the
@@ -1789,7 +2304,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // two agree without a second measurement pass.
     return NotificationListener<ScrollStartNotification>(
       onNotification: (notification) {
-        if (notification.dragDetails != null) _hideControlsOnDrag();
+        if (notification.dragDetails != null) {
+          // Scrolling away cancels the selection (the official client keeps
+          // it and repositions its toolbar after the scroll settles; here one
+          // long press reselects instead).
+          _closeSelectionBar(clearSelection: true);
+          _hideControlsOnDrag();
+        }
         return false;
       },
       child: ListView.builder(
@@ -1820,14 +2341,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 block: layout.blocks[itemIndex],
                 spec: spec,
                 imageProviderFactory: widget.imageProviderFactory,
-                highlight:
-                    _pressedParagraphTextId != null &&
-                        layout.blocks[itemIndex].textId ==
-                            _pressedParagraphTextId
-                    ? _preferences.themePreset.selectionHighlightColor
-                    : null,
+                selectionScope: scope,
+                selection: _selection,
+                rangeUnderlines: _rangeUnderlines,
                 onParagraphLongPress: (block, position) =>
-                    unawaited(_showParagraphActions(block, position)),
+                    unawaited(_onParagraphLongPress(block, position)),
+                onParagraphLongPressMoveUpdate: _onParagraphLongPressMoveUpdate,
+                onParagraphLongPressEnd: _onParagraphLongPressEnd,
               ),
             );
           }
@@ -1983,6 +2503,9 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
   late final ScrollController _scrollController;
   bool _reversed = false;
   String _query = '';
+  // The directory can hold thousands of chapters; filtering on every keystroke
+  // re-scans them all and rebuilds the sheet. Coalesce the input instead.
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -1996,9 +2519,18 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      setState(() => _query = value);
+    });
   }
 
   List<int> get _visibleIndexes {
@@ -2063,7 +2595,7 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
           child: TextField(
             controller: _searchController,
             textInputAction: TextInputAction.search,
-            onChanged: (value) => setState(() => _query = value),
+            onChanged: _onSearchChanged,
             decoration: InputDecoration(
               hintText: '搜索章节名或序号',
               prefixIcon: const Icon(Icons.search),
@@ -2072,6 +2604,7 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
                   : IconButton(
                       tooltip: '清空',
                       onPressed: () {
+                        _searchDebounce?.cancel();
                         _searchController.clear();
                         setState(() => _query = '');
                       },

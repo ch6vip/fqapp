@@ -34,12 +34,16 @@ extension ReaderThemeColors on ReaderThemePreset {
 
   Color get mutedTextColor => textColor.withValues(alpha: 0.6);
 
-  /// The wash behind a long-pressed paragraph while the action bar is up. The
-  /// official engine paints its SelectionParagraph colour inside the native
-  /// text layout with no resource to copy, so this is the body colour at a low
-  /// alpha — a neutral that stays visible on all four presets.
-  Color get selectionHighlightColor =>
-      textColor.withValues(alpha: isDark ? 0.2 : 0.14);
+  /// The wash behind a text selection (long-pressed paragraph or a dragged
+  /// handle range). The official reader tints its selection with the brand
+  /// orange at 16% (`getHighlightColor` → `#FA6725`, alpha 41), identically
+  /// across themes — replicated here instead of a per-preset tint.
+  Color get selectionWashColor => const Color(0x29FA6725);
+
+  /// The solid colour of the selection drag handles; official night theme
+  /// drops the same orange to 60% (`b4e` `#99FA6725`).
+  Color get selectionHandleColor =>
+      isDark ? const Color(0x99FA6725) : const Color(0xFFFA6725);
 
   Color get panelColor => Color.alphaBlend(
     isDark ? const Color(0x0DFFFFFF) : const Color(0x99FFFFFF),

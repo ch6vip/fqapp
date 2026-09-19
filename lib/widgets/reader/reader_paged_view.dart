@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/reader_preferences.dart';
+import '../../services/reader_underline_store.dart';
 import 'reader_chapter_layout.dart';
 import 'reader_illustration.dart';
+import 'reader_text_selection.dart';
 
 class ReaderPagedView extends StatefulWidget {
   final ReaderChapterLayout layout;
@@ -21,11 +23,18 @@ class ReaderPagedView extends StatefulWidget {
   final void Function(ReaderContentBlock block, Offset globalPosition)?
   onParagraphLongPress;
 
-  /// The long-pressed paragraph's `textId` plus the wash painted behind its
-  /// visible lines while the action bar is up — the paged counterpart of
-  /// [ReaderBlockContent.highlight].
-  final int? pressedParagraphTextId;
-  final Color? paragraphHighlightColor;
+  /// 官方的不抬手拖动: moves and release while the finger stays down after a
+  /// long press. Global coordinates.
+  final void Function(Offset globalPosition)? onParagraphLongPressMoveUpdate;
+  final void Function(Offset globalPosition)? onParagraphLongPressEnd;
+
+  /// Selection plumbing: the shared scope (palette + hit-test registry), the
+  /// live selection, and the chapter's saved range underlines. Handles are
+  /// floated by the reader page above the whole content, so the paged view
+  /// only needs to paint marks and register geometry.
+  final ReaderSelectionScope? selectionScope;
+  final ReaderTextSelection? selection;
+  final List<ReaderRangeUnderline> rangeUnderlines;
 
   /// Page-turn animation; see [ReaderPageTurnStyle]. The widgets for the
   /// boundary pages beyond the chapter (章末 / 上一章) are optional.
@@ -55,8 +64,11 @@ class ReaderPagedView extends StatefulWidget {
     this.onBoundaryLanded,
     this.imageProviderFactory,
     this.onParagraphLongPress,
-    this.pressedParagraphTextId,
-    this.paragraphHighlightColor,
+    this.onParagraphLongPressMoveUpdate,
+    this.onParagraphLongPressEnd,
+    this.selectionScope,
+    this.selection,
+    this.rangeUnderlines = const [],
   });
 
   @override
@@ -288,8 +300,12 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
             // nothing at all — which is exactly how 翻页 readers saw it, since
             // scroll mode was the only path that passed it down.
             onParagraphLongPress: widget.onParagraphLongPress,
-            pressedParagraphTextId: widget.pressedParagraphTextId,
-            paragraphHighlightColor: widget.paragraphHighlightColor,
+            onParagraphLongPressMoveUpdate:
+                widget.onParagraphLongPressMoveUpdate,
+            onParagraphLongPressEnd: widget.onParagraphLongPressEnd,
+            selectionScope: widget.selectionScope,
+            selection: widget.selection,
+            rangeUnderlines: widget.rangeUnderlines,
           );
           if (widget.turnStyle == ReaderPageTurnStyle.cover) {
             // 覆盖: the outgoing page stays pinned while the incoming one
@@ -331,8 +347,11 @@ class ReaderPageContent extends StatelessWidget {
   final ReaderImageProviderFactory? imageProviderFactory;
   final void Function(ReaderContentBlock block, Offset globalPosition)?
   onParagraphLongPress;
-  final int? pressedParagraphTextId;
-  final Color? paragraphHighlightColor;
+  final void Function(Offset globalPosition)? onParagraphLongPressMoveUpdate;
+  final void Function(Offset globalPosition)? onParagraphLongPressEnd;
+  final ReaderSelectionScope? selectionScope;
+  final ReaderTextSelection? selection;
+  final List<ReaderRangeUnderline> rangeUnderlines;
 
   const ReaderPageContent({
     super.key,
@@ -340,8 +359,11 @@ class ReaderPageContent extends StatelessWidget {
     required this.spec,
     this.imageProviderFactory,
     this.onParagraphLongPress,
-    this.pressedParagraphTextId,
-    this.paragraphHighlightColor,
+    this.onParagraphLongPressMoveUpdate,
+    this.onParagraphLongPressEnd,
+    this.selectionScope,
+    this.selection,
+    this.rangeUnderlines = const [],
   });
 
   @override
@@ -359,14 +381,34 @@ class ReaderPageContent extends StatelessWidget {
               height: fragment.height,
               child: Builder(
                 builder: (context) {
-                  // A block split across pages highlights exactly the lines
-                  // this page shows; a title (textId null) never matches a
-                  // pressed id.
-                  final highlight =
-                      pressedParagraphTextId != null &&
-                          fragment.block.textId == pressedParagraphTextId
-                      ? paragraphHighlightColor
-                      : null;
+                  // Marks ride inside the block's own coordinate space (the
+                  // OverflowBox child under the -sourceTop shift), so wash and
+                  // underlines translate with the fragment and clip at its
+                  // bounds; the window tells the hit-test registry which
+                  // lines this page shows.
+                  final text = ReaderBlockText(
+                    block: fragment.block,
+                    spec: spec,
+                  );
+                  final marked =
+                      selectionScope != null &&
+                          !fragment.block.isTitle &&
+                          !fragment.block.isImage &&
+                          fragment.block.lines.isNotEmpty
+                      ? ReaderBlockMarkLayer(
+                          key: ValueKey(
+                            'reader-block-marks-${fragment.block.index}',
+                          ),
+                          block: fragment.block,
+                          spec: spec,
+                          scope: selectionScope!,
+                          selection: selection,
+                          rangeUnderlines: rangeUnderlines,
+                          windowTop: fragment.sourceTop,
+                          windowBottom: fragment.sourceTop + fragment.height,
+                          child: text,
+                        )
+                      : text;
                   final body = ClipRect(
                     child: OverflowBox(
                       alignment: Alignment.topLeft,
@@ -374,10 +416,7 @@ class ReaderPageContent extends StatelessWidget {
                       maxHeight: fragment.block.height,
                       child: Transform.translate(
                         offset: Offset(0, -fragment.sourceTop),
-                        child: ReaderBlockText(
-                          block: fragment.block,
-                          spec: spec,
-                        ),
+                        child: marked,
                       ),
                     ),
                   );
@@ -403,9 +442,19 @@ class ReaderPageContent extends StatelessWidget {
                                     fragment.block,
                                     details.globalPosition,
                                   ),
-                            child: highlight == null
-                                ? body
-                                : ColoredBox(color: highlight, child: body),
+                            onLongPressMoveUpdate:
+                                onParagraphLongPressMoveUpdate == null
+                                ? null
+                                : (details) => onParagraphLongPressMoveUpdate!(
+                                    details.globalPosition,
+                                  ),
+                            onLongPressEnd: onParagraphLongPressEnd == null
+                                ? null
+                                : (details) =>
+                                      onParagraphLongPressEnd!(
+                                        details.globalPosition,
+                                      ),
+                            child: body,
                           ),
                         );
                 },
