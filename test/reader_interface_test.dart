@@ -156,17 +156,22 @@ void main() {
       await tester.tap(find.byTooltip('增大字号'));
       await tester.pumpAndSettle();
       expect(_firstVisibleParagraph(tester), anchor);
-      await tester.tap(find.byTooltip('增大字距'));
-      await tester.pumpAndSettle();
+      // 字距 lives under 更多排版 (官方版式首屏没有它).
       await tester.ensureVisible(
         find.byKey(const ValueKey('reader-more-appearance')),
       );
-      await tester.tap(find.text('标题与留白'));
+      await tester.tap(find.text('更多排版'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byTooltip('增大字距'));
+      await tester.tap(find.byTooltip('增大字距'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('标题居中'));
       await tester.tap(find.text('标题居中'));
-      await tester.ensureVisible(find.byTooltip('增大上下留白'));
-      await tester.tap(find.byTooltip('增大上下留白'));
+      // 上下边距 is an official-style chip row: tap the 宽 preset.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('reader-vertical-padding-28.0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('reader-vertical-padding-28.0')));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('关闭排版设置'));
       await tester.pumpAndSettle();
@@ -174,7 +179,7 @@ void main() {
       expect(preferences.fontSize, 19);
       expect(preferences.letterSpacing, closeTo(0.1, 0.001));
       expect(preferences.titleAlignment, ReaderTitleAlignment.center);
-      expect(preferences.verticalPadding, 17);
+      expect(preferences.verticalPadding, 28);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );

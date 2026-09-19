@@ -416,10 +416,16 @@ void main() {
     await _openSettings(tester);
     await tester.tap(find.text('排版'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('reader-mode-scroll')),
+    );
     await tester.tap(find.byKey(const ValueKey('reader-mode-scroll')));
     await tester.pumpAndSettle();
     expect(store.entry!['textOffset'], anchor);
     expect(_scroll(tester).offset, greaterThan(0));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('reader-mode-paged')),
+    );
     await tester.tap(find.byKey(const ValueKey('reader-mode-paged')));
     await tester.pumpAndSettle();
     expect(store.entry!['textOffset'], anchor);
