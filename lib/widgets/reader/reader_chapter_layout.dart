@@ -252,8 +252,10 @@ class ReaderChapterLayout {
           : bubbleBuilder(paraIndex!, bubbleCount, bubbleVariant);
       final blockIndex = blocks.length;
       // The title is block 0 and is not an editable paragraph, so the ordinal
-      // used for identity starts at the first body paragraph.
-      final textId = element is ChapterParagraph
+      // used for identity starts at the first body paragraph. The title itself
+      // must not take a textId: its ordinal fallback would be -(-1 + 1) = 0,
+      // colliding with an upstream idx="0" on the first body paragraph.
+      final textId = element is ChapterParagraph && blockIndex > 0
           ? paragraphUnderlineId(
               paraIndex: paraIndex,
               blockIndex: blockIndex - 1,
@@ -700,12 +702,18 @@ class ReaderBlockContent extends StatelessWidget {
   final void Function(ReaderContentBlock block, Offset globalPosition)?
   onParagraphLongPress;
 
+  /// Wash painted behind the paragraph while the action bar is up — the
+  /// equivalent of the official SelectionParagraph highlight. Full width,
+  /// matching the justified column the official line rects cover.
+  final Color? highlight;
+
   const ReaderBlockContent({
     super.key,
     required this.block,
     required this.spec,
     this.imageProviderFactory,
     this.onParagraphLongPress,
+    this.highlight,
   });
 
   @override
@@ -718,7 +726,13 @@ class ReaderBlockContent extends StatelessWidget {
         providerFactory: imageProviderFactory,
       );
     }
-    final text = ReaderBlockText(block: block, spec: spec);
+    Widget text = ReaderBlockText(block: block, spec: spec);
+    if (highlight != null && !block.isTitle) {
+      text = DecoratedBox(
+        decoration: BoxDecoration(color: highlight),
+        child: text,
+      );
+    }
     if (block.isTitle || onParagraphLongPress == null) return text;
     return GestureDetector(
       key: ValueKey('reader-paragraph-press-${block.index - 1}'),

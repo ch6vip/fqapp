@@ -256,6 +256,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// Paragraph ids of this chapter carrying a locally saved 划线.
   Set<int> _underlines = const {};
+
+  /// The paragraph whose action bar is up, keyed by its `textId`; the
+  /// selection wash behind it follows. Set on long press, cleared wherever
+  /// the bar dismisses — the official equivalent keeps a SelectionParagraph
+  /// highlight alive for exactly the popup's lifetime.
+  int? _pressedParagraphTextId;
   int _underlineRevision = 0;
   int _layoutUnderlineRevision = -1;
   int _textOffset = 0;
@@ -406,26 +412,31 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ) async {
     final textId = block.textId;
     if (textId == null) return;
-    final action = await ReaderParagraphMenu.show(
-      context,
-      underlined: _underlines.contains(textId),
-      anchor: position,
-      isDark: _preferences.themePreset.isDark,
-      // Keep clear of the reader's own bottom toolbar so a long press near the
-      // page foot flips the bar above the line instead of covering the toolbar.
-      avoidBottom: _controlsVisible ? _bottomBarHeight : 0,
-    );
-    if (!mounted || action == null) return;
-    switch (action) {
-      case ReaderParagraphAction.copy:
-        await Clipboard.setData(ClipboardData(text: block.text));
-        if (mounted) _showMessage('已复制');
-      case ReaderParagraphAction.listen:
-        await _openListening(fromMs: block.startMs, textId: textId);
-      case ReaderParagraphAction.underline:
-        await _toggleUnderline(block, add: true);
-      case ReaderParagraphAction.removeUnderline:
-        await _toggleUnderline(block, add: false);
+    setState(() => _pressedParagraphTextId = textId);
+    try {
+      final action = await ReaderParagraphMenu.show(
+        context,
+        underlined: _underlines.contains(textId),
+        anchor: position,
+        isDark: _preferences.themePreset.isDark,
+        // Keep clear of the reader's own bottom toolbar so a long press near the
+        // page foot flips the bar above the line instead of covering the toolbar.
+        avoidBottom: _controlsVisible ? _bottomBarHeight : 0,
+      );
+      if (!mounted || action == null) return;
+      switch (action) {
+        case ReaderParagraphAction.copy:
+          await Clipboard.setData(ClipboardData(text: block.text));
+          if (mounted) _showMessage('已复制');
+        case ReaderParagraphAction.listen:
+          await _openListening(fromMs: block.startMs, textId: textId);
+        case ReaderParagraphAction.underline:
+          await _toggleUnderline(block, add: true);
+        case ReaderParagraphAction.removeUnderline:
+          await _toggleUnderline(block, add: false);
+      }
+    } finally {
+      if (mounted) setState(() => _pressedParagraphTextId = null);
     }
   }
 
@@ -1701,6 +1712,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   imageProviderFactory: widget.imageProviderFactory,
                   onParagraphLongPress: (block, position) =>
                       unawaited(_showParagraphActions(block, position)),
+                  pressedParagraphTextId: _pressedParagraphTextId,
+                  paragraphHighlightColor: preset.selectionHighlightColor,
                 )
               : _buildScrollContent(layout),
         );
@@ -1807,6 +1820,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 block: layout.blocks[itemIndex],
                 spec: spec,
                 imageProviderFactory: widget.imageProviderFactory,
+                highlight:
+                    _pressedParagraphTextId != null &&
+                        layout.blocks[itemIndex].textId ==
+                            _pressedParagraphTextId
+                    ? _preferences.themePreset.selectionHighlightColor
+                    : null,
                 onParagraphLongPress: (block, position) =>
                     unawaited(_showParagraphActions(block, position)),
               ),

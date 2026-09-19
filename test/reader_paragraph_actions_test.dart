@@ -9,7 +9,12 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/services/reader_underline_store.dart';
+import 'package:fqapp/widgets/reader/reader_chapter_layout.dart';
+import 'package:fqapp/widgets/reader/reader_paged_view.dart';
+import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
+import 'package:fqapp/widgets/reader/reader_theme.dart';
 
 
 import 'support/fakes.dart';
@@ -130,6 +135,101 @@ void main() {
 
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
     expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
+  });
+
+  // The official bar takes u_ #FF303030 by day and s7 #FF1C1C1C at night
+  // (selection/m.java#o); the mapping used to be recorded the other way round.
+  testWidgets('the bar background is #FF303030 by day and #FF1C1C1C at night', (
+    tester,
+  ) async {
+    Future<Color?> barColor({required bool dark}) async {
+      await tester.pumpWidget(
+        MaterialApp(home: ReaderParagraphMenu(isDark: dark)),
+      );
+      final containers = tester.widgetList<Container>(
+        find.byWidgetPredicate(
+          (widget) => widget is Container && widget.decoration is BoxDecoration,
+        ),
+      );
+      return (containers.single.decoration! as BoxDecoration).color;
+    }
+
+    expect(await barColor(dark: false), const Color(0xFF303030));
+    expect(await barColor(dark: true), const Color(0xFF1C1C1C));
+  });
+
+  testWidgets('the pressed paragraph keeps a wash while the bar is up', (
+    tester,
+  ) async {
+    final store = _MemoryUnderlines();
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_app(store));
+    await tester.pumpAndSettle();
+
+    final textId = paragraphUnderlineId(paraIndex: 0, blockIndex: 0);
+    Color? highlightOfParagraph0() {
+      for (final content
+          in tester.widgetList<ReaderBlockContent>(
+            find.byType(ReaderBlockContent),
+          )) {
+        if (content.block.textId == textId) return content.highlight;
+      }
+      return null;
+    }
+
+    expect(highlightOfParagraph0(), isNull);
+
+    await _longPressParagraph(tester, 0);
+    expect(
+      highlightOfParagraph0(),
+      ReaderPreferences().themePreset.selectionHighlightColor,
+    );
+
+    // Dismissing the bar clears the wash, like the official selection does.
+    await tester.tapAt(const Offset(200, 60));
+    await tester.pumpAndSettle();
+    expect(highlightOfParagraph0(), isNull);
+  });
+
+  testWidgets('paged mode paints the wash on the pressed paragraph too', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'reader_page_mode': 'paged'});
+    final store = _MemoryUnderlines();
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_app(store));
+    await tester.pumpAndSettle();
+
+    await tester.longPress(
+      find.byKey(const ValueKey('reader-paragraph-press-0')),
+    );
+    await tester.pumpAndSettle();
+
+    final pages = tester.widgetList<ReaderPageContent>(
+      find.byType(ReaderPageContent),
+    );
+    final pressed = pages
+        .where((page) => page.pressedParagraphTextId != null)
+        .toList();
+    expect(pressed, hasLength(1));
+    expect(
+      pressed.single.pressedParagraphTextId,
+      paragraphUnderlineId(paraIndex: 0, blockIndex: 0),
+    );
+    expect(
+      find.descendant(
+        of: find.byWidget(pressed.single),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is ColoredBox &&
+              widget.color ==
+                  ReaderPreferences().themePreset.selectionHighlightColor,
+        ),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a chapter without paragraph ids still offers the menu', (

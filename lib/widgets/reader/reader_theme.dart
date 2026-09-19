@@ -33,6 +33,14 @@ extension ReaderThemeColors on ReaderThemePreset {
   };
 
   Color get mutedTextColor => textColor.withValues(alpha: 0.6);
+
+  /// The wash behind a long-pressed paragraph while the action bar is up. The
+  /// official engine paints its SelectionParagraph colour inside the native
+  /// text layout with no resource to copy, so this is the body colour at a low
+  /// alpha — a neutral that stays visible on all four presets.
+  Color get selectionHighlightColor =>
+      textColor.withValues(alpha: isDark ? 0.2 : 0.14);
+
   Color get panelColor => Color.alphaBlend(
     isDark ? const Color(0x0DFFFFFF) : const Color(0x99FFFFFF),
     backgroundColor,

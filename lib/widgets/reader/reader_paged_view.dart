@@ -21,6 +21,12 @@ class ReaderPagedView extends StatefulWidget {
   final void Function(ReaderContentBlock block, Offset globalPosition)?
   onParagraphLongPress;
 
+  /// The long-pressed paragraph's `textId` plus the wash painted behind its
+  /// visible lines while the action bar is up — the paged counterpart of
+  /// [ReaderBlockContent.highlight].
+  final int? pressedParagraphTextId;
+  final Color? paragraphHighlightColor;
+
   /// Page-turn animation; see [ReaderPageTurnStyle]. The widgets for the
   /// boundary pages beyond the chapter (章末 / 上一章) are optional.
   final ReaderPageTurnStyle turnStyle;
@@ -49,6 +55,8 @@ class ReaderPagedView extends StatefulWidget {
     this.onBoundaryLanded,
     this.imageProviderFactory,
     this.onParagraphLongPress,
+    this.pressedParagraphTextId,
+    this.paragraphHighlightColor,
   });
 
   @override
@@ -280,6 +288,8 @@ class ReaderPagedViewState extends State<ReaderPagedView> {
             // nothing at all — which is exactly how 翻页 readers saw it, since
             // scroll mode was the only path that passed it down.
             onParagraphLongPress: widget.onParagraphLongPress,
+            pressedParagraphTextId: widget.pressedParagraphTextId,
+            paragraphHighlightColor: widget.paragraphHighlightColor,
           );
           if (widget.turnStyle == ReaderPageTurnStyle.cover) {
             // 覆盖: the outgoing page stays pinned while the incoming one
@@ -321,6 +331,8 @@ class ReaderPageContent extends StatelessWidget {
   final ReaderImageProviderFactory? imageProviderFactory;
   final void Function(ReaderContentBlock block, Offset globalPosition)?
   onParagraphLongPress;
+  final int? pressedParagraphTextId;
+  final Color? paragraphHighlightColor;
 
   const ReaderPageContent({
     super.key,
@@ -328,6 +340,8 @@ class ReaderPageContent extends StatelessWidget {
     required this.spec,
     this.imageProviderFactory,
     this.onParagraphLongPress,
+    this.pressedParagraphTextId,
+    this.paragraphHighlightColor,
   });
 
   @override
@@ -343,44 +357,59 @@ class ReaderPageContent extends StatelessWidget {
               left: 0,
               right: 0,
               height: fragment.height,
-              child: fragment.block.isImage
-                  ? ReaderBlockContent(
-                      block: fragment.block,
-                      spec: spec,
-                      imageProviderFactory: imageProviderFactory,
-                    )
-                  : Semantics(
-                      label: fragment.text,
-                      excludeSemantics: true,
-                      child: GestureDetector(
-                        // Same key the scroll list uses, so both page modes
-                        // expose one stable paragraph target.
-                        key: ValueKey(
-                          'reader-paragraph-press-${fragment.block.index - 1}',
-                        ),
-                        behavior: HitTestBehavior.translucent,
-                        onLongPressStart: onParagraphLongPress == null
-                            ? null
-                            : (details) => onParagraphLongPress!(
-                                fragment.block,
-                                details.globalPosition,
-                              ),
-                        child: ClipRect(
-                          child: OverflowBox(
-                            alignment: Alignment.topLeft,
-                            minHeight: fragment.block.height,
-                            maxHeight: fragment.block.height,
-                            child: Transform.translate(
-                              offset: Offset(0, -fragment.sourceTop),
-                              child: ReaderBlockText(
-                                block: fragment.block,
-                                spec: spec,
-                              ),
-                            ),
-                          ),
+              child: Builder(
+                builder: (context) {
+                  // A block split across pages highlights exactly the lines
+                  // this page shows; a title (textId null) never matches a
+                  // pressed id.
+                  final highlight =
+                      pressedParagraphTextId != null &&
+                          fragment.block.textId == pressedParagraphTextId
+                      ? paragraphHighlightColor
+                      : null;
+                  final body = ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.topLeft,
+                      minHeight: fragment.block.height,
+                      maxHeight: fragment.block.height,
+                      child: Transform.translate(
+                        offset: Offset(0, -fragment.sourceTop),
+                        child: ReaderBlockText(
+                          block: fragment.block,
+                          spec: spec,
                         ),
                       ),
                     ),
+                  );
+                  return fragment.block.isImage
+                      ? ReaderBlockContent(
+                          block: fragment.block,
+                          spec: spec,
+                          imageProviderFactory: imageProviderFactory,
+                        )
+                      : Semantics(
+                          label: fragment.text,
+                          excludeSemantics: true,
+                          child: GestureDetector(
+                            // Same key the scroll list uses, so both page modes
+                            // expose one stable paragraph target.
+                            key: ValueKey(
+                              'reader-paragraph-press-${fragment.block.index - 1}',
+                            ),
+                            behavior: HitTestBehavior.translucent,
+                            onLongPressStart: onParagraphLongPress == null
+                                ? null
+                                : (details) => onParagraphLongPress!(
+                                    fragment.block,
+                                    details.globalPosition,
+                                  ),
+                            child: highlight == null
+                                ? body
+                                : ColoredBox(color: highlight, child: body),
+                          ),
+                        );
+                },
+              ),
             ),
         ],
       ),

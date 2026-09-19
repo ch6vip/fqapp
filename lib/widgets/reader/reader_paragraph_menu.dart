@@ -13,7 +13,8 @@ enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
 ///   10dp for several.
 /// * `res/layout/wr.xml` — the root: up arrow, the item row, down arrow.
 /// * `res/layout/wt.xml` — one item: 60x48dp, a 24dp icon, then a 10sp label
-///   2dp below it, on #FF1C1C1C with #FFFFFFFF text.
+///   2dp below it, on a #FF303030 (day) / #FF1C1C1C (night) bar with #FFFFFFFF
+///   text.
 ///
 /// The official bar offers 从本句听 / 写段评 / 一键生图 / 分享 plus 复制 / 划线 /
 /// 查询. 写段评, 一键生图 and 分享 need account-side endpoints  does not
@@ -44,9 +45,11 @@ class ReaderParagraphMenu extends StatelessWidget {
   /// `UiUtils.getRoundRectDrawable(UIKt.getDp(8), color)` in `m.java`.
   static const _radius = 8.0;
 
-  /// `ReaderCommonColor`: #FF1C1C1C on white, #FF303030 on black.
-  static const _barColor = Color(0xFF1C1C1C);
-  static const _barColorDark = Color(0xFF303030);
+  /// `selection/m.java#o`, confirmed against its smali: the black theme takes
+  /// `s7` #FF1C1C1C and the day theme `u_` #FF303030 (the first branch jadx
+  /// shows there is dead code, its result is never assigned).
+  static const _barColor = Color(0xFF303030);
+  static const _barColorDark = Color(0xFF1C1C1C);
 
   /// `@color/al` — pure white in both themes.
   static const _foreground = Color(0xFFFFFFFF);
