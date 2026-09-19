@@ -9,6 +9,7 @@ import 'package:fqapp/pages/comic_reader_page.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/chapter_text_formatter.dart';
 
 import 'support/fakes.dart';
 
@@ -356,6 +357,79 @@ void main() {
       },
     );
   }
+
+  testWidgets('the download action caches the whole book without a sheet', (
+    tester,
+  ) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    final cache = MemoryChapterCache(chapterCapacity: 1);
+    final fetched = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailPage(
+          item: _book,
+          detailLoader: (id, {String tab = '小说'}) async => {},
+          directoryLoader: (id, {String tab = '小说'}) async => [_chapters],
+          readerStore: MemoryReaderStore(),
+          chapterCache: cache,
+          chapterLoader: (chapter) async {
+            fetched.add(chapter.itemId);
+            return ChapterContent.fromPlainText(
+              '正文${chapter.itemId}',
+              illustrationsChecked: true,
+            ).toCacheText();
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('下载'));
+    await tester.pumpAndSettle();
+    expect(fetched, ['first', 'second']);
+    expect(await cache.cachedChapterIds('book'), {'first', 'second'});
+    // A download is pinned: the cache's one-chapter automatic budget neither
+    // truncates nor evicts it.
+    expect(cache.pinned['book'], {'first', 'second'});
+    expect(find.textContaining('缓存完成'), findsOneWidget);
+    // The action goes back to its idle label once the batch ends.
+    expect(find.text('下载'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping a running download stops it', (tester) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    final cache = MemoryChapterCache();
+    final pending = Completer<String>();
+    final fetched = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailPage(
+          item: _book,
+          detailLoader: (id, {String tab = '小说'}) async => {},
+          directoryLoader: (id, {String tab = '小说'}) async => [_chapters],
+          readerStore: MemoryReaderStore(),
+          chapterCache: cache,
+          chapterLoader: (chapter) {
+            fetched.add(chapter.itemId);
+            return pending.future;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('下载'));
+    await tester.pump();
+    // Progress replaces the static icon while the batch runs.
+    expect(find.text('缓存 0/2'), findsOneWidget);
+    await tester.tap(find.text('缓存 0/2'));
+    await tester.pump();
+    pending.complete('不应在停止后保存的正文');
+    await tester.pumpAndSettle();
+    expect(await cache.cachedChapterIds('book'), isEmpty);
+    expect(find.textContaining('已停止缓存'), findsOneWidget);
+    expect(find.text('下载'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 final _book = MediaItem(

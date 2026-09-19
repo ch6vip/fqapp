@@ -338,6 +338,198 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('detail download caches the whole remainder in one action', (
+    tester,
+  ) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    final cache = MemoryChapterCache();
+    final fetched = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChapterCacheSheet(
+            book: CachedBook(
+              id: 'book',
+              title: '全部下载测试',
+              chapters: [
+                for (var i = 0; i < 101; i++)
+                  Chapter(itemId: '$i', title: '第$i章', volumeName: ''),
+              ],
+            ),
+            currentIndex: 0,
+            includeCurrentChapter: true,
+            cache: cache,
+            loader: (chapter) async {
+              fetched.add(chapter.itemId);
+              return ChapterContent.fromPlainText(
+                '正文${chapter.itemId}',
+                illustrationsChecked: true,
+              ).toCacheText();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('全部下载 101 章'));
+    await tester.pumpAndSettle();
+    expect(fetched, hasLength(101));
+    expect(await cache.cachedChapterIds('book'), hasLength(101));
+    expect(cache.pinned['book'], hasLength(101));
+    expect(find.textContaining('缓存完成'), findsOneWidget);
+    expect(find.textContaining('缓存上限'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('whole-book download runs past the cache capacity', (
+    tester,
+  ) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    final cache = MemoryChapterCache(chapterCapacity: 3);
+    final fetched = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChapterCacheSheet(
+            book: CachedBook(
+              id: 'book',
+              title: '超长目录',
+              chapters: [
+                for (var i = 0; i < 101; i++)
+                  Chapter(itemId: '$i', title: '第$i章', volumeName: ''),
+              ],
+            ),
+            currentIndex: 0,
+            includeCurrentChapter: true,
+            cache: cache,
+            loader: (chapter) async {
+              fetched.add(chapter.itemId);
+              return ChapterContent.fromPlainText(
+                '正文${chapter.itemId}',
+                illustrationsChecked: true,
+              ).toCacheText();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The store's automatic budget cannot truncate a download the user asked
+    // for, and every chapter of the batch is pinned.
+    await tester.tap(find.text('全部下载 101 章'));
+    await tester.pumpAndSettle();
+    expect(fetched, hasLength(101));
+    expect(await cache.cachedChapterIds('book'), hasLength(101));
+    expect(cache.pinned['book'], hasLength(101));
+    expect(find.textContaining('缓存完成'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a short remainder keeps the preset buttons', (tester) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChapterCacheSheet(
+            book: CachedBook(
+              id: 'book',
+              title: '短目录',
+              chapters: [
+                for (var i = 0; i < 3; i++)
+                  Chapter(itemId: '$i', title: '第$i章', volumeName: ''),
+              ],
+            ),
+            currentIndex: 0,
+            includeCurrentChapter: true,
+            cache: MemoryChapterCache(),
+            loader: (chapter) async => '正文${chapter.itemId}',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('缓存 3 章'), findsOneWidget);
+    expect(find.byKey(const Key('chapter_cache_all')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a reader whole-book batch pins every following chapter', (
+    tester,
+  ) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    final cache = MemoryChapterCache(chapterCapacity: 4);
+    final fetched = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChapterCacheSheet(
+            book: CachedBook(
+              id: 'book',
+              title: '阅读器里下载',
+              chapters: [
+                for (var i = 0; i < 102; i++)
+                  Chapter(itemId: '$i', title: '第$i章', volumeName: ''),
+              ],
+            ),
+            currentIndex: 0,
+            cache: cache,
+            loader: (chapter) async {
+              fetched.add(chapter.itemId);
+              return ChapterContent.fromPlainText(
+                '正文${chapter.itemId}',
+                illustrationsChecked: true,
+              ).toCacheText();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The reader starts after the current chapter, and the batch is pinned: the
+    // capacity of 4 does not cut it to four chapters.
+    await tester.tap(find.text('全部下载 101 章'));
+    await tester.pumpAndSettle();
+    expect(fetched, [for (var i = 1; i <= 101; i++) '$i']);
+    expect(cache.pinned['book'], hasLength(101));
+    expect(find.textContaining('缓存完成'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('preset batches stay inside the automatic budget', (
+    tester,
+  ) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    final cache = MemoryChapterCache();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChapterCacheSheet(
+            book: CachedBook(
+              id: 'book',
+              title: '短目录',
+              chapters: [
+                for (var i = 0; i < 3; i++)
+                  Chapter(itemId: '$i', title: '第$i章', volumeName: ''),
+              ],
+            ),
+            currentIndex: 0,
+            includeCurrentChapter: true,
+            cache: cache,
+            loader: (chapter) async => '正文${chapter.itemId}',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('缓存 3 章'));
+    await tester.pumpAndSettle();
+    // Only the whole-book action is a user download; a preset batch is still
+    // ordinary cache the LRU pass may reclaim.
+    expect(await cache.cachedChapterIds('book'), hasLength(3));
+    expect(cache.pinned['book'], isNull);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _EvictingCache extends MemoryChapterCache {
@@ -347,12 +539,14 @@ class _EvictingCache extends MemoryChapterCache {
     required String chapterId,
     required String title,
     required String text,
+    bool pinned = false,
   }) async {
     await super.write(
       bookId: bookId,
       chapterId: chapterId,
       title: title,
       text: text,
+      pinned: pinned,
     );
     if (chapterId == '2') content[bookId]?.remove('3');
   }

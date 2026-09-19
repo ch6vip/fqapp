@@ -178,12 +178,14 @@ class _ManagedMemoryCache extends ChapterCacheStore {
     required String chapterId,
     required String title,
     required String text,
+    bool pinned = false,
   }) async {
     await memory.write(
       bookId: bookId,
       chapterId: chapterId,
       title: title,
       text: text,
+      pinned: pinned,
     );
     changes.value++;
   }

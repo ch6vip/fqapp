@@ -161,6 +161,40 @@ void main() {
       );
     },
   );
+
+  test(
+    'an unpinned batch larger than the cap evicts its own opening chapters',
+    () async {
+      // Why a download has to be pinned: under the automatic budget, an uncapped
+      // "download everything" deletes the chapters the reader is standing on and
+      // leaves only the tail of the catalogue.
+      final store = ChapterCacheStore(maxEntries: 3);
+      for (var index = 1; index <= 6; index++) {
+        await _write(store, 'a', '$index', '正文$index');
+      }
+      expect(await store.cachedChapterIds('a'), {'4', '5', '6'});
+    },
+  );
+
+  test('a pinned download runs past the cap intact', () async {
+    final store = ChapterCacheStore(maxEntries: 3);
+    for (var index = 1; index <= 6; index++) {
+      await _write(store, 'a', '$index', '正文$index', pinned: true);
+    }
+    expect(await store.cachedChapterIds('a'), {'1', '2', '3', '4', '5', '6'});
+  });
+
+  test('pinned downloads do not spend the automatic budget', () async {
+    final store = ChapterCacheStore(maxEntries: 2);
+    for (final id in ['p1', 'p2', 'p3']) {
+      await _write(store, 'a', id, '下载$id', pinned: true);
+    }
+    for (final id in ['r1', 'r2', 'r3']) {
+      await _write(store, 'b', id, '自动$id');
+    }
+    expect(await store.cachedChapterIds('a'), {'p1', 'p2', 'p3'});
+    expect(await store.cachedChapterIds('b'), {'r2', 'r3'});
+  });
 }
 
 class _ReadOnlyHive extends Fake implements HiveInterface {
@@ -200,5 +234,12 @@ Future<void> _write(
   ChapterCacheStore store,
   String book,
   String chapter,
-  String text,
-) => store.write(bookId: book, chapterId: chapter, title: chapter, text: text);
+  String text, {
+  bool pinned = false,
+}) => store.write(
+  bookId: book,
+  chapterId: chapter,
+  title: chapter,
+  text: text,
+  pinned: pinned,
+);

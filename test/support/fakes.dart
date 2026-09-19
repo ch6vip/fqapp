@@ -46,8 +46,17 @@ class MemoryReaderStore implements ReaderStore {
 }
 
 class MemoryChapterCache implements ChapterCache {
+  MemoryChapterCache({this.chapterCapacity = 500});
+
   final Map<String, Map<String, String>> content = {};
   final Map<String, CachedBook> catalogs = {};
+
+  /// Chapter ids written with `pinned: true`, per book: what a real store keeps
+  /// outside its automatic-cache budget.
+  final Map<String, Set<String>> pinned = {};
+
+  @override
+  final int chapterCapacity;
 
   @override
   Future<String?> read({
@@ -61,8 +70,10 @@ class MemoryChapterCache implements ChapterCache {
     required String chapterId,
     required String title,
     required String text,
+    bool pinned = false,
   }) async {
     (content[bookId] ??= {})[chapterId] = text;
+    if (pinned) (this.pinned[bookId] ??= <String>{}).add(chapterId);
   }
 
   @override

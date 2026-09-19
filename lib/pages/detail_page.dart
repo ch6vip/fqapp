@@ -13,12 +13,12 @@ import '../models/series_detail.dart';
 import '../services/api_client.dart';
 import '../services/audio_history.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/chapter_download.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/player_history.dart';
 import '../services/reader_history.dart';
 import '../services/user_facing_error.dart';
-import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/detail/detail_chapter_row.dart';
 import '../widgets/detail/detail_description.dart';
 import '../widgets/detail/detail_directory_sheet.dart';
@@ -105,6 +105,14 @@ class DetailPage extends StatefulWidget {
   final Future<SeriesDetail> Function(String seriesId)? seriesLoader;
   final ReaderStore? readerStore;
 
+  /// Offline chapter cache behind the download action. Injectable so tests can
+  /// download without a real Hive box.
+  final ChapterCache? chapterCache;
+
+  /// Chapter body loader behind the download; defaults to the live API and is
+  /// injectable like the other loaders so tests stay offline.
+  final Future<String> Function(Chapter chapter)? chapterLoader;
+
   const DetailPage({
     super.key,
     required this.item,
@@ -114,6 +122,8 @@ class DetailPage extends StatefulWidget {
     this.previewLoader,
     this.seriesLoader,
     this.readerStore,
+    this.chapterCache,
+    this.chapterLoader,
   });
 
   @override
@@ -138,6 +148,7 @@ class _DetailPageState extends State<DetailPage> {
   int _historyGeneration = 0;
   int? _resumeIndex;
   bool _opening = false;
+  ChapterDownload? _download;
 
   bool get _supported => kindLabels.containsKey(widget.item.kind);
   bool get _isVideo => isVideoKind(widget.item.kind);
@@ -161,6 +172,17 @@ class _DetailPageState extends State<DetailPage> {
     super.initState();
     _tab = _isVideo ? '短剧' : kindLabels[widget.item.kind] ?? '小说';
     _scroll.addListener(_onScroll);
+    // A whole-book download outlives this page: coming back re-attaches to the
+    // same batch instead of starting a second one.
+    final active = WholeBookDownload.active;
+    if (active != null) {
+      if (!active.value.running) {
+        WholeBookDownload.release(active);
+      } else if (active.book.id == _contentId) {
+        _download = active;
+        active.addListener(_onDownloadChanged);
+      }
+    }
     _load();
   }
 
@@ -173,6 +195,12 @@ class _DetailPageState extends State<DetailPage> {
   void dispose() {
     _scroll.dispose();
     _compactTitle.dispose();
+    final download = _download;
+    if (download != null) {
+      download.removeListener(_onDownloadChanged);
+      // A running batch keeps going; a finished one can be collected.
+      WholeBookDownload.release(download);
+    }
     super.dispose();
   }
 
@@ -519,7 +547,8 @@ class _DetailPageState extends State<DetailPage> {
                     : _allChapters[_resumeIndex!].title,
                 onRead: _openLastPosition,
                 onListen: _isBook ? _openListening : null,
-                onDownload: _isBook ? _showDownload : null,
+                onDownload: _isBook ? _toggleDownload : null,
+                download: _isBook ? _downloadProgress : null,
               )
             : null,
       ),
@@ -777,32 +806,81 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  /// Caches from the current chapter for offline reading. Unlike the reader,
-  /// the detail page has not fetched that chapter's body yet.
-  Future<void> _showDownload() async {
+  /// Starts — or, while a batch runs, stops — the whole-book download.
+  ///
+  /// The range sheet stays with the reader, where picking a batch size still
+  /// makes sense; here one tap means the whole book: every remaining chapter in
+  /// one batch, pinned so the cache's LRU budget cannot truncate it.
+  ///
+  /// Note: 详情页「下载」直接下全本、下载的章节不受缓存预算清理 — 见
+  /// .agents/notes/implemented/feature/2026-09-20-offline-whole-book-download.md
+  void _toggleDownload() {
     if (_allChapters.isEmpty) return;
-    final cache = ChapterCacheStore.instance;
-    final book = CachedBook(
-      id: _contentId,
-      title: widget.item.title,
-      cover: widget.item.cover,
-      chapters: _allChapters,
-    );
-    if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (context) => ChapterCacheSheet(
-        book: book,
-        currentIndex: _resumeIndex ?? 0,
-        includeCurrentChapter: true,
+    final running = _download;
+    if (running != null && running.value.running) {
+      running.cancel();
+      return;
+    }
+    final cache = widget.chapterCache ?? ChapterCacheStore.instance;
+    final startIndex = (_resumeIndex ?? 0).clamp(0, _allChapters.length - 1);
+    final count = _allChapters.length - startIndex;
+    if (count <= 0) {
+      _snack('没有可缓存的章节');
+      return;
+    }
+    _attachDownload(
+      WholeBookDownload.start(
         cache: cache,
-        loader: (chapter) => ApiClient.instance.contentText(chapter.itemId),
+        book: CachedBook(
+          id: _contentId,
+          title: widget.item.title,
+          cover: widget.item.cover,
+          chapters: _allChapters,
+        ),
+        loader:
+            widget.chapterLoader ??
+            (chapter) => ApiClient.instance.contentText(chapter.itemId),
+        startIndex: startIndex,
+        count: count,
       ),
     );
-    if (mounted) unawaited(_refreshResume());
+  }
+
+  /// The running batch as the read bar renders it; null while idle.
+  ({int completed, int total})? get _downloadProgress {
+    final download = _download;
+    if (download == null || !download.value.running) return null;
+    final state = download.value;
+    return (completed: state.completed, total: state.total);
+  }
+
+  void _attachDownload(ChapterDownload download) {
+    _download?.removeListener(_onDownloadChanged);
+    _download = download;
+    download.addListener(_onDownloadChanged);
+    if (mounted) setState(() {});
+  }
+
+  /// Progress, and the final report of the attached batch.
+  void _onDownloadChanged() {
+    final download = _download;
+    if (download == null) return;
+    final state = download.value;
+    if (!state.running) {
+      download.removeListener(_onDownloadChanged);
+      _download = null;
+      WholeBookDownload.release(download);
+      final message = state.message;
+      if (message != null) _snack(message);
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<Map<String, dynamic>?> _readSavedRecord() async {

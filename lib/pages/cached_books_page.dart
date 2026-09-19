@@ -175,7 +175,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
-                  '暂无缓存章节\n阅读小说后会自动保存，也可以在阅读器中提前缓存。',
+                  '暂无缓存章节\n阅读小说后会自动保存，详情页「下载」会保存整本；下载的章节不会被自动清理。',
                   textAlign: TextAlign.center,
                 ),
               ),

@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,40 +6,21 @@ import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
-import 'package:fqapp/services/chapter_cache_store.dart';
+import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/widgets/chapter_cache_sheet.dart';
 import 'package:fqapp/widgets/lazy_indexed_stack.dart';
-import 'package:hive/hive.dart';
 
 import 'support/fakes.dart';
 
 void main() {
-  group('U03 detail download range', () {
-    late Directory directory;
-    final tempRoot = Directory.systemTemp.absolute;
-
-    setUpAll(() async {
-      directory = await tempRoot.createTemp('fqapp-detail-download-');
-      Hive.init(directory.path);
-      // Open the actual sheet cache before entering the widget fake clock.
-      await ChapterCacheStore.instance.cachedChapterIds('book');
-    });
-
-    tearDownAll(() async {
-      await Hive.close();
-      if (directory.absolute.parent.path != tempRoot.path) {
-        throw StateError('Temporary directory escaped its parent');
-      }
-      await directory.delete(recursive: true);
-    });
-
-    for (final scenario in <({int chapters, int? resume, int remaining})>[
-      (chapters: 1, resume: null, remaining: 1),
-      (chapters: 3, resume: null, remaining: 3),
-      (chapters: 3, resume: 2, remaining: 1),
+  group('U03 detail download', () {
+    for (final scenario in <({int chapters, int? resume})>[
+      (chapters: 1, resume: null),
+      (chapters: 3, resume: null),
+      (chapters: 3, resume: 2),
     ]) {
       testWidgets('${scenario.chapters} chapters, resume ${scenario.resume}: '
-          'current unread chapter is included', (tester) async {
+          'one tap caches the rest of the catalogue', (tester) async {
         addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
         final chapters = <Chapter>[
           for (var index = 0; index < scenario.chapters; index++)
@@ -51,6 +30,7 @@ void main() {
               volumeName: '',
             ),
         ];
+        final cache = MemoryChapterCache();
         await tester.pumpWidget(
           MaterialApp(
             home: DetailPage(
@@ -75,15 +55,25 @@ void main() {
                         'episode': scenario.resume,
                       },
               ),
+              chapterCache: cache,
+              chapterLoader: (chapter) async => ChapterContent.fromPlainText(
+                '正文${chapter.itemId}',
+                illustrationsChecked: true,
+              ).toCacheText(),
             ),
           ),
         );
         await tester.pumpAndSettle();
         await tester.tap(find.text('下载'));
         await tester.pumpAndSettle();
-        expect(find.byType(ChapterCacheSheet), findsOneWidget);
-        expect(find.text('缓存 ${scenario.remaining} 章'), findsOneWidget);
-        expect(find.text('当前已是最后一章'), findsNothing);
+        // The detail page downloads: no sheet, no range to choose.
+        expect(find.byType(ChapterCacheSheet), findsNothing);
+        final start = scenario.resume ?? 0;
+        expect(await cache.cachedChapterIds('book'), {
+          for (var index = start; index < scenario.chapters; index++)
+            'chapter-$index',
+        });
+        expect(find.textContaining('缓存完成'), findsOneWidget);
         expect(tester.takeException(), isNull);
       });
     }

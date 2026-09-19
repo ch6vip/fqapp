@@ -15,8 +15,12 @@ class DetailReadBar extends StatelessWidget {
   /// Opens the listening page. Hidden when the work has no audio version.
   final VoidCallback? onListen;
 
-  /// Downloads from the current chapter. Hidden when caching is unsupported.
+  /// Starts (or stops) the whole-book download. The range sheet stays with the
+  /// reader, where picking a batch size still makes sense.
   final VoidCallback? onDownload;
+
+  /// Running whole-book batch: its progress replaces the static download icon.
+  final ({int completed, int total})? download;
 
   const DetailReadBar({
     super.key,
@@ -27,15 +31,32 @@ class DetailReadBar extends StatelessWidget {
     this.resumeTitle,
     this.onListen,
     this.onDownload,
+    this.download,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final largeType = MediaQuery.textScalerOf(context).scale(16) > 24;
-    final secondary = <(IconData, String, VoidCallback)>[
-      if (onListen != null) (LucideIcons.headphones, '听书', onListen!),
-      if (onDownload != null) (LucideIcons.download, '下载', onDownload!),
+    final secondary = <_Secondary>[
+      if (onListen != null)
+        (
+          icon: LucideIcons.headphones,
+          label: '听书',
+          keyName: '听书',
+          onTap: onListen!,
+          progress: null,
+        ),
+      if (onDownload != null)
+        (
+          icon: LucideIcons.download,
+          label: download == null
+              ? '下载'
+              : '缓存 ${download!.completed}/${download!.total}',
+          keyName: '下载',
+          onTap: onDownload!,
+          progress: download == null ? null : _fraction(download!),
+        ),
     ];
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -84,9 +105,11 @@ class DetailReadBar extends StatelessWidget {
                     children: [
                       for (final action in secondary) ...[
                         _SecondaryAction(
-                          icon: action.$1,
-                          label: action.$2,
-                          onTap: action.$3,
+                          icon: action.icon,
+                          label: action.label,
+                          keyName: action.keyName,
+                          onTap: action.onTap,
+                          progress: action.progress,
                           compact: largeType,
                         ),
                         Container(
@@ -190,21 +213,31 @@ class DetailReadBar extends StatelessWidget {
 class _SecondaryAction extends StatelessWidget {
   final IconData icon;
   final String label;
+
+  /// Stable identifier for the widget key: a running download puts its progress
+  /// into [label], so the label itself cannot be the key.
+  final String keyName;
   final VoidCallback onTap;
   final bool compact;
+
+  /// 0..1 while a whole-book batch runs; null falls back to [icon].
+  final double? progress;
 
   const _SecondaryAction({
     required this.icon,
     required this.label,
+    required this.keyName,
     required this.onTap,
     required this.compact,
+    this.progress,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final progress = this.progress;
     return HomePressable(
-      key: Key('detail_action_$label'),
+      key: Key('detail_action_$keyName'),
       semanticLabel: label,
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
@@ -213,7 +246,17 @@ class _SecondaryAction extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 19, color: palette.ink),
+            if (progress == null)
+              Icon(icon, size: 19, color: palette.ink)
+            else
+              SizedBox.square(
+                dimension: 19,
+                child: CircularProgressIndicator(
+                  value: progress.clamp(0.0, 1.0).toDouble(),
+                  strokeWidth: 2,
+                  color: palette.ink,
+                ),
+              ),
             if (!compact) ...[
               const SizedBox(height: 3),
               Text(
@@ -231,3 +274,17 @@ class _SecondaryAction extends StatelessWidget {
     );
   }
 }
+
+/// A secondary action: what it shows, what it opens, and — for a running
+/// whole-book download — the batch progress the entry renders in place of its
+/// static icon.
+typedef _Secondary = ({
+  IconData icon,
+  String label,
+  String keyName,
+  VoidCallback onTap,
+  double? progress,
+});
+
+double _fraction(({int completed, int total}) download) =>
+    download.total == 0 ? 0 : download.completed / download.total;

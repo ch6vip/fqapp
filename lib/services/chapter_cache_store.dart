@@ -7,14 +7,25 @@ import '../models/media_item.dart';
 
 abstract interface class ChapterCache {
   Future<String?> read({required String bookId, required String chapterId});
+
+  /// Writes one chapter of [bookId].
+  ///
+  /// [pinned] marks a chapter the user asked to download: pinned chapters are
+  /// never evicted and do not consume the automatic cache's budget, which is
+  /// what lets a whole-book download run past [chapterCapacity] intact.
   Future<void> write({
     required String bookId,
     required String chapterId,
     required String title,
     required String text,
+    bool pinned = false,
   });
   Future<void> saveBook(CachedBook book);
   Future<Set<String>> cachedChapterIds(String bookId);
+
+  /// Chapters the automatic cache keeps before evicting the least recently read
+  /// ones. Chapters written with `pinned: true` are outside this budget.
+  int get chapterCapacity;
 }
 
 class CachedBook {
@@ -105,8 +116,18 @@ class ChapterCacheStore implements ChapterCache {
   static const _boxName = 'chapter_cache_v1';
 
   final HiveInterface _hive;
+
+  /// Chapters the automatic cache keeps before evicting the least recently read
+  /// ones. What the user downloads is pinned and lives outside this budget, so
+  /// a whole-book download is never truncated by it.
   final int maxEntries;
+
+  /// The byte budget that goes with [maxEntries]; pinned downloads are outside
+  /// it as well.
   final int maxBytes;
+
+  @override
+  int get chapterCapacity => maxEntries;
 
   /// Detached (catalogue-only) records untouched for this long are dropped.
   final Duration catalogTtl;
@@ -204,6 +225,7 @@ class ChapterCacheStore implements ChapterCache {
     required String chapterId,
     required String title,
     required String text,
+    bool pinned = false,
   }) => _serialize((box) async {
     if (bookId.isEmpty || chapterId.isEmpty || text.trim().isEmpty) return;
     final bytes = utf8.encode(text).length;
@@ -217,6 +239,7 @@ class ChapterCacheStore implements ChapterCache {
       'text': text,
       'bytes': bytes,
       'accessedAt': accessedAt,
+      if (pinned) 'pinned': true,
     });
     await _trim(box, keepBook: bookId);
     changes.value++;
@@ -313,13 +336,20 @@ class ChapterCacheStore implements ChapterCache {
     changes.value++;
   });
 
+  /// A chapter the user asked to download, as opposed to one the reader cached
+  /// on the way past: it is the user's own copy and the LRU pass leaves it be.
+  bool _isPinned(Map entry) => entry['pinned'] == true;
+
   Future<void> _trim(Box<dynamic> box, {required String keepBook}) async {
     final entries = <({dynamic key, int bytes, num accessedAt})>[];
     var totalBytes = 0;
     for (final key in box.keys) {
       final raw = box.get(key);
       if (!_isChapter(raw)) continue;
-      final bytes = _bytes(raw as Map);
+      // Pinned chapters sit outside the budget entirely: they can neither be
+      // evicted nor push an automatically cached chapter out of the running.
+      if (_isPinned(raw as Map)) continue;
+      final bytes = _bytes(raw);
       totalBytes += bytes;
       entries.add((
         key: key,

@@ -423,9 +423,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(store.entry!['textOffset'], anchor);
     expect(_scroll(tester).offset, greaterThan(0));
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('reader-mode-paged')),
-    );
+    await tester.ensureVisible(find.byKey(const ValueKey('reader-mode-paged')));
     await tester.tap(find.byKey(const ValueKey('reader-mode-paged')));
     await tester.pumpAndSettle();
     expect(store.entry!['textOffset'], anchor);
@@ -919,6 +917,7 @@ class _DelayedWriteCache extends MemoryChapterCache {
     required String chapterId,
     required String title,
     required String text,
+    bool pinned = false,
   }) async {
     if (chapterId == 'second') {
       chapterWrites++;
@@ -929,6 +928,7 @@ class _DelayedWriteCache extends MemoryChapterCache {
       chapterId: chapterId,
       title: title,
       text: text,
+      pinned: pinned,
     );
   }
 }
