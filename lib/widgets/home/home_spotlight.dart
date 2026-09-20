@@ -9,8 +9,11 @@ import 'home_media_card.dart';
 class HomeSpotlight extends StatefulWidget {
   final List<MediaItem> items;
   final ValueChanged<MediaItem> onOpen;
-
-  const HomeSpotlight({super.key, required this.items, required this.onOpen});
+  const HomeSpotlight({
+    super.key,
+    required this.items,
+    required this.onOpen,
+  });
 
   @override
   State<HomeSpotlight> createState() => _HomeSpotlightState();

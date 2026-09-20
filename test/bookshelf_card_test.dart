@@ -5,135 +5,91 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/bookshelf_card.dart';
 
 void main() {
-  testWidgets('a saved manju uses episode counts in shelf rows', (
-    tester,
-  ) async {
+  test('每种内容类型都有中文标签', () {
+    expect(bookshelfKindLabel('book'), '小说');
+    expect(bookshelfKindLabel('video'), '短剧');
+    expect(bookshelfKindLabel('audio'), '听书');
+    expect(bookshelfKindLabel('manga'), '漫画');
+    expect(bookshelfKindLabel('manju'), '漫剧');
+    // 未知类型退回原始值，不抛异常。
+    expect(bookshelfKindLabel('unknown'), 'unknown');
+  });
+
+  testWidgets('宫格封面按官方 1.3947369 比例并带圆角与角标', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: BookshelfListCard(
-            item: _item('测试漫剧', kind: 'manju'),
-            compact: false,
-            onTap: () {},
-          ),
-        ),
-      ),
-    );
-    expect(find.text('共 120集'), findsOneWidget);
-    expect(find.text('共 120章'), findsNothing);
-  });
-
-  testWidgets('narrow shelf rows fit large text and complete date labels', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(280, 700));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(
-        home: MediaQuery(
-          data: const MediaQueryData(textScaler: TextScaler.linear(3)),
-          child: Scaffold(
-            body: ListView(
-              children: [
-                for (final compact in [false, true])
-                  BookshelfListCard(
-                    item: _item('测试作品'),
-                    compact: compact,
-                    readingText: '第12章 · 35%',
-                    lastUpdateText: '12月31日',
-                    badgeText: '100%',
-                    onTap: () {},
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('large badges stay inside narrow grid covers', (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: MediaQuery(
-          data: const MediaQueryData(textScaler: TextScaler.linear(3)),
-          child: Scaffold(
-            body: Center(
-              child: SizedBox(
-                width: 70,
-                height: 220,
-                child: BookshelfGridCard(item: _item('书名'), onTap: () {}),
+          body: Center(
+            child: SizedBox(
+              width: 200,
+              height: 420,
+              child: BookshelfGridCard(
+                item: _item('宫格作品'),
+                badgeText: '35%',
+                infoText: '第12章 · 35%',
+                onTap: () {},
               ),
             ),
           ),
         ),
       ),
     );
-    final cover = tester.getRect(find.byType(AspectRatio));
-    final badge = tester.getRect(find.text('小说'));
-    expect(badge.left, greaterThanOrEqualTo(cover.left));
-    expect(badge.right, lessThanOrEqualTo(cover.right));
+
+    final cover = tester.getSize(find.byKey(const Key('bookshelf-cover')));
+    expect(cover.width, 200);
+    expect(cover.height, closeTo(200 * bookshelfGridCoverRatio, 0.01));
+    // 圆角 12dp。
+    final clip = tester.widget<ClipRRect>(
+      find
+          .descendant(
+            of: find.byKey(const Key('bookshelf-cover')),
+            matching: find.byType(ClipRRect),
+          )
+          .first,
+    );
+    expect(clip.borderRadius, BorderRadius.circular(12));
+    expect(find.text('35%'), findsOneWidget);
+    expect(find.text('第12章 · 35%'), findsOneWidget);
+    expect(find.text('宫格作品'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('grid shelf card uses a 3:4 cover and centered title', (
-    tester,
-  ) async {
+  testWidgets('宫格编辑态显示多选框并隐藏角标', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: Center(
             child: SizedBox(
-              width: 130,
-              height: 225,
-              child: BookshelfGridCard(item: _item('无封面作品'), onTap: () {}),
+              width: 120,
+              height: 320,
+              child: BookshelfGridCard(
+                item: _item('宫格作品'),
+                badgeText: '35%',
+                editing: true,
+                selected: true,
+                onTap: () {},
+              ),
             ),
           ),
         ),
       ),
     );
 
-    final cover = tester.widget<AspectRatio>(find.byType(AspectRatio).first);
-    expect(cover.aspectRatio, bookshelfCoverAspectRatio);
-    // Legado-style missing covers render the name on the generated cover and
-    // once more as the regular grid caption.
-    expect(find.text('无封面作品'), findsNWidgets(2));
-    final titles = tester
-        .widgetList<Text>(find.text('无封面作品'))
-        .toList(growable: false);
-    expect(
-      titles.every((title) => title.textAlign == TextAlign.center),
-      isTrue,
-    );
+    expect(find.byIcon(Icons.check), findsOneWidget);
+    expect(find.text('35%'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('standard and compact shelf rows keep the same cover ratio', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(360, 640));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
+  testWidgets('列表条目是 110dp 行高加 60×90 封面', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: ListView(
             children: [
               BookshelfListCard(
-                item: _item('标准列表作品'),
-                compact: false,
-                readingText: '第12章 · 35%',
-                lastUpdateText: '2小时前',
-                badgeText: '35%',
-                onTap: () {},
-              ),
-              BookshelfListCard(
-                item: _item('紧凑列表作品'),
-                compact: true,
-                readingText: '第3章 · 10%',
-                lastUpdateText: '刚刚',
-                badgeText: '10%',
+                item: _item('列表作品'),
+                progressText: '第12章 · 35%',
+                metaText: '测试作者',
                 onTap: () {},
               ),
             ],
@@ -142,40 +98,115 @@ void main() {
       ),
     );
 
-    final covers = tester.widgetList<AspectRatio>(find.byType(AspectRatio));
-    expect(covers, hasLength(2));
     expect(
-      covers.every((cover) => cover.aspectRatio == bookshelfCoverAspectRatio),
-      isTrue,
+      tester.getSize(find.byType(BookshelfListCard)).height,
+      bookshelfListRowHeight,
+    );
+    final cover = tester.getSize(find.byKey(const Key('bookshelf-cover')));
+    expect(cover.width, bookshelfListCoverWidth);
+    expect(cover.height, bookshelfListCoverHeight);
+    // 封面 marginStart 20dp。
+    final card = tester.getRect(find.byType(BookshelfListCard));
+    expect(
+      tester.getRect(find.byKey(const Key('bookshelf-cover'))).left - card.left,
+      bookshelfListSidePadding,
+    );
+    expect(
+      tester.widget<Text>(find.text('列表作品')).style?.fontSize,
+      15,
     );
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('grid height adapts to accessibility text scaling', (
-    tester,
-  ) async {
+  testWidgets('列表编辑态在封面左侧显示 22dp 多选框', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            children: [
+              BookshelfListCard(
+                item: _item('列表作品'),
+                editing: true,
+                selected: true,
+                onTap: () {},
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.check), findsOneWidget);
+    // 20dp 外边距 + 22dp 多选框 + 20dp marginEnd。
+    final cover = tester.getRect(find.byKey(const Key('bookshelf-cover')));
+    expect(
+      cover.left - tester.getRect(find.byType(BookshelfListCard)).left,
+      bookshelfListSidePadding + 22 + 20,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('双列条目使用 110×162 封面并保留信息槽位', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 162,
+              height: 500,
+              child: BookshelfDoubleCard(
+                item: _item('双列作品'),
+                badgeText: '35%',
+                subtitleText: '测试作者',
+                infoLines: const ['第12章 · 35%', '共 120章'],
+                onTap: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final cover = tester.getSize(find.byKey(const Key('bookshelf-cover')));
+    expect(cover.width, bookshelfDoubleCoverWidth);
+    expect(cover.height, bookshelfDoubleCoverHeight);
+    expect(
+      tester.getRect(find.byKey(const Key('bookshelf-cover'))).left -
+          tester.getRect(find.byType(BookshelfDoubleCard)).left,
+      12,
+    );
+    expect(tester.widget<Text>(find.text('双列作品')).style?.fontSize, 16);
+    expect(find.text('第12章 · 35%'), findsOneWidget);
+    expect(find.text('共 120章'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('三种版式在无障碍大字号下都不溢出', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 640));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
-          data: const MediaQueryData(textScaler: TextScaler.linear(2.5)),
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
           child: Scaffold(
             body: LayoutBuilder(
               builder: (context, constraints) => GridView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
+                  crossAxisCount: bookshelfGridColumns,
+                  crossAxisSpacing: bookshelfGridSpacing,
+                  mainAxisSpacing: bookshelfGridRunSpacing,
                   childAspectRatio: bookshelfGridChildAspectRatio(
                     context,
                     availableWidth: constraints.maxWidth,
-                    columns: 3,
                   ),
                 ),
                 itemCount: 6,
                 itemBuilder: (_, index) => BookshelfGridCard(
                   item: _item('很长的书名用于验证无障碍字体排版$index'),
+                  badgeText: '35%',
+                  infoText: '第12章 · 35%',
                   onTap: () {},
                 ),
               ),
@@ -184,7 +215,62 @@ void main() {
         ),
       ),
     );
+    expect(tester.takeException(), isNull);
 
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: Scaffold(
+            body: LayoutBuilder(
+              builder: (context, constraints) => GridView.builder(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: bookshelfDoubleSidePadding,
+                ),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: bookshelfDoubleSpacing,
+                  mainAxisSpacing: bookshelfDoubleRunSpacing,
+                  childAspectRatio: bookshelfDoubleChildAspectRatio(
+                    context,
+                    availableWidth: constraints.maxWidth,
+                  ),
+                ),
+                itemCount: 4,
+                itemBuilder: (_, index) => BookshelfDoubleCard(
+                  item: _item('很长很长的书名用于验证双列排版$index'),
+                  subtitleText: '测试作者',
+                  infoLines: const ['第12章 · 35%', '测试作者', '共 120章'],
+                  onTap: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(3)),
+          child: Scaffold(
+            body: ListView(
+              children: [
+                for (var index = 0; index < 4; index++)
+                  BookshelfListCard(
+                    item: _item('很长的列表书名$index'),
+                    progressText: '第12章 · 35%',
+                    metaText: '测试作者',
+                    onTap: () {},
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
     expect(tester.takeException(), isNull);
   });
 }

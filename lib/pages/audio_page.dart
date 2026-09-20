@@ -15,6 +15,7 @@ import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
+import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../widgets/audio/audio_sections.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
@@ -318,9 +319,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       if (saved?['autoAdvance'] case final bool enabled) {
         _autoAdvance = enabled;
       }
-      if (saved?['inShelf'] case final bool shelf) {
-        _inShelf = shelf;
-      }
+      // 是否已在书架以本地收藏库为准；收藏库不可用时退回历史里的旧字段，
+      // 以免没有 Hive 的环境丢掉标记。
+      _inShelf = _resolveShelf(saved);
     });
     _publishMoreState();
     unawaited(_publishExtras(extras, generation));
@@ -1518,11 +1519,33 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     );
   }
 
+  /// 听书条目的归一化模型：本地收藏库同时服务书架页与这一页。
+  MediaItem get _shelfItem => MediaItem(
+    id: _bookId,
+    title: _title,
+    cover: _cover,
+    author: '',
+    badge: '',
+    ep: _chapters.isEmpty ? '' : '${_chapters.length}',
+    kind: 'audio',
+  );
+
+  /// 以 [ShelfStore] 为准；收藏库没起来时（例如纯离线测试环境）退回历史里的
+  /// 旧 `inShelf` 字段。
+  bool _resolveShelf(Map<String, dynamic>? saved) {
+    final store = ShelfStore.instance;
+    if (store.isReady) return store.containsItem(_shelfItem);
+    return saved?['inShelf'] == true;
+  }
+
   Future<void> _toggleShelf() async {
-    final next = !_inShelf;
+    final store = ShelfStore.instance;
+    final next = store.isReady ? await store.toggle(_shelfItem) : !_inShelf;
+    if (!mounted) return;
     setState(() => _inShelf = next);
     // The shelf flag is independent of playback, so it is written even when
-    // nothing has been played yet in this session.
+    // nothing has been played yet in this session. The history copy stays as
+    // the legacy mirror of the flag.
     try {
       final existing =
           await _history.load(_bookId) ?? const <String, dynamic>{};

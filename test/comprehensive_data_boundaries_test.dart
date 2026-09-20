@@ -8,6 +8,7 @@ import 'package:fqapp/main.dart' as app;
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/shelf_store.dart';
 import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
@@ -42,6 +43,10 @@ void main() {
           Hive.init(directory.path);
           final history = await Hive.openBox<dynamic>('history');
           await Hive.openBox<dynamic>('read_time');
+          // The bootstrap also opens the 加入书架 box; pre-opening it here keeps
+          // that openBox off the widget test's fake-async file I/O path, which
+          // would never complete.
+          await ShelfStore.instance.init();
           await history.put('kept-book', record);
         });
         const channel = MethodChannel('plugins.flutter.io/path_provider');

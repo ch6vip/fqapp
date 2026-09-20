@@ -151,12 +151,14 @@ class HomeNotifier extends Notifier<HomeState> {
   final SearchTabsLoader _searchLoader;
   final CategorySearchLoader _mangaSearchLoader;
   final CategorySearchLoader _manjuSearchLoader;
+  final int initialTabIndex;
 
   HomeNotifier({
     HomepageLoader? homepageLoader,
     SearchTabsLoader? searchLoader,
     CategorySearchLoader? mangaSearchLoader,
     CategorySearchLoader? manjuSearchLoader,
+    this.initialTabIndex = 0,
   }) : _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
        _searchLoader = searchLoader ?? ApiClient.instance.searchTabs,
        _mangaSearchLoader =
@@ -191,11 +193,13 @@ class HomeNotifier extends Notifier<HomeState> {
   final Map<int, _TabFeed> _feeds = {};
   int _generation = 0;
 
+  /// The category this feed opens on. The home page starts on 全部; a page that
+  /// is locked to one channel starts on that channel and never shows the strip.
   @override
   HomeState build() {
     ++_generation;
     _feeds.clear();
-    return const HomeState();
+    return HomeState(tabIndex: initialTabIndex);
   }
 
   _TabFeed _feedFor(int tabIndex) => _feeds.putIfAbsent(tabIndex, _TabFeed.new);
@@ -727,4 +731,20 @@ class HomeNotifier extends Notifier<HomeState> {
 
 final homeProvider = NotifierProvider<HomeNotifier, HomeState>(
   HomeNotifier.new,
+);
+
+// Note: 底部导航的短剧目的地用第二个 HomeNotifier 实例而不是复用 homeProvider，
+// 理由与被否掉的方案见
+// .agents/notes/implemented/feature/2026-09-20-bottom-short-drama-tab.md
+
+/// Index of 短剧 inside [HomeNotifier.tabs].
+final dramaTabIndex = HomeNotifier.tabs.indexOf('短剧');
+
+/// The bottom navigation's 短剧 destination.
+///
+/// It is a second instance of the same notifier rather than a category of
+/// [homeProvider]: two tabs watching one provider would move together, so
+/// switching the home page to 听书 would replace the 短剧 tab's feed as well.
+final dramaProvider = NotifierProvider<HomeNotifier, HomeState>(
+  () => HomeNotifier(initialTabIndex: dramaTabIndex),
 );

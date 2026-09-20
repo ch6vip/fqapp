@@ -6,11 +6,13 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'pages/home_page.dart';
 import 'pages/cached_books_page.dart';
+import 'pages/drama_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_theme.dart';
 import 'services/backend_service.dart';
 import 'services/library_store.dart';
+import 'services/shelf_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/home/home_design.dart';
 
@@ -22,6 +24,9 @@ void main() {
 Future<void> _initializeLocalData() async {
   await Hive.initFlutter();
   await LibraryStore.instance.init();
+  // The 加入书架 collection is optional data: a failure here must not block
+  // startup, which is why it shares the retryable bootstrap with the history.
+  await ShelfStore.instance.init();
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
@@ -239,7 +244,13 @@ class _RootShellState extends State<RootShell> {
     return Scaffold(
       body: LazyIndexedStack(
         index: _index,
-        children: const [HomePage(), LibraryPage(), MinePage()],
+        children: [
+          const HomePage(),
+          const DramaPage(),
+          // 空书架上的「去书城找书」切回首页 tab。
+          LibraryPage(onBrowse: () => setState(() => _index = 0)),
+          const MinePage(),
+        ],
       ),
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(
@@ -280,11 +291,18 @@ class _RootShellState extends State<RootShell> {
             onDestinationSelected: (i) {
               if (i != _index) setState(() => _index = i);
             },
+            // Note: 短剧是独立的底部目的地，拥有自己的 feed 实例 —— 为何不复用
+            // homeProvider 见 .agents/notes/implemented/feature/2026-09-20-bottom-short-drama-tab.md
             destinations: const [
               NavigationDestination(
                 icon: Icon(LucideIcons.house),
                 selectedIcon: Icon(LucideIcons.house),
                 label: '首页',
+              ),
+              NavigationDestination(
+                icon: Icon(LucideIcons.clapperboard),
+                selectedIcon: Icon(LucideIcons.clapperboard),
+                label: '短剧',
               ),
               NavigationDestination(
                 icon: Icon(LucideIcons.library_big),

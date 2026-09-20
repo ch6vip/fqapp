@@ -10,7 +10,9 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 import 'package:fqapp/pages/library_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/pages/stats_page.dart';
+import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/app_theme.dart';
 
 void main() {
@@ -30,6 +32,9 @@ void main() {
       'time': DateTime.now().millisecondsSinceEpoch,
     });
     await LibraryStore.instance.init();
+    // 书架 tab 的数据来自本地收藏库，这里放一条与历史不同的作品。
+    await ShelfStore.instance.init();
+    await ShelfStore.instance.add(_shelfItem);
   });
 
   tearDown(() async {
@@ -105,24 +110,28 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: LibraryPage()));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.byTooltip('书架布局：3列网格'), findsOneWidget);
+    // 无效偏好落到默认宫格，本地收藏仍在。
+    expect(find.byKey(const Key('shelf-grid-view')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('shelf-grid-book-preserved-book')),
+      find.byKey(const ValueKey('shelf-grid-book:shelf-book')),
       findsOneWidget,
     );
+    expect(find.text('书架保留的书'), findsWidgets);
+    await tester.tap(find.text('浏览历史'));
+    await tester.pumpAndSettle();
     expect(find.text('保留的阅读记录'), findsWidgets);
     expect(
       LibraryStore.instance.historySnapshot().single['id'],
       'preserved-book',
     );
-    await tester.tap(find.byKey(const Key('bookshelf-layout-button')));
+    await tester.tap(find.byKey(const Key('library-more-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('紧凑列表'));
+    await tester.tap(find.byKey(const Key('library-menu-switchList')));
     await tester.pumpAndSettle();
-    expect(find.byTooltip('书架布局：紧凑列表'), findsOneWidget);
+    expect(find.byKey(const Key('shelf-list-view')), findsOneWidget);
     expect(
       (await SharedPreferences.getInstance()).getInt('bookshelf_layout'),
-      1,
+      2,
     );
   });
 
@@ -200,12 +209,13 @@ void main() {
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(const MaterialApp(home: LibraryPage()));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('bookshelf-layout-button')));
+    await tester.tap(find.byKey(const Key('library-more-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('紧凑列表'));
+    await tester.tap(find.byKey(const Key('library-menu-switchList')));
     await tester.pumpAndSettle();
-    expect(find.byTooltip('书架布局：紧凑列表'), findsOneWidget);
-    expect(find.text('保留的阅读记录'), findsWidgets);
+    // 写失败也不能回退版式，网格里的数据要照常显示。
+    expect(find.byKey(const Key('shelf-list-view')), findsOneWidget);
+    expect(find.text('书架保留的书'), findsWidgets);
     expect(find.text('布局已更新，但未能保存'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -251,8 +261,12 @@ void main() {
       if (statistics) {
         expect(find.text('阅读热力图'), findsOneWidget);
       } else {
+        // 偏好读失败时保留默认宫格；阅读历史仍能从第二个 tab 打开。
+        expect(find.byKey(const Key('shelf-grid-view')), findsOneWidget);
+        expect(find.text('书架保留的书'), findsWidgets);
+        await tester.tap(find.text('浏览历史'));
+        await tester.pumpAndSettle();
         expect(find.text('保留的阅读记录'), findsWidgets);
-        expect(find.byTooltip('书架布局：3列网格'), findsOneWidget);
       }
       expect(LibraryStore.instance.historySnapshot(), hasLength(1));
     });
@@ -304,3 +318,14 @@ class _FailingWriteStore extends InMemorySharedPreferencesStore {
     return false;
   }
 }
+
+/// 书架页宫格里的保留作品。
+final _shelfItem = MediaItem(
+  id: 'shelf-book',
+  title: '书架保留的书',
+  cover: '',
+  author: '测试作者',
+  badge: '',
+  ep: '120',
+  kind: 'book',
+);

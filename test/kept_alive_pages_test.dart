@@ -63,7 +63,12 @@ void main() {
     debugPrint('rendering: hidden tabs $builds');
     expect(builds, isEmpty);
 
+    // 书架 tab 的集合是本地的，这次写入只落在阅读历史上，所以在第二个
+    // tab 上验证「下次可见时追上最新数据」。
     index.value = 0;
+    await tester.pumpAndSettle();
+    expect(find.text('书架暂无书籍'), findsOneWidget);
+    await tester.tap(find.text('浏览历史'));
     await tester.pumpAndSettle();
     expect(find.text('最新记录 9'), findsWidgets);
     expect(find.text('10%'), findsOneWidget);

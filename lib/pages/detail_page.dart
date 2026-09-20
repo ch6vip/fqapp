@@ -18,6 +18,7 @@ import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/player_history.dart';
 import '../services/reader_history.dart';
+import '../services/shelf_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/detail/detail_chapter_row.dart';
 import '../widgets/detail/detail_description.dart';
@@ -166,6 +167,28 @@ class _DetailPageState extends State<DetailPage> {
     'audio' => _resumeIndex == null ? '开始收听' : '继续收听',
     _ => _resumeIndex == null ? '开始阅读' : '继续阅读',
   };
+
+  /// 是否已在本地书架。以 [ShelfStore] 为准，写入后由它的 listenable 触发重绘；
+  /// 短剧/漫剧官方用的是「追剧」，这里统一沿用「加入书架」，与听书页和书架页
+  /// 的文案保持一致。
+  bool get _inShelf => ShelfStore.instance.containsItem(widget.item);
+
+  Future<void> _toggleShelf() async {
+    if (!ShelfStore.instance.isReady) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('本地书架暂不可用，请重试')),
+      );
+      return;
+    }
+    final added = await ShelfStore.instance.toggle(widget.item);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(added ? '已加入书架' : '已移出书架'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -474,6 +497,22 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ),
           actions: [
+            ValueListenableBuilder<int>(
+              valueListenable: ShelfStore.instance.listenable,
+              builder: (context, _, _) => IconButton(
+                key: const Key('detail_shelf_button'),
+                tooltip: _inShelf ? '已在书架' : '加入书架',
+                onPressed: _loading || !_supported ? null : _toggleShelf,
+                style: IconButton.styleFrom(
+                  foregroundColor: _inShelf ? HomePalette.accent : palette.ink,
+                  disabledForegroundColor: palette.muted,
+                ),
+                icon: Icon(
+                  _inShelf ? LucideIcons.bookmark_check : LucideIcons.bookmark_plus,
+                  size: 20,
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: IconButton(
