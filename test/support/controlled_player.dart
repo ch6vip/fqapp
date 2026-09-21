@@ -99,6 +99,20 @@ class ControlledNativePlayer extends FakeNativePlayer {
     if (!disposed) this.rate = rate;
   }
 
+  /// Reports a duration, which is what makes the card's seek bar appear
+  /// (`cjt.xml` renders nothing until the decoder knows the total).
+  void emitDuration(Duration total) {
+    if (disposed) return;
+    totalDuration = total;
+    durations.add(total);
+  }
+
+  @override
+  Future<void> setVolume(double volume) async {
+    if (disposed) return;
+    calls.add('volume:$volume');
+  }
+
   void emitPosition(Duration position) {
     if (disposed) return;
     currentPosition = position;

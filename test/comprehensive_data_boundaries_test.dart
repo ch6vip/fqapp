@@ -8,6 +8,7 @@ import 'package:fqapp/main.dart' as app;
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,6 +48,8 @@ void main() {
           // that openBox off the widget test's fake-async file I/O path, which
           // would never complete.
           await ShelfStore.instance.init();
+          // 同理，短剧 feed 的 点赞 box 也在 bootstrap 里开箱。
+          await DiggStore.instance.init();
           await history.put('kept-book', record);
         });
         const channel = MethodChannel('plugins.flutter.io/path_provider');

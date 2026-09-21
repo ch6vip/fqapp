@@ -137,15 +137,25 @@ typedef _AllManjuGroup = ({
 /// and feed before the first await, so switching tabs can never redirect a
 /// late response into a different tab's cache.
 class HomeNotifier extends Notifier<HomeState> {
-  static const tabs = ['全部', '小说', '短剧', '漫剧', '漫画', '听书'];
+  static const tabs = ['全部', '小说', '短剧', '漫剧', '漫画', '听书', '视频'];
   static const tabKinds = {
     '小说': 'book',
     '短剧': 'video',
     '漫剧': 'manju',
     '漫画': 'manga',
     '听书': 'audio',
+    // The 短剧 tab's 推荐 channel. `BookstoreTabType.video_feed = 16`; the
+    // bookstore strip happens to label 16 「视频」, while the seriesmall tab
+    // shows the same feed under 「推荐」 (用户截图与 ap3.xml 的兜底名都如此).
+    '视频': 'video',
   };
-  static const tabTypes = {'小说': 2, '短剧': 8, '漫剧': 24, '听书': 5};
+  static const tabTypes = {
+    '小说': 2,
+    '短剧': 8,
+    '漫剧': 24,
+    '听书': 5,
+    '视频': 16,
+  };
 
   final HomepageLoader _homepageLoader;
   final SearchTabsLoader _searchLoader;

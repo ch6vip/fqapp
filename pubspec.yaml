@@ -80,6 +80,10 @@ flutter:
     - assets/plugins/
     - assets/images/app_logo.webp
     - assets/images/bubble/
+    # 短剧单列卡右侧栏/信息层的官方图标，从
+    # `ckao/decompile/apktool/res/drawable*/` 原样抽出（见
+    # docs/short-drama-decompile-comparison-20260921.md §8）。
+    - assets/images/drama/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

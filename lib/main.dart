@@ -11,6 +11,7 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_theme.dart';
 import 'services/backend_service.dart';
+import 'services/digg_store.dart';
 import 'services/library_store.dart';
 import 'services/shelf_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
@@ -27,6 +28,13 @@ Future<void> _initializeLocalData() async {
   // The 加入书架 collection is optional data: a failure here must not block
   // startup, which is why it shares the retryable bootstrap with the history.
   await ShelfStore.instance.init();
+  // 短剧 feed 的 点赞 也是可选本地数据，与书架同一处理：开箱失败不能让
+  // 启动失败，否则一个纯装饰性的集合会拖住短剧页之外的所有功能。
+  try {
+    await DiggStore.instance.init();
+  } catch (_) {
+    // DiggStore 自己把「不可用」当成「没有点赞」处理（见 _openBox）。
+  }
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
