@@ -705,4 +705,75 @@ void main() {
     // Required-field integrity: a truncated map cannot resurrect an item.
     expect(MediaItemJson.fromJson({'id': 'b3'}), isNull);
   });
+
+  test('video_detail info-panel fields reach the flat card', () {
+    // 真实 `cell/change` 卡形状（show_type=407）：信息面板数据在
+    // video_detail（简介/追剧数/分类），style 骑在模板 cell 上。
+    final payload = {
+      'data': {
+        'cell_view': {
+          'cell_data': [
+            {
+              'show_type': 407,
+              'style': {'episode_list_text': '观看完整漫剧·全153集'},
+              'video_data': [
+                {
+                  'vid': 'v1',
+                  'series_id_str': '7680187265020070937',
+                  'video_detail': {
+                    'series_title': '反派亲妈',
+                    'series_intro': '穿成反派亲妈？',
+                    'followed_cnt': 687558,
+                    'episode_cnt': 153,
+                    'secondary_infos': [
+                      {
+                        'can_click': true,
+                        'content': '都市日常',
+                        'data_type': 3,
+                      },
+                      {
+                        'can_click': true,
+                        'content': '演员·萨钢云',
+                        'data_type': 23,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    final items = parseMediaItems(payload, kind: 'manju');
+    expect(items, hasLength(1));
+    final item = items.single;
+    expect(item.intro, '穿成反派亲妈？');
+    expect(item.followerCount, 687558);
+    // 只有 data_type=3 的 secondary_infos 是分类；演员条目不进 chip 行。
+    expect(item.categories, ['都市日常']);
+    expect(item.episodeListText, '观看完整漫剧·全153集');
+    expect(item.ep, '153');
+  });
+
+  test('category chips fall back to category_schema names', () {
+    final payload = {
+      'data': {
+        'video_data': [
+          {
+            'vid': 'v2',
+            'series_id_str': '1001',
+            'series_title': '无 secondary 的卡',
+            'category_schema': '[{"category_id":748,"name":"喜剧"}]',
+          },
+        ],
+      },
+    };
+
+    final items = parseMediaItems(payload, kind: 'video');
+    expect(items, hasLength(1));
+    expect(items.single.categories, ['喜剧']);
+    expect(items.single.followerCount, 0);
+  });
 }

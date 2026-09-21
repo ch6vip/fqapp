@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:hive/hive.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lottie/lottie.dart';
 
+import '../models/book_detail.dart' show formatCounter;
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/digg_store.dart';
@@ -14,6 +16,7 @@ import '../services/library_store.dart';
 import '../services/native_player.dart';
 import '../services/player_history.dart';
 import '../services/shelf_store.dart';
+import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
 import '../widgets/home/home_media_card.dart';
@@ -160,6 +163,17 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// `aq0.xml` shows 「下拉刷新内容」 (`@string/dhk`) while this is in flight.
   double _pullDistance = 0;
 
+  /// 「上滑查看更多视频」guide（官方 `pp3.f` + `cf_.xml`）。官方行为：
+  /// **每台设备只弹一次**（SharedPreferences `series_show_user_guide`，
+  /// `wp3/d0.java`），停留约 **8 秒**（`j()` 是 1s 重复计数、`v()` 把计数
+  /// 置 8，不是笔记第二轮误读的「1s 后消失」），**300ms 淡入 / 300ms 淡出**，
+  /// 频道横滑一开始就立即收起（`onPageScrolled` → `m()`）。
+  bool _guideMounted = false;
+  bool _guideVisible = false;
+  Timer? _guideFadeIn;
+  Timer? _guideTick;
+  Timer? _guideFadeOut;
+
   late final InlineVideoPlayback _inline;
 
 
@@ -177,6 +191,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(dramaProvider.notifier).load();
+      if (mounted) _showGuide();
     });
   }
 
@@ -184,8 +199,48 @@ class _DramaPageState extends ConsumerState<DramaPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_inline.dispose());
+    _guideFadeIn?.cancel();
+    _guideTick?.cancel();
+    _guideFadeOut?.cancel();
     _pages.dispose();
     super.dispose();
+  }
+
+  /// 进 tab 后弹一次引导。官方在 `onCreateContent` 里 `Ge()`，且被
+  /// `!wp3.d0.c()`（本仓库 `SwipeGuideStore`）与频道可见性双重门控；
+  /// `onShow()` 一触发就写回标记，之后再也不弹。
+  void _showGuide() {
+    if (!mounted || _guideMounted) return;
+    if (!_current.isFeed) return;
+    if (SwipeGuideStore.instance.shown) return;
+    unawaited(SwipeGuideStore.instance.markShown());
+    setState(() {
+      _guideMounted = true;
+      _guideVisible = true;
+    });
+    // 官方 8 次计数从淡入完成（`w()` 在 fade-in 的 withEndAction 里 `j()`）
+    // 之后才开始走。
+    _guideFadeIn?.cancel();
+    _guideFadeIn = Timer(const Duration(milliseconds: 300), () {
+      _guideTick?.cancel();
+      var ticks = 8;
+      _guideTick = Timer.periodic(const Duration(seconds: 1), (_) {
+        ticks--;
+        if (ticks <= 0) _hideGuide();
+      });
+    });
+  }
+
+  /// 300ms 淡出后从树上摘掉。官方 `t()`：fade-out withEndAction → `x()` remove。
+  void _hideGuide() {
+    _guideFadeIn?.cancel();
+    _guideTick?.cancel();
+    if (!_guideMounted || !_guideVisible) return;
+    setState(() => _guideVisible = false);
+    _guideFadeOut?.cancel();
+    _guideFadeOut = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _guideMounted = false);
+    });
   }
 
   @override
@@ -267,6 +322,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
   void _selectChannel(int index) {
     if (index == _channel) return;
     final channel = dramaChannels[index];
+    // 官方横向频道 pager 一滚动就收起引导（`onPageScrolled` → `pp3.f.m()`）；
+    // 这里的等价动作是切频道。
+    _hideGuide();
     setState(() {
       _channel = index;
       _screenIndex = 0;
@@ -434,6 +492,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
               onSearch: _openSearch,
             ),
           ),
+          // 「上滑查看更多视频」：官方挂在全屏容器上、`gravity=bottom|center`
+          // + bottomMargin 94dp（`pp3.f.n()`）。注意官方主界面（`d5.xml`）的
+          // 底部 tab（50dp）是**悬浮压在 feed 上的**，所以 94dp 从 tab 底边算，
+          // 提示悬在 tab 栏上方约 44dp。本页 feed 止步于 NavigationBar 顶边，
+          // 同一视觉位置 = 94 - 官方 tab 高 50 = **44dp**。
+          if (_guideMounted)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 44,
+              child: _SwipeUpHint(visible: _guideVisible),
+            ),
         ],
       ),
     );
@@ -507,7 +577,6 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 opening: _openingId == item.id,
                 followed: ShelfStore.instance.containsItem(item),
                 liked: DiggStore.instance.containsItem(item),
-                swipeHint: index < items.length - 1 || state.hasMore,
                 playback: onScreen ? _inline : null,
                 video: onScreen
                     ? _InlineVideoLayer(item: item, playback: _inline)
@@ -672,119 +741,130 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      // Official `ap3/ap4` root is `@color/ba9=@null`, but a ViewStub
-      // inflates `dad.xml` (`BookstoreHeaderBgView`, `app:fh="1.0 0.0"`) so
-      // the black-on-white strip can sit over video. The fade below is that
-      // header, not a self-invented scrim.
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.white.withValues(alpha: 0.94),
-            Colors.white.withValues(alpha: 0.0),
-          ],
-          stops: const [0, 1],
-        ),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Official compressed header `ap4.xml`: search row is 38dp,
-            // `marginStart/End` 16dp, no `paddingTop` (that 6dp belongs to
-            // uncompressed `ap3.xml`).
-            SizedBox(
-              height: _DramaPageState._searchRowHeight,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _searchField(context),
-              ),
+    // 官方 `ap4.xml` 根背景 `@color/ba9`=@null：整个顶栏**透明**，直接压在
+    // 全屏视频流上（截图里频道条后面就是黑底画面）。xml 里的白色 ViewStub
+    // `dad.xml` 不是渐变条，是 `BookstoreHeaderBgView`——书城频道的**每频道
+    // 一张 CDN 头图**分页（`app:fh="1.0 0.0"` 只是头图自身的淡出），且受
+    // `SearchBoxStyleOpt` 门控；短剧 feed 上没有它。文字用白色系与深色背景
+    // 对比（截图：选中「推荐」白字加粗，未选中半透明白）。
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Official compressed header `ap4.xml`: search row is 38dp,
+          // `marginStart/End` 16dp, no `paddingTop` (that 6dp belongs to
+          // uncompressed `ap3.xml`).
+          SizedBox(
+            height: _DramaPageState._searchRowHeight,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              // 官方 `ap4.xml` 的搜索行 38dp、框体 36dp（`c5e.xml` `@dimen/zl`），
+              // 垂直居中。
+              child: Center(child: _searchField(context)),
             ),
+          ),
 
-            SizedBox(
-              height: _DramaPageState._stripHeight,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: channels.length,
-                      itemBuilder: (context, index) => _ChannelTab(
-                        label: channels[index].label,
-                        selected: index == selected,
-                        onTap: () => onSelect(index),
-                      ),
+          SizedBox(
+            height: _DramaPageState._stripHeight,
+            child: Row(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: channels.length,
+                    itemBuilder: (context, index) => _ChannelTab(
+                      label: channels[index].label,
+                      selected: index == selected,
+                      onTap: () => onSelect(index),
                     ),
                   ),
-                  // 官方 `ap3.xml` 的 `@id/h4f`：频道条右端一枚 20×20dp 图标，
-                  // 右边距 16dp（`layout_marginEnd`），点击进搜索
-                  // （`SeriesMallFragment.Xh()` 把 `clickEvent(this.i)` 接到
-                  // `Of(...)` → `openBookSearchActivity`）。它**不是刷新按钮**：
-                  // 官方刷新是下拉手势（频道页 `aq0.xml` 的
-                  // `PullToRefreshDetectLayout` ＋「下拉刷新内容」`@string/dhk`）。
-                  IconButton(
-                    key: const Key('drama_strip_search_button'),
-                    tooltip: '搜索短剧',
-                    onPressed: onSearch,
-                    iconSize: 20,
-                    color: Colors.black87,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 20,
-                      height: 20,
-                    ),
-                    icon: const Icon(LucideIcons.search),
+                ),
+                // 官方 `ap3.xml` 的 `@id/h4f`：频道条右端一枚 20×20dp 图标，
+                // 右边距 16dp（`layout_marginEnd`），点击进搜索
+                // （`SeriesMallFragment.Xh()` 把 `clickEvent(this.i)` 接到
+                // `Of(...)` → `openBookSearchActivity`）。它**不是刷新按钮**：
+                // 官方刷新是下拉手势（频道页 `aq0.xml` 的
+                // `PullToRefreshDetectLayout` ＋「下拉刷新内容」`@string/dhk`）。
+                IconButton(
+                  key: const Key('drama_strip_search_button'),
+                  tooltip: '搜索短剧',
+                  onPressed: onSearch,
+                  iconSize: 20,
+                  color: Colors.white,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 20,
+                    height: 20,
                   ),
-                  const SizedBox(width: 16),
-                ],
-              ),
+                  icon: const Icon(LucideIcons.search),
+                ),
+                const SizedBox(width: 16),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _searchField(BuildContext context) => Semantics(
-    button: true,
-    label: '搜索短剧',
-    child: Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(22),
-      child: InkWell(
+  Widget _searchField(BuildContext context) {
+    // 官方搜索框（`SearchWordDisplayView` inflate `c5e.xml`）：高 36dp
+    // （`@dimen/zl`）、圆角 8dp（`ViewOutlineProvider.setRoundRect(…, 8f)` +
+    // `setClipToOutline`）、图标 12dp 距左 16dp、文字距图标 8dp。配色取官方
+    // **暗色皮肤**变体（用户设备官方即暗色）：底
+    // `skin_color_search_bar_bg_v2_dark`=#1C1C1C、提示 14sp
+    // `skin_color_search_bar_text_v2_dark`=#66FFFFFF（服务端 cue word 态更亮，
+    // `skin_color_search_word_dark`=#99FFFFFF）、图标 `…_optimize_dark`。
+    return Semantics(
+      button: true,
+      label: '搜索短剧',
+      child: GestureDetector(
         key: const Key('drama_search_button'),
         onTap: onSearch,
-        borderRadius: BorderRadius.circular(22),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          height: 36,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1C1C1C),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          padding: const EdgeInsets.only(left: 16),
+          alignment: Alignment.centerLeft,
           child: Row(
             children: [
-              const Icon(LucideIcons.search, size: 18, color: Color(0x66000000)),
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: Image.asset(
+                  'assets/images/drama/search.webp',
+                  fit: BoxFit.contain,
+                ),
+              ),
               const SizedBox(width: 8),
-              Expanded(
+              const Expanded(
                 child: Text(
                   '请输入短剧名或主演名',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0x66000000),
-                  ),
+                  style: TextStyle(fontSize: 14, color: Color(0x66FFFFFF)),
                 ),
               ),
             ],
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// One tab of the channel strip: 18sp label with a 3dp indicator under it.
+///
+/// The strip floats over the video feed (`ap4.xml` 根背景 @null)，文字用白色系：
+/// 选中纯白加粗、未选中半透明白（官方 `app:aui/avn` 指向的
+/// `skin_color_black_light` 是皮肤资源，截图里短剧 feed 上呈现为深色背景上
+/// 的白字，与皮肤暗色变体一致）。
 class _ChannelTab extends StatelessWidget {
   final String label;
   final bool selected;
@@ -821,8 +901,8 @@ class _ChannelTab extends StatelessWidget {
                     height: 1.1,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
                     color: selected
-                        ? const Color(0xFF000000)
-                        : const Color(0x1A000000),
+                        ? Colors.white
+                        : const Color(0x99FFFFFF),
                   ),
                 ),
                 // 官方指示条：高 `app:arw` = 3dp、宽 `app:auw` = 16dp（`ap3.xml`），
@@ -832,7 +912,7 @@ class _ChannelTab extends StatelessWidget {
                   width: 16,
                   height: 3,
                   decoration: BoxDecoration(
-                    color: selected ? const Color(0xFF000000) : Colors.transparent,
+                    color: selected ? Colors.white : Colors.transparent,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -867,7 +947,6 @@ class _DramaFeedCard extends StatelessWidget {
   final bool opening;
   final bool followed;
   final bool liked;
-  final bool swipeHint;
   final Widget? video;
   final Widget? errorOverlay;
   final InlineVideoPlayback? playback;
@@ -882,7 +961,6 @@ class _DramaFeedCard extends StatelessWidget {
     required this.opening,
     required this.followed,
     required this.liked,
-    required this.swipeHint,
     this.video,
     this.errorOverlay,
     this.playback,
@@ -984,7 +1062,8 @@ class _DramaFeedCard extends StatelessWidget {
         ?errorOverlay,
         // 官方右侧竖向操作栏（`cjq.xml`，由 `rightview.a` inflate）：
         // 头像 41.5dp（本仓库无账号侧数据，省略）、追剧、点赞（间距 12dp，
-        // 图标 46dp、文字 12sp bold、色 `@color/u`=#ccffffff）。
+        // 图标 46dp、文字 12sp bold、色 `@color/u`=#ccffffff）。追剧按钮下的
+        // 文字在有 `followed_cnt` 时就是它（官方截图上是「4.6万」这样的计数）。
         // 官方 XML 里 评论(`c7u`) 与 分享(`hbw`) 默认 `gone`，这里同样不显示。
         // 锚在右下、信息层之上：官方这一栏也是沿右缘靠下排列，且顶部被顶栏
         // 的浮层覆盖（`ap3.xml` 的搜索行与频道条）。
@@ -993,6 +1072,7 @@ class _DramaFeedCard extends StatelessWidget {
           bottom: 64,
           child: _RightRail(
             followed: followed,
+            followerCount: item.followerCount,
             liked: liked,
             onFollow: onFollow,
             onLike: onLike,
@@ -1026,39 +1106,20 @@ class _DramaFeedCard extends StatelessWidget {
             bottom: 180,
             child: _RateHint(playback: playback!),
           ),
-        // Official feed hint: `@string/eal`="上滑查看更多视频", 14sp white on a
-        // `@color/sx`=#CC222222 strip (16dp horizontal / 12dp vertical padding),
-        // 94dp above the page bottom, auto-hides after 1s (`pp3.f.j()` posts
-        // 1000ms). Sources: `SeriesBookMallTabFragment.java:800-804`
-        // and `apktool/res/layout/cf_.xml`. (`@string/e6j`=上滑继续观看短剧 belongs to
-        // the player page's `BottomContainer`, not here.)
-        if (swipeHint && !opening)
-          const Positioned(
-            left: 0,
-            right: 0,
-            bottom: 94,
-            child: _SwipeUpHint(),
-          ),
-        // 官方「全屏观看」(`mq3.e` inflate `aqi.xml`) 挂在底部信息槽 H3 上、
-        // 水平居中；运行时再把 topMargin 调到画面底边上方 8dp。本页没有官方
-        // 那套画面适配，所以锚在信息行之上、水平居中。
-        // 它是**唯一**进入全页播放器的入口：`o.java:402-415` 的 `J6()` 把
-        // `mq3.e` 加进来，`O4()` 在用系统返回时 `this.V4.callOnClick()`
-        // 把它当成「继续播放」按一次。
-        if (onFullscreen != null)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 56,
-            child: Center(child: _FullscreenButton(onTap: onFullscreen!)),
-          ),
-        // 官方底部信息层（`cj3.xml` → `d6g.xml`）：标题 16sp bold 白字 + 8×16dp
-        // 箭头（`@drawable/ead`）。官方这张卡上没有那排药丸按钮。
+        // 官方底部信息层（`cj3.xml` 整体）：最上是居中的「观看全集」药丸行
+        // （`nk3.c` inflate `ad9.xml`，在 RelativeLayout 里 CENTER_IN_PARENT），
+        // 然后是标题行（`d6g.xml`）、分类 chip 行（`d6f.xml` 的 `hdm`）、
+        // 集数简介行（`m6` ShortSeriesExtendTextView）。整块挂在信息槽 `H3` 上。
         Positioned(
           left: 12,
           right: 12,
-          bottom: 24,
-          child: _InfoLine(item: item, onOpen: onTogglePlay),
+          bottom: 20,
+          child: _InfoPanel(
+            item: item,
+            playback: playback,
+            onOpen: onTogglePlay,
+            onFullscreen: onFullscreen,
+          ),
         ),
 
         if (opening)
@@ -1348,12 +1409,14 @@ class _RateHint extends StatelessWidget {
 /// 12dp between items.
 class _RightRail extends StatelessWidget {
   final bool followed;
+  final int followerCount;
   final bool liked;
   final VoidCallback onFollow;
   final VoidCallback onLike;
 
   const _RightRail({
     required this.followed,
+    required this.followerCount,
     required this.liked,
     required this.onFollow,
     required this.onLike,
@@ -1365,7 +1428,13 @@ class _RightRail extends StatelessWidget {
       _RailButton(
         key: const Key('drama_follow_button'),
         asset: 'assets/images/drama/rail_follow.webp',
-        label: followed ? '已追剧' : '追剧',
+        // 官方截图：星标下显示的是追剧人数（如「4.6万」）。没有 followed_cnt
+        // 的卡退回「追剧/已追剧」文案。
+        label: switch ((followerCount, followed)) {
+          (> 0, _) => formatCounter('$followerCount'),
+          (_, true) => '已追剧',
+          _ => '追剧',
+        },
         onTap: onFollow,
       ),
       const SizedBox(height: 12),
@@ -1533,100 +1602,238 @@ class _SeekTrack extends StatelessWidget {
 /// 10sp tag all ship `gone` and only light up at runtime, so they stay off
 /// here. 「全屏观看」 is a sibling overlay (`mq3.e` / `aqi.xml`), not a
 /// child of this row.
-class _InfoLine extends StatelessWidget {
+/// 官方底部信息层（`cj3.xml` 的 `hdq` 段落，由 `ql3.c0` inflate `d6f.xml`）：
+///
+/// - **药丸行**：`nk3.c` inflate `ad9.xml`，在 RelativeLayout 里
+///   `CENTER_IN_PARENT` 居中、挂在标题行上方。药丸本体高 30dp、左右 padding
+///   17dp、背景 `@drawable/adu`=#1AFFFFFF 圆角 20dp、文字 14sp bold 白字；
+///   集数 >1 时文案 `@string/e7v`=「观看全集·%s集」（`nk3.c.d()` 用
+///   `episodeCnt` 填），否则 `@string/e7w`=「观看全片」。点击日志
+///   「watch_full_episodes」→ 进全页播放器（`nk3.c.e` → `zf3.c.s`）。
+///   右侧 30×30dp 圆形全屏钮（图标 `@drawable/f1d`，背景 `@drawable/a4r`
+///   =#1AFFFFFF、marginStart 12dp、padding 5dp）只在**横版片源**显示
+///   （`vk3.a.a`：`!saasVideoData.isVertical()` 才可见），点击走
+///   `zf3.c.w(…, "horizontal", …)`，同样进全页播放器。
+/// - **标题行**：`d6g.xml`，16sp bold 白字 + 8×16dp 箭头（`@drawable/ead`）。
+/// - **分类 chip 行**：`d6f.xml` 的 `hdm`（marginTop 4dp、marginBottom 12dp、
+///   divider `@drawable/aai`），chip 由 `ql3.c0.V()` 运行时构造：12sp 白字、
+///   背景 `@color/ags`=#33FFFFFF、圆角 2dp、padding 6/2/6/2。
+/// - **简介行**：`m6` `ShortSeriesExtendTextView`：14sp、`@color/bb8`→
+///   `@color/u`=#CCFFFFFF、最多 2 行（`app:amo=2`），截断时点「展开」。
+///   文案按官方截图为「第1集丨简介」——feed 卡从第 1 集起播。
+class _InfoPanel extends StatefulWidget {
   final MediaItem item;
+  final InlineVideoPlayback? playback;
   final VoidCallback onOpen;
+  final VoidCallback? onFullscreen;
 
-  const _InfoLine({required this.item, required this.onOpen});
+  const _InfoPanel({
+    required this.item,
+    required this.playback,
+    required this.onOpen,
+    required this.onFullscreen,
+  });
+
+  @override
+  State<_InfoPanel> createState() => _InfoPanelState();
+}
+
+class _InfoPanelState extends State<_InfoPanel> {
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onOpen,
-      behavior: HitTestBehavior.opaque,
-      child: Row(
-        children: [
-          Flexible(
-            child: Text(
-              item.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-                shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
-              ),
+    final item = widget.item;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.onFullscreen != null) ...[
+          Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _EpisodePill(item: item, onTap: widget.onFullscreen!),
+                if (widget.playback != null) ...[
+                  const SizedBox(width: 12),
+                  _FullscreenRoundButton(
+                    playback: widget.playback!,
+                    onTap: widget.onFullscreen!,
+                  ),
+                ],
+              ],
             ),
           ),
-          const SizedBox(width: 4),
-          SizedBox(
-            width: 8,
-            height: 16,
-            child: Image.asset(
-              'assets/images/drama/info_arrow.webp',
-              fit: BoxFit.contain,
-            ),
-          ),
+          const SizedBox(height: 12),
         ],
-      ),
-    );
-  }
-}
-
-
-
-/// 官方「全屏观看」按钮（`aqg.xml`/`aqh.xml`/`aqi.xml` 三变体）。
-///
-/// 取 `aqi.xml`：圆角 8dp、底 `@color/avv`=#b3262626、左右 padding 16dp、
-/// 上下 8dp，图标 20×20dp(`@drawable/f1d`)，文字 14sp bold 白字
-/// `@string/dzc`=「全屏观看」，图标与文字间距 4dp。
-class _FullscreenButton extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _FullscreenButton({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: '全屏观看',
-    child: GestureDetector(
-      key: const Key('drama_fullscreen_button'),
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xB3262626),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        // 标题行：官方 `d6g.xml`。点击 = 播放/暂停（与卡片手势层同一语义）。
+        GestureDetector(
+          onTap: widget.onOpen,
+          behavior: HitTestBehavior.opaque,
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: Image.asset(
-                  'assets/images/drama/fullscreen.webp',
-                  fit: BoxFit.contain,
+              Flexible(
+                child: Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
+                  ),
                 ),
               ),
               const SizedBox(width: 4),
-              const Text(
-                '全屏观看',
-                maxLines: 1,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+              SizedBox(
+                width: 8,
+                height: 16,
+                child: Image.asset(
+                  'assets/images/drama/info_arrow.webp',
+                  fit: BoxFit.contain,
                 ),
               ),
             ],
           ),
         ),
+        if (item.categories.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              for (final category in item.categories.take(3))
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0x33FFFFFF),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Text(
+                    category,
+                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (item.intro.isNotEmpty)
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Flexible(
+                  child: Text(
+                    '第1集丨${item.intro}',
+                    maxLines: _expanded ? 20 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      height: 1.3,
+                      color: Color(0xCCFFFFFF),
+                    ),
+                  ),
+                ),
+                if (!_expanded) ...[
+                  const SizedBox(width: 8),
+                  const Text(
+                    '展开',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 官方「观看全集·N集」药丸（`ad9.xml` 的 `@id/cz1`，文案 `nk3.c.d()`）。
+class _EpisodePill extends StatelessWidget {
+  final MediaItem item;
+  final VoidCallback onTap;
+
+  const _EpisodePill({required this.item, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = int.tryParse(item.ep) ?? 0;
+    // `nk3.c.d()`：episodeCnt > 1 → `@string/e7v`=「观看全集·%s集」，
+    // 否则 `@string/e7w`=「观看全片」。
+    final label = count > 1 ? '观看全集·$count集' : '观看全片';
+    return GestureDetector(
+      key: const Key('drama_episode_pill'),
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 17),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: const Color(0x1AFFFFFF),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
       ),
-    ),
+    );
+  }
+}
+
+/// 官方 30×30dp 圆形全屏钮（`ad9.xml` 的 `@id/dgu`）。官方只在横版片源上
+/// 显示（`vk3.a.a`：非 vertical 才可见），这里用解码尺寸比例（≥1.666，
+/// 同 `VideoFit.landscapeRatio`）作代理；解码前不显示。
+class _FullscreenRoundButton extends StatelessWidget {
+  final InlineVideoPlayback playback;
+  final VoidCallback onTap;
+
+  const _FullscreenRoundButton({required this.playback, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<Size>(
+    valueListenable: playback.videoSize,
+    builder: (context, size, _) {
+      final landscape =
+          size.width > 0 &&
+          size.height > 0 &&
+          size.width / size.height >= PlayerVideoLayout.landscapeRatio;
+      if (!landscape) return const SizedBox.shrink();
+      return GestureDetector(
+        key: const Key('drama_fullscreen_button'),
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 30,
+          height: 30,
+          padding: const EdgeInsets.all(5),
+          decoration: const BoxDecoration(
+            color: Color(0x1AFFFFFF),
+            shape: BoxShape.circle,
+          ),
+          child: Image.asset(
+            'assets/images/drama/fullscreen.webp',
+            fit: BoxFit.contain,
+          ),
+        ),
+      );
+    },
   );
 }
 
@@ -1707,45 +1914,41 @@ class _FeedMessage extends StatelessWidget {
 
 /// Official `cf_.xml` swipe-up hint: 14sp white on `#CC222222`, 16/12dp
 /// padding, auto-hides after 1s (`pp3.f.j()` posts 1000ms).
-class _SwipeUpHint extends StatefulWidget {
-  const _SwipeUpHint();
+/// 「上滑查看更多视频」（`@string/eal`），对齐官方 `pp3.f` + `cf_.xml`：
+///
+/// - 条：`@color/sx`=#CC222222 底、横 16dp / 纵 12dp 内边距、内容水平居中；
+/// - 文字 14sp（`@dimen/r0`）白字（`@color/al`），与箭头间距 4dp；
+/// - 箭头：16×16dp **Lottie 循环动画** `more_wonderful_series_up_arrow.json`
+///   （官方 `autoPlay+loop`；原资源填充是橙色，官方用 `LottieValueCallback`
+///   强制刷成 `@color/al`=#ffffffff，本仓库直接把资源里的填充改成白色）；
+/// - 显隐：300ms 淡入（`v()`）/ 300ms 淡出（`t()`），淡出完才摘掉。
+class _SwipeUpHint extends StatelessWidget {
+  final bool visible;
+
+  const _SwipeUpHint({required this.visible});
 
   @override
-  State<_SwipeUpHint> createState() => _SwipeUpHintState();
-}
-
-class _SwipeUpHintState extends State<_SwipeUpHint> {
-  bool _visible = true;
-  Timer? _hide;
-
-  @override
-  void initState() {
-    super.initState();
-    _hide = Timer(const Duration(seconds: 1), () {
-      if (mounted) setState(() => _visible = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _hide?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_visible) return const SizedBox.shrink();
-    return Center(
+  Widget build(BuildContext context) => AnimatedOpacity(
+    duration: const Duration(milliseconds: 300),
+    opacity: visible ? 1 : 0,
+    child: Center(
       child: DecoratedBox(
         decoration: const BoxDecoration(color: Color(0xCC222222)),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(LucideIcons.chevron_up, size: 16, color: Colors.white),
-              SizedBox(width: 4),
-              Text(
+            children: [
+              Lottie.asset(
+                'assets/lottie/up_arrow.json',
+                width: 16,
+                height: 16,
+                repeat: true,
+                animate: true,
+                fit: BoxFit.contain,
+              ),
+              const SizedBox(width: 4),
+              const Text(
                 '上滑查看更多视频',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: Colors.white),
@@ -1754,8 +1957,8 @@ class _SwipeUpHintState extends State<_SwipeUpHint> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 /// Official `aq0.xml` pull-to-refresh strip: 16sp white 「下拉刷新内容」.

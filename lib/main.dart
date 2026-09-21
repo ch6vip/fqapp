@@ -14,6 +14,7 @@ import 'services/backend_service.dart';
 import 'services/digg_store.dart';
 import 'services/library_store.dart';
 import 'services/shelf_store.dart';
+import 'services/swipe_guide_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/home/home_design.dart';
 
@@ -34,6 +35,13 @@ Future<void> _initializeLocalData() async {
     await DiggStore.instance.init();
   } catch (_) {
     // DiggStore 自己把「不可用」当成「没有点赞」处理（见 _openBox）。
+  }
+  // 「上滑查看更多视频」的一次性标记同样是可选数据：读不到就当没弹过，
+  // 弹一次的语义退化成「本次启动弹一次」也不能拖住启动。
+  try {
+    await SwipeGuideStore.instance.init();
+  } catch (_) {
+    // SwipeGuideStore 自己把「不可用」当成「未显示」处理。
   }
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see

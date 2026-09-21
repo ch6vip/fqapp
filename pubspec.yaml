@@ -44,6 +44,7 @@ dependencies:
   flutter_riverpod: ^3.4.3
   html: 0.15.6
   flutter_lucide: ^1.43.0
+  lottie: ^3.6.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -84,6 +85,10 @@ flutter:
     # `ckao/decompile/apktool/res/drawable*/` 原样抽出（见
     # docs/short-drama-decompile-comparison-20260921.md §8）。
     - assets/images/drama/
+    # 「上滑查看更多视频」的官方箭头动画（`more_wonderful_series_up_arrow.json`），
+    # 原样复制、仅把填充色改为白色——官方运行时用 LottieValueCallback 强制
+    # `@color/al`=#ffffffff（见同文档 §19）。
+    - assets/lottie/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

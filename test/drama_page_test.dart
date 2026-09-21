@@ -12,30 +12,54 @@ import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/services/swipe_guide_store.dart';
 
 import 'package:fqapp/services/digg_store.dart';
 import 'support/controlled_player.dart';
-MediaItem _item(String label, {String kind = 'video', String ep = ''}) =>
-    MediaItem(
-      id: label,
-      title: '$label 作品',
-      cover: '',
-      author: '演员',
-      badge: '',
-      ep: ep,
-      kind: kind,
-    );
+MediaItem _item(
+  String label, {
+  String kind = 'video',
+  String ep = '',
+  String intro = '',
+  int followerCount = 0,
+  List<String> categories = const [],
+}) => MediaItem(
+  id: label,
+  title: '$label 作品',
+  cover: '',
+  author: '演员',
+  badge: '',
+  ep: ep,
+  kind: kind,
+  intro: intro,
+  followerCount: followerCount,
+  categories: categories,
+);
 
 /// A notifier whose stream answers with `perTab` items per tab_type, so a test
 /// can tell which channel a feed is actually reading. The drama tab's override
 /// has to open on the 短剧 channel the way the real `dramaProvider` does.
-HomeNotifier _notifier({int perTab = 1, int initialTabIndex = 0}) => HomeNotifier(
+/// [intro]/[followerCount]/[categories] decorate the first card so the info
+/// panel cases can exercise the chips, the intro and the rail count.
+HomeNotifier _notifier({
+  int perTab = 1,
+  int initialTabIndex = 0,
+  String intro = '',
+  int followerCount = 0,
+  List<String> categories = const [],
+}) => HomeNotifier(
   initialTabIndex: initialTabIndex,
   homepageLoader: ({int tabType = 2, int offset = 0, String? sessionId}) async {
     return HomepagePage(
       items: [
         for (var index = 0; index < perTab; index++)
-          _item('$tabType-$index', ep: index == 0 ? '全12集' : ''),
+          _item(
+            '$tabType-$index',
+            ep: index == 0 ? '全12集' : '',
+            intro: index == 0 ? intro : '',
+            followerCount: index == 0 ? followerCount : 0,
+            categories: index == 0 ? categories : const [],
+          ),
       ],
       nextOffset: null,
       sessionId: null,
@@ -46,11 +70,30 @@ HomeNotifier _notifier({int perTab = 1, int initialTabIndex = 0}) => HomeNotifie
 
 /// Both feeds are faked together: the shell mounts the home page next to the
 /// 短剧 destination, and the drama page reads only the second provider.
-ProviderScope _scope({required Widget child, int perTab = 1}) => ProviderScope(
+ProviderScope _scope({
+  required Widget child,
+  int perTab = 1,
+  String intro = '',
+  int followerCount = 0,
+  List<String> categories = const [],
+}) => ProviderScope(
   overrides: [
-    homeProvider.overrideWith(() => _notifier(perTab: perTab)),
+    homeProvider.overrideWith(
+      () => _notifier(
+        perTab: perTab,
+        intro: intro,
+        followerCount: followerCount,
+        categories: categories,
+      ),
+    ),
     dramaProvider.overrideWith(
-      () => _notifier(perTab: perTab, initialTabIndex: dramaTabIndex),
+      () => _notifier(
+        perTab: perTab,
+        initialTabIndex: dramaTabIndex,
+        intro: intro,
+        followerCount: followerCount,
+        categories: categories,
+      ),
     ),
   ],
   child: child,
@@ -125,6 +168,10 @@ void main() {
     await ShelfStore.instance.init();
     // 点赞 与 追剧 一样落在本地 box，测试点它之前必须先开箱。
     await DiggStore.instance.init();
+    // 「上滑查看更多视频」引导带 8s 定时器：默认按「已显示过」处理，
+    // 否则所有用例结束时都会留下 pending timer；引导自身的用例再 reset。
+    await SwipeGuideStore.instance.init();
+    await SwipeGuideStore.instance.markShown();
   });
 
   tearDown(() async {
@@ -178,6 +225,7 @@ void main() {
     );
     // 推荐 = BookstoreTabType.video_feed(16), 看剧 = video_episode(8),
     // 漫剧 = dynamic_comic(24); the last two are device-local lists.
+    // （预约=video_subscribe 28 无数据源，刻意不做。）
     expect(
       HomeNotifier.tabTypes[HomeNotifier.tabs[dramaChannels[0].tabIndex]],
       16,
@@ -191,8 +239,6 @@ void main() {
     expect(dramaChannels[2].kind, 'manju');
     expect(dramaChannels[3].source, DramaChannelSource.history);
     expect(dramaChannels[4].source, DramaChannelSource.shelf);
-    // 预约 has no data source and is deliberately absent.
-    expect(dramaChannels.map((channel) => channel.label), isNot(contains('预约')));
   });
 
   test('the drama feed keeps its own cursor when the home page switches', () async {
@@ -219,6 +265,8 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    // 本用例要看到引导，先把 setUp 置上的「已显示」清掉（Hive 写走真实异步区）。
+    await tester.runAsync(SwipeGuideStore.instance.reset);
 
     await tester.pumpWidget(
       _scope(
@@ -229,7 +277,8 @@ void main() {
     await _flush(tester);
 
 
-    // Top bar: the official search hint and the channel strip.
+    // Top bar: the official search hint and the channel strip (官方六个频道，
+    // 顺序同截图；顶栏按 `ap4.xml` 根背景 @null 透明压在视频流上)。
     expect(find.text('请输入短剧名或主演名'), findsOneWidget);
     expect(find.text('推荐'), findsOneWidget);
     expect(find.text('漫剧'), findsOneWidget);
@@ -249,15 +298,74 @@ void main() {
     expect(find.byKey(const Key('drama_like_button')), findsOneWidget);
     expect(find.text('观看完整短剧'), findsNothing);
     expect(find.text('查看剧集'), findsNothing);
-    expect(find.text('全屏观看'), findsOneWidget);
+    // 官方卡片底部唯一的一颗按钮是居中的「观看全集」药丸（`ad9.xml`，文案
+    // `nk3.c.d()` 用集数填）。夹具的 ep='全12集' 不是纯数字，按官方 ≤1 的
+    // 分支退到 `@string/e7w`=「观看全片」。圆形全屏钮只在横版解码尺寸下出现。
+    expect(find.byKey(const Key('drama_episode_pill')), findsOneWidget);
+    expect(find.text('观看全片'), findsOneWidget);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsNothing);
     // 官方 feed 的上滑提示是 `@string/eal`=「上滑查看更多视频」（14sp，底 #CC222222，
-    // 距底 94dp，1s 后消失）；`上滑继续观看短剧`(`@string/e6j`) 属播放页 BottomContainer。
+    // 距底 94dp）。官方 `pp3.f` 是 300ms 淡入后 **8 次 1s 计数**才淡出
+    // （第二轮笔记的「1s 后消失」是误读），且每台设备只弹一次。
     expect(find.text('上滑查看更多视频'), findsOneWidget);
     expect(find.text('8-1 作品'), findsNothing);
-    await tester.pump(const Duration(seconds: 1));
+    // 8 秒内一直在。
+    await tester.pump(const Duration(seconds: 5));
+    expect(find.text('上滑查看更多视频'), findsOneWidget);
+    // 计满 8s（从 300ms 淡入结束起算）后 300ms 淡出、再从树上摘掉：
+    // 挂载在 8.3s 结束，这里泵到 8.7s。
+    await tester.pump(const Duration(seconds: 3, milliseconds: 700));
     expect(find.text('上滑查看更多视频'), findsNothing);
     expect(tester.takeException(), isNull);
 
+  });
+
+  testWidgets('上滑引导换频道立即收起，且每台设备只弹一次', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 850));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    // 官方 `wp3.d0`：SharedPreferences 标记一旦写回就再也不弹。setUp 已把
+    // 标记置真，先清掉模拟「首次安装」。Hive 写在假时钟区里永远不完成
+    // （见追剧用例的注释），必须走 runAsync 的真实异步区。
+    await tester.runAsync(SwipeGuideStore.instance.reset);
+    expect(SwipeGuideStore.instance.shown, isFalse);
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await tester.pump();
+    expect(find.text('上滑查看更多视频'), findsOneWidget);
+    expect(SwipeGuideStore.instance.shown, isTrue);
+
+    // 官方横向频道 pager 一滚动就收（`onPageScrolled` → `pp3.f.m()`）；
+    // 这里等价于点频道。300ms 淡出后从树上摘掉。
+    await tester.tap(find.text('看剧'));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('上滑查看更多视频'), findsNothing);
+
+    // 回到推荐频道也不再弹（标记已写回）。
+    await tester.tap(find.text('推荐'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('上滑查看更多视频'), findsNothing);
+    // 冲刷页面里 markShown 留下的真实异步写，别把它带进 tearDown 的 Hive.close。
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('上滑引导已显示过就不再出现', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 850));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('上滑查看更多视频'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('swiping up reveals the next drama and switching channels swaps the feed', (
@@ -376,9 +484,9 @@ void main() {
     final inline = seams.players.single;
     expect(inline.isPlaying, isTrue);
 
-    // 官方只有「全屏观看」(`mq3.e` / `aqi.xml`) 会进全页播放器；点画面中间
-    // 只切换播放/暂停（见下一条用例）。
-    await tester.tap(find.byKey(const Key('drama_fullscreen_button')));
+    // 官方进全页播放器的入口是「观看全集」药丸（`nk3.c.e` 的
+    // 「watch_full_episodes」）；点画面中间只切换播放/暂停（见下一条用例）。
+    await tester.tap(find.byKey(const Key('drama_episode_pill')));
     // The push waits for the inline release before the directory request, so
     // the second request is only recorded after the player is gone.
     await _flush(tester);
@@ -465,6 +573,38 @@ void main() {
     expect(find.text('已追剧'), findsOneWidget);
     expect(find.text('追剧'), findsNothing);
     expect(find.textContaining('已追剧，可在「书架-短剧」查看'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('信息面板：药丸按集数出文案，追剧挂计数，chip 与简介可展开', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 850));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        intro: '一个长生却会老的穿越者的故事简介，足够长到需要截断才能看到展开按钮',
+        followerCount: 46000,
+        categories: const ['喜剧'],
+        child: MaterialApp(home: _Seams().page()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 药丸：夹具 ep='全12集' 不是纯数字，按官方 ≤1 分支显示「观看全片」。
+    expect(find.text('观看全片'), findsOneWidget);
+    // 右栏星标下显示追剧人数（`followed_cnt` → formatCounter）。
+    expect(find.text('4.6万'), findsOneWidget);
+    // 分类 chip（`d6f.xml` 的 `hdm` 行，12sp 白字 #33FFFFFF 底）。
+    expect(find.text('喜剧'), findsOneWidget);
+    // 简言行默认 2 行截断，带「展开」；点开后全文显示、「展开」消失。
+    expect(find.textContaining('第1集丨一个长生却会老的穿越者'), findsOneWidget);
+    expect(find.text('展开'), findsOneWidget);
+    await tester.tap(find.text('展开'));
+    await tester.pumpAndSettle();
+    expect(find.text('展开'), findsNothing);
+    expect(find.textContaining('展开按钮'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

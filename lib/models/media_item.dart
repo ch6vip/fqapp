@@ -47,6 +47,24 @@ class MediaItem {
   final String? seriesId;
   final String? episodeId;
 
+  /// Series synopsis (`series_intro` in the 短剧 template cell's
+  /// `video_detail`). Empty when the card carries none.
+  final String intro;
+
+  /// 追剧人数 (`followed_cnt` in `video_detail`), 0 when absent. This is the
+  /// count the official right rail shows under the star button.
+  final int followerCount;
+
+  /// Category names for the info panel's chip row: `secondary_infos` entries
+  /// with `data_type == 3` (categories), falling back to `category_schema`
+  /// names. Empty when the card carries neither.
+  final List<String> categories;
+
+  /// Server-authored pill copy (`style.episode_list_text`, e.g.
+  /// 「观看完整漫剧·全153集」). The feed card's pill builds its own
+  /// 「观看全集·N集」 from the episode count, so this is informational.
+  final String episodeListText;
+
   MediaItem({
     required this.id,
     required this.title,
@@ -58,6 +76,10 @@ class MediaItem {
     this.tag,
     this.seriesId,
     this.episodeId,
+    this.intro = '',
+    this.followerCount = 0,
+    this.categories = const [],
+    this.episodeListText = '',
   });
 
   /// Copy with selected fields replaced.
@@ -79,6 +101,10 @@ class MediaItem {
     MediaTag? tag,
     String? seriesId,
     String? episodeId,
+    String? intro,
+    int? followerCount,
+    List<String>? categories,
+    String? episodeListText,
   }) => MediaItem(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -90,6 +116,10 @@ class MediaItem {
     tag: tag ?? this.tag,
     seriesId: seriesId ?? this.seriesId,
     episodeId: episodeId ?? this.episodeId,
+    intro: intro ?? this.intro,
+    followerCount: followerCount ?? this.followerCount,
+    categories: categories ?? this.categories,
+    episodeListText: episodeListText ?? this.episodeListText,
   );
 
   factory MediaItem.fromRaw(Map<String, dynamic> item) {
@@ -173,6 +203,19 @@ class MediaItem {
     // and carries its own label and both light/dark gradients.
     final tagInfo = _mapFrom(item['tag_info']) ?? _mapFrom(bd['tag_info']);
 
+    // 短剧模板卡的信息面板数据：简介/追剧数在 video_detail（visit() 已摊平到
+    // item 上），分类 chip 在 secondary_infos（data_type=3），其 fallback 是
+    // category_schema 里的 name 列表。style 骑在模板 cell 本体上。
+    final followedCount =
+        _asInt(item['followed_cnt']) ?? _asInt(bd['followed_cnt']) ?? 0;
+    final styleInfo = _mapFrom(item['style']) ?? _mapFrom(bd['style']);
+    final episodeListText =
+        _firstString(styleInfo ?? const {}, ['episode_list_text']) ?? '';
+    final categories = _secondaryCategories(
+      item['secondary_infos'] ?? bd['secondary_infos'],
+      fallback: item['category_schema'] ?? bd['category_schema'],
+    );
+
     return MediaItem(
       id:
           seriesId ??
@@ -238,6 +281,13 @@ class MediaItem {
             'episode_cnt',
           ]) ??
           '',
+      intro:
+          _firstString(item, ['series_intro', 'intro']) ??
+          _firstString(bd, ['series_intro', 'intro']) ??
+          '',
+      followerCount: followedCount,
+      categories: categories,
+      episodeListText: episodeListText,
     );
   }
 
@@ -1094,6 +1144,35 @@ int? _asInt(dynamic value) {
   return int.tryParse('$value');
 }
 
+/// Category names for the info panel's chip row. The feed card's
+/// `video_detail.secondary_infos` marks categories with `data_type == 3`
+/// (other entries are actors and the like); `category_schema` — a JSON string
+/// of `{name: …}` records, same shape the series detail page parses — is the
+/// fallback when the card carries no secondary infos.
+List<String> _secondaryCategories(dynamic secondaryInfos, {dynamic fallback}) {
+  final names = <String>[];
+  if (secondaryInfos is Iterable) {
+    for (final entry in secondaryInfos) {
+      if (entry is! Map) continue;
+      final type = _asInt(entry['data_type']);
+      final content = entry['content'];
+      if (type == 3 && content is String && content.trim().isNotEmpty) {
+        names.add(content.trim());
+      }
+    }
+  }
+  if (names.isEmpty && fallback is String && fallback.trim().isNotEmpty) {
+    final matches = RegExp(
+      '"name"\\s*:\\s*"([^"]+)"',
+    ).allMatches(fallback);
+    for (final match in matches) {
+      final name = match.group(1)?.trim() ?? '';
+      if (name.isNotEmpty) names.add(name);
+    }
+  }
+  return List.unmodifiable(names);
+}
+
 extension MediaItemJson on MediaItem {
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -1105,6 +1184,10 @@ extension MediaItemJson on MediaItem {
     'kind': kind,
     if (seriesId != null) 'seriesId': seriesId,
     if (episodeId != null) 'episodeId': episodeId,
+    if (intro.isNotEmpty) 'intro': intro,
+    if (followerCount > 0) 'followerCount': followerCount,
+    if (categories.isNotEmpty) 'categories': categories,
+    if (episodeListText.isNotEmpty) 'episodeListText': episodeListText,
     // The promotional badge must survive a round-trip; the keys reuse
     // [MediaTag.fromRaw]'s payload shape so both paths stay lossless.
     if (tag != null)
@@ -1133,6 +1216,14 @@ extension MediaItemJson on MediaItem {
       tag: MediaTag.fromRaw(map['tag'] is Map ? (map['tag'] as Map).cast<String, dynamic>() : null),
       seriesId: (map['seriesId'] as String?),
       episodeId: (map['episodeId'] as String?),
+      intro: field('intro'),
+      followerCount: _asInt(map['followerCount']) ?? 0,
+      categories: map['categories'] is List
+          ? List.unmodifiable(
+              (map['categories'] as List).map((e) => '$e'),
+            )
+          : const [],
+      episodeListText: field('episodeListText'),
     );
   }
 }

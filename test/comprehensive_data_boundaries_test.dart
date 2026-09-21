@@ -10,6 +10,7 @@ import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/services/swipe_guide_store.dart';
 import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
@@ -50,6 +51,10 @@ void main() {
           await ShelfStore.instance.init();
           // 同理，短剧 feed 的 点赞 box 也在 bootstrap 里开箱。
           await DiggStore.instance.init();
+          // 「上滑查看更多视频」引导同样在 bootstrap 里开箱；这里预置「已显示」，
+          // 否则引导的循环 Lottie 动画会让下面的 pumpAndSettle 永远不 settle。
+          await SwipeGuideStore.instance.init();
+          await SwipeGuideStore.instance.markShown();
           await history.put('kept-book', record);
         });
         const channel = MethodChannel('plugins.flutter.io/path_provider');

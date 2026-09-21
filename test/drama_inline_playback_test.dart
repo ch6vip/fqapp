@@ -13,6 +13,7 @@ import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/services/swipe_guide_store.dart';
 
 import 'support/controlled_player.dart';
 
@@ -142,6 +143,9 @@ void main() {
     await ShelfStore.instance.init();
     // The card's 点赞 button writes the same kind of local box.
     await DiggStore.instance.init();
+    // 引导提示的 8s 定时器会挂住用例收尾，默认按已显示过处理。
+    await SwipeGuideStore.instance.init();
+    await SwipeGuideStore.instance.markShown();
   });
 
   // The binding resets (surface size, lifecycle) live in _mount's tear-down:
@@ -213,6 +217,8 @@ void main() {
     expect(rect.right, lessThanOrEqualTo(feed.right + 0.5));
     expect(rect.top, greaterThanOrEqualTo(feed.top - 0.5));
     expect(rect.bottom, lessThanOrEqualTo(feed.bottom + 0.5));
+    // 横版源：官方 `vk3.a.a` 只在非竖屏源上显示 30dp 圆形全屏钮。
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -235,6 +241,8 @@ void main() {
     // 居中铺满，所以裁切是对称的。
     expect(rect.center.dx, closeTo(feed.center.dx, 0.5));
     expect(rect.center.dy, closeTo(feed.center.dy, 0.5));
+    // 竖屏源：官方 `vk3.a.a` 不显示圆形全屏钮（入口只有药丸）。
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsNothing);
     // `getRect` 返回的是未裁剪的布局矩形，所以溢出不会被上面几条发现：
     // 真正把画面裁到卡片里的是祖先 `ClipRRect`（`drama_page.dart:916`）。
     // 没有它，铺满就会画到卡片外面。
@@ -367,7 +375,9 @@ void main() {
     expect(session.players, hasLength(2));
     expect(first.disposed, isFalse, reason: '刚滑走时被放进池');
 
-    await tester.tap(find.byKey(const Key('drama_fullscreen_button')));
+    // 官方进全页播放器的入口是「观看全集」药丸（`nk3.c.e`）；圆形全屏钮只在
+    // 横版解码尺寸下出现，夹具没有解码尺寸，所以这里用药丸。
+    await tester.tap(find.byKey(const Key('drama_episode_pill')));
     // Not `pumpAndSettle`: the push keeps a spinner running. The pool teardown
     // happens before the page is pushed, so a couple of flushes is enough.
     await _flush(tester);
