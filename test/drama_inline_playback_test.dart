@@ -144,8 +144,10 @@ void main() {
     // The card's 点赞 button writes the same kind of local box.
     await DiggStore.instance.init();
     // 引导提示的 8s 定时器会挂住用例收尾，默认按已显示过处理。
+    // 播放页的横滑引导同理（ SwipeGuideStore 已打开，不预置就会弹出）。
     await SwipeGuideStore.instance.init();
     await SwipeGuideStore.instance.markShown();
+    await SwipeGuideStore.instance.markSeekHintShown();
   });
 
   // The binding resets (surface size, lifecycle) live in _mount's tear-down:

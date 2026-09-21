@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -36,6 +37,26 @@ class VideoPlayerChrome extends StatefulWidget {
   final Future<void> Function(int) onSelectEpisode;
   final void Function(Object) onError;
 
+  /// Enter with the episode catalog already open — the official 「观看全集」
+  /// pill's `setLaunchCatalogPanel(true)` (`jq3/i0.java` `goToSingleFeed`).
+  final bool launchCatalogPanel;
+
+  /// 官方播放页**双击 = 点赞**（`v2/view/holder/o.java` 的 `z7` →
+  /// `lh3.a.onDoubleTap`；播放页手势层 `shortserieslayer/speed/
+  /// VideoGestureDetectLayout` 只实现了双击+长按+横滑，单击走控制条显隐）。
+  /// 回调由宿主提供（本仓库退化为本地 DiggStore）；心形动效在 chrome 内。
+  final VoidCallback? onDoubleTapLike;
+
+  /// 「左右滑动可调整进度」首次引导（`@string/cha`，引导层距底 138dp，
+  /// `of3/a.java`）。显示与否由宿主决定（每台设备一次）。
+  final bool showSeekHint;
+  final VoidCallback? onSeekHintConsumed;
+
+  /// 当前集已播完、等待用户上滑切集（官方 `apf.xml` 的 `d99` 槽 →
+  /// `BottomContainer`，`cia.xml`：90dp、paddingTop 26、14sp 白字
+  /// `@string/e6j`=「上滑继续观看短剧」）。仅在不自动连播且有下一集时为真。
+  final bool episodeEndedWaiting;
+
   const VideoPlayerChrome({
     super.key,
     required this.player,
@@ -58,6 +79,11 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onPagingChanged,
     required this.onSelectEpisode,
     required this.onError,
+    this.launchCatalogPanel = false,
+    this.onDoubleTapLike,
+    this.showSeekHint = false,
+    this.onSeekHintConsumed,
+    this.episodeEndedWaiting = false,
   });
 
   @override
@@ -106,6 +132,16 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Future<void> _systemUiUpdates = Future<void>.value();
   bool _systemUiTouched = false;
 
+  /// 双击点赞的心形动效：位置取双击点，generation 驱动 TweenAnimationBuilder
+  /// 重放；动效结束归零。
+  Offset? _doubleTapAt;
+  int _heartGeneration = 0;
+
+  /// 横滑调进度的起手位置与激活状态。null = 没有进行中的横滑；
+  /// `_dragSeekActive` = 已证明是横向主导的拖动（见 [_updateDragSeek]）。
+  Offset? _dragSeekOrigin;
+  bool _dragSeekActive = false;
+
   /// The orientation list currently pinned while fullscreen, so an unchanged
   /// answer does not re-issue a rotation request.
   List<DeviceOrientation>? _appliedOrientations;
@@ -151,6 +187,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     unawaited(_loadRate());
     _scheduleHide();
+    if (widget.launchCatalogPanel) {
+      // 官方「观看全集」进播放页即弹选集面板（`goToSingleFeed` 的
+      // `setLaunchCatalogPanel(true)` → `catalogdialog/v2/k.java:797`）。
+      // 放在首帧之后：面板打开要量一次 `panelFractionFor(_videoSize)`。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openPanel(1);
+      });
+    }
   }
 
   @override
@@ -301,8 +345,94 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
   }
 
-  void _togglePlayback() {
+  /// 双击 = 点赞（官方播放页语义，见 [VideoPlayerChrome.onDoubleTapLike]）。
+  /// 每次双击都放心形动效；点赞状态由宿主写入。
+  void _handleDoubleTap() {
+    if (_locked || _panelOpen || _modalOpen || _seeking || _paging) return;
+    setState(() => ++_heartGeneration);
+    widget.onDoubleTapLike?.call();
+  }
+
+  /// 横滑调进度：与 feed 卡同一条官方规则——把横向拖动位置映射到整集
+  /// 时间轴（feed 的 `_CardGestures` 与播放页引导层 `o.java K6` 同源）。
+  /// 拖动中实时 seek（feed 亦如此），不进入进度条的 `_seeking` 暂停语义。
+  ///
+  /// start 只记起点不 seek：竖直翻页不可用时（横屏、面板打开等），单击/
+  /// 长按识别器会因移动放弃，竞技场可能把**纯竖直滑动**判给水平识别器
+  /// （未达横向阈值也会判胜，`onlyAcceptDragOnThreshold` 默认 false）。
+  /// 是否真是横滑由 [_updateDragSeek] 用横向主导的位移判定。
+  void _startDragSeek(DragStartDetails details) {
     if (!_ready ||
+        _locked ||
+        _panelOpen ||
+        _modalOpen ||
+        _seeking ||
+        widget.duration <= Duration.zero) {
+      return;
+    }
+    _endBoost();
+    ++_interaction;
+    _hideTimer?.cancel();
+    _dragSeekOrigin = details.localPosition;
+    _dragSeekActive = false;
+  }
+
+  void _updateDragSeek(DragUpdateDetails details) {
+    final origin = _dragSeekOrigin;
+    if (origin == null) return;
+    final dx = details.localPosition.dx - origin.dx;
+    final dy = details.localPosition.dy - origin.dy;
+    if (!_dragSeekActive) {
+      if (dx.abs() < kTouchSlop || dx.abs() < dy.abs()) return;
+      _dragSeekActive = true;
+      widget.onSeekHintConsumed?.call();
+    }
+    final fraction = _dragFraction(details.localPosition.dx);
+    _seekValue.value = fraction;
+    unawaited(
+      _control(
+        (player) => player.seek(
+          Duration(
+            milliseconds: (widget.duration.inMilliseconds * fraction).round(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _endDragSeek(DragEndDetails details) {
+    _dragSeekOrigin = null;
+    if (!_dragSeekActive) return;
+    _dragSeekActive = false;
+    final fraction = _dragFraction(
+      // DragEnd 没有位置；沿用最后一次 update 的预览值。
+      _seekValue.value == null
+          ? 0
+          : (_seekValue.value! * MediaQuery.sizeOf(context).width),
+    );
+    unawaited(
+      () async {
+        await _control(
+          (player) => player.seek(
+            Duration(
+              milliseconds: (widget.duration.inMilliseconds * fraction)
+                  .round(),
+            ),
+          ),
+        );
+        if (mounted && !_seeking) _seekValue.value = null;
+      }(),
+    );
+    if (widget.showSeekHint) widget.onSeekHintConsumed?.call();
+  }
+
+  double _dragFraction(double dx) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width <= 0) return 0;
+    return (dx / width).clamp(0.0, 1.0);
+  }
+
+  void _togglePlayback() {    if (!_ready ||
         !_appActive ||
         _locked ||
         _panelOpen ||
@@ -809,7 +939,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 key: const ValueKey('video-surface'),
                 behavior: HitTestBehavior.opaque,
                 onTap: _toggleControls,
-                onDoubleTap: _togglePlayback,
+                onDoubleTapDown: (details) => _doubleTapAt = details.localPosition,
+                onDoubleTap: _handleDoubleTap,
+                onHorizontalDragStart: _startDragSeek,
+                onHorizontalDragUpdate: _updateDragSeek,
+                onHorizontalDragEnd: _endDragSeek,
                 onLongPressStart: (_) => _startBoost(),
                 onLongPressEnd: (_) => _endBoost(),
                 onLongPressCancel: _endBoost,
@@ -865,6 +999,120 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   ),
                 ),
               ),
+              // 官方播放页双击点赞的心形动效（`lh3.a.onDoubleTap`）：在双击点
+              // 放大 + 淡出，700ms。
+              if (_heartGeneration > 0 && _doubleTapAt != null)
+                Positioned(
+                  left: (_doubleTapAt!.dx - 36).clamp(
+                    insets.left,
+                    math.max(insets.left, window.width - 72),
+                  ),
+                  top: (_doubleTapAt!.dy - 36).clamp(
+                    insets.top,
+                    math.max(insets.top, window.height - 72),
+                  ),
+                  child: IgnorePointer(
+                    child: TweenAnimationBuilder<double>(
+                      key: ValueKey('player-heart-$_heartGeneration'),
+                      tween: Tween(begin: 0, end: 1),
+                      duration: const Duration(milliseconds: 700),
+                      onEnd: () {
+                        if (mounted) setState(() => _heartGeneration = 0);
+                      },
+                      builder: (context, t, child) => Opacity(
+                        opacity: t < .5 ? 1 : math.max(0, 1 - (t - .5) * 2),
+                        child: Transform.scale(
+                          scale: .6 + .55 * Curves.easeOutBack.transform(t),
+                          child: child,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.favorite,
+                        size: 72,
+                        color: Colors.white,
+                        shadows: [
+                          Shadow(color: Colors.black38, blurRadius: 12),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              // 「左右滑动可调整进度」首次引导（`@string/cha`，距底 138dp，
+              // `o.java K6` 的引导层）。
+              if (widget.showSeekHint && !_locked && !_panelOpen)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: insets.bottom + 138,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: Color(0xCC222222),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(
+                                Icons.swap_horiz,
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                '左右滑动可调整进度',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // 官方 `BottomContainer`（`cia.xml`）：一集播完且不自动连播时，
+              // 底部 90dp「上滑继续观看短剧」，引导上滑切集；IgnorePointer
+              // 让上滑手势穿透到分页器。
+              if (widget.episodeEndedWaiting && !_panelOpen && !_locked)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 90,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Color(0x01000000), Color(0x99000000)],
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 26),
+                        child: Center(
+                          child: Text(
+                            widget.episodes.length > widget.currentIndex + 1
+                                ? '上滑继续观看短剧'
+                                : '已是最后一集',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               if (controls) ...[
                 _topBar(insets),
                 if (!landscape) _rightBar(insets),

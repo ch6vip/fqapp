@@ -654,6 +654,19 @@ class _DramaPageState extends ConsumerState<DramaPage>
             cover: item.cover,
             eps: eps,
             startIndex: index.toInt(),
+            // 官方「观看全集」= goToSingleFeed 的 setLaunchCatalogPanel(true)：
+            // 进播放器即弹选集面板、定位当前集。进度不需要显式传——上面的
+            // `disposePlayer()` 已把 feed 的当前集与播放进度写进历史，
+            // PlayerPage 从同一条历史续播。
+            launchCatalogPanel: true,
+            // 官方播放页双击 = 点赞（`lh3.a.onDoubleTap`）：走 feed 同一条
+            // DiggStore 退化写入；心形动效由 chrome 每次 双击都放，与官方
+            // 一致，点赞状态的变化由右栏/再进时读 store 反映。
+            onDoubleTapLike: () {
+              if (DiggStore.instance.isReady) {
+                unawaited(DiggStore.instance.toggle(item));
+              }
+            },
           ),
         ),
       );

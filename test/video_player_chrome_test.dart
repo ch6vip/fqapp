@@ -55,6 +55,93 @@ void main() {
   });
 
   testWidgets(
+    'launchCatalogPanel opens the episode catalog without a tap',
+    (tester) async {
+      // 官方「观看全集」= goToSingleFeed 的 setLaunchCatalogPanel(true)：
+      // 进播放页即弹选集面板，不用再点一次「选集」。
+      final player = FakeNativePlayer()..isPlaying = true;
+      await tester.pumpWidget(_app(player, launchCatalogPanel: true));
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.text('选集'), findsOneWidget);
+      expect(find.byKey(const ValueKey('story-episode-0')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    },
+  );
+
+  testWidgets(
+    'double tap shows the heart, fires the like callback and never pauses',
+    (tester) async {
+      // 官方播放页双击 = 点赞（`lh3.a.onDoubleTap`），不再是暂停/继续。
+      final player = FakeNativePlayer()..isPlaying = true;
+      var likes = 0;
+      await tester.pumpWidget(_app(player, onDoubleTapLike: () => likes++));
+      await tester.pumpAndSettle();
+      final surface = tester.getCenter(
+        find.byKey(const ValueKey('video-surface')),
+      );
+      await tester.tapAt(surface);
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.tapAt(surface);
+      await tester.pump();
+      expect(likes, 1);
+      expect(find.byKey(const ValueKey('player-heart-1')), findsOneWidget);
+      expect(player.calls.where((call) => call == 'pause'), isEmpty);
+      // 700ms 动效走完归零，双击可以再次重放心形。
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('player-heart-1')), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    },
+  );
+
+  testWidgets('a horizontal drag seeks the episode and consumes the hint', (
+    tester,
+  ) async {
+    // 官方播放页手势层：横滑 = 调进度（映射整集时间轴，拖动中实时 seek）。
+    final player = FakeNativePlayer()..isPlaying = true;
+    var hintConsumed = 0;
+    await tester.pumpWidget(
+      _app(
+        player,
+        showSeekHint: true,
+        onSeekHintConsumed: () => hintConsumed++,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('左右滑动可调整进度'), findsOneWidget);
+    await tester.drag(
+      find.byKey(const ValueKey('video-surface')),
+      const Offset(120, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(player.calls.where((call) => call.startsWith('seek:')), isNotEmpty);
+    expect(hintConsumed, greaterThan(0));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets(
+    'episodeEndedWaiting shows the official bottom bar with the right copy',
+    (tester) async {
+      // 官方 `BottomContainer`（`cia.xml`）：有下一集是「上滑继续观看短剧」，
+      // 最后一集是「已是最后一集」。
+      final player = FakeNativePlayer()..isPlaying = true;
+      await tester.pumpWidget(_app(player, episodeEndedWaiting: true));
+      await tester.pumpAndSettle();
+      expect(find.text('上滑继续观看短剧'), findsOneWidget);
+      await tester.pumpWidget(
+        _app(player, episodeEndedWaiting: true, currentIndex: 1),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('已是最后一集'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    },
+  );
+
+  testWidgets(
     'controls hide, long press restores speed, episode selection works',
     (tester) async {
       final player = FakeNativePlayer()..isPlaying = true;
@@ -354,6 +441,12 @@ Widget _app(
   FakeNativePlayer player, {
   List<int>? selected,
   TextScaler textScaler = TextScaler.noScaling,
+  bool launchCatalogPanel = false,
+  VoidCallback? onDoubleTapLike,
+  bool showSeekHint = false,
+  VoidCallback? onSeekHintConsumed,
+  bool episodeEndedWaiting = false,
+  int currentIndex = 0,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(textScaler: textScaler),
@@ -368,13 +461,18 @@ Widget _app(
         Chapter(itemId: '1', title: '第一集', volumeName: ''),
         Chapter(itemId: '2', title: '第二集', volumeName: ''),
       ],
-      currentIndex: 0,
+      currentIndex: currentIndex,
       duration: player.duration,
       playing: playing.data!,
       onSelectEpisode: (index) async {
         selected?.add(index);
       },
       onError: (error) => throw error,
+      launchCatalogPanel: launchCatalogPanel,
+      onDoubleTapLike: onDoubleTapLike,
+      showSeekHint: showSeekHint,
+      onSeekHintConsumed: onSeekHintConsumed,
+      episodeEndedWaiting: episodeEndedWaiting,
       child: const ColoredBox(color: Colors.black),
     ),
   ),

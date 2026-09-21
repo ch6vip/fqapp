@@ -12,6 +12,7 @@ import '../services/playback_issue.dart';
 import '../services/player_history.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
+import '../services/swipe_guide_store.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
@@ -30,6 +31,14 @@ class PlayerPage extends StatefulWidget {
   final ReaderStore? historyStore;
   final PlayerLoadDiagnostics? loadDiagnostics;
 
+  /// Enter with the episode catalog already open — the official 「观看全集」
+  /// pill's behavior (`goToSingleFeed` → `setLaunchCatalogPanel(true)`).
+  final bool launchCatalogPanel;
+
+  /// 官方播放页双击 = 点赞（`lh3.a.onDoubleTap`）；由 feed 宿主接本地
+  /// DiggStore。null 时双击只有心形动效。
+  final VoidCallback? onDoubleTapLike;
+
   const PlayerPage({
     super.key,
     required this.bookId,
@@ -44,6 +53,8 @@ class PlayerPage extends StatefulWidget {
     this.playerFactory,
     this.historyStore,
     this.loadDiagnostics,
+    this.launchCatalogPanel = false,
+    this.onDoubleTapLike,
   });
 
   @override
@@ -73,6 +84,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Timer? _prefetchTimer;
   int? _prefetchQueuedGeneration;
   int? _prefetchAttemptedGeneration;
+
+  /// 当前集播完且不自动连播：显示官方 `BottomContainer` 的
+  /// 「上滑继续观看短剧」底条（有下一集才显示）。
+  bool _episodeEndedWaiting = false;
+
+  /// 「左右滑动可调整进度」首次引导（每台设备一次，`of3/a`）。
+  bool _seekHintVisible = false;
+  Timer? _seekHintTimer;
 
   late String _description;
   late bool _descriptionLoaded;
@@ -104,6 +123,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _description = widget.description ?? '';
     _descriptionLoaded = widget.description != null;
     _autoAdvanceReady = _loadAutoAdvance();
+    // 「左右滑动可调整进度」每台设备一次（`of3/a`）。只在 store 已初始化时
+    // 判定，测试里未打开的 box 不显示；横滑或超时后写回并隐藏。
+    if (SwipeGuideStore.instance.ready &&
+        !SwipeGuideStore.instance.seekHintShown) {
+      _seekHintVisible = true;
+      _seekHintTimer = Timer(const Duration(seconds: 5), _consumeSeekHint);
+    }
     _diagnostics = widget.loadDiagnostics ?? PlayerLoadDiagnostics();
     _sources = EpisodeSourceCache(
       loader: (episode) async => EpisodeSource.fromResponse(
@@ -128,6 +154,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(NativePlayer.setKeepScreenOn(false).catchError((Object _) {}));
     _progressTimer?.cancel();
     _prefetchTimer?.cancel();
+    _seekHintTimer?.cancel();
     _sources.dispose();
     _loadTrace?.finish('disposed');
     ++_loadGeneration;
@@ -202,6 +229,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
       }),
     );
+  }
+
+  /// 首次横滑或超时后收起引导并写回「已显示」（chrome 在
+  /// `_startDragSeek`/`_endDragSeek` 里回调）。
+  void _consumeSeekHint() {
+    _seekHintTimer?.cancel();
+    _seekHintTimer = null;
+    if (!_seekHintVisible) return;
+    setState(() => _seekHintVisible = false);
+    unawaited(SwipeGuideStore.instance.markSeekHintShown());
   }
 
   Future<bool> _waitForPaging(int generation, [NativePlayer? player]) async {
@@ -524,6 +561,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         if (!completed) {
           _pendingCompletion = null;
+          // 播放器从播完态回到非播完态（拖回/重播）即收起底条。
+          if (_episodeEndedWaiting) setState(() => _episodeEndedWaiting = false);
           return;
         }
         // Completion must persist even when there is no next episode or a
@@ -532,6 +571,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         unawaited(_persistProgress());
         if (!_autoAdvance) {
           _pendingCompletion = null;
+          // 官方 BottomContainer（`cia.xml`）：本集播完、不自动连播且还有
+          // 下一集时，底部出「上滑继续观看短剧」；切集成功后复位。
+          if (_index + 1 < widget.eps.length && !_episodeEndedWaiting) {
+            setState(() => _episodeEndedWaiting = true);
+          }
           return;
         }
         if (_paging) {
@@ -610,7 +654,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             (!_autoAdvance || !_current(expectedGeneration)))) {
       return Future<void>.value();
     }
-    setState(() => _index = index);
+    setState(() {
+      _index = index;
+      _episodeEndedWaiting = false;
+    });
     // _loadVideo invalidates prior work synchronously; no network or history
     // operation may delay recording the user's newest target.
     return _loadVideo();
@@ -658,6 +705,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     playing: _playing,
     autoAdvance: _autoAdvance,
     onAutoAdvanceChanged: _setAutoAdvance,
+    launchCatalogPanel: widget.launchCatalogPanel,
+    onDoubleTapLike: widget.onDoubleTapLike,
+    showSeekHint: _seekHintVisible,
+    onSeekHintConsumed: _consumeSeekHint,
+    episodeEndedWaiting: _episodeEndedWaiting,
     coverUrl: ApiClient.instance.absoluteUrl(widget.cover),
     enabled:
         _player != null &&
