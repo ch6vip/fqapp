@@ -112,7 +112,11 @@ class MediaItem {
         ? 'audio'
         : 'book';
 
-    final seriesKeys = <String>['pseries_id', 'series_id'];
+    // `series_id_str` first: the numeric `series_id` of the 短剧 template cells is
+    // shipped as a JSON double and is already truncated upstream
+    // (`…880000` vs the exact `…880409`), so the string form is the only usable
+    // identifier for the series detail / episode lookups.
+    final seriesKeys = <String>['series_id_str', 'pseries_id', 'series_id'];
     // A search cell can wrap episodes in video_data and expose the series
     // identifier only as its book_id. A standalone video result should keep
     // its video_id instead, because that is what /api/content accepts.
@@ -135,6 +139,7 @@ class MediaItem {
 
     final idKeys = switch (kind) {
       'video' || 'manju' => [
+        'series_id_str',
         'video_id',
         'vid',
         'pseries_id',
@@ -180,13 +185,19 @@ class MediaItem {
       tag: MediaTag.fromRaw(tagInfo),
       title:
           highlightTitle ??
-          _firstString(item, ['title', 'name', 'raw_book_name']) ??
+          _firstString(item, ['series_title', 'title', 'name', 'raw_book_name']) ??
           _firstString(bd, ['title', 'name', 'raw_book_name', 'book_name']) ??
           _firstString(item, ['book_name']) ??
           _firstString(item, ['cell_name']) ??
           '未知',
       cover:
-          _firstString(item, ['thumb_url', 'cover', 'cover_url', 'poster']) ??
+          _firstString(item, [
+            'series_cover',
+            'thumb_url',
+            'cover',
+            'cover_url',
+            'poster',
+          ]) ??
           _firstString(bd, ['thumb_url', 'cover', 'cover_url', 'poster']) ??
           '',
       author:
@@ -954,7 +965,13 @@ List<MediaItem> parseMediaItems(Map<String, dynamic> payload, {String? kind}) {
     if (videoData is Iterable && videoData.isNotEmpty) {
       for (final child in videoData) {
         if (child is Map) {
+          // 短剧的模板卡（`show_type=407`）把标题/封面/简介放在更深一层的
+          // `video_data[].video_detail`（`series_title`/`series_cover`/`series_intro`），
+          // 扁平卡则直接放在 `video_data[]` 上。这里把 detail 也提上来，让
+          // `MediaItem.fromRaw` 只在一个平面里找字段。
+          final detail = child['video_detail'];
           final merged = Map<String, dynamic>.from(map)
+            ..addAll(detail is Map ? Map<String, dynamic>.from(detail) : const {})
             ..addAll(Map<String, dynamic>.from(child));
           add(merged);
         }
@@ -979,6 +996,9 @@ List<MediaItem> parseMediaItems(Map<String, dynamic> payload, {String? kind}) {
     for (final key in [
       'tab_item',
       'cell_data',
+      // 官方短剧 feed 的第二段（`bookapi/bookmall/cell/change`）把卡片放在
+      // `data.cell_view.cell_data[]` 里，比书城那层多包一个 `cell_view`。
+      'cell_view',
       'book_data',
       'search_tabs',
       'data',

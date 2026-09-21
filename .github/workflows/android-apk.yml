@@ -34,7 +34,7 @@ env:
   # The app-compatibility patch was retired once its changes landed in the
   # backend history (ch6vip/ branch fqapp-android); see
   # patches//README.md for the dependency and Web business-error patches.
-  LEGACY_COMMIT: '03030d488f3e2b0146c5225eaf790a453f62ccab'
+  LEGACY_COMMIT: '947eafe28555b998a0f5b3501c57c1604592c5d0'
   FLUTTER_VERSION: '3.44.6'
   GO_VERSION: '1.26.7'
   NDK_VERSION: '28.2.13676358'

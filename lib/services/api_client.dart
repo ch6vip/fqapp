@@ -55,6 +55,12 @@ class ApiClient {
   // setup and TIME_WAIT churn.
   final http.Client _client;
 
+  /// 视频 tab（短剧 feed）的 cell id，按 tab_type 缓存：官方第二段
+  /// `bookmall/cell/change` 必须带这个 tab 的 cell，而它只出现在第一段的响应里。
+  /// 每个 tab 一个值，几天内都不会变；取不到时按老路径走，所以缓存过期只会
+  /// 退化成第一段的结果。
+  final Map<int, String> _seriesCellIds = {};
+
   /// Timeout applied to every backend request. The backend runs locally, so a
   /// healthy call returns in well under this; a hung child process or a stuck
   /// upstream request must not leave a page spinning forever.
@@ -810,15 +816,37 @@ class ApiClient {
 
   /// Homepage variant that combines envelope decoding, recursive card
   /// extraction and cursor scanning in a single isolate hop.
+  ///
+  /// 官方短剧 feed 是**两段**：`/reading/bookapi/bookmall/tab` 只给出这个 tab 的
+  /// cell（`cell_id_str`）和 session，视频流本身由
+  /// `/reading/bookapi/bookmall/cell/change` 返回
+  /// （`com/dragon/read/shortvideo/common/c.java`）。所以视频 tab 在第一段之后
+  /// 追加第二段；第二段拿不到就退回第一段的结果，老后端没有第二段时行为不变。
   Future<HomepagePage> homepagePage({
     int tabType = 2,
     int offset = 0,
     String? sessionId,
   }) async {
+    // 翻页时第一段只是用来开 cell 的：它的游标和视频流不是一回事，而且把第二段
+    // 的 session 再传给 tab 接口会被上游拒掉（客户端表现为 SERVICE_ERROR）。所以
+    // 已经知道 cell 的翻页直接打第二段。
+    final cachedCellId = _seriesCellIds[tabType];
+    if (offset > 0 &&
+        cachedCellId != null &&
+        cachedCellId.isNotEmpty &&
+        _seriesFlowTabs.contains(tabType)) {
+      final flow = await _seriesFlowPage(
+        tabType: tabType,
+        cellId: cachedCellId,
+        offset: offset,
+        sessionId: sessionId,
+      );
+      if (flow != null) return flow;
+    }
     final r = await _get(_homepageUrl(tabType, offset, sessionId));
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
-    return Isolate.run(() {
+    final tab = await Isolate.run(() {
       final payload = _decodeEnvelope(statusCode, bodyBytes);
       int? nextOffset;
       String? nextSessionId;
@@ -850,13 +878,107 @@ class ApiClient {
         selectedPayload,
         kind: tabType == 24 ? 'manju' : null,
       );
-      return HomepagePage(
-        items: items,
-        nextOffset: nextOffset,
-        sessionId: nextSessionId,
+      return (
+        page: HomepagePage(
+          items: items,
+          nextOffset: nextOffset,
+          sessionId: nextSessionId,
+        ),
+        // 数字型 `cell_id` 在 JSON 里是 double，会被精度截断成上游认不出的值，
+        // 必须取 `cell_id_str`。
+        cellId: _firstStringField(payload, 'cell_id_str'),
       );
     });
+    if (!_seriesFlowTabs.contains(tabType)) return tab.page;
+    // 翻页时上面已经拿第二段试过一次（同一个参数），失败就别再打一遍。
+    if (offset > 0 && cachedCellId != null && cachedCellId.isNotEmpty) {
+      return tab.page;
+    }
+    final cellId = tab.cellId ?? _seriesCellIds[tabType];
+    if (cellId == null || cellId.isEmpty) return tab.page;
+    _seriesCellIds[tabType] = cellId;
+    final flow = await _seriesFlowPage(
+      tabType: tabType,
+      cellId: cellId,
+      offset: offset,
+      // 第一段刚开的 session 一并带上：后端据此把第二段钉在同一台设备上
+      // （上游否则回 101116）。
+      sessionId: sessionId ?? tab.page.sessionId,
+    );
+    return flow ?? tab.page;
   }
+
+  /// 走官方第二段（`bookmall/cell/change`）拉视频流；任何失败都返回 null，
+  /// 由调用方退回第一段。
+  Future<HomepagePage?> _seriesFlowPage({
+    required int tabType,
+    required String cellId,
+    required int offset,
+    String? sessionId,
+  }) async {
+    try {
+      final url = _seriesFlowUrl(
+        tabType: tabType,
+        cellId: cellId,
+        offset: offset,
+        sessionId: sessionId,
+      );
+      final r = await _get(url);
+      final statusCode = r.statusCode;
+      final bodyBytes = r.bodyBytes;
+      return await Isolate.run(() {
+        final payload = _decodeEnvelope(statusCode, bodyBytes);
+        final items = parseMediaItems(
+          payload,
+          kind: tabType == 24 ? 'manju' : 'video',
+        );
+        if (items.isEmpty) return null;
+        int? nextOffset;
+        String? nextSessionId;
+        final data = payload['data'];
+        if (data is Map) {
+          final candidate = data['next_offset'];
+          if (candidate is num && candidate.toInt() > offset) {
+            nextOffset = candidate.toInt();
+          }
+          final candidateSession = data['session_id'];
+          if (candidateSession is String && candidateSession.isNotEmpty) {
+            nextSessionId = candidateSession;
+          }
+        }
+        return HomepagePage(
+          items: items,
+          nextOffset: nextOffset,
+          sessionId: nextSessionId,
+        );
+      });
+    } catch (error) {
+      // 第二段是可选增强：失败就退回第一段。但静默吞掉异常会让「为什么没生效」
+      // 变成谜案，所以测试里把它打出来（release 由 assert 去掉）。
+      assert(() {
+        // ignore: avoid_print
+        print('[series-feed] failed: $error');
+        return true;
+      }());
+      return null;
+    }
+  }
+
+  String _seriesFlowUrl({
+    required int tabType,
+    required String cellId,
+    required int offset,
+    String? sessionId,
+  }) => _url('/api/v1/recommend/series-feed', {
+    'cell_id': cellId,
+    'tab_type': '$tabType',
+    'client_template': '2',
+    'client_req_type': '2',
+    'offset': '$offset',
+    // 首屏 ChangeFilter(2)，翻页 GetMore(1)：官方 `c.java` 的 q()/m() 两个分支。
+    'unlimited_selector_change_type': offset > 0 ? '1' : '2',
+    if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
+  });
 
   String _homepageUrl(int tabType, int offset, String? sessionId) =>
       _url('/api/v1/recommend/homepage', {
@@ -958,3 +1080,34 @@ class ApiException implements Exception {
   @override
   String toString() => message;
 }
+
+/// 递归找第一个非空的字符串字段。官方 feed 的 cell id 藏在深层 cell 里，且
+/// 数字写法会丢精度，只能按名字取字符串值。
+String? _firstStringField(dynamic node, String key, [int depth = 0]) {
+  if (depth > 16 || node == null) return null;
+  if (node is Iterable) {
+    for (final child in node) {
+      final found = _firstStringField(child, key, depth + 1);
+      if (found != null) return found;
+    }
+    return null;
+  }
+  if (node is! Map) return null;
+  final value = node[key];
+  if (value is String && value.isNotEmpty) return value;
+  if (value != null && value is num) return value.toString();
+  for (final child in node.values) {
+    final found = _firstStringField(child, key, depth + 1);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+/// 短剧 feed 里走官方第二段（`bookmall/cell/change`）的频道：推荐 16 / 看剧 8 / 漫剧 24。
+///
+/// 推荐频道尤其需要第二段：第一段只回 2 张卡且没有翻页游标，第二段回 5 张并给出游标
+/// （实测 `series_title`/`video_data` 计数 2→5）。它的卡是模板卡（`show_type=407`），
+/// 标题/封面走 `series_title`/`series_cover` 而不是 `title`/`cover`，且精确的系列 id
+/// 在 `series_id_str`（数字型 `series_id` 已被上游截断）—— 这三处映射在
+/// `models/media_item.dart` 的 `MediaItem.fromRaw` 里处理。
+const _seriesFlowTabs = {8, 16, 24};
