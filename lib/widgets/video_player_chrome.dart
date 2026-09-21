@@ -1113,6 +1113,59 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     ),
                   ),
                 ),
+              // 官方播放页底部 CTA 文字栏（`cjw.xml`，注入 `apf.xml d99` 槽）：
+              // 36dp、左 16 / 右 110（给右栏让位）、#33FFFFFF 圆角 8、14sp 粗体
+              // 白字「观看完整短剧」（`@string/dw8`）+ 官方 8×16dp 白色右箭头
+              // （`djz`，原样抽出的 webp）。官方由服务端 `SaaSVideoBottomBar`
+              // （type=album + schema）下发触发，本仓库无该配置，退化为本地
+              // 规则：控制条隐藏的观看中显示，点击打开选集面板（schema 跳转
+              // 的等价物）。与播完底条（`cia.xml`，同一 d99 槽的另一内容）互斥。
+              if (_ready &&
+                  !controls &&
+                  unobstructed &&
+                  !_seeking &&
+                  !_locked &&
+                  !landscape &&
+                  !widget.episodeEndedWaiting &&
+                  widget.episodes.length > 1)
+                Positioned(
+                  left: insets.left + 16,
+                  right: insets.right + 110,
+                  bottom: insets.bottom,
+                  height: 36,
+                  child: GestureDetector(
+                    key: const ValueKey('player-cta-bar'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _openPanel(1),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0x33FFFFFF),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              '观看完整短剧',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            Image.asset(
+                              'assets/images/drama/cta_arrow.webp',
+                              width: 8,
+                              height: 16,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               if (controls) ...[
                 _topBar(insets),
                 if (!landscape) _rightBar(insets),

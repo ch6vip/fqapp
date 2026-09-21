@@ -123,6 +123,27 @@ void main() {
   });
 
   testWidgets(
+    'the official bottom CTA bar appears with controls hidden and opens the catalog',
+    (tester) async {
+      // 官方 cjw.xml（d99 槽注入）：控制条隐藏的观看中出「观看完整短剧」
+      // CTA 条，点击进选集面板（官方 schema 跳转的等价物）。
+      final player = FakeNativePlayer()..isPlaying = true;
+      final selected = <int>[];
+      await tester.pumpWidget(_app(player, selected: selected));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('player-cta-bar')), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.byKey(const ValueKey('player-cta-bar')), findsOneWidget);
+      expect(find.text('观看完整短剧'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('player-cta-bar')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('story-episode-0')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    },
+  );
+
+  testWidgets(
     'episodeEndedWaiting shows the official bottom bar with the right copy',
     (tester) async {
       // 官方 `BottomContainer`（`cia.xml`）：有下一集是「上滑继续观看短剧」，
