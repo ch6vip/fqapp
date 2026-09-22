@@ -74,6 +74,7 @@ class SeriesDetail {
     this.playCount = 0,
     this.followerCount = 0,
     this.categories = const [],
+    this.originalBook,
   });
 
   static const empty = SeriesDetail();
@@ -92,6 +93,10 @@ class SeriesDetail {
   final int playCount;
   final int followerCount;
   final List<String> categories;
+
+  /// 原著书卡（官方播放页底部 `BottomRelateBookView`，数据在
+  /// `video_relate_book.book_info`）。剧无原著关联时为 null。
+  final SeriesRelateBook? originalBook;
 
   bool get isEmpty => title.isEmpty && cast.isEmpty;
 
@@ -121,8 +126,40 @@ class SeriesDetail {
       playCount: _int(video['series_play_cnt']),
       followerCount: _int(video['followed_cnt']),
       categories: _categoryNames(video['category_schema']),
+      originalBook: _relateBook(data['video_relate_book']),
     );
   }
+}
+
+/// `video_relate_book.book_info`（官方 `SaasBookInfo`：book_id/book_name/
+/// creation_status/thumb_url…）。
+class SeriesRelateBook {
+  const SeriesRelateBook({
+    this.id = '',
+    this.title = '',
+    this.cover = '',
+    this.status = '',
+  });
+
+  final String id;
+  final String title;
+  final String cover;
+  final String status;
+}
+
+SeriesRelateBook? _relateBook(dynamic raw) {
+  if (raw is! Map) return null;
+  final info = raw['book_info'];
+  if (info is! Map) return null;
+  final id = _string(info['book_id']);
+  final title = _string(info['book_name']);
+  if (id.isEmpty || title.isEmpty) return null;
+  return SeriesRelateBook(
+    id: id,
+    title: title,
+    cover: _string(info['thumb_url']),
+    status: _string(info['creation_status']),
+  );
 }
 
 List<CastMember> _castList(dynamic raw) {

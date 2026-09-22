@@ -67,6 +67,36 @@ void main() {
       expect(series.playCount, 19483737);
       expect(series.playLabel, '1948.4万');
       expect(series.categories, ['爱情']);
+      expect(series.originalBook, isNull);
+    });
+
+    test('reads the original book from video_relate_book', () {
+      // 官方播放页原著卡（`BottomRelateBookView`）的数据源：
+      // `data.video_relate_book.book_info`，真实值见对照文档 §29。
+      final payload = _payload();
+      (payload['data'] as Map)['video_relate_book'] = {
+        'book_info': {
+          'book_id': '7423976172309974040',
+          'book_name': '从宿舍逃杀开始斩尽幽诡邪神',
+          'book_type': 0,
+          'creation_status': '1',
+          'thumb_url': 'https://example.test/book.heic',
+        },
+      };
+      final book = SeriesDetail.fromPayload(payload).originalBook;
+      expect(book, isNotNull);
+      expect(book!.id, '7423976172309974040');
+      expect(book.title, '从宿舍逃杀开始斩尽幽诡邪神');
+      expect(book.cover, 'https://example.test/book.heic');
+      expect(book.status, '1');
+    });
+
+    test('original book is null without book_info', () {
+      final payload = _payload();
+      (payload['data'] as Map)['video_relate_book'] = {
+        'ShowTag': 'not-a-book-info',
+      };
+      expect(SeriesDetail.fromPayload(payload).originalBook, isNull);
     });
 
     test(

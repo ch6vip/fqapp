@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/audio_extra.dart' show RelatedWork;
 import '../models/media_item.dart';
+import '../models/series_detail.dart';
 import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
 import '../services/episode_source_cache.dart';
@@ -34,7 +35,6 @@ class PlayerPage extends StatefulWidget {
   /// 底部 band 装饰数据的可注入 loader（默认走 ApiClient，均为
   /// best-effort：失败就缺省，不打扰播放）。测试注入用。
   final Future<BookDetail> Function(String bookId)? detailLoader;
-  final Future<List<RelatedWork>> Function(String bookId)? relatedLoader;
 
   /// 官方短剧播放页形态（`apf.xml`）：竖屏无运输条、单击=播放/暂停。
   /// 详情页的电影/电视剧走通用形态（默认 false）。
@@ -60,7 +60,6 @@ class PlayerPage extends StatefulWidget {
     this.historyStore,
     this.loadDiagnostics,
     this.detailLoader,
-    this.relatedLoader,
     this.shortSeries = false,
     this.followerCount = 0,
     this.aiGenerated = false,
@@ -155,8 +154,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// 完结状态（`book_detail.creation_status`：0=已完结、1=连载中）与原著
-  /// 书卡（`/related` 里 kind=book 的关联）。两请求都自吞异常——band 是
-  /// 装饰，接口再差也不能影响播放。
+  /// 书卡。书卡走 `seriesDetail` 的 `video_relate_book`（官方播放页
+  /// `BottomRelateBookView` 同源；`/related` 推荐接口对剧只回关联视频）。
+  /// 请求都自吞异常——band 是装饰，接口再差也不能影响播放。
   Future<void> _loadBandExtras() async {
     final detail = await (widget.detailLoader?.call(widget.bookId) ??
             ApiClient.instance.bookDetail(widget.bookId))
@@ -170,14 +170,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         };
       });
     }
-    final related = await (widget.relatedLoader?.call(widget.bookId) ??
-            ApiClient.instance.relatedWorks(widget.bookId))
-        .catchError((Object _) => const <RelatedWork>[]);
-    for (final work in related) {
-      if (work.kind == 'book' && work.title.isNotEmpty) {
-        if (mounted) setState(() => _originalBook = work);
-        return;
-      }
+    final series = await ApiClient.instance
+        .seriesDetail(widget.bookId)
+        .catchError((Object _) => SeriesDetail.empty);
+    final book = series.originalBook;
+    if (mounted && book != null) {
+      setState(() {
+        _originalBook = RelatedWork(
+          kind: 'book',
+          id: book.id,
+          title: book.title,
+          cover: book.cover,
+          label: '原著小说',
+        );
+      });
     }
   }
 
