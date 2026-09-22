@@ -1031,7 +1031,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   ),
                 ),
               if (controls) ...[
-                _topBar(insets),
+                _topBar(insets, landscape: landscape),
                 if (!landscape) _rightBar(insets),
               ],
               // 信息层/选集胶囊压在进度条与画面之上，但必须保持transport在
@@ -1245,7 +1245,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     },
   );
 
-  Widget _topBar(EdgeInsets insets) => Positioned(
+  Widget _topBar(EdgeInsets insets, {required bool landscape}) => Positioned(
     left: insets.left,
     right: insets.right,
     top: 0,
@@ -1274,8 +1274,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             Expanded(
               child: Text(
                 // 官方播放页顶栏标题就是「第1集」这样的集数（截图），
-                // 剧名在底部信息层。
-                '第${widget.currentIndex + 1}集',
+                // 剧名在底部信息层；横屏顶栏是「剧名 第1集」（官方横屏
+                // 截图第二十三轮），剧名与集数同行、剧名加粗。
+                landscape
+                    ? '$_seriesTitle 第${widget.currentIndex + 1}集'
+                    : '第${widget.currentIndex + 1}集',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -1731,27 +1734,26 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     ),
   );
 
-  /// 官方横屏底条（批次四，第二十一轮）。形态 = `c0i.xml` 的控制行 +
-  /// `cw7.xml` 的进度块，压在 130dp 渐变（`f0h`/`f6m`：透明 → `#7F000000`）上：
-  ///
-  /// - 控制行（`g67`：40dp 高、宽 78% 居中）：播放/暂停 32dp（`btu/btv`）→
-  ///   12dp → 下一集 32dp（`btt`，仅集数>1，最后一集 toast「当前已在最后一集」
-  ///   `dxx`，`a.java:963-976`）；右端倍速文本（14sp bold，`dh5`，`b2()`：
-  ///   1.0 显示「倍速」否则「1.5x」）与选集（`full_screen_episode`，仅集数>1）。
-  /// - 进度块（`cw7`）：居中时间行 18sp bold「当前 / 总」（`i52`，`/`=`f10`、
-  ///   总时长与分隔符 `@color/a0`=#80ffffff）→ 24dp → 进度条（左右 20dp、
-  ///   轨道 4dip `abt`、滑块 16dip `ah6`）。
-  ///
-  /// 有意偏差：时间文案用共享格式器（分位可越过 60，如 `75:30`）；官方
-  /// `d7.o` 小时位为 0 时同为 `mm:ss`，仅 ≥1h 的剧写法不同（短剧集长不触发）。
-  /// 通用运输条的 prev/±10/全屏钮官方横屏没有，全部不出现。
+  /// 官方横屏底条（官方截图第二十三轮，真实 app 形态，替代第二十一轮按
+  /// `c0i/cw7` 取证的单行布局）：130dp 渐变上两行——
+  /// - 控制行：播放/暂停 32dp（`btu/btv`）→ 下一集 32dp（仅集数>1）→
+  ///   当前时长（拖动中实时）→ 橙色进度条（轨道 4/滑块 16）→ 总时长；
+  ///   时长恒 `HH:MM:SS`（`o2()` → `d7.o(sec, true)`，截图 00:00:02/00:02:05）。
+  /// - 功能行：点赞（无计数数据源，只显示图标）、追剧+计数
+  ///   （`followed_cnt` → formatCounter）｜倍速文本、选集（仅集数>1）。
+  /// 官方该行还有评论计数、弹幕开关+弹幕输入框、720P 清晰度——均无数据
+  /// 源，不显示（诚实清单）。
   Widget _landscapeBar(EdgeInsets insets) => Positioned(
     left: 0,
     right: 0,
     bottom: 0,
     child: Container(
       height: insets.bottom + 130,
-      padding: EdgeInsets.only(bottom: insets.bottom),
+      padding: EdgeInsets.only(
+        bottom: insets.bottom,
+        left: insets.left + 16,
+        right: insets.right + 16,
+      ),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -1762,116 +1764,149 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          // 控制行：宽 78% 居中（`g67` constraintWidth_percent 0.78）。
-          Center(
-            child: FractionallySizedBox(
-              widthFactor: 0.78,
-              child: SizedBox(
-                height: 40,
-                child: Row(
-                  children: [
-                    _landIconButton(
-                      'landscape-play',
-                      _playbackRequested
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      _playbackRequested ? '暂停' : '播放',
-                      _togglePlayback,
-                    ),
-                    const SizedBox(width: 12),
-                    if (widget.episodes.length > 1)
-                      _landIconButton(
-                        'landscape-next',
-                        Icons.skip_next_rounded,
-                        '下一集',
-                        _nextEpisodeOrToast,
-                      ),
-                    const Spacer(),
-                    _landText(
-                      'landscape-rate',
-                      _rateText(_rate),
-                      _showRates,
-                    ),
-                    const SizedBox(width: 16),
-                    if (widget.episodes.length > 1)
-                      _landText('landscape-episodes', '选集', _openPanel),
-                  ],
+          SizedBox(
+            height: 40,
+            child: Row(
+              children: [
+                _landIconButton(
+                  'landscape-play',
+                  _playbackRequested
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  _playbackRequested ? '暂停' : '播放',
+                  _togglePlayback,
                 ),
-              ),
-            ),
-          ),
-          // 时间行（`cw7 i52`）：18sp bold 居中「当前 / 总」。
-          Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: ListenableBuilder(
-              listenable: _timeline,
-              builder: (context, _) {
-                final duration = widget.duration;
-                final shown =
-                    _seekValue.value != null && duration > Duration.zero
-                    ? Duration(
-                        milliseconds:
-                            (_seekValue.value! *
-                                duration.inMilliseconds)
+                const SizedBox(width: 12),
+                if (widget.episodes.length > 1)
+                  _landIconButton(
+                    'landscape-next',
+                    Icons.skip_next_rounded,
+                    '下一集',
+                    _nextEpisodeOrToast,
+                  ),
+                const SizedBox(width: 16),
+                ListenableBuilder(
+                  listenable: _timeline,
+                  builder: (context, _) {
+                    final duration = widget.duration;
+                    final shown =
+                        _seekValue.value != null && duration > Duration.zero
+                        ? Duration(
+                            milliseconds:
+                                (_seekValue.value! * duration.inMilliseconds)
                                     .round(),
-                      )
-                    : _position.value;
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
+                          )
+                        : _position.value;
+                    return Text(
                       key: const ValueKey('landscape-time'),
-                      _time(shown),
+                      _hms(shown),
                       style: const TextStyle(
-                        fontSize: 18,
+                        fontSize: 14,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
+                        shadows: [_landShadow],
                       ),
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 6),
-                      child: Text(
-                        '/',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0x80FFFFFF),
-                        ),
-                      ),
-                    ),
-                    Text(
-                      _time(duration),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0x80FFFFFF),
-                      ),
-                    ),
-                  ],
-                );
-              },
+                    );
+                  },
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: StorySeekBar(
+                    key: const ValueKey('landscape-seek'),
+                    value: _progressValue,
+                    enabled: widget.duration > Duration.zero,
+                    seeking: _seeking,
+                    onStart: _startSeek,
+                    onChanged: (value) => _seekValue.value = value,
+                    onEnd: (value) => unawaited(_finishSeek(value)),
+                    onCancel: _cancelSeek,
+                    trackWidth: 4,
+                    thumbRadius: 8,
+                    progressColor: const Color(0xFFFA6725),
+                    trackColor: const Color(0x4DFFFFFF),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  key: const ValueKey('landscape-total-time'),
+                  _hms(widget.duration),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    shadows: [_landShadow],
+                  ),
+                ),
+              ],
             ),
           ),
-          // 进度条（`cw7 h0a`）：左右 20dp、轨道 4dip、滑块 16dip。
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: StorySeekBar(
-              key: const ValueKey('landscape-seek'),
-              value: _progressValue,
-              enabled: widget.duration > Duration.zero,
-              seeking: _seeking,
-              onStart: _startSeek,
-              onChanged: (value) => _seekValue.value = value,
-              onEnd: (value) => unawaited(_finishSeek(value)),
-              onCancel: _cancelSeek,
-              trackWidth: 4,
-              thumbRadius: 8,
-              progressColor: const Color(0xFFFA6725),
-              trackColor: const Color(0x4DFFFFFF),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 40,
+            child: Row(
+              children: [
+                _landRailItem(
+                  'landscape-like',
+                  Icons.favorite_rounded,
+                  null,
+                  widget.onLike,
+                ),
+                const SizedBox(width: 20),
+                _landRailItem(
+                  'landscape-follow',
+                  Icons.star_rounded,
+                  widget.followerLabel ?? '追剧',
+                  widget.onFollow,
+                ),
+                const Spacer(),
+                _landText('landscape-rate', _rateText(_rate), _showRates),
+                const SizedBox(width: 24),
+                if (widget.episodes.length > 1)
+                  _landText('landscape-episodes', '选集', _openPanel),
+              ],
             ),
           ),
         ],
       ),
+    ),
+  );
+
+  /// 官方横屏时长格式（`o2()` → `d7.o(sec, true)`）：恒 `HH:MM:SS`，
+  /// 与共享的 `mm:ss` 格式器（音频页同源）分开。
+  String _hms(Duration value) {
+    final seconds = value.inSeconds.clamp(0, 0x7fffffff);
+    String p(int v) => v.toString().padLeft(2, '0');
+    return '${p(seconds ~/ 3600)}:${p((seconds % 3600) ~/ 60)}:${p(seconds % 60)}';
+  }
+
+  /// 横屏功能行的追剧/点赞项（官方截图：图标 + 下方计数）。计数由宿主给
+  /// （追剧 = followed_cnt；点赞/评论无数据源，只出图标或不出）。
+  Widget _landRailItem(
+    String key,
+    IconData icon,
+    String? label,
+    VoidCallback? onTap,
+  ) => GestureDetector(
+    key: ValueKey(key),
+    behavior: HitTestBehavior.opaque,
+    onTap: onTap,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 22, color: Colors.white, shadows: const [_landShadow]),
+        if (label != null)
+          Text(
+            label,
+            maxLines: 1,
+            style: const TextStyle(
+              fontSize: 11,
+              height: 1.2,
+              color: Colors.white,
+              shadows: [_landShadow],
+            ),
+          ),
+      ],
     ),
   );
 

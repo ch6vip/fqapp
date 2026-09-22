@@ -108,10 +108,16 @@ void main() {
     expect(find.byKey(const ValueKey('landscape-episodes')), findsOneWidget);
     // setUp 的 mock 偏好是 1.5 → 官方倍速文案「1.5x」（`b2()`）。
     expect(find.text('1.5x'), findsOneWidget);
-    // 时间行（`cw7 i52`）：「当前 / 总」，分隔符就是一根斜杠。
+    // 时间行（官方横屏截图）：控制行内「当前 / 总」，恒 HH:MM:SS
+    // （`d7.o(sec, true)`）；fake 初始 20 秒、时长 2 分钟。
     expect(find.byKey(const ValueKey('landscape-time')), findsOneWidget);
-    expect(find.text('/'), findsOneWidget);
+    expect(find.text('00:00:20'), findsOneWidget);
+    expect(find.text('00:02:00'), findsOneWidget);
     expect(find.byKey(const ValueKey('landscape-seek')), findsOneWidget);
+    // 功能行：追剧（图标+计数，无数据时「追剧」）；点赞无计数只出图标。
+    expect(find.byKey(const ValueKey('landscape-follow')), findsOneWidget);
+    expect(find.text('追剧'), findsOneWidget);
+    expect(find.byKey(const ValueKey('landscape-like')), findsOneWidget);
     // 下一集 → 切到第二集（`a.java:963-976` 的 setCurrentItem 语义）。
     await tester.tap(find.byKey(const ValueKey('landscape-next')));
     await tester.pump();
