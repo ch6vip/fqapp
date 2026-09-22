@@ -15,7 +15,7 @@ import '../services/player_history.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
 import '../services/swipe_guide_store.dart';
-import '../models/book_detail.dart' show BookDetail, formatCounter;
+import '../models/book_detail.dart' show formatCounter;
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
@@ -32,9 +32,9 @@ class PlayerPage extends StatefulWidget {
   final ReaderStore? historyStore;
   final PlayerLoadDiagnostics? loadDiagnostics;
 
-  /// 底部 band 装饰数据的可注入 loader（默认走 ApiClient，均为
-  /// best-effort：失败就缺省，不打扰播放）。测试注入用。
-  final Future<BookDetail> Function(String bookId)? detailLoader;
+  /// 底部 band 装饰数据的可注入 loader（默认走 ApiClient，best-effort：
+  /// 失败就缺省，不打扰播放）。测试注入用。
+  final Future<SeriesDetail> Function(String bookId)? seriesLoader;
 
   /// 官方短剧播放页形态（`apf.xml`）：竖屏无运输条、单击=播放/暂停。
   /// 详情页的电影/电视剧走通用形态（默认 false）。
@@ -59,7 +59,7 @@ class PlayerPage extends StatefulWidget {
     this.playerFactory,
     this.historyStore,
     this.loadDiagnostics,
-    this.detailLoader,
+    this.seriesLoader,
     this.shortSeries = false,
     this.followerCount = 0,
     this.aiGenerated = false,
@@ -153,38 +153,35 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_loadBandExtras());
   }
 
-  /// 完结状态（`book_detail.creation_status`：0=已完结、1=连载中）与原著
-  /// 书卡。书卡走 `seriesDetail` 的 `video_relate_book`（官方播放页
-  /// `BottomRelateBookView` 同源；`/related` 推荐接口对剧只回关联视频）。
-  /// 请求都自吞异常——band 是装饰，接口再差也不能影响播放。
+  /// 底部 band 装饰，一个 `seriesDetail` 请求全出：完结状态
+  /// （`series_status`：官方 `SeriesStatus` 1=已完结/0=更新中/3=今日更新/
+  /// 4=断更）与原著书卡（`video_relate_book`）。自吞异常——band 是装饰，
+  /// 接口再差也不能影响播放。
   Future<void> _loadBandExtras() async {
-    final detail = await (widget.detailLoader?.call(widget.bookId) ??
-            ApiClient.instance.bookDetail(widget.bookId))
-        .catchError((Object _) => const BookDetail());
-    if (mounted) {
-      setState(() {
-        _seriesStatus = switch (detail.creationStatus) {
-          0 => '已完结',
-          1 => '连载中',
-          _ => null,
-        };
-      });
-    }
-    final series = await ApiClient.instance
-        .seriesDetail(widget.bookId)
+    final series = await (widget.seriesLoader?.call(widget.bookId) ??
+            ApiClient.instance.seriesDetail(widget.bookId))
         .catchError((Object _) => SeriesDetail.empty);
+    if (!mounted) return;
+    final status = switch (series.status) {
+      1 => '已完结',
+      0 => '连载中',
+      3 => '今日更新',
+      4 => '断更',
+      _ => null,
+    };
     final book = series.originalBook;
-    if (mounted && book != null) {
-      setState(() {
-        _originalBook = RelatedWork(
-          kind: 'book',
-          id: book.id,
-          title: book.title,
-          cover: book.cover,
-          label: '原著小说',
-        );
-      });
-    }
+    setState(() {
+      _seriesStatus = status;
+      _originalBook = book == null
+          ? null
+          : RelatedWork(
+              kind: 'book',
+              id: book.id,
+              title: book.title,
+              cover: book.cover,
+              label: '原著小说',
+            );
+    });
   }
 
   /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。

@@ -75,6 +75,7 @@ class SeriesDetail {
     this.followerCount = 0,
     this.categories = const [],
     this.originalBook,
+    this.status,
   });
 
   static const empty = SeriesDetail();
@@ -97,6 +98,11 @@ class SeriesDetail {
   /// 原著书卡（官方播放页底部 `BottomRelateBookView`，数据在
   /// `video_relate_book.book_info`）。剧无原著关联时为 null。
   final SeriesRelateBook? originalBook;
+
+  /// `series_status`（官方 `SeriesStatus` 枚举：**1=已完结**、0=更新中、
+  /// 3=今日更新、4=断更——注意与书库 creation_status 的 0=完结/1=连载
+  /// 语义相反）。null = 未知。
+  final int? status;
 
   bool get isEmpty => title.isEmpty && cast.isEmpty;
 
@@ -127,6 +133,9 @@ class SeriesDetail {
       followerCount: _int(video['followed_cnt']),
       categories: _categoryNames(video['category_schema']),
       originalBook: _relateBook(data['video_relate_book']),
+      status: video['series_status'] == null
+          ? null
+          : _int(video['series_status']),
     );
   }
 }

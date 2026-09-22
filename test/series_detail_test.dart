@@ -91,6 +91,16 @@ void main() {
       expect(book.status, '1');
     });
 
+    test('reads the series status (1 = 已完结, official SeriesStatus)', () {
+      // 官方 SeriesStatus：0=更新中、1=已完结、3=今日更新、4=断更——
+      // 与书库 creation_status 的 0=完结/1=连载语义相反（对照文档 §29.6）。
+      final payload = _payload();
+      (payload['data'] as Map)['video_data']['series_status'] = 1;
+      expect(SeriesDetail.fromPayload(payload).status, 1);
+      (payload['data'] as Map)['video_data'].remove('series_status');
+      expect(SeriesDetail.fromPayload(payload).status, isNull);
+    });
+
     test('original book is null without book_info', () {
       final payload = _payload();
       (payload['data'] as Map)['video_relate_book'] = {
