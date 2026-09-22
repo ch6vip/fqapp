@@ -126,6 +126,38 @@ void main() {
     await player.dispose();
   });
 
+  testWidgets('landscape episode panel is the official right drawer', (
+    tester,
+  ) async {
+    // 官方横屏选集 = 右侧深色抽屉（✕头 + 4 列格子），非竖屏的底部
+    // 白色面板（官方截图第二十三轮）。
+    final player = FakeNativePlayer()..isPlaying = true;
+    final selected = <int>[];
+    await tester.pumpWidget(_app(player, shortSeries: true, selected: selected));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('landscape-episodes')));
+    // 200ms 滑入；抽屉里有循环 Lottie，固定时长 pump（勿 settle）。
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.byKey(const ValueKey('story-episode-drawer')), findsOneWidget);
+    expect(find.byKey(const ValueKey('story-episode-0')), findsOneWidget);
+    // 点格子 → 切集 + 关抽屉（220ms 退场后摘除）。
+    await tester.tap(find.byKey(const ValueKey('story-episode-1')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(selected, [1]);
+    expect(find.byKey(const ValueKey('story-episode-drawer')), findsNothing);
+    // 重开 → ✕ 关闭。
+    await tester.tap(find.byKey(const ValueKey('landscape-episodes')));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.byKey(const ValueKey('story-episode-drawer')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('story-drawer-close')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('story-episode-drawer')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
   testWidgets('landscape next on the last episode toasts instead', (
     tester,
   ) async {

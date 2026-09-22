@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive/hive.dart';
 
 import 'package:fqapp/main.dart';
@@ -11,6 +12,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 
@@ -647,6 +649,85 @@ void main() {
     // drain that timer, which would otherwise outlive the test.
     await tester.pump(const Duration(seconds: 25));
     await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    '最近 tab：官方筛选 chips、漫剧角标与已看到第N集',
+    timeout: Timeout(const Duration(minutes: 1)),
+    (tester) async {
+    // 官方截图第二十三轮：chips 行（全部/短剧/漫剧，选中橙字浅橙底）、
+    // 封面左上「漫剧」角标 + 居中半透明 ▶、两行标题、灰字「已看到第N集」。
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    // Hive 是真实文件 IO，必须逃出 FakeAsync 时区（runAsync），否则
+    // await 永不完成——这正是这用例第一次跑挂满 10 分钟的原因。
+    await tester.runAsync(() async {
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final history = await Hive.openBox<dynamic>('history');
+      await history.put('d-video', {
+        'id': 'd-video',
+        'kind': 'video',
+        'title': '全球杀机 作品',
+        'episode': 0,
+        'ep': '82',
+        'time': now,
+      });
+      await history.put('d-manju', {
+        'id': 'd-manju',
+        'kind': 'manju',
+        'title': '仙渊道尘 作品',
+        'episode': 0,
+        'time': now - 1000,
+      });
+      await LibraryStore.instance.init();
+      await SwipeGuideStore.instance.markShown();
+    });
+
+    await tester.pumpWidget(_scope(perTab: 1, child: MaterialApp(home: _Seams().page())));
+    await _flush(tester);
+    await tester.tap(find.text('最近'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('drama_最近_grid')), findsOneWidget);
+    expect(find.text('全部'), findsOneWidget);
+    expect(find.text('已看到第1集'), findsNWidgets(2));
+    // 「漫剧」出现在 chip、封面角标与频道条上，共 3 处。
+    expect(find.text('漫剧'), findsNWidgets(3));
+    expect(find.text('全球杀机 作品'), findsOneWidget);
+
+    // 漫剧 chip（作用域限定在筛选行，避免命中频道条）→ 只剩漫剧卡。
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('drama_recent_filter')),
+        matching: find.text('漫剧'),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('仙渊道尘 作品'), findsOneWidget);
+    expect(find.text('全球杀机 作品'), findsNothing);
+    expect(find.text('已看到第1集'), findsOneWidget);
+
+    // 短剧 chip → 只剩短剧卡；全部 → 两张都回来。
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('drama_recent_filter')),
+        matching: find.text('短剧'),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('全球杀机 作品'), findsOneWidget);
+    expect(find.text('仙渊道尘 作品'), findsNothing);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('drama_recent_filter')),
+        matching: find.text('全部'),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('全球杀机 作品'), findsOneWidget);
+    expect(find.text('仙渊道尘 作品'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -2169,49 +2169,140 @@ class _InlineVideoError extends StatelessWidget {
 /// (`bex.xml`: 7:5 cover, 8dp radius, 14sp single-line title, 9sp corner
 /// tag). Neither may keep the inline player alive. 最近 reads this app's
 /// player history; 收藏 reads the local shelf the 追剧 button writes.
-class _LocalList extends StatelessWidget {
+///
+/// 官方截图第二十三轮：最近 tab 顶部有「全部/短剧/漫剧」筛选 chips（选中
+/// 橙字浅橙底），卡片封面带「漫剧」左上角标与居中半透明 ▶，标题两行，
+/// 下方灰字「已看到第N集」（本仓库取自播放历史的 episode 索引）。「其他
+/// 视频」无数据源、「编辑」多选管理不做。
+class _LocalList extends StatefulWidget {
   final DramaChannel channel;
   final void Function(MediaItem item) onOpen;
 
   const _LocalList({required this.channel, required this.onOpen});
 
   @override
+  State<_LocalList> createState() => _LocalListState();
+}
+
+class _LocalListState extends State<_LocalList> {
+  /// null = 全部；'video' / 'manju' = 官方 chips 的筛选（仅最近 tab 有）。
+  String? _filter;
+
+  @override
   Widget build(BuildContext context) {
+    final fromShelf = widget.channel.source == DramaChannelSource.shelf;
     return ValueListenableBuilder<int>(
       valueListenable: ShelfStore.instance.listenable,
       builder: (context, _, _) => ValueListenableBuilder<Box<dynamic>>(
         valueListenable: LibraryStore.instance.historyListenable,
         builder: (context, _, _) {
-          final fromShelf = channel.source == DramaChannelSource.shelf;
-          final items = fromShelf ? _shelfItems() : _historyItems();
-          if (items.isEmpty) {
-            return _FeedMessage(
-              key: Key('drama_${channel.label}_empty'),
-              message: '暂无符合条件的短剧',
-            );
-          }
+          final entries = fromShelf ? null : _historyEntries();
+          final items = fromShelf ? _shelfItems() : _itemsOf(entries!);
+          final filtered = _filter == null
+              ? items
+              : items.where((item) => item.kind == _filter).toList();
+          final body = filtered.isEmpty
+              ? _FeedMessage(
+                  key: Key('drama_${widget.channel.label}_empty'),
+                  message: '暂无符合条件的短剧',
+                )
+              : GridView.builder(
+                  key: Key('drama_${widget.channel.label}_grid'),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: 0.62,
+                  ),
+                  itemCount: filtered.length,
+                  itemBuilder: (context, index) => _DistributeCard(
+                    key: ValueKey(
+                      'drama_local_${widget.channel.label}_${filtered[index].id}',
+                    ),
+                    item: filtered[index],
+                    subtitle: fromShelf
+                        ? null
+                        : _progressLabel(filtered[index]),
+                    onTap: () => widget.onOpen(filtered[index]),
+                  ),
+                );
           return SafeArea(
-            child: GridView.builder(
-              key: Key('drama_${channel.label}_grid'),
-              padding: const EdgeInsets.fromLTRB(16, 96, 16, 24),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 16,
-                childAspectRatio: 0.72,
-              ),
-              itemCount: items.length,
-              itemBuilder: (context, index) => _DistributeCard(
-                key: ValueKey('drama_local_${channel.label}_${items[index].id}'),
-                item: items[index],
-                onTap: () => onOpen(items[index]),
-              ),
+            child: Column(
+              children: [
+                if (!fromShelf) ...[
+                  // 官方 chips 行：固定在悬浮顶栏之下（grid 的 padding 让位）。
+                  Padding(
+                    key: const Key('drama_recent_filter'),
+                    padding: const EdgeInsets.fromLTRB(16, 96, 16, 8),
+                    child: Row(
+                      children: [
+                        _filterChip(null, '全部'),
+                        const SizedBox(width: 8),
+                        _filterChip('video', '短剧'),
+                        const SizedBox(width: 8),
+                        _filterChip('manju', '漫剧'),
+                      ],
+                    ),
+                  ),
+                ] else
+                  const SizedBox(height: 96),
+                Expanded(child: body),
+              ],
             ),
           );
         },
       ),
     );
   }
+
+  Widget _filterChip(String? kind, String label) {
+    final selected = _filter == kind;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => setState(() => _filter = kind),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: selected ? const Color(0x1AFA6725) : const Color(0x1AFFFFFF),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              color: selected ? const Color(0xFFFA6725) : const Color(0xB3FFFFFF),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _historyEntries() => LibraryStore
+      .instance
+      .historySnapshot()
+      .where((entry) {
+        final kind = entry['kind']?.toString() ?? '';
+        return kind == 'video' || kind == 'manju';
+      })
+      .toList();
+
+  List<MediaItem> _itemsOf(List<Map<String, dynamic>> entries) => [
+    for (final entry in entries)
+      MediaItem(
+        id: historyContentId(entry),
+        title: entry['title']?.toString() ?? '未知作品',
+        cover: entry['cover']?.toString() ?? '',
+        author: entry['author']?.toString() ?? '',
+        badge: '',
+        ep: entry['ep']?.toString() ?? '',
+        kind: entry['kind']?.toString() ?? 'video',
+        seriesId: entry['seriesId']?.toString(),
+        episodeId: entry['episodeId']?.toString(),
+      ),
+  ];
 
   List<MediaItem> _shelfItems() => [
 
@@ -2220,38 +2311,32 @@ class _LocalList extends StatelessWidget {
         record.item,
   ];
 
-  /// 最近 keeps this app's own player history: the entries the player wrote for
-  /// short dramas and 漫剧, newest first.
-  List<MediaItem> _historyItems() {
-    final items = <MediaItem>[];
-    for (final entry in LibraryStore.instance.historySnapshot()) {
-      final kind = entry['kind']?.toString() ?? '';
-      if (kind != 'video' && kind != 'manju') continue;
-      items.add(
-        MediaItem(
-          id: historyContentId(entry),
-          title: entry['title']?.toString() ?? '未知作品',
-          cover: entry['cover']?.toString() ?? '',
-          author: entry['author']?.toString() ?? '',
-          badge: '',
-          ep: entry['ep']?.toString() ?? '',
-          kind: kind,
-          seriesId: entry['seriesId']?.toString(),
-          episodeId: entry['episodeId']?.toString(),
-        ),
-      );
+  /// 「已看到第N集」：播放历史里的 episode 是 0 起下标。
+  String? _progressLabel(MediaItem item) {
+    for (final entry in _historyEntries()) {
+      if (historyContentId(entry) != item.id) continue;
+      final index = entry['episode'];
+      if (index is num) return '已看到第${index.toInt() + 1}集';
+      return null;
     }
-    return items;
+    return null;
   }
 }
 
 /// Official distribute-list card (`bex.xml`): 7:5 cover, 8dp radius, 14sp
-/// single-line title, 9sp top-right episode tag.
+/// title, 9sp corner tag. 官方截图第二十三轮（最近 tab）：漫剧左上角标、
+/// 居中半透明 ▶、标题两行、下方灰字「已看到第N集」。
 class _DistributeCard extends StatelessWidget {
   final MediaItem item;
+  final String? subtitle;
   final VoidCallback onTap;
 
-  const _DistributeCard({super.key, required this.item, required this.onTap});
+  const _DistributeCard({
+    super.key,
+    required this.item,
+    required this.onTap,
+    this.subtitle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2273,6 +2358,38 @@ class _DistributeCard extends StatelessWidget {
                     builder: (context, constraints) => StoryCover(
                       item: item,
                       cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
+                    ),
+                  ),
+                  if (item.kind == 'manju')
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0x99000000),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          child: Text(
+                            '漫剧',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.white,
+                              height: 1.1,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  const Center(
+                    child: Icon(
+                      Icons.play_arrow_rounded,
+                      size: 40,
+                      color: Color(0xCCFFFFFF),
                     ),
                   ),
                   if (item.ep.isNotEmpty)
@@ -2308,7 +2425,7 @@ class _DistributeCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             item.title,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 14,
@@ -2316,6 +2433,20 @@ class _DistributeCard extends StatelessWidget {
               height: 1.25,
             ),
           ),
+          if (subtitle != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                subtitle!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF9499A0),
+                  height: 1.2,
+                ),
+              ),
+            ),
         ],
       ),
     );

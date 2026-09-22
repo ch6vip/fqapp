@@ -117,6 +117,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _resumeAfterSeek = false;
   bool _modalOpen = false;
   bool _panelOpen = false;
+
+  /// 面板形态：横屏（短剧全屏）走右侧深色抽屉（`StoryEpisodeDrawer`，
+  /// 官方截图第二十三轮），竖屏走白色 bottom sheet（`StoryPlayerPanel`）。
+  bool _panelDrawer = false;
+  bool _panelDrawerClosing = false;
+  Timer? _panelDrawerTimer;
   bool _panelAnimating = false;
   bool _panelWasVisible = false;
   bool _panelHeaderDragging = false;
@@ -657,7 +663,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _cancelSeek();
     _hideTimer?.cancel();
     FocusManager.instance.primaryFocus?.unfocus();
+    final size = MediaQuery.sizeOf(context);
     setState(() {
+      _panelDrawer = widget.shortSeries && _fullScreen && size.width > size.height;
+      _panelDrawerClosing = false;
       _panelRestFraction = PlayerVideoLayout.panelFractionFor(_videoSize);
       _panelMaxFraction = _panelRestFraction;
       // Keep this list stable while the panel follows a drag. Replacing it
@@ -669,6 +678,21 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _panelOpen) unawaited(_animatePanel(_panelRestFraction));
+    });
+  }
+
+  /// 关面板：抽屉态走 200ms 退场动画后摘除；sheet 态走 extent 动画。
+  Future<void> _closePanel() async {
+    if (!_panelDrawer) {
+      await _animatePanel(0);
+      return;
+    }
+    if (_panelDrawerClosing) return;
+    setState(() => _panelDrawerClosing = true);
+    _panelDrawerTimer?.cancel();
+    _panelDrawerTimer = Timer(const Duration(milliseconds: 220), () {
+      _panelDrawerClosing = false;
+      if (mounted) _removePanel();
     });
   }
 
@@ -795,7 +819,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   Future<void> _back() async {
     if (_panelOpen) {
-      await _animatePanel(0);
+      await _closePanel();
     } else if (_fullScreen) {
       await _toggleFullScreen();
     } else {
@@ -1144,7 +1168,54 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     child: IgnorePointer(child: Chip(label: Text('2× 加速中'))),
                   ),
                 ),
-              if (_panelOpen) ...[
+              if (_panelOpen && _panelDrawer) ...[
+                // 横屏右侧抽屉（官方截图第二十三轮）：200ms 滑入滑出 +
+                // 0.5 遮罩，点遮罩/✕/返回键关闭。
+                Positioned.fill(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(end: _panelDrawerClosing ? 0.0 : 1.0),
+                    duration: const Duration(milliseconds: 200),
+                    builder: (context, t, _) => GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => unawaited(_closePanel()),
+                      child: ColoredBox(
+                        key: const ValueKey('story-panel-scrim'),
+                        color: Color.fromRGBO(0, 0, 0, 0.5 * t),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
+                  width: math.min(math.max(window.width * 0.34, 280), 420),
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(end: _panelDrawerClosing ? 0.0 : 1.0),
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, t, child) => FractionalTranslation(
+                      translation: Offset(1 - t, 0),
+                      child: Opacity(opacity: t, child: child!),
+                    ),
+                    child: StoryEpisodeDrawer(
+                      episodes: widget.episodes,
+                      currentIndex: widget.currentIndex,
+                      playingIndex:
+                          widget.playingIndex ??
+                          (_ready ? widget.currentIndex : null),
+                      playing: widget.playing,
+                      watched: widget.watchedEpisodes,
+                      onSelectEpisode: (index) {
+                        unawaited(_closePanel());
+                        unawaited(_selectEpisode(index));
+                      },
+                      onClose: () => unawaited(_closePanel()),
+                    ),
+                  ),
+                ),
+              ],
+              if (_panelOpen && !_panelDrawer) ...[
                 // 官方弹层遮罩：dim 0.5、随面板开合淡入淡出、点遮罩关闭
                 // （`AnimationBottomDialog.java:312-316,604`）。
                 Positioned.fill(

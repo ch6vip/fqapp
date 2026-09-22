@@ -398,3 +398,193 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     );
   }
 }
+
+/// 官方横屏选集面板（真实 app 截图第二十三轮）：**右侧抽屉**——深色底、
+/// 头部 ✕ + 居中「选集」、4 列格子；当前集橙底（`#B3FA6725`，暗色上的
+/// 半透明橙）+ 橙字 + 右上声波，普通格白字浅底，已看淡白。竖屏的白色
+/// bottom sheet（`StoryPlayerPanel`）不在此复用——两态的皮肤/列数/头部
+/// 都不同，定位逻辑各自维护。
+class StoryEpisodeDrawer extends StatefulWidget {
+  final List<Chapter> episodes;
+  final int currentIndex;
+  final int? playingIndex;
+  final bool playing;
+  final Set<int> watched;
+  final ValueChanged<int> onSelectEpisode;
+  final VoidCallback onClose;
+
+  const StoryEpisodeDrawer({
+    super.key,
+    required this.episodes,
+    required this.currentIndex,
+    required this.playingIndex,
+    this.playing = false,
+    this.watched = const <int>{},
+    required this.onSelectEpisode,
+    required this.onClose,
+  });
+
+  @override
+  State<StoryEpisodeDrawer> createState() => _StoryEpisodeDrawerState();
+}
+
+class _StoryEpisodeDrawerState extends State<StoryEpisodeDrawer> {
+  final _scroll = ScrollController();
+  double _tile = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _centerCurrent());
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// 打开时把当前集滚到视口竖直居中（竖屏面板同款语义，
+  /// `gj3/o.java:237-272`；抽屉无展开动画，一帧定位即可）。格子尺寸来自
+  /// 抽屉宽度，首帧未排版时顺延一帧重试。
+  void _centerCurrent() {
+    if (!_scroll.hasClients ||
+        !_scroll.position.hasContentDimensions ||
+        _tile <= 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _centerCurrent();
+      });
+      return;
+    }
+    final position = _scroll.position;
+    final row = widget.currentIndex ~/ 4;
+    _scroll.jumpTo(
+      (16 + row * (_tile + 8) - position.viewportDimension / 2 + _tile / 2)
+          .clamp(0.0, position.maxScrollExtent),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final playingIndex = widget.playingIndex ?? widget.currentIndex;
+    return Material(
+      key: const ValueKey('story-episode-drawer'),
+      color: const Color(0xFF141414),
+      child: SafeArea(
+        child: Column(
+          children: [
+            SizedBox(
+              height: 64,
+              child: Stack(
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: IconButton(
+                      key: const ValueKey('story-drawer-close'),
+                      tooltip: '关闭',
+                      onPressed: widget.onClose,
+                      icon: const Icon(Icons.close, color: Colors.white),
+                    ),
+                  ),
+                  const Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      '选集',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // 4 列方格：宽 =（抽屉宽 − 左右 24 − 列距 3×8）/ 4。
+                  _tile = (constraints.maxWidth - 24 - 24) / 4;
+                  return GridView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 4,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 1,
+                        ),
+                    itemCount: widget.episodes.length,
+                    itemBuilder: (context, index) {
+                      final active = index == playingIndex;
+                      final watched = !active && widget.watched.contains(index);
+                      return Semantics(
+                        key: ValueKey('story-episode-$index'),
+                        label: '第 ${index + 1} 集',
+                        value: active
+                            ? (widget.playing ? '正在播放' : '当前剧集')
+                            : null,
+                        button: true,
+                        selected: active,
+                        excludeSemantics: true,
+                        onTap: () => widget.onSelectEpisode(index),
+                        child: Material(
+                          color: active
+                              ? const Color(0xB3FA6725)
+                              : const Color(0x26FFFFFF),
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(8)),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            onTap: () => widget.onSelectEpisode(index),
+                            child: Stack(
+                              children: [
+                                Center(
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: active
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                      color: active
+                                          ? _currentText
+                                          : watched
+                                          ? const Color(0x66FFFFFF)
+                                          : Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                if (active)
+                                  Positioned(
+                                    top: 4,
+                                    right: 4,
+                                    child: SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                      child: Lottie.asset(
+                                        'assets/lottie/video_playing_orange.json',
+                                        animate: widget.playing,
+                                        repeat: true,
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
