@@ -11,6 +11,18 @@ class StorySeekBar extends StatefulWidget {
   final ValueChanged<double> onEnd;
   final VoidCallback onCancel;
 
+  /// 贴底细条的轨道/滑块半径。官方横屏底条（cw7.xml：`abt` 轨道 4dip、
+  /// `ah6` 滑块 16dip）用 4/8；竖屏沿用原默认 2/3。
+  final double trackWidth;
+  final double thumbRadius;
+
+  /// 官方播放段=皮肤橙（`bf3.c.l2()` → `#FFFA6725`，截图第二十二轮），
+  /// 滑块恒白（`@color/q`）、剩余轨道 `@color/b8`=#4dffffff（`awc`）。
+  /// 默认保持原白色系（通用播放器不受影响）。
+  final Color progressColor;
+  final Color trackColor;
+  final Color thumbColor;
+
   const StorySeekBar({
     super.key,
     required this.value,
@@ -20,6 +32,11 @@ class StorySeekBar extends StatefulWidget {
     required this.onChanged,
     required this.onEnd,
     required this.onCancel,
+    this.trackWidth = 2,
+    this.thumbRadius = 3,
+    this.progressColor = Colors.white,
+    this.trackColor = Colors.white24,
+    this.thumbColor = Colors.white,
   });
 
   @override
@@ -92,7 +109,16 @@ class _StorySeekBarState extends State<StorySeekBar> {
               tween: Tween(end: widget.seeking ? 1 : 0),
               duration: const Duration(milliseconds: 300),
               builder: (context, emphasis, _) => CustomPaint(
-                painter: _SeekPainter(widget.value, emphasis, widget.enabled),
+                painter: _SeekPainter(
+                  widget.value,
+                  emphasis,
+                  widget.enabled,
+                  widget.trackWidth,
+                  widget.thumbRadius,
+                  widget.progressColor,
+                  widget.trackColor,
+                  widget.thumbColor,
+                ),
               ),
             ),
           ),
@@ -106,23 +132,37 @@ class _SeekPainter extends CustomPainter {
   final double value;
   final double emphasis;
   final bool enabled;
-  _SeekPainter(this.value, this.emphasis, this.enabled);
+  final double trackWidth;
+  final double thumbRadius;
+  final Color progressColor;
+  final Color trackColor;
+  final Color thumbColor;
+  _SeekPainter(
+    this.value,
+    this.emphasis,
+    this.enabled,
+    this.trackWidth,
+    this.thumbRadius,
+    this.progressColor,
+    this.trackColor,
+    this.thumbColor,
+  );
 
   @override
   void paint(Canvas canvas, Size size) {
     final line = Paint()
-      ..strokeWidth = 2 + 4 * emphasis
+      ..strokeWidth = trackWidth + 4 * emphasis
       ..strokeCap = StrokeCap.round
-      ..color = Colors.white24;
+      ..color = trackColor;
     final y = size.height / 2;
     canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
     final end = Offset(size.width * value.clamp(0.0, 1.0), y);
-    line.color = enabled ? Colors.white : Colors.white38;
+    line.color = enabled ? progressColor : Colors.white38;
     canvas.drawLine(Offset(0, y), end, line);
     canvas.drawCircle(
       end,
-      3 * (1 + .22 * emphasis),
-      line..style = PaintingStyle.fill,
+      thumbRadius * (1 + .22 * emphasis),
+      line..style = PaintingStyle.fill..color = thumbColor,
     );
   }
 
@@ -130,5 +170,10 @@ class _SeekPainter extends CustomPainter {
   bool shouldRepaint(_SeekPainter oldDelegate) =>
       value != oldDelegate.value ||
       emphasis != oldDelegate.emphasis ||
-      enabled != oldDelegate.enabled;
+      enabled != oldDelegate.enabled ||
+      trackWidth != oldDelegate.trackWidth ||
+      thumbRadius != oldDelegate.thumbRadius ||
+      progressColor != oldDelegate.progressColor ||
+      trackColor != oldDelegate.trackColor ||
+      thumbColor != oldDelegate.thumbColor;
 }

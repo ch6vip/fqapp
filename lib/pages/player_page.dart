@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../models/audio_extra.dart' show RelatedWork;
 import '../models/media_item.dart';
-import '../models/media_description.dart';
+import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
 import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
@@ -13,6 +14,7 @@ import '../services/player_history.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
 import '../services/swipe_guide_store.dart';
+import '../models/book_detail.dart' show BookDetail, formatCounter;
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
@@ -24,20 +26,26 @@ class PlayerPage extends StatefulWidget {
   final String cover;
   final List<Chapter> eps;
   final int startIndex;
-  final String? description;
-  final Future<String> Function()? descriptionLoader;
   final Future<Map<String, dynamic>> Function(Chapter)? contentLoader;
   final NativePlayer Function()? playerFactory;
   final ReaderStore? historyStore;
   final PlayerLoadDiagnostics? loadDiagnostics;
 
-  /// Enter with the episode catalog already open — the official 「观看全集」
-  /// pill's behavior (`goToSingleFeed` → `setLaunchCatalogPanel(true)`).
-  final bool launchCatalogPanel;
+  /// 底部 band 装饰数据的可注入 loader（默认走 ApiClient，均为
+  /// best-effort：失败就缺省，不打扰播放）。测试注入用。
+  final Future<BookDetail> Function(String bookId)? detailLoader;
+  final Future<List<RelatedWork>> Function(String bookId)? relatedLoader;
 
-  /// 官方播放页双击 = 点赞（`lh3.a.onDoubleTap`）；由 feed 宿主接本地
-  /// DiggStore。null 时双击只有心形动效。
-  final VoidCallback? onDoubleTapLike;
+  /// 官方短剧播放页形态（`apf.xml`）：竖屏无运输条、单击=播放/暂停。
+  /// 详情页的电影/电视剧走通用形态（默认 false）。
+  final bool shortSeries;
+
+  /// 播放页沉浸式信息层（官方截图形态）：右栏追剧计数（`followed_cnt`，
+  /// 0 = 显示「追剧」）、AI 声明行、右栏/追剧的本地回调。
+  final int followerCount;
+  final bool aiGenerated;
+  final VoidCallback? onFollow;
+  final VoidCallback? onLike;
 
   const PlayerPage({
     super.key,
@@ -47,14 +55,17 @@ class PlayerPage extends StatefulWidget {
     this.cover = '',
     required this.eps,
     required this.startIndex,
-    this.description,
-    this.descriptionLoader,
     this.contentLoader,
     this.playerFactory,
     this.historyStore,
     this.loadDiagnostics,
-    this.launchCatalogPanel = false,
-    this.onDoubleTapLike,
+    this.detailLoader,
+    this.relatedLoader,
+    this.shortSeries = false,
+    this.followerCount = 0,
+    this.aiGenerated = false,
+    this.onFollow,
+    this.onLike,
   });
 
   @override
@@ -85,27 +96,23 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   int? _prefetchQueuedGeneration;
   int? _prefetchAttemptedGeneration;
 
-  /// 当前集播完且不自动连播：显示官方 `BottomContainer` 的
-  /// 「上滑继续观看短剧」底条（有下一集才显示）。
-  bool _episodeEndedWaiting = false;
-
   /// 「左右滑动可调整进度」首次引导（每台设备一次，`of3/a`）。
   bool _seekHintVisible = false;
   Timer? _seekHintTimer;
 
-  late String _description;
-  late bool _descriptionLoaded;
-  bool _descriptionLoading = false;
-  String? _descriptionError;
-  int _descriptionGeneration = 0;
+  /// 已看集（选集面板灰字）：续播点之前的集（本地历史的等价推断）+
+  /// 本次会话播过的集（切集时把离开的集记为已看）。
+  final Set<int> _watched = {};
+
+  /// 底部 band 装饰（官方截图第二十二轮）：完结状态与原著书卡，
+  /// best-effort 拉取，失败保持缺省。
+  String? _seriesStatus;
+  RelatedWork? _originalBook;
 
   PlayerHistory get _history =>
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
   Duration _duration = Duration.zero;
   bool _playing = false;
-  bool _autoAdvance = true;
-  int _autoAdvanceGeneration = 0;
-  late final Future<void> _autoAdvanceReady;
 
   bool _current(int generation, [NativePlayer? player]) =>
       mounted &&
@@ -120,9 +127,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _index = widget.eps.isEmpty
         ? 0
         : widget.startIndex.clamp(0, widget.eps.length - 1);
-    _description = widget.description ?? '';
-    _descriptionLoaded = widget.description != null;
-    _autoAdvanceReady = _loadAutoAdvance();
+    _watched.addAll([for (var i = 0; i < _index; i++) i]);
     // 「左右滑动可调整进度」每台设备一次（`of3/a`）。只在 store 已初始化时
     // 判定，测试里未打开的 box 不显示；横滑或超时后写回并隐藏。
     if (SwipeGuideStore.instance.ready &&
@@ -146,6 +151,56 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     } else {
       unawaited(_loadVideo());
     }
+    unawaited(_loadBandExtras());
+  }
+
+  /// 完结状态（`book_detail.creation_status`：0=已完结、1=连载中）与原著
+  /// 书卡（`/related` 里 kind=book 的关联）。两请求都自吞异常——band 是
+  /// 装饰，接口再差也不能影响播放。
+  Future<void> _loadBandExtras() async {
+    final detail = await (widget.detailLoader?.call(widget.bookId) ??
+            ApiClient.instance.bookDetail(widget.bookId))
+        .catchError((Object _) => const BookDetail());
+    if (mounted) {
+      setState(() {
+        _seriesStatus = switch (detail.creationStatus) {
+          0 => '已完结',
+          1 => '连载中',
+          _ => null,
+        };
+      });
+    }
+    final related = await (widget.relatedLoader?.call(widget.bookId) ??
+            ApiClient.instance.relatedWorks(widget.bookId))
+        .catchError((Object _) => const <RelatedWork>[]);
+    for (final work in related) {
+      if (work.kind == 'book' && work.title.isNotEmpty) {
+        if (mounted) setState(() => _originalBook = work);
+        return;
+      }
+    }
+  }
+
+  /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。
+  void _openOriginalBook() {
+    final book = _originalBook;
+    if (book == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => DetailPage(
+          item: MediaItem(
+            id: book.id,
+            title: book.title,
+            cover: book.cover,
+            author: '',
+            badge: book.label,
+            ep: '',
+            kind: 'book',
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -158,7 +213,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _sources.dispose();
     _loadTrace?.finish('disposed');
     ++_loadGeneration;
-    ++_descriptionGeneration;
     _pagingSettled?.complete();
     _pagingSettled = null;
     _watchTime.stop();
@@ -189,8 +243,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _pagingSettled = null;
       final completedGeneration = _pendingCompletion;
       _pendingCompletion = null;
-      if (_autoAdvance &&
-          completedGeneration != null &&
+      if (completedGeneration != null &&
           _current(completedGeneration) &&
           _activeIndex == _index) {
         unawaited(
@@ -201,34 +254,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
     }
     _updatePrefetch();
-  }
-
-  Future<void> _loadAutoAdvance() async {
-    final generation = _autoAdvanceGeneration;
-    try {
-      final enabled = await PlayerPreferences.loadAutoAdvance();
-      if (mounted && generation == _autoAdvanceGeneration) {
-        setState(() => _autoAdvance = enabled);
-      }
-    } catch (_) {
-      // Keep the existing automatic-next-episode behavior if storage fails.
-    }
-  }
-
-  void _setAutoAdvance(bool enabled) {
-    if (_autoAdvance == enabled) return;
-    final generation = ++_autoAdvanceGeneration;
-    setState(() => _autoAdvance = enabled);
-    if (!enabled) _pendingCompletion = null;
-    unawaited(
-      PlayerPreferences.saveAutoAdvance(enabled).catchError((Object _) {
-        if (mounted && generation == _autoAdvanceGeneration) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('连播设置已生效，但未能保存')));
-        }
-      }),
-    );
   }
 
   /// 首次横滑或超时后收起引导并写回「已显示」（chrome 在
@@ -454,7 +479,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       try {
         rate = await PlayerPreferences.loadPlaybackRate();
       } catch (_) {}
-      await _autoAdvanceReady;
       if (!_current(generation, player)) return;
       await player.setRate(rate);
       if (!_current(generation, player)) return;
@@ -561,23 +585,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         if (!completed) {
           _pendingCompletion = null;
-          // 播放器从播完态回到非播完态（拖回/重播）即收起底条。
-          if (_episodeEndedWaiting) setState(() => _episodeEndedWaiting = false);
           return;
         }
         // Completion must persist even when there is no next episode or a
         // paging gesture delays it. Each snapshot settles only new watch time.
         // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
         unawaited(_persistProgress());
-        if (!_autoAdvance) {
-          _pendingCompletion = null;
-          // 官方 BottomContainer（`cia.xml`）：本集播完、不自动连播且还有
-          // 下一集时，底部出「上滑继续观看短剧」；切集成功后复位。
-          if (_index + 1 < widget.eps.length && !_episodeEndedWaiting) {
-            setState(() => _episodeEndedWaiting = true);
-          }
-          return;
-        }
         if (_paging) {
           _pendingCompletion = generation;
           return;
@@ -650,48 +663,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         index < 0 ||
         index >= widget.eps.length ||
         index == _index ||
-        (expectedGeneration != null &&
-            (!_autoAdvance || !_current(expectedGeneration)))) {
+        (expectedGeneration != null && !_current(expectedGeneration))) {
       return Future<void>.value();
     }
     setState(() {
+      _watched.add(_index);
       _index = index;
-      _episodeEndedWaiting = false;
     });
     // _loadVideo invalidates prior work synchronously; no network or history
     // operation may delay recording the user's newest target.
     return _loadVideo();
-  }
-
-  Future<void> _loadDescription({bool retry = false}) async {
-    if (_descriptionLoading || (_descriptionLoaded && !retry)) return;
-    final generation = ++_descriptionGeneration;
-    setState(() {
-      _descriptionLoading = true;
-      _descriptionError = null;
-    });
-    try {
-      final description =
-          await (widget.descriptionLoader?.call() ??
-              ApiClient.instance
-                  .detail(widget.bookId, tab: '短剧')
-                  .then(extractMediaDescription));
-      if (!mounted || generation != _descriptionGeneration) return;
-      setState(() {
-        _description = description;
-        _descriptionLoaded = true;
-      });
-    } catch (error) {
-      if (!mounted || generation != _descriptionGeneration) return;
-      setState(() {
-        _descriptionError = '$error';
-        _descriptionLoaded = true;
-      });
-    } finally {
-      if (mounted && generation == _descriptionGeneration) {
-        setState(() => _descriptionLoading = false);
-      }
-    }
   }
 
   @override
@@ -703,24 +684,25 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     playingIndex: _activeIndex,
     duration: _duration,
     playing: _playing,
-    autoAdvance: _autoAdvance,
-    onAutoAdvanceChanged: _setAutoAdvance,
-    launchCatalogPanel: widget.launchCatalogPanel,
-    onDoubleTapLike: widget.onDoubleTapLike,
+    shortSeries: widget.shortSeries,
+    watchedEpisodes: _watched,
+    followerLabel: widget.followerCount > 0
+        ? formatCounter('${widget.followerCount}')
+        : null,
+    onFollow: widget.onFollow,
+    onLike: widget.onLike,
+    aiGenerated: widget.aiGenerated,
     showSeekHint: _seekHintVisible,
     onSeekHintConsumed: _consumeSeekHint,
-    episodeEndedWaiting: _episodeEndedWaiting,
+    seriesStatus: _seriesStatus,
+    originalBook: _originalBook,
+    onOpenOriginalBook: _openOriginalBook,
     coverUrl: ApiClient.instance.absoluteUrl(widget.cover),
     enabled:
         _player != null &&
         _activeIndex != null &&
         !_initVideo &&
         _error == null,
-    description: _description,
-    descriptionLoading: _descriptionLoading,
-    descriptionError: _descriptionError,
-    onRequestDescription: () => unawaited(_loadDescription()),
-    onRetryDescription: () => unawaited(_loadDescription(retry: true)),
     onPagingChanged: _onPagingChanged,
     onSelectEpisode: _selectEpisode,
     onError: (error) => _fail(error, _loadGeneration),

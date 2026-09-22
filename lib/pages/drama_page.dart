@@ -654,19 +654,19 @@ class _DramaPageState extends ConsumerState<DramaPage>
             cover: item.cover,
             eps: eps,
             startIndex: index.toInt(),
-            // 官方「观看全集」= goToSingleFeed 的 setLaunchCatalogPanel(true)：
-            // 进播放器即弹选集面板、定位当前集。进度不需要显式传——上面的
-            // `disposePlayer()` 已把 feed 的当前集与播放进度写进历史，
-            // PlayerPage 从同一条历史续播。
-            launchCatalogPanel: true,
-            // 官方播放页双击 = 点赞（`lh3.a.onDoubleTap`）：走 feed 同一条
-            // DiggStore 退化写入；心形动效由 chrome 每次 双击都放，与官方
-            // 一致，点赞状态的变化由右栏/再进时读 store 反映。
-            onDoubleTapLike: () {
-              if (DiggStore.instance.isReady) {
-                unawaited(DiggStore.instance.toggle(item));
-              }
-            },
+            // 官方「观看全集」进播放器**不弹选集面板**：goToSingleFeed 虽然
+            // setLaunchCatalogPanel(true)，但消费端 catalogdialog/v2/k.q0()
+            // 被 AB `series_view_show_auto`（默认 enabled=false）门住——
+            // 默认进播放器续当前集，选集入口是底部目录条（更正 §22）。
+            // 进度不需要显式传——上面的 `disposePlayer()` 已把 feed 的
+            // 当前集与播放进度写进历史，PlayerPage 从同一条历史续播。
+            shortSeries: true,
+            // 播放页沉浸式信息层（官方截图）：右栏追剧计数、AI 声明行、
+            // 追剧/点赞写本地 store（feed 右栏同一条链路）。
+            followerCount: item.followerCount,
+            aiGenerated: item.aiGenerated,
+            onFollow: () => unawaited(_toggleFollow(item)),
+            onLike: () => unawaited(_toggleLike(item)),
           ),
         ),
       );

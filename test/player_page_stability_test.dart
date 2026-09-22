@@ -542,7 +542,6 @@ class _Session {
     home: PlayerPage(
       bookId: 'stability-book',
       title: '连续播放测试',
-      description: '测试简介',
       eps: [
         for (var index = 1; index <= 5; index++)
           Chapter(itemId: '$index', title: '第 $index 集', volumeName: ''),

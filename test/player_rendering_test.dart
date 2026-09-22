@@ -37,8 +37,16 @@ void main() {
       (tester) async {
         final player = await _mount(tester);
         if (panelOpen) {
-          await tester.tap(find.byTooltip('选集'));
-          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('player-catalog-bar')));
+          // 打开动画 200ms；面板开着时当前集的循环声波 Lottie 让 settle 永不
+          // 结束，只能用固定 pump（对照文档 §26）。首段带时长的 pump 是动画
+          // ticker 的首个 tick，elapsed 被起点捕获吃掉，必须再给足时长并补
+          // 一帧，把 _animatePanel 收尾的 setState 也 flush 掉。
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pump(const Duration(milliseconds: 150));
+          await tester.pump(const Duration(milliseconds: 150));
+          await tester.pump();
         }
         final builds = _recordBuilds();
         for (var tick = 1; tick <= 10; tick++) {
@@ -54,7 +62,11 @@ void main() {
           );
         } else {
           expect(find.byKey(const ValueKey('story-panel')), findsOneWidget);
-          await tester.tap(find.byTooltip('关闭面板'));
+          // 官方无右上角关闭钮：点遮罩关（`AnimationBottomDialog:604`）。
+          final panelTop = tester.getTopLeft(
+            find.byKey(const ValueKey('story-panel')),
+          ).dy;
+          await tester.tapAt(Offset(200, panelTop - 60));
           await tester.pumpAndSettle();
           expect(
             tester.widget<StorySeekBar>(find.byType(StorySeekBar)).value,
@@ -73,8 +85,10 @@ void main() {
     tester,
   ) async {
     await _mount(tester);
-    await tester.tap(find.byTooltip('选集'));
-    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-catalog-bar')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 320));
+    await tester.pump();
     final panel = find.byKey(const ValueKey('story-panel'));
     final before = tester.getRect(panel);
     final gesture = await tester.startGesture(
@@ -97,7 +111,8 @@ void main() {
       lessThanOrEqualTo(after.top + 1),
     );
     await gesture.up();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 320));
     expect(builds['VideoPlayerChrome'] ?? 0, 0);
     expect(builds['StoryPlayerPanel'] ?? 0, 0);
     expect(tester.takeException(), isNull);
@@ -203,10 +218,14 @@ void main() {
 
       // Include the frame that inserts/removes the panel, plus repeated cycles.
       for (var cycle = 0; cycle < 3; cycle++) {
-        await tester.tap(find.text('简介'));
+        await tester.tap(find.byKey(const ValueKey('player-catalog-bar')));
         await checkFrames();
         expect(find.byKey(const ValueKey('story-panel')), findsOneWidget);
-        await tester.tap(find.byTooltip('关闭面板'));
+        // 官方无右上角关闭钮：点遮罩关（`AnimationBottomDialog:604`）。
+        final panelTop = tester
+            .getTopLeft(find.byKey(const ValueKey('story-panel')))
+            .dy;
+        await tester.tapAt(Offset(200, panelTop - 60));
         await checkFrames();
         expect(find.byKey(const ValueKey('story-panel')), findsNothing);
         expect(tester.getRect(texture), originalRect);
@@ -239,7 +258,7 @@ void main() {
       }
 
       checkRotation();
-      await tester.tap(find.text('简介'));
+      await tester.tap(find.byKey(const ValueKey('player-catalog-bar')));
       for (var frame = 0; frame < 20; frame++) {
         await tester.pump(const Duration(milliseconds: 16));
         expect(tester.renderObject<TextureBox>(texture), same(box));
@@ -293,7 +312,6 @@ Future<ControlledNativePlayer> _mount(
       home: PlayerPage(
         bookId: 'rendering-book',
         title: '播放渲染测试',
-        description: '剧情简介',
         eps: [
           for (var index = 1; index <= 80; index++)
             Chapter(itemId: '$index', title: '第 $index 集', volumeName: ''),

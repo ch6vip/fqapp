@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/widgets/player/story_seek_bar.dart';
@@ -32,9 +33,6 @@ void main() {
       Offset(track.left + track.width * .1, track.center.dy),
       Offset(track.width / 3, 0),
     );
-    await tester.pumpAndSettle();
-    expect(player.calls, contains('seek:60'));
-    expect(player.calls, isNot(contains('play')));
     await tester.tap(find.byTooltip('快进10秒'));
     await tester.pumpAndSettle();
     expect(player.calls, contains('seek:70'));
@@ -44,9 +42,9 @@ void main() {
     await tester.tap(find.byTooltip('快进10秒'));
     await tester.pumpAndSettle();
     expect(player.calls.last, 'seek:120');
-    await tester.tap(find.byTooltip('倍速 1.5×'));
+    await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, '2×'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '2x'));
     await tester.pumpAndSettle();
     expect(player.rate, 2);
     expect(await PlayerPreferences.loadPlaybackRate(), 2);
@@ -55,46 +53,174 @@ void main() {
   });
 
   testWidgets(
-    'launchCatalogPanel opens the episode catalog without a tap',
+    'shortSeries portrait drops the transport row; tap toggles playback',
     (tester) async {
-      // 官方「观看全集」= goToSingleFeed 的 setLaunchCatalogPanel(true)：
-      // 进播放页即弹选集面板，不用再点一次「选集」。
+      // 官方播放页（`apf.xml`）竖屏没有上一集/±10/暂停/下一集运输条；
+      // 暂停入口是单击画面（feed 卡同款）。横屏是官方底条（批次四），
+      // 通用运输条两个朝向都不再出现。
       final player = FakeNativePlayer()..isPlaying = true;
-      await tester.pumpWidget(_app(player, launchCatalogPanel: true));
-      await tester.pump();
+      await tester.pumpWidget(_app(player, shortSeries: true));
       await tester.pumpAndSettle();
-      expect(find.text('选集'), findsOneWidget);
-      expect(find.byKey(const ValueKey('story-episode-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('video-controls')), findsNothing);
+      expect(find.byTooltip('快进10秒'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('video-surface')));
+      await tester.pumpAndSettle();
+      expect(player.calls.where((call) => call == 'pause'), isNotEmpty);
+      await tester.tap(find.byKey(const ValueKey('video-surface')));
+      // 不 settle：恢复播放后的 4s 自动隐藏会把控制条（含全屏 pill）收走。
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(player.calls.where((call) => call == 'play'), isNotEmpty);
+      // 「观看全集」默认不弹选集面板（官方 AB `series_view_show_auto`
+      // 默认 enabled=false 门住，更正 §22）；入口是底部目录条。
+      expect(find.byKey(const ValueKey('story-episode-0')), findsNothing);
+      // 全屏（测试窗口 800×600 → 横屏）后是官方底条：播放/下一集/倍速/
+      // 选集 + 时间行与进度条，通用运输条不再出现（批次四）。
+      await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('landscape-play')), findsOneWidget);
+      expect(find.byKey(const ValueKey('landscape-episodes')), findsOneWidget);
+      expect(find.byTooltip('退出全屏'), findsNothing);
+      expect(find.byTooltip('快进10秒'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
       await player.dispose();
     },
   );
 
-  testWidgets(
-    'double tap shows the heart, fires the like callback and never pauses',
-    (tester) async {
-      // 官方播放页双击 = 点赞（`lh3.a.onDoubleTap`），不再是暂停/继续。
-      final player = FakeNativePlayer()..isPlaying = true;
-      var likes = 0;
-      await tester.pumpWidget(_app(player, onDoubleTapLike: () => likes++));
-      await tester.pumpAndSettle();
-      final surface = tester.getCenter(
-        find.byKey(const ValueKey('video-surface')),
-      );
-      await tester.tapAt(surface);
-      await tester.pump(const Duration(milliseconds: 80));
-      await tester.tapAt(surface);
-      await tester.pump();
-      expect(likes, 1);
-      expect(find.byKey(const ValueKey('player-heart-1')), findsOneWidget);
-      expect(player.calls.where((call) => call == 'pause'), isEmpty);
-      // 700ms 动效走完归零，双击可以再次重放心形。
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('player-heart-1')), findsNothing);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await player.dispose();
-    },
-  );
+  testWidgets('shortSeries landscape shows the official bottom bar', (
+    tester,
+  ) async {
+    // 官方横屏底条（`c0i` 控制行 + `cw7` 进度块）：播放/暂停 32dp、下一集
+    // 32dp、倍速文本（1.5x）、选集；时间行「当前 / 总」居中 18sp；无
+    // prev/±10/全屏钮（通用运输条残留，批次四删）。
+    final player = FakeNativePlayer()..isPlaying = true;
+    final selected = <int>[];
+    await tester.pumpWidget(_app(player, shortSeries: true, selected: selected));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('video-controls')), findsNothing);
+    expect(find.byTooltip('上一集'), findsNothing);
+    expect(find.byTooltip('快退10秒'), findsNothing);
+    expect(find.byTooltip('快进10秒'), findsNothing);
+    expect(find.byKey(const ValueKey('landscape-play')), findsOneWidget);
+    expect(find.byKey(const ValueKey('landscape-next')), findsOneWidget);
+    expect(find.byKey(const ValueKey('landscape-rate')), findsOneWidget);
+    expect(find.byKey(const ValueKey('landscape-episodes')), findsOneWidget);
+    // setUp 的 mock 偏好是 1.5 → 官方倍速文案「1.5x」（`b2()`）。
+    expect(find.text('1.5x'), findsOneWidget);
+    // 时间行（`cw7 i52`）：「当前 / 总」，分隔符就是一根斜杠。
+    expect(find.byKey(const ValueKey('landscape-time')), findsOneWidget);
+    expect(find.text('/'), findsOneWidget);
+    expect(find.byKey(const ValueKey('landscape-seek')), findsOneWidget);
+    // 下一集 → 切到第二集（`a.java:963-976` 的 setCurrentItem 语义）。
+    await tester.tap(find.byKey(const ValueKey('landscape-next')));
+    await tester.pump();
+    expect(selected, [1]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('landscape next on the last episode toasts instead', (
+    tester,
+  ) async {
+    // 最后一集点下一集：toast「当前已在最后一集」（`@string/dxx`），不切集。
+    final player = FakeNativePlayer()..isPlaying = true;
+    final selected = <int>[];
+    await tester.pumpWidget(
+      _app(player, shortSeries: true, selected: selected, currentIndex: 1),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('landscape-next')));
+    await tester.pump();
+    expect(find.text('当前已在最后一集'), findsOneWidget);
+    expect(selected, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('landscape rate opens the official speed sheet', (tester) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(_app(player, shortSeries: true));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('landscape-rate')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-more-rate-row')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('shortSeries band persists after controls auto-hide', (
+    tester,
+  ) async {
+    // 官方截图第二十二轮：控制条收起后，剧名/原著卡/贴底进度条/选集胶囊
+    // 常驻；全屏 pill、右栏、倍速清屏行随控制条收走。
+    final player = FakeNativePlayer()..isPlaying = true;
+    var opened = 0;
+    await tester.pumpWidget(
+      _app(
+        player,
+        shortSeries: true,
+        seriesStatus: '已完结',
+        originalBook: const RelatedWork(
+          kind: 'book',
+          id: '42',
+          title: '从宿舍逃杀开始',
+          label: '原著小说',
+        ),
+        onOpenOriginalBook: () => opened++,
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 控制条可见：pill + 剧名，无原著卡；清屏走文字行，无图标钮。
+    expect(find.byKey(const ValueKey('player-fullscreen-pill')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-original-book')), findsNothing);
+    expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
+    // 3s 自动收起 → 常驻 band。
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.byKey(const ValueKey('player-fullscreen-pill')), findsNothing);
+    expect(find.byKey(const ValueKey('player-follow-button')), findsNothing);
+    expect(find.byKey(const ValueKey('player-original-book')), findsOneWidget);
+    expect(find.text('原著《从宿舍逃杀开始》'), findsOneWidget);
+    expect(find.byKey(const ValueKey('video-seek')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-catalog-bar')), findsOneWidget);
+    expect(find.text(' · 已完结 · 全2集'), findsOneWidget);
+    // 胶囊右侧的清屏图标钮（用户指认）：band 态可见，控制条可见时没有
+    // （那时清屏入口是倍速｜清屏文字行）。
+    expect(find.byKey(const ValueKey('player-clear-icon')), findsOneWidget);
+    // 原著卡点击 → 宿主跳原著详情。
+    await tester.tap(find.byKey(const ValueKey('player-original-book')));
+    expect(opened, 1);
+    // 清屏图标钮 → 进清屏态：band 全收，只剩「恢复」出口。
+    await tester.tap(find.byKey(const ValueKey('player-clear-icon')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('player-catalog-bar')), findsNothing);
+    expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
+    expect(find.text('恢复'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('double tap toggles playback', (tester) async {
+    // 双击点赞按用户决定不做了（无账号点赞数据，官方语义无从对齐）；
+    // 恢复第十二轮之前的双击 = 播放/暂停。
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(_app(player));
+    await tester.pumpAndSettle();
+    final surface = tester.getCenter(
+      find.byKey(const ValueKey('video-surface')),
+    );
+    await tester.tapAt(surface);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(surface);
+    await tester.pumpAndSettle();
+    expect(player.calls.where((call) => call == 'pause'), isNotEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
 
   testWidgets('a horizontal drag seeks the episode and consumes the hint', (
     tester,
@@ -123,46 +249,6 @@ void main() {
   });
 
   testWidgets(
-    'the official bottom CTA bar appears with controls hidden and opens the catalog',
-    (tester) async {
-      // 官方 cjw.xml（d99 槽注入）：控制条隐藏的观看中出「观看完整短剧」
-      // CTA 条，点击进选集面板（官方 schema 跳转的等价物）。
-      final player = FakeNativePlayer()..isPlaying = true;
-      final selected = <int>[];
-      await tester.pumpWidget(_app(player, selected: selected));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('player-cta-bar')), findsNothing);
-      await tester.pump(const Duration(seconds: 4));
-      expect(find.byKey(const ValueKey('player-cta-bar')), findsOneWidget);
-      expect(find.text('观看完整短剧'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('player-cta-bar')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('story-episode-0')), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await player.dispose();
-    },
-  );
-
-  testWidgets(
-    'episodeEndedWaiting shows the official bottom bar with the right copy',
-    (tester) async {
-      // 官方 `BottomContainer`（`cia.xml`）：有下一集是「上滑继续观看短剧」，
-      // 最后一集是「已是最后一集」。
-      final player = FakeNativePlayer()..isPlaying = true;
-      await tester.pumpWidget(_app(player, episodeEndedWaiting: true));
-      await tester.pumpAndSettle();
-      expect(find.text('上滑继续观看短剧'), findsOneWidget);
-      await tester.pumpWidget(
-        _app(player, episodeEndedWaiting: true, currentIndex: 1),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('已是最后一集'), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await player.dispose();
-    },
-  );
-
-  testWidgets(
     'controls hide, long press restores speed, episode selection works',
     (tester) async {
       final player = FakeNativePlayer()..isPlaying = true;
@@ -184,7 +270,14 @@ void main() {
       await tester.pump();
       expect(player.rate, 1.5);
       await tester.tap(find.text('选集'));
-      await tester.pumpAndSettle();
+      // 面板开着时当前集的循环声波 Lottie 永不定帧，用固定 pump 等开合动画。
+      // 首段带时长的 pump 是 ticker 首个 tick（elapsed 被起点吃掉），要再给
+      // 足时长把 200ms 动画推完，补一帧 flush 收尾 setState。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('story-episode-1')));
       await tester.pumpAndSettle();
       expect(selected, [1]);
@@ -192,6 +285,27 @@ void main() {
       await player.dispose();
     },
   );
+
+  testWidgets('short-series text row shows the official rate copy', (
+    tester,
+  ) async {
+    // 官方右下角文字行（`SingleVideoHolder.java:1131-1171`）：倍速 1.0 显示
+    // 「倍速」，其余 `数值x`（本用例档位 1.5 → 「1.5x」）；点它开更多面板，
+    // 「清屏」点后切文案为「恢复」。通用播放器（详情页影视）不显示这一行。
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(_app(player));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-rate-text')), findsNothing);
+    await tester.pumpWidget(_app(player, shortSeries: true));
+    await tester.pumpAndSettle();
+    expect(find.text('1.5x'), findsOneWidget);
+    expect(find.text('清屏'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-more-rate-row')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
 
   testWidgets('an older rate reply cannot overwrite a newer saved selection', (
     tester,
@@ -202,14 +316,14 @@ void main() {
       await tester.pumpWidget(_app(player));
       await tester.pumpAndSettle();
       player.rateAcknowledgement = olderReply;
-      await tester.tap(find.byTooltip('倍速 1.5×'));
+      await tester.tap(find.byTooltip('更多'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '2×'));
+      await tester.tap(find.widgetWithText(ChoiceChip, '2x'));
       await tester.pumpAndSettle();
       player.rateAcknowledgement = null;
-      await tester.tap(find.byTooltip('倍速 2×'));
+      await tester.tap(find.byTooltip('更多'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '1.25×'));
+      await tester.tap(find.widgetWithText(ChoiceChip, '1.25x'));
       await tester.pumpAndSettle();
       expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
       olderReply.complete();
@@ -434,7 +548,8 @@ void main() {
       await second.seek(const Duration(seconds: 90));
       await tester.pump();
       expect(tester.widget<StorySeekBar>(find.byType(StorySeekBar)).value, .75);
-      expect(find.text('01:30 / 02:00'), findsOneWidget);
+      // 暂停态浮层的时间文字已按官方删除（§27），位置只反映在进度条上。
+      expect(find.textContaining(' / '), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
       second.positions.add(const Duration(seconds: 100));
       await tester.pump();
@@ -462,12 +577,13 @@ Widget _app(
   FakeNativePlayer player, {
   List<int>? selected,
   TextScaler textScaler = TextScaler.noScaling,
-  bool launchCatalogPanel = false,
-  VoidCallback? onDoubleTapLike,
+  bool shortSeries = false,
   bool showSeekHint = false,
   VoidCallback? onSeekHintConsumed,
-  bool episodeEndedWaiting = false,
   int currentIndex = 0,
+  String? seriesStatus,
+  RelatedWork? originalBook,
+  VoidCallback? onOpenOriginalBook,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(textScaler: textScaler),
@@ -489,11 +605,12 @@ Widget _app(
         selected?.add(index);
       },
       onError: (error) => throw error,
-      launchCatalogPanel: launchCatalogPanel,
-      onDoubleTapLike: onDoubleTapLike,
+      shortSeries: shortSeries,
       showSeekHint: showSeekHint,
       onSeekHintConsumed: onSeekHintConsumed,
-      episodeEndedWaiting: episodeEndedWaiting,
+      seriesStatus: seriesStatus,
+      originalBook: originalBook,
+      onOpenOriginalBook: onOpenOriginalBook,
       child: const ColoredBox(color: Colors.black),
     ),
   ),

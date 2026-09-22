@@ -147,7 +147,7 @@ void main() {
     expect(readAlong, 1);
   });
 
-  testWidgets('clearing the episode search re-locates the current episode', (
+  testWidgets('opening the panel centers the current episode in its page', (
     tester,
   ) async {
     final controller = ScrollController();
@@ -170,42 +170,29 @@ void main() {
             episodes: episodes,
             currentIndex: 67,
             playingIndex: 67,
-            title: '测试短剧',
-            description: '',
-            descriptionLoading: false,
-            descriptionError: null,
-            onRetryDescription: null,
-            initialTab: 1,
-            expanded: false,
             playing: true,
-            onTabChanged: (_) {},
+            watched: {for (var i = 0; i < 67; i++) i},
             onSelectEpisode: (_) {},
             onDragStart: (_) {},
             onDragUpdate: (_) {},
             onDragEnd: (_) {},
             onDragCancel: () {},
-            onExpand: () {},
-            onClose: () {},
           ),
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
+    // 打开即居中定位当前集（`gj3/o.java:237-272,1116-1186`），所在分页选中。
     expect(_episode(67).hitTestable(), findsOneWidget);
-    await tester.tap(find.text('找集'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('story-episode-search')),
-      '68',
+    expect(
+      tester.widget<Text>(find.text('61-71')).style?.fontWeight,
+      FontWeight.bold,
     );
-    await tester.pumpAndSettle();
-    expect(_episode(67).hitTestable(), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const ValueKey('story-episode-search')),
-      '',
+    expect(
+      tester.widget<Text>(find.text('1-30')).style?.fontWeight,
+      FontWeight.normal,
     );
-    await tester.pumpAndSettle();
-    expect(_episode(67).hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

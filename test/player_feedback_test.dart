@@ -405,7 +405,6 @@ class _Session {
     home: PlayerPage(
       bookId: 'feedback-book',
       title: '播放提示测试',
-      description: '测试简介',
       eps: [
         for (var index = 1; index <= episodeCount; index++)
           Chapter(itemId: '$index', title: '第 $index 集', volumeName: ''),

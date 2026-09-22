@@ -1,32 +1,41 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 
 import '../../models/media_item.dart';
 
-const storyAccent = Color(0xFFFF6699);
+/// 官方选集格子（`bbw.xml` + `hj3/r0.java` + colors.xml）：
+/// 当前集 文字 `@color/aok`=#FFFA6725、底 `@color/aom`=#1AFA6725、粗体；
+/// 已看 文字 `skin_color_gray_40_light`=#66000000；普通 `skin_color_black_light`
+/// =#FF000000；格子底 `@drawable/o4`=#08000000、圆角 8dp；播放中
+/// `video_playing_orange.json` 12×12dp 挂右上角（margin 4，loop）。
+const _currentText = Color(0xFFFA6725);
+const _currentBg = Color(0x1AFA6725);
+const _watchedText = Color(0x66000000);
+const _normalText = Color(0xFF000000);
+const _tileBg = Color(0x08000000);
+
+/// 官方长剧分页（`gj3/o.java:731` `setGroupByCount(30)`）：每 30 集一组
+/// 「1-30/31-60/…」，>30 集出现、滚动联动，≤30 隐藏。
+const _pageSize = 30;
+const _columns = 6;
 
 class StoryPlayerPanel extends StatefulWidget {
   final ScrollController scrollController;
   final List<Chapter> episodes;
   final int currentIndex;
   final int? playingIndex;
-  final String title;
-  final String description;
-  final bool descriptionLoading;
-  final String? descriptionError;
-  final VoidCallback? onRetryDescription;
-  final int initialTab;
-  final bool expanded;
   final bool playing;
-  final ValueChanged<int> onTabChanged;
+
+  /// 已看集（灰字 #66000000）。官方取观看历史（`hj3/r0.java:224-235`），
+  /// 本仓库由宿主给：续播点之前的集 + 本次会话播过的集。
+  final Set<int> watched;
   final ValueChanged<int> onSelectEpisode;
   final GestureDragStartCallback onDragStart;
   final GestureDragUpdateCallback onDragUpdate;
   final GestureDragEndCallback onDragEnd;
-  final VoidCallback onDragCancel;
-  final VoidCallback onExpand;
-  final VoidCallback onClose;
+  final GestureDragCancelCallback onDragCancel;
 
   const StoryPlayerPanel({
     super.key,
@@ -34,173 +43,163 @@ class StoryPlayerPanel extends StatefulWidget {
     required this.episodes,
     required this.currentIndex,
     required this.playingIndex,
-    required this.title,
-    required this.description,
-    required this.descriptionLoading,
-    required this.descriptionError,
-    required this.onRetryDescription,
-    required this.initialTab,
-    required this.expanded,
     this.playing = false,
-    required this.onTabChanged,
+    this.watched = const <int>{},
     required this.onSelectEpisode,
     required this.onDragStart,
     required this.onDragUpdate,
     required this.onDragEnd,
     required this.onDragCancel,
-    required this.onExpand,
-    required this.onClose,
   });
 
   @override
   State<StoryPlayerPanel> createState() => _StoryPlayerPanelState();
 }
 
-class _StoryPlayerPanelState extends State<StoryPlayerPanel>
-    with SingleTickerProviderStateMixin {
-  static final _theme = ThemeData.light(useMaterial3: true).copyWith(
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: storyAccent,
-      primary: storyAccent,
-    ),
-  );
-  late final TabController _tabs;
-  final _search = TextEditingController();
-  final _searchFocus = FocusNode();
-  final _scrollStorage = PageStorageBucket();
-  late int _tab;
-  late bool _useGrid;
-  bool _searchOpen = false;
+class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
+  late int _page;
   bool _needsLocate = true;
-  String _query = '';
-  double _horizontalDrag = 0;
-  int _columns = 5;
+  bool _locating = false;
   double _tileHeight = 52;
-  double _rowHeight = 64;
+
+  /// 最近一次居中定位用的视口高：展开动画期间逐帧对比，变了就重定位。
+  double? _lastLocateViewport;
 
   @override
   void initState() {
     super.initState();
-    _tab = widget.initialTab;
-    _useGrid = _hasNumberedTitles(widget.episodes);
-    _tabs = TabController(length: 2, vsync: this, initialIndex: _tab)
-      ..addListener(_tabChanged);
+    _page = _pageOf(widget.currentIndex);
+    widget.scrollController.addListener(_onScroll);
   }
 
   @override
   void didUpdateWidget(StoryPlayerPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.episodes, widget.episodes)) {
-      _useGrid = _hasNumberedTitles(widget.episodes);
-      _needsLocate = true;
-    }
+    if (!identical(oldWidget.episodes, widget.episodes)) _needsLocate = true;
     if (oldWidget.currentIndex != widget.currentIndex) _needsLocate = true;
-    if (oldWidget.initialTab != widget.initialTab &&
-        _tabs.index != widget.initialTab) {
-      _tabs.index = widget.initialTab;
-    }
   }
 
-  void _tabChanged() {
-    // TabController also notifies when its animation finishes. Only a real
-    // tab change should rebuild the body or reset its scroll position.
-    if (!mounted || _tab == _tabs.index) return;
-    _searchFocus.unfocus();
-    setState(() {
-      _tab = _tabs.index;
-    });
-    widget.onTabChanged(_tab);
+  @override
+  void dispose() {
+    widget.scrollController.removeListener(_onScroll);
+    super.dispose();
   }
 
+  int _pageOf(int index) => (index ~/ _pageSize).clamp(0, _lastPage);
+
+  int get _lastPage => math.max(0, (widget.episodes.length - 1) ~/ _pageSize);
+
+  /// 官方打开面板时自动滚动并把当前集**居中定位**（`gj3/o.java:237-272,
+  /// 1116-1186`，偏移=视口高/2−半格−12dp）；长剧同时切到所在分页。
   void _locateEpisode() {
-    if (!_needsLocate || _tab != 1 || _query.isNotEmpty) return;
+    if (!_needsLocate) return;
     _needsLocate = false;
+    // build 期间不允许 setState；分页条在下一帧读到新值。
+    _page = _pageOf(widget.currentIndex);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _tab != 1 || _query.isNotEmpty) return;
+      if (!mounted) return;
       if (!widget.scrollController.hasClients ||
           !widget.scrollController.position.hasContentDimensions ||
           widget.scrollController.position.viewportDimension <= 0) {
         _needsLocate = true;
         return;
       }
-      final position = widget.scrollController.position;
-      final row = _useGrid
-          ? widget.currentIndex ~/ _columns
-          : widget.currentIndex;
-      final stride = _useGrid ? _tileHeight + 8 : _rowHeight;
-      widget.scrollController.jumpTo(
-        (8 + row * stride - position.viewportDimension / 3).clamp(
-          0.0,
-          position.maxScrollExtent,
-        ),
-      );
+      _centerCurrentEpisode();
+      _relocateWhileSheetExpands();
     });
   }
 
-  void _toggleSearch() {
-    if (_searchOpen) {
-      _searchFocus.unfocus();
-      _search.clear();
-      setState(() {
-        _searchOpen = false;
-        _query = '';
-        _needsLocate = true;
-      });
-    } else {
-      setState(() => _searchOpen = true);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _searchOpen) _searchFocus.requestFocus();
-      });
+  /// 把当前集滚到视口竖直居中（真机验证：面板有 200ms 展开动画，首帧
+  /// viewportDimension 是展开中的瞬时小值，展开完成后当前集被顶到列表
+  /// 顶部——定位必须跟随视口长大重算）。
+  void _centerCurrentEpisode() {
+    final position = widget.scrollController.position;
+    final row = widget.currentIndex ~/ _columns;
+    final stride = _tileHeight + 8;
+    final cellTop = 4 + row * stride;
+    _lastLocateViewport = position.viewportDimension;
+    _locating = true;
+    widget.scrollController.jumpTo(
+      (cellTop - position.viewportDimension / 2 + _tileHeight / 2 - 12)
+          .clamp(0.0, position.maxScrollExtent),
+    );
+    _locating = false;
+  }
+
+  /// 展开期间视口每帧都在变：逐帧用新视口重定位，视口高稳定（动画结束）
+  /// 即停。用户滚动不改视口高，不会误触发。
+  void _relocateWhileSheetExpands() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!widget.scrollController.hasClients ||
+          !widget.scrollController.position.hasContentDimensions ||
+          widget.scrollController.position.viewportDimension <= 0) {
+        return;
+      }
+      final viewport = widget.scrollController.position.viewportDimension;
+      final located = _lastLocateViewport;
+      if (located != null && (viewport - located).abs() <= 0.5) return;
+      _centerCurrentEpisode();
+      _relocateWhileSheetExpands();
+    });
+  }
+
+  /// 官方 tab 条滚动联动：可视区顶部所在行换页时更新选中的「1-30」段
+  /// （`view/f.java:669-739`）。打开定位（jumpTo）不联动——官方打开时
+  /// 选中页就是当前集所在页，用户滚动后才跟随可视区。
+  void _onScroll() {
+    if (_locating || !mounted || !widget.scrollController.hasClients) return;
+    final position = widget.scrollController.position;
+    if (!position.hasContentDimensions || position.viewportDimension <= 0) {
+      return;
+    }
+    final topRow = (position.pixels / (_tileHeight + 8)).floor();
+    final page = (topRow * _columns) ~/ _pageSize;
+    if (page != _page && page >= 0 && page <= _lastPage) {
+      setState(() => _page = page);
     }
   }
 
-  void _select(int index) {
-    _searchFocus.unfocus();
-    widget.onSelectEpisode(index);
+  void _jumpToPage(int page) {
+    setState(() => _page = page);
+    if (!widget.scrollController.hasClients ||
+        !widget.scrollController.position.hasContentDimensions) {
+      return;
+    }
+    final position = widget.scrollController.position;
+    final row = (page * _pageSize) ~/ _columns;
+    widget.scrollController.jumpTo(
+      (4 + row * (_tileHeight + 8)).clamp(0.0, position.maxScrollExtent),
+    );
   }
 
-  @override
-  void dispose() {
-    _tabs.dispose();
-    _search.dispose();
-    _searchFocus.dispose();
-    super.dispose();
-  }
+  void _select(int index) => widget.onSelectEpisode(index);
 
   @override
   Widget build(BuildContext context) {
     final scale = MediaQuery.textScalerOf(context);
-    final tabHeight = math.max(46.0, scale.scale(16) + 24);
-    final toolbarHeight = math.max(44.0, scale.scale(14) + 20);
-    final headerHeight = 14 + tabHeight + (_tab == 1 ? toolbarHeight + 8 : 0);
-    _tileHeight = math.max(52.0, scale.scale(16) * 1.2 + 24);
-    _rowHeight = math.max(64.0, scale.scale(16) * 1.25 + 32);
+    final tabHeight = math.max(40.0, scale.scale(14) + 22);
+    final showPaging = widget.episodes.length > _pageSize;
+    final headerHeight = 12 + tabHeight + (showPaging ? 36 : 0);
     // A sheet-height change only needs layout. Keep the existing header and
     // lazy list children; state/data/text-scale changes create a fresh build.
     Widget? contents;
     return Theme(
-      data: _theme,
+      data: ThemeData.light(useMaterial3: true),
       child: Material(
         key: const ValueKey('story-panel'),
         color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        // 官方 `skin_bg_short_series_episode_dialog`：顶部圆角 16dp。
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         clipBehavior: Clip.antiAlias,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final preferredColumns = scale.scale(16) > 20 ? 4 : 5;
-            final minTileWidth = math.max(
+            _tileHeight = math.max(
               44.0,
-              scale.scale(widget.episodes.length.toString().length * 9.0) + 16,
+              ((constraints.maxWidth - 24 - (_columns - 1) * 8) / _columns) *
+                  52 /
+                  53,
             );
-            final columns =
-                ((constraints.maxWidth - 32 + 8) / (minTileWidth + 8))
-                    .floor()
-                    .clamp(1, preferredColumns);
-            if (_columns != columns) {
-              _columns = columns;
-              _needsLocate = true;
-              contents = null;
-            }
             _locateEpisode();
             // While the sheet closes, clip the fixed header instead of
             // squeezing its controls into a zero-height Column.
@@ -220,13 +219,15 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
                     child: Column(
                       children: [
                         SizedBox(
-                          height: 14,
+                          height: 12,
                           child: Center(
                             child: Container(
-                              width: 30,
+                              // 官方 grabber：36×4dp、`@drawable/yt` 圆角 2、
+                              // `#1A000000`（`aa8.xml:6`）。
+                              width: 36,
                               height: 4,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFCACDD1),
+                                color: const Color(0x1A000000),
                                 borderRadius: BorderRadius.circular(2),
                               ),
                             ),
@@ -236,64 +237,20 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
                           height: tabHeight,
                           child: Row(
                             children: [
-                              Expanded(
-                                child: TabBar(
-                                  controller: _tabs,
-                                  isScrollable: true,
-                                  tabAlignment: TabAlignment.start,
-                                  dividerColor: Colors.transparent,
-                                  labelColor: const Color(0xFF18191C),
-                                  unselectedLabelColor: const Color(0xFF9499A0),
-                                  labelStyle: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  indicator: const _StoryTabIndicator(),
-                                  tabs: [
-                                    const Tab(text: '简介'),
-                                    Tab(
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Text('选集'),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            '${widget.episodes.length}',
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w400,
-                                              color: Color(0xFF9499A0),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              SizedBox(
-                                width: 40,
-                                child: IconButton(
-                                  tooltip: widget.expanded ? '收起面板' : '展开面板',
-                                  onPressed: widget.onExpand,
-                                  iconSize: 18,
-                                  icon: Icon(
-                                    widget.expanded
-                                        ? Icons.unfold_less
-                                        : Icons.unfold_more,
-                                    color: const Color(0xFFA8ADB4),
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 44,
-                                child: IconButton(
-                                  tooltip: '关闭面板',
-                                  onPressed: widget.onClose,
-                                  icon: const Icon(
-                                    Icons.close,
-                                    size: 22,
-                                    color: Color(0xFF61666D),
+                              // 官方单 tab「选集」：14sp 粗体 `#FF1B1B1B`、
+                              // padding 20/13、无下划线指示器（`hj3/p.java:97-124`）。
+                              // 「简介」tab 仅有关联剧才出现（本仓库无数据）。
+                              Padding(
+                                padding: const EdgeInsets.only(left: 20),
+                                child: Text(
+                                  '选集',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    height: 1.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF1B1B1B),
+                                    leadingDistribution:
+                                        TextLeadingDistribution.even,
                                   ),
                                 ),
                               ),
@@ -303,33 +260,8 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
                       ],
                     ),
                   ),
-                  if (_tab == 1) _episodeToolbar(toolbarHeight),
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onHorizontalDragStart: (_) => _horizontalDrag = 0,
-                      onHorizontalDragUpdate: (details) =>
-                          _horizontalDrag += details.delta.dx,
-                      onHorizontalDragEnd: (details) {
-                        final velocity = details.primaryVelocity ?? 0;
-                        if (_horizontalDrag.abs() < 40 &&
-                            velocity.abs() < 400) {
-                          return;
-                        }
-                        final direction = velocity.abs() >= 400
-                            ? velocity
-                            : _horizontalDrag;
-                        _tabs.animateTo(direction < 0 ? 1 : 0);
-                      },
-                      child: PageStorage(
-                        bucket: _scrollStorage,
-                        child: KeyedSubtree(
-                          key: PageStorageKey<String>('story-panel-tab-$_tab'),
-                          child: _tab == 0 ? _introduction() : _episodes(),
-                        ),
-                      ),
-                    ),
-                  ),
+                  if (showPaging) _pagingStrip(),
+                  Expanded(child: _episodes()),
                 ],
               ),
             );
@@ -339,233 +271,67 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
     );
   }
 
-  Widget _episodeToolbar(double height) => Padding(
-    key: const ValueKey('story-episode-toolbar'),
-    padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
-    child: SizedBox(
-      height: height,
-      child: _searchOpen
-          ? Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('story-episode-search'),
-                    controller: _search,
-                    focusNode: _searchFocus,
-                    keyboardType: _useGrid
-                        ? TextInputType.number
-                        : TextInputType.text,
-                    textInputAction: TextInputAction.search,
-                    style: const TextStyle(fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: _useGrid ? '输入集数' : '搜索集数或标题',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      filled: true,
-                      fillColor: const Color(0xFFF5F6F8),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                    onChanged: (value) {
-                      setState(() {
-                        _query = value.trim();
-                        // Clearing the filter must re-locate the current
-                        // episode instead of leaving the list at the top.
-                        if (_query.isEmpty) _needsLocate = true;
-                      });
-                      if (widget.scrollController.hasClients) {
-                        widget.scrollController.jumpTo(0);
-                      }
-                    },
-                    onSubmitted: (_) => _searchFocus.unfocus(),
+  Widget _pagingStrip() => SizedBox(
+    key: const ValueKey('story-episode-pages'),
+    height: 36,
+    child: ListView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      children: [
+        for (var page = 0; page <= _lastPage; page++)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _jumpToPage(page),
+              child: Center(
+                child: Text(
+                  '${page * _pageSize + 1}-'
+                  '${math.min((page + 1) * _pageSize, widget.episodes.length)}',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: page == _page
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    color: page == _page
+                        ? const Color(0xFF1B1B1B)
+                        : const Color(0x66000000),
                   ),
                 ),
-                IconButton(
-                  tooltip: '关闭搜索',
-                  onPressed: _toggleSearch,
-                  icon: const Icon(Icons.close, size: 20),
-                ),
-              ],
-            )
-          : Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.episodes.isEmpty
-                        ? '暂无剧集'
-                        : widget.playingIndex == widget.currentIndex
-                        ? '${widget.playing ? '正在播放' : '当前'} 第 ${widget.currentIndex + 1} 集'
-                        : '已选择 第 ${widget.currentIndex + 1} 集',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF61666D),
-                    ),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: _toggleSearch,
-                  icon: const Icon(Icons.search, size: 19),
-                  label: const Text('找集'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF61666D),
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(60, 40),
-                  ),
-                ),
-              ],
+              ),
             ),
-    ),
-  );
-
-  Widget _introduction() => ListView(
-    key: const ValueKey('story-introduction'),
-    controller: widget.scrollController,
-    padding: EdgeInsets.fromLTRB(
-      16,
-      18,
-      16,
-      24 + MediaQuery.paddingOf(context).bottom,
-    ),
-    children: [
-      Text(
-        widget.title,
-        style: const TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w600,
-          color: Color(0xFF18191C),
-        ),
-      ),
-      const SizedBox(height: 12),
-      Text(
-        '共 ${widget.episodes.length} 集',
-        style: const TextStyle(color: Color(0xFF9499A0), fontSize: 13),
-      ),
-      const SizedBox(height: 20),
-      ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        tileColor: const Color(0xFFF6F7F8),
-        leading: const Icon(Icons.layers_outlined),
-        title: const Text('查看全部剧集'),
-        subtitle: Text(
-          widget.episodes.isEmpty ? '暂无剧集' : '当前第 ${widget.currentIndex + 1} 集',
-        ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => _tabs.animateTo(1),
-      ),
-      const SizedBox(height: 24),
-      const Text(
-        '剧情简介',
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-      ),
-      const SizedBox(height: 12),
-      if (widget.descriptionLoading)
-        const Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: CircularProgressIndicator()),
-        )
-      else if (widget.descriptionError != null) ...[
-        const Text('简介加载失败', style: TextStyle(color: Color(0xFF9499A0))),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            onPressed: widget.onRetryDescription,
-            child: const Text('重新加载简介'),
           ),
-        ),
-      ] else
-        Text(
-          widget.description.isEmpty ? '暂无简介' : widget.description,
-          style: const TextStyle(
-            fontSize: 15,
-            height: 1.7,
-            color: Color(0xFF61666D),
-          ),
-        ),
-    ],
+      ],
+    ),
   );
 
   Widget _episodes() {
-    final number = int.tryParse(_query);
-    final indexes = [
-      for (var i = 0; i < widget.episodes.length; i++)
-        if (_query.isEmpty ||
-            (number != null
-                ? number == i + 1
-                : widget.episodes[i].title.toLowerCase().contains(
-                    _query.toLowerCase(),
-                  )))
-          i,
-    ];
+    if (widget.episodes.isEmpty) {
+      return const Center(
+        key: ValueKey('story-episodes'),
+        child: Text('暂无剧集', style: TextStyle(color: Color(0xFF9499A0))),
+      );
+    }
     return CustomScrollView(
       key: const ValueKey('story-episodes'),
       controller: widget.scrollController,
       slivers: [
-        if (indexes.isEmpty)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: Text('没有匹配的剧集')),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+          sliver: SliverGrid(
+            key: const ValueKey('story-episode-grid'),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: _columns,
+              mainAxisExtent: _tileHeight,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
             ),
-          )
-        else if (_useGrid)
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            sliver: SliverGrid(
-              key: const ValueKey('story-episode-grid'),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: _columns,
-                mainAxisExtent: _tileHeight,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, position) => _episodeTile(indexes[position]),
-                childCount: indexes.length,
-              ),
+            delegate: SliverChildBuilderDelegate(
+              (context, position) => _episodeTile(position),
+              childCount: widget.episodes.length,
             ),
-          )
-        else
-          SliverFixedExtentList(
-            key: const ValueKey('story-episode-list'),
-            itemExtent: _rowHeight,
-            delegate: SliverChildBuilderDelegate((context, position) {
-              final index = indexes[position];
-              final active = index == widget.playingIndex;
-              final pending = index == widget.currentIndex && !active;
-              return ListTile(
-                key: ValueKey('story-episode-$index'),
-                selected: active || pending,
-                selectedColor: storyAccent,
-                selectedTileColor: const Color(0xFFFFF1F5),
-                leading: SizedBox(
-                  width: 32,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('${index + 1}'),
-                  ),
-                ),
-                title: Text(
-                  widget.episodes[index].title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: active
-                    ? const Icon(Icons.graphic_eq, semanticLabel: '当前剧集')
-                    : pending
-                    ? const Icon(Icons.hourglass_empty, semanticLabel: '待播放')
-                    : null,
-                onTap: () => _select(index),
-              );
-            }, childCount: indexes.length),
           ),
+        ),
         SliverToBoxAdapter(
           child: SizedBox(height: 16 + MediaQuery.paddingOf(context).bottom),
         ),
@@ -574,151 +340,61 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel>
   }
 
   Widget _episodeTile(int index) {
-    final active = index == widget.playingIndex;
-    final pending = index == widget.currentIndex && !active;
-    final selected = active || pending;
+    final active = index == (widget.playingIndex ?? widget.currentIndex);
+    final watched = !active && widget.watched.contains(index);
     return Semantics(
       key: ValueKey('story-episode-$index'),
       label: '第 ${index + 1} 集',
-      value: active
-          ? (widget.playing ? '正在播放' : '当前剧集')
-          : pending
-          ? '已选择'
-          : null,
+      value: active ? (widget.playing ? '正在播放' : '当前剧集') : null,
       button: true,
-      selected: selected,
+      selected: active,
       excludeSemantics: true,
       onTap: () => _select(index),
       child: Material(
-        color: selected ? const Color(0xFFFFF1F5) : const Color(0xFFF5F6F8),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: BorderSide(color: selected ? storyAccent : Colors.transparent),
+        color: active ? _currentBg : _tileBg,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(8)),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => _select(index),
           child: Stack(
             children: [
-              Positioned.fill(
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: selected ? 10 : 0),
-                  child: Center(
-                    child: Text(
-                      '${index + 1}',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w500,
-                        color: selected ? storyAccent : const Color(0xFF18191C),
-                      ),
-                    ),
+              Center(
+                child: Text(
+                  '${index + 1}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                    color: active
+                        ? _currentText
+                        : watched
+                        ? _watchedText
+                        : _normalText,
                   ),
                 ),
               ),
-              if (selected)
+              if (active)
                 Positioned(
-                  bottom: 4,
-                  left: 0,
-                  right: 0,
-                  child: Icon(
-                    pending
-                        ? Icons.hourglass_empty
-                        : widget.playing
-                        ? Icons.graphic_eq
-                        : Icons.play_arrow_rounded,
-                    size: 12,
-                    color: storyAccent,
+                  top: 4,
+                  right: 4,
+                  child: SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: Lottie.asset(
+                      'assets/lottie/video_playing_orange.json',
+                      animate: widget.playing,
+                      repeat: true,
+                      fit: BoxFit.contain,
+                    ),
                   ),
                 ),
             ],
           ),
         ),
       ),
-    );
-  }
-}
-
-// Only hide a title when it encodes exactly the episode's ordinal. Missing,
-// reordered or meaningful titles keep their list presentation.
-bool _hasNumberedTitles(List<Chapter> episodes) {
-  final pattern = RegExp(
-    r'^(?:第|episode|ep)?([0-9零〇一二三四五六七八九十百千万两]+)(?:集|话|期)?$',
-    caseSensitive: false,
-  );
-  for (var i = 0; i < episodes.length; i++) {
-    final title = episodes[i].title.replaceAll(RegExp(r'\s+'), '');
-    if (title.isEmpty) continue;
-    final match = pattern.firstMatch(title);
-    if (match == null || _episodeOrdinal(match.group(1)!) != i + 1) {
-      return false;
-    }
-  }
-  return true;
-}
-
-int? _episodeOrdinal(String value) {
-  final number = int.tryParse(value);
-  if (number != null) return number;
-  const digits = {
-    '零': 0,
-    '〇': 0,
-    '一': 1,
-    '二': 2,
-    '两': 2,
-    '三': 3,
-    '四': 4,
-    '五': 5,
-    '六': 6,
-    '七': 7,
-    '八': 8,
-    '九': 9,
-  };
-  const units = {'十': 10, '百': 100, '千': 1000, '万': 10000};
-  var total = 0;
-  var section = 0;
-  var digit = 0;
-  for (final character in value.split('')) {
-    if (digits.containsKey(character)) {
-      digit = digit * 10 + digits[character]!;
-    } else {
-      final unit = units[character];
-      if (unit == null) return null;
-      if (unit == 10000) {
-        total += (section + digit) * unit;
-        section = 0;
-      } else {
-        section += (digit == 0 ? 1 : digit) * unit;
-      }
-      digit = 0;
-    }
-  }
-  return total + section + digit;
-}
-
-class _StoryTabIndicator extends Decoration {
-  const _StoryTabIndicator();
-  @override
-  BoxPainter createBoxPainter([VoidCallback? onChanged]) =>
-      _StoryIndicatorPainter();
-}
-
-class _StoryIndicatorPainter extends BoxPainter {
-  @override
-  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
-    final size = configuration.size!;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          offset.dx + (size.width - 16) / 2,
-          offset.dy + size.height - 4,
-          16,
-          4,
-        ),
-        const Radius.circular(2),
-      ),
-      Paint()..color = storyAccent,
     );
   }
 }

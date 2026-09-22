@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -12,75 +13,136 @@ void main() {
     () => SharedPreferences.setMockInitialValues({'player_playback_rate': 1.5}),
   );
 
+  // 打开面板后不能用 pumpAndSettle：当前集的「播放中」声波 Lottie 是循环
+  // 动画（官方 loop），会永不定帧。打开动画 200ms（§批次一），用固定 pump。
+  Future<void> openEpisodes(WidgetTester tester) async {
+    // 目录条在控制条可见时才挂载；settle 可能已越过 4s 自动隐藏线，先点
+    // 画面把控制条唤回来。
+    if (find.byKey(const ValueKey('player-catalog-bar')).evaluate().isEmpty) {
+      await tester.tap(find.byKey(const ValueKey('video-surface')));
+      await tester.pump();
+    }
+    await tester.tap(find.byKey(const ValueKey('player-catalog-bar')));
+    // 打开动画 200ms：pump 必须带时长——Ticker 首个 tick 把起点定在当下，
+    // 无时长的 pump 不推进测试时钟，动画永远停在 elapsed 0（§26 踩坑）。
+    // 面板开着时当前集的循环声波 Lottie 让 pumpAndSettle 永不结束，只能
+    // 用固定时长 pump。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pump();
+  }
+
+  testWidgets('71 episodes use six columns with 30-episode page tabs', (
+    tester,
+  ) async {
+    final fixture = await _mount(tester);
+    final videoBefore = tester.getRect(
+      find.byKey(const ValueKey('video-frame')),
+    );
+    final callsBefore = List<String>.of(fixture.player.calls);
+    await openEpisodes(tester);
+    final panel = tester.getRect(find.byKey(const ValueKey('story-panel')));
+    expect(panel.height, closeTo((904 - 39) * .55, 1));
+    expect(find.byKey(const ValueKey('story-episode-grid')), findsOneWidget);
+    // 官方面板没有搜索、没有「正在播放/找集」工具行（`catalogdialog/v2`）。
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('找集'), findsNothing);
+    expect(find.textContaining('正在播放'), findsNothing);
+    // 打开面板不暂停播放（官方 `k.smali` H0 无 pause）。
+    expect(fixture.player.calls, callsBefore);
+
+    // 六列方形格子（`gj3/o.java:749`、`hj3/r0.java:713-728`）。
+    final first = tester.getRect(_episode(0));
+    expect(tester.getRect(_episode(5)).top, closeTo(first.top, .1));
+    expect(tester.getRect(_episode(6)).top, greaterThan(first.bottom));
+    expect(first.width, closeTo((407 - 24 - 40) / 6, 1));
+    expect(first.height, closeTo(first.width * 52 / 53, 1));
+
+    // 长剧 30 集分页 tab（`gj3/o.java:812-846`）。
+    expect(find.text('1-30'), findsOneWidget);
+    expect(find.text('31-60'), findsOneWidget);
+    expect(find.text('61-71'), findsOneWidget);
+
+    // 点分页 tab 跳页：61-71 页起点可见。
+    await tester.tap(find.text('61-71'));
+    await tester.pump();
+    await tester.pump();
+    expect(_episode(60).hitTestable(), findsOneWidget);
+    await tester.tap(_episode(70));
+    await tester.pumpAndSettle();
+    expect(fixture.selected, [70]);
+    expect(find.byKey(const ValueKey('story-panel')), findsNothing);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('video-frame'))),
+      videoBefore,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('opening centers the current episode and pages to its group', (
+    tester,
+  ) async {
+    await _mount(tester, currentIndex: 67);
+    await openEpisodes(tester);
+    expect(_episode(67).hitTestable(), findsOneWidget);
+    // 当前集所在分页被选中（选中=加粗深色，`hj3/p.java:97-124`）。
+    final activePage = tester.widget<Text>(find.text('61-71'));
+    expect(activePage.style?.fontWeight, FontWeight.bold);
+    final idlePage = tester.widget<Text>(find.text('1-30'));
+    expect(idlePage.style?.fontWeight, FontWeight.normal);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('opening vertically centers the current tile in the viewport', (
+    tester,
+  ) async {
+    // 真机踩坑：定位在面板 200ms 展开动画期间执行，用的是瞬时小视口，
+    // 展开完成后当前集停在列表顶部而不是居中（§26.2）。选列表中段的
+    // 39 集（不受 maxScrollExtent 截断），断言格子中心=视口中心+12dp。
+    await _mount(tester, currentIndex: 39);
+    await openEpisodes(tester);
+    final viewport = tester.getRect(
+      find.byKey(const ValueKey('story-episodes')),
+    );
+    final current = tester.getRect(_episode(39));
+    expect(current.center.dy, closeTo(viewport.center.dy + 12, 1.5));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    '71 episodes use five columns and exact search selects the last episode',
+    'current tile is orange with the corner playing lottie; watched tiles are gray',
     (tester) async {
-      final fixture = await _mount(tester);
-      final videoBefore = tester.getRect(
-        find.byKey(const ValueKey('video-frame')),
+      await _mount(
+        tester,
+        currentIndex: 3,
+        watched: {0, 1, 2},
       );
-      final callsBefore = List<String>.of(fixture.player.calls);
-      await _openEpisodes(tester);
-      final panel = tester.getRect(find.byKey(const ValueKey('story-panel')));
-      expect(panel.height, closeTo((904 - 39) * .55, 1));
-      expect(find.byKey(const ValueKey('story-episode-grid')), findsOneWidget);
-      expect(find.byType(TextField), findsNothing);
-      expect(find.text('选集 · 71 集'), findsNothing);
-      final first = tester.getRect(_episode(0));
-      expect(tester.getRect(_episode(4)).top, closeTo(first.top, .1));
-      expect(tester.getRect(_episode(5)).top, greaterThan(first.bottom));
-      final viewport = tester.getRect(
-        find.byKey(const ValueKey('story-episodes')),
+      await openEpisodes(tester);
+      Text tileText(int index) => tester.widget<Text>(
+        find.descendant(of: _episode(index), matching: find.byType(Text)).first,
       );
-      final visible = find
-          .byWidgetPredicate((widget) {
-            final key = widget.key;
-            return key is ValueKey<String> &&
-                RegExp(r'^story-episode-\d+$').hasMatch(key.value);
-          })
-          .evaluate()
-          .where((element) {
-            final box = element.renderObject as RenderBox;
-            final rect = box.localToGlobal(Offset.zero) & box.size;
-            return rect.top >= viewport.top && rect.bottom <= viewport.bottom;
-          })
-          .length;
-      expect(visible, greaterThanOrEqualTo(20));
-      expect(fixture.player.calls, callsBefore);
-
-      await tester.tap(find.byTooltip('展开面板'));
-      await tester.pumpAndSettle();
-      final toolbarTop = tester.getTopLeft(
-        find.byKey(const ValueKey('story-episode-toolbar')),
-      );
-      await tester.drag(
-        find.byKey(const ValueKey('story-episodes')),
-        const Offset(0, -220),
-      );
-      await tester.pumpAndSettle();
+      // 当前集：文字 #FFFA6725 粗体、底 #1AFA6725（`r0.java:449-457`）。
+      final current = tileText(3);
+      expect(current.style?.color, const Color(0xFFFA6725));
+      expect(current.style?.fontWeight, FontWeight.bold);
+      // 当前集底色 #1AFA6725 只出现在这一块格子上。
       expect(
-        tester.getTopLeft(find.byKey(const ValueKey('story-episode-toolbar'))),
-        toolbarTop,
+        find.byWidgetPredicate(
+          (widget) => widget is Material && widget.color == const Color(0x1AFA6725),
+        ),
+        findsOneWidget,
       );
-      expect(fixture.selected, isEmpty);
-
-      await tester.tap(find.text('找集'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('story-episode-search')),
-        '71',
-      );
-      await tester.pumpAndSettle();
-      expect(_episode(70), findsOneWidget);
-      expect(_episode(0), findsNothing);
-      await tester.tap(_episode(70));
-      await tester.pumpAndSettle();
-      expect(fixture.selected, [70]);
-      expect(find.byKey(const ValueKey('story-panel')), findsNothing);
+      // 播放中 Lottie 在右上角（`bbw.xml:5-6`）。
       expect(
-        tester.getRect(find.byKey(const ValueKey('video-frame'))),
-        videoBefore,
+        find.descendant(of: _episode(3), matching: find.byType(Lottie)),
+        findsOneWidget,
       );
+      // 已看集灰字 #66000000（`r0.java:224-235`）。
+      expect(tileText(1).style?.color, const Color(0x66000000));
+      // 未看普通集纯黑 #FF000000。
+      expect(tileText(10).style?.color, const Color(0xFF000000));
       expect(tester.takeException(), isNull);
     },
   );
@@ -99,7 +161,7 @@ void main() {
         );
         final callsBefore = List<String>.of(fixture.player.calls);
         final positionBefore = fixture.player.position;
-        await _openEpisodes(tester);
+        await openEpisodes(tester);
         final panel = tester.getRect(find.byKey(const ValueKey('story-panel')));
         final video = tester.getRect(find.byKey(const ValueKey('video-frame')));
         expect(
@@ -112,18 +174,6 @@ void main() {
         );
         expect(video.bottom, lessThanOrEqualTo(panel.top + .1));
         expect(video.top, greaterThanOrEqualTo(39));
-        await tester.tap(find.byTooltip('展开面板'));
-        await tester.pumpAndSettle();
-        expect(
-          tester.getRect(find.byKey(const ValueKey('story-panel'))).top,
-          closeTo(39, 1),
-        );
-        await tester.tap(find.byTooltip('收起面板'));
-        await tester.pumpAndSettle();
-        expect(
-          tester.getRect(find.byKey(const ValueKey('story-panel'))).height,
-          closeTo(panel.height, 1),
-        );
         await tester.binding.handlePopRoute();
         await tester.pumpAndSettle();
         expect(find.byKey(const ValueKey('story-panel')), findsNothing);
@@ -140,209 +190,109 @@ void main() {
     );
   }
 
-  testWidgets(
-    'opening locates a late episode and closing search restores that location',
-    (tester) async {
-      await _mount(tester, currentIndex: 67);
-      await _openEpisodes(tester);
-      expect(_episode(67).hitTestable(), findsOneWidget);
-      await tester.tap(find.text('找集'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('story-episode-search')),
-        '999',
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('没有匹配的剧集'), findsOneWidget);
-      await tester.tap(find.byTooltip('关闭搜索'));
-      await tester.pumpAndSettle();
-      expect(find.byType(TextField), findsNothing);
-      expect(_episode(67).hitTestable(), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'large text uses four columns and search fits above the keyboard',
-    (tester) async {
-      await _mount(
-        tester,
-        window: const Size(320, 640),
-        scale: const TextScaler.linear(2),
-      );
-      await _openEpisodes(tester);
-      final first = tester.getRect(_episode(0));
-      expect(tester.getRect(_episode(3)).top, closeTo(first.top, .1));
-      expect(tester.getRect(_episode(4)).top, greaterThan(first.bottom));
-      expect(tester.takeException(), isNull);
-      await tester.tap(find.text('找集'));
-      await tester.pumpAndSettle();
-      tester.view.viewInsets = FakeViewPadding(
-        bottom: 240 * tester.view.devicePixelRatio,
-      );
-      addTearDown(tester.view.resetViewInsets);
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('story-episode-search')),
-        '24',
-      );
-      await tester.pumpAndSettle();
-      expect(_episode(23).hitTestable(), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'meaningful episode titles retain their list and can be searched',
-    (tester) async {
-      final fixture = await _mount(
-        tester,
-        episodes: [
-          Chapter(itemId: '1', title: '第1集 初次相遇', volumeName: ''),
-          Chapter(itemId: '2', title: '第2集 久别重逢', volumeName: ''),
-          Chapter(itemId: '3', title: '第3集 真相', volumeName: ''),
-        ],
-      );
-      await _openEpisodes(tester);
-      expect(find.byKey(const ValueKey('story-episode-list')), findsOneWidget);
-      expect(find.byKey(const ValueKey('story-episode-grid')), findsNothing);
-      expect(find.text('第2集 久别重逢'), findsOneWidget);
-      await tester.tap(find.text('找集'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('story-episode-search')),
-        '重逢',
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(_episode(1));
-      await tester.pumpAndSettle();
-      expect(fixture.selected, [1]);
-    },
-  );
-
-  testWidgets(
-    'tab gestures keep controls fixed and a downward header drag closes the panel',
-    (tester) async {
-      final fixture = await _mount(tester);
-      await _openEpisodes(tester);
-      await tester.tap(find.text('简介'));
-      await tester.pumpAndSettle();
-      expect(find.text('这是测试短剧的真实简介内容'), findsOneWidget);
-      await tester.drag(
-        find.byKey(const ValueKey('story-introduction')),
-        const Offset(-160, 0),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('story-episode-grid')), findsOneWidget);
-      expect(fixture.selected, isEmpty);
-      final handle = tester.getRect(
-        find.byKey(const ValueKey('story-panel-drag')),
-      );
-      await tester.dragFrom(
-        Offset(handle.center.dx, handle.top + 7),
-        const Offset(0, 370),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('story-panel')), findsNothing);
-      expect(fixture.selected, isEmpty);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  for (final tab in ['introduction', 'episodes']) {
-    testWidgets(
-      'half panel scrolls $tab from its center without moving the sheet',
-      (tester) async {
-        final fixture = await _mount(tester, description: _longDescription);
-        await _openEpisodes(tester);
-        if (tab == 'introduction') {
-          await tester.tap(find.text('简介'));
-          await tester.pumpAndSettle();
-        }
-        final body = find.byKey(
-          ValueKey(
-            tab == 'introduction' ? 'story-introduction' : 'story-episodes',
-          ),
-        );
-        final panel = find.byKey(const ValueKey('story-panel'));
-        final before = tester.getRect(panel);
-        final videoBefore = tester.getRect(
-          find.byKey(const ValueKey('video-frame')),
-        );
-        final playerCalls = List<String>.of(fixture.player.calls);
-        final scroll = _scrollPosition(tester, body);
-        final heights = <double>[];
-        final gesture = await tester.startGesture(tester.getCenter(body));
-        for (var frame = 0; frame < 6; frame++) {
-          await gesture.moveBy(const Offset(0, -30));
-          await tester.pump(const Duration(milliseconds: 32));
-          heights.add(tester.getSize(panel).height);
-        }
-        await gesture.up();
-        await tester.pumpAndSettle();
-
-        expect(heights, everyElement(closeTo(before.height, 1)));
-        expect(scroll.pixels, greaterThan(100));
-        final scrolled = scroll.pixels;
-        await tester.drag(body, const Offset(0, 70));
-        await tester.pumpAndSettle();
-        expect(scroll.pixels, inExclusiveRange(0, scrolled));
-        expect(tester.getRect(panel), before);
-        expect(
-          tester.getRect(find.byKey(const ValueKey('video-frame'))),
-          videoBefore,
-        );
-        expect(fixture.selected, isEmpty);
-        expect(fixture.player.calls, playerCalls);
-        expect(tester.takeException(), isNull);
-      },
-    );
-  }
-
-  testWidgets('switching tabs keeps each content scroll position', (
+  testWidgets('tapping the dim scrim closes the panel without pausing', (
     tester,
   ) async {
-    await _mount(tester, description: _longDescription);
-    await _openEpisodes(tester);
-    await tester.tap(find.byTooltip('展开面板'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('简介'));
-    await tester.pumpAndSettle();
-    final introduction = find.byKey(const ValueKey('story-introduction'));
-    await tester.drag(introduction, const Offset(0, -190));
-    await tester.pumpAndSettle();
-    final introOffset = _scrollPosition(tester, introduction).pixels;
-    expect(introOffset, greaterThan(100));
-
-    await tester.tap(find.text('选集'));
-    await tester.pumpAndSettle();
-    final episodes = find.byKey(const ValueKey('story-episodes'));
-    await tester.drag(episodes, const Offset(0, -140));
-    await tester.pumpAndSettle();
-    final episodeOffset = _scrollPosition(tester, episodes).pixels;
-    expect(episodeOffset, greaterThan(50));
-
-    await tester.tap(find.text('简介'));
-    await tester.pumpAndSettle();
-    expect(
-      _scrollPosition(tester, introduction).pixels,
-      closeTo(introOffset, 1),
+    final fixture = await _mount(tester);
+    final callsBefore = List<String>.of(fixture.player.calls);
+    final videoBefore = tester.getRect(
+      find.byKey(const ValueKey('video-frame')),
     );
-    await tester.tap(find.text('选集'));
+    await openEpisodes(tester);
+    // 官方遮罩 dim 0.5（`AnimationBottomDialog.java:129-140`）。
+    final scrim = tester.widget<ColoredBox>(
+      find.byKey(const ValueKey('story-panel-scrim')),
+    );
+    expect(scrim.color, isNot(const Color(0x00000000)));
+    expect(scrim.color.a, closeTo(.5, .05));
+    final panel = find.byKey(const ValueKey('story-panel'));
+    final panelTop = tester.getTopLeft(panel).dy;
+    await tester.tapAt(Offset(200, (panelTop - 60).clamp(45.0, 800.0)));
     await tester.pumpAndSettle();
-    expect(_scrollPosition(tester, episodes).pixels, closeTo(episodeOffset, 1));
+    expect(panel, findsNothing);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('video-frame'))),
+      videoBefore,
+    );
+    expect(fixture.player.calls, callsBefore);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a downward header drag closes the panel', (tester) async {
+    final fixture = await _mount(tester);
+    await openEpisodes(tester);
+    final handle = tester.getRect(
+      find.byKey(const ValueKey('story-panel-drag')),
+    );
+    await tester.dragFrom(
+      Offset(handle.center.dx, handle.top + 6),
+      const Offset(0, 370),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('story-panel')), findsNothing);
+    expect(fixture.selected, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('half panel scrolls episodes without moving the sheet', (
+    tester,
+  ) async {
+    final fixture = await _mount(tester);
+    await openEpisodes(tester);
+    final body = find.byKey(const ValueKey('story-episodes'));
+    final panel = find.byKey(const ValueKey('story-panel'));
+    final before = tester.getRect(panel);
+    final videoBefore = tester.getRect(
+      find.byKey(const ValueKey('video-frame')),
+    );
+    final playerCalls = List<String>.of(fixture.player.calls);
+    final scroll = _scrollPosition(tester, body);
+    final heights = <double>[];
+    final gesture = await tester.startGesture(tester.getCenter(body));
+    for (var frame = 0; frame < 6; frame++) {
+      await gesture.moveBy(const Offset(0, -30));
+      await tester.pump(const Duration(milliseconds: 32));
+      heights.add(tester.getSize(panel).height);
+    }
+    // 停顿一拍再抬手，杀掉惯性（ballistic 的落点不确定）。
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.up();
+    await tester.pump();
+
+    expect(heights, everyElement(closeTo(before.height, 1)));
+    final scrolled = scroll.pixels;
+    expect(scrolled, closeTo(180, 1));
+    // 滚动联动分页条：可视区滚进第 31-60 集后选中页变化（用户滚动才联动）。
+    scroll.jumpTo(360);
+    await tester.pump();
+    final linkedPage = tester.widget<Text>(find.text('31-60'));
+    expect(linkedPage.style?.fontWeight, FontWeight.bold);
+    // 向回拖一截，sheet 不动、播放不受影响。
+    final gesture2 = await tester.startGesture(tester.getCenter(body));
+    await gesture2.moveBy(const Offset(0, 40));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture2.up();
+    await tester.pump();
+    // 拖动让列表像素从 jumpTo(360) 回落（下拖 40px 后应在 320 附近）。
+    expect(_scrollPosition(tester, body).pixels, lessThan(360));
+    expect(tester.getRect(panel), before);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('video-frame'))),
+      videoBefore,
+    );
+    expect(fixture.selected, isEmpty);
+    expect(fixture.player.calls, playerCalls);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('content drag does not snap back before the finger is released', (
     tester,
   ) async {
-    await _mount(tester, description: _longDescription);
-    await _openEpisodes(tester);
-    await tester.tap(find.text('简介'));
-    await tester.pumpAndSettle();
+    await _mount(tester);
+    await openEpisodes(tester);
     final panel = find.byKey(const ValueKey('story-panel'));
-    final body = find.byKey(const ValueKey('story-introduction'));
+    final body = find.byKey(const ValueKey('story-episodes'));
     final before = tester.getSize(panel).height;
     final gesture = await tester.startGesture(tester.getCenter(body));
     await gesture.moveBy(const Offset(0, 70));
@@ -356,99 +306,19 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
     final moved = tester.getSize(panel).height;
     await gesture.up();
-    await tester.pumpAndSettle();
+    // 手抬后面板仍开着，当前集的循环声波 Lottie 让 pumpAndSettle 永不结束，
+    // 只能用固定时长 pump（§2.1 时钟坑）。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pump();
     expect(during, lessThan(before - 20));
     expect(held, closeTo(during, 1));
     expect(moved, lessThan(held - 20));
     expect(tester.takeException(), isNull);
   });
-
-  testWidgets(
-    'expanded content collapses at its top and then scrolls at half height',
-    (tester) async {
-      await _mount(tester, description: _longDescription);
-      await _openEpisodes(tester);
-      await tester.tap(find.text('简介'));
-      await tester.pumpAndSettle();
-      final panel = find.byKey(const ValueKey('story-panel'));
-      final restingHeight = tester.getSize(panel).height;
-      final body = find.byKey(const ValueKey('story-introduction'));
-      await tester.tap(find.byTooltip('展开面板'));
-      await tester.pumpAndSettle();
-      expect(tester.getSize(panel).height, closeTo(904 - 39, 1));
-
-      await tester.drag(body, const Offset(0, 260));
-      await tester.pumpAndSettle();
-      expect(tester.getSize(panel).height, closeTo(restingHeight, 1));
-      await tester.drag(body, const Offset(0, -160));
-      await tester.pumpAndSettle();
-      expect(tester.getSize(panel).height, closeTo(restingHeight, 1));
-      expect(_scrollPosition(tester, body).pixels, greaterThan(100));
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets('header expansion preserves the scrolled introduction', (
-    tester,
-  ) async {
-    await _mount(tester, description: _longDescription);
-    await _openEpisodes(tester);
-    await tester.tap(find.text('简介'));
-    await tester.pumpAndSettle();
-    final panel = find.byKey(const ValueKey('story-panel'));
-    final restingHeight = tester.getSize(panel).height;
-    final body = find.byKey(const ValueKey('story-introduction'));
-    await tester.drag(body, const Offset(0, -200));
-    await tester.pumpAndSettle();
-    final scrollOffset = _scrollPosition(tester, body).pixels;
-    final handle = tester.getRect(
-      find.byKey(const ValueKey('story-panel-drag')),
-    );
-    final gesture = await tester.startGesture(
-      Offset(handle.center.dx, handle.top + 7),
-    );
-    await gesture.moveBy(const Offset(0, -24));
-    await tester.pump(const Duration(milliseconds: 16));
-    await gesture.moveBy(const Offset(0, -240));
-    await tester.pump(const Duration(milliseconds: 16));
-    await gesture.up();
-    await tester.pumpAndSettle();
-    expect(tester.getSize(panel).height, closeTo(904 - 39, 1));
-    expect(_scrollPosition(tester, body).pixels, closeTo(scrollOffset, 1));
-
-    await tester.tap(find.byTooltip('收起面板'));
-    await tester.pumpAndSettle();
-    expect(tester.getSize(panel).height, closeTo(restingHeight, 1));
-    expect(_scrollPosition(tester, body).pixels, closeTo(scrollOffset, 1));
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets(
-    'a short introduction still allows a downward content fling to close',
-    (tester) async {
-      final fixture = await _mount(tester, description: '');
-      await _openEpisodes(tester);
-      await tester.tap(find.text('简介'));
-      await tester.pumpAndSettle();
-      final calls = List<String>.of(fixture.player.calls);
-      await tester.fling(
-        find.byKey(const ValueKey('story-introduction')),
-        const Offset(0, 240),
-        1500,
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('story-panel')), findsNothing);
-      expect(fixture.selected, isEmpty);
-      expect(fixture.player.calls, calls);
-      expect(tester.takeException(), isNull);
-    },
-  );
 }
-
-final _longDescription = List.filled(
-  24,
-  '主角重返故乡，从小城开始新的生活。在一次次选择中找回亲情和友谊，也逐渐揭开往事的真相。',
-).join('\n');
 
 ScrollPosition _scrollPosition(WidgetTester tester, Finder body) => tester
     .state<ScrollableState>(
@@ -457,11 +327,6 @@ ScrollPosition _scrollPosition(WidgetTester tester, Finder body) => tester
     .position;
 
 Finder _episode(int index) => find.byKey(ValueKey('story-episode-$index'));
-
-Future<void> _openEpisodes(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('选集'));
-  await tester.pumpAndSettle();
-}
 
 class _Fixture {
   final FakeNativePlayer player;
@@ -475,7 +340,7 @@ Future<_Fixture> _mount(
   Size videoSize = const Size(1080, 1920),
   TextScaler scale = TextScaler.noScaling,
   int currentIndex = 0,
-  String description = '这是测试短剧的真实简介内容',
+  Set<int>? watched,
   List<Chapter>? episodes,
 }) async {
   await tester.binding.setSurfaceSize(window);
@@ -515,7 +380,8 @@ Future<_Fixture> _mount(
         playingIndex: currentIndex,
         playing: true,
         duration: player.duration,
-        description: description,
+        watchedEpisodes:
+            watched ?? {for (var i = 0; i < currentIndex; i++) i},
         onSelectEpisode: (index) async => selected.add(index),
         onError: (error) => throw error,
         child: const ColoredBox(color: Colors.black),

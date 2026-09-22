@@ -60,6 +60,10 @@ class MediaItem {
   /// names. Empty when the card carries neither.
   final List<String> categories;
 
+  /// 「作者声明：内容由AI生成」行（`video_detail.ai_usage_type > 0`，
+  /// 官方播放页信息层按它渲染声明行）。
+  final bool aiGenerated;
+
   /// Server-authored pill copy (`style.episode_list_text`, e.g.
   /// 「观看完整漫剧·全153集」). The feed card's pill builds its own
   /// 「观看全集·N集」 from the episode count, so this is informational.
@@ -80,6 +84,7 @@ class MediaItem {
     this.followerCount = 0,
     this.categories = const [],
     this.episodeListText = '',
+    this.aiGenerated = false,
   });
 
   /// Copy with selected fields replaced.
@@ -105,6 +110,7 @@ class MediaItem {
     int? followerCount,
     List<String>? categories,
     String? episodeListText,
+    bool? aiGenerated,
   }) => MediaItem(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -120,6 +126,7 @@ class MediaItem {
     followerCount: followerCount ?? this.followerCount,
     categories: categories ?? this.categories,
     episodeListText: episodeListText ?? this.episodeListText,
+    aiGenerated: aiGenerated ?? this.aiGenerated,
   );
 
   factory MediaItem.fromRaw(Map<String, dynamic> item) {
@@ -208,6 +215,8 @@ class MediaItem {
     // category_schema 里的 name 列表。style 骑在模板 cell 本体上。
     final followedCount =
         _asInt(item['followed_cnt']) ?? _asInt(bd['followed_cnt']) ?? 0;
+    final aiUsageType =
+        _asInt(item['ai_usage_type']) ?? _asInt(bd['ai_usage_type']) ?? 0;
     final styleInfo = _mapFrom(item['style']) ?? _mapFrom(bd['style']);
     final episodeListText =
         _firstString(styleInfo ?? const {}, ['episode_list_text']) ?? '';
@@ -288,6 +297,7 @@ class MediaItem {
       followerCount: followedCount,
       categories: categories,
       episodeListText: episodeListText,
+      aiGenerated: aiUsageType > 0,
     );
   }
 
@@ -1188,6 +1198,7 @@ extension MediaItemJson on MediaItem {
     if (followerCount > 0) 'followerCount': followerCount,
     if (categories.isNotEmpty) 'categories': categories,
     if (episodeListText.isNotEmpty) 'episodeListText': episodeListText,
+    if (aiGenerated) 'aiGenerated': true,
     // The promotional badge must survive a round-trip; the keys reuse
     // [MediaTag.fromRaw]'s payload shape so both paths stay lossless.
     if (tag != null)
@@ -1224,6 +1235,7 @@ extension MediaItemJson on MediaItem {
             )
           : const [],
       episodeListText: field('episodeListText'),
+      aiGenerated: map['aiGenerated'] == true,
     );
   }
 }

@@ -996,7 +996,6 @@ class _DetailPageState extends State<DetailPage> {
         cover: widget.item.cover,
         historyStore: widget.readerStore,
         eps: _allChapters,
-        description: _detail == null ? null : extractMediaDescription(_detail),
         startIndex: startIndex,
       ),
       'audio' => AudioPage(

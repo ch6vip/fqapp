@@ -32,85 +32,37 @@ void main() {
   });
 
   testWidgets(
-    'lock blocks episode, seek, double tap and speed gestures without stopping video',
+    'clear screen hides every overlay and only the 恢复 text brings them back',
     (tester) async {
+      // 官方清屏（`SingleVideoHolder.java:1140-1210` → `o.java:1860-1884`）：
+      // 浮层全隐、遮罩不可用，出口是右下角文字行的「恢复」。
       final player = FakeNativePlayer()..isPlaying = true;
       final selected = <int>[];
-      await _mount(tester, player, selected: selected);
-      final video = tester.element(find.byKey(const ValueKey('video-frame')));
-      await tester.tap(find.byTooltip('锁定播放'));
-      await tester.pump();
-      expect(find.byKey(const ValueKey('player-unlock')), findsOneWidget);
-      expect(find.byKey(const ValueKey('video-seek')), findsNothing);
-      expect(find.byTooltip('播放设置'), findsNothing);
-      player.calls.clear();
-      await tester.dragFrom(const Offset(200, 420), const Offset(0, -280));
-      await tester.pumpAndSettle();
-      await tester.dragFrom(const Offset(100, 650), const Offset(180, 0));
-      await tester.tapAt(const Offset(200, 350));
-      await tester.pump(const Duration(milliseconds: 80));
-      await tester.tapAt(const Offset(200, 350));
-      final hold = await tester.startGesture(const Offset(200, 350));
-      await tester.pump(const Duration(milliseconds: 700));
-      await hold.up();
-      await tester.pump();
-      expect(selected, isEmpty);
-      expect(player.calls, isEmpty);
-      expect(player.isPlaying, isTrue);
-      expect(nativeCalls, isEmpty);
-      expect(
-        tester.element(find.byKey(const ValueKey('video-frame'))),
-        same(video),
-      );
-      await tester.binding.handlePopRoute();
-      await tester.pump();
+      await _mount(tester, player, selected: selected, shortSeries: true);
       expect(find.byKey(const ValueKey('video-seek')), findsOneWidget);
-      await tester.dragFrom(const Offset(200, 420), const Offset(0, -500));
-      await tester.pumpAndSettle();
-      expect(selected, contains(1));
+      await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
+      await tester.pump();
+      expect(find.byTooltip('返回'), findsNothing);
+      expect(find.byKey(const ValueKey('video-controls')), findsNothing);
+      expect(find.byKey(const ValueKey('player-catalog-bar')), findsNothing);
+      expect(find.byKey(const ValueKey('player-follow-button')), findsNothing);
+      expect(find.byKey(const ValueKey('video-seek')), findsNothing);
+      expect(find.text('恢复'), findsOneWidget);
+      // 清屏态下点画面不再唤回浮层（官方 `setVisibility(4)`）；短剧竖屏的
+      // 单击=暂停（第十八轮的有意偏差）仍然生效，但不唤回浮层。
+      await tester.tapAt(const Offset(200, 400));
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byTooltip('返回'), findsNothing);
+      expect(find.text('恢复'), findsOneWidget);
+      expect(selected, isEmpty);
+      await tester.tap(find.text('恢复'));
+      await tester.pump();
+      expect(find.byTooltip('返回'), findsOneWidget);
+      expect(find.byKey(const ValueKey('video-seek')), findsOneWidget);
+      expect(find.text('恢复'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
-
-  testWidgets(
-    'locked fullscreen hides unlock then a tap reveals it; back unlocks before leaving fullscreen',
-    (tester) async {
-      final player = FakeNativePlayer()..isPlaying = true;
-      await _mount(tester, player, landscape: true);
-      await tester.tap(find.byTooltip('锁定播放'));
-      await tester.pump(const Duration(seconds: 4));
-      expect(find.byKey(const ValueKey('player-unlock')), findsNothing);
-      await tester.tapAt(const Offset(400, 180));
-      await tester.pump();
-      expect(find.byKey(const ValueKey('player-unlock')), findsOneWidget);
-      await tester.binding.handlePopRoute();
-      await tester.pump();
-      expect(find.byTooltip('退出全屏'), findsOneWidget);
-      await tester.binding.handlePopRoute();
-      await tester.pump();
-      expect(find.byTooltip('全屏'), findsOneWidget);
-      expect(player.isPlaying, isTrue);
-    },
-  );
-
-  testWidgets('lock survives an automatic episode and player replacement', (
-    tester,
-  ) async {
-    final first = FakeNativePlayer()..isPlaying = true;
-    final second = FakeNativePlayer()..isPlaying = true;
-    await _mount(tester, first);
-    addTearDown(second.dispose);
-    await tester.tap(find.byTooltip('锁定播放'));
-    await tester.pump();
-    await tester.pumpWidget(_app(second, index: 1));
-    await tester.pump();
-    await tester.pump();
-    expect(find.byKey(const ValueKey('player-lock-shield')), findsOneWidget);
-    expect(find.byKey(const ValueKey('video-seek')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('player-unlock')));
-    await tester.pump();
-    expect(find.text('第 2 集 · 共 3 集'), findsOneWidget);
-    expect(second.rate, 1.5);
-  });
 
   testWidgets('portrait swipes keep paging and never adjust the device', (
     tester,
@@ -160,7 +112,7 @@ void main() {
       textScale: 2.5,
     );
     expect(tester.takeException(), isNull);
-    await tester.tap(find.byTooltip('播放设置'));
+    await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
@@ -182,6 +134,7 @@ Future<void> _mount(
   bool landscape = false,
   List<int>? selected,
   double textScale = 1,
+  bool shortSeries = false,
 }) async {
   await tester.binding.setSurfaceSize(
     landscape ? const Size(800, 450) : const Size(400, 800),
@@ -196,7 +149,12 @@ Future<void> _mount(
     await tester.binding.setSurfaceSize(null);
   });
   await tester.pumpWidget(
-    _app(player, selected: selected, textScale: textScale),
+    _app(
+      player,
+      selected: selected,
+      textScale: textScale,
+      shortSeries: shortSeries,
+    ),
   );
   await tester.pumpAndSettle();
   if (landscape) {
@@ -210,6 +168,7 @@ Widget _app(
   List<int>? selected,
   int index = 0,
   double textScale = 1,
+  bool shortSeries = false,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(
@@ -230,7 +189,7 @@ Widget _app(
       currentIndex: index,
       duration: player.duration,
       playing: playing.data!,
-      description: '剧情介绍',
+      shortSeries: shortSeries,
       onSelectEpisode: (value) async {
         selected?.add(value);
       },

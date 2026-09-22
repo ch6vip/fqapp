@@ -55,7 +55,6 @@ void main() {
                 ),
             ],
             startIndex: 2,
-            description: '测试剧情',
             historyStore: store,
             playerFactory: () => player,
             contentLoader: (_) async => {
@@ -68,7 +67,6 @@ void main() {
       final chrome = tester.widget<VideoPlayerChrome>(
         find.byType(VideoPlayerChrome),
       );
-      expect(chrome.autoAdvance, isTrue);
       expect(chrome.currentIndex, 2);
       expect(store.entry?['position'], 0);
 
