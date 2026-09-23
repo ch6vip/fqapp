@@ -1,0 +1,7 @@
+# Cross-compilation settings for the Android ARM64 target.
+#
+# The linker is provided by scripts/build_rust_backend.ps1 / .sh (the NDK path
+# differs per machine), while the 16 KiB page alignment required by Android
+# 15+ is pinned here so every cargo invocation produces a compliant ELF.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

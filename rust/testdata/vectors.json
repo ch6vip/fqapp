@@ -1,0 +1,60 @@
+{
+    "sm3": {
+        "empty": "1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b",
+        "abc": "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0",
+        "zero16": "106e34a2b8c7bb13156cfdd0d91379dcc47543dcf9787c68ae5eb582620ae6e8",
+        "long": "0c105d5a46a65fdf0a0938283db2517ea87f176de84786f443cb78802aaa03de",
+        "query": "81c65adb29f5b7912512e81103813432471e6f72311425a111741459d03eee5f"
+    },
+    "simon": {
+        "pt": [
+            "1234567890123456789",
+            "9876543210987654321"
+        ],
+        "k": [
+            "1111111111111111111",
+            "2222222222222222222",
+            "3333333333333333333",
+            "4444444444444444444"
+        ],
+        "ct": [
+            "6071150433487837324",
+            "2027321285990159935"
+        ]
+    },
+    "simon_keyexp_last": [
+        "13679004903447286117",
+        "6988159389011166349",
+        "12845848347567849394",
+        "14469362449063813004"
+    ],
+    "ladon": {
+        "khronos": 1700000000,
+        "lcId": 1611921764,
+        "aid": 1967,
+        "randomBytes": "01020304",
+        "result": "AQIDBKM7Y7bWnOIUXmTybD6/MpGbuge4sBwUJsyHVivhtMsH"
+    },
+    "ladon_raw": {
+        "md5": "53136271c432a1af377c3806c3112ddf",
+        "data": "hello-world-data",
+        "result": "995103f804b4fa834266bf7ff4e382563c5745c587456a7ca3cb861c00f487e3"
+    },
+    "argus_bodyhash": {
+        "null": "106e34a2b8c7",
+        "stub": "108d6c638943"
+    },
+    "argus_queryhash": {
+        "null": "106e34a2b8c7",
+        "query": "925b8d86b20f"
+    },
+    "argus_encpb": {
+        "in": "1122334411223344112233441122334411223344112233441122334411223344",
+        "out": "44332211443322110000000000000000000000000000000000000000000000004433221144332211"
+    },
+    "argus_encrypt": {
+        "bean_note": "field3=305419896 fixed, ts=1700000000",
+        "result": "CenCagJvoxTUWE5EKHSREum5XvTccRUiQ6zMVQ+ukI60LEAcPfL4G+G7JQ+PQUf1N/GhJZfgDbrDQz6bB5hu2WHD6Jhk+ZJa5OVOITddXAmdw03KsxjyGgg59eQAw/3C77PsT/y36u1YWD9aqegf30VVgrG4doDhNoPZoaTbx4qAzXrwY/gAsrW3zXEgEP2RgepRfPugDCNZPoqFu76/8g=="
+    },
+    "protobuf_bean": "08d2a4808204100218f8acd191012204313936372a0e746573745f6465766963655f6964320a313631313932313736343a004200480052005a006080c49fd50c6a06106e34a2b8c77206ac5095fc674e7a0c08011001180138ccd9cbbc0c820100a201046e6f6e65a801e205ba01110a064e583535314a1084402080b0838708c80102"
+}

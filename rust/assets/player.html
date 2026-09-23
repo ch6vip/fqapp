@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="referrer" content="no-referrer">
+    <title>短剧播放器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; height: 100vh; width: 100vw; }
+        #player-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background: #000; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 1s ease-in-out infinite; display: none; z-index: 10; }
+        @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+        .controls-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; transition: opacity 0.3s; }
+        .top-bar { padding: 15px 20px; background: linear-gradient(180deg, rgba(0,0,0,0.7) 0%, transparent 100%); display: flex; justify-content: space-between; align-items: center; }
+        .video-title { font-size: 16px; font-weight: 500; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .episode-info { font-size: 14px; color: rgba(255,255,255,0.8); }
+        .center-area { display: flex; justify-content: center; align-items: center; pointer-events: auto; }
+        .play-pause-btn { width: 60px; height: 60px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; justify-content: center; align-items: center; cursor: pointer; }
+        .play-icon { width: 24px; height: 24px; fill: #fff; }
+        .bottom-bar { padding: 15px 20px; background: linear-gradient(0deg, rgba(0,0,0,0.7) 0%, transparent 100%); }
+        .progress-container { width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; margin-bottom: 10px; cursor: pointer; position: relative; }
+        .progress-bar { height: 100%; background: #fff; border-radius: 2px; width: 0%; transition: width 0.1s; }
+        .time-info { display: flex; justify-content: space-between; font-size: 12px; color: rgba(255,255,255,0.8); }
+        .control-buttons { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+        .speed-btn, .episode-btn { padding: 8px 16px; background: rgba(255,255,255,0.2); border-radius: 20px; font-size: 14px; cursor: pointer; pointer-events: auto; }
+        .toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 10px 20px; border-radius: 20px; font-size: 14px; opacity: 0; transition: opacity 0.3s; z-index: 20; }
+        .toast.show { opacity: 1; }
+        .episode-selection-layer { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 30; display: none; overflow-y: auto; }
+        .episode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; padding: 20px; max-width: 600px; margin: 0 auto; }
+        .episode-item { padding: 10px; background: rgba(255,255,255,0.1); border-radius: 8px; text-align: center; cursor: pointer; font-size: 14px; }
+        .episode-item.active { background: rgba(255,255,255,0.3); }
+    </style>
+</head>
+<body>
+    <div id="player-container">
+        <video id="video-player" playsinline></video>
+        <div id="loading" class="loading"></div>
+        <div id="controls-layer" class="controls-layer">
+            <div class="top-bar">
+                <div id="video-title" class="video-title">加载中...</div>
+                <div id="current-episode" class="episode-info">第 1 集</div>
+            </div>
+            <div class="center-area">
+                <div id="play-pause-btn" class="play-pause-btn">
+                    <svg id="play-icon" class="play-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </div>
+            </div>
+            <div class="bottom-bar">
+                <div id="progress-container" class="progress-container"><div id="progress-bar" class="progress-bar"></div></div>
+                <div class="time-info"><span id="current-time">00:00</span><span id="total-time">00:00</span></div>
+                <div class="control-buttons">
+                    <div id="speed-btn" class="speed-btn">1.0x</div>
+                    <div id="total-episodes" class="episode-info">共 0 集</div>
+                    <div id="episode-btn" class="episode-btn">选集</div>
+                </div>
+            </div>
+        </div>
+        <div id="toast" class="toast"></div>
+        <div id="episode-selection-layer" class="episode-selection-layer">
+            <div style="padding: 20px; text-align: center; color: #fff;">
+                <h3 style="margin-bottom: 20px;">选择剧集</h3>
+                <div id="episode-grid" class="episode-grid"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+    class VideoPlayer {
+        constructor(bookId, itemId) {
+            this.bookId = bookId;
+            this.currentItemId = itemId;
+            this.playlist = [];
+            this.currentIndex = -1;
+            this.video = document.getElementById('video-player');
+            this.loading = document.getElementById('loading');
+            this.titleEl = document.getElementById('video-title');
+            this.episodeEl = document.getElementById('current-episode');
+            this.totalEl = document.getElementById('total-episodes');
+            this.toastEl = document.getElementById('toast');
+            this.playIcon = document.getElementById('play-icon');
+            this.progressContainer = document.getElementById('progress-container');
+            this.progressBar = document.getElementById('progress-bar');
+            this.currentTimeEl = document.getElementById('current-time');
+            this.totalTimeEl = document.getElementById('total-time');
+            this.speedBtn = document.getElementById('speed-btn');
+            this.playPauseBtn = document.getElementById('play-pause-btn');
+            this.episodeSelectionLayer = document.getElementById('episode-selection-layer');
+            this.episodeGrid = document.getElementById('episode-grid');
+            this.speeds = [1.0, 1.25, 1.5, 2.0];
+            this.currentSpeedIndex = 0;
+            this.baseUrl = "index.php";
+            this.init();
+        }
+        async init() {
+            this.bindEvents();
+            this.bindControlEvents();
+            if (this.bookId) { this.loadPlaylist(); }
+            else if (this.currentItemId) { this.playSingleVideo(this.currentItemId); }
+        }
+        bindEvents() {
+            this.video.addEventListener('loadstart', () => this.showLoading());
+            this.video.addEventListener('canplay', () => this.hideLoading());
+            this.video.addEventListener('playing', () => this.updatePlayIcon());
+            this.video.addEventListener('pause', () => this.updatePlayIcon());
+            this.video.addEventListener('ended', () => this.playNext());
+            this.video.addEventListener('timeupdate', () => this.updateProgress());
+            this.video.addEventListener('durationchange', () => this.updateDuration());
+        }
+        bindControlEvents() {
+            this.playPauseBtn.addEventListener('click', () => this.togglePlay());
+            this.speedBtn.addEventListener('click', () => this.changeSpeed());
+            document.getElementById('episode-btn').addEventListener('click', () => { this.episodeSelectionLayer.style.display = 'block'; });
+            this.episodeSelectionLayer.addEventListener('click', (e) => { if (e.target === this.episodeSelectionLayer) { this.episodeSelectionLayer.style.display = 'none'; } });
+            this.progressContainer.addEventListener('click', (e) => {
+                const rect = this.progressContainer.getBoundingClientRect();
+                const pos = (e.clientX - rect.left) / rect.width;
+                this.video.currentTime = pos * this.video.duration;
+            });
+        }
+        async loadPlaylist() {
+            try {
+                const response = await fetch(this.baseUrl + '?api=pseries&pseries_id=' + this.bookId);
+                const data = await response.json();
+                if (data.success && data.data && data.data.episodes) {
+                    this.playlist = data.data.episodes;
+                    this.totalEl.textContent = '共 ' + this.playlist.length + ' 集';
+                    this.renderEpisodeGrid();
+                    if (this.currentItemId) {
+                        const index = this.playlist.findIndex(ep => ep.item_id == this.currentItemId);
+                        if (index >= 0) { this.currentIndex = index; }
+                    }
+                    if (this.currentIndex < 0) { this.currentIndex = 0; }
+                    this.playEpisode(this.currentIndex);
+                }
+            } catch (e) { this.showToast('加载播放列表失败'); }
+        }
+        renderEpisodeGrid() {
+            this.episodeGrid.innerHTML = '';
+            this.playlist.forEach((ep, index) => {
+                const item = document.createElement('div');
+                item.className = 'episode-item' + (index === this.currentIndex ? ' active' : '');
+                item.textContent = '第 ' + (index + 1) + ' 集';
+                item.addEventListener('click', () => { this.playEpisode(index); this.episodeSelectionLayer.style.display = 'none'; });
+                this.episodeGrid.appendChild(item);
+            });
+        }
+        async playSingleVideo(itemId) {
+            try {
+                const response = await fetch(this.baseUrl + '?api=video&video_id=' + itemId);
+                const data = await response.json();
+                if (data.data) {
+                    this.titleEl.textContent = '视频播放';
+                    this.episodeEl.textContent = '单集';
+                    const videoUrl = this.extractVideoUrl(data.data);
+                    if (videoUrl) { this.video.src = videoUrl; this.video.play(); }
+                }
+            } catch (e) { this.showToast('加载视频失败'); }
+        }
+        async playEpisode(index) {
+            if (index < 0 || index >= this.playlist.length) return;
+            this.currentIndex = index;
+            const episode = this.playlist[index];
+            this.titleEl.textContent = episode.title || '第 ' + (index + 1) + ' 集';
+            this.episodeEl.textContent = '第 ' + (index + 1) + ' 集';
+            this.renderEpisodeGrid();
+            try {
+                const response = await fetch(this.baseUrl + '?api=video&video_id=' + episode.item_id);
+                const data = await response.json();
+                if (data.data) {
+                    const videoUrl = this.extractVideoUrl(data.data);
+                    if (videoUrl) { this.video.src = videoUrl; this.video.play(); }
+                }
+            } catch (e) { this.showToast('加载视频失败'); }
+        }
+        extractVideoUrl(data) {
+            if (data.video_list) {
+                for (const quality of Object.values(data.video_list)) {
+                    if (quality.main_url) { return quality.main_url; }
+                }
+            }
+            return null;
+        }
+        playNext() { if (this.currentIndex < this.playlist.length - 1) { this.playEpisode(this.currentIndex + 1); } else { this.showToast('播放完成'); } }
+        togglePlay() { if (this.video.paused) { this.video.play(); } else { this.video.pause(); } }
+        updatePlayIcon() { const path = this.video.paused ? 'M8 5v14l11-7z' : 'M6 4h4v16H6zM14 4h4v16h-4z'; this.playIcon.innerHTML = '<path d="' + path + '"/>'; }
+        changeSpeed() {
+            this.currentSpeedIndex = (this.currentSpeedIndex + 1) % this.speeds.length;
+            const speed = this.speeds[this.currentSpeedIndex];
+            this.video.playbackRate = speed;
+            this.speedBtn.textContent = speed + 'x';
+            this.showToast('播放速度: ' + speed + 'x');
+        }
+        updateProgress() { const progress = (this.video.currentTime / this.video.duration) * 100; this.progressBar.style.width = progress + '%'; this.currentTimeEl.textContent = this.formatTime(this.video.currentTime); }
+        updateDuration() { this.totalTimeEl.textContent = this.formatTime(this.video.duration); }
+        formatTime(seconds) { const mins = Math.floor(seconds / 60); const secs = Math.floor(seconds % 60); return mins.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0'); }
+        showLoading() { this.loading.style.display = 'block'; }
+        hideLoading() { this.loading.style.display = 'none'; }
+        showToast(message) { this.toastEl.textContent = message; this.toastEl.classList.add('show'); setTimeout(() => this.toastEl.classList.remove('show'), 2000); }
+    }
+    const player = new VideoPlayer(__BOOK_ID__, __ITEM_ID__);
+    </script>
+</body>
+</html>

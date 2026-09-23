@@ -1,64 +1,69 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
-typedef BackendProcessStarter =
-    Future<Process> Function(
-      String executable,
-      List<String> arguments, {
-      String? workingDirectory,
-    });
+import 'backend_transport.dart';
 
-/// Manages the local Go  backend.
+/// Manages the local backend core.
 ///
-/// On Android the backend ships as liblegacy.so (a real c-shared library with
-/// JNI exports) and is started via a MethodChannel → Kotlin → JNI path. The
-/// standalone executable is deployed only on desktop; Android cannot execute
-/// app-data binaries under SELinux and therefore uses the JNI backend only.
+/// The backend is the Rust native core (`rust/`, packaged as
+/// `libfqapi_core.so`). Flutter calls it over flutter_rust_bridge; the same
+/// Rust core also serves the built-in Web UI and `/src/*` resources over a
+/// loopback HTTP adapter, which is why [baseUrl] still exists for resource
+/// resolution in `ApiClient.absoluteUrl`.
+///
+/// There is no process to launch and no JNI bridge: `start` deploys the
+/// runtime files and initializes the core in-process.
 class BackendService {
   BackendService({
     AssetBundle? assets,
     Future<Directory> Function()? supportDirectory,
-    bool? useJni,
-    BackendProcessStarter? startProcess,
-    this.baseUrl = 'http://127.0.0.1:8080',
-    this._startupTimeout = const Duration(seconds: 15),
-    this._shutdownTimeout = const Duration(seconds: 3),
+    BackendTransport? transport,
+    this.fallbackBaseUrl = 'http://127.0.0.1:8080',
+    this.startupTimeout = const Duration(seconds: 15),
+    this.shutdownTimeout = const Duration(seconds: 3),
   }) : _assets = assets ?? rootBundle,
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
-       _useJni = useJni ?? (!kIsWeb && Platform.isAndroid),
-       _startProcess = startProcess ?? Process.start;
+       _transport = transport ?? RustBackendTransport();
 
   static final BackendService instance = BackendService();
 
-  static const MethodChannel _channel = MethodChannel('fqapp/backend');
   final AssetBundle _assets;
   final Future<Directory> Function() _supportDirectory;
-  final bool _useJni;
-  final BackendProcessStarter _startProcess;
-  final Duration _startupTimeout;
-  final Duration _shutdownTimeout;
+  final BackendTransport _transport;
 
-  Process? _proc;
-  bool _viaJni = false;
+  /// Used for resource URLs only when the core has not reported a port yet.
+  final String fallbackBaseUrl;
+
+  final Duration startupTimeout;
+  final Duration shutdownTimeout;
+
   Future<void>? _startFuture;
   Future<void>? _stopFuture;
-  final List<StreamSubscription<String>> _logSubs = [];
+  bool _running = false;
+  /// Whether this service successfully initialized the core, so [stop] only
+  /// tears down something it created.
+  bool _coreStarted = false;
   final List<String> _logLines = [];
   File? _logFile;
   // Serializes async log-file writes so concurrent appends don't interleave.
   Future<void> _logWriteQueue = Future.value();
 
-  /// Base URL of the local backend.
-  final String baseUrl;
+  /// The transport business calls go through.
+  BackendTransport get transport => _transport;
 
-  /// Whether the backend is currently running (via JNI or as a subprocess).
-  bool get isRunning => _viaJni || (_proc != null && _proc!.pid > 0);
+  /// Base URL used to resolve backend-relative resources.
+  String get baseUrl =>
+      _transport.baseUrl.isNotEmpty ? _transport.baseUrl : fallbackBaseUrl;
+
+  /// Whether the Rust FFI transport is in use (as opposed to the HTTP adapter).
+  bool get usesRustTransport => _transport is RustBackendTransport;
+
+  /// Whether the backend core is currently running.
+  bool get isRunning => _running;
 
   /// Recent backend log lines (for diagnostics).
   List<String> get logLines => List.unmodifiable(_logLines);
@@ -87,11 +92,8 @@ class BackendService {
     if (await temporary.exists()) await temporary.delete();
     await temporary.writeAsBytes(bytes, flush: true);
     try {
-      // rename() replaces an existing regular file atomically on Android and
-      // the supported desktop filesystems.
       await temporary.rename(dest.path);
     } on FileSystemException {
-      // Some Windows filesystems do not replace an existing destination.
       if (await dest.exists()) await dest.delete();
       await temporary.rename(dest.path);
     }
@@ -106,21 +108,13 @@ class BackendService {
     return Isolate.run(() => _bytesEqual(existing, bundled));
   }
 
-  /// Deploys the backend binary + runtime files from assets to disk.
-  Future<void> _deploy({required bool includeExecutable}) async {
+  /// Deploys the runtime files the Rust core reads (config + Web/静态资源)。
+  Future<void> _deploy() async {
     final dir = await _backendDir();
 
-    if (includeExecutable) {
-      final bin = File('${dir.path}/');
-      await _copyAsset('assets/bin/', bin);
-      try {
-        await Process.run('chmod', ['755', bin.path]);
-      } catch (_) {
-        // Windows has no chmod; executable permissions are not needed there.
-      }
-    }
+    final configDir = Directory('${dir.path}/config');
+    await configDir.create(recursive: true);
 
-    // Config
     await _copyAsset(
       'assets/config/config.json',
       File('${dir.path}/config/config.json'),
@@ -133,7 +127,7 @@ class BackendService {
       'assets/config/filter.json',
       File('${dir.path}/config/filter.json'),
     );
-    // Seed the device pool from the example on first launch (the backend
+    // Seed the device pool from the example on first launch (the core
     // registers a real device on demand and persists it here).
     final poolFile = File('${dir.path}/config/device_pool.json');
     if (!await poolFile.exists()) {
@@ -155,7 +149,6 @@ class BackendService {
   void _log(String line) {
     _logLines.add(line);
     if (_logLines.length > 500) _logLines.removeAt(0);
-    // Append to a file for offline diagnosis without blocking the UI isolate.
     final file = _logFile;
     if (file == null) return;
     _logWriteQueue = _logWriteQueue.then((_) async {
@@ -168,7 +161,8 @@ class BackendService {
   /// Starts the backend if not already running.
   ///
   /// Concurrent callers share the same startup future, so every caller waits
-  /// for a definitive healthy/error result.
+  /// for a definitive healthy/error result. Initialization is idempotent: a
+  /// second call while running returns immediately.
   Future<void> start() {
     final stopping = _stopFuture;
     if (stopping != null) return stopping.then((_) => start());
@@ -184,16 +178,11 @@ class BackendService {
 
   Future<void> _startInternal() async {
     try {
-      if (_viaJni || _proc != null) {
-        if (await _waitHealthy(_startupTimeout)) return;
-        await _stopRunningBackend();
-      }
-      await _cancelLogSubscriptions();
-      final android = _useJni;
-      await _deploy(includeExecutable: !android);
+      if (_running) return;
+      await _deploy();
       final dir = await _backendDir();
 
-      // Reset log file each start.
+      // Reset the log file each start.
       final logPath = '${dir.path}/backend.log';
       await _logWriteQueue;
       try {
@@ -201,98 +190,31 @@ class BackendService {
       } catch (_) {}
       _logFile = File(logPath);
 
-      // --- JNI path (Android only) ---
-      if (android) {
-        try {
-          _log('trying JNI backend (liblegacy.so)...');
-          final result = await _channel
-              .invokeMethod<String>('startBackend', {
-                'config': '${dir.path}/config/config.json',
-                'pool': '${dir.path}/config/device_pool.json',
-                'filter': '${dir.path}/config/filter.json',
-              })
-              .timeout(const Duration(seconds: 20));
-          _log('JNI startBackend returned: $result');
-          if (result == 'running') {
-            _viaJni = true;
-            final ok = await _waitHealthy(_startupTimeout);
-            if (!ok) {
-              throw StateError(
-                'JNI backend started but /health did not come up',
-              );
-            }
-            _log('JNI backend healthy');
-            return;
-          }
-          throw StateError('JNI backend failed: $result');
-        } catch (e) {
-          _viaJni = false;
-          _log('JNI path failed: $e');
-          try {
-            await _channel
-                .invokeMethod('stopBackend')
-                .timeout(_shutdownTimeout);
-          } catch (stopError) {
-            _log('stop failed JNI backend failed: $stopError');
-          }
-          rethrow;
+      final rustTransport = _transport;
+      if (rustTransport is RustBackendTransport) {
+        _log('initializing Rust core...');
+        final result = await rustTransport.start(
+          configPath: '${dir.path}/config/config.json',
+          poolPath: '${dir.path}/config/device_pool.json',
+          filterPath: '${dir.path}/config/filter.json',
+          runtimeDir: dir.path,
+        );
+        _log('Rust core init returned: $result');
+        if (result != 'running') {
+          throw StateError('Rust core failed: $result');
         }
+        _coreStarted = true;
       }
 
-      // --- Desktop Process.start path ---
-      final bin = '${dir.path}/';
-      _log('starting backend via Process.start: $bin');
-      _log('workdir: ${dir.path}');
-
-      _proc = await _startProcess(bin, [
-        '-config',
-        '${dir.path}/config/config.json',
-        '-pool',
-        '${dir.path}/config/device_pool.json',
-        '-filter',
-        '${dir.path}/config/filter.json',
-        '-runtime-dir',
-        dir.path,
-      ], workingDirectory: dir.path);
-      final process = _proc!;
-      _log('backend pid: ${process.pid}');
-
-      // Drain stdout/stderr so the child never blocks on a full pipe.
-      final stdoutLines = process.stdout
-          .transform(const Utf8Decoder(allowMalformed: true))
-          .transform(const LineSplitter());
-      _logSubs.add(
-        stdoutLines.listen(
-          _log,
-          onError: (Object error) => _log('backend stdout error: $error'),
-        ),
-      );
-      final stderrLines = process.stderr
-          .transform(const Utf8Decoder(allowMalformed: true))
-          .transform(const LineSplitter());
-      _logSubs.add(
-        stderrLines.listen(
-          _log,
-          onError: (Object error) => _log('backend stderr error: $error'),
-        ),
-      );
-      process.exitCode.then((code) {
-        _log('backend exited with code $code');
-        if (identical(_proc, process)) _proc = null;
-      });
-
-      // Wait for the health endpoint to come up.
-      final ok = await _waitHealthy(_startupTimeout);
+      final ok = await _waitHealthy(startupTimeout);
       if (!ok) {
-        // Do not release the process until it has exited; retries must not
-        // overwrite its executable or race an old listener for the same port.
         await _stopRunningBackend();
-        await _cancelLogSubscriptions();
         throw StateError(
-          ' backend failed to start (health check timeout)\n'
+          'backend failed to start (health check timeout)\n'
           'logs: ${_logLines.join('\n')}',
         );
       }
+      _running = true;
       _log('backend healthy');
     } catch (e) {
       _log('start error: $e');
@@ -300,31 +222,25 @@ class BackendService {
     }
   }
 
-  /// Polls /health until the backend responds or [timeout] elapses.
+  /// Polls `/health` until the backend responds or [timeout] elapses.
   Future<bool> _waitHealthy(Duration timeout) async {
     final elapsed = Stopwatch()..start();
     while (elapsed.elapsed < timeout) {
-      // If the process died and we're not on the JNI path, give up.
-      if (!_viaJni && _proc == null) return false;
       final remaining = timeout - elapsed.elapsed;
       final attemptTimeout = remaining < const Duration(seconds: 2)
           ? remaining
           : const Duration(seconds: 2);
-      final client = HttpClient()..connectionTimeout = attemptTimeout;
+      if (attemptTimeout <= Duration.zero) break;
       try {
-        final statusCode = await (() async {
-          final req = await client.getUrl(Uri.parse('$baseUrl/health'));
-          final resp = await req.close();
-          await resp.drain<void>();
-          return resp.statusCode;
-        })().timeout(attemptTimeout);
-        if (statusCode == 200) return _viaJni || _proc != null;
-        _log('health check: HTTP $statusCode');
+        final response = await _transport.send(
+          'GET',
+          Uri.parse('$baseUrl/health'),
+          timeout: attemptTimeout,
+        );
+        if (response.statusCode == 200) return true;
+        _log('health check: HTTP ${response.statusCode}');
       } catch (_) {
-        // Not up yet. Bound the complete exchange, including response-body
-        // draining: connectionTimeout alone cannot stop a stalled server.
-      } finally {
-        client.close(force: true);
+        // Not up yet. Bound the complete exchange, including body reading.
       }
       final pause = timeout - elapsed.elapsed;
       if (pause <= Duration.zero) break;
@@ -337,7 +253,7 @@ class BackendService {
     return false;
   }
 
-  /// Stops the backend (JNI or subprocess).
+  /// Stops the backend core. Safe to call repeatedly.
   Future<void> stop() {
     final active = _stopFuture;
     if (active != null) return active;
@@ -350,8 +266,8 @@ class BackendService {
   }
 
   Future<void> _stopInternal() async {
-    // Deployment and native startup can still be in flight when stop() is
-    // called. Wait for that attempt before stopping the resource it owns.
+    // Startup can still be in flight when stop() is called; wait for that
+    // attempt before stopping the resource it owns.
     try {
       await _startFuture;
     } catch (_) {
@@ -360,45 +276,21 @@ class BackendService {
     try {
       await _stopRunningBackend();
     } finally {
-      await _cancelLogSubscriptions();
       await _logWriteQueue;
     }
   }
 
-  Future<void> _cancelLogSubscriptions() async {
-    for (final s in _logSubs) {
-      await s.cancel();
-    }
-    _logSubs.clear();
-  }
-
   Future<void> _stopRunningBackend() async {
-    // JNI path
-    if (_viaJni) {
+    final transport = _transport;
+    if (_coreStarted && transport is RustBackendTransport) {
+      _coreStarted = false;
       try {
-        await _channel.invokeMethod('stopBackend').timeout(_shutdownTimeout);
+        await transport.stop().timeout(shutdownTimeout);
       } catch (e) {
-        _log('stopBackend via JNI failed: $e');
+        _log('shutdown failed: $e');
       }
-      _viaJni = false;
-      return;
     }
-    // Subprocess path
-    final process = _proc;
-    if (process == null) return;
-    var exited = false;
-    try {
-      process.kill();
-      try {
-        await process.exitCode.timeout(_shutdownTimeout);
-      } on TimeoutException {
-        process.kill(ProcessSignal.sigkill);
-        await process.exitCode.timeout(_shutdownTimeout);
-      }
-      exited = true;
-    } finally {
-      if (exited && identical(_proc, process)) _proc = null;
-    }
+    _running = false;
   }
 }
 

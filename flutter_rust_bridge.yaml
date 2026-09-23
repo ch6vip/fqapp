@@ -1,0 +1,12 @@
+# flutter_rust_bridge v2 code generation configuration.
+#
+# Regenerate with:
+#   flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
+# scripts/build_rust_backend.ps1 / .sh run this before every build, so the
+# bindings and the crate always stay in step.
+base_dir: .
+rust_input: crate::api
+rust_root: rust/
+dart_output: lib/src/rust
+web: false
+rust_format: false

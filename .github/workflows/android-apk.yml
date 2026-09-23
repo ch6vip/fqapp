@@ -7,18 +7,20 @@ on:
       - 'lib/**'
       - 'android/**'
       - 'native/**'
+      - 'rust/**'
       - 'assets/**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'analysis_options.yaml'
       - 'test/**'
-      - 'scripts/build_backend.sh'
-      - 'scripts/build_backend.ps1'
+      - 'flutter_rust_bridge.yaml'
+      - 'scripts/build_rust_backend.sh'
+      - 'scripts/build_rust_backend.ps1'
+      - 'scripts/run_rust_host_tests.sh'
+      - 'scripts/run_rust_host_tests.ps1'
       - 'scripts/check_native_alignment.cjs'
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
-      - 'patches//**'
-      - 'test/build_backend_scripts_test.cjs'
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
@@ -30,31 +32,29 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Reproducible backend = this pinned upstream commit + the two patches below.
-  # The app-compatibility patch was retired once its changes landed in the
-  # backend history (ch6vip/ branch fqapp-android); see
-  # patches//README.md for the dependency and Web business-error patches.
-  LEGACY_COMMIT: '947eafe28555b998a0f5b3501c57c1604592c5d0'
   FLUTTER_VERSION: '3.44.6'
-  GO_VERSION: '1.26.7'
+  # Pinned flutter_rust_bridge toolchain. The Rust crate, the generated bindings
+  # and the codegen binary must all be the same version.
+  FRB_VERSION: '2.13.0'
   NDK_VERSION: '28.2.13676358'
   CMAKE_VERSION: '3.22.1'
   BUILD_TOOLS_VERSION: '36.0.0'
+  RUST_TARGET: 'aarch64-linux-android'
   # Certificate the release APK must carry. The built APK is compared against
   # this, so a package signed with the wrong key -- or not signed at all --
   # fails here instead of being published. The matching keystore is a
   # repository secret; see docs/release-signing.md.
   RELEASE_SIGNER_SHA256: 'e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550'
   FQAPP_USE_MAVEN_MIRRORS: 'false'
-  GOMAXPROCS: '2'
-  GOFLAGS: '-p=2'
   GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m" -Dorg.gradle.workers.max=2 -Dorg.gradle.daemon=false'
   CMAKE_BUILD_PARALLEL_LEVEL: '2'
+  CARGO_BUILD_JOBS: '2'
+  CARGO_TERM_COLOR: always
 
 jobs:
   apk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -66,30 +66,32 @@ jobs:
           path: app
           persist-credentials: false
 
-      - name: Check out pinned private backend source
-        uses: actions/checkout@v4
+      # The Go backend was replaced by the Rust core in rust/. There is no
+      # private backend checkout and no Go installation in the product build.
+      # patches// is retained only as an offline oracle for regenerating
+      # golden vectors, and is never an input to this workflow.
+
+      - name: Install the pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          repository: ch6vip/
-          ref: ${{ env.LEGACY_COMMIT }}
-          path: 
-          ssh-key: ${{ secrets.LEGACY_READONLY_SSH_KEY }}
-          persist-credentials: false
+          targets: aarch64-linux-android
+          components: rustfmt, clippy
 
-      - name: Verify pinned backend revision
-        run: test "$(git -C ../ rev-parse HEAD)" = "$LEGACY_COMMIT"
+      - name: Cache the Cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/rust
 
-      # Note: .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md
-      # Note: .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
-      - name: Apply the pinned backend fixes
-        working-directory: 
-        run: |
-          backend_patches=(
-            ../app/patches//x-text-security.patch
-            ../app/patches//web-business-errors.patch
-          )
-          git apply --check "${backend_patches[@]}"
-          git apply "${backend_patches[@]}"
-          git diff --check
+      - name: Cache flutter_rust_bridge_codegen
+        id: frb-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/flutter_rust_bridge_codegen
+          key: frb-codegen-${{ env.FRB_VERSION }}-${{ runner.os }}
+
+      - name: Install flutter_rust_bridge_codegen
+        if: steps.frb-cache.outputs.cache-hit != 'true'
+        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked
 
       - uses: actions/setup-java@v4
         with:
@@ -99,18 +101,9 @@ jobs:
           cache-dependency-path: |
             app/android/**/*.gradle.kts
             app/android/gradle/wrapper/gradle-wrapper.properties
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: /go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Check backend scripts, Web behavior, and audio diagnostics
-        run: >-
-          node --test test/build_backend_scripts_test.cjs
-          test/web_assets_test.cjs test/verify_audio_cenc_test.cjs
 
       - uses: subosito/flutter-action@v2
         with:
@@ -127,27 +120,76 @@ jobs:
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
           flutter config --android-sdk "$ANDROID_HOME" --no-analytics
 
-      - name: Test backend including novel decryption contract
-        working-directory: 
+      - name: Check the Web assets, audio diagnostics, and Rust build scripts
+        run: >-
+          node --test test/web_assets_test.cjs
+          test/verify_audio_cenc_test.cjs
+          test/build_rust_backend_scripts_test.cjs
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+
+      - name: Rust lints
+        run: cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings
+
+      - name: Rust tests (signing, device crypto, protocol vectors)
+        run: cargo test --manifest-path rust/Cargo.toml --locked
+
+      # The host build is what the real Dart -> FRB -> Rust integration tests
+      # load; without it those tests are reported as skipped, never as passed.
+      - name: Build the host Rust core for the FFI integration tests
+        run: cargo build --manifest-path rust/Cargo.toml
+
+      - name: Host FFI integration tests (Dart -> FRB -> Rust, mock upstream)
+        run: bash scripts/run_rust_host_tests.sh --skip-build
+
+      - name: Generate the bridge bindings and verify they are reproducible
         run: |
-          go test -mod=readonly -count=1 ./...
-          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          # Content-hash the generated tree instead of using `git diff`: rust/ and
+          # lib/src/ can be untracked in a fresh checkout, where git diff compares
+          # nothing at all and the check would silently pass.
+          mkdir -p build/ci-artifacts
+          digest() {
+            find rust/src/frb_generated.rs lib/src/rust -type f -print0 \
+              | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1
+          }
+          before="$(digest)"
+          flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
+          after="$(digest)"
+          printf 'generated bindings digest (before): %s\n' "$before"
+          printf 'generated bindings digest (after):  %s\n' "$after"
+          if [ "$before" != "$after" ]; then
+            echo 'Generated bindings are stale: commit the output of flutter_rust_bridge_codegen.' >&2
+            exit 1
+          fi
+          {
+            printf 'bindings_sha256=%s\n' "$after"
+          } > build/ci-artifacts/bindings-digest.txt
 
-      - name: Compile backend and synchronize runtime assets
-        run: bash scripts/build_backend.sh --jni ../
+      - name: Compile the Rust core for Android ARM64
+        run: bash scripts/build_rust_backend.sh --skip-codegen
 
-      - name: Check Android backend JNI exports
+      - name: Check the Android Rust core library
         run: |
           mkdir -p build/ci-artifacts
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
-            --dynamic --defined-only android/app/src/main/jniLibs/arm64-v8a/liblegacy.so \
-            > build/ci-artifacts/backend-symbols.txt
-          for method in startBackend stopBackend status; do
-            if ! grep -Eq "[[:space:]]Java_com_fqapp_fqapp_BackendNative_${method}$" build/ci-artifacts/backend-symbols.txt; then
-              echo "Missing JNI method: BackendNative.$method" >&2
+          so=android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so
+          test -s "$so"
+          nm_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$nm_bin" --dynamic --defined-only "$so" > build/ci-artifacts/rust-core-symbols.txt
+          # flutter_rust_bridge entry points must be exported for dart:ffi.
+          for symbol in frb_get_rust_content_hash store_dart_post_cobject; do
+            if ! grep -Eq "[[:space:]]${symbol}$" build/ci-artifacts/rust-core-symbols.txt; then
+              echo "Missing Rust bridge symbol: $symbol" >&2
               exit 1
             fi
           done
+          # 16 KiB page alignment is required by Android 15+.
+          readelf_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$readelf_bin" -l "$so" > build/ci-artifacts/rust-core-program-headers.txt
+          if ! grep -Eq 'LOAD.*0x4000$' build/ci-artifacts/rust-core-program-headers.txt; then
+            echo 'Rust core library is not 16 KiB aligned.' >&2
+            exit 1
+          fi
 
       # Note: docs/release-signing.md
       - name: Restore the release signing identity
@@ -202,15 +244,15 @@ jobs:
             --report-dir build/ci-artifacts/verification
           cp build/app/outputs/flutter-apk/app-release.apk build/ci-artifacts/app-release.apk
           {
-            printf 'App commit: %s\nBackend commit: %s\n' "$GITHUB_SHA" "$LEGACY_COMMIT"
+            printf 'App commit: %s\n' "$GITHUB_SHA"
+            printf 'Rust core: fqapi_core (flutter_rust_bridge %s)\n' "$FRB_VERSION"
+            printf 'Rust core library SHA-256: '
+            sha256sum android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so
             printf 'Release signer SHA-256: %s\n' "$RELEASE_SIGNER_SHA256"
-            printf 'Backend dependency patch SHA-256: '
-            sha256sum patches//x-text-security.patch
-            printf 'Backend Web business-error patch SHA-256: '
-            sha256sum patches//web-business-errors.patch
             printf 'NDK: %s\nCMake: %s\nAndroid Build Tools: %s\n' "$NDK_VERSION" "$CMAKE_VERSION" "$BUILD_TOOLS_VERSION"
             flutter --version
-            go version
+            cargo --version
+            rustc --version
             java -version 2>&1
           } > build/ci-artifacts/build-info.txt
 
@@ -225,7 +267,8 @@ jobs:
           path: |
             app/build/ci-artifacts/app-release.apk
             app/build/ci-artifacts/build-info.txt
-            app/build/ci-artifacts/backend-symbols.txt
+            app/build/ci-artifacts/rust-core-symbols.txt
+            app/build/ci-artifacts/rust-core-program-headers.txt
             app/build/ci-artifacts/verification/*.json
             app/build/ci-artifacts/verification/*.sha256
             app/build/ci-artifacts/verification/*.log
@@ -238,7 +281,8 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
           path: |
-            app/build/ci-artifacts/backend-symbols.txt
+            app/build/ci-artifacts/rust-core-symbols.txt
+            app/build/ci-artifacts/rust-core-program-headers.txt
             app/build/ci-artifacts/verification/*.json
             app/build/ci-artifacts/verification/*.log
 
@@ -248,11 +292,12 @@ jobs:
         run: |
           {
             printf '[下载 ARM64 APK 和校验报告](%s)\n\n' "$ARTIFACT_URL"
-            printf 'App commit: `%s`  \nBackend commit: `%s`\n\n' "$GITHUB_SHA" "$LEGACY_COMMIT"
-            printf 'Backend dependency patch SHA-256: `%s`\n\n' "$(sha256sum patches//x-text-security.patch | cut -d ' ' -f 1)"
-            printf 'Backend Web business-error patch SHA-256: `%s`\n\n' "$(sha256sum patches//web-business-errors.patch | cut -d ' ' -f 1)"
+            printf 'App commit: `%s`  \n' "$GITHUB_SHA"
+            printf 'Rust core: `fqapi_core` (flutter_rust_bridge `%s`)\n\n' "$FRB_VERSION"
+            printf 'Rust core library SHA-256: `%s`\n\n' \
+              "$(sha256sum android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so | cut -d ' ' -f 1)"
             printf 'Release signer SHA-256: `%s`\n\n' "$RELEASE_SIGNER_SHA256"
-            printf '使用正式 release 签名。已验证全部原生库和 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+            printf '使用正式 release 签名。已验证 Rust 核心库与 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove temporary signing file

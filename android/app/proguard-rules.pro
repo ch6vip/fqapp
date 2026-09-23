@@ -1,18 +1,13 @@
 # R8 keep rules for the JNI contracts and the Flutter embedding.
 #
-# Both bundled native libraries resolve Java symbols by NAME, so obfuscation
+# The bundled native libraries resolve Java symbols by NAME, so obfuscation
 # breaks them at runtime with an UnsatisfiedLinkError -- the build still
 # succeeds, which is why these keeps are written out explicitly rather than
 # relying on the transitive consumer rules that androidx.annotation ships for
 # @Keep. A JNI contract must not depend on an indirect dependency.
-
-# --- liblegacy.so (Go, -buildmode=c-shared) -------------------------------
-# Exports, verified by reading the dynamic symbols out of the built library:
-#   Java_com_fqapp_fqapp_BackendNative_startBackend
-#   Java_com_fqapp_fqapp_BackendNative_stopBackend
-#   Java_com_fqapp_fqapp_BackendNative_status
-# Note: this class carries no @Keep annotation in the source.
--keep class com.fqapp.fqapp.BackendNative { *; }
+#
+# The Rust core (libfqapi_core.so) has NO Java JNI surface: Flutter reaches it
+# through flutter_rust_bridge over dart:ffi, so no keep rule is needed for it.
 
 # --- libshortplay_crypto.so (native/android/jni_bridge.c) ----------------
 # Exports Java_com_example_shortplay_CryptoNative_*. The package name is part

@@ -6,6 +6,7 @@ import '../models/media_item.dart';
 import '../models/media_id.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
+import '../services/backend_transport.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
@@ -69,6 +70,10 @@ class _SearchPageState extends State<SearchPage> {
   String? _idQuery;
   int _tabIndex = 0;
   int _requestGeneration = 0;
+
+  /// In-flight search / id-lookup. Superseded searches and page disposal cancel
+  /// it so a fast typist does not leave a queue of upstream requests behind.
+  BackendRequest? _activeRequest;
   List<String> _history = const [];
   bool _historyLoading = true;
   int _historyGeneration = 0;
@@ -289,10 +294,12 @@ class _SearchPageState extends State<SearchPage> {
       }
     });
     try {
-      final item =
-          await (widget.idSearchLoader ?? ApiClient.instance.lookupMediaById)(
-            id,
-          );
+      _activeRequest?.cancel();
+      final request = _activeRequest = BackendRequest();
+      final item = await ApiClient.instance.withCancellation(
+        request,
+        () => (widget.idSearchLoader ?? ApiClient.instance.lookupMediaById)(id),
+      );
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
         for (var index = 0; index < _categories.length; index++) {
@@ -335,10 +342,11 @@ class _SearchPageState extends State<SearchPage> {
 
     try {
       final loader = widget.searchLoader ?? ApiClient.instance.searchTabs;
-      final tabs = await loader(
-        _query,
-        tabType: category.tabType,
-        offset: offset,
+      _activeRequest?.cancel();
+      final request = _activeRequest = BackendRequest();
+      final tabs = await ApiClient.instance.withCancellation(
+        request,
+        () => loader(_query, tabType: category.tabType, offset: offset),
       );
       if (!mounted || generation != _requestGeneration) return;
 
@@ -407,6 +415,7 @@ class _SearchPageState extends State<SearchPage> {
   void dispose() {
     ++_requestGeneration;
     ++_suggestGeneration;
+    _activeRequest?.cancel();
     _suggestDebounce?.cancel();
     _scrollController.dispose();
     _ctrl.dispose();

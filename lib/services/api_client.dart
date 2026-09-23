@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -18,6 +19,7 @@ import '../models/rank.dart';
 import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
 import 'backend_service.dart';
+import 'backend_transport.dart';
 import 'chapter_text_formatter.dart';
 
 /// A parsed homepage page. Keeping the cursor next to the parsed cards lets
@@ -42,18 +44,45 @@ class HomepagePage {
 class ApiClient {
   ApiClient({
     http.Client? client,
+    BackendTransport? transport,
     String? baseUrl,
     this._timeout = const Duration(seconds: 20),
     this._comicTimeout = const Duration(seconds: 90),
-  }) : _client = client ?? http.Client(),
-       _base = baseUrl ?? BackendService.instance.baseUrl;
+  }) : _transport =
+           transport ??
+           (client != null || baseUrl != null
+               ? HttpBackendTransport(
+                   client: client,
+                   baseUrl: baseUrl ?? BackendService.instance.baseUrl,
+                 )
+               : BackendService.instance.transport);
 
   static final ApiClient instance = ApiClient();
 
-  // Reuse sockets for the lifetime of the app. All requests target the same
-  // loopback backend, so creating a new Client for every call only adds TCP
-  // setup and TIME_WAIT churn.
-  final http.Client _client;
+  /// Zone key carrying the [BackendRequest] a call belongs to.
+  static final Object _requestZoneKey = Object();
+
+  /// Binds every backend request started inside [body] to [request].
+  ///
+  /// The binding travels in the current Zone, so existing call sites keep their
+  /// signatures while the request owner (a page, a feed loader) still controls
+  /// cancellation: cancelling [request] aborts the in-flight Rust dispatch and
+  /// the awaiting upstream call. This is the same mechanism
+  /// `http.runWithClient` uses for test clients.
+  Future<T> withCancellation<T>(
+    BackendRequest request,
+    Future<T> Function() body,
+  ) {
+    if (request.isCancelled) {
+      return Future<T>.error(BackendRequestAborted('请求已取消'));
+    }
+    return runZoned(body, zoneValues: {_requestZoneKey: request});
+  }
+
+  /// Business calls go through the Rust core by default. Tests and the Web
+  /// build inject an [http.Client]/base URL and get the loopback HTTP adapter,
+  /// which shares the same Rust dispatcher.
+  final BackendTransport _transport;
 
   /// 视频 tab（短剧 feed）的 cell id，按 tab_type 缓存：官方第二段
   /// `bookmall/cell/change` 必须带这个 tab 的 cell，而它只出现在第一段的响应里。
@@ -70,7 +99,9 @@ class ApiClient {
   // before its JSON response is ready, so they need a separate finite limit.
   final Duration _comicTimeout;
 
-  final String _base;
+  /// Base URL used to resolve backend-relative resources (`/src/...`). It is
+  /// read from the transport so a backend restart cannot leave a stale port.
+  String get _base => _transport.baseUrl;
 
   /// Converts a backend-relative resource (`/src/foo.mp4`) into a URL the
   /// Flutter networking plugins can consume. JSON API paths stay untouched.
@@ -105,24 +136,26 @@ class ApiClient {
     String url, {
     Duration? timeout,
     String method = 'GET',
+    Uint8List? body,
   }) async {
-    final abort = Completer<void>();
-    final request = http.AbortableRequest(
+    // The transport owns the deadline: cancelling drops the in-flight Rust
+    // dispatch (and therefore the upstream request, its retry backoff and any
+    // pending write), so a late result can never be published.
+    final request = Zone.current[_requestZoneKey];
+    final response = await _transport.send(
       method,
       Uri.parse(url),
-      abortTrigger: abort.future,
+      body: body,
+      timeout: timeout ?? _timeout,
+      request: request is BackendRequest ? request : null,
     );
-    try {
-      return await _client
-          .send(request)
-          .then(http.Response.fromStream)
-          .timeout(timeout ?? _timeout);
-    } on TimeoutException {
-      // Future.timeout alone leaves a hung request occupying a connection.
-      // Cancel this request without closing the shared client's other calls.
-      abort.complete();
-      rethrow;
-    }
+    return http.Response.bytes(
+      response.body,
+      response.statusCode,
+      headers: response.contentType.isEmpty
+          ? const {}
+          : {'content-type': response.contentType},
+    );
   }
 
   String _url(String path, Map<String, String> query) =>

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/backend_transport.dart';
 import '../services/user_facing_error.dart';
 
 typedef HomepageLoader =
@@ -203,11 +204,20 @@ class HomeNotifier extends Notifier<HomeState> {
   final Map<int, _TabFeed> _feeds = {};
   int _generation = 0;
 
+  /// In-flight feed request. Cancelled when a newer load supersedes it, when
+  /// the tab changes, and on dispose, so leaving the page stops the upstream
+  /// work instead of only ignoring its result.
+  BackendRequest? _activeRequest;
+
   /// The category this feed opens on. The home page starts on 全部; a page that
   /// is locked to one channel starts on that channel and never shows the strip.
   @override
   HomeState build() {
     ++_generation;
+    // Leaving the page (or rebuilding the provider) stops whatever is in
+    // flight instead of only ignoring its result.
+    ref.onDispose(() => _activeRequest?.cancel());
+    _activeRequest?.cancel();
     _feeds.clear();
     return HomeState(tabIndex: initialTabIndex);
   }
@@ -227,8 +237,14 @@ class HomeNotifier extends Notifier<HomeState> {
       clearError: true,
     );
 
+    _activeRequest?.cancel();
+    final request = _activeRequest = BackendRequest();
+
     try {
-      final fetched = await _loadInitial(tabIndex);
+      final fetched = await ApiClient.instance.withCancellation(
+        request,
+        () => _loadInitial(tabIndex),
+      );
       if (!ref.mounted ||
           generation != _generation ||
           state.tabIndex != tabIndex) {
@@ -262,6 +278,7 @@ class HomeNotifier extends Notifier<HomeState> {
   void selectTab(int index) {
     if (index == state.tabIndex || index < 0 || index >= tabs.length) return;
     ++_generation;
+    _activeRequest?.cancel();
     final cached = _feeds[index];
     state = state.copyWith(
       tabIndex: index,
@@ -282,8 +299,14 @@ class HomeNotifier extends Notifier<HomeState> {
     final feed = _feedFor(tabIndex);
     state = state.copyWith(isLoadMore: true, clearError: true);
 
+    _activeRequest?.cancel();
+    final request = _activeRequest = BackendRequest();
+
     try {
-      final fetched = await _loadNext(tabIndex, feed);
+      final fetched = await ApiClient.instance.withCancellation(
+        request,
+        () => _loadNext(tabIndex, feed),
+      );
       if (!ref.mounted ||
           generation != _generation ||
           state.tabIndex != tabIndex) {

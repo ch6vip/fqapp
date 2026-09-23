@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="referrer" content="no-referrer">
+    <title>漫画阅读器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; height: 100%; width: 100%; }
+        #reader-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 0; }
+        .image-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow-y: auto; overflow-x: hidden; background: #000; -webkit-overflow-scrolling: touch; }
+        .image-scroll-area { width: 100%; display: flex; flex-direction: column; align-items: center; }
+        .image-scroll-area img { width: 100%; height: auto; display: block; }
+    </style>
+</head>
+<body>
+    <div id="reader-container">
+        <div id="image-container" class="image-container">
+            <div id="image-scroll-area" class="image-scroll-area"></div>
+        </div>
+    </div>
+    <script>
+    class MangaReader {
+        constructor() {
+            this.bookId = __BOOK_ID__;
+            this.currentItemId = __ITEM_ID__;
+            this.chapters = [];
+            this.currentChapterIndex = -1;
+            this.imageContainer = document.getElementById('image-container');
+            this.imageScrollArea = document.getElementById('image-scroll-area');
+            this.baseUrl = "index.php";
+            this.init();
+        }
+        async init() {
+            this.bindEvents();
+            if (this.bookId) { this.loadChapters(); }
+            if (this.currentItemId) { this.loadChapter(this.currentItemId); }
+        }
+        bindEvents() {
+            let startX = 0;
+            this.imageContainer.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; }, { passive: true });
+            this.imageContainer.addEventListener('touchend', (e) => {
+                const endX = e.changedTouches[0].clientX;
+                const diff = endX - startX;
+                if (Math.abs(diff) > 50) { if (diff > 0) { this.prevChapter(); } else { this.nextChapter(); } }
+            });
+        }
+        async loadChapters() {
+            try {
+                const response = await fetch(this.baseUrl + '?api=directory&book_id=' + this.bookId);
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.chapters = data.data.lists || data.data;
+                    this.currentChapterIndex = this.chapters.findIndex(c => c.item_id == this.currentItemId);
+                }
+            } catch (e) { console.error('加载章节列表失败:', e); }
+        }
+        async loadChapter(itemId) {
+            try {
+                const response = await fetch(this.baseUrl + '?api=manga&item_ids=' + itemId + '&show_html=1');
+                const data = await response.json();
+                const html = (data.data && data.data.content) ? data.data.content : '';
+                this.imageScrollArea.innerHTML = html;
+            } catch (e) { console.error('加载章节失败:', e); }
+        }
+        prevChapter() { if (this.currentChapterIndex > 0) { this.currentChapterIndex--; this.loadChapter(this.chapters[this.currentChapterIndex].item_id); } }
+        nextChapter() { if (this.currentChapterIndex < this.chapters.length - 1) { this.currentChapterIndex++; this.loadChapter(this.chapters[this.currentChapterIndex].item_id); } }
+    }
+    const reader = new MangaReader();
+    </script>
+</body>
+</html>

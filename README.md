@@ -1,10 +1,10 @@
 # fqapp — 番茄小说/短剧/漫剧/听书/漫画 Flutter 客户端
 
-一个运行在 **Android 手机本地** 的番茄内容聚合客户端：内置 Go 版 `` 后端，Flutter 原生 UI 提供小说阅读、短剧与漫剧播放、前台听书、漫画阅读、搜索、历史和小说离线缓存。
+一个运行在 **Android 手机本地** 的番茄内容聚合客户端：内置 Rust 原生核心 `fqapi_core`，Flutter 原生 UI 提供小说阅读、短剧与漫剧播放、前台听书、漫画阅读、搜索、历史和小说离线缓存。
 
 [下载 v1.0.17 测试安装包（ARM64）](https://github.com/ch6vip/fqapp/releases/tag/v1.0.17)
 
-> **核心设计**：后端跑在 `127.0.0.1:8080`，UI 通过 HTTP 调用本地后端。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问番茄上游。
+> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:8080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问番茄上游。
 
 ---
 
@@ -15,7 +15,7 @@
 - [项目结构](#项目结构)
 - [快速开始](#快速开始)
 - [构建 APK](#构建-apk)
-- [Android 后端进程集成](#android-后端进程集成)
+- [Android 原生核心集成](#android-原生核心集成)
 - [API 对接说明](#api-对接说明)
 - [数据模型](#数据模型)
 - [页面说明](#页面说明)
@@ -37,43 +37,45 @@
 | 📋 详情 | 封面 + 分类/完结/字数 + 作者等级 + 榜单/在读/评分 + 标签 + 简介 + 目录 + 书评 |
 | 🕘 历史 | 阅读/播放进度记录，续看 |
 | 🏠 首页 | 推荐内容流，推荐不可用或耗尽后回退分类搜索 |
-| 📱 本地后端 | 旧后端与前端在手机内运行，在线内容从上游获取 |
+| 📱 本地核心 | Rust 原生核心与前端在手机内运行，在线内容从上游获取 |
 
 ---
 
 ## 架构总览
 
 ```
-┌────────────────────────────────────────────────┐
-│                    Flutter App                  │
-│                                                │
-│  ┌──────────┐   ┌────────────┐   ┌──────────┐  │
-│  │ UI 页面  │──▶│ ApiClient  │──▶│  HTTP    │  │
-│  │(阅读/播放)│   │(归一化解析) │   │127.0.0.1 │  │
-│  └──────────┘   └────────────┘   └────┬─────┘  │
-│                                       │        │
-│  ┌──────────┐   ┌────────────┐        │        │
-│  │ Library  │   │  Backend   │        │        │
-│  │  Store   │   │  Service   │────────┘        │
-│  │(历史/时长)│   │(进程管理)   │                 │
-│  └──────────┘   └─────┬──────┘                 │
-└───────────────────────┼────────────────────────┘
-                        │ Android JNI
+┌──────────────────────────────────────────────────┐
+│                    Flutter App                   │
+│                                                  │
+│  ┌──────────┐   ┌────────────┐   ┌────────────┐  │
+│  │ UI 页面  │──▶│ ApiClient  │──▶│  Backend   │  │
+│  │(阅读/播放)│   │(归一化解析) │   │ Transport  │  │
+│  └──────────┘   └────────────┘   └─────┬──────┘  │
+│                                        │         │
+│  ┌──────────┐   ┌────────────┐         │         │
+│  │ Library  │   │  Backend   │         │         │
+│  │  Store   │   │  Service   │─────────┘         │
+│  │(历史/时长)│   │(核心初始化) │                  │
+│  └──────────┘   └─────┬──────┘                   │
+└───────────────────────┼──────────────────────────┘
+                        │ flutter_rust_bridge (FFI)
                         ▼
-              ┌─────────────────────┐
-              │   Go  后端      │
-              │    liblegacy.so     │
-              │  签名 · 解密 · 代理  │
-              └─────────┬───────────┘
-                        │ HTTPS
-                        ▼
-              番茄上游 API (fanqie)
+              ┌───────────────────────────┐
+              │    Rust 核心 fqapi_core    │
+              │    libfqapi_core.so       │
+              │ 签名 · 解密 · 设备池 · 分发器│
+              └──────┬─────────────┬──────┘
+                     │             │
+      loopback HTTP  │             │ HTTPS (reqwest)
+      127.0.0.1:8080 │             ▼
+                     ▼      番茄上游 API (fanqie)
+          内置 Web UI / /src/* 漫画图
 ```
 
 ### 数据流
 
-1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、Web 页面及其 CSS/字体、插件部署到 app 私有目录 → 通过 Kotlin/JNI 启动 APK 中的 `liblegacy.so` → 轮询 `/health` 直到 200。Android 不执行私有目录中的独立二进制；桌面后端路径使用宿主平台的 `assets/bin/`。
-2. **请求**：UI 页面 → `ApiClient`（`http` 包）→ `http://127.0.0.1:8080/api/*` → 后端完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
+1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、Web 页面及其 CSS/字体、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
+2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；Web/测试用 loopback HTTP）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
 ---
@@ -83,14 +85,16 @@
 ```
 fqapp/
 ├── lib/
-│   ├── main.dart                    # 入口：启动后端 + RootShell(底部导航)
+│   ├── main.dart                    # 入口：启动 Rust 核心 + RootShell(底部导航)
 │   ├── models/
 │   │   ├── media_item.dart          # MediaItem/Chapter/SearchTab 模型 + 归一化解析
 │   │   └── chapter_media.dart       # 听书音源、音色与漫画图片模型
 │   ├── services/
-│   │   ├── backend_service.dart     # 旧后端管理(部署/JNI/桌面进程/健康检查/日志)
-│   │   ├── api_client.dart          # 后端 HTTP 客户端(对接 /api/* 桥接层)
+│   │   ├── backend_service.dart     # Rust 核心管理(部署/初始化/健康检查/日志)
+│   │   ├── api_client.dart          # 后端客户端(对接 /api/* 桥接层)
+│   │   ├── backend_transport.dart   # Rust FFI 与 loopback HTTP 传输层
 │   │   └── library_store.dart       # 历史/阅读时长本地存储
+│   ├── src/rust/                     # flutter_rust_bridge 生成绑定(api/frb_generated)
 │   ├── pages/
 │   │   ├── home_page.dart           # 首页(推荐流)
 │   │   ├── search_page.dart         # 搜索(分 tab、联想词与热搜)
@@ -106,23 +110,29 @@ fqapp/
 │   └── widgets/
 │       └── media_card.dart          # 封面卡片组件
 ├── assets/
-│   ├── bin/                    # 宿主平台独立后端，不打入 Android APK
 │   ├── config/                      # config.json / filter.json / 设备池示例
-│   ├── filters/                     # 15 个 JS 过滤脚本(goja 运行时)
-│   ├── web/                         # 后端自带 Web UI(浏览器备用)
+│   ├── filters/                     # 15 个 JS 过滤脚本(当前全部 disabled；Rust 首轮不引入 JS 引擎)
+│   ├── web/                         # Rust 核心自带 Web UI(浏览器备用，经 loopback HTTP)
 │   └── plugins/                     # manga_reader / player HTML 插件
-├── android/                         # Android 工程、JNI 桥接与 JVM 测试
+├── rust/                            # Rust 原生核心 fqapi_core(签名/解密/端点/loopback HTTP)
+├── android/                         # Android 工程、原生插件桥接与 JVM 测试
 ├── native/                          # 可重建的 CENC 流式 C 解密库与 CMake
 ├── scripts/
-│   ├── build_backend.sh             # 编译宿主后端、可选 Android JNI + 同步运行时文件
-│   └── build_backend.ps1            # 同上，Windows PowerShell 版
+│   ├── build_rust_backend.sh        # 生成 FRB 绑定 + 交叉编译 ARM64 Rust 核心
+│   └── build_rust_backend.ps1       # 同上，Windows PowerShell 版
+├── flutter_rust_bridge.yaml         # flutter_rust_bridge 代码生成配置
 ├── test/                            # Flutter 单元/组件测试及 Web 回归
 └── pubspec.yaml                     # Flutter 依赖与资源声明
 ```
 
-> **仓库不含原生二进制**：`assets/bin/` 和两份 `.so` 均被 Git 忽略。独立后端及
-> `liblegacy.so` 可由 `` 源码重建；`libshortplay_crypto.so` 由本仓库 `native/` 中的
-> C 源码在 Android 构建时自动生成。Android 构建前需准备 Go JNI 后端。
+> **仓库不含原生二进制**：`libfqapi_core.so` 和 `libshortplay_crypto.so` 均被 Git 忽略。
+> 前者可由 `rust/` 中的 Rust 源码经 `scripts/build_rust_backend.*` 重建；
+> `libshortplay_crypto.so` 由本仓库 `native/` 中的 C 源码在 Android 构建时自动生成。
+> Android 构建前需先运行 Rust 构建脚本生成 ARM64 核心库。
+>
+> 体积参考：Rust ARM64 `libfqapi_core.so` 为 6,125,392 字节（约 5.84 MiB），此前记录的 旧方案
+> 库为 15.32 MiB（隔离编译实验中移除 goja 的实验版为 7.589 MiB）。这是本地 release 构建产物的
+> 实测大小，不是安装包体积，也不是性能结论；两者功能范围不同，不能直接当作收益证明。
 
 ---
 
@@ -132,47 +142,48 @@ fqapp/
 
 | 工具 | 版本 | 用途 |
 |---|---|---|
-| Flutter | 3.44+ (stable) | 构建 App |
+| Flutter | 3.44.6 (stable) | 构建 App |
 | Dart SDK | 3.12+ | 随 Flutter |
+| Rust | stable (cargo/rustc) | 编译原生核心 `fqapi_core` |
+| flutter_rust_bridge | 2.13.0 | 生成 Flutter/Rust 绑定 |
 | Android SDK | 36 (platform) + Build-Tools | 编译 APK |
-| Go | 1.26+ | 交叉编译后端二进制 |
-| Android NDK | 28.2.13676358 | 编译 Go JNI 后端与 C 流式解密库 |
+| JDK | 17 | Android Gradle 构建 |
+| Android NDK | 28.2.13676358 | 交叉编译 Rust ARM64 核心与 C 流式解密库 |
 | CMake | 3.22.1 | Android 构建自动编译 C 库 |
 
 > Windows 下构建注意：Kotlin 增量编译在部分环境会报 `Could not close incremental caches`，已在 `android/gradle.properties` 中关闭（`kotlin.incremental=false`）。
 
-### 1. 编译后端并同步运行时文件
+### 1. 编译 Rust 原生核心
 
-先按[后端准备说明](patches//README.md)检出工作流固定的版本并应用依赖安全与 Web 业务错误补丁，
-得到 `../-app-build`。以下命令用于重建已经准备好的源码。
-
-脚本默认编译当前宿主系统与架构的独立后端，并同步运行时资源。Android 构建必须加
-`--jni` / `-Jni`，同时生成 `android/app/src/main/jniLibs/arm64-v8a/liblegacy.so`：
-
-```bash
-./scripts/build_backend.sh --jni ../-app-build
-./scripts/build_backend.sh --jni /path/to/prepared/
-```
+`rust/` 是产品唯一的后端实现（crate `fqapi_core`）。构建脚本会先用
+`flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml` 生成 Dart/Rust 绑定，
+再用 NDK 28.2.13676358 交叉编译 `aarch64-linux-android`，最后把 `libfqapi_core.so`
+复制到 `android/app/src/main/jniLibs/arm64-v8a/`。
 
 Windows PowerShell：
 
 ```powershell
-.\scripts\build_backend.ps1 -Jni ../-app-build
-.\scripts\build_backend.ps1 -Jni C:\path\to\prepared\
+.\scripts\build_rust_backend.ps1
 ```
 
-NDK 可由 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` 指定，或放在 Android SDK 的 `ndk/` 下。
-源码树必须包含与 `BackendNative.kt` 匹配的 JNI 入口。独立后端使用 `GOHOSTOS/GOHOSTARCH`，
-JNI 后端固定使用 `GOOS=android`、`GOARCH=arm64` 和 NDK clang。
+Linux / macOS：
 
-脚本默认保留已有配置、过滤器、Web 与插件，只补齐缺失文件，以保留本项目的移动端配置和修复。
-需要从上游覆盖时，分别使用 `--force-config` / `-ForceConfig` 和
-`--force-runtime` / `-ForceRuntime`；覆盖后应检查 diff 并重跑测试。
+```bash
+./scripts/build_rust_backend.sh
+```
 
-> ⚠️ 脚本只拷贝 `config.json`、`filter.json`、`device_pool.example.json` 三个确定的配置文件，
-> **不会**整目录复制 `config/`。真实设备池 `device_pool.json` 里带 `secret_key`，
-> 脚本会跳过它并清理 `assets/config/` 中的副本；`pubspec.yaml` 也只声明上述三个配置文件。
-> 设备实际注册的池保存在应用私有目录，后续资源升级会保留它。
+常用开关：`-SkipCodegen` 跳过绑定生成（绑定已是最新时），`-HostLib` 额外构建桌面 cdylib，
+`-Profile debug` 选择 debug 配置。NDK 可由 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`
+指定，或放在 Android SDK 的 `ndk/` 下；脚本优先使用 `ndk/28.2.13676358`。
+
+`patches//` 中的 对照源码与两个补丁已退出产品构建，只作**离线 oracle**，用于重新生成
+`rust/testdata/` 的黄金向量（见[后端准备说明](patches//README.md)）；正常构建与 CI
+都不再检出或编译 对照源码，也不再需要 外部工具链。
+
+> ⚠️ `assets/config/` 只包含 `config.json`、`filter.json`、`device_pool.example.json`
+> 三个确定的配置文件。真实设备池 `device_pool.json` 里带 `secret_key`，**不随仓库或 APK 分发**；
+> 首次启动时由 `BackendService` 从示例初始化，此后设备实际注册的池保存在应用私有目录，
+> 后续资源升级会保留它。
 
 ### 2. 构建加密播放库
 
@@ -181,8 +192,8 @@ JNI 接口与 ExoPlayer。Gradle 通过 CMake 自动编译 `libshortplay_crypto.
 使用 NDK 28 并显式设置 16 KB ELF 对齐，不再需要下载外部预编译 crypto 库。
 
 升级旧工作区时，请把 `android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so`
-备份到 `jniLibs` 之外，避免它与自动生成的库重复。Gradle 会检查旧输入以及 Go JNI 库是否就绪。
-`build_backend -Jni` / `--jni` 仍只负责编译 旧后端；C 库由下一步 APK 构建自动生成。
+备份到 `jniLibs` 之外，避免它与自动生成的库重复。Gradle 会检查旧输入与原生库是否就绪。
+Rust 核心库由 `scripts/build_rust_backend.*` 生成；C 库由下一步 APK 构建自动生成。
 
 实现范围、支持的 MP4 格式、主机回归和设备验证边界见 [C 库说明](native/README.md)。
 本轮测试结果、APK 校验值和 16 KB 设备验证状态见 [C 库验证记录](docs/native-c-validation-20260908.md)。
@@ -193,13 +204,13 @@ JNI 接口与 ExoPlayer。Gradle 通过 CMake 自动编译 `libshortplay_crypto.
 ```powershell
 cd fqapp
 flutter pub get
-# 当前 JNI 后端只提供 arm64-v8a，构建时显式指定目标 ABI
+# 当前 Rust 核心只提供 arm64-v8a，构建时显式指定目标 ABI
 flutter build apk --debug --target-platform android-arm64
 flutter build apk --release --target-platform android-arm64
 ```
 
 生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
-对应 ABI 编译并打包 `liblegacy.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
+对应 ABI 交叉编译并打包 `libfqapi_core.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
 
 ### GitHub Actions 云端编译
 
@@ -208,26 +219,21 @@ flutter build apk --release --target-platform android-arm64
 运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
 `app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
 
-[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.44.6`、Go `1.26.7`、JDK 17、
-NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 runner 上编译，
-构建脚本默认保留本仓库已有的移动端资源。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false` 使用
-官方 Maven 源；本地构建默认仍使用国内镜像。
+[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.44.6`、Rust 工具链与
+flutter_rust_bridge `2.13.0`、JDK 17、NDK `28.2.13676358` 和 CMake `3.22.1`。
+Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false`
+使用官方 Maven 源；本地构建默认仍使用国内镜像。
 
-每次构建运行 Go、Web 与诊断脚本测试、Flutter 静态分析与完整单元/组件测试，
+每次构建运行 Rust、Web 与诊断脚本测试、Flutter 静态分析与完整单元/组件测试，
 并验证 Android JVM 测试和最终 APK。
 
-`` 是私有仓库，CI 以[工作流](.github/workflows/android-apk.yml)中的 `LEGACY_COMMIT`
-作为后端源码版本的唯一来源。该版本包含小说图文解密、短剧剧集标题索引、章评／段评、
-短剧系列详情及音频内容密钥派生契约。原应用兼容补丁已并入后端历史并退休；
-目前应用两个固定补丁：升级 `golang.org/x/text`，以及保留 Web 桥接接口的上游业务错误。
-本地构建也须按[后端准备说明](patches//README.md)选择同一源码版本并应用这两个补丁。
-完整 Go 测试与依赖漏洞扫描通过后再构建 JNI，构建报告记录源码提交和两个补丁的 SHA-256。
-本地其它未提交的后端改动不进入云端构建。
+产品构建不再安装 Go，也不再检出私有 `` 仓库；`patches//` 中的 对照源码与两个
+补丁只作为**离线 oracle**，用于离线重放并重新生成 `rust/testdata/` 的黄金向量，
+不进入产品构建。历史源码固定版本与补丁摘要见[后端准备说明](patches//README.md)。
 本仓库已配置以下 Actions secrets，复制工作流到其它仓库时需要配置对应内容：
 
 | Secret | 用途 |
 | --- | --- |
-| `LEGACY_READONLY_SSH_KEY` | 仅授予 `` 读取权限的独立 SSH deploy key |
 | `RELEASE_KEYSTORE_BASE64` | 正式 keystore 的 Base64 内容 |
 | `RELEASE_STORE_PASSWORD` | 正式 keystore 的 storePassword |
 | `RELEASE_KEY_ALIAS` | 正式密钥别名（`fqapp`） |
@@ -235,6 +241,8 @@ NDK `28.2.13676358` 和 CMake `3.22.1`。Go JNI 后端与 C 解密库都会在 r
 
 （`ANDROID_DEBUG_KEYSTORE_BASE64` 已不再被工作流使用：release 不再用调试密钥签名，
 JVM 单测也不需要签名。可以保留，也可以删除。）
+
+（`LEGACY_READONLY_SSH_KEY` 已随私有 `` 检出一并退休，产品构建不再需要它。）
 
 云端 APK 使用**正式 release 签名**，并开启 R8 混淆与资源裁剪。CI 先把 keystore 还原到
 临时目录并核对证书指纹，再在 APK 生成后由 `scripts/verify_android_apk.py` 比对
@@ -258,7 +266,7 @@ adb install -r build\app\outputs\flutter-apk\app-debug.apk
 adb shell am start -n com.fqapp.fqapp/.MainActivity
 ```
 
-首次启动：App 将运行时资源部署到 `files/backend/`，通过 JNI 启动本地后端，健康检查通过后进入主界面。
+首次启动：App 将运行时资源部署到 `files/backend/`，通过 flutter_rust_bridge 初始化 Rust 原生核心，健康检查通过后进入主界面。
 已有缓存时也可在启动页面直接进入离线阅读。
 
 ---
@@ -297,56 +305,58 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 
 ---
 
-## Android 后端进程集成
+## Android 原生核心集成
 
 ### 部署流程（`BackendService._deploy`）
 
 1. 将 `config.json`、`filter.json`、`device_pool.example.json` 部署到应用私有目录 `files/backend/config/`。
 2. 首次启动时用示例初始化 `device_pool.json`；以后保留后端注册并保存的实际设备池。
 3. 从 Flutter 资源清单枚举并部署全部 `filters/`、`web/`、`plugins/` 文件，包含 CSS 和字体。内容变更时替换旧资源。
-4. 仅桌面进程路径另外部署 `assets/bin/` 并设置执行权限；Android 从 APK 加载 JNI 库。
+4. 运行时资源不含任何可执行后端二进制；Rust 核心以 `libfqapi_core.so` 随 APK 打包，在进程内加载。
 
 ### 启动流程（`BackendService.start`）
 
 ```dart
-// Android: MethodChannel → Kotlin → liblegacy.so (JNI)
-// Desktop：
-_proc = await Process.start(bin, [
-    '-config', ..., '-pool', ..., '-filter', ..., '-runtime-dir', dir.path,
-  ], workingDirectory: dir.path);
+// 默认：flutter_rust_bridge 直调 Rust 核心（进程内，无独立进程）
+await rust.init(
+  configPath: ..., poolPath: ..., filterPath: ..., runtimeDir: ..., port: 8080,
+);
+// Web / 测试：同一分发器另开 loopback HTTP 适配器，供浏览器入口与 /src/* 资源
 ```
 
 - 并发 `start()` 等待同一次完整启动，`stop()` 会等待进行中的部署与启动结束再清理。
 - 健康检查默认总时限 15 秒，单次请求覆盖连接、响应头和响应体的时限，失败后间隔最多 300 毫秒重试。
-- 启动诊断、桌面后端 stdout/stderr 写入 `backend.log`。后端子进程退出时清除引用；显式 `stop()` 等待其退出，超时后升级终止信号。
+- 启动诊断写入 `backend.log`。核心没有独立进程：显式 `stop()` 调用 Rust 的 `shutdown` 释放运行时，不存在子进程退出或终止信号逻辑。
 
-### ⚠️ SELinux 关键限制（已实测）
+### ⚠️ SELinux 关键限制（历史记录）
 
 | 执行方式 | 结果 |
 |---|---|
 | Flutter `Process.start`（untrusted_app 域） | ❌ `Permission denied` |
 | `adb shell run-as <pkg> ./`（shell 域） | ✅ 可执行 |
 
-**Android 的 `untrusted_app` SELinux 域禁止执行 `app_data_file` 下的二进制**。
-本项目已实现 JNI 路径：Go 使用 `-buildmode=c-shared` 生成 `liblegacy.so`，
-Kotlin 通过 `System.loadLibrary("")` 加载，再调用匹配的 JNI 启停入口。
-Android 上 JNI 失败会显示启动错误与重试入口，不回退到 `Process.start`。
+**Android 的 `untrusted_app` SELinux 域禁止执行 `app_data_file` 下的二进制**，
+这条实测结论今天仍然成立，也是本项目始终不发布独立后端可执行文件的原因。
+它曾解释 旧后端当年为何改用 `-buildmode=c-shared` 生成 `liblegacy.so` 并由 Kotlin/JNI 加载
+（`Process.start` 会 `Permission denied`，JNI 失败则显示启动错误与重试入口）。
+Rust 核心延续「共享库 + 进程内加载」的形态，但不再需要 Kotlin 桥：`libfqapi_core.so`
+随 APK 打包，Flutter 通过 flutter_rust_bridge 的 FFI 调用，不再有 `BackendNative.kt`。
 
-安装 NDK（例如 `sdkmanager "ndk;28.2.13676358"`）并按[准备说明](patches//README.md)
-检出源码、应用两个固定补丁后编译：
+安装 NDK（例如 `sdkmanager "ndk;28.2.13676358"`）后运行 Rust 构建脚本：
 
 ```powershell
-.\scripts\build_backend.ps1 -Jni ../-app-build
+.\scripts\build_rust_backend.ps1
 ```
 
-Go JNI 入口会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；HTTP 服务只绑定 `127.0.0.1`。
+Rust 核心会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；
+loopback HTTP 适配器只绑定 `127.0.0.1`，`/health`、`/api/*`、`/src/*` 与 Web 入口共用同一分发器。
 加密播放所需的 `libshortplay_crypto.so` 由 APK 构建自动从 `native/` 生成。
 
 ---
 
 ## API 对接说明
 
-App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`），首页推荐使用
+App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `rust/src/endpoints/webui.rs`），首页推荐使用
 `/api/v1/recommend/homepage`。漫剧首页使用 `tab_type=24`；听书使用现有音频播放接口，漫画首页使用真实漫画分类搜索。
 客户端模型同时兼容归一化结果及部分旧版响应结构：
 
@@ -379,7 +389,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 **响应信封**：客户端接受 `code=200`（Web 桥接）或 `code=0`（上游兼容接口）的成功响应；
 其他显式状态码或 `success=false` 视为错误。
 
-**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持需要同步 `/internal/endpoints/base.go` 的解密修复，再运行 `scripts/build_backend.ps1 -Jni ../-app-build` 构建 Android 后端；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。旧后端没有解密成功标记时，客户端回退文字。该修复已并入后端历史；本地应按[后端准备说明](patches//README.md)使用工作流当前固定的源码版本重建，不能复用旧 `liblegacy.so`。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
+**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持由 Rust 核心 `rust/src/endpoints/base.rs` 的解密实现提供，改动后运行 `scripts/build_rust_backend.ps1` 重建 `libfqapi_core.so`；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。核心没有解密成功标记时，客户端回退文字。该行为源自已并入 `` 历史的修复，现由 reference implementation 的离线黄金向量保证一致（见[后端准备说明](patches//README.md)）。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/review-fixes-validation-20260910.md)。
 
 **搜索分类与分页**：搜索页使用 `/api/v1/search` 请求所选分类，在拆分漫剧之前先选取对应的上游 tab，
 再按条目实际 `kind` 筛选。综合保留全部作品；短剧、漫剧、漫画、听书分别只展示 `video`、`manju`、`manga`、`audio`。
@@ -413,7 +423,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 
 `chapterListWithVolume` 格式 → `itemId`/`title`/`volume_name`，按卷分组。
 
-短剧和漫剧上游的 `data.episodes`、`item_data_list` 和 `lists` 也会统一转换为同一模型，客户端因此可以兼容新旧后端二进制。
+短剧和漫剧上游的 `data.episodes`、`item_data_list` 和 `lists` 也会统一转换为同一模型，客户端因此可以兼容新旧响应结构。
 
 ### `SearchTab`（搜索 tab）
 
@@ -426,7 +436,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 
 ### 首页（`home_page.dart`）
 - 提供推荐、小说、短剧、漫剧、漫画和听书分类；推荐页混排各类内容
-- 优先调用真实 `/api/v1/recommend/homepage`，旧后端不可用时回退搜索结果
+- 优先调用真实 `/api/v1/recommend/homepage`，推荐接口不可用时回退搜索结果
 - 推荐页的漫剧与小说都取各自的专属推荐流（`tab_type=24` / `2`），短剧、漫画、听书取搜索结果；
   漫剧的推荐流没有翻页游标，后续页仍由漫剧搜索承接
 - 漫剧首屏使用专属推荐，后续按视频搜索的实际游标加载；筛选后空页或重复页仍可继续，来源耗尽后停止请求
@@ -478,7 +488,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 - 目录预览每章附正文开头数行（一次请求覆盖 3 章）；上游字段名虽为 `summary`，实际内容是正文开头，故按试读呈现
 - 书评区：评分卡 + 评论列表（0-10 分转五星、相对时间、在读时长、点赞与回复数）
 - 书评的「回复 N」可展开回复（点击时懒加载，失败只在该条下提示，不影响列表）
-- 作者行整行可点进入作者主页（后端无关注端点，因此不提供假的关注按钮）
+- 作者行整行可点进入作者主页（核心无关注端点，因此不提供假的关注按钮）
 - 底部：听书 / 下载 / 阅读（播放、续看）三键；听书与下载仅小说显示
 - 听书直接进入听书页并接续已保存的进度；下载一次点击即缓存整本（从续读位置起，进度显示在底栏，缓存中再点一次停止）。下载的章节不受缓存上限约束，也不会被自动清理
 - 按内容类型打开小说阅读器、短剧/漫剧播放器、听书播放器或漫画阅读器
@@ -505,7 +515,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 - 章节正文解析上游 `<p idx>` 段落 ID，随结构化缓存持久化；旧缓存没有该字段时只影响段评
 - 段评面板按官方版式：只展示**所点那一段**的评论列表（头像、昵称、时间、正文、赞/回复数），
   顶部为段落选择条（仅当本章有多段时）、`全部/最新` 筛选（客户端排序）、段落引文，面板高 90%；
-  底部发布栏未做——后端无写接口，不做点了没反应的控件
+  底部发布栏未做——核心无写接口，不做点了没反应的控件
 - 段落评论正文由 `server_channel=39` 拉取（**不是**官方 presenter 里的 43；43 会被接受但恒返回空），
   面板展示该段真实段评：头像、昵称、时间、正文、赞/回复数、作者徽章，以及「读 N 分钟」；
   实测第 0 段 287 条、第 32 段 6 条，计数与段评气泡逐段一致
@@ -576,9 +586,9 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（`webui.go`）
 
 ### 1. 原生库与真机验证
 
-- Android 后端必须使用 JNI。先按[后端准备说明](patches//README.md)准备源码，再执行 `scripts/build_backend.ps1 -Jni ../-app-build` 或 `bash scripts/build_backend.sh --jni ../-app-build` 生成 `liblegacy.so`。
+- Rust 核心随 APK 打包并在进程内加载。先运行 `scripts/build_rust_backend.ps1`（或 `bash scripts/build_rust_backend.sh`）生成 `libfqapi_core.so`；`patches//` 的 对照源码与补丁只作离线 oracle，不参与构建。
 - 加密播放使用 `native/` 中的 C 源码，Gradle/CMake 自动生成 `libshortplay_crypto.so`。
-- 准备 Go JNI 后端后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。Android 的纯 JVM 测试不会加载这两份库。
+- 生成 Rust 核心后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。Android 的纯 JVM 测试不会加载这两份库。
 - 本轮审查的修复范围、自动化验证与剩余限制见 [全项目代码审查记录](docs/project-code-review-20260908.md)。
 
 ### 2. 调试技巧
@@ -629,7 +639,7 @@ adb logcat -s flutter
 
 ## 开发计划
 
-- [x] **JNI 集成后端**：Go c-shared → `liblegacy.so` → `System.loadLibrary` 启动（解决 SELinux）
+- [x] **Rust 原生核心**：`fqapi_core` → `libfqapi_core.so` → flutter_rust_bridge 进程内调用（替代 Go/Kotlin JNI）
 - [x] 小说搜索、目录、正文、章节/滚动位置续读
 - [x] 短剧目录归一化、自动连播、播放进度续看
 - [x] 首页真实推荐接口（`/api/v1/recommend/homepage`）

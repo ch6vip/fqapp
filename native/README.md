@@ -32,7 +32,8 @@ Android 仍加载 `libshortplay_crypto.so`，保留 `com.example.shortplay.Crypt
 Gradle `externalNativeBuild` 使用本目录 [CMakeLists.txt](CMakeLists.txt)，
 固定 NDK `28.2.13676358`、CMake `3.22.1`，自动生成并打包 ARM64 crypto 库。
 共享库显式设置 `max-page-size=16384` 和 `common-page-size=16384`，未增加运行时共享库依赖。
-Go JNI 库仍由 `scripts/build_backend.ps1 -Jni` / `build_backend.sh --jni` 生成。
+Rust 核心库 `libfqapi_core.so` 由 `scripts/build_rust_backend.ps1` / `build_rust_backend.sh` 生成，
+与 C 库一起打包；两者互不依赖。
 
 升级旧工作区时，把 `android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so`
 备份到 `jniLibs` 之外。预编译旧库与 CMake 产物不能同时打包，Gradle 会提示清理旧输入。

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/backend_transport.dart';
 import '../services/comic_page_layout.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
@@ -62,6 +63,10 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   double? _restoreAnchor;
   int _restoreTicket = 0;
   int _loadGeneration = 0;
+
+  /// In-flight comic image request; cancelled when a newer chapter load wins or
+  /// the page is disposed.
+  BackendRequest? _imageRequest;
   int _visiblePage = 0;
   double _lastPosition = 0;
   bool _restoring = true;
@@ -96,6 +101,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
 
   @override
   void dispose() {
+    _imageRequest?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _saveTimer?.cancel();
     _settleReadTime();
@@ -142,9 +148,14 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     // Serialized history reads also wait for the departing reader's save.
     final history = _history.load(widget.bookId).catchError((Object _) => null);
     try {
-      final images =
-          await (widget.chapterLoader?.call(chapter) ??
-              ApiClient.instance.comicImages(chapter.itemId));
+      _imageRequest?.cancel();
+      final request = _imageRequest = BackendRequest();
+      final images = await ApiClient.instance.withCancellation(
+        request,
+        () async =>
+            await (widget.chapterLoader?.call(chapter) ??
+                ApiClient.instance.comicImages(chapter.itemId)),
+      );
       if (!mounted || generation != _loadGeneration) return;
       if (images.isEmpty) throw const ApiException('本章暂无可阅读图片');
       final saved = await history;

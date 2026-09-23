@@ -7,6 +7,7 @@ import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/backend_transport.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
@@ -95,6 +96,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   late int _index;
   final ScrollController _scrollController = ScrollController();
   Timer? _saveTimer;
+
+  /// In-flight chapter fetch. Switching chapters or leaving the reader cancels
+  /// it, so a slow chapter cannot keep the upstream request alive.
+  BackendRequest? _chapterRequest;
+
   String _content = '';
   ChapterContent _chapterContent = ChapterContent(blocks: const []);
   ChapterIdeas _ideas = ChapterIdeas.empty;
@@ -855,6 +861,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _chapterRequest?.cancel();
     HardwareKeyboard.instance.removeHandler(_handleVolumeKey);
     ListeningSession.instance.removeListener(_onListeningTick);
     _autoTurnTimer?.cancel();
@@ -1107,7 +1114,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final loader = widget.chapterLoader;
     final ChapterContent content;
     if (loader == null) {
-      content = await ApiClient.instance.chapterContent(chapter.itemId);
+      _chapterRequest?.cancel();
+      final request = _chapterRequest = BackendRequest();
+      content = await ApiClient.instance.withCancellation(
+        request,
+        () => ApiClient.instance.chapterContent(chapter.itemId),
+      );
     } else {
       final text = await loader(chapter);
       content = ChapterContent.isStructuredCache(text)

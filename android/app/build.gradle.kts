@@ -146,13 +146,14 @@ flutter {
     source = "../.."
 }
 
-// The Go library is the only external native build input. The crypto library
-// is compiled from native/ by externalNativeBuild. Keep this check at packaging
-// time so pure JVM tests can still run without the Go backend artifact.
+// The Rust core library is the only external native build input. The crypto
+// library is compiled from native/ by externalNativeBuild. Keep this check at
+// packaging time so pure JVM tests can still run without the Rust artifact
+// (scripts/build_rust_backend.ps1 / .sh produce it).
 val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibraries") {
     group = "verification"
-    description = "Checks the external Android ARM64 Go JNI library before packaging."
-    val nativeFiles = listOf("liblegacy.so").map { name ->
+    description = "Checks the external Android ARM64 Rust core library before packaging."
+    val nativeFiles = listOf("libfqapi_core.so").map { name ->
         layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/$name").asFile
     }
     // Optional inputs let the task report missing files with setup guidance,
@@ -197,7 +198,7 @@ val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibrarie
                 "Required Android native libraries are missing or incompatible:\n" +
                     failures.joinToString("\n") +
                     "\nSee the native library setup in the repository README.md. " +
-                    "build_backend -Jni/--jni builds liblegacy.so. " +
+                    "scripts/build_rust_backend.ps1 / .sh build libfqapi_core.so. " +
                     "The crypto library is built automatically from native/."
             )
         }
@@ -210,26 +211,7 @@ tasks.configureEach {
     }
 }
 
-// Flutter's generated asset directory bypasses androidResources' ignore
-// pattern. Strip the desktop-only executable from the generated Android
-// bundle before Flutter copies it into AGP's merged-assets directory. The
-// source asset remains available to Windows/Linux/macOS builds.
-listOf("Debug", "Profile", "Release").forEach { variant ->
-    val variantDirectory = variant.lowercase()
-    val stripTask = tasks.register("strip${variant}StandaloneBackend") {
-        dependsOn("compileFlutterBuild$variant")
-        outputs.upToDateWhen { false }
-        doLast {
-            delete(
-                layout.buildDirectory.file(
-                    "intermediates/flutter/$variantDirectory/flutter_assets/assets/bin/"
-                )
-            )
-        }
-    }
-    tasks.configureEach {
-        if (name == "copyFlutterAssets$variant") {
-            dependsOn(stripTask)
-        }
-    }
-}
+// NOTE: the Rust core runs in-process over flutter_rust_bridge, so there is no
+// standalone backend executable to strip from the Flutter asset bundle anymore.
+// The Android packaging path only needs jniLibs (libfqapi_core.so) plus the
+// crypto library built from native/.

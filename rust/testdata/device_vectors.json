@@ -1,0 +1,21 @@
+{
+    "reversehex": {
+        "7276663560427471412": "34024f6df4e6fb640000000000000000",
+        "123456": "40e20100000000000000000000000000"
+    },
+    "decryptkey": {
+        "input_b64": "ABEiM0RVZneImaq7zN3u//NnA1PPLklvy0VWJ2Qnd45A/zarUCjsToTdr+Zm34ab",
+        "expect_plain": "SECRETKEY_16byte",
+        "expect_hex": "5345435245544B45595F313662797465"
+    },
+    "registerkey_req": {
+        "device_id": "7276663560427471412",
+        "iv": "0123456789abcdef",
+        "content": "MDEyMzQ1Njc4OWFiY2RlZvVb0lAf40euDsfvj1ILUK9jAhLCs8plve4qa3UqkHsj"
+    },
+    "ttencrypt": {
+        "random32": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "data": "hello-tt-encrypt-payload",
+        "result": "746305100000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f9c2938fa4a012faf0ecd9d31020e00f9748841c73838f76c10a9f9084bcfc717bc3cb6085a81a491f6e9b3d47a574b96bd818707ca911fc89bfad9a68edc174aa2f2dbc4ea60415c1e06b7525320a6451dbebd0a552028b5e70653d538c39842"
+    }
+}

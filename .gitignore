@@ -33,6 +33,9 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Local APK checkpoints survive flutter clean and are kept outside source control.
+/release-archives/
+
 # Symbolication related
 app.*.symbols
 
@@ -46,9 +49,12 @@ app.*.map.json
 /android/build/
 /android/app/.cxx/
 
-# 旧后端产物可由  源码重建；Android 请使用脚本的 --jni / -Jni。
-# shortplay 加密库由 native/ 中的 C 源码通过 CMake 构建，不提交生成的 .so。
-/assets/bin/
+# Rust 原生核心（rust/）的构建输出。/android/app/src/main/jniLibs/*/*.so 已在下面忽略，
+# 因此 Rust ARM64 库同样不入库，由 scripts/build_rust_backend.ps1 / .sh 重建。
+/rust/target/
+
+# Rust 原生核心（rust/）与 C 加密库都可由源码重建，不提交生成的 .so。
+# shortplay 加密库由 native/ 中的 C 源码通过 CMake 构建。
 /assets/config/device_pool.json
 /android/app/src/main/jniLibs/*/*.so
 

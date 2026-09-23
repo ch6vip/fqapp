@@ -45,6 +45,7 @@ dependencies:
   html: 0.15.6
   flutter_lucide: ^1.43.0
   lottie: ^3.6.1
+  flutter_rust_bridge: 2.13.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -69,7 +70,6 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/bin/
     - assets/config/config.json
     - assets/config/filter.json
     - assets/config/device_pool.example.json
