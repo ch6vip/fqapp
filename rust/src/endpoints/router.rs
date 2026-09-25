@@ -353,6 +353,7 @@ fn match_videos(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             params: p,
         });
     }
+
     p.set("video_id", parts[0]);
     Some(RouteMatch {
         api: "video",
@@ -373,6 +374,14 @@ fn match_series(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             "comments" => {
                 return Some(RouteMatch {
                     api: "playlet_comments",
+                    params: p,
+                })
+            }
+            // 热评与右栏评论计数（`a13/w.java:563-599`）：剧集场景下
+            // group_id 取 vid（调用方给），没有 vid 时退回剧集 id。
+            "hot-comments" => {
+                return Some(RouteMatch {
+                    api: "playlet_hot_comments",
                     params: p,
                 })
             }

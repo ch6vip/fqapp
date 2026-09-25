@@ -73,6 +73,7 @@ class SeriesDetail {
     this.episodeLabel = '',
     this.playCount = 0,
     this.followerCount = 0,
+    this.commentCount = 0,
     this.categories = const [],
     this.originalBook,
     this.status,
@@ -93,6 +94,10 @@ class SeriesDetail {
   final String episodeLabel;
   final int playCount;
   final int followerCount;
+
+  /// `comment_cnt`：官方右栏评论入口的计数判据（0 显示「评论」）。
+  /// **未取证**该字段确实在 `video_detail` 回包里，见验证报告的未验项。
+  final int commentCount;
   final List<String> categories;
 
   /// 原著书卡（官方播放页底部 `BottomRelateBookView`，数据在
@@ -131,6 +136,7 @@ class SeriesDetail {
       episodeLabel: _string(video['episode_right_text']),
       playCount: _int(video['series_play_cnt']),
       followerCount: _int(video['followed_cnt']),
+      commentCount: _int(video['comment_cnt']),
       categories: _categoryNames(video['category_schema']),
       originalBook: _relateBook(data['video_relate_book']),
       status: video['series_status'] == null

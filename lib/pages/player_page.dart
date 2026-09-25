@@ -17,6 +17,7 @@ import '../services/player_preferences.dart';
 import '../services/player_style_config.dart';
 import '../services/swipe_guide_store.dart';
 import '../models/book_detail.dart' show formatCounter;
+import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
@@ -109,6 +110,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   String? _seriesStatus;
   RelatedWork? _originalBook;
 
+  /// 官方入口计数（`SeriesCommentView` 读 `du4.a.e()` 并回写 videoData）；
+  /// 0 表示「还没有人评论」，入口按官方文案显示「评论」。
+  int _commentCount = 0;
+
   PlayerHistory get _history =>
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
   Duration _duration = Duration.zero;
@@ -156,13 +161,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   /// 底部 band 装饰，一个 `seriesDetail` 请求全出：完结状态
   /// （`series_status`：官方 `SeriesStatus` 1=已完结/0=更新中/3=今日更新/
-  /// 4=断更）与原著书卡（`video_relate_book`）。自吞异常——band 是装饰，
-  /// 接口再差也不能影响播放。
+  /// 4=断更）、原著书卡（`video_relate_book`）与评论计数
+  /// （`comment_cnt`，官方入口「评论/抢首评」的判据）。
+  /// 自吞异常——band 是装饰，接口再差也不能影响播放。
   Future<void> _loadBandExtras() async {
     final series = await (widget.seriesLoader?.call(widget.bookId) ??
             ApiClient.instance.seriesDetail(widget.bookId))
         .catchError((Object _) => SeriesDetail.empty);
     if (!mounted) return;
+    // 评论计数与评论入口同源：有计数才显示入口（官方该项默认 gone，
+    // 由数据驱动显隐，见 res/layout/cjs.xml:11 与 SeriesCommentView.java:479-491）。
+    if (series.commentCount > 0) _commentCount = series.commentCount;
     final status = switch (series.status) {
       1 => '已完结',
       0 => '连载中',
@@ -173,6 +182,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final book = series.originalBook;
     setState(() {
       _seriesStatus = status;
+      _commentCount = series.commentCount;
       _originalBook = book == null
           ? null
           : RelatedWork(
@@ -183,6 +193,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               label: '原著小说',
             );
     });
+  }
+
+  /// 官方右栏评论入口：竖屏走底部评论面板（`CommentDialogHelper`）。
+  /// 面板数据走短剧剧评链路（`gx1/m.java:168-181`），与播放页共用剧集 id。
+  void _openComments() {
+    if (!widget.shortSeries) return;
+    PlayletCommentPanel.show(
+      context,
+      seriesId: widget.bookId,
+      total: _commentCount,
+    );
   }
 
   /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。
@@ -717,6 +738,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     onPagingChanged: _onPagingChanged,
     onSelectEpisode: _selectEpisode,
     onError: (error) => _fail(error, _loadGeneration),
+    commentCount: _commentCount,
+    onComments: widget.shortSeries ? _openComments : null,
     newPlayerBottomStyle: style.useNewPlayerBottomStyle,
     hasBanner: style.hasBanner,
     padNewBottomStyle: style.padNewBottomStyle,

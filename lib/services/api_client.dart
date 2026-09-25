@@ -793,6 +793,31 @@ class ApiClient {
     );
   }
 
+  /// 官方热评 + 右栏评论计数（`a13/w.java:563-599`）。
+  ///
+  /// 热评与剧评共用一条列表接口，这里固定 `comment_source=4`、
+  /// `comment_type=4`、`group_type=30`、`count=20`；返回
+  /// `common_list_info.total` 就是右栏评论计数，列表则由 [hotOf] 在本地筛。
+  ///
+  /// [vid] 为空时退化成剧集 id（官方 `jVar.C()` 的书场景分支）。
+  Future<PlayletCommentPage> playletHotComments(
+    String seriesId, {
+    String vid = '',
+    int serverChannel = 17,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/series/${Uri.encodeComponent(seriesId)}/hot-comments', {
+        if (vid.isNotEmpty) 'vid': vid,
+        'server_channel': '$serverChannel',
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => PlayletCommentPage.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
   /// 短剧分享信息（官方 `m0.java:930-957`，`share_type=7`）。
   ///
   /// 官方的 `share_url`/`short_url`/`schema` 全部由服务端下发，客户端不下发

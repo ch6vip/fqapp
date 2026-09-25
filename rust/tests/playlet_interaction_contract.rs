@@ -264,6 +264,89 @@ async fn playlet_share_requests_video_share_type() {
     upstream.shutdown();
 }
 
+/// 热评复用同一次列表请求（`a13/w.java:563-599`）：`:group_id` 是 vid、
+/// `comment_source=4`、`comment_type=4`、`group_type=30`、`count=20`、
+/// `business_param.book_id` 在剧集场景也是 vid；返回的 total 就是右栏计数。
+#[tokio::test]
+async fn playlet_hot_comments_match_the_official_request() {
+    let upstream = MockUpstream::start(|_| {
+        MockReply::json(json!({"code": 0, "data": {"common_list_info": {"total": 42}}}))
+    })
+    .await;
+    let dir = TempDir::new("playlet-hot");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, body) = json_body(
+        dispatch(
+            &server,
+            &api_get("/api/v1/series/123/hot-comments", "vid=VID-7"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["data"]["common_list_info"]["total"], 42);
+
+    let request = upstream.last_request().expect("call");
+    assert_eq!(
+        request.path, "/novel/commentapi/comment/list/VID-7/v1/",
+        "热评的 group_id 是 vid"
+    );
+    let sent = body_of(&request);
+    assert_eq!(sent["group_id"], "VID-7");
+    assert_eq!(sent["comment_source"], 4);
+    assert_eq!(sent["comment_type"], 4);
+    assert_eq!(sent["group_type"], 30);
+    assert_eq!(sent["sort"], 1);
+    assert_eq!(sent["count"], 20);
+    assert_eq!(sent["business_param"]["book_id"], "VID-7");
+    assert_eq!(sent["business_param"]["need_count"], true);
+    assert_eq!(sent["server_channel"], 17, "缺省场景 channel");
+    upstream.shutdown();
+}
+
+/// 调用方可以覆盖场景 channel（官方按场景取 17/26/37/48）。
+#[tokio::test]
+async fn playlet_hot_comments_accept_the_scene_channel() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-hot-channel");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_get(
+                "/api/v1/series/123/hot-comments",
+                "vid=VID-7&server_channel=48",
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let sent = body_of(&upstream.last_request().expect("call"));
+    assert_eq!(sent["server_channel"], 48);
+    upstream.shutdown();
+}
+
+/// 没有 vid 时热评退化到剧集 id 作为 group_id（官方 `jVar.C()` 的书场景分支）。
+#[tokio::test]
+async fn playlet_hot_comments_fall_back_to_the_series_id() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-hot-book");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, _) =
+        json_body(dispatch(&server, &api_get("/api/v1/series/123/hot-comments", "")).await).await;
+    assert_eq!(status, 200);
+    let request = upstream.last_request().expect("call");
+    assert_eq!(request.path, "/novel/commentapi/comment/list/123/v1/");
+    let sent = body_of(&request);
+    assert_eq!(sent["group_id"], "123");
+    assert_eq!(sent["business_param"]["book_id"], "123");
+    upstream.shutdown();
+}
+
 /// 剧集 id 就是 group_id：路由必须从路径补齐 `group_id`/`album_id`，
 /// 调用方不传也不能丢（官方 model 里两者同源，`m0.java:938-957`）。
 #[tokio::test]

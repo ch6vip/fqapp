@@ -12,6 +12,7 @@ import '../models/media_item.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
+import '../models/playlet_comment.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_player_panel.dart';
@@ -83,6 +84,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool liked;
   final VoidCallback? onLikeTap;
 
+  /// 评论入口：官方右栏第三项。计数 0 时文案是「评论」。为 null 时该项
+  /// 不出现（官方该项本身默认 gone，见 \`res/layout/cjs.xml:11\`）。
+  final int commentCount;
+  final VoidCallback? onComments;
+
   /// 底部 band 的两块服务端装饰（官方截图第二十二轮）：完结状态
   /// （「选集 · 已完结 · 全82集」胶囊，`@string/ag_`/`e6r`）与
   /// 原著书卡（「原著《…》」，`/related` 的 book 关联）。缺省就不显示。
@@ -123,6 +129,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.landscapeLockEnabled = false,
     this.liked = false,
     this.onLikeTap,
+    this.commentCount = 0,
+    this.onComments,
   });
 
   @override
@@ -1663,6 +1671,19 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             Icons.favorite_rounded,
             widget.onLike,
           ),
+          // 官方右栏第三项是评论（`res/layout/cjs.xml:11`），计数为 0 时
+          // 文案退化成「评论」（`SeriesCommentView.java:182-188`）。官方的
+          // 该项默认 gone，显示条件未取证，因此只在宿主开了评论链路
+          // （`onComments` 非空）时出现。
+          if (widget.onComments != null) ...[
+            const SizedBox(height: 12),
+            railButton(
+              'player-comment-button',
+              PlayletCommentPage.entryLabel(widget.commentCount),
+              Icons.mode_comment_rounded,
+              widget.onComments,
+            ),
+          ],
         ],
       ),
     );

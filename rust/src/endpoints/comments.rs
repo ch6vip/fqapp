@@ -354,6 +354,91 @@ fn handle_playlet_comments<'a>(
     })
 }
 
+/// 官方热评请求的固定取值（`a13/w.java:563-599`）。
+///
+/// 热评**没有独立接口字段**：同一次 `comment/list` 返回的列表就是热评来源
+/// （客户端按 `dataType` 筛，见 Dart 侧 `hotOf`）。与剧评面板的区别是
+/// `comment_source=NovelItemComment(4)`、`comment_type=NewItem(4)`、
+/// `group_type=SeriesVideo(30)`、`count=20`，并且**返回的
+/// `common_list_info.total` 就是右栏评论计数**（`SeriesCommentView` 读的
+/// `du4.a.e()`，见 `a13/w.java:500`）。
+struct PlayletHotCommentBody {
+    series_id: String,
+    vid: String,
+    server_channel: i64,
+    insert_ids: Vec<String>,
+}
+
+fn playlet_hot_comment_body(p: &PlayletHotCommentBody) -> ApiResult<Vec<u8>> {
+    // 官方的 group_id/book_id 取 vid 还是剧集 id 由「是不是书场景」决定
+    // （`jVar.C()`）；剧集播放页走 SeriesVideo 分支，两者都用 vid。
+    let group_id = if p.vid.is_empty() {
+        p.series_id.clone()
+    } else {
+        p.vid.clone()
+    };
+    let mut business = json!({
+        "book_id": group_id,
+        "need_count": true,
+    });
+    if !p.insert_ids.is_empty() {
+        business["insert_comment_ids"] = json!(p.insert_ids);
+    }
+    let body = json!({
+        "business_param": business,
+        "comment_source": 4,
+        "comment_type": 4,
+        "count": 20,
+        "group_id": group_id,
+        "group_type": 30,
+        "server_channel": p.server_channel,
+        "sort": 1,
+    });
+    serde_json::to_vec(&body).map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// `GET /api/v1/videos/:vid/hot-comments?series_id=…` -> 官方热评 + 评论计数。
+///
+/// `server_channel` 由调用场景决定（`FanqieHotCommentArgsBrick.java:17-29`：
+/// 17/26/37/48），场景到 channel 的映射**未取证**，所以由调用方给，缺省 17。
+fn handle_playlet_hot_comments<'a>(
+    ctx: &'a Ctx,
+    params: &'a Params,
+) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let series_id = params.get_str("series_id");
+        if series_id.is_empty() {
+            return Err(ApiError::BadRequest("缺少series_id参数".to_string()));
+        }
+        let vid = params.get_str("vid");
+        let group_id = if vid.is_empty() {
+            series_id.clone()
+        } else {
+            vid.clone()
+        };
+
+        let body = playlet_hot_comment_body(&PlayletHotCommentBody {
+            series_id,
+            vid,
+            server_channel: int_default(&params.get_str("server_channel"), 17),
+            insert_ids: split_csv(&params.get_str("insert_comment_ids")),
+        })?;
+
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                method: Some("POST".to_string()),
+                host: HOST_FQNOVEL.to_string(),
+                path: format!("{BOOK_REVIEWS_PATH}{}/v1/", go_path_escape(&group_id)),
+                params: reading724_params(),
+                body: Some(body),
+                headers: dragon_read_json_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
 /// `GET /api/v1/videos/:vid/danmaku?series_id=…` -> 官方短剧弹幕取数。
 ///
 /// 弹幕没有独立上游 path，它复用短剧评论列表；`group_id` 是 **vid**，
@@ -543,6 +628,7 @@ pub fn register(s: &mut Server) {
     s.add_route("book_reviews", handle_book_reviews);
     s.add_route("playlet_comments", handle_playlet_comments);
     s.add_route("playlet_danmaku", handle_playlet_danmaku);
+    s.add_route("playlet_hot_comments", handle_playlet_hot_comments);
     s.add_route("idea_list", handle_idea_list);
     s.add_route("book_comments_legacy", handle_book_comments_legacy);
     s.add_route("comment_replies", handle_comment_replies);
