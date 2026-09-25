@@ -128,10 +128,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _panelHeaderDragging = false;
   bool _fullScreen = false;
 
-  /// 清屏（持久沉浸）：点右下角「清屏」后隐藏全部浮层，只留右下角文字行
-  /// 的「恢复」出口；再点「恢复」回到正常态。官方 `o.java:1860-1884 H1()`
-  /// 翻转清屏态、清屏时遮罩 `setVisibility(4)`（`SingleVideoHolder.java:
-  /// 1245-1247,1193-1210`），是运行时状态、不持久化。
+  /// 清屏独立于控件自动收起，暂停、切集与旋转均保留本次会话的选择。
+  /// Note: 新底栏统一文字入口与手势取舍 — 见
+  /// .agents/notes/implemented/bug-fix/2026-09-25-short-drama-clear-screen.md
   bool _clearScreen = false;
   bool _boosting = false;
   bool _paging = false;
@@ -324,6 +323,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void _scheduleHide() {
     _hideTimer?.cancel();
     if (!_ready ||
+        _clearScreen ||
         !_appActive ||
         !widget.playing ||
         _seeking ||
@@ -339,8 +339,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _toggleControls() {
-    // 清屏态下单击不再唤回浮层（官方清屏时遮罩 `setVisibility(4)`），
-    // 出口只有右下角的「恢复」。
+    // 控件显隐不退出清屏；短剧清屏时单击画面仍走播放/暂停。
     if (_clearScreen) return;
     if (_panelOpen || _modalOpen || _seeking || _boosting || _paging) return;
     setState(() => _visible = !_visible);
@@ -351,9 +350,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
   }
 
-  /// 清屏/恢复（官方 `SingleVideoHolder.java:1140-1210` → `o.java:1860-1884`）：
-  /// 清屏=隐藏全部浮层与遮罩、只留右下角文字行；恢复=回到正常态并重新计时
-  /// 自动隐藏。运行时状态，不持久化。
+  /// 沿用官方独立清屏状态；文字入口常驻是本地选择，详见源码对照文档 §32。
   void _setClearScreen(bool clear) {
     _endBoost();
     _cancelSeek();
@@ -422,19 +419,16 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           ? 0
           : (_seekValue.value! * MediaQuery.sizeOf(context).width),
     );
-    unawaited(
-      () async {
-        await _control(
-          (player) => player.seek(
-            Duration(
-              milliseconds: (widget.duration.inMilliseconds * fraction)
-                  .round(),
-            ),
+    unawaited(() async {
+      await _control(
+        (player) => player.seek(
+          Duration(
+            milliseconds: (widget.duration.inMilliseconds * fraction).round(),
           ),
-        );
-        if (mounted && !_seeking) _seekValue.value = null;
-      }(),
-    );
+        ),
+      );
+      if (mounted && !_seeking) _seekValue.value = null;
+    }());
     if (widget.showSeekHint) widget.onSeekHintConsumed?.call();
   }
 
@@ -444,7 +438,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     return (dx / width).clamp(0.0, 1.0);
   }
 
-  void _togglePlayback() {    if (!_ready ||
+  void _togglePlayback() {
+    if (!_ready ||
         !_appActive ||
         _panelOpen ||
         _modalOpen ||
@@ -665,7 +660,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     FocusManager.instance.primaryFocus?.unfocus();
     final size = MediaQuery.sizeOf(context);
     setState(() {
-      _panelDrawer = widget.shortSeries && _fullScreen && size.width > size.height;
+      _panelDrawer =
+          widget.shortSeries && _fullScreen && size.width > size.height;
       _panelDrawerClosing = false;
       _panelRestFraction = PlayerVideoLayout.panelFractionFor(_videoSize);
       _panelMaxFraction = _panelRestFraction;
@@ -932,21 +928,29 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           );
           final durationMs = math.max(0, widget.duration.inMilliseconds);
           final unobstructed = !_panelOpen && !_modalOpen;
-          final controls =
-              _visible && unobstructed && !_seeking && !_clearScreen;
-          // 短剧竖屏没有运输条，单击就是暂停/恢复（feed 卡同款）；不注册
+          final showChrome = unobstructed && !_clearScreen;
+          final controls = _visible && showChrome && !_seeking;
+          // 短剧竖屏及清屏态通过单击暂停/继续；不注册
           // 双击——快速双击等价两次单击，回到原播放状态。
-          final tapTogglesPlayback = widget.shortSeries && !landscape;
-          final canPage =
-              unobstructed && !_seeking && !_boosting && !landscape;
+          final tapTogglesPlayback =
+              widget.shortSeries && (!landscape || _clearScreen);
+          final canPage = unobstructed && !_seeking && !_boosting && !landscape;
           // 短剧横屏底条（批次四）：官方 `c0i.xml` + `cw7.xml` 的形态，
           // 替换通用运输条在此朝向的全部残留（prev/±10/全屏钮）。
           final landscapeBar = widget.shortSeries && landscape;
-          // 常驻 band（官方截图第二十二轮）：控制条自动收起后，信息层
-          // （剧名/原著卡）、贴底进度条与选集胶囊仍然常驻——官方截图里
-          // 无顶栏/右栏/全屏 pill/倍速清屏行，只有这三层。
+          // 自动收起保留信息区，清屏则统一隐藏；计时器不是清屏状态来源。
           final bandVisible =
-              widget.shortSeries && !landscape && _ready && !_visible;
+              widget.shortSeries &&
+              !landscape &&
+              _ready &&
+              !_visible &&
+              !_seeking &&
+              showChrome;
+          final showTextActions =
+              widget.shortSeries &&
+              unobstructed &&
+              !_seeking &&
+              (!landscape || _clearScreen);
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -1011,11 +1015,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                       ],
                     ),
                   ),
-                  ),
                 ),
+              ),
               // 「左右滑动可调整进度」首次引导（`@string/cha`，距底 138dp，
               // `o.java K6` 的引导层）。
-              if (widget.showSeekHint && !_panelOpen)
+              if (widget.showSeekHint && showChrome)
                 Positioned(
                   left: 0,
                   right: 0,
@@ -1061,36 +1065,43 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               // 信息层/选集胶囊压在进度条与画面之上，但必须保持transport在
               // 其上方（Stack 后者在上）：通用播放器的运输条按钮不能被信息
               // 层的渐变 Container 挡住点击。
-              if (!landscape && (controls || bandVisible)) ...[
-                _information(insets, showPill: controls, showBook: bandVisible),
-                _catalogBar(insets, compact: bandVisible),
-              ],
-              if (bandVisible) _clearScreenButton(insets),
+              if ((!landscape && (controls || bandVisible)) || showTextActions)
+                Positioned(
+                  left: insets.left,
+                  right: insets.right,
+                  bottom:
+                      insets.bottom +
+                      (widget.shortSeries ? (landscape ? 16 : 88) : 96),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!landscape && (controls || bandVisible))
+                        _information(showPill: controls, showBook: bandVisible),
+                      // 标题/原著卡排在操作行上方，文字放大时也不占它的点击区。
+                      if (showTextActions)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: _screenTexts(),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              if (!landscape && (controls || bandVisible)) _catalogBar(insets),
               // 官方播放页（`apf.xml`）竖屏没有运输条；运输条只剩通用
               // 播放器（详情页影视）在用，短剧两个朝向都不走它。
               if (controls && _ready && !widget.shortSeries)
                 _transport(insets, landscape),
               if (landscapeBar &&
                   _ready &&
-                  unobstructed &&
-                  !_clearScreen &&
+                  showChrome &&
                   (_visible || _seeking))
                 _landscapeBar(insets),
-              // 官方那条右下角文字行只属于短剧播放页（`SingleVideoHolder`
-              // 家族）；通用播放器（详情页影视）保留运输条，不需要它，也避免
-              // 与运输条右端的「下一集」抢点击。竖屏清屏时它是唯一出口。
-              if (widget.shortSeries &&
-                  !landscape &&
-                  (controls || _clearScreen))
-                Positioned(
-                  right: insets.right + 16,
-                  bottom: insets.bottom + 88,
-                  child: _screenTexts(),
-                ),
               if ((_visible || _seeking || bandVisible) &&
-                  unobstructed &&
+                  showChrome &&
                   _ready &&
-                  !_clearScreen &&
                   !landscapeBar)
                 Positioned(
                   // Controls leave this Stack while seeking. Keep the outer
@@ -1128,7 +1139,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               // 只有铺满的进度/手势/空注入容器），已删（对照文档 §27）。
               if (_ready &&
                   !_playbackRequested &&
-                  unobstructed &&
+                  showChrome &&
                   _visible &&
                   !_seeking)
                 Positioned.fromRect(
@@ -1274,10 +1285,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                           onDragCancel: () => _endPanelDrag(DragEndDetails()),
                         ),
                       ),
-                      builder: (context, child) => Opacity(
-                        opacity: _panelStrength,
-                        child: child,
-                      ),
+                      builder: (context, child) =>
+                          Opacity(opacity: _panelStrength, child: child),
                     ),
                   ),
                 ),
@@ -1370,13 +1379,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     ),
   );
 
-  /// 官方播放页右侧竖栏（`cjq.xml` 家族：46dp 图标 + 12sp bold、色
-  /// `@color/u`=#ccffffff、项间距 12dp）：星=追剧、心=点赞。选集走底部
-  /// 目录条、倍速在长按/传输条、清屏在顶栏。
   /// 官方播放页右侧竖栏（`cjq.xml` + `cuv.xml`/`cuh.xml`：图标 **46dp**、
   /// 12sp bold、色 `@color/u`=#ccffffff、图标与文案间距 2dp、项间距
   /// **12dp**）：星=追剧、心=点赞。官方的评论/分享默认 gone，本仓库无
-  /// 数据也不显示。
+  /// 数据也不显示。选集走目录条，清屏与倍速走右下文字行。
   Widget _rightBar(EdgeInsets insets) {
     Widget railButton(
       String? key,
@@ -1390,9 +1396,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 46, color: Colors.white, shadows: const [
-            Shadow(color: Colors.black38, blurRadius: 6),
-          ]),
+          Icon(
+            icon,
+            size: 46,
+            color: Colors.white,
+            shadows: const [Shadow(color: Colors.black38, blurRadius: 6)],
+          ),
           const SizedBox(height: 2),
           Text(
             label,
@@ -1432,44 +1441,47 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     );
   }
 
-  /// 官方播放页底部信息层（截图）：居中「全屏观看」pill（`aqi.xml`：圆角
-  /// 8dp、底 `@color/avv`=#B3262626、图标 20dp + 14sp bold 白字）→ 剧名
-  /// 16sp bold + 8×16dp 箭头（`d6g.xml` 同款）→ 「ⓘ 作者声明：内容由AI
-  /// 生成」（`video_detail.ai_usage_type`，有才显示）。
-  ///
-  /// 官方右下角文字行（`SingleVideoHolder.java:1131-1153` 的
-  /// `q8()/W4()`：14sp bold `@color/a3`=#ffffffff、项间距 24dp、无分隔符）。
-  ///
-  /// 官方 XML 是条目布局里独立的 `bottom 15dp / end 16dp` 容器；我们的底部
-  /// band 被贴底进度条与选集底栏占满，落 15dp 会与两者互相遮挡且点不到，
-  /// 故整行放在进度条之上（bottom 88dp、end 16dp），信息层整体上抬到 96dp
-  /// 让位（对照文档 §27 记偏差）。
-  Widget _screenTexts() {
-    const style = TextStyle(
-      fontSize: 14,
-      fontWeight: FontWeight.bold,
-      color: Color(0xFFFFFFFF),
-      shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
-    );
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          key: const ValueKey('player-rate-text'),
+  /// 文字样式参考官方 `SingleVideoHolder.q8()`；常驻入口与 48dp 点击区
+  /// 是本地取舍。操作行独立于标题高度，窄屏大字可换行（源码对照文档 §32）。
+  Widget _screenTexts() => Wrap(
+    alignment: WrapAlignment.end,
+    spacing: 24,
+    runSpacing: 4,
+    children: [
+      _screenTextButton('player-rate-text', _rateText(_rate), _showRates),
+      _screenTextButton(
+        'player-clear-screen',
+        _clearScreen ? '恢复' : '清屏',
+        () => _setClearScreen(!_clearScreen),
+      ),
+    ],
+  );
+
+  Widget _screenTextButton(String key, String label, VoidCallback onTap) =>
+      Semantics(
+        button: true,
+        child: GestureDetector(
+          key: ValueKey(key),
           behavior: HitTestBehavior.opaque,
-          onTap: _showRates,
-          child: Text(_rateText(_rate), style: style),
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            child: Center(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
+                ),
+              ),
+            ),
+          ),
         ),
-        const SizedBox(width: 24),
-        GestureDetector(
-          key: const ValueKey('player-clear-screen'),
-          behavior: HitTestBehavior.opaque,
-          onTap: () => _setClearScreen(!_clearScreen),
-          child: Text(_clearScreen ? '恢复' : '清屏', style: style),
-        ),
-      ],
-    );
-  }
+      );
 
   /// 底部信息层（官方截图第二十二轮，常驻 band）：
   /// - 控制条可见时：居中「全屏观看」pill（`aqi.xml`：圆角 8dp、底
@@ -1477,17 +1489,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// - 控制条收起后：剧名 + 原著书卡（「原著《…》」，`/related` 的 book
   ///   关联，点击开原著详情）。
   /// 官方截图里的「热评」行与分享箭头+计数需要评论/分享后端（§21 暂缓），
-  /// 不显示；胶囊右侧的方形图标钮 = 清屏开关（用户指认），见
-  /// `_clearScreenButton`。
-  Widget _information(
-    EdgeInsets insets, {
-    required bool showPill,
-    required bool showBook,
-  }) => Positioned(
-    left: insets.left,
-    right: insets.right,
-    bottom: insets.bottom + 96,
-    child: Container(
+  /// 不显示。
+  Widget _information({required bool showPill, required bool showBook}) {
+    return Container(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -1586,8 +1590,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             _originalBookCard(widget.originalBook!),
         ],
       ),
-    ),
-  );
+    );
+  }
 
   /// 原著书卡（官方截图第二十二轮）：深色圆角条，白色小方徽 + 深色书本
   /// 图标 + 「原著《书名》」14sp bold 白 + 8×16dp 右箭头（`info_arrow`），
@@ -1637,8 +1641,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             SizedBox(
               width: 8,
               height: 16,
-              child: Image.asset('assets/images/drama/info_arrow.webp',
-                  fit: BoxFit.contain),
+              child: Image.asset(
+                'assets/images/drama/info_arrow.webp',
+                fit: BoxFit.contain,
+              ),
             ),
           ],
         ),
@@ -1650,11 +1656,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// + 上箭头，点击弹选集面板（`key_launch_catalog_panel` 弹的就是它）。
   /// 状态段用 `@string/ag_`（已完结）/`agb`（连载中），由宿主从
   /// `book_detail.creation_status` 取好传入；无数据只显示「选集 · 全N集」
-  /// （官方文案 `@string/e6r`「全%s集」）。`compact` = 右端给清屏图标钮
-  /// 让位（官方截图：胶囊与图标钮同行，间距 8dp）。
-  Widget _catalogBar(EdgeInsets insets, {required bool compact}) => Positioned(
+  /// （官方文案 `@string/e6r`「全%s集」）。
+  Widget _catalogBar(EdgeInsets insets) => Positioned(
     left: insets.left + 12,
-    right: insets.right + (compact ? 52 : 12),
+    right: insets.right + 12,
     bottom: insets.bottom + 8,
     child: GestureDetector(
       key: const ValueKey('player-catalog-bar'),
@@ -1697,30 +1702,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               size: 22,
             ),
           ],
-        ),
-      ),
-    ),
-  );
-
-  /// 清屏图标钮（官方截图第二十二轮，用户指认 = 清屏）：胶囊右侧的
-  /// 「页面 + 禁止角标」图标钮，属常驻 band（控制条收起后仍在）；点击进
-  /// 清屏态，出口仍是右下「恢复」文字行。控制条可见时清屏入口是
-  /// 倍速｜清屏 文字行（`SingleVideoHolder.s8()`），两者并存不冲突。
-  Widget _clearScreenButton(EdgeInsets insets) => Positioned(
-    right: insets.right + 12,
-    bottom: insets.bottom + 8,
-    child: GestureDetector(
-      key: const ValueKey('player-clear-icon'),
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _setClearScreen(true),
-      child: SizedBox(
-        width: 40,
-        height: 48,
-        child: Center(
-          child: CustomPaint(
-            size: const Size(30, 30),
-            painter: _ClearScreenIconPainter(),
-          ),
         ),
       ),
     ),
@@ -2047,52 +2028,3 @@ String _rateText(double rate) => rate == 1 ? '倍速' : '${_rateLabel(rate)}x';
 String _rateChipLabel(double rate) => '${_rateLabel(rate)}x';
 
 String _time(Duration value) => formatPlaybackTime(value);
-
-/// 清屏图标（官方截图第二十二轮）：圆角页面 + 两条文字行 + 右下角
-/// 「禁止」圆环斜杠角标；页面轮廓在角标处留缺口（Path.difference）。
-class _ClearScreenIconPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.width / 24;
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.7 * s
-      ..strokeCap = StrokeCap.round
-      ..color = Colors.white;
-    const badge = Offset(17.9, 17.6);
-    final page = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(3.2 * s, 3.2 * s, 16.3 * s, 17.6 * s),
-          Radius.circular(4 * s),
-        ),
-      );
-    final cut = Path()
-      ..addOval(
-        Rect.fromCircle(center: Offset(badge.dx * s, badge.dy * s), radius: 6.1 * s),
-      );
-    canvas.drawPath(Path.combine(PathOperation.difference, page, cut), stroke);
-    canvas.drawLine(
-      Offset(7.8 * s, 9 * s),
-      Offset(16.4 * s, 9 * s),
-      stroke..strokeWidth = 1.5 * s,
-    );
-    canvas.drawLine(
-      Offset(7.8 * s, 13 * s),
-      Offset(15.2 * s, 13 * s),
-      stroke,
-    );
-    final radius = 4.4 * s;
-    final center = Offset(badge.dx * s, badge.dy * s);
-    canvas.drawCircle(center, radius, stroke);
-    final r = radius / math.sqrt2;
-    canvas.drawLine(
-      Offset(center.dx - r, center.dy + r),
-      Offset(center.dx + r, center.dy - r),
-      stroke,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}

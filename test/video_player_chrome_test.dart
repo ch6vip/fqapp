@@ -94,7 +94,9 @@ void main() {
     // prev/±10/全屏钮（通用运输条残留，批次四删）。
     final player = FakeNativePlayer()..isPlaying = true;
     final selected = <int>[];
-    await tester.pumpWidget(_app(player, shortSeries: true, selected: selected));
+    await tester.pumpWidget(
+      _app(player, shortSeries: true, selected: selected),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
     await tester.pump();
@@ -133,7 +135,9 @@ void main() {
     // 白色面板（官方截图第二十三轮）。
     final player = FakeNativePlayer()..isPlaying = true;
     final selected = <int>[];
-    await tester.pumpWidget(_app(player, shortSeries: true, selected: selected));
+    await tester.pumpWidget(
+      _app(player, shortSeries: true, selected: selected),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
     await tester.pump();
@@ -191,11 +195,10 @@ void main() {
     await player.dispose();
   });
 
-  testWidgets('shortSeries band persists after controls auto-hide', (
+  testWidgets('shortSeries text actions and band persist after auto-hide', (
     tester,
   ) async {
-    // 官方截图第二十二轮：控制条收起后，剧名/原著卡/贴底进度条/选集胶囊
-    // 常驻；全屏 pill、右栏、倍速清屏行随控制条收走。
+    // 本地选择新底栏文字入口常驻；自动收起不再切到另一套清屏图标。
     final player = FakeNativePlayer()..isPlaying = true;
     var opened = 0;
     await tester.pumpWidget(
@@ -214,9 +217,17 @@ void main() {
     );
     await tester.pumpAndSettle();
     // 控制条可见：pill + 剧名，无原著卡；清屏走文字行，无图标钮。
-    expect(find.byKey(const ValueKey('player-fullscreen-pill')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('player-fullscreen-pill')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('player-original-book')), findsNothing);
     expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
+    final clearAction = find.byKey(const ValueKey('player-clear-screen'));
+    final clearRect = tester.getRect(clearAction);
+    final catalogRect = tester.getRect(
+      find.byKey(const ValueKey('player-catalog-bar')),
+    );
     // 3s 自动收起 → 常驻 band。
     await tester.pump(const Duration(seconds: 4));
     expect(find.byKey(const ValueKey('player-fullscreen-pill')), findsNothing);
@@ -226,18 +237,26 @@ void main() {
     expect(find.byKey(const ValueKey('video-seek')), findsOneWidget);
     expect(find.byKey(const ValueKey('player-catalog-bar')), findsOneWidget);
     expect(find.text(' · 已完结 · 全2集'), findsOneWidget);
-    // 胶囊右侧的清屏图标钮（用户指认）：band 态可见，控制条可见时没有
-    // （那时清屏入口是倍速｜清屏文字行）。
-    expect(find.byKey(const ValueKey('player-clear-icon')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
+    expect(clearAction.hitTestable(), findsOneWidget);
+    expect(tester.getRect(clearAction), clearRect);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('player-catalog-bar'))),
+      catalogRect,
+    );
+    expect(
+      tester.getRect(find.byKey(const ValueKey('player-original-book'))).bottom,
+      lessThanOrEqualTo(clearRect.top),
+    );
     // 原著卡点击 → 宿主跳原著详情。
     await tester.tap(find.byKey(const ValueKey('player-original-book')));
     expect(opened, 1);
-    // 清屏图标钮 → 进清屏态：band 全收，只剩「恢复」出口。
-    await tester.tap(find.byKey(const ValueKey('player-clear-icon')));
+    await tester.tap(clearAction);
     await tester.pump();
     expect(find.byKey(const ValueKey('player-catalog-bar')), findsNothing);
     expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
     expect(find.text('恢复'), findsOneWidget);
+    expect(tester.getRect(clearAction), clearRect);
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });
