@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/backend_service.dart';
 import 'package:fqapp/services/backend_transport.dart';
+import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/src/rust/api.dart' as rust;
 import 'package:fqapp/src/rust/frb_generated.dart';
 
@@ -103,6 +104,7 @@ void main() {
     File('${root.path}/outside.txt').writeAsStringSync('OFFLINE_TEST_MARKER');
     mockRequests.clear();
     mockDelay = Duration.zero;
+    mockPayload = '{"code":0,"data":{"served_by":"mock-upstream"}}';
   });
 
   tearDown(() async {
@@ -125,6 +127,24 @@ void main() {
 
   String bodyOf(rust.BridgeResponse response) =>
       utf8.decode(response.body, allowMalformed: true);
+
+  Future<ApiClient> startApiClient() async {
+    final transport = RustBackendTransport(
+      port: 0,
+      mockUpstreamOrigin: mockOrigin,
+    );
+    addTearDown(transport.close);
+    expect(
+      await transport.start(
+        configPath: '${root.path}/config/config.json',
+        poolPath: '${root.path}/config/device_pool.json',
+        filterPath: '${root.path}/config/filter.json',
+        runtimeDir: root.path,
+      ),
+      'running',
+    );
+    return ApiClient(transport: transport);
+  }
 
   test('the real FFI path initializes, serves static files and reaches upstream',
       () async {
@@ -264,6 +284,67 @@ void main() {
     expect(firstBase, isNotEmpty);
   }, skip: skipReason);
 
+  test('codec rejection cannot become a source through Dart legacy parsing',
+      () async {
+    mockPayload = jsonEncode(_videoPayload());
+    await startCore();
+    final response = await rust.request(
+      requestId: 'host-video-codec-rejected',
+      method: 'GET',
+      path: '/api/v1/videos/episode',
+      query: 'mode=stream',
+      body: Uint8List(0),
+      timeoutMs: 0,
+    );
+    final payload = jsonDecode(bodyOf(response)) as Map<String, dynamic>;
+    expect(
+      () => EpisodeSource.fromResponse(payload),
+      throwsA(isA<ApiException>()),
+    );
+    expect(response.status, 500);
+    expect(bodyOf(response), isNot(contains('https://example.invalid/')));
+  }, skip: skipReason);
+
+  test('ApiClient reports codec rejection before creating an episode source',
+      () async {
+    mockPayload = jsonEncode(_videoPayload());
+    final api = await startApiClient();
+    await expectLater(
+      api.content('episode', tab: '短剧', mode: 'stream'),
+      throwsA(isA<ApiException>().having(
+        (error) => error.message,
+        'message',
+        '该视频暂不支持播放',
+      )),
+    );
+  }, skip: skipReason);
+
+  test('a mixed video response keeps the allowed URL and its content key',
+      () async {
+    mockPayload = jsonEncode(_videoPayload(includeH264: true));
+    final api = await startApiClient();
+    final payload = await api.content('episode', tab: '短剧', mode: 'stream');
+    final source = EpisodeSource.fromResponse(payload);
+    expect(source.url, 'https://example.invalid/h264.mp4');
+    expect(source.keyHex, '4990a92de837e29e18031a370ab744e6');
+    expect(jsonEncode(payload), isNot(contains('bytevc2.mp4')));
+  }, skip: skipReason);
+
+  test('an unrecognized legacy video response still reaches Dart parsing',
+      () async {
+    mockPayload = jsonEncode({
+      'code': 0,
+      'data': {
+        'legacy': {'main_url': 'https://example.invalid/legacy.mp4'},
+      },
+    });
+    final api = await startApiClient();
+    final payload = await api.content('episode', tab: '短剧', mode: 'stream');
+    final source = EpisodeSource.fromResponse(payload);
+    expect(source.url, 'https://example.invalid/legacy.mp4');
+    expect(source.keyHex, isEmpty);
+  }, skip: skipReason);
+
   test('BackendService and ApiClient work end to end over the real core',
       () async {
     mockPayload =
@@ -290,6 +371,30 @@ void main() {
     expect(backend.isRunning, isFalse);
   }, skip: skipReason);
 }
+
+Map<String, dynamic> _videoPayload({bool includeH264 = false}) => {
+      'code': 0,
+      'data': {
+        'video_model': {
+          'key_seed': 'AAAA',
+          'video_list': {
+            'video_1': {
+              'main_url': 'https://example.invalid/bytevc2.mp4',
+              'codec_type': 'bytevc2',
+              'vwidth': 1080,
+            },
+            if (includeH264)
+              'video_2': {
+                'main_url': 'https://example.invalid/h264.mp4',
+                'codec_type': 'h264',
+                'vwidth': 720,
+                'spade_a':
+                    'kbwf80+1N+V9nwHQSp431GWvLeBlqizTYJ0o5FOrHuZhqimysg==',
+              },
+          },
+        },
+      },
+    };
 
 /// Minimal bundle so BackendService's deployment step has real files to copy.
 class _HostAssets extends CachingAssetBundle {

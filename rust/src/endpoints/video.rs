@@ -44,6 +44,20 @@ const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
 
 static VIDEO_CACHE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
+// Note: 编码拒绝必须穿透回退链，见 .agents/notes/implemented/bug-fix/2026-09-25-video-codec-gates.md
+#[derive(Debug, PartialEq, Eq)]
+enum VideoSourceResolution {
+    Found(String, Vec<u8>),
+    CodecRejected,
+    NotFound,
+}
+
+impl VideoSourceResolution {
+    fn is_terminal(&self) -> bool {
+        !matches!(self, Self::NotFound)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // video.go
 // ---------------------------------------------------------------------------
@@ -62,19 +76,25 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             fetch_phoenix_video_model(ctx, &video_id).await?
         };
 
-        let (video_url, content_key) = resolve_video_source(ctx, &raw).await;
-        if video_url.is_empty() {
-            let data: Value = serde_json::from_slice(&raw)
-                .map_err(|e| ApiError::Internal(format!("parse upstream json: {e}")))?;
-            return Ok(data);
-        }
+        let (video_url, content_key) = match resolve_video_source(ctx, &raw).await {
+            VideoSourceResolution::Found(url, key) => (url, key),
+            VideoSourceResolution::CodecRejected => {
+                return Err(ApiError::Internal("该视频暂不支持播放".to_string()));
+            }
+            VideoSourceResolution::NotFound => {
+                let data: Value = serde_json::from_slice(&raw)
+                    .map_err(|e| ApiError::Internal(format!("parse upstream json: {e}")))?;
+                return Ok(data);
+            }
+        };
 
+        let source = json!({
+            "video_url": video_url,
+            "key_hex": hex::encode(&content_key),
+            "video_id": video_id,
+        });
         if stream_mode {
-            return Ok(json!({
-                "video_url": video_url,
-                "key_hex": hex::encode(&content_key),
-                "video_id": video_id,
-            }));
+            return Ok(source);
         }
 
         match download_and_save(ctx, &video_id, &video_url, &content_key).await {
@@ -92,7 +112,9 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                     },
                 }))
             }
-            Err(_) => Ok(serde_json::from_slice(&raw).unwrap_or(Value::Null)),
+            // Legacy clients recursively extract URLs from raw payloads;
+            // only the already-selected variant may survive a download error.
+            Err(_) => Ok(source),
         }
     })
 }
@@ -160,37 +182,31 @@ async fn fetch_shortplay_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec
 }
 
 /// Parses the multi_video_model response and extracts the best quality MP4 URL.
-fn extract_video_url(raw: &[u8]) -> String {
+fn extract_video_url(raw: &[u8]) -> VideoSourceResolution {
     let Ok(resp) = serde_json::from_slice::<Value>(raw) else {
-        return String::new();
+        return VideoSourceResolution::NotFound;
     };
     let Some(data) = resp.get("data").and_then(|d| d.as_object()) else {
-        return String::new();
+        return VideoSourceResolution::NotFound;
     };
 
     let direct = extract_video_info_list_map_url(data);
-    if !direct.is_empty() {
+    if direct.is_terminal() {
         return direct;
     }
 
-    for item in data.values() {
-        let Some(m) = item.as_object() else {
-            continue;
-        };
-        let Some(model) = decode_video_model(m.get("video_model").unwrap_or(&Value::Null)) else {
-            continue;
-        };
-        let u = extract_video_model_url(&model);
-        if !u.is_empty() {
-            return u;
+    for model in video_models(data) {
+        let source = extract_video_model_url(&model);
+        if source.is_terminal() {
+            return source;
         }
     }
-    String::new()
+    VideoSourceResolution::NotFound
 }
 
-fn extract_video_info_list_map_url(data: &Map<String, Value>) -> String {
+fn extract_video_info_list_map_url(data: &Map<String, Value>) -> VideoSourceResolution {
     let Some(video_map) = data.get("video_info_list_map").and_then(|v| v.as_object()) else {
-        return String::new();
+        return VideoSourceResolution::NotFound;
     };
 
     let mut video_list: Option<&Vec<Value>> = None;
@@ -203,61 +219,29 @@ fn extract_video_info_list_map_url(data: &Map<String, Value>) -> String {
         }
     }
     let Some(video_list) = video_list else {
-        return String::new();
+        return VideoSourceResolution::NotFound;
     };
     let Some(video_info) = video_list[0].as_object() else {
-        return String::new();
+        return VideoSourceResolution::NotFound;
     };
     let Some(play_info_list) = video_info.get("play_info_list").and_then(|v| v.as_array()) else {
-        return String::new();
+        return VideoSourceResolution::NotFound;
     };
-    if play_info_list.is_empty() {
-        return String::new();
-    }
-
-    for i in (0..play_info_list.len()).rev() {
-        let Some(info) = play_info_list[i].as_object() else {
-            continue;
-        };
-        if let Some(u) = info.get("play_url").and_then(|v| v.as_str()) {
-            if !u.is_empty() {
-                return u.to_string();
-            }
-        }
-        if let Some(u) = info.get("main_url").and_then(|v| v.as_str()) {
-            if !u.is_empty() {
-                return u.to_string();
-            }
-        }
-    }
-    String::new()
+    extract_video_list_source(play_info_list)
 }
 
-async fn resolve_video_source(ctx: &Ctx, raw: &[u8]) -> (String, Vec<u8>) {
+async fn resolve_video_source(ctx: &Ctx, raw: &[u8]) -> VideoSourceResolution {
     let Ok(resp) = serde_json::from_slice::<Value>(raw) else {
-        return (String::new(), Vec::new());
+        return VideoSourceResolution::NotFound;
     };
     let Some(data) = resp.get("data").and_then(|d| d.as_object()) else {
-        return (String::new(), Vec::new());
+        return VideoSourceResolution::NotFound;
     };
 
-    if let Some(model) = decode_video_model(data.get("video_model").unwrap_or(&Value::Null)) {
-        let (u, key) = extract_shortplay_video_model_source(&model);
-        if !u.is_empty() {
-            return (u, key);
-        }
-    }
-
-    for item in data.values() {
-        let Some(m) = item.as_object() else {
-            continue;
-        };
-        let Some(model) = decode_video_model(m.get("video_model").unwrap_or(&Value::Null)) else {
-            continue;
-        };
-        let (u, key) = extract_shortplay_video_model_source(&model);
-        if !u.is_empty() {
-            return (u, key);
+    for model in video_models(data) {
+        let source = extract_shortplay_video_model_source(&model);
+        if source.is_terminal() {
+            return source;
         }
         if !video_model_encrypted(&model) {
             continue;
@@ -267,36 +251,29 @@ async fn resolve_video_source(ctx: &Ctx, raw: &[u8]) -> (String, Vec<u8>) {
             continue;
         }
         if let Some(fallback_data) = fetch_fallback_video_info(ctx, &fallback_url).await {
-            let (u, key) = extract_fallback_video_source(&fallback_data);
-            if !u.is_empty() {
-                return (u, key);
+            let source = extract_fallback_video_source(&fallback_data);
+            if source.is_terminal() {
+                return source;
             }
         }
     }
 
-    (extract_video_url(raw), Vec::new())
+    extract_video_url(raw)
 }
 
-fn extract_shortplay_video_model_source(model: &Map<String, Value>) -> (String, Vec<u8>) {
-    let key_seed_b64 = model.get("key_seed").and_then(|v| v.as_str()).unwrap_or("");
-    if key_seed_b64.is_empty() {
-        return (String::new(), Vec::new());
-    }
-    let Ok(key_seed) = audio_b64_decode(key_seed_b64) else {
-        return (String::new(), Vec::new());
-    };
+fn extract_shortplay_video_model_source(model: &Map<String, Value>) -> VideoSourceResolution {
     let Some(video_list) = model.get("video_list").and_then(|v| v.as_object()) else {
-        return (String::new(), Vec::new());
+        return VideoSourceResolution::NotFound;
     };
+    let key_seed = model
+        .get("key_seed")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| audio_b64_decode(s).ok());
 
-    let mut infos: Vec<(i64, &Map<String, Value>)> = video_list
-        .values()
-        .filter_map(|v| v.as_object())
-        .filter_map(|info| video_quality_score(info).map(|score| (score, info)))
-        .collect();
-    infos.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-
-    for (_, info) in &infos {
+    select_video_source(video_list.values(), |info| {
+        // Missing keys may prevent resolution, but must not hide a codec rejection.
+        let key_seed = key_seed.as_deref()?;
         let mut raw_url = info
             .get("main_url")
             .and_then(|v| v.as_str())
@@ -316,14 +293,13 @@ fn extract_shortplay_video_model_source(model: &Map<String, Value>) -> (String, 
                 }
             }
         }
-        let u = decrypt_spade_url(&raw_url, &key_seed);
+        let u = decrypt_spade_url(&raw_url, key_seed);
         if u.is_empty() {
-            continue;
+            return None;
         }
         let spade_a = info.get("spade_a").and_then(|v| v.as_str()).unwrap_or("");
-        return (u, derive_spade_content_key(spade_a));
-    }
-    (String::new(), Vec::new())
+        Some((u, derive_spade_content_key(spade_a)))
+    })
 }
 
 pub(crate) fn decode_video_model_str(s: &str) -> Option<Map<String, Value>> {
@@ -336,6 +312,13 @@ pub(crate) fn decode_video_model_str(s: &str) -> Option<Map<String, Value>> {
     }
 }
 
+fn video_models(data: &Map<String, Value>) -> impl Iterator<Item = Map<String, Value>> + '_ {
+    data.get("video_model")
+        .into_iter()
+        .chain(data.values().filter_map(|item| item.get("video_model")))
+        .filter_map(decode_video_model)
+}
+
 fn decode_video_model(v: &Value) -> Option<Map<String, Value>> {
     match v {
         Value::Object(m) => Some(m.clone()),
@@ -344,26 +327,22 @@ fn decode_video_model(v: &Value) -> Option<Map<String, Value>> {
     }
 }
 
-fn extract_video_model_url(model: &Map<String, Value>) -> String {
+fn extract_video_model_url(model: &Map<String, Value>) -> VideoSourceResolution {
     let Some(video_list) = model.get("video_list").and_then(|v| v.as_array()) else {
-        return String::new();
+        return VideoSourceResolution::NotFound;
     };
-    for i in (0..video_list.len()).rev() {
-        let Some(info) = video_list[i].as_object() else {
-            continue;
-        };
-        if let Some(u) = info.get("play_url").and_then(|v| v.as_str()) {
-            if !u.is_empty() {
-                return u.to_string();
-            }
-        }
-        if let Some(u) = info.get("main_url").and_then(|v| v.as_str()) {
-            if !u.is_empty() {
-                return u.to_string();
-            }
-        }
-    }
-    String::new()
+    extract_video_list_source(video_list)
+}
+
+fn extract_video_list_source(video_list: &[Value]) -> VideoSourceResolution {
+    // Preserve the legacy last-entry preference when quality metadata is absent.
+    select_video_source(video_list.iter().rev(), |info| {
+        ["play_url", "main_url"]
+            .iter()
+            .filter_map(|key| info.get(*key).and_then(|v| v.as_str()))
+            .find(|url| !url.is_empty())
+            .map(|url| (url.to_string(), Vec::new()))
+    })
 }
 
 fn video_model_encrypted(model: &Map<String, Value>) -> bool {
@@ -425,35 +404,24 @@ async fn fetch_fallback_video_info(ctx: &Ctx, u: &str) -> Option<Map<String, Val
         .cloned()
 }
 
-fn extract_fallback_video_source(root: &Map<String, Value>) -> (String, Vec<u8>) {
+fn extract_fallback_video_source(root: &Map<String, Value>) -> VideoSourceResolution {
     let Some(video_info) = root.get("video_info").and_then(|v| v.as_object()) else {
-        return (String::new(), Vec::new());
+        return VideoSourceResolution::NotFound;
     };
     let Some(data_root) = video_info.get("data").and_then(|v| v.as_object()) else {
-        return (String::new(), Vec::new());
+        return VideoSourceResolution::NotFound;
     };
-    let key_seed_b64 = data_root
+    let key_seed = data_root
         .get("key_seed")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if key_seed_b64.is_empty() {
-        return (String::new(), Vec::new());
-    }
-    let Ok(key_seed) = audio_b64_decode(key_seed_b64) else {
-        return (String::new(), Vec::new());
-    };
+        .filter(|s| !s.is_empty())
+        .and_then(|s| audio_b64_decode(s).ok());
     let Some(video_list) = data_root.get("video_list").and_then(|v| v.as_object()) else {
-        return (String::new(), Vec::new());
+        return VideoSourceResolution::NotFound;
     };
 
-    let mut infos: Vec<(i64, &Map<String, Value>)> = video_list
-        .values()
-        .filter_map(|v| v.as_object())
-        .filter_map(|info| video_quality_score(info).map(|score| (score, info)))
-        .collect();
-    infos.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-
-    for (_, info) in &infos {
+    select_video_source(video_list.values(), |info| {
+        let key_seed = key_seed.as_deref()?;
         let mut raw_url = info
             .get("main_url")
             .and_then(|v| v.as_str())
@@ -466,14 +434,37 @@ fn extract_fallback_video_source(root: &Map<String, Value>) -> (String, Vec<u8>)
                 .unwrap_or("")
                 .to_string();
         }
-        let u = decrypt_spade_url(&raw_url, &key_seed);
+        let u = decrypt_spade_url(&raw_url, key_seed);
         if u.is_empty() {
-            continue;
+            return None;
         }
         let spade_a = info.get("spade_a").and_then(|v| v.as_str()).unwrap_or("");
-        return (u, derive_spade_content_key(spade_a));
+        Some((u, derive_spade_content_key(spade_a)))
+    })
+}
+
+fn select_video_source<'a>(
+    variants: impl Iterator<Item = &'a Value>,
+    mut resolve: impl FnMut(&Map<String, Value>) -> Option<(String, Vec<u8>)>,
+) -> VideoSourceResolution {
+    let mut unresolved = VideoSourceResolution::NotFound;
+    let mut infos: Vec<_> = variants
+        .filter_map(|v| v.as_object())
+        .filter_map(|info| match video_quality_score(info) {
+            Some(score) => Some((score, info)),
+            None => {
+                unresolved = VideoSourceResolution::CodecRejected;
+                None
+            }
+        })
+        .collect();
+    infos.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    for (_, info) in infos {
+        if let Some((url, key)) = resolve(info) {
+            return VideoSourceResolution::Found(url, key);
+        }
     }
-    (String::new(), Vec::new())
+    unresolved
 }
 
 fn video_quality_score(info: &Map<String, Value>) -> Option<i64> {
@@ -1509,6 +1500,13 @@ mod spade_vectors {
     use super::*;
     use serde_json::json;
 
+    fn expect_source(resolution: VideoSourceResolution) -> (String, Vec<u8>) {
+        match resolution {
+            VideoSourceResolution::Found(url, key) => (url, key),
+            other => panic!("expected a playable source, got {other:?}"),
+        }
+    }
+
     #[test]
     fn derives_the_short_drama_content_key() {
         let key = derive_spade_content_key("kbwf80+1N+V9nwHQSp431GWvLeBlqizTYJ0o5FOrHuZhqimysg==");
@@ -1523,7 +1521,10 @@ mod spade_vectors {
             } }
         }))
         .unwrap();
-        assert_eq!(extract_video_url(&raw), "https://example.test/high.mp4");
+        assert_eq!(
+            expect_source(extract_video_url(&raw)).0,
+            "https://example.test/high.mp4"
+        );
     }
 
     #[test]
@@ -1540,7 +1541,7 @@ mod spade_vectors {
             }
         });
         let map = model.as_object().unwrap();
-        let (url, key) = extract_shortplay_video_model_source(map);
+        let (url, key) = expect_source(extract_shortplay_video_model_source(map));
         assert_eq!(url, "https://v26-reading-video.fqnovelvod.com/example.mp4");
         assert_eq!(key.len(), 16);
     }
@@ -1564,7 +1565,7 @@ mod spade_vectors {
             } }
         });
         let map = root.as_object().unwrap();
-        let (url, key) = extract_fallback_video_source(map);
+        let (url, key) = expect_source(extract_fallback_video_source(map));
         assert_eq!(url, "https://example.test/high.mp4");
         assert_eq!(hex::encode(key), "4990a92de837e29e18031a370ab744e6");
     }
@@ -1589,7 +1590,7 @@ mod spade_vectors {
             } }
         });
         let map = root.as_object().unwrap();
-        let (url, _) = extract_fallback_video_source(map);
+        let (url, _) = expect_source(extract_fallback_video_source(map));
         assert_eq!(url, "https://example.test/h264.mp4");
     }
 
@@ -1608,8 +1609,10 @@ mod spade_vectors {
             } }
         });
         let map = root.as_object().unwrap();
-        let (url, _) = extract_fallback_video_source(map);
-        assert_eq!(url, "");
+        assert_eq!(
+            extract_fallback_video_source(map),
+            VideoSourceResolution::CodecRejected
+        );
     }
 
     #[test]
@@ -1634,7 +1637,7 @@ mod spade_vectors {
             } }
         });
         let map = root.as_object().unwrap();
-        let (url, _) = extract_fallback_video_source(map);
+        let (url, _) = expect_source(extract_fallback_video_source(map));
         assert_eq!(url, "https://example.test/h264.mp4");
     }
 }
