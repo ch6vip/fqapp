@@ -83,6 +83,7 @@ fn match_chapters(parts: &[&str], q: &Params) -> Option<RouteMatch> {
         });
     }
     match parts[1] {
+        // 短剧：/api/v1/series/:id/... （官方短剧 ID 是 series id）
         "novel" => {
             p.set("item_ids", id);
             p.set("api_type", "novel");
@@ -182,6 +183,8 @@ fn match_books(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             api: "book_share",
             params: p,
         }),
+        // 短剧剧评与弹幕走 `/api/v1/series/...` / `/api/v1/videos/...`，
+        // 见 `match_series` / `match_videos`。
         "reviews" => Some(RouteMatch {
             api: "book_reviews",
             params: p,
@@ -341,6 +344,15 @@ fn match_videos(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             params: p,
         });
     }
+    // 弹幕取数以 vid 为 group_id（官方 `DanmakuRequestHelper.java:303,318`），
+    // 剧集 id 只是在 business_param 里当 book_id，所以两者都进 params。
+    if parts.len() >= 2 && parts[1] == "danmaku" {
+        p.set("vid", parts[0]);
+        return Some(RouteMatch {
+            api: "playlet_danmaku",
+            params: p,
+        });
+    }
     p.set("video_id", parts[0]);
     Some(RouteMatch {
         api: "video",
@@ -354,6 +366,30 @@ fn match_series(parts: &[&str], q: &Params) -> Option<RouteMatch> {
     }
     let mut p = q.clone();
     p.set("series_id", parts[0]);
+    // 短剧剧评（`gx1/m.java:168-181`）与短剧分享
+    // （`m0.java:938-957`，`share_type=7`）。
+    if parts.len() >= 2 {
+        match parts[1] {
+            "comments" => {
+                return Some(RouteMatch {
+                    api: "playlet_comments",
+                    params: p,
+                })
+            }
+            "share" => {
+                // 官方把 seriesId 同时放在 `album_id` 与 `group_id`。
+                p.set("group_id", parts[0]);
+                if p.get_str("album_id").is_empty() {
+                    p.set("album_id", parts[0]);
+                }
+                return Some(RouteMatch {
+                    api: "playlet_share",
+                    params: p,
+                });
+            }
+            _ => {}
+        }
+    }
     Some(RouteMatch {
         api: "video_detail",
         params: p,
@@ -413,10 +449,20 @@ fn match_items(parts: &[&str], q: &Params) -> Option<RouteMatch> {
 }
 
 fn match_comments(parts: &[&str], q: &Params) -> Option<RouteMatch> {
-    if parts.len() < 2 {
+    if parts.is_empty() {
         return None;
     }
     let mut p = q.clone();
+    // 复制链接的短链兜底（`LinkShareItem.java:86-104`）。
+    if parts[0] == "short-url" {
+        return Some(RouteMatch {
+            api: "share_short_url",
+            params: p,
+        });
+    }
+    if parts.len() < 2 {
+        return None;
+    }
     p.set("comment_id", parts[0]);
     if parts[1] == "replies" {
         return Some(RouteMatch {

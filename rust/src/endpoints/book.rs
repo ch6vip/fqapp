@@ -429,6 +429,116 @@ const BOOK_SHARE_INFO_URL_SUFFIX: &str = "&only_share_status=false&status=0&ac=w
 const BOOK_SHARE_EXCERPT_PATH: &str = "/reading/bookapi/excerpt/list/v?limit=0&book_id=";
 const BOOK_SHARE_EXCERPT_URL_SUFFIX: &str = "&iid={install_id}&device_id={device_id}&ac=wifi&channel=xiaomi_1967_64&aid=1967&app_name=novelapp&version_code=65132&version_name=6.5.1.32&device_platform=android&os=android&ssmix=a&device_type=FRD-AL10&device_brand=honor&language=zh&os_api=28&os_version=9&manifest_version_code=65132&resolution=1080*1920&dpi=480&update_version_code=65132&pv_player=65132&=&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&host_abi=arm64-v8a&dragon_device_type=phone&rom_version=FRD-AL10+8.0.0.556%28C00%29&compliance_status=0";
 
+/// 官方短剧分享信息路径（`m0.java:930-957`）。
+///
+/// 与书籍分享（`share_type=0`）共用同一个上游，只有 `share_type=7`（Video）
+/// 和短剧专属的剧集上下文字段不同。官方的 `ShareRequest` 里
+/// `share_type`、`album_id`、`current_chapter_id`、`first_chapter_id`、
+/// `share_timestamp`、`entrance` 都在 query 上。
+fn playlet_share<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let group_id = params.get_str("group_id");
+        if group_id.is_empty() {
+            // 官方在没有 groupId 时连接口都不打，直接弹「网络错误，请重试」
+            // （m0.java:2115-2128）。
+            return Err(ApiError::BadRequest("缺少group_id参数".to_string()));
+        }
+
+        let mut query = vec![
+            ("tone_id".to_string(), "0".to_string()),
+            ("share_type".to_string(), "7".to_string()),
+            ("group_id".to_string(), group_id.clone()),
+            ("only_share_status".to_string(), "false".to_string()),
+            ("status".to_string(), "0".to_string()),
+        ];
+        // 短剧专属字段只有在调用方给了值时才带上：官方把这些放在
+        // ShareRequest 里按 model 的实际取值序列化，未取到的字段不下发。
+        for (key, value) in [
+            ("album_id", params.get_str("album_id")),
+            ("current_chapter_id", params.get_str("current_chapter_id")),
+            ("first_chapter_id", params.get_str("first_chapter_id")),
+            ("share_timestamp", params.get_str("share_timestamp")),
+            ("entrance", params.get_str("entrance")),
+            ("video_type", params.get_str("video_type")),
+        ] {
+            if !value.is_empty() {
+                query.push((key.to_string(), value));
+            }
+        }
+        query.extend(share_info_device_params());
+
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                host: HOST_FQNOVEL.to_string(),
+                path: SHARE_INFO_PATH.to_string(),
+                params: query,
+                headers: dragon_read_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
+/// 复制链接的短链兜底（`LinkShareItem.java:86-104` -> `GET /reading/user/share/short_url/`）。
+fn share_short_url<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let target = params.get_str("target");
+        if target.is_empty() {
+            return Err(ApiError::BadRequest("缺少target参数".to_string()));
+        }
+        let mut query = vec![("target".to_string(), target.clone())];
+        query.extend(share_info_device_params());
+
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                host: HOST_FQNOVEL.to_string(),
+                path: SHARE_SHORT_URL_PATH.to_string(),
+                params: query,
+                headers: dragon_read_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
+/// 分享信息/短链两处共用的设备参数，取自官方分享请求的固定 query 集合
+/// （`m0.java:973-1016` 的 device 部分，与书籍分享同一套）。
+fn share_info_device_params() -> Vec<(String, String)> {
+    vec![
+        ("ac".to_string(), "wifi".to_string()),
+        ("channel".to_string(), "xiaomi_1967_64".to_string()),
+        ("aid".to_string(), "1967".to_string()),
+        ("app_name".to_string(), "novelapp".to_string()),
+        ("version_code".to_string(), "65132".to_string()),
+        ("version_name".to_string(), "6.5.1.32".to_string()),
+        ("device_platform".to_string(), "android".to_string()),
+        ("os".to_string(), "android".to_string()),
+        ("ssmix".to_string(), "a".to_string()),
+        ("device_type".to_string(), "FRD-AL10".to_string()),
+        ("device_brand".to_string(), "honor".to_string()),
+        ("language".to_string(), "zh".to_string()),
+        ("os_api".to_string(), "28".to_string()),
+        ("os_version".to_string(), "9".to_string()),
+        ("manifest_version_code".to_string(), "65132".to_string()),
+        ("resolution".to_string(), "1080*1920".to_string()),
+        ("dpi".to_string(), "480".to_string()),
+        ("update_version_code".to_string(), "65132".to_string()),
+        ("pv_player".to_string(), "65132".to_string()),
+        ("need_personal_recommend".to_string(), "1".to_string()),
+        ("player_so_load".to_string(), "1".to_string()),
+        ("is_android_pad_screen".to_string(), "0".to_string()),
+        ("host_abi".to_string(), "arm64-v8a".to_string()),
+        ("dragon_device_type".to_string(), "phone".to_string()),
+        ("compliance_status".to_string(), "0".to_string()),
+    ]
+}
+
+/// 分享信息与短链的路径常量（相对 host）。
+const SHARE_INFO_PATH: &str = "/reading/user/share/info/v";
+const SHARE_SHORT_URL_PATH: &str = "/reading/user/share/short_url/";
+
 async fn raw_share_json(ctx: &Ctx, raw_url: String) -> ApiResult<Value> {
     Upstream::new(ctx.up.clone())
         .json(&UpstreamRequestSpec {
@@ -477,4 +587,6 @@ pub fn register(s: &mut Server) {
     s.add_route("forum_id", forum_id);
     s.add_route("item_info", item_info);
     s.add_route("book_share", book_share);
+    s.add_route("playlet_share", playlet_share);
+    s.add_route("share_short_url", share_short_url);
 }

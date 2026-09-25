@@ -15,6 +15,7 @@ import '../models/chapter_summary.dart';
 import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../models/media_id.dart';
+import '../models/playlet_comment.dart';
 import '../models/rank.dart';
 import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
@@ -736,6 +737,84 @@ class ApiClient {
     return Isolate.run(
       () => parseParagraphComments(_decodeEnvelope(status, bytes)),
     );
+  }
+
+  /// 短剧剧评（官方 `gx1/m.java:168-181`）：`:group_id` 是剧集 id。
+  ///
+  /// [sort] 1=最热（「全部」）、3=最新；[tag] 是服务端筛选标签，
+  /// 非空时官方同时改用最新排序。
+  Future<PlayletCommentPage> playletComments(
+    String seriesId, {
+    int sort = UgcSort.smartHot,
+    int count = 10,
+    String cursor = '',
+    String tag = '',
+  }) async {
+    final response = await _get(
+      _url('/api/v1/series/${Uri.encodeComponent(seriesId)}/comments', {
+        'sort': '$sort',
+        'count': '$count',
+        if (cursor.isNotEmpty) 'cursor': cursor,
+        if (tag.isNotEmpty) 'tag': tag,
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => PlayletCommentPage.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
+  /// 短剧弹幕取数（官方 `DanmakuRequestHelper.java:314-329`）。
+  ///
+  /// [vid] 是当前视频 id（官方把它当 path 的 group_id），[seriesId] 进
+  /// `business_param.book_id`；时间单位是毫秒。
+  Future<PlayletCommentPage> playletDanmaku(
+    String vid, {
+    required String seriesId,
+    int startOffsetMs = 0,
+    Duration duration = Duration.zero,
+    String cursor = '',
+  }) async {
+    final response = await _get(
+      _url('/api/v1/videos/${Uri.encodeComponent(vid)}/danmaku', {
+        'series_id': seriesId,
+        'start_offset_time': '$startOffsetMs',
+        'playlet_item_duration': '${duration.inSeconds}',
+        if (cursor.isNotEmpty) 'cursor': cursor,
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => PlayletCommentPage.fromDanmakuPayload(
+        _decodeEnvelope(status, bytes),
+      ),
+    );
+  }
+
+  /// 短剧分享信息（官方 `m0.java:930-957`，`share_type=7`）。
+  ///
+  /// 官方的 `share_url`/`short_url`/`schema` 全部由服务端下发，客户端不下发
+  /// 字面量，所以这里只回传原始 JSON 供页面取字段。
+  Future<Map<String, dynamic>> playletShare(
+    String seriesId, {
+    String currentChapterId = '',
+    String firstChapterId = '',
+    String shareTimestamp = '',
+    String entrance = '',
+  }) async {
+    final response = await _get(
+      _url('/api/v1/series/${Uri.encodeComponent(seriesId)}/share', {
+        if (currentChapterId.isNotEmpty) 'current_chapter_id': currentChapterId,
+        if (firstChapterId.isNotEmpty) 'first_chapter_id': firstChapterId,
+        if (shareTimestamp.isNotEmpty) 'share_timestamp': shareTimestamp,
+        if (entrance.isNotEmpty) 'entrance': entrance,
+      }),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(() => _decodeEnvelope(status, bytes));
   }
 
   /// Short-drama series detail, including the cast list.
