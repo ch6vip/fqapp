@@ -170,7 +170,11 @@ class PlayletComment {
       dataType: base.dataType,
       parentCommentId: base.parentCommentId,
       playletRoleType: base.playletRoleType,
-      offsetMs: _int(expandMap['offset']),
+      // 官方回包的时间字段是 `expand.offset_time`（毫秒）：
+      // `CommentExpand.java` 的 `@SerializedName("offset_time")`，
+      // 消费点 `VideoComment.getOffsetTime()`（`com/dragon/community/impl/
+      // model/VideoComment.java:107-113`）。`offset` 只是历史的兜底拼写。
+      offsetMs: _int(expandMap['offset_time'] ?? expandMap['offset']),
       userDigg: base.userDigg,
     );
   }

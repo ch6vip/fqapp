@@ -27,7 +27,11 @@ void main() {
         },
       },
       'stat': {'digg_count': digg, 'reply_count': 1},
-      'expand': {'playlet_role_type': roleType, 'offset': offset},
+      'expand': {
+      'playlet_role_type': roleType,
+      // 官方字段名（CommentExpand 的 @SerializedName("offset_time")）。
+      'offset_time': offset,
+    },
     },
     'mix_data': {
       'data_type': dataType,
@@ -133,6 +137,31 @@ void main() {
     expect(PlayletCommentPage.entryLabel(0), '评论');
     expect(PlayletCommentPage.entryLabel(12000), '1.2万');
     expect(PlayletCommentPage.entryLabel(88), '88');
+  });
+
+  test('the legacy offset key is still accepted', () {
+    // 历史兜底拼写：`offset` 不是官方字段名，但早期实现用过；
+    // 官方字段是 `expand.offset_time`。
+    final page = PlayletCommentPage.fromDanmakuPayload({
+      'code': 0,
+      'data': {
+        'common_list_info': {'total': 1},
+        'data_list': [
+          {
+            'comment': {
+              'comment_id': 'd2',
+              'common': {
+                'content': {'text': '兜底'},
+              },
+              'expand': {'offset': 900},
+            },
+            'mix_data': {'data_type': UgcRelativeType.seriesVideo},
+          },
+        ],
+      },
+    });
+    expect(page.comments, hasLength(1));
+    expect(page.comments.single.offsetMs, 900);
   });
 
   test('parses danmaku with the millisecond offset', () {
