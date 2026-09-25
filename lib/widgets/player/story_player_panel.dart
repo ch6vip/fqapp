@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lottie/lottie.dart';
 
 import '../../models/media_item.dart';
@@ -85,6 +86,66 @@ bool episodeShowsNewBadge({
   required bool newlyUpdate,
 }) => !current && !played && !watched && newlyUpdate;
 
+/// 官方头部的封面占位（没有封面图时用剧集首帧同款深色块）。
+class _HeaderCoverFallback extends StatelessWidget {
+  const _HeaderCoverFallback();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 64,
+    height: 86,
+    decoration: BoxDecoration(
+      color: const Color(0xFFEDEDF0),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: const Icon(Icons.movie_creation_outlined, color: Color(0xFF9499A0)),
+  );
+}
+
+/// 官方头部集数/状态文案（`a1.java:554-568` 的 `A2()` 与 `:2034-2056` 的 `o1()`）。
+///
+/// 分支顺序照搬源码：
+/// 1. 电影：`电影 · 共N分钟`（N = 时长向上取整到分钟）
+/// 2. 虚幻短剧（`UnrealShortPlay`）：`string/d6d`「暂未上线」
+/// 3. `SeriesStatus.SeriesUpdating`：漫改用 `string/e6u`
+///    「看到%s集/更新至%s集」（第一个 %s 是当前集号），否则 `string/e6s`
+///    「更新至%s集」
+/// 4. 其余（`SeriesEnd`/今日更新/断更都落这里）：`string/e6q`「已完结 共%s集」
+///
+/// 注意取证笔记里把 `d6d` 记成「未上线」的通用文案，实际源码里它只服务
+/// `UnrealShortPlay` 这一支，这里按**源码**实现。
+String seriesEpisodeLabel({
+  required int? status,
+  required int count,
+  required int currentIndex,
+  bool motionComic = false,
+  bool unrealShortPlay = false,
+  int durationSeconds = 0,
+}) {
+  if (unrealShortPlay) return '暂未上线';
+  if (durationSeconds > 0 && count <= 1) {
+    final minutes = (durationSeconds / 60).ceil();
+    if (minutes > 0) return '电影 · 共$minutes分钟';
+  }
+  if (status == SeriesStatus.updating) {
+    if (motionComic) return '看到${currentIndex + 1}集/更新至$count集';
+    return '更新至$count集';
+  }
+  if (count > 0) return '已完结 共$count集';
+  return '';
+}
+
+/// 官方 `SeriesStatus`（`com/bytedance/kmp/reading/model/SeriesStatus.java`）：
+/// **0=更新中（SeriesUpdating）**、1=已完结（SeriesEnd）、3=今日更新、
+/// 4=断更。注意与书库 `creation_status` 的 0=完结/1=连载语义相反。
+class SeriesStatus {
+  const SeriesStatus._();
+  static const int updating = 0;
+  static const int finished = 1;
+  static const int updateToday = 3;
+  static const int updateStop = 4;
+}
+
 /// 官方长剧分页（`gj3/o.java:731` `setGroupByCount(30)`）：每 30 集一组
 /// 「1-30/31-60/…」，>30 集出现、滚动联动，≤30 隐藏。
 const _pageSize = 30;
@@ -100,6 +161,19 @@ class StoryPlayerPanel extends StatefulWidget {
   /// 已看集（灰字 #66000000）。官方取观看历史（`hj3/r0.java:224-235`），
   /// 本仓库由宿主给：续播点之前的集 + 本次会话播过的集。
   final Set<int> watched;
+
+  /// 头部剧信息（官方 `aa8.xml:7-15` 的 `hdp` 区块）：封面、标题、
+  /// 集数/状态文案、免费角标、收藏态。官方这些字段来自剧集详情。
+  final String seriesTitle;
+  final String seriesCover;
+  final String episodeLabel;
+  final bool freeWatch;
+  final bool collected;
+
+  /// 点头部（官方 `right_icon` 箭头）与收藏。
+  final VoidCallback? onOpenSeries;
+  final VoidCallback? onCollect;
+
   final ValueChanged<int> onSelectEpisode;
   final GestureDragStartCallback onDragStart;
   final GestureDragUpdateCallback onDragUpdate;
@@ -114,6 +188,13 @@ class StoryPlayerPanel extends StatefulWidget {
     required this.playingIndex,
     this.playing = false,
     this.watched = const <int>{},
+    this.seriesTitle = '',
+    this.seriesCover = '',
+    this.episodeLabel = '',
+    this.freeWatch = false,
+    this.collected = false,
+    this.onOpenSeries,
+    this.onCollect,
     required this.onSelectEpisode,
     required this.onDragStart,
     required this.onDragUpdate,
@@ -153,6 +234,145 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     widget.scrollController.removeListener(_onScroll);
     super.dispose();
   }
+
+  /// 头部剧信息区只有在宿主给了剧名或集数文案时才出现（官方该区块常显，
+  /// 本地没有数据源时不显示，避免出现空壳封面）。
+  bool get _hasHeader =>
+      widget.seriesTitle.isNotEmpty || widget.episodeLabel.isNotEmpty;
+
+  double get _headerHeight => 12 + 96;
+
+  /// 官方头部剧信息（`aa8.xml:7-15`）：封面 `hdb`、标题 `hdt`、
+  /// 右箭头 `right_icon`、集数行 `he1`（免费角标 `dga` + 文案 `hdz`）、
+  /// 收藏 `ddg`。免费角标：文 `@string/c3q`「免费观看」、
+  /// 字色 `skin_color_green_brand_light`=#FF00AE83、
+  /// 底 `skin_color_green_brand_10_light`=#1A00AE83（`colors.xml`）。
+  Widget _seriesHeader() => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+    child: Row(
+      children: [
+        if (widget.seriesCover.isNotEmpty)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: CachedNetworkImage(
+              imageUrl: widget.seriesCover,
+              width: 64,
+              height: 86,
+              fit: BoxFit.cover,
+              errorWidget: (_, _, _) => const _HeaderCoverFallback(),
+            ),
+          )
+        else
+          const _HeaderCoverFallback(),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                key: const ValueKey('story-panel-series-title'),
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onOpenSeries,
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.seriesTitle.isEmpty ? '短剧' : widget.seriesTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1B1B1B),
+                        ),
+                      ),
+                    ),
+                    if (widget.onOpenSeries != null)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 2),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: Color(0xFF9499A0),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  if (widget.freeWatch)
+                    Container(
+                      key: const ValueKey('story-panel-free-badge'),
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1A00AE83),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        '免费观看',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFF00AE83),
+                        ),
+                      ),
+                    ),
+                  if (widget.episodeLabel.isNotEmpty)
+                    Text(
+                      widget.episodeLabel,
+                      key: const ValueKey('story-panel-episode-label'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF9499A0),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (widget.onCollect != null)
+          GestureDetector(
+            key: const ValueKey('story-panel-collect'),
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onCollect,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    widget.collected
+                        ? Icons.star_rounded
+                        : Icons.star_border_rounded,
+                    size: 22,
+                    color: widget.collected
+                        ? const Color(0xFFFA6725)
+                        : const Color(0xFF9499A0),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    widget.collected ? '已收藏' : '收藏',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF9499A0),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
 
   int _pageOf(int index) => (index ~/ _pageSize).clamp(0, _lastPage);
 
@@ -261,7 +481,8 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     final scale = MediaQuery.textScalerOf(context);
     final tabHeight = math.max(40.0, scale.scale(14) + 22);
     final showPaging = widget.episodes.length > _pageSize;
-    final headerHeight = 12 + tabHeight + (showPaging ? 36 : 0);
+    final headerHeight =
+        12 + tabHeight + (showPaging ? 36 : 0) + (_hasHeader ? _headerHeight : 0);
     // A sheet-height change only needs layout. Keep the existing header and
     // lazy list children; state/data/text-scale changes create a fresh build.
     Widget? contents;
@@ -314,6 +535,12 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                             ),
                           ),
                         ),
+                        if (_hasHeader)
+                          SizedBox(
+                            key: const ValueKey('story-panel-series-header'),
+                            height: _headerHeight,
+                            child: _seriesHeader(),
+                          ),
                         SizedBox(
                           height: tabHeight,
                           child: Row(

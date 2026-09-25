@@ -105,6 +105,17 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool defaultMute;
   final ValueChanged<bool>? onDefaultMuteChanged;
 
+  /// 选集面板头部的剧信息（官方 \`aa8.xml:7-15\`）。
+  final String seriesTitle;
+  final String seriesCover;
+  final String episodeLabel;
+
+  /// 头部收藏态（官方头部 \`ddg\` 与右栏 \`SeriesCollectView\` 共用同一个
+  /// 关注态；本地把 \`followerLabel == '已追剧'\` 当作已收藏）。
+  final bool collected;
+  /// 头部收藏动作；为 null 时头部不显示收藏按钮。
+  final VoidCallback? onCollect;
+
   /// 弹幕（官方 \`DanmakuRequestHelper\`）：时间轴条目 + 开关状态。
   /// 发送回调为 null 时不出现弹幕入口。
   /// 分享（官方右栏第四项 `SeriesShareView`）：计数 0 时文案「分享」
@@ -161,6 +172,11 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onComments,
     this.hotComments = const [],
     this.onHotCommentTap,
+    this.seriesTitle = '',
+    this.seriesCover = '',
+    this.episodeLabel = '',
+    this.collected = false,
+    this.onCollect,
     this.shareCount = 0,
     this.onShare,
     this.fillScreen = false,
@@ -1696,6 +1712,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                         snapSizes: _panelSnapSizes,
                         shouldCloseOnMinExtent: false,
                         builder: (context, scroll) => StoryPlayerPanel(
+                          seriesTitle: widget.seriesTitle,
+                          seriesCover: widget.seriesCover,
+                          episodeLabel: widget.episodeLabel,
+                          collected: widget.collected,
+                          onCollect: widget.onCollect,
                           scrollController: scroll,
                           episodes: widget.episodes,
                           currentIndex: widget.currentIndex,

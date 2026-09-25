@@ -23,6 +23,7 @@ import '../models/book_detail.dart' show formatCounter;
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_danmaku_layer.dart';
 import '../widgets/player/playlet_share_panel.dart';
+import '../widgets/player/story_player_panel.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
@@ -119,6 +120,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 0 表示「还没有人评论」，入口按官方文案显示「评论」。
   int _commentCount = 0;
   int _danmakuGeneration = 0;
+  /// 选集面板头部用的剧信息（官方 `aa8.xml:7-15`）。
+  String _seriesTitle = '';
+  String _seriesCover = '';
+  String _episodeLabel = '';
   /// 官方「画面撑满」（SP `is_fill_screen`）。
   bool _fillScreen = false;
   /// 官方「默认静音」：**不落盘**，只在进程内（`tm3/b.java:17-20`）。
@@ -203,8 +208,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _ => null,
     };
     final book = series.originalBook;
+    final episodes = series.episodeCount > 0
+        ? series.episodeCount
+        : widget.eps.length;
     setState(() {
       _seriesStatus = status;
+      _seriesTitle = series.title;
+      _seriesCover = series.cover;
+      _episodeLabel = seriesEpisodeLabel(
+        status: series.status,
+        count: episodes,
+        currentIndex: _index,
+      );
       _commentCount = series.commentCount;
       _originalBook = book == null
           ? null
@@ -987,6 +1002,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     // 没有该数据源，因此按官方的「无计数」分支显示「分享」
     // （`SeriesShareView.java:123-129`），不伪造数字。
     onShare: widget.shortSeries ? _openShare : null,
+    seriesTitle: _seriesTitle,
+    seriesCover: _seriesCover,
+    episodeLabel: _episodeLabel,
+    // 收藏复用播放页的追剧态与动作（官方头部 `ddg` 与右栏
+    // `SeriesCollectView` 是同一个关注态）。
+    // 头部收藏只有「宿主确实给了追剧动作」时才出现（官方头部 `ddg`
+    // 与右栏 `SeriesCollectView` 是同一个关注态）。
+    collected: widget.followerCount > 0,
+    onCollect: widget.onFollow,
     fillScreen: _fillScreen,
     onFillScreenChanged: widget.shortSeries ? _setFillScreen : null,
     defaultMute: _defaultMute,
