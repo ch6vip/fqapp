@@ -77,6 +77,34 @@ class RankEntry {
     if (category.isNotEmpty) category,
     if (statusLabel.isNotEmpty) statusLabel,
   ].join(' · ');
+
+  Map<String, dynamic> toJson() => {
+    'position': position,
+    'id': id,
+    'title': title,
+    'cover': cover,
+    'author': author,
+    'abstract': abstract,
+    'category': category,
+    'creationStatus': creationStatus,
+    'wordNumber': wordNumber,
+    'readCount': readCount,
+  };
+
+  static RankEntry fromJson(Map<String, dynamic> map) => RankEntry(
+    position: map['position'] is int ? map['position'] as int : 0,
+    id: map['id'] is String ? map['id'] as String : '',
+    title: map['title'] is String ? map['title'] as String : '',
+    cover: map['cover'] is String ? map['cover'] as String : '',
+    author: map['author'] is String ? map['author'] as String : '',
+    abstract: map['abstract'] is String ? map['abstract'] as String : '',
+    category: map['category'] is String ? map['category'] as String : '',
+    creationStatus: map['creationStatus'] is int
+        ? map['creationStatus'] as int
+        : -1,
+    wordNumber: map['wordNumber'] is int ? map['wordNumber'] as int : 0,
+    readCount: map['readCount'] is String ? map['readCount'] as String : '',
+  );
 }
 
 /// A page of ranked works.
@@ -89,6 +117,25 @@ class RankBoard {
   final bool hasMore;
 
   bool get isEmpty => entries.isEmpty;
+
+  Map<String, dynamic> toJson() => {
+    'hasMore': hasMore,
+    'entries': [for (final entry in entries) entry.toJson()],
+  };
+
+  static RankBoard fromJson(Map<String, dynamic> map) {
+    final rawEntries = map['entries'];
+    return RankBoard(
+      hasMore: map['hasMore'] == true,
+      entries: rawEntries is List
+          ? List.unmodifiable(
+              rawEntries
+                  .whereType<Map>()
+                  .map((entry) => RankEntry.fromJson(Map<String, dynamic>.from(entry))),
+            )
+          : const [],
+    );
+  }
 }
 
 /// The catalogue of available ranks plus their sub-categories.
@@ -111,6 +158,76 @@ class RankCatalog {
   final List<RankCategory> categories;
 
   bool get isEmpty => tabs.isEmpty && rankId.isEmpty;
+
+  Map<String, dynamic> toJson() => {
+    'rankId': rankId,
+    'tabs': [
+      for (final tab in tabs)
+        {
+          'name': tab.name,
+          'algo': tab.algo,
+          'subs': [
+            for (final category in tab.subCategories)
+              {'name': category.name, 'id': category.id},
+          ],
+        },
+    ],
+    'categories': [
+      for (final category in categories)
+        {'name': category.name, 'id': category.id},
+    ],
+  };
+
+  static RankCatalog? fromJson(Map<String, dynamic> map) {
+    final rankId = map['rankId'] is String ? map['rankId'] as String : '';
+    final tabs = <RankTab>[];
+    final rawTabs = map['tabs'];
+    if (rawTabs is List) {
+      for (final entry in rawTabs) {
+        if (entry is! Map) continue;
+        final name = entry['name'];
+        final algo = entry['algo'];
+        if (name is! String || name.isEmpty || algo is! int) continue;
+        final subs = <RankCategory>[];
+        final rawSubs = entry['subs'];
+        if (rawSubs is List) {
+          for (final sub in rawSubs) {
+            if (sub is! Map) continue;
+            final subName = sub['name'];
+            if (subName is! String || subName.isEmpty) continue;
+            subs.add(
+              RankCategory(
+                name: subName,
+                id: sub['id'] is int ? sub['id'] as int : 0,
+              ),
+            );
+          }
+        }
+        tabs.add(RankTab(name: name, algo: algo, subCategories: subs));
+      }
+    }
+    final categories = <RankCategory>[];
+    final rawCategories = map['categories'];
+    if (rawCategories is List) {
+      for (final entry in rawCategories) {
+        if (entry is! Map) continue;
+        final name = entry['name'];
+        if (name is! String || name.isEmpty) continue;
+        categories.add(
+          RankCategory(
+            name: name,
+            id: entry['id'] is int ? entry['id'] as int : 0,
+          ),
+        );
+      }
+    }
+    if (tabs.isEmpty && rankId.isEmpty) return null;
+    return RankCatalog(
+      rankId: rankId,
+      tabs: List.unmodifiable(tabs),
+      categories: List.unmodifiable(categories),
+    );
+  }
 
   /// Pulls the catalogue out of a novel homepage payload.
   ///

@@ -7,6 +7,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/media_item.dart';
 import '../models/rank.dart';
 import '../services/api_client.dart';
+import '../services/rank_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
 import 'detail_page.dart';
@@ -31,8 +32,9 @@ typedef RankPageLoader =
 class RankPage extends StatefulWidget {
   final RankCatalogLoader? catalogLoader;
   final RankPageLoader? pageLoader;
+  final RankCache? rankCache;
 
-  const RankPage({super.key, this.catalogLoader, this.pageLoader});
+  const RankPage({super.key, this.catalogLoader, this.pageLoader, this.rankCache});
 
   @override
   State<RankPage> createState() => _RankPageState();
@@ -48,6 +50,8 @@ class _RankPageState extends State<RankPage> {
   int _rankIndex = 0;
   int _categoryIndex = 0;
   int _generation = 0;
+
+  RankCache get _cache => widget.rankCache ?? RankCache.instance;
 
   RankTab? get _rank =>
       _rankIndex < _catalog.tabs.length ? _catalog.tabs[_rankIndex] : null;
@@ -68,25 +72,30 @@ class _RankPageState extends State<RankPage> {
       _loading = true;
       _error = null;
     });
+    var catalog = RankCatalog.empty;
     try {
-      final catalog = await (widget.catalogLoader ?? _defaultCatalog)();
-      if (!mounted || generation != _generation) return;
-      if (catalog.isEmpty) {
+      catalog = await (widget.catalogLoader ?? _defaultCatalog)();
+    } catch (_) {
+      // The loader normally swallows failures; a stale cache still applies.
+    }
+    if (!mounted || generation != _generation) return;
+    if (catalog.isEmpty) {
+      // A failed refresh falls back to the stored catalogue instead of an
+      // error page; the board below keeps its own cached content too.
+      final snapshot = _cache.loadCatalog();
+      if (snapshot == null) {
         setState(() {
           _loading = false;
           _error = '排行榜暂时不可用';
         });
         return;
       }
-      setState(() => _catalog = catalog);
-      await _loadFirst(generation);
-    } catch (error) {
-      if (!mounted || generation != _generation) return;
-      setState(() {
-        _error = userFacingError(error);
-        _loading = false;
-      });
+      catalog = snapshot.catalog;
+    } else {
+      unawaited(_cache.saveCatalog(catalog));
     }
+    setState(() => _catalog = catalog);
+    await _loadFirst(generation);
   }
 
   Future<RankCatalog> _defaultCatalog() => ApiClient.instance.rankCatalog();
@@ -114,25 +123,60 @@ class _RankPageState extends State<RankPage> {
   }
 
   Future<void> _loadFirst(int generation) async {
-    setState(() {
-      _loading = true;
-      _loadingMore = false;
-      _loadMoreError = null;
-      _error = null;
-    });
+    final rank = _rank;
+    // Stale-while-revalidate on the first page: a snapshot renders immediately
+    // (fresh ones skip the network entirely), the refresh replaces it.
+    final snapshot = rank == null
+        ? null
+        : _cache.loadBoard(
+            rankId: _catalog.rankId,
+            algo: rank.algo,
+            categoryId: _category?.id ?? 0,
+          );
+    if (snapshot != null) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _page = snapshot.board;
+        _loading = false;
+        _loadingMore = false;
+        _loadMoreError = null;
+        _error = snapshot.board.isEmpty ? '该榜单暂无内容' : null;
+      });
+      if (DateTime.now().difference(snapshot.savedAt) <
+          RankCache.freshTtl) {
+        return;
+      }
+    } else {
+      setState(() {
+        _loading = true;
+        _loadingMore = false;
+        _loadMoreError = null;
+        _error = null;
+      });
+    }
     try {
       final page = await _fetch(offset: 0, startAt: 1);
       if (!mounted || generation != _generation) return;
       setState(() {
         _page = page;
         _loading = false;
-        if (page.isEmpty) _error = '该榜单暂无内容';
+        _error = page.isEmpty ? '该榜单暂无内容' : null;
       });
+      unawaited(
+        _cache.saveBoard(
+          rankId: _catalog.rankId,
+          algo: rank?.algo ?? 0,
+          categoryId: _category?.id ?? 0,
+          board: page,
+        ),
+      );
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
-        _error = userFacingError(error);
         _loading = false;
+        // A cached list stays on screen; the error page only takes over
+        // when there was nothing to show.
+        if (_page.isEmpty) _error = userFacingError(error);
       });
     }
   }

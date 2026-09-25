@@ -14,6 +14,7 @@ import 'services/backend_service.dart';
 import 'services/digg_store.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
+import 'services/rank_cache.dart';
 import 'services/shelf_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
@@ -51,6 +52,13 @@ Future<void> _initializeLocalData() async {
     await HomeFeedCache.instance.warmUp();
   } catch (_) {
     // HomeFeedCache 自己把「不可用」当成「没有缓存」处理。
+  }
+  // 榜单缓存同理：开箱失败只是退化为每次现拉。
+  try {
+    RankCache.hiveReady = true;
+    await RankCache.instance.warmUp();
+  } catch (_) {
+    // RankCache 自己把「不可用」当成「没有缓存」处理。
   }
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see
