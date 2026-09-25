@@ -623,11 +623,24 @@ class Chapter {
   /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
   final String version;
 
+  /// 官方选集格子的元数据（`hj3/r0.java:413-419,539-554` 的
+  /// `SaasVideoData` 字段）。JSON 侧的键名**未取证**（Gson 按字段名原样
+  /// 读写，上游可能换成下划线风格），因此解析时多种拼写都接受，
+  /// 读不到就当 false——这是「宁可不显示角标」而不是「宁可不显示入口」。
+  final bool trailer;
+  final bool highlight;
+  final bool disabled;
+  final bool newlyUpdate;
+
   Chapter({
     required this.itemId,
     required this.title,
     required this.volumeName,
     this.version = '',
+    this.trailer = false,
+    this.highlight = false,
+    this.disabled = false,
+    this.newlyUpdate = false,
   });
 
   factory Chapter.fromRaw(Map<String, dynamic> m, {int? index}) => Chapter(
@@ -644,12 +657,20 @@ class Episode {
   final String title;
   final int index;
   final int durationSeconds;
+  final bool trailer;
+  final bool highlight;
+  final bool disabled;
+  final bool newlyUpdate;
 
   Episode({
     required this.itemId,
     required this.title,
     required this.index,
     this.durationSeconds = 0,
+    this.trailer = false,
+    this.highlight = false,
+    this.disabled = false,
+    this.newlyUpdate = false,
   });
 
   factory Episode.fromRaw(Map<String, dynamic> m, {int index = 0}) => Episode(
@@ -657,10 +678,33 @@ class Episode {
     title: _entryTitle(m, index: index, fallbackPrefix: '第', suffix: '集'),
     index: _asInt(m['index'] ?? m['episode_index'] ?? m['episode_no']) ?? index,
     durationSeconds: _asInt(m['duration'] ?? m['duration_seconds']) ?? 0,
+    trailer: _flag(m, const ['is_trailer', 'isTrailer', 'trailer']),
+    highlight: _flag(m, const [
+      'is_inserted_from_feed',
+      'isInsertedFromFeed',
+      'inserted_from_feed',
+    ]),
+    // item_status != 0 表示该集不可播（与 chapter_media.dart 对 item_status
+    // 的处理同一含义）。
+    disabled:
+        (_asInt(m['item_status']) ?? 0) != 0 ||
+        _flag(m, const ['disable_play', 'disablePlay']),
+    newlyUpdate: _flag(m, const [
+      'is_newly_update',
+      'isNewlyUpdate',
+      'newly_update',
+    ]),
   );
 
-  Chapter toChapter() =>
-      Chapter(itemId: itemId, title: title, volumeName: '剧集');
+  Chapter toChapter() => Chapter(
+    itemId: itemId,
+    title: title,
+    volumeName: '剧集',
+    trailer: trailer,
+    highlight: highlight,
+    disabled: disabled,
+    newlyUpdate: newlyUpdate,
+  );
 }
 
 class SearchTab {
@@ -1152,6 +1196,20 @@ int? _asInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse('$value');
+}
+
+/// 布尔标记的宽松解析：上游可能给 bool、0/1 或 "true"/"1"。
+bool _flag(Map<String, dynamic> m, List<String> keys) {
+  for (final key in keys) {
+    final value = m[key];
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final text = value.trim().toLowerCase();
+      if (text == 'true' || text == '1') return true;
+    }
+  }
+  return false;
 }
 
 /// Category names for the info panel's chip row. The feed card's

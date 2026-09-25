@@ -13,8 +13,77 @@ import '../../models/media_item.dart';
 const _currentText = Color(0xFFFA6725);
 const _currentBg = Color(0x1AFA6725);
 const _watchedText = Color(0x66000000);
-const _normalText = Color(0xFF000000);
+/// 官方未选中普通格文字 `skin_color_catalog_unselect_item_text_normal_dark`
+/// = @color/skin_color_black_dark = **#CCFFFFFF**（不是纯黑）。
+const _normalText = Color(0xCCFFFFFF);
+/// 官方不可播格文字 `..._text_disable_light` = #33000000。
+const _disabledText = Color(0x33000000);
+/// 官方普通格底色 `skin_color_gray_03_light` = #08000000。
 const _tileBg = Color(0x08000000);
+
+/// 选集格子的官方状态（`hj3/r0.java:217-235,539-554`）。
+///
+/// 状态色（全部来自 APK 的 colors.xml）：
+/// - 选中：底 `skin_color_catalog_select_item_bg_light`=@color/aom=#1AFA6725、
+///   字 `skin_color_catalog_select_item_text_light`=@color/aok=#FFFA6725
+/// - 不可播：字 `..._text_disable_light`=#33000000，点击 Toast「该选集暂时无法播放」
+/// - 已看：字 `..._text_played_light`=#66000000
+/// - 普通：字 `..._text_normal_dark`=@color/skin_color_black_dark=#CCFFFFFF
+/// - 普通格底 `skin_color_gray_03_light`=#08000000
+enum EpisodeTileState {
+  normal,
+  current,
+  watched,
+  disabled;
+
+  static EpisodeTileState of({
+    required bool current,
+    required bool watched,
+    required bool disabled,
+  }) {
+    if (current) return EpisodeTileState.current;
+    if (disabled) return EpisodeTileState.disabled;
+    if (watched) return EpisodeTileState.watched;
+    return EpisodeTileState.normal;
+  }
+
+  Color get textColor => switch (this) {
+    EpisodeTileState.current => _currentText,
+    EpisodeTileState.disabled => _disabledText,
+    EpisodeTileState.watched => _watchedText,
+    EpisodeTileState.normal => _normalText,
+  };
+
+  Color get backgroundColor =>
+      this == EpisodeTileState.current ? _currentBg : _tileBg;
+
+  FontWeight get weight =>
+      this == EpisodeTileState.current ? FontWeight.bold : FontWeight.normal;
+}
+
+/// 官方选集格子文案（`hj3/r0.java:413-419`）：预告 -> 「预告」（`epd`）、
+/// 推荐流插入项 -> 「高光」（`esr`），其余是纯序号。
+String episodeTileLabel({
+  required int index,
+  bool trailer = false,
+  bool highlight = false,
+}) {
+  if (trailer) return '预告';
+  if (highlight) return '高光';
+  return '${index + 1}';
+}
+
+/// 官方「新」角标（`bbw.xml:2-10`：18x18dp 容器、圆角 6dp、底
+/// `@color/aom`=#1AFA6725、内文 `@string/e0f`=「新」）。
+///
+/// 显示条件（`hj3/r0.java:539-554` 的 `T1`）：
+/// 未选中 && 未播过 && 不在观看历史里 && `isNewlyUpdate`。
+bool episodeShowsNewBadge({
+  required bool current,
+  required bool played,
+  required bool watched,
+  required bool newlyUpdate,
+}) => !current && !played && !watched && newlyUpdate;
 
 /// 官方长剧分页（`gj3/o.java:731` `setGroupByCount(30)`）：每 30 集一组
 /// 「1-30/31-60/…」，>30 集出现、滚动联动，≤30 隐藏。
@@ -173,7 +242,19 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     );
   }
 
-  void _select(int index) => widget.onSelectEpisode(index);
+  /// 官方不可播集的点击是 Toast「该选集暂时无法播放」
+  /// （`hj3/r0.java:598-601`），不会切换集。
+  void _select(int index) {
+    if (index >= 0 &&
+        index < widget.episodes.length &&
+        widget.episodes[index].disabled) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('该选集暂时无法播放')));
+      return;
+    }
+    widget.onSelectEpisode(index);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -340,8 +421,19 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
   }
 
   Widget _episodeTile(int index) {
+    final episode = widget.episodes[index];
     final active = index == (widget.playingIndex ?? widget.currentIndex);
-    final watched = !active && widget.watched.contains(index);
+    final state = EpisodeTileState.of(
+      current: active,
+      watched: widget.watched.contains(index),
+      disabled: episode.disabled,
+    );
+    final badge = episodeShowsNewBadge(
+      current: active,
+      played: widget.playingIndex == index,
+      watched: widget.watched.contains(index),
+      newlyUpdate: episode.newlyUpdate,
+    );
     return Semantics(
       key: ValueKey('story-episode-$index'),
       label: '第 ${index + 1} 集',
@@ -351,7 +443,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
       excludeSemantics: true,
       onTap: () => _select(index),
       child: Material(
-        color: active ? _currentBg : _tileBg,
+        color: state.backgroundColor,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(8)),
         ),
@@ -362,17 +454,17 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
             children: [
               Center(
                 child: Text(
-                  '${index + 1}',
+                  episodeTileLabel(
+                    index: index,
+                    trailer: episode.trailer,
+                    highlight: episode.highlight,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                    color: active
-                        ? _currentText
-                        : watched
-                        ? _watchedText
-                        : _normalText,
+                    fontWeight: state.weight,
+                    color: state.textColor,
                   ),
                 ),
               ),
@@ -388,6 +480,25 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                       animate: widget.playing,
                       repeat: true,
                       fit: BoxFit.contain,
+                    ),
+                  ),
+                )
+              else if (badge)
+                Positioned(
+                  top: 2,
+                  right: 2,
+                  child: Container(
+                    key: ValueKey('story-episode-new-$index'),
+                    width: 18,
+                    height: 18,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _currentBg,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      '新',
+                      style: TextStyle(fontSize: 10, color: _currentText),
                     ),
                   ),
                 ),
