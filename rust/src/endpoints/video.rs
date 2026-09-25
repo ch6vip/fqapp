@@ -289,11 +289,14 @@ fn extract_shortplay_video_model_source(model: &Map<String, Value>) -> (String, 
         return (String::new(), Vec::new());
     };
 
-    let mut infos: Vec<&Map<String, Value>> =
-        video_list.values().filter_map(|v| v.as_object()).collect();
-    infos.sort_by_key(|a| std::cmp::Reverse(video_quality_score(a)));
+    let mut infos: Vec<(i64, &Map<String, Value>)> = video_list
+        .values()
+        .filter_map(|v| v.as_object())
+        .filter_map(|info| video_quality_score(info).map(|score| (score, info)))
+        .collect();
+    infos.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
 
-    for info in infos {
+    for (_, info) in &infos {
         let mut raw_url = info
             .get("main_url")
             .and_then(|v| v.as_str())
@@ -443,11 +446,14 @@ fn extract_fallback_video_source(root: &Map<String, Value>) -> (String, Vec<u8>)
         return (String::new(), Vec::new());
     };
 
-    let mut infos: Vec<&Map<String, Value>> =
-        video_list.values().filter_map(|v| v.as_object()).collect();
-    infos.sort_by_key(|a| std::cmp::Reverse(video_quality_score(a)));
+    let mut infos: Vec<(i64, &Map<String, Value>)> = video_list
+        .values()
+        .filter_map(|v| v.as_object())
+        .filter_map(|info| video_quality_score(info).map(|score| (score, info)))
+        .collect();
+    infos.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
 
-    for info in infos {
+    for (_, info) in &infos {
         let mut raw_url = info
             .get("main_url")
             .and_then(|v| v.as_str())
@@ -470,14 +476,39 @@ fn extract_fallback_video_source(root: &Map<String, Value>) -> (String, Vec<u8>)
     (String::new(), Vec::new())
 }
 
-fn video_quality_score(info: &Map<String, Value>) -> i64 {
+fn video_quality_score(info: &Map<String, Value>) -> Option<i64> {
+    // Codec gates mirror the reference short-drama client: bytevc2
+    // (H.266-class) has no decoder on the playback path, so a variant that
+    // carries it must never win the quality race even as a last resort;
+    // H.264 decodes everywhere, so it wins ties at equal quality.
+    let codec = {
+        let mut value = String::new();
+        if let Some(v) = info.get("codec_type").and_then(|v| v.as_str()) {
+            value.push_str(&v.to_lowercase());
+        }
+        if let Some(meta) = info.get("video_meta").and_then(|v| v.as_object()) {
+            if let Some(v) = meta.get("codec_type").and_then(|v| v.as_str()) {
+                value.push(' ');
+                value.push_str(&v.to_lowercase());
+            }
+        }
+        if let Some(v) = info.get("gear_des_key").and_then(|v| v.as_str()) {
+            value.push(' ');
+            value.push_str(&v.to_lowercase());
+        }
+        value
+    };
+    if codec.contains("bytevc2") {
+        return None;
+    }
     let w = int64_from_any(info.get("vwidth").unwrap_or(&Value::Null));
     let h = int64_from_any(info.get("vheight").unwrap_or(&Value::Null));
     let mut b = int64_from_any(info.get("bitrate").unwrap_or(&Value::Null));
     if b == 0 {
         b = int64_from_any(info.get("real_bitrate").unwrap_or(&Value::Null));
     }
-    w * 1_000_000_000 + h * 1_000_000 + b
+    let bonus = i64::from(codec.contains("h264") || codec.contains("avc1"));
+    Some(w * 1_000_000_000 + h * 1_000_000 + b + bonus)
 }
 
 fn int64_from_any(v: &Value) -> i64 {
@@ -1536,6 +1567,75 @@ mod spade_vectors {
         let (url, key) = extract_fallback_video_source(map);
         assert_eq!(url, "https://example.test/high.mp4");
         assert_eq!(hex::encode(key), "4990a92de837e29e18031a370ab744e6");
+    }
+
+    #[test]
+    fn fallback_source_skips_bytevc2_even_when_it_scores_highest() {
+        let root = json!({
+            "video_info": { "data": {
+                "key_seed": "AAAA",
+                "video_list": {
+                    "video_5": {
+                        "main_url": "https://example.test/vvc.mp4",
+                        "vwidth": 1080, "vheight": 1920,
+                        "codec_type": "bytevc2"
+                    },
+                    "video_1": {
+                        "main_url": "https://example.test/h264.mp4",
+                        "vwidth": 720, "vheight": 1280,
+                        "codec_type": "h264"
+                    }
+                }
+            } }
+        });
+        let map = root.as_object().unwrap();
+        let (url, _) = extract_fallback_video_source(map);
+        assert_eq!(url, "https://example.test/h264.mp4");
+    }
+
+    #[test]
+    fn fallback_source_never_serves_a_bytevc2_only_list() {
+        let root = json!({
+            "video_info": { "data": {
+                "key_seed": "AAAA",
+                "video_list": {
+                    "video_5": {
+                        "main_url": "https://example.test/vvc.mp4",
+                        "vwidth": 1080, "vheight": 1920,
+                        "gear_des_key": "bytevc2_1080p"
+                    }
+                }
+            } }
+        });
+        let map = root.as_object().unwrap();
+        let (url, _) = extract_fallback_video_source(map);
+        assert_eq!(url, "");
+    }
+
+    #[test]
+    fn fallback_source_prefers_h264_on_equal_quality() {
+        let root = json!({
+            "video_info": { "data": {
+                "key_seed": "AAAA",
+                "video_list": {
+                    "video_1": {
+                        "main_url": "https://example.test/h265.mp4",
+                        "vwidth": 1080, "vheight": 1920,
+                        "bitrate": 2000000,
+                        "codec_type": "h265"
+                    },
+                    "video_2": {
+                        "main_url": "https://example.test/h264.mp4",
+                        "vwidth": 1080, "vheight": 1920,
+                        "bitrate": 2000000,
+                        "codec_type": "h264"
+                    }
+                }
+            } }
+        });
+        let map = root.as_object().unwrap();
+        let (url, _) = extract_fallback_video_source(map);
+        assert_eq!(url, "https://example.test/h264.mp4");
     }
 }
 
