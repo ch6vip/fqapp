@@ -2186,6 +2186,13 @@ class _LocalList extends StatefulWidget {
 
 class _LocalListState extends State<_LocalList> {
   /// null = 全部；'video' / 'manju' = 官方 chips 的筛选（仅最近 tab 有）。
+  ///
+  /// 官方编辑模式（`LatestShortVideoFragmentImpl`）：`Me()` 进编辑、
+  /// `Le()` 完成、`Ke()` 全选/取消全选、`ue()` 删除（先弹
+  /// 「确定删除浏览历史吗？」确认框）。多选态在下方的 `_selected` 里。
+  bool _editing = false;
+  final Set<String> _selected = <String>{};
+  /// 官方 `f.u()` 的取值：1=短剧(genreFilter==1)、2=漫剧、3=视频（其他视频）。
   String? _filter;
 
   @override
@@ -2224,12 +2231,27 @@ class _LocalListState extends State<_LocalList> {
                     subtitle: fromShelf
                         ? null
                         : _progressLabel(filtered[index]),
-                    onTap: () => widget.onOpen(filtered[index]),
+                    selected: _selected.contains(_keyOf(filtered[index])),
+                    onTap: () {
+                      if (_editing) {
+                        setState(() {
+                          final key = _keyOf(filtered[index]);
+                          if (!_selected.add(key)) _selected.remove(key);
+                        });
+                        return;
+                      }
+                      widget.onOpen(filtered[index]);
+                    },
                   ),
                 );
+          final shelfMode = fromShelf;
           return SafeArea(
             child: Column(
               children: [
+                // 官方编辑头（`editHeaderLayout`）：全选/取消全选 + 删除，
+                // 右上角「编辑/完成」。收藏频道没有这套（官方只在浏览历史有）。
+                if (!shelfMode && filtered.isNotEmpty)
+                  _editHeader(filtered),
                 if (!fromShelf) ...[
                   // 官方 chips 行：固定在悬浮顶栏之下（grid 的 padding 让位）。
                   Padding(
@@ -2253,6 +2275,117 @@ class _LocalListState extends State<_LocalList> {
           );
         },
       ),
+    );
+  }
+
+  /// 官方删除要按**记录身份**（kind + contentId），不能用下标。
+  String _keyOf(MediaItem item) => '${item.kind}:${item.id}';
+
+  List<({String contentId, String kind})> get _targets => [
+    for (final entry in _historyEntries())
+      (
+        contentId: historyContentId(entry),
+        kind: entry['kind']?.toString() ?? 'video',
+      ),
+  ];
+
+  /// 官方编辑头（`editHeaderLayout`）：进编辑后顶部换成「全选」+「删除」，
+  /// 未进编辑时只显示「编辑」。收藏频道没有这套。
+  Widget _editHeader(List<MediaItem> filtered) {
+    final allSelected =
+        _editing && _selected.length == filtered.length && filtered.isNotEmpty;
+    return Padding(
+      key: const Key('drama_recent_edit_header'),
+      padding: const EdgeInsets.fromLTRB(16, 96, 16, 0),
+      child: Row(
+        children: [
+          if (_editing) ...[
+            GestureDetector(
+              key: const Key('drama_recent_select_all'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() {
+                if (allSelected) {
+                  _selected.clear();
+                } else {
+                  _selected
+                    ..clear()
+                    ..addAll(filtered.map(_keyOf));
+                }
+              }),
+              child: Text(
+                allSelected ? '取消全选' : '全选',
+                style: const TextStyle(fontSize: 14, color: Color(0xFFFA6725)),
+              ),
+            ),
+            const Spacer(),
+            GestureDetector(
+              key: const Key('drama_recent_delete'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _selected.isEmpty ? null : _confirmDelete,
+              child: Text(
+                '删除',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: _selected.isEmpty
+                      ? const Color(0x66FFFFFF)
+                      : const Color(0xFFFA6725),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+          ],
+          GestureDetector(
+            key: const Key('drama_recent_edit'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() {
+              _editing = !_editing;
+              if (!_editing) _selected.clear();
+            }),
+            child: Text(
+              _editing ? '完成' : '编辑',
+              style: const TextStyle(fontSize: 14, color: Color(0xB3FFFFFF)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 官方删除前先确认（`Te()` 的 `ConfirmDialogBuilder`，标题
+  /// 「确定删除浏览历史吗？」，确认后删除并 Toast「删除成功」）。
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确定删除浏览历史吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            key: const Key('drama_recent_delete_confirm'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final selected = _selected.toSet();
+    // 只删选中的记录：按 kind+contentId 精确匹配，其它记录一律不动。
+    final removed = await LibraryStore.instance.removeHistoryEntries(
+      _targets.where((target) => selected.contains(
+        '${target.kind}:${target.contentId}',
+      )),
+    );
+    if (!mounted) return;
+    setState(() {
+      _selected.clear();
+      if (removed == 0) _editing = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(removed > 0 ? '删除成功' : '删除失败')),
     );
   }
 
@@ -2331,11 +2464,15 @@ class _DistributeCard extends StatelessWidget {
   final String? subtitle;
   final VoidCallback onTap;
 
+  /// 编辑模式下的多选态（官方编辑态卡片右上角打勾）。
+  final bool selected;
+
   const _DistributeCard({
     super.key,
     required this.item,
     required this.onTap,
     this.subtitle,
+    this.selected = false,
   });
 
   @override
@@ -2415,6 +2552,22 @@ class _DistributeCard extends StatelessWidget {
                               height: 1.1,
                             ),
                           ),
+                        ),
+                      ),
+                    ),
+                  // 编辑态多选框（右上角，官方选中打勾）。
+                  if (selected)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFA6725),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Padding(
+                          padding: EdgeInsets.all(2),
+                          child: Icon(Icons.check, size: 14, color: Colors.white),
                         ),
                       ),
                     ),

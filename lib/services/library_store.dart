@@ -114,6 +114,13 @@ class LibraryStore implements ReaderStore {
     return write;
   }
 
+  /// 与 [_serialize] 同一条队列，但把结果返回给调用方（删除要报条数）。
+  Future<T> _serializeResult<T>(Future<T> Function() action) {
+    final write = _writes.then<T>((_) => action());
+    _writes = write.then<void>((_) {}).catchError((Object _) {});
+    return write;
+  }
+
   /// Hive-backed notifications for retained tabs. Visible pages update after
   /// writes; hidden pages defer their snapshots until the next visit.
   ValueListenable<Box<dynamic>> get historyListenable => _histBox.listenable();
@@ -398,6 +405,48 @@ class LibraryStore implements ReaderStore {
   Future<void> forgetWatchedEpisodes(String id) {
     if (id.isEmpty) return Future<void>.value();
     return _serialize(() => _watchedBox.delete(id));
+  }
+
+  /// 删除单条观看记录（最近页的编辑/删除，官方 `w0.I0()` 调删除接口后
+  /// 本地也要去掉）。返回是否真的删掉了一条。
+  ///
+  /// 只按 **contentId/kind** 精确匹配，不碰其它记录——工单要求「保护未选中
+  /// 的历史记录」。
+  Future<bool> removeHistoryEntry(String contentId, String kind) async {
+    if (contentId.isEmpty) return false;
+    return _serializeResult(() async {
+      final keys = <dynamic>[];
+      for (final key in _histBox.keys) {
+        final record = _historyRecord(_histBox.get(key), id: key.toString());
+        if (record == null) continue;
+        if (_historyIdentity(record) == (kind, contentId)) keys.add(key);
+      }
+      if (keys.isEmpty) return false;
+      await _histBox.deleteAll(keys);
+      return true;
+    });
+  }
+
+  /// 批量删除（编辑模式的「删除」）。返回删除条数。
+  Future<int> removeHistoryEntries(
+    Iterable<({String contentId, String kind})> targets,
+  ) async {
+    final wanted = targets
+        .where((target) => target.contentId.isNotEmpty)
+        .map((target) => (target.kind, target.contentId))
+        .toSet();
+    if (wanted.isEmpty) return 0;
+    return _serializeResult(() async {
+      final keys = <dynamic>[];
+      for (final key in _histBox.keys) {
+        final record = _historyRecord(_histBox.get(key), id: key.toString());
+        if (record == null) continue;
+        if (wanted.contains(_historyIdentity(record))) keys.add(key);
+      }
+      if (keys.isEmpty) return 0;
+      await _histBox.deleteAll(keys);
+      return keys.length;
+    });
   }
 
   Future<void> clearHistory() {
