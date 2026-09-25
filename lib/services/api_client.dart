@@ -21,6 +21,7 @@ import '../models/series_detail.dart';
 import 'backend_service.dart';
 import 'backend_transport.dart';
 import 'chapter_text_formatter.dart';
+import 'request_gate.dart';
 
 /// A parsed homepage page. Keeping the cursor next to the parsed cards lets
 /// callers update the feed atomically after checking that the request is
@@ -58,6 +59,10 @@ class ApiClient {
                : BackendService.instance.transport);
 
   static final ApiClient instance = ApiClient();
+
+  /// Per-instance gate: coalescing must not reach across test instances, and
+  /// a restarted backend service gets a fresh flight table.
+  final RequestGate _gate = RequestGate();
 
   /// Zone key carrying the [BackendRequest] a call belongs to.
   static final Object _requestZoneKey = Object();
@@ -132,29 +137,40 @@ class ApiClient {
   /// [method] exists for the few bridge endpoints that are POST-only upstream
   /// (comment replies); callers still pass their arguments as query parameters,
   /// which the backend reads from the URL either way.
+  ///
+  /// Every call passes through [RequestGate]: identical concurrent GETs share
+  /// one upstream flight, and no more than sixteen talk to the core at once.
   Future<http.Response> _get(
     String url, {
     Duration? timeout,
     String method = 'GET',
     Uint8List? body,
-  }) async {
+  }) {
     // The transport owns the deadline: cancelling drops the in-flight Rust
     // dispatch (and therefore the upstream request, its retry backoff and any
     // pending write), so a late result can never be published.
     final request = Zone.current[_requestZoneKey];
-    final response = await _transport.send(
-      method,
-      Uri.parse(url),
-      body: body,
-      timeout: timeout ?? _timeout,
+    final effectiveTimeout = timeout ?? _timeout;
+    return _gate.run(
+      '$method $url ${effectiveTimeout.inMilliseconds}',
       request: request is BackendRequest ? request : null,
-    );
-    return http.Response.bytes(
-      response.body,
-      response.statusCode,
-      headers: response.contentType.isEmpty
-          ? const {}
-          : {'content-type': response.contentType},
+      share: method == 'GET' && body == null,
+      send: () async {
+        final response = await _transport.send(
+          method,
+          Uri.parse(url),
+          body: body,
+          timeout: effectiveTimeout,
+          request: request is BackendRequest ? request : null,
+        );
+        return http.Response.bytes(
+          response.body,
+          response.statusCode,
+          headers: response.contentType.isEmpty
+              ? const {}
+              : {'content-type': response.contentType},
+        );
+      },
     );
   }
 
