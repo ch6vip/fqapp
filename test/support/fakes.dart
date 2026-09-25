@@ -98,6 +98,7 @@ class FakeNativePlayer extends NativePlayer {
   bool isBuffering = false;
   bool disposed = false;
   double rate = 1;
+  double volume = 1;
   final positions = StreamController<Duration>.broadcast(sync: true);
   final durations = StreamController<Duration>.broadcast(sync: true);
   final playingEvents = StreamController<bool>.broadcast(sync: true);
@@ -178,6 +179,12 @@ class FakeNativePlayer extends NativePlayer {
   Future<void> setRate(double rate) async {
     calls.add('rate:$rate');
     this.rate = rate;
+  }
+
+  @override
+  Future<void> setVolume(double volume) async {
+    calls.add('volume:$volume');
+    this.volume = volume;
   }
 
   @override

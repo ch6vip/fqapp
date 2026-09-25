@@ -98,6 +98,13 @@ class VideoPlayerChrome extends StatefulWidget {
   final List<PlayletComment> hotComments;
   final ValueChanged<PlayletComment>? onHotCommentTap;
 
+  /// 更多面板的开关行（官方 `ShortSeriesMorePanelDialogV2`）：
+  /// 画面撑满 / 默认静音。为 null 时该行不出现。
+  final bool fillScreen;
+  final ValueChanged<bool>? onFillScreenChanged;
+  final bool defaultMute;
+  final ValueChanged<bool>? onDefaultMuteChanged;
+
   /// 弹幕（官方 \`DanmakuRequestHelper\`）：时间轴条目 + 开关状态。
   /// 发送回调为 null 时不出现弹幕入口。
   /// 分享（官方右栏第四项 `SeriesShareView`）：计数 0 时文案「分享」
@@ -156,6 +163,10 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onHotCommentTap,
     this.shareCount = 0,
     this.onShare,
+    this.fillScreen = false,
+    this.onFillScreenChanged,
+    this.defaultMute = true,
+    this.onDefaultMuteChanged,
     this.danmaku = const [],
     this.danmakuEnabled = true,
     this.onToggleDanmaku,
@@ -857,6 +868,34 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     ],
                   ),
                 ],
+                // 官方更多面板：默认静音行（`tm3.b`，只存在内存里）。
+                if (widget.onDefaultMuteChanged != null) ...[
+                  const SizedBox(height: 12),
+                  _sheetSwitch(
+                    'player-more-mute-row',
+                    'player-more-mute-switch',
+                    '默认静音',
+                    widget.defaultMute,
+                    onChanged: (value) {
+                      widget.onDefaultMuteChanged!.call(value);
+                      setSheetState(() {});
+                    },
+                  ),
+                ],
+                // 官方更多面板：画面撑满行（SP `is_fill_screen`）。
+                if (widget.onFillScreenChanged != null) ...[
+                  const SizedBox(height: 12),
+                  _sheetSwitch(
+                    'player-more-fill-row',
+                    'player-more-fill-switch',
+                    '画面撑满',
+                    widget.fillScreen,
+                    onChanged: (value) {
+                      widget.onFillScreenChanged!.call(value);
+                      setSheetState(() {});
+                    },
+                  ),
+                ],
                 // 官方在横屏全屏底栏有「发弹幕」入口
                 // （`lk3/u0.java:1096-1119`），文案「发弹幕」
                 // （strings.xml:8043）。
@@ -902,6 +941,30 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
     if (mounted) _scheduleHide();
   }
+
+  /// 官方更多面板的开关行：整行可点、Switch 自身由行承担点击
+  /// （官方的 `SwitchButtonV2` 都调用 `setClickable(false)`）。
+  Widget _sheetSwitch(
+    String rowKey,
+    String switchKey,
+    String label,
+    bool value, {
+    required ValueChanged<bool> onChanged,
+  }) => GestureDetector(
+    key: ValueKey(rowKey),
+    behavior: HitTestBehavior.opaque,
+    onTap: () => onChanged(!value),
+    child: Row(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 14, color: Color(0xFF1B1B1B)),
+        ),
+        const Spacer(),
+        Switch(key: ValueKey(switchKey), value: value, onChanged: onChanged),
+      ],
+    ),
+  );
 
   /// 官方弹幕输入：占位「发条友善的弹幕吧」，长度上下限来自
   /// `VideoDanmakuSettingConfig`（超限文案「弹幕最多/最少输入%d个字」）。
@@ -1135,6 +1198,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _systemUiUpdates = operation.catchError((Object _) {});
     await _systemUiUpdates;
   }
+
+  /// 官方「画面撑满」（SP `is_fill_screen`）：只改画面铺排，
+  /// 不打断播放。`fillsFrame` 为假的横版片源会被降级成按宽度铺满，
+  /// 与官方 `ShortVideoCropConfig.landscapeRatio` 的规则一致。
+  VideoFit get _videoFit => widget.fillScreen && !_locked
+      ? VideoFit.fillFrame
+      : VideoFit.contain;
 
   /// The player's reported video size; 0x0 until the media has loaded.
   Size get _playerVideoSize => Size(
@@ -1691,7 +1761,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         window: window,
         insets: insets,
         videoSize: _videoSize,
-        fit: VideoFit.contain,
+        // 官方「画面撑满」只换铺排方式，不动解码与进度：本地用同一套
+        // PlayerVideoLayout，切换 fillFrame/contain 即可，无需重新起播。
+        fit: _videoFit,
         panelFraction: fraction,
         restingPanelFraction: _panelRestFraction,
         fullScreen: _fullScreen,

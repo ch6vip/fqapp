@@ -23,6 +23,7 @@ class PlayerStyleConfig {
     this.padNewBottomStyle = false,
     this.reverseClearScreen = false,
     this.landscapeLockEnabled = false,
+    this.defaultVideoSizeAspectFit = false,
   });
 
   /// 无配置时的形态：**旧底栏**、无横幅、无清屏反转、无横屏锁——
@@ -45,6 +46,11 @@ class PlayerStyleConfig {
   final bool reverseClearScreen;
   final bool landscapeLockEnabled;
 
+  /// 官方 `short_video_setting_opt_v679.default_video_size_aspect_fit`
+  /// （默认 false）。它只决定「画面撑满」的缺省值
+  /// （`FillScreenDataManager.java:32`）。
+  final bool defaultVideoSizeAspectFit;
+
   /// 官方 `PlayerBottomStyleConfig.a()`：两个字段任一为真即走新底栏。
   bool get newBottomStyle => useNewPlayerBottomStyle || hasBanner;
 
@@ -52,12 +58,14 @@ class PlayerStyleConfig {
     final bottom = json['player_bottom_style_config'];
     final reverse = json['func_reverse_of_clear_screen_v691'];
     final landscape = json['landscape_func_config_v705'];
+    final fill = json['short_video_setting_opt_v679'];
     return PlayerStyleConfig(
       useNewPlayerBottomStyle: _bool(bottom, 'use_new_player_bottom_style'),
       hasBanner: _bool(bottom, 'has_banner'),
       padNewBottomStyle: json['pad_new_player_bottom_style'] == true,
       reverseClearScreen: _bool(reverse, 'reverse'),
       landscapeLockEnabled: _bool(landscape, 'enable_lock'),
+      defaultVideoSizeAspectFit: _bool(fill, 'default_video_size_aspect_fit'),
     );
   }
 

@@ -14,7 +14,9 @@ import 'support/controlled_player.dart';
 
 void main() {
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    // 官方画面撑满的缺省值取决于方向（非竖屏时 = !default_video_size_aspect_fit
+    // = true）。本套用例验的是 contain 铺排，所以显式把 SP 置成关闭。
+    SharedPreferences.setMockInitialValues({'is_fill_screen': false});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('fqapp/native_player'),

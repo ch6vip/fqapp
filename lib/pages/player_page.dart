@@ -8,6 +8,7 @@ import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
+import '../services/player_panel_preferences.dart';
 import '../services/playlet_share.dart';
 import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
@@ -118,6 +119,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 0 表示「还没有人评论」，入口按官方文案显示「评论」。
   int _commentCount = 0;
   int _danmakuGeneration = 0;
+  /// 官方「画面撑满」（SP `is_fill_screen`）。
+  bool _fillScreen = false;
+  /// 官方「默认静音」：**不落盘**，只在进程内（`tm3/b.java:17-20`）。
+  bool _defaultMute = PlayerPanelPreferences.defaultMute;
 
   PlayerHistory get _history =>
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
@@ -284,6 +289,51 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       diggComment: _diggComment,
       replyComment: _replyComment,
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 画面撑满的缺省值取决于竖/横屏（`FillScreenDataManager.a()` 的
+    // `e.q()` 分支），因此要等 MediaQuery 可用之后才能读。
+    unawaited(_loadPanelPreferences());
+  }
+
+  /// 更多面板的两个开关：画面撑满读 SP，默认静音取进程内静态值。
+  ///
+  /// 两者都只改播放器的表现，不动进度：官方切换后不 pause 也不 seek
+  /// （画面撑满 `FillScreenDataManager`；默认静音 `tm3/b`）。
+  Future<void> _loadPanelPreferences() async {
+    final portrait =
+        MediaQuery.orientationOf(context) == Orientation.portrait;
+    final fillScreen = await PlayerPanelPreferences.loadFillScreen(
+      portrait: portrait,
+    );
+    if (!mounted) return;
+    setState(() {
+      _fillScreen = fillScreen;
+      _defaultMute = PlayerPanelPreferences.defaultMute;
+    });
+  }
+
+  void _setFillScreen(bool enabled) {
+    setState(() => _fillScreen = enabled);
+    unawaited(PlayerPanelPreferences.saveFillScreen(enabled));
+  }
+
+  void _setDefaultMute(bool enabled) {
+    setState(() => _defaultMute = enabled);
+    PlayerPanelPreferences.setDefaultMute(enabled);
+    // 官方默认静音是「起播时的音量」，切换时立刻作用到当前播放器，
+    // 与官方「开启时默认静音/关闭默认静音」的即时反馈一致。
+    final player = _player;
+    if (player != null) {
+      unawaited(
+        player.setVolume(enabled ? 0 : 1).catchError((Object _) {
+          // 音量设置失败不影响播放，也不该冒泡到 onError。
+        }),
+      );
+    }
   }
 
   /// 官方开关落盘（`video_danmaku_switch_sp`）。
@@ -686,6 +736,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (!_current(generation, player)) return;
       await player.setRate(rate);
       if (!_current(generation, player)) return;
+      // 官方「默认静音」是**起播音量**（`tm3/b.java:17-20` 的静态标志），
+      // 每次新建播放器都要重新套一遍。音量失败不能拖垮播放：
+      // 官方音量只是表现层，起播照旧。
+      try {
+        await player.setVolume(_defaultMute ? 0 : 1);
+      } catch (_) {
+        // 忽略：默认音量不成立时保持播放器的默认音量。
+      }
+      if (!_current(generation, player)) return;
 
       final savedIndex = resumeEpisodeIndex(saved, widget.eps);
       final rawPosition = saved?['position'];
@@ -928,6 +987,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     // 没有该数据源，因此按官方的「无计数」分支显示「分享」
     // （`SeriesShareView.java:123-129`），不伪造数字。
     onShare: widget.shortSeries ? _openShare : null,
+    fillScreen: _fillScreen,
+    onFillScreenChanged: widget.shortSeries ? _setFillScreen : null,
+    defaultMute: _defaultMute,
+    onDefaultMuteChanged: widget.shortSeries ? _setDefaultMute : null,
     danmaku: _danmaku.entries,
     danmakuEnabled: _danmakuEnabled,
     onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,
