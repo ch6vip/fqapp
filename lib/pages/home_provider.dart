@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/backend_transport.dart';
+import '../services/home_feed_cache.dart';
 import '../services/user_facing_error.dart';
 
 typedef HomepageLoader =
@@ -162,6 +165,7 @@ class HomeNotifier extends Notifier<HomeState> {
   final SearchTabsLoader _searchLoader;
   final CategorySearchLoader _mangaSearchLoader;
   final CategorySearchLoader _manjuSearchLoader;
+  final HomeFeedCache? _feedCache;
   final int initialTabIndex;
 
   HomeNotifier({
@@ -169,8 +173,10 @@ class HomeNotifier extends Notifier<HomeState> {
     SearchTabsLoader? searchLoader,
     CategorySearchLoader? mangaSearchLoader,
     CategorySearchLoader? manjuSearchLoader,
+    HomeFeedCache? feedCache,
     this.initialTabIndex = 0,
-  }) : _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
+  }) : _feedCache = feedCache ?? HomeFeedCache.instance,
+       _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
        _searchLoader = searchLoader ?? ApiClient.instance.searchTabs,
        _mangaSearchLoader =
            mangaSearchLoader ??
@@ -229,8 +235,12 @@ class HomeNotifier extends Notifier<HomeState> {
     final tabIndex = state.tabIndex;
     final generation = ++_generation;
     final feed = _feedFor(tabIndex)..reset();
+    // Stale-while-revalidate: show the last rendered cards while the network
+    // refresh runs. The cursors stay reset, so the response replaces page one.
+    final snapshot = _feedCache?.load(tabIndex);
+    if (snapshot != null) feed.items = snapshot.items;
     state = state.copyWith(
-      items: const [],
+      items: feed.items,
       isLoading: true,
       isLoadMore: false,
       hasMore: true,
@@ -257,6 +267,9 @@ class HomeNotifier extends Notifier<HomeState> {
         isLoadMore: false,
         hasMore: feed.hasMore,
       );
+      unawaited(
+        _feedCache?.save(tabIndex, feed.items, hasMore: feed.hasMore),
+      );
     } catch (error) {
       if (!ref.mounted ||
           generation != _generation ||
@@ -264,6 +277,8 @@ class HomeNotifier extends Notifier<HomeState> {
         return;
       }
       feed.hasMore = false;
+      // The seeded snapshot (or nothing, on a cold start) stays on screen;
+      // the error surface only takes over when there is nothing to show.
       state = state.copyWith(
         error: userFacingError(error),
         isLoading: false,
@@ -317,6 +332,9 @@ class HomeNotifier extends Notifier<HomeState> {
         items: feed.items,
         isLoadMore: false,
         hasMore: feed.hasMore,
+      );
+      unawaited(
+        _feedCache?.save(tabIndex, feed.items, hasMore: feed.hasMore),
       );
     } catch (_) {
       if (!ref.mounted ||

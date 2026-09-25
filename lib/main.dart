@@ -12,6 +12,7 @@ import 'pages/mine_page.dart';
 import 'services/app_theme.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
+import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/shelf_store.dart';
 import 'services/swipe_guide_store.dart';
@@ -42,6 +43,14 @@ Future<void> _initializeLocalData() async {
     await SwipeGuideStore.instance.init();
   } catch (_) {
     // SwipeGuideStore 自己把「不可用」当成「未显示」处理。
+  }
+  // 首页 feed 的冷启动缓存也是可选数据：打不开就当没有缓存，
+  // 首页退化为先加载再显示，其余行为不变。
+  try {
+    HomeFeedCache.hiveReady = true;
+    await HomeFeedCache.instance.warmUp();
+  } catch (_) {
+    // HomeFeedCache 自己把「不可用」当成「没有缓存」处理。
   }
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see

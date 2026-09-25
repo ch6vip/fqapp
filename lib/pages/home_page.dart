@@ -131,7 +131,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               constraints: const BoxConstraints(maxWidth: 840),
               child: SafeArea(
                 bottom: false,
-                child: state.error != null
+                child: state.error != null && state.items.isEmpty
                     ? HomeFeedError(
                         headline: '故事还在路上',
                         message: '暂时无法加载推荐，稍后再试一次。',

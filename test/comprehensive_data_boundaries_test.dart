@@ -55,6 +55,8 @@ void main() {
           // 否则引导的循环 Lottie 动画会让下面的 pumpAndSettle 永远不 settle。
           await SwipeGuideStore.instance.init();
           await SwipeGuideStore.instance.markShown();
+          // 首页 feed 的冷启动缓存 box 也在 bootstrap 里开箱。
+          await Hive.openBox<dynamic>('home_feed_cache_v1');
           await history.put('kept-book', record);
         });
         const channel = MethodChannel('plugins.flutter.io/path_provider');
