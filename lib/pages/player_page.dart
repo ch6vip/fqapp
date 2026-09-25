@@ -19,6 +19,7 @@ import '../services/player_style_config.dart';
 import '../services/swipe_guide_store.dart';
 import '../models/book_detail.dart' show formatCounter;
 import '../widgets/player/playlet_comment_panel.dart';
+import '../widgets/player/playlet_danmaku_layer.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
@@ -114,6 +115,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 官方入口计数（`SeriesCommentView` 读 `du4.a.e()` 并回写 videoData）；
   /// 0 表示「还没有人评论」，入口按官方文案显示「评论」。
   int _commentCount = 0;
+  int _danmakuGeneration = 0;
 
   PlayerHistory get _history =>
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
@@ -159,12 +161,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     unawaited(_loadBandExtras());
     unawaited(_loadHotComments());
+    unawaited(_loadDanmakuPreference());
+    unawaited(_loadDanmaku());
   }
 
   /// 热评（官方 `SeriesHotCommentView`）：与评论计数同源，来自
   /// `comment/list` 的 `comment_source=4/count=20` 那次请求，
   /// 由 [hotOf] 在本地筛出（**不是接口字段**）。
   List<PlayletComment> _hotComments = const [];
+
+  /// 弹幕（官方 `DanmakuRequestHelper`）：按 vid 取数，时间单位毫秒。
+  /// 时间轴对象负责切集清空与去重（官方 container/l.java 的规则）。
+  final DanmakuTimeline _danmaku = DanmakuTimeline();
+  bool _danmakuEnabled = DanmakuPreference.defaultEnabled;
 
   /// 底部 band 装饰，一个 `seriesDetail` 请求全出：完结状态
   /// （`series_status`：官方 `SeriesStatus` 1=已完结/0=更新中/3=今日更新/
@@ -273,6 +282,74 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       diggComment: _diggComment,
       replyComment: _replyComment,
     );
+  }
+
+  /// 官方开关落盘（`video_danmaku_switch_sp`）。
+  Future<void> _loadDanmakuPreference() async {
+    final enabled = await DanmakuPreference.load();
+    if (!mounted) return;
+    setState(() => _danmakuEnabled = enabled);
+  }
+
+  /// 官方取数（`DanmakuRequestHelper.java:314-329`）：`:group_id` 是当前
+  /// vid，剧集 id 进 `business_param.book_id`，时间毫秒。best-effort：
+  /// 失败不显示弹幕，不影响播放。
+  Future<void> _loadDanmaku() async {
+    if (!widget.shortSeries || widget.eps.isEmpty) return;
+    final vid = widget.eps[_index].itemId;
+    if (vid.isEmpty) return;
+    final request = ++_danmakuGeneration;
+    try {
+      final page = await ApiClient.instance.playletDanmaku(
+        vid,
+        seriesId: widget.bookId,
+        startOffsetMs: _player?.position.inMilliseconds ?? 0,
+        duration: _duration,
+      );
+      if (!mounted || request != _danmakuGeneration) return;
+      setState(() => _danmaku.load(danmakuFromPage(page), replace: true));
+    } catch (_) {
+      // 弹幕是装饰层，取数失败只是不显示。
+    }
+  }
+
+  /// 官方开关切换：落盘 + Toast 文案（`i95/i.java:339-346`）。
+  Future<void> _toggleDanmaku() async {
+    final enabled = !_danmakuEnabled;
+    setState(() => _danmakuEnabled = enabled);
+    await DanmakuPreference.save(enabled);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(enabled ? danmakuEnabledToast : danmakuDisabledToast),
+      ),
+    );
+  }
+
+  /// 发弹幕（官方 `comment/add`，`commit_source=1500`）：成功后按当前进度
+  /// 就地插入，等价于官方的整池重灌。
+  Future<void> _sendDanmaku(String text) async {
+    if (widget.eps.isEmpty) return;
+    final vid = widget.eps[_index].itemId;
+    if (vid.isEmpty) return;
+    final offset = _player?.position.inMilliseconds ?? 0;
+    await ApiClient.instance.addPlayletDanmaku(
+      vid,
+      seriesId: widget.bookId,
+      text: text,
+      offsetMs: offset,
+    );
+    if (!mounted) return;
+    setState(() {
+      _danmaku.entries.add(
+        PlayletComment(
+          id: 'local-${DateTime.now().microsecondsSinceEpoch}',
+          text: text,
+          dataType: UgcRelativeType.seriesVideo,
+          offsetMs: offset,
+        ),
+      );
+    });
   }
 
   /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。
@@ -763,7 +840,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     setState(() {
       _watched.add(_index);
       _index = index;
+      // 切集：官方清时间线整池重灌（container/l.java:1496-1528）。
+      _danmaku.reset();
     });
+    unawaited(_loadDanmaku());
     // _loadVideo invalidates prior work synchronously; no network or history
     // operation may delay recording the user's newest target.
     return _loadVideo();
@@ -811,6 +891,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     onComments: widget.shortSeries ? _openComments : null,
     hotComments: _hotComments,
     onHotCommentTap: widget.shortSeries ? _openHotComment : null,
+    danmaku: _danmaku.entries,
+    danmakuEnabled: _danmakuEnabled,
+    onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,
+    onSendDanmaku: widget.shortSeries ? _sendDanmaku : null,
     newPlayerBottomStyle: style.useNewPlayerBottomStyle,
     hasBanner: style.hasBanner,
     padNewBottomStyle: style.padNewBottomStyle,

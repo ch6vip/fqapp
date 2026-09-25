@@ -12,7 +12,9 @@ import '../models/media_item.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
+import '../services/user_facing_error.dart';
 import '../models/playlet_comment.dart';
+import 'player/playlet_danmaku_layer.dart';
 import 'player/playlet_hot_comment_bar.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
@@ -95,6 +97,13 @@ class VideoPlayerChrome extends StatefulWidget {
   final List<PlayletComment> hotComments;
   final ValueChanged<PlayletComment>? onHotCommentTap;
 
+  /// 弹幕（官方 \`DanmakuRequestHelper\`）：时间轴条目 + 开关状态。
+  /// 发送回调为 null 时不出现弹幕入口。
+  final List<PlayletComment> danmaku;
+  final bool danmakuEnabled;
+  final VoidCallback? onToggleDanmaku;
+  final Future<void> Function(String text)? onSendDanmaku;
+
   /// 底部 band 的两块服务端装饰（官方截图第二十二轮）：完结状态
   /// （「选集 · 已完结 · 全82集」胶囊，`@string/ag_`/`e6r`）与
   /// 原著书卡（「原著《…》」，`/related` 的 book 关联）。缺省就不显示。
@@ -139,6 +148,10 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onComments,
     this.hotComments = const [],
     this.onHotCommentTap,
+    this.danmaku = const [],
+    this.danmakuEnabled = true,
+    this.onToggleDanmaku,
+    this.onSendDanmaku,
   });
 
   @override
@@ -762,40 +775,99 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-          child: Row(
-            key: const ValueKey('player-more-rate-row'),
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 10),
-                child: Text(
-                  '倍速',
-                  style: TextStyle(fontSize: 14, color: Color(0xFF1B1B1B)),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          top: false,
+          // 面板会随大字体变高；矮窗口下必须可滚，否则 RenderFlex 溢出
+          // （官方面板本身就是 RecyclerView）。
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  key: const ValueKey('player-more-rate-row'),
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (final rate in PlayerPreferences.playbackRates)
-                      ChoiceChip(
-                        label: Text(_rateChipLabel(rate)),
-                        selected: rate == _rate,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: Text(
+                        '倍速',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF1B1B1B),
                         ),
-                        onSelected: (_) => Navigator.pop(context, rate),
                       ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final rate in PlayerPreferences.playbackRates)
+                            ChoiceChip(
+                              label: Text(_rateChipLabel(rate)),
+                              selected: rate == _rate,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              onSelected: (_) => Navigator.pop(context, rate),
+                            ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
-              ),
-            ],
+                // 官方更多面板第 5 行：弹幕开关（`oi3/k.java:554-568`，
+                // SP `video_danmaku_switch_sp/key_enable_danmaku_by_user`）。
+                // 只有宿主提供了开关回调时才出现。
+                if (widget.onToggleDanmaku != null) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    key: const ValueKey('player-more-danmaku-row'),
+                    children: [
+                      const Text(
+                        '弹幕',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF1B1B1B),
+                        ),
+                      ),
+                      const Spacer(),
+                      Switch(
+                        key: const ValueKey('player-more-danmaku-switch'),
+                        value: widget.danmakuEnabled,
+                        onChanged: widget.onToggleDanmaku == null
+                            ? null
+                            : (_) {
+                                widget.onToggleDanmaku!.call();
+                                setSheetState(() {});
+                              },
+                      ),
+                    ],
+                  ),
+                ],
+                // 官方在横屏全屏底栏有「发弹幕」入口
+                // （`lk3/u0.java:1096-1119`），文案「发弹幕」
+                // （strings.xml:8043）。
+                if (widget.onSendDanmaku != null) ...[
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      key: const ValueKey('player-more-danmaku-send'),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        unawaited(_publishDanmaku());
+                      },
+                      child: const Text('发弹幕'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
@@ -819,6 +891,27 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           ).showSnackBar(const SnackBar(content: Text('倍速已生效，但未能保存设置')));
         }
       }
+    }
+    if (mounted) _scheduleHide();
+  }
+
+  /// 官方弹幕输入：占位「发条友善的弹幕吧」，长度上下限来自
+  /// `VideoDanmakuSettingConfig`（超限文案「弹幕最多/最少输入%d个字」）。
+  Future<void> _publishDanmaku() async {
+    final send = widget.onSendDanmaku;
+    if (send == null) return;
+    final text = await showDialog<String>(
+      context: context,
+      builder: (context) => const _DanmakuComposer(),
+    );
+    if (text == null || text.isEmpty || !mounted) return;
+    try {
+      await send(text);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(userFacingError(error))));
     }
     if (mounted) _scheduleHide();
   }
@@ -1248,6 +1341,24 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   ),
                 ),
               ),
+              // 弹幕层：官方在竖屏画面内滚动，锁屏/清屏时隐藏
+              // （container/l.java 的渲染参数未取证，这里只放已证时间轴语义）。
+              if (widget.shortSeries &&
+                  widget.danmakuEnabled &&
+                  !_locked &&
+                  !_clearScreen &&
+                  widget.danmaku.isNotEmpty)
+                Positioned.fill(
+                  child: SafeArea(
+                    bottom: false,
+                    child: PlayletDanmakuLayer(
+                      key: const ValueKey('player-danmaku-layer'),
+                      entries: widget.danmaku,
+                      position: _position,
+                      rate: _rate,
+                    ),
+                  ),
+                ),
               // 「左右滑动可调整进度」首次引导（`@string/cha`，距底 138dp，
               // `o.java K6` 的引导层）。
               if (widget.showSeekHint && unobstructed && widget.enabled)
@@ -2350,3 +2461,65 @@ String _rateText(double rate) => rate == 1 ? '倍速' : '${_rateLabel(rate)}x';
 String _rateChipLabel(double rate) => '${_rateLabel(rate)}x';
 
 String _time(Duration value) => formatPlaybackTime(value);
+
+
+/// 官方弹幕输入框（占位「发条友善的弹幕吧」；超出
+/// `VideoDanmakuSettingConfig` 的上下限时按官方文案提示）。
+///
+/// 单独做成 StatefulWidget 是因为 `TextEditingController` 必须活到
+/// 弹窗退场动画结束，直接在调用处 dispose 会触发
+/// 「A TextEditingController was used after being disposed」。
+class _DanmakuComposer extends StatefulWidget {
+  const _DanmakuComposer();
+
+  @override
+  State<_DanmakuComposer> createState() => _DanmakuComposerState();
+}
+
+class _DanmakuComposerState extends State<_DanmakuComposer> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final text = _controller.text.trim();
+    final error = danmakuLengthError(
+      text.characters.length,
+      min: 1,
+      max: danmakuMaxLength,
+    );
+    if (error.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    Navigator.pop(context, text);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('发弹幕'),
+    content: TextField(
+      key: const ValueKey('danmaku-input'),
+      controller: _controller,
+      autofocus: true,
+      // 不用 maxLength 截断：官方是保留文本并提示
+      // 「弹幕最多输入%d个字」，截断会让用户看不到自己打了什么。
+      decoration: const InputDecoration(hintText: danmakuHint, counterText: ''),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      TextButton(
+        key: const ValueKey('danmaku-send'),
+        onPressed: _submit,
+        child: const Text('发送'),
+      ),
+    ],
+  );
+}
