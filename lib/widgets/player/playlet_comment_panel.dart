@@ -40,6 +40,8 @@ class PlayletCommentPanel extends StatefulWidget {
     this.initialTotal = 0,
     this.focusCommentId = '',
     this.submitComment,
+    this.diggComment,
+    this.replyComment,
   });
 
   final String seriesId;
@@ -58,6 +60,12 @@ class PlayletCommentPanel extends StatefulWidget {
   /// 发表评论的回调；为 null 时输入条提示「当前页面不支持发表评论」。
   final Future<void> Function(String text)? submitComment;
 
+  /// 点赞/取消点赞（官方独立 digg 接口）。为 null 时点赞按钮只读。
+  final Future<void> Function(PlayletComment comment, bool liked)? diggComment;
+
+  /// 回复某条评论（官方 reply/add）。为 null 时不显示「回复」入口。
+  final Future<void> Function(PlayletComment comment, String text)? replyComment;
+
   /// 打开面板：官方入口在右侧竖栏，竖屏走底部弹窗。
   static Future<void> show(
     BuildContext context, {
@@ -66,6 +74,8 @@ class PlayletCommentPanel extends StatefulWidget {
     int total = 0,
     String focusCommentId = '',
     Future<void> Function(String text)? submitComment,
+    Future<void> Function(PlayletComment comment, bool liked)? diggComment,
+    Future<void> Function(PlayletComment comment, String text)? replyComment,
   }) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -80,6 +90,8 @@ class PlayletCommentPanel extends StatefulWidget {
       initialTotal: total,
       focusCommentId: focusCommentId,
       submitComment: submitComment,
+      diggComment: diggComment,
+      replyComment: replyComment,
     ),
   );
 
@@ -106,6 +118,9 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
   bool _hasMore = true;
   Object? _error;
   int _generation = 0;
+
+  /// 当前回复目标（官方编辑器会把「回复 @某某」带进输入框）。
+  PlayletComment? _replyTo;
 
   @override
   void initState() {
@@ -220,27 +235,94 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
           const Divider(height: 1),
           Expanded(child: _body()),
           const Divider(height: 1),
+          if (_replyTo != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '回复 @${_replyTo!.userName.isEmpty ? '匿名用户' : _replyTo!.userName}',
+                      key: const ValueKey('playlet-comment-reply-target'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF9499A0),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    key: const ValueKey('playlet-comment-reply-cancel'),
+                    tooltip: '取消回复',
+                    onPressed: () => setState(() => _replyTo = null),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: Color(0xFF9499A0),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           _CommentComposer(onSubmit: _submitComment),
         ],
       ),
     );
   }
 
-  /// 官方发布链路：`comment/add`（`p0.java:211-256`）。成功后重拉第一页，
-  /// 等价于官方的本地插入。
+  /// 官方发布链路：`comment/add`（`p0.java:211-256`）；有回复目标时走
+  /// `reply/add`（`nx1/d.java:217-231`）。成功后重拉第一页，等价于官方的
+  /// 本地插入（`gx1/n0.java:346-363`）。
   Future<String?> _submitComment(String text) async {
-    final submit = widget.submitComment;
-    if (submit == null) {
+    final target = _replyTo;
+    final submit = target == null ? widget.submitComment : null;
+    final reply = target == null ? null : widget.replyComment;
+    if (target == null && submit == null) {
       return '当前页面不支持发表评论';
     }
+    if (target != null && reply == null) {
+      return '当前页面不支持回复';
+    }
     try {
-      await submit(text);
+      if (target != null) {
+        await reply!(target, text);
+      } else {
+        await submit!(text);
+      }
     } catch (error) {
       // 失败原因按官方「保留草稿 + 提示」的语义回传输入条。
       return userFacingError(error);
     }
+    if (mounted) setState(() => _replyTo = null);
     await _load(reset: true);
     return null;
+  }
+
+  Future<void> Function(PlayletComment comment, bool liked)? get _diggCallback =>
+      widget.diggComment;
+
+  /// 乐观更新：先改本地再打接口，失败回滚（官方 `gx1/n0.java:489-509`）。
+  Future<void> _toggleDigg(PlayletComment comment) async {
+    final digg = _diggCallback;
+    if (digg == null) return;
+    final index = _comments.indexWhere((c) => c.id == comment.id);
+    if (index < 0) return;
+    final before = _comments[index];
+    final liked = !before.userDigg;
+    setState(() => _comments[index] = before.withDigg(liked));
+    try {
+      await digg(before, liked);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        final now = _comments.indexWhere((c) => c.id == comment.id);
+        if (now >= 0) _comments[now] = before;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(userFacingError(error))));
+    }
   }
 
   Widget _header() => Padding(
@@ -422,31 +504,59 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
                     ),
                   ),
                   const Spacer(),
-                  const Icon(
-                    Icons.thumb_up_alt_outlined,
-                    size: 14,
-                    color: Color(0xFF9499A0),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${comment.diggCount}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF9499A0),
+                  // 官方点赞选中态用橙色图标（与面板选中色一致），
+                  // 点击先本地乐观更新，失败再回滚（gx1/n0.java:489-509）。
+                  GestureDetector(
+                    key: ValueKey('playlet-comment-like-${comment.id}'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _diggCallback == null ? null : () => _toggleDigg(comment),
+                    child: Row(
+                      children: [
+                        Icon(
+                          comment.userDigg
+                              ? Icons.thumb_up_alt_rounded
+                              : Icons.thumb_up_alt_outlined,
+                          size: 14,
+                          color: comment.userDigg
+                              ? const Color(0xFFFA6725)
+                              : const Color(0xFF9499A0),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${comment.diggCount}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: comment.userDigg
+                                ? const Color(0xFFFA6725)
+                                : const Color(0xFF9499A0),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Icon(
-                    Icons.mode_comment_outlined,
-                    size: 14,
-                    color: Color(0xFF9499A0),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${comment.replyCount}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF9499A0),
+                  GestureDetector(
+                    key: ValueKey('playlet-comment-reply-${comment.id}'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: widget.replyComment == null
+                        ? null
+                        : () => setState(() => _replyTo = comment),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.mode_comment_outlined,
+                          size: 14,
+                          color: Color(0xFF9499A0),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${comment.replyCount}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF9499A0),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],

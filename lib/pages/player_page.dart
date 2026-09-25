@@ -211,12 +211,30 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       seriesId: widget.bookId,
       total: _commentCount,
       submitComment: _submitComment,
+      diggComment: _diggComment,
+      replyComment: _replyComment,
     );
   }
 
   /// 发表剧评（官方 `comment/add`）。数据走真实接口，成功后由面板重拉。
   Future<void> _submitComment(String text) =>
       ApiClient.instance.addPlayletComment(widget.bookId, text);
+
+  /// 回复剧评（官方 `reply/add`）。
+  Future<void> _replyComment(PlayletComment comment, String text) =>
+      ApiClient.instance.replyPlayletComment(
+        comment.id,
+        seriesId: widget.bookId,
+        text: text,
+      );
+
+  /// 点赞/取消点赞（官方独立 digg 接口）。
+  Future<void> _diggComment(PlayletComment comment, bool liked) =>
+      ApiClient.instance.diggPlayletComment(
+        comment.id,
+        liked: liked,
+        bookId: widget.bookId,
+      );
 
 
   /// 热评数据：官方与评论计数同源（`comment/list` 的
@@ -252,6 +270,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       total: _commentCount,
       focusCommentId: target,
       submitComment: _submitComment,
+      diggComment: _diggComment,
+      replyComment: _replyComment,
     );
   }
 

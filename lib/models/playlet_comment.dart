@@ -47,6 +47,7 @@ class PlayletComment {
     this.parentCommentId = '',
     this.playletRoleType = 0,
     this.offsetMs = 0,
+    this.userDigg = false,
   });
 
   final String id;
@@ -68,6 +69,29 @@ class PlayletComment {
 
   /// 弹幕在视频里的时间点（毫秒）。剧评恒为 0。
   final int offsetMs;
+
+  /// 官方 `SaaSComment.user_digg`（`SaaSComment.java`）：本人是否点过赞。
+  /// 热评点击与点赞按钮的选中态都依赖它。
+  final bool userDigg;
+
+  /// 点赞的本地乐观更新（官方 `gx1/n0.java:489-509`：先改状态与计数，
+  /// 接口失败再回滚）。计数不允许被减到负数。
+  PlayletComment withDigg(bool liked) => PlayletComment(
+    id: id,
+    text: text,
+    diggCount: liked
+        ? diggCount + (userDigg ? 0 : 1)
+        : (diggCount - (userDigg ? 1 : 0)).clamp(0, 1 << 31),
+    replyCount: replyCount,
+    createdAt: createdAt,
+    userName: userName,
+    userAvatar: userAvatar,
+    dataType: dataType,
+    parentCommentId: parentCommentId,
+    playletRoleType: playletRoleType,
+    offsetMs: offsetMs,
+    userDigg: liked,
+  );
 
   bool get isEmpty => text.trim().isEmpty;
 
@@ -123,6 +147,7 @@ class PlayletComment {
       ),
       parentCommentId: _string(parentCommentMap['comment_id']),
       playletRoleType: _int(expandMap['playlet_role_type']),
+      userDigg: statMap['user_digg'] == true,
     );
   }
 
@@ -146,6 +171,7 @@ class PlayletComment {
       parentCommentId: base.parentCommentId,
       playletRoleType: base.playletRoleType,
       offsetMs: _int(expandMap['offset']),
+      userDigg: base.userDigg,
     );
   }
 }
