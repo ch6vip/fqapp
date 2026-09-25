@@ -210,8 +210,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       context,
       seriesId: widget.bookId,
       total: _commentCount,
+      submitComment: _submitComment,
     );
   }
+
+  /// 发表剧评（官方 `comment/add`）。数据走真实接口，成功后由面板重拉。
+  Future<void> _submitComment(String text) =>
+      ApiClient.instance.addPlayletComment(widget.bookId, text);
+
 
   /// 热评数据：官方与评论计数同源（`comment/list` 的
   /// `comment_source=4/count=20` 那次请求，`a13/w.java:563-599`），
@@ -245,6 +251,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       seriesId: widget.bookId,
       total: _commentCount,
       focusCommentId: target,
+      submitComment: _submitComment,
     );
   }
 

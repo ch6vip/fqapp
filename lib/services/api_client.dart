@@ -821,6 +821,104 @@ class ApiClient {
     );
   }
 
+  /// 发短剧评论（官方 `comment/add`，`community/.../playlet/editor/p0.java:211-256`）。
+  ///
+  /// [dataType] 官方由调用点给：列表页普通具评用 `Book(2)`，
+  /// 快捷评星用 `FakeBook(3)`（`kr1/n.java:241`）。
+  Future<void> addPlayletComment(
+    String seriesId,
+    String text, {
+    int dataType = 2,
+    int score = 0,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/series/${Uri.encodeComponent(seriesId)}/comments/add', {
+        'text': text,
+        'data_type': '$dataType',
+        'score': '$score',
+      }),
+      method: 'POST',
+    );
+    _checkWrite(response);
+  }
+
+  /// 发弹幕（官方 `hy1/l.java:86-113`）：`group_id` 是 vid，时间毫秒。
+  Future<void> addPlayletDanmaku(
+    String vid, {
+    required String seriesId,
+    required String text,
+    required int offsetMs,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/videos/${Uri.encodeComponent(vid)}/danmaku/add', {
+        'text': text,
+        'series_id': seriesId,
+        'offset': '$offsetMs',
+      }),
+      method: 'POST',
+    );
+    _checkWrite(response);
+  }
+
+  /// 回复短剧评论（官方 `nx1/d.java:217-231`）。
+  Future<void> replyPlayletComment(
+    String commentId, {
+    required String seriesId,
+    required String text,
+    String replyToReplyId = '',
+    String replyToUserId = '',
+  }) async {
+    final response = await _get(
+      _url('/api/v1/comments/${Uri.encodeComponent(commentId)}/reply', {
+        'text': text,
+        'series_id': seriesId,
+        if (replyToReplyId.isNotEmpty) 'reply_to_reply_id': replyToReplyId,
+        if (replyToUserId.isNotEmpty) 'reply_to_user_id': replyToUserId,
+      }),
+      method: 'POST',
+    );
+    _checkWrite(response);
+  }
+
+  /// 点赞/取消点赞短剧评论（官方独立 digg 接口，`social/t.java:803-831`）。
+  ///
+  /// [targetType] 官方 `DiggTargetType`：Comment=1 / Reply=2 / PlayletComment=5；
+  /// 短剧评论该用哪个**未取证**，所以由调用方给。
+  Future<void> diggPlayletComment(
+    String commentId, {
+    required bool liked,
+    String bookId = '',
+    int targetType = 1,
+  }) async {
+    final response = await _get(
+      _url('/api/v1/comments/${Uri.encodeComponent(commentId)}/digg', {
+        'liked': liked ? 'true' : 'false',
+        'target_type': '$targetType',
+        if (bookId.isNotEmpty) 'book_id': bookId,
+      }),
+      method: 'POST',
+    );
+    _checkWrite(response);
+  }
+
+  /// 写接口的业务码检查：HTTP 200 里也会带回业务错误，不能只看状态码。
+  /// 与只读接口一致，把上游带出来的业务码放进 `upstreamCode`。
+  void _checkWrite(http.Response response) {
+    final status = response.statusCode;
+    if (status != 200) {
+      throw ApiException('写入失败', statusCode: status);
+    }
+    final payload = jsonDecode(utf8.decode(response.bodyBytes));
+    if (payload is! Map) return;
+    final code = payload['code'];
+    if (code == null || code == 0 || code == 200) return;
+    throw ApiException(
+      '${payload['message'] ?? '写入失败'}',
+      statusCode: status,
+      upstreamCode: code is int ? code : int.tryParse('$code'),
+    );
+  }
+
   /// 短剧分享信息（官方 `m0.java:930-957`，`share_type=7`）。
   ///
   /// 官方的 `share_url`/`short_url`/`schema` 全部由服务端下发，客户端不下发

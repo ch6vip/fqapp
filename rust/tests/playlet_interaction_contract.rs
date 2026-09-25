@@ -29,6 +29,16 @@ fn api_get(path: &str, query: &str) -> Request {
     }
 }
 
+fn api_post(path: &str, query: &str, body: &str) -> Request {
+    Request {
+        method: "POST".to_string(),
+        path: path.to_string(),
+        query: query.to_string(),
+        body: body.as_bytes().to_vec(),
+        headers: Vec::new(),
+    }
+}
+
 async fn json_body(resp: fqapi_core::dispatch::Response) -> (u16, Value) {
     let status = resp.status;
     let bytes = resp.into_bytes().await.expect("body");
@@ -344,6 +354,270 @@ async fn playlet_hot_comments_fall_back_to_the_series_id() {
     let sent = body_of(&request);
     assert_eq!(sent["group_id"], "123");
     assert_eq!(sent["business_param"]["book_id"], "123");
+    upstream.shutdown();
+}
+
+/// 发短剧剧评（`community/impl/comment/playlet/editor/p0.java:211-256`）：
+/// 上游 `comment/add/v1/`，`group_id`=seriesId、`group_type=Book(1)`、
+/// `comment_type=UserActualComment(0)`、`commit_source=NovelPlayletCommentAdd(12)`、
+/// `business_param.book_id`=seriesId，且 `aid` 走 query。
+#[tokio::test]
+async fn playlet_comment_add_matches_the_official_request() {
+    let upstream = MockUpstream::start(|_| {
+        MockReply::json(json!({"code": 0, "data": {"comment_info": {"comment_id": "c9"}}}))
+    })
+    .await;
+    let dir = TempDir::new("playlet-comment-add");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, body) = json_body(
+        dispatch(
+            &server,
+            &api_post("/api/v1/series/123/comments/add", "text=好看&score=5", ""),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["data"]["comment_info"]["comment_id"], "c9");
+
+    let request = upstream.last_request().expect("call");
+    assert_eq!(request.path, "/novel/commentapi/comment/add/v1/");
+    assert!(
+        request.query.contains("aid=1967"),
+        "aid 走 query: {}",
+        request.query
+    );
+    let sent = body_of(&request);
+    assert_eq!(sent["text"], "好看");
+    assert_eq!(sent["group_id"], "123");
+    assert_eq!(sent["group_type"], 1);
+    assert_eq!(sent["comment_type"], 0);
+    assert_eq!(sent["commit_source"], 12);
+    assert_eq!(sent["business_param"]["book_id"], "123");
+    assert_eq!(sent["business_param"]["score"], 5);
+    assert!(
+        sent.get("offset").is_none() && sent["business_param"].get("offset").is_none(),
+        "剧评不带弹幕的 offset"
+    );
+    upstream.shutdown();
+}
+
+/// 发弹幕（`hy1/l.java:86-113`）：`group_id`=vid、`group_type=SeriesVideo(30)`、
+/// `data_type=Danmaku(20)`、`commit_source=NovelItemDanmakuAdd(1500)`、
+/// `business_param.offset` 毫秒、`shark_param.type=short_play`。
+#[tokio::test]
+async fn playlet_danmaku_add_matches_the_official_request() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-danmaku-add");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_post(
+                "/api/v1/videos/VID-3/danmaku/add",
+                "text=前方高能&series_id=123&offset=12500",
+                "",
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let request = upstream.last_request().expect("call");
+    assert_eq!(request.path, "/novel/commentapi/comment/add/v1/");
+    let sent = body_of(&request);
+    assert_eq!(sent["group_id"], "VID-3");
+    assert_eq!(sent["group_type"], 30);
+    assert_eq!(sent["data_type"], 20);
+    assert_eq!(sent["commit_source"], 1500);
+    assert_eq!(sent["business_param"]["book_id"], "123");
+    assert_eq!(sent["business_param"]["offset"], 12500);
+    assert_eq!(sent["business_param"]["shark_param"]["type"], "short_play");
+    upstream.shutdown();
+}
+
+/// 空文本必须被拒绝，而且完全不打上游（官方编辑器在 UI 层就挡住空串）。
+#[tokio::test]
+async fn playlet_comment_add_rejects_an_empty_text() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-comment-add-empty");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, body) = json_body(
+        dispatch(
+            &server,
+            &api_post("/api/v1/series/123/comments/add", "text=%20%20", ""),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(body["error"].as_str().unwrap_or_default().contains("text"));
+    assert!(upstream.requests().is_empty());
+    upstream.shutdown();
+}
+
+/// 发弹幕缺 vid 必须被拒绝（vid 是它的 group_id）。
+#[tokio::test]
+async fn playlet_danmaku_add_requires_the_vid() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-danmaku-add-missing");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, body) = json_body(
+        dispatch(
+            &server,
+            &api_post("/api/v1/videos//danmaku/add", "text=x&series_id=123", ""),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(body["error"].as_str().unwrap_or_default().contains("vid"));
+    assert!(upstream.requests().is_empty());
+    upstream.shutdown();
+}
+
+/// 点赞短剧评论（`social/t.java:803-831`）：走独立 digg 接口而不是 do_action，
+/// `digg_type` 1=Digg / 3=UnDigg。
+#[tokio::test]
+async fn playlet_comment_digg_matches_the_official_request() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-comment-digg");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_post(
+                "/api/v1/comments/c9/digg",
+                "liked=true&book_id=123&target_type=5",
+                "",
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let request = upstream.last_request().expect("call");
+    assert_eq!(request.path, "/reading/ugc/novel_comment/digg/v");
+    let sent = body_of(&request);
+    assert_eq!(sent["comment_id"], "c9");
+    assert_eq!(sent["digg_type"], 1);
+    assert_eq!(sent["target_type"], 5);
+    assert_eq!(sent["book_id"], "123");
+    upstream.shutdown();
+}
+
+/// 取消点赞用 UnDigg(3)。
+#[tokio::test]
+async fn playlet_comment_undigg_uses_the_cancel_action() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-comment-undigg");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_post("/api/v1/comments/c9/digg", "liked=false", ""),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let sent = body_of(&upstream.last_request().expect("call"));
+    assert_eq!(sent["digg_type"], 3);
+    assert!(
+        sent.get("book_id").is_none(),
+        "没给 book_id 时不能凭空造一个"
+    );
+    upstream.shutdown();
+}
+
+/// 回复短剧评论（`nx1/d.java:217-231`）：`commit_source=13`、`data_type=Book(2)`，
+/// 一级回复只带 `reply_to_comment_id`。
+#[tokio::test]
+async fn playlet_comment_reply_matches_the_official_request() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-comment-reply");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_post(
+                "/api/v1/comments/c9/reply",
+                "text=同感&series_id=123&reply_to_comment_id=c9",
+                "",
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let request = upstream.last_request().expect("call");
+    assert_eq!(request.path, "/novel/commentapi/reply/add/v1/");
+    let sent = body_of(&request);
+    assert_eq!(sent["text"], "同感");
+    assert_eq!(sent["group_id"], "123");
+    assert_eq!(sent["group_type"], 1);
+    assert_eq!(sent["commit_source"], 13);
+    assert_eq!(sent["data_type"], 2);
+    assert_eq!(sent["reply_to_comment_id"], "c9");
+    assert_eq!(sent["business_param"]["book_id"], "123");
+    assert!(sent.get("reply_to_replyid").is_none());
+    upstream.shutdown();
+}
+
+/// 二级回复额外带 `reply_to_replyid` 与 `reply_to_userid`。
+#[tokio::test]
+async fn playlet_comment_second_level_reply_carries_the_parent_reply() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-comment-reply-2");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_post(
+                "/api/v1/comments/c9/reply",
+                "text=同意&series_id=123&reply_to_comment_id=c9                 &reply_to_reply_id=r1&reply_to_user_id=u7",
+                "",
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let sent = body_of(&upstream.last_request().expect("call"));
+    assert_eq!(sent["reply_to_replyid"], "r1");
+    assert_eq!(sent["reply_to_userid"], "u7");
+    upstream.shutdown();
+}
+
+/// 回复缺 reply_to_comment_id 必须被拒绝。
+#[tokio::test]
+async fn playlet_comment_reply_requires_the_target_comment() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {}}))).await;
+    let dir = TempDir::new("playlet-comment-reply-missing");
+    let server = server_with(&dir, &upstream.origin).await;
+
+    let (status, body) = json_body(
+        dispatch(
+            &server,
+            &api_post("/api/v1/comments/c9/reply", "text=x&series_id=123", ""),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("reply_to_comment_id"));
+    assert!(upstream.requests().is_empty());
     upstream.shutdown();
 }
 

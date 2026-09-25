@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 import '../../models/book_comment.dart' show formatCount;
 import '../../models/playlet_comment.dart';
 import '../../services/api_client.dart';
+import '../../services/user_facing_error.dart';
 
 /// 一次「加载一页」的请求：宿主注入，测试可替身。
 typedef PlayletCommentPageLoader =
@@ -38,6 +39,7 @@ class PlayletCommentPanel extends StatefulWidget {
     this.loader,
     this.initialTotal = 0,
     this.focusCommentId = '',
+    this.submitComment,
   });
 
   final String seriesId;
@@ -53,6 +55,9 @@ class PlayletCommentPanel extends StatefulWidget {
   /// `insert_comment_ids` 让服务端把这条插进列表，页面里高亮它。
   final String focusCommentId;
 
+  /// 发表评论的回调；为 null 时输入条提示「当前页面不支持发表评论」。
+  final Future<void> Function(String text)? submitComment;
+
   /// 打开面板：官方入口在右侧竖栏，竖屏走底部弹窗。
   static Future<void> show(
     BuildContext context, {
@@ -60,6 +65,7 @@ class PlayletCommentPanel extends StatefulWidget {
     PlayletCommentPageLoader? loader,
     int total = 0,
     String focusCommentId = '',
+    Future<void> Function(String text)? submitComment,
   }) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -73,6 +79,7 @@ class PlayletCommentPanel extends StatefulWidget {
       loader: loader,
       initialTotal: total,
       focusCommentId: focusCommentId,
+      submitComment: submitComment,
     ),
   );
 
@@ -212,9 +219,28 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
           _filters(),
           const Divider(height: 1),
           Expanded(child: _body()),
+          const Divider(height: 1),
+          _CommentComposer(onSubmit: _submitComment),
         ],
       ),
     );
+  }
+
+  /// 官方发布链路：`comment/add`（`p0.java:211-256`）。成功后重拉第一页，
+  /// 等价于官方的本地插入。
+  Future<String?> _submitComment(String text) async {
+    final submit = widget.submitComment;
+    if (submit == null) {
+      return '当前页面不支持发表评论';
+    }
+    try {
+      await submit(text);
+    } catch (error) {
+      // 失败原因按官方「保留草稿 + 提示」的语义回传输入条。
+      return userFacingError(error);
+    }
+    await _load(reset: true);
+    return null;
   }
 
   Widget _header() => Padding(
@@ -429,6 +455,83 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
           ),
         ),
       ],
+    ),
+  );
+}
+
+/// 评论输入条（官方编辑器底部：输入框 + 「发布」）。
+///
+/// 文案取官方资源：占位「发条友善的评论吧」（0x7f061595 = `d_j`）、
+/// 按钮「发布」（0x7f0615a1 附近，`dtu`）——两者都是 APK 里真实存在的串。
+///
+/// 发送成功后官方会把新评论插到列表最前（`gx1/n0.java:346-363` 的本地
+/// 乐观更新），本地等价是回调让宿主重拉第一页。
+class _CommentComposer extends StatefulWidget {
+  const _CommentComposer({required this.onSubmit});
+
+  /// 返回 null 表示成功；返回文案表示失败原因（官方失败时保留草稿）。
+  final Future<String?> Function(String text) onSubmit;
+
+  @override
+  State<_CommentComposer> createState() => _CommentComposerState();
+}
+
+class _CommentComposerState extends State<_CommentComposer> {
+  final _controller = TextEditingController();
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    final error = await widget.onSubmit(text);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (error == null) {
+      _controller.clear();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              key: const ValueKey('playlet-comment-input'),
+              controller: _controller,
+              maxLines: 3,
+              minLines: 1,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => unawaited(_submit()),
+              decoration: const InputDecoration(
+                hintText: '发条友善的评论吧',
+                isDense: true,
+                border: InputBorder.none,
+              ),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('playlet-comment-send'),
+            onPressed: _sending ? null : () => unawaited(_submit()),
+            child: const Text(
+              '发布',
+              style: TextStyle(color: Color(0xFFFA6725)),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }

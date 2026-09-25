@@ -16,6 +16,10 @@ const BOOK_REVIEWS_PATH: &str = "/novel/commentapi/comment/list/";
 const IDEA_LIST_PATH: &str = "/novel/commentapi/idea/list/";
 const COMMENT_REPLIES_PATH: &str = "/novel/commentapi/reply/list/";
 const CHAPTER_SUMMARY_PATH: &str = "/reading/reader/item_summary/mget/v";
+const COMMENT_ADD_PATH: &str = "/novel/commentapi/comment/add/v1/";
+const COMMENT_REPLY_ADD_PATH: &str = "/novel/commentapi/reply/add/v1/";
+/// 官方评论点赞（`UgcApiService.java:443`）。
+const COMMENT_DIGG_PATH: &str = "/reading/ugc/novel_comment/digg/v";
 
 const BOOK_COMMENTS_LEGACY_HOST: &str = "https://api3-normal-sinfonlineb.fqnovel.com";
 const BOOK_COMMENTS_LEGACY_PATH: &str = "/reading/ugc/novel_comment/book/v/";
@@ -354,6 +358,61 @@ fn handle_playlet_comments<'a>(
     })
 }
 
+/// 官方写评论的请求体（`AddCommentRequest` + `gx1/p0` / `hy1/l`）。
+///
+/// `res` 字段名全部来自 `AddCommentRequest.java:17-47`：
+/// `text`、`group_id`、`group_type`、`comment_type`、`commit_source`、
+/// `data_type`、`business_param`、`rich_text`，外加 query 上的 `aid`。
+///
+/// 短剧剧评（`community/impl/comment/playlet/editor/p0.java:211-256`）：
+/// `group_id`=seriesId、`group_type=Book(1)`、`comment_type=UserActualComment(0)`、
+/// `data_type` 由调用点给（快捷评星用 `FakeBook(3)`，见
+/// `kr1/n.java:241`）、`commit_source=NovelPlayletCommentAdd(12)`、
+/// `business_param.book_id`=seriesId。
+///
+/// 弹幕（`hy1/l.java:86-113`）：`group_id`=vid、`group_type=SeriesVideo(30)`、
+/// `data_type=Danmaku(20)`、`commit_source=NovelItemDanmakuAdd(1500)`、
+/// `business_param.offset` 毫秒、`business_param.shark_param={type:"short_play"}`。
+struct PlayletCommentAddBody {
+    text: String,
+    group_id: String,
+    group_type: i64,
+    comment_type: i64,
+    commit_source: i64,
+    data_type: i64,
+    book_id: String,
+    score: i64,
+    offset_ms: i64,
+    shark_type: String,
+    vid: String,
+}
+
+fn playlet_comment_add_body(p: &PlayletCommentAddBody) -> ApiResult<Vec<u8>> {
+    let mut business = json!({
+        "book_id": p.book_id,
+        "score": p.score,
+    });
+    if p.offset_ms > 0 {
+        business["offset"] = json!(p.offset_ms);
+    }
+    if !p.shark_type.is_empty() {
+        business["shark_param"] = json!({ "type": p.shark_type });
+    }
+    let mut body = json!({
+        "business_param": business,
+        "comment_type": p.comment_type,
+        "commit_source": p.commit_source,
+        "data_type": p.data_type,
+        "group_id": p.group_id,
+        "group_type": p.group_type,
+        "text": p.text,
+    });
+    if !p.vid.is_empty() {
+        body["vid"] = json!(p.vid);
+    }
+    serde_json::to_vec(&body).map_err(|e| ApiError::Internal(e.to_string()))
+}
+
 /// 官方热评请求的固定取值（`a13/w.java:563-599`）。
 ///
 /// 热评**没有独立接口字段**：同一次 `comment/list` 返回的列表就是热评来源
@@ -401,6 +460,201 @@ fn playlet_hot_comment_body(p: &PlayletHotCommentBody) -> ApiResult<Vec<u8>> {
 ///
 /// `server_channel` 由调用场景决定（`FanqieHotCommentArgsBrick.java:17-29`：
 /// 17/26/37/48），场景到 channel 的映射**未取证**，所以由调用方给，缺省 17。
+///
+/// 官方评论点赞走**独立的 digg 接口**，不是 `do_action`
+/// （`com/dragon/read/social/t.java:803-831`：`W(NovelComment)` 与
+/// `Z(NovelReply)` 都构 `DiggRequest`）。
+///
+/// `DiggRequest` 字段（`rpc/model/DiggRequest.java:13-26`）：
+/// `book_id`、`comment_id`、`digg_type`、`target_type`、`service_id`。
+/// `DiggActionType`：Digg=1 / UnDigg=3（`kmp/reading/model/DiggActionType.java:12-13`）。
+/// `DiggTargetType`：Comment=1 / Reply=2 / PlayletComment=5
+/// （`kmp/reading/model/DiggTargetType.java:13-17`）。短剧评论该用哪个
+/// target_type **未取证**，因此由调用方给，缺省 1。
+fn handle_playlet_comment_digg<'a>(
+    ctx: &'a Ctx,
+    params: &'a Params,
+) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let comment_id = params.get_str("comment_id");
+        if comment_id.is_empty() {
+            return Err(ApiError::BadRequest("缺少comment_id参数".to_string()));
+        }
+        let liked = params.get_str("liked") != "false";
+        let mut body = json!({
+            "comment_id": comment_id,
+            "digg_type": if liked { 1 } else { 3 },
+            "target_type": int_default(&params.get_str("target_type"), 1),
+        });
+        let book_id = params.get_str("book_id");
+        if !book_id.is_empty() {
+            body["book_id"] = json!(book_id);
+        }
+
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                method: Some("POST".to_string()),
+                host: HOST_FQNOVEL.to_string(),
+                path: COMMENT_DIGG_PATH.to_string(),
+                params: reading724_params(),
+                body: Some(
+                    serde_json::to_vec(&body).map_err(|e| ApiError::Internal(e.to_string()))?,
+                ),
+                headers: dragon_read_json_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
+/// 官方回复短剧评论（`community/impl/comment/playlet/.../nx1/d.java:217-231`）：
+/// `commit_source=NovelPlayletReplyAdd(13)`、`group_type=Book(1)`、
+/// `data_type=Book(2)`，并带 `reply_to_comment_id`/`reply_to_user_id`/`reply_to_replyid`。
+fn handle_playlet_comment_reply<'a>(
+    ctx: &'a Ctx,
+    params: &'a Params,
+) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let text = params.get_str("text");
+        if text.trim().is_empty() {
+            return Err(ApiError::BadRequest("缺少text参数".to_string()));
+        }
+        let series_id = params.get_str("series_id");
+        if series_id.is_empty() {
+            return Err(ApiError::BadRequest("缺少series_id参数".to_string()));
+        }
+        let reply_to_comment_id = params.get_str("reply_to_comment_id");
+        if reply_to_comment_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "缺少reply_to_comment_id参数".to_string(),
+            ));
+        }
+
+        let mut body = json!({
+            "business_param": { "book_id": series_id },
+            "commit_source": 13,
+            "data_type": 2,
+            "group_id": series_id,
+            "group_type": 1,
+            "reply_to_comment_id": reply_to_comment_id,
+            "text": text,
+        });
+        // 二级回复才带这两个：官方只在有值时序列化。
+        for (key, value) in [
+            ("reply_to_replyid", params.get_str("reply_to_reply_id")),
+            ("reply_to_userid", params.get_str("reply_to_user_id")),
+        ] {
+            if !value.is_empty() {
+                body[key] = json!(value);
+            }
+        }
+
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                method: Some("POST".to_string()),
+                host: HOST_FQNOVEL.to_string(),
+                path: COMMENT_REPLY_ADD_PATH.to_string(),
+                params: reading724_params(),
+                body: Some(
+                    serde_json::to_vec(&body).map_err(|e| ApiError::Internal(e.to_string()))?,
+                ),
+                headers: dragon_read_json_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
+/// `POST /api/v1/series/:id/comments/add` -> 官方发评论（剧评或弹幕共用一条上游）。
+///
+/// 上游是 `POST /novel/commentapi/comment/add/v1/`，`mode` 决定用哪一组枚举：
+/// `comment`（默认）= 短剧剧评，`danmaku` = 弹幕。`aid` 走 query
+/// （`AddCommentRequest.appID` 标了 `@RpcField(QUERY)`）。
+fn handle_playlet_comment_add<'a>(
+    ctx: &'a Ctx,
+    params: &'a Params,
+) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let text = params.get_str("text");
+        if text.trim().is_empty() {
+            return Err(ApiError::BadRequest("缺少text参数".to_string()));
+        }
+        let series_id = params.get_str("series_id");
+        if series_id.is_empty() {
+            return Err(ApiError::BadRequest("缺少series_id参数".to_string()));
+        }
+        let is_danmaku = params.get_str("mode") == "danmaku";
+        let vid = params.get_str("vid");
+        if is_danmaku && vid.is_empty() {
+            return Err(ApiError::BadRequest("缺少vid参数".to_string()));
+        }
+
+        // 弹幕：group_id=vid、group_type=SeriesVideo(30)、data_type=Danmaku(20)、
+        // commit_source=NovelItemDanmakuAdd(1500)、book_id 取剧集 id、offset 毫秒。
+        // 剧评：group_id=seriesId、group_type=Book(1)、
+        // commit_source=NovelPlayletCommentAdd(12)。
+        // vid 在弹幕分支里同时要当 group_id 和（剧评分支的）可选字段，
+        // 先克隆一份给 body，避免所有权被 group_id 吃掉。
+        let vid_for_body = vid.clone();
+        let (group_id, group_type, data_type, commit_source, book_id) = if is_danmaku {
+            (vid, 30, 20, 1500, series_id)
+        } else {
+            (
+                series_id.clone(),
+                1,
+                int_default(&params.get_str("data_type"), 2),
+                12,
+                series_id,
+            )
+        };
+
+        let body = playlet_comment_add_body(&PlayletCommentAddBody {
+            text,
+            group_id: group_id.clone(),
+            group_type,
+            // UgcNovelCommentType.UserActualComment = 0（p0.java:215）。
+            comment_type: int_default(&params.get_str("comment_type"), 0),
+            commit_source,
+            data_type,
+            book_id,
+            score: int_default(&params.get_str("score"), 0),
+            offset_ms: if is_danmaku {
+                int_default(&params.get_str("offset"), 0)
+            } else {
+                0
+            },
+            shark_type: if is_danmaku {
+                "short_play".to_string()
+            } else {
+                String::new()
+            },
+            vid: if is_danmaku {
+                String::new()
+            } else {
+                vid_for_body
+            },
+        })?;
+
+        let mut query = reading724_params();
+        set_param(&mut query, "aid", "1967");
+
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                method: Some("POST".to_string()),
+                host: HOST_FQNOVEL.to_string(),
+                path: COMMENT_ADD_PATH.to_string(),
+                params: query,
+                body: Some(body),
+                headers: dragon_read_json_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
 fn handle_playlet_hot_comments<'a>(
     ctx: &'a Ctx,
     params: &'a Params,
@@ -629,6 +883,9 @@ pub fn register(s: &mut Server) {
     s.add_route("playlet_comments", handle_playlet_comments);
     s.add_route("playlet_danmaku", handle_playlet_danmaku);
     s.add_route("playlet_hot_comments", handle_playlet_hot_comments);
+    s.add_route("playlet_comment_add", handle_playlet_comment_add);
+    s.add_route("playlet_comment_digg", handle_playlet_comment_digg);
+    s.add_route("playlet_comment_reply", handle_playlet_comment_reply);
     s.add_route("idea_list", handle_idea_list);
     s.add_route("book_comments_legacy", handle_book_comments_legacy);
     s.add_route("comment_replies", handle_comment_replies);
