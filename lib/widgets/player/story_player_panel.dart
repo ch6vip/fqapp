@@ -86,6 +86,20 @@ bool episodeShowsNewBadge({
   required bool newlyUpdate,
 }) => !current && !played && !watched && newlyUpdate;
 
+/// 选集面板「关联原著」条的数据（官方 `VideoRelateBook.bookInfo`：
+/// `book_id` / `book_name` / `thumb_url`，映射见 `bh3/c.java:21-43`）。
+class EpisodeRelateBook {
+  const EpisodeRelateBook({
+    required this.id,
+    required this.title,
+    this.cover = '',
+  });
+
+  final String id;
+  final String title;
+  final String cover;
+}
+
 /// 官方头部的封面占位（没有封面图时用剧集首帧同款深色块）。
 class _HeaderCoverFallback extends StatelessWidget {
   const _HeaderCoverFallback();
@@ -174,6 +188,12 @@ class StoryPlayerPanel extends StatefulWidget {
   final VoidCallback? onOpenSeries;
   final VoidCallback? onCollect;
 
+  /// 关联原著条（官方 `aa8.xml:17` 的 `gnh`，由
+  /// `series_relate_book_config_v659.relate_book_in_episodes_dialog` 控制，
+  /// **默认 false**）。为 null 时整条不显示。
+  final EpisodeRelateBook? relateBook;
+  final VoidCallback? onOpenRelateBook;
+
   final ValueChanged<int> onSelectEpisode;
   final GestureDragStartCallback onDragStart;
   final GestureDragUpdateCallback onDragUpdate;
@@ -195,6 +215,8 @@ class StoryPlayerPanel extends StatefulWidget {
     this.collected = false,
     this.onOpenSeries,
     this.onCollect,
+    this.relateBook,
+    this.onOpenRelateBook,
     required this.onSelectEpisode,
     required this.onDragStart,
     required this.onDragUpdate,
@@ -541,6 +563,14 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                             height: _headerHeight,
                             child: _seriesHeader(),
                           ),
+                        // 官方关联原著条（`aa8.xml:17` 的 `gnh`；左右各 16dp、
+                        // 底 24dp 外边距）。配置默认关，宿主不给数据就不显示。
+                        if (widget.relateBook != null)
+                          Padding(
+                            key: const ValueKey('story-panel-relate-book'),
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                            child: _relateBookRow(widget.relateBook!),
+                          ),
                         SizedBox(
                           height: tabHeight,
                           child: Row(
@@ -576,6 +606,59 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
           },
         ),
       ),
+    );
+  }
+
+  /// 官方关联原著条：封面 + 书名，右侧箭头（`aa8.xml:17` 的 `gnh`）。
+  Widget _relateBookRow(EpisodeRelateBook book) =>
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onOpenRelateBook,
+        child: Container(
+          height: 56,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0x0A000000),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: _relateCover(book.cover),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  book.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF1B1B1B),
+                  ),
+                ),
+              ),
+              if (widget.onOpenRelateBook != null)
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: Color(0xFF9499A0),
+                ),
+            ],
+          ),
+        ),
+      );
+
+  /// 原著封面；没有封面图时用统一的占位块。
+  Widget _relateCover(String cover) {
+    if (cover.isEmpty) return const _HeaderCoverFallback();
+    return CachedNetworkImage(
+      imageUrl: cover,
+      width: 36,
+      height: 44,
+      fit: BoxFit.cover,
+      errorWidget: (_, _, _) => const _HeaderCoverFallback(),
     );
   }
 

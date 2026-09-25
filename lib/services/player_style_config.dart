@@ -24,6 +24,7 @@ class PlayerStyleConfig {
     this.reverseClearScreen = false,
     this.landscapeLockEnabled = false,
     this.defaultVideoSizeAspectFit = false,
+    this.relateBookInEpisodesDialog = false,
   });
 
   /// 无配置时的形态：**旧底栏**、无横幅、无清屏反转、无横屏锁——
@@ -51,6 +52,11 @@ class PlayerStyleConfig {
   /// （`FillScreenDataManager.java:32`）。
   final bool defaultVideoSizeAspectFit;
 
+  /// 官方 `series_relate_book_config_v659.relate_book_in_episodes_dialog`
+  /// （**默认 false**）：选集面板里的「关联原著」条（`a1.java:1819-1828`）。
+  /// 官方默认关，所以本地也默认关——不会在官方未显示的配置下强制添加。
+  final bool relateBookInEpisodesDialog;
+
   /// 官方 `PlayerBottomStyleConfig.a()`：两个字段任一为真即走新底栏。
   bool get newBottomStyle => useNewPlayerBottomStyle || hasBanner;
 
@@ -66,6 +72,10 @@ class PlayerStyleConfig {
       reverseClearScreen: _bool(reverse, 'reverse'),
       landscapeLockEnabled: _bool(landscape, 'enable_lock'),
       defaultVideoSizeAspectFit: _bool(fill, 'default_video_size_aspect_fit'),
+      relateBookInEpisodesDialog: _bool(
+        json['series_relate_book_config_v659'],
+        'relate_book_in_episodes_dialog',
+      ),
     );
   }
 

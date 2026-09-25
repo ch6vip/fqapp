@@ -494,6 +494,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  /// 选集面板头部下方的关联原著（官方 `a1.java:1819-1828`）。
+  ///
+  /// 官方三个条件都要满足：配置 `relate_book_in_episodes_dialog`（默认关）、
+  /// `videoRelateBook.bookInfo` 非空、且不在 `SeriesDeliverUserRelateBookRevert`
+  /// 的回滚实验里。本地只有前两条可判，第三条的开关未接入。
+  EpisodeRelateBook? get _episodeRelateBook {
+    if (!PlayerStyleConfig.instance.relateBookInEpisodesDialog) return null;
+    final book = _originalBook;
+    if (book == null) return null;
+    return EpisodeRelateBook(
+      id: book.id,
+      title: book.title,
+      cover: book.cover,
+    );
+  }
+
   /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。
   void _openOriginalBook() {
     final book = _originalBook;
@@ -1032,6 +1048,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     seriesStatus: _seriesStatus,
     originalBook: _originalBook,
     onOpenOriginalBook: _openOriginalBook,
+    // 选集面板的关联原著条：官方由
+    // `series_relate_book_config_v659.relate_book_in_episodes_dialog`
+    // 控制且**默认 false**，本地照官方默认（配置里可打开）。
+    relateBook: _episodeRelateBook,
+    onOpenRelateBook: _episodeRelateBook == null ? null : _openOriginalBook,
     coverUrl: ApiClient.instance.absoluteUrl(widget.cover),
     enabled:
         _player != null &&

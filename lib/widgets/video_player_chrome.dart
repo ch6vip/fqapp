@@ -15,11 +15,11 @@ import '../services/player_preferences.dart';
 import '../services/user_facing_error.dart';
 import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
+import 'player/story_player_panel.dart';
 import '../services/playlet_share.dart';
 import 'player/playlet_hot_comment_bar.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
-import 'player/story_player_panel.dart';
 import 'player/story_seek_bar.dart';
 
 class VideoPlayerChrome extends StatefulWidget {
@@ -116,6 +116,11 @@ class VideoPlayerChrome extends StatefulWidget {
   /// 头部收藏动作；为 null 时头部不显示收藏按钮。
   final VoidCallback? onCollect;
 
+  /// 选集面板的关联原著条（官方 `series_relate_book_config_v659`
+  /// 的 `relate_book_in_episodes_dialog`，**默认 false**）。
+  final EpisodeRelateBook? relateBook;
+  final VoidCallback? onOpenRelateBook;
+
   /// 弹幕（官方 \`DanmakuRequestHelper\`）：时间轴条目 + 开关状态。
   /// 发送回调为 null 时不出现弹幕入口。
   /// 分享（官方右栏第四项 `SeriesShareView`）：计数 0 时文案「分享」
@@ -177,6 +182,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.episodeLabel = '',
     this.collected = false,
     this.onCollect,
+    this.relateBook,
+    this.onOpenRelateBook,
     this.shareCount = 0,
     this.onShare,
     this.fillScreen = false,
@@ -1717,6 +1724,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                           episodeLabel: widget.episodeLabel,
                           collected: widget.collected,
                           onCollect: widget.onCollect,
+                          relateBook: widget.relateBook,
+                          onOpenRelateBook: widget.onOpenRelateBook,
                           scrollController: scroll,
                           episodes: widget.episodes,
                           currentIndex: widget.currentIndex,
