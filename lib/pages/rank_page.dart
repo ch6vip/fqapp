@@ -7,6 +7,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/media_item.dart';
 import '../models/rank.dart';
 import '../services/api_client.dart';
+import '../services/poster_cache.dart';
 import '../services/rank_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
@@ -34,7 +35,12 @@ class RankPage extends StatefulWidget {
   final RankPageLoader? pageLoader;
   final RankCache? rankCache;
 
-  const RankPage({super.key, this.catalogLoader, this.pageLoader, this.rankCache});
+  const RankPage({
+    super.key,
+    this.catalogLoader,
+    this.pageLoader,
+    this.rankCache,
+  });
 
   @override
   State<RankPage> createState() => _RankPageState();
@@ -142,8 +148,7 @@ class _RankPageState extends State<RankPage> {
         _loadMoreError = null;
         _error = snapshot.board.isEmpty ? '该榜单暂无内容' : null;
       });
-      if (DateTime.now().difference(snapshot.savedAt) <
-          RankCache.freshTtl) {
+      if (DateTime.now().difference(snapshot.savedAt) < RankCache.freshTtl) {
         return;
       }
     } else {
@@ -484,6 +489,7 @@ class _RankRow extends StatelessWidget {
                         ),
                       )
                     : CachedNetworkImage(
+                        cacheManager: PosterCache.instance,
                         imageUrl: entry.cover,
                         fit: BoxFit.cover,
                         // 56x78 logical tile; decode at 2×.

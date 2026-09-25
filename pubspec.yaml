@@ -41,6 +41,7 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   cached_network_image: ^4.0.0
+  flutter_cache_manager: ^3.4.2
   flutter_riverpod: ^3.4.3
   html: 0.15.6
   flutter_lucide: ^1.43.0

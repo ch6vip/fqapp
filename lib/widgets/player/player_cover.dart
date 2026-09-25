@@ -1,6 +1,8 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/poster_cache.dart';
+
 /// The same cover is used during loading and while swiping adjacent pages.
 /// A bounded decode avoids keeping a full-resolution poster per page.
 class PlayerCover extends StatelessWidget {
@@ -30,6 +32,7 @@ class PlayerCover extends StatelessWidget {
       ),
       if (url.isNotEmpty)
         CachedNetworkImage(
+          cacheManager: PosterCache.instance,
           imageUrl: url,
           fit: BoxFit.cover,
           memCacheWidth: 720,

@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/poster_cache.dart';
 import '../../models/book_detail.dart';
 import '../../models/series_detail.dart';
 import '../home/home_design.dart';
@@ -29,6 +30,7 @@ class DetailAuthorRow extends StatelessWidget {
                 child: Icon(LucideIcons.user, size: 20, color: palette.muted),
               )
             : CachedNetworkImage(
+                cacheManager: PosterCache.instance,
                 imageUrl: author.avatar,
                 fit: BoxFit.cover,
                 // 38dp avatar; decode at 2×. CachedNetworkImage also adds
@@ -518,6 +520,7 @@ class _CastAvatar extends StatelessWidget {
     final fallback = _InitialAvatar(member: member, palette: palette);
     if (member.avatar.isEmpty) return fallback;
     return CachedNetworkImage(
+      cacheManager: PosterCache.instance,
       imageUrl: member.avatar,
       fit: BoxFit.cover,
       // 56dp avatar; decode at 2×. The cast row scrolls horizontally, so the

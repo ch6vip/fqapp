@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'dart:async';
+
 import 'pages/home_page.dart';
 import 'pages/cached_books_page.dart';
 import 'pages/drama_page.dart';
@@ -15,6 +17,7 @@ import 'services/digg_store.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
+import 'services/poster_cache.dart';
 import 'services/shelf_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
@@ -60,6 +63,8 @@ Future<void> _initializeLocalData() async {
   } catch (_) {
     // RankCache 自己把「不可用」当成「没有缓存」处理。
   }
+  // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
+  unawaited(PosterCache.instance.enforceBudget());
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.

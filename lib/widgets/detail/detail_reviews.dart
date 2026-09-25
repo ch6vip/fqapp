@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/poster_cache.dart';
 import '../../models/book_comment.dart';
 import '../../models/book_detail.dart';
 import '../../models/comment_reply.dart';
@@ -222,6 +223,7 @@ class _CommentTileState extends State<_CommentTile> {
                           ),
                         )
                       : CachedNetworkImage(
+                          cacheManager: PosterCache.instance,
                           imageUrl: comment.userAvatar,
                           fit: BoxFit.cover,
                           // 30dp avatar; decode at 2×. CachedNetworkImage also
@@ -447,6 +449,7 @@ class _ReplyTile extends StatelessWidget {
                       ),
                     )
                   : CachedNetworkImage(
+                      cacheManager: PosterCache.instance,
                       imageUrl: reply.userAvatar,
                       fit: BoxFit.cover,
                       // 22dp avatar; decode at 2×.

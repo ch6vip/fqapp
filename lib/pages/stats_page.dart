@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/library_store.dart';
+import '../services/poster_cache.dart';
 import '../services/media_history_store.dart';
 import '../widgets/reading_goal_dialog.dart';
 import 'detail_page.dart';
@@ -827,6 +828,7 @@ class _RecentBooksCard extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: CachedNetworkImage(
+        cacheManager: PosterCache.instance,
         imageUrl: url,
         width: w,
         height: h,
@@ -945,6 +947,7 @@ class _RecentCoversCard extends StatelessWidget {
                               ),
                             )
                           : CachedNetworkImage(
+                              cacheManager: PosterCache.instance,
                               imageUrl: url,
                               width: 74,
                               height: 110,

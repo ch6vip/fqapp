@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/poster_cache.dart';
 import '../models/media_item.dart';
 import 'cover_tag_chip.dart';
 
@@ -85,6 +86,7 @@ class MediaCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   child: item.cover.isNotEmpty
                       ? CachedNetworkImage(
+                          cacheManager: PosterCache.instance,
                           imageUrl: item.cover,
                           fit: BoxFit.cover,
                           memCacheWidth: cacheWidth,

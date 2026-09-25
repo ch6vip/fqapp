@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/poster_cache.dart';
 import '../../models/media_item.dart';
 import '../cover_tag_chip.dart';
 import 'home_design.dart';
@@ -90,6 +91,7 @@ class StoryCover extends StatelessWidget {
     );
     if (item.cover.isEmpty) return fallback;
     return CachedNetworkImage(
+      cacheManager: PosterCache.instance,
       imageUrl: item.cover,
       fit: BoxFit.cover,
       alignment: alignment,

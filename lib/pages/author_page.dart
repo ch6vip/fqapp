@@ -7,6 +7,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/author_profile.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/poster_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/media_card.dart';
@@ -218,6 +219,7 @@ class _AuthorPageState extends State<AuthorPage> {
                           ),
                         )
                       : CachedNetworkImage(
+                          cacheManager: PosterCache.instance,
                           imageUrl: profile.avatar,
                           fit: BoxFit.cover,
                           // 58dp avatar; decode at 2×.

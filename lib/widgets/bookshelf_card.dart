@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/poster_cache.dart';
 import '../models/media_item.dart';
 import 'home/home_design.dart';
 
@@ -58,6 +59,7 @@ const bookshelfGridCoverRatio = 1.3947369;
 const bookshelfGridCoverRadius = 12.0;
 
 const _gridTitleSize = 14.0;
+
 /// Android `lineSpacingExtra="3.0dip"` on a 14sp title, as a height multiple.
 const _gridTitleLineHeight = 1 + 3 / _gridTitleSize;
 const _subtitleSize = 12.0;
@@ -79,6 +81,7 @@ const _doubleCoverMarginStart = 12.0;
 const _doubleInfoPadding = 12.0;
 const _doubleInfoOverlap = 84.0;
 const _doubleTitleSize = 16.0;
+
 /// The 简介 slot keeps up to four 12sp lines.
 const bookshelfDoubleInfoLines = 4;
 
@@ -106,7 +109,12 @@ double bookshelfGridChildAspectRatio(
       MediaQuery.textScalerOf(context).scale(_subtitleSize) *
       _subtitleLineHeight;
   final cellHeight =
-      cellWidth * bookshelfGridCoverRatio + 2 + titleHeight + 4 + infoHeight + 4;
+      cellWidth * bookshelfGridCoverRatio +
+      2 +
+      titleHeight +
+      4 +
+      infoHeight +
+      4;
   return cellWidth / cellHeight;
 }
 
@@ -156,6 +164,7 @@ class _ShelfCover extends StatelessWidget {
               child: item.cover.trim().isEmpty
                   ? fallback
                   : CachedNetworkImage(
+                      cacheManager: PosterCache.instance,
                       imageUrl: item.cover,
                       fit: BoxFit.cover,
                       memCacheWidth: math.max(1, (width * 3).round()),
@@ -174,11 +183,7 @@ class _ShelfCover extends StatelessWidget {
               ),
             ),
           if (badgeText != null && !selected)
-            Positioned(
-              top: 4,
-              right: 7,
-              child: _UpdateBadge(text: badgeText!),
-            ),
+            Positioned(top: 4, right: 7, child: _UpdateBadge(text: badgeText!)),
         ],
       ),
     );
@@ -239,7 +244,9 @@ class _SelectionBox extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: selected ? HomePalette.accent : Colors.black.withValues(alpha: 0.18),
+          color: selected
+              ? HomePalette.accent
+              : Colors.black.withValues(alpha: 0.18),
           border: Border.all(
             color: selected ? HomePalette.accent : border,
             width: 1.5,
@@ -447,7 +454,8 @@ class BookshelfDoubleCard extends StatelessWidget {
               math.max(1.0, cellWidth - _doubleCoverMarginStart),
             );
             final coverHeight =
-                coverWidth * (bookshelfDoubleCoverHeight / bookshelfDoubleCoverWidth);
+                coverWidth *
+                (bookshelfDoubleCoverHeight / bookshelfDoubleCoverWidth);
             final infoTop = math.max(0.0, coverHeight - _doubleInfoOverlap);
             return Stack(
               fit: StackFit.expand,
@@ -664,7 +672,8 @@ class BookshelfListCard extends StatelessWidget {
 /// The cell height of the 双列 grid: cover plus the info block below it.
 double bookshelfDoubleCellWidth(double availableWidth) => math.max(
   1.0,
-  (availableWidth - bookshelfDoubleSidePadding * 2 - bookshelfDoubleSpacing) / 2,
+  (availableWidth - bookshelfDoubleSidePadding * 2 - bookshelfDoubleSpacing) /
+      2,
 );
 
 double bookshelfDoubleChildAspectRatio(

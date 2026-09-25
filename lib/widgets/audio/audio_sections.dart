@@ -6,6 +6,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/audio_extra.dart';
 import '../../services/playback_format.dart';
+import '../../services/poster_cache.dart';
 import '../home/home_design.dart';
 
 /// Listening page title with collapse and additional actions.
@@ -255,6 +256,7 @@ class _CoverImage extends StatelessWidget {
       );
     }
     return CachedNetworkImage(
+      cacheManager: PosterCache.instance,
       imageUrl: url,
       fit: BoxFit.cover,
       // The big cover renders at ~293 logical px; decode at 2× instead of the
