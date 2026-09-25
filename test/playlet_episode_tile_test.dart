@@ -72,22 +72,37 @@ void main() {
   });
 
   test('episodes parse the official flag fields', () {
+    // 官方字段名来自 `EpisodeInfo.java` 的 @SerializedName：
+    // is_preview_material（预告）/ is_newly_update（新）/ disable_play（不可播）。
     final episode = Episode.fromRaw({
       'item_id': 'v9',
-      'is_trailer': true,
-      'is_inserted_from_feed': 1,
-      'item_status': 2,
+      'is_preview_material': true,
+      'disable_play': 1,
       'is_newly_update': 'true',
     }, index: 8);
     expect(episode.trailer, isTrue);
-    expect(episode.highlight, isTrue);
     expect(episode.disabled, isTrue);
     expect(episode.newlyUpdate, isTrue);
     final chapter = episode.toChapter();
     expect(chapter.trailer, isTrue);
-    expect(chapter.highlight, isTrue);
     expect(chapter.disabled, isTrue);
     expect(chapter.newlyUpdate, isTrue);
+  });
+
+  test('the directory item_status also marks an episode as unplayable', () {
+    final episode = Episode.fromRaw({'item_id': 'v1', 'item_status': 2}, index: 0);
+    expect(episode.disabled, isTrue);
+  });
+
+  test('inserted-from-feed is never read from JSON', () {
+    // 官方由客户端在插入推荐视频时自己 set（wp3/a.java:42、yw2/j.java:34），
+    // 不是接口字段——所以「高光」只能来自客户端行为，不从回包猜。
+    final episode = Episode.fromRaw({
+      'item_id': 'v1',
+      'is_inserted_from_feed': 1,
+      'isInsertedFromFeed': true,
+    }, index: 0);
+    expect(episode.highlight, isFalse);
   });
 
   test('a playable episode stays enabled', () {

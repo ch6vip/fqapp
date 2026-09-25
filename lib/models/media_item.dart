@@ -678,22 +678,27 @@ class Episode {
     title: _entryTitle(m, index: index, fallbackPrefix: '第', suffix: '集'),
     index: _asInt(m['index'] ?? m['episode_index'] ?? m['episode_no']) ?? index,
     durationSeconds: _asInt(m['duration'] ?? m['duration_seconds']) ?? 0,
-    trailer: _flag(m, const ['is_trailer', 'isTrailer', 'trailer']),
-    highlight: _flag(m, const [
-      'is_inserted_from_feed',
-      'isInsertedFromFeed',
-      'inserted_from_feed',
+    // 官方字段名（`EpisodeInfo.java` 的 @SerializedName）：
+    // 预告 = `is_preview_material`（`th3/e.java:119` 把它映射成
+    // `SaasVideoData.isTrailer`）。
+    trailer: _flag(m, const [
+      'is_preview_material',
+      'isPreviewMaterial',
+      'is_trailer',
     ]),
+    // `is_inserted_from_feed` **不是**接口字段：官方由客户端在插入推荐视频时
+    // 自己 set（`wp3/a.java:42`、`yw2/j.java:34`），所以不从 JSON 里读。
+    highlight: false,
     // item_status != 0 表示该集不可播（与 chapter_media.dart 对 item_status
     // 的处理同一含义）。
+    // 官方 `EpisodeInfo.disable_play`（`th3/e.java:116`）；
+    // 目录侧的 `item_status != 0` 是另一条等价信号。
     disabled:
-        (_asInt(m['item_status']) ?? 0) != 0 ||
-        _flag(m, const ['disable_play', 'disablePlay']),
-    newlyUpdate: _flag(m, const [
-      'is_newly_update',
-      'isNewlyUpdate',
-      'newly_update',
-    ]),
+        _flag(m, const ['disable_play', 'disablePlay']) ||
+        (_asInt(m['item_status']) ?? 0) != 0,
+    // 官方 `EpisodeInfo.is_newly_update`（`th3/e.java:133` 映射到
+    // `SaasVideoData.isNewlyUpdate`，选集格子的「新」角标就看它）。
+    newlyUpdate: _flag(m, const ['is_newly_update', 'isNewlyUpdate']),
   );
 
   Chapter toChapter() => Chapter(
