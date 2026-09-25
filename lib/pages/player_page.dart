@@ -8,6 +8,7 @@ import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
+import '../services/playlet_share.dart';
 import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
@@ -20,6 +21,7 @@ import '../services/swipe_guide_store.dart';
 import '../models/book_detail.dart' show formatCounter;
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_danmaku_layer.dart';
+import '../widgets/player/playlet_share_panel.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/video_player_chrome.dart';
@@ -350,6 +352,37 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ),
       );
     });
+  }
+
+  /// 分享（官方 `SeriesShareView` → `showShortSeriesSharePanel`）：
+  /// 先取分享数据，再弹面板；取不到就按官方给「网络错误，请重试」。
+  Future<void> _openShare() async {
+    if (!widget.shortSeries || widget.bookId.isEmpty) return;
+    try {
+      final payload = await ApiClient.instance.playletShare(
+        widget.bookId,
+        currentChapterId: widget.eps.isEmpty
+            ? ''
+            : widget.eps[_index].itemId,
+        firstChapterId: widget.eps.isEmpty ? '' : widget.eps.first.itemId,
+        shareTimestamp: '${DateTime.now().millisecondsSinceEpoch}',
+        entrance: 'video_more',
+      );
+      if (!mounted) return;
+      await PlayletSharePanel.show(
+        context,
+        title: '《${widget.title}》免费看全集',
+        info: PlayletShareInfo.fromPayload(payload),
+        seriesName: widget.title,
+        resolveShortUrl: (target) =>
+            ApiClient.instance.shareShortUrl(target),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text(shareUnavailableToast)));
+    }
   }
 
   /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。
@@ -891,6 +924,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     onComments: widget.shortSeries ? _openComments : null,
     hotComments: _hotComments,
     onHotCommentTap: widget.shortSeries ? _openHotComment : null,
+    // 分享计数：官方来自分享上报服务（`m0.java:1343-1388`），本仓库
+    // 没有该数据源，因此按官方的「无计数」分支显示「分享」
+    // （`SeriesShareView.java:123-129`），不伪造数字。
+    onShare: widget.shortSeries ? _openShare : null,
     danmaku: _danmaku.entries,
     danmakuEnabled: _danmakuEnabled,
     onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,

@@ -15,6 +15,7 @@ import '../services/player_preferences.dart';
 import '../services/user_facing_error.dart';
 import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
+import '../services/playlet_share.dart';
 import 'player/playlet_hot_comment_bar.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
@@ -99,6 +100,11 @@ class VideoPlayerChrome extends StatefulWidget {
 
   /// 弹幕（官方 \`DanmakuRequestHelper\`）：时间轴条目 + 开关状态。
   /// 发送回调为 null 时不出现弹幕入口。
+  /// 分享（官方右栏第四项 `SeriesShareView`）：计数 0 时文案「分享」
+  /// （0x7f061a02）。为 null 时该项不出现（官方该项本身默认 gone）。
+  final int shareCount;
+  final VoidCallback? onShare;
+
   final List<PlayletComment> danmaku;
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
@@ -148,6 +154,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onComments,
     this.hotComments = const [],
     this.onHotCommentTap,
+    this.shareCount = 0,
+    this.onShare,
     this.danmaku = const [],
     this.danmakuEnabled = true,
     this.onToggleDanmaku,
@@ -1819,6 +1827,19 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               PlayletCommentPage.entryLabel(widget.commentCount),
               Icons.mode_comment_rounded,
               widget.onComments,
+            ),
+          ],
+          // 官方右栏第四项是分享（`res/layout/cjs.xml:13`）。计数 <= 0 时
+          // 文案是「分享」（`SeriesShareView.java:123-139`）。
+          if (widget.onShare != null) ...[
+            const SizedBox(height: 12),
+            railButton(
+              'player-share-button',
+              widget.shareCount > 0
+                  ? PlayletCommentPage.entryLabel(widget.shareCount)
+                  : shareEntryLabel,
+              Icons.ios_share_rounded,
+              widget.onShare,
             ),
           ],
         ],

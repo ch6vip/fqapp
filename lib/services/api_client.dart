@@ -943,6 +943,23 @@ class ApiClient {
     return Isolate.run(() => _decodeEnvelope(status, bytes));
   }
 
+  /// 复制链接的短链兜底（官方 `LinkShareItem.java:86-104` 的
+  /// `GET /reading/user/share/short_url/`）。失败由调用方回落长链。
+  Future<String> shareShortUrl(String target) async {
+    final response = await _get(
+      _url('/api/v1/share/short-url', {'target': target}),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    final payload = await Isolate.run(() => _decodeEnvelope(status, bytes));
+    final data = payload['data'];
+    if (data is String) return data.trim();
+    if (data is Map && data['short_url'] != null) {
+      return '${data['short_url']}'.trim();
+    }
+    return '';
+  }
+
   /// Short-drama series detail, including the cast list.
   ///
   /// The reading-API detail and directory responses carry no cast data, so the

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +19,7 @@ import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
 import 'services/player_style_config.dart';
+import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
 import 'services/shelf_store.dart';
 import 'services/swipe_guide_store.dart';
@@ -26,6 +28,14 @@ import 'widgets/home/home_design.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // 短剧分享的「系统分享」走 Android 的 Intent.ACTION_SEND
+  //（官方同一条路径）。桥不可用时 PlayletShare 自动降级为复制链接，
+  // 不会把失败说成成功。
+  SharePlusLite.handler = ({required title, required text}) async {
+    await const MethodChannel(
+      'fqapp/share',
+    ).invokeMethod<bool>('shareText', {'title': title, 'text': text});
+  };
   runApp(const ProviderScope(child: FqApp()));
 }
 

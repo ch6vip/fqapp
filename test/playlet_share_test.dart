@@ -1,0 +1,174 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:fqapp/services/playlet_share.dart';
+import 'package:fqapp/widgets/player/playlet_share_panel.dart';
+
+/// 短剧分享的用例。
+///
+/// 官方依据：复制链接插在列表头部、海报分享插在 SYSTEM 之前
+/// （`m0.java:898-903,1409-1483`）；复制写剪贴板的是 title+链接、
+/// Toast 是硬编码「链接已复制，快去分享吧」（`LinkShareItem.java:117-122,174-189`）；
+/// 无数据时「网络错误，请重试」（`m0.java:2118`）；
+/// 计数为 0 时右栏文案「分享」（`SeriesShareView.java:123-129`，0x7f061a02）。
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharePlusLite.handler = null;
+  });
+
+  group('模型与文案', () {
+    test('the payload keeps the official field names', () {
+      final info = PlayletShareInfo.fromPayload({
+        'data': {
+          'share_url': 'https://a.example/x',
+          'short_url': 'https://s.example/y',
+          'schema': 'snssdk143://x',
+          'text': '正文',
+        },
+      });
+      expect(info.shareUrl, 'https://a.example/x');
+      expect(info.shortUrl, 'https://s.example/y');
+      expect(info.schema, 'snssdk143://x');
+      expect(info.text, '正文');
+      expect(info.isEmpty, isFalse);
+    });
+
+    test('an empty payload counts as unavailable', () {
+      final info = PlayletShareInfo.fromPayload(const {'data': {}});
+      expect(info.isEmpty, isTrue);
+    });
+
+    test('the title uses the official fallback wording', () {
+      expect(shareTitle('我的短剧'), '跟我一起免费看《我的短剧》');
+      expect(shareTitle(''), '跟我一起免费看');
+    });
+
+    test('the clipboard payload is title concatenated with the link', () {
+      expect(shareClipboardPayload('标题', 'https://x'), '标题https://x');
+    });
+
+    test('copy prefers the short url', () async {
+      String? written;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+            if (call.method == 'Clipboard.setData') {
+              written = (call.arguments as Map)['text'] as String?;
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      final outcome = await PlayletShare.copyLink(
+        title: '标题',
+        info: const PlayletShareInfo(
+          shareUrl: 'https://long',
+          shortUrl: 'https://short',
+        ),
+      );
+      expect(outcome, ShareCopyOutcome.copied);
+      expect(written, '标题https://short');
+    });
+
+    test('copy falls back to the long url when the short url call fails', () async {
+      String? written;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+            if (call.method == 'Clipboard.setData') {
+              written = (call.arguments as Map)['text'] as String?;
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      final outcome = await PlayletShare.copyLink(
+        title: '标题',
+        info: const PlayletShareInfo(shareUrl: 'https://long'),
+        resolveShortUrl: (target) async => throw Exception('短链失败'),
+      );
+      expect(outcome, ShareCopyOutcome.copied);
+      expect(written, '标题https://long');
+    });
+
+    test('copy without any url reports unavailable', () async {
+      final outcome = await PlayletShare.copyLink(
+        title: '标题',
+        info: const PlayletShareInfo(),
+      );
+      expect(outcome, ShareCopyOutcome.unavailable);
+    });
+  });
+
+  group('面板', () {
+    Future<void> pump(
+      WidgetTester tester, {
+      PlayletShareInfo info = const PlayletShareInfo(
+        shareUrl: 'https://a.example/x',
+        shortUrl: 'https://s.example/y',
+      ),
+      VoidCallback? onPoster,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PlayletSharePanel(
+              title: '《剧名》免费看全集',
+              info: info,
+              seriesName: '剧名',
+              onPoster: onPoster,
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('the panel keeps the official item order', (tester) async {
+      await pump(tester, onPoster: () {});
+      expect(find.text('复制链接'), findsOneWidget);
+      expect(find.text('系统分享'), findsOneWidget);
+      expect(find.text('海报分享'), findsOneWidget);
+      // 复制链接在最前、海报分享在系统分享之后（官方把海报插在 SYSTEM 前，
+      // 本地面板按同一相对关系排列）。
+      final copyX = tester.getCenter(
+        find.byKey(const ValueKey('playlet-share-copy-link')),
+      ).dx;
+      final systemX = tester.getCenter(
+        find.byKey(const ValueKey('playlet-share-system')),
+      ).dx;
+      final posterX = tester.getCenter(
+        find.byKey(const ValueKey('playlet-share-poster')),
+      ).dx;
+      expect(copyX, lessThan(systemX));
+      expect(posterX, greaterThan(systemX));
+    });
+
+    testWidgets('poster sharing disappears without its callback', (
+      tester,
+    ) async {
+      await pump(tester);
+      expect(find.text('海报分享'), findsNothing);
+    });
+
+    testWidgets('an unavailable payload shows the official fallback', (
+      tester,
+    ) async {
+      await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+      final context = tester.element(find.byType(Scaffold));
+      await PlayletSharePanel.show(
+        context,
+        title: 'x',
+        info: const PlayletShareInfo(),
+        seriesName: '剧名',
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('网络错误，请重试'), findsOneWidget);
+      expect(find.byType(PlayletSharePanel), findsNothing);
+    });
+  });
+}
