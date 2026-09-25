@@ -954,7 +954,7 @@ class _ChannelTab extends StatelessWidget {
 ///   long-press.
 ///
 /// Note: 右侧栏/进度条/信息层的官方数值出处 —
-/// docs/short-drama-decompile-comparison-20260921.md §8
+/// docs/research/short-drama-decompile-comparison-20260921.md §8
 class _DramaFeedCard extends StatelessWidget {
   final MediaItem item;
   final bool opening;

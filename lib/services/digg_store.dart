@@ -15,7 +15,7 @@ import '../models/media_item.dart';
 /// and `followed_cnt` only).
 ///
 /// Note: 官方点赞在账号侧、这里退化为本地集合的理由 — 见
-/// docs/short-drama-decompile-comparison-20260921.md §8.4
+/// docs/research/short-drama-decompile-comparison-20260921.md §8.4
 class DiggStore {
   DiggStore._();
 

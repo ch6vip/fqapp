@@ -9,6 +9,9 @@
 （flutter_rust_bridge 直调，另开 `127.0.0.1:8080` loopback 服务 Web UI 与漫画图）。
 无独立后端进程，结构精简，不需要 root。
 
+目录职责与代码阅读入口见 [`docs/project-structure.md`](docs/project-structure.md)，
+文档分类与历史报告见 [`docs/README.md`](docs/README.md)。
+
 ## 改代码必过的验证门
 
 按改动面取交集，全部通过才算完成：

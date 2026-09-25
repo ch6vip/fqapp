@@ -14,7 +14,7 @@
 //   device    - persistent device pool + registration
 //   sign      - request signing primitives
 //
-// See docs/rust-migration-contracts.md for the behaviour contract and
+// See docs/migration/rust-migration-contracts.md for the behaviour contract and
 // docs/rust-migration-progress.md for the current verification state.
 
 pub mod api;

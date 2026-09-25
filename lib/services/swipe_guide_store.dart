@@ -11,7 +11,7 @@ import 'package:hive/hive.dart';
 /// are dropped instead of throwing out of the feed.
 ///
 /// Note: 官方一次性提示的完整行为 — 见
-/// docs/short-drama-decompile-comparison-20260921.md §19
+/// docs/research/short-drama-decompile-comparison-20260921.md §19
 class SwipeGuideStore {
   SwipeGuideStore._();
 

@@ -84,7 +84,7 @@ flutter:
     - assets/images/bubble/
     # 短剧单列卡右侧栏/信息层的官方图标，从
     # `ckao/decompile/apktool/res/drawable*/` 原样抽出（见
-    # docs/short-drama-decompile-comparison-20260921.md §8）。
+    # docs/research/short-drama-decompile-comparison-20260921.md §8）。
     - assets/images/drama/
     # 「上滑查看更多视频」的官方箭头动画（`more_wonderful_series_up_arrow.json`），
     # 原样复制、仅把填充色改为白色——官方运行时用 LottieValueCallback 强制

@@ -2,7 +2,7 @@
 //!
 //! Architecture decision and consequences:
 //! .agents/notes/implemented/architecture/2026-09-23-rust-native-core-migration.md
-//! Behaviour contract: docs/rust-migration-contracts.md
+//! Behaviour contract: docs/migration/rust-migration-contracts.md
 //!
 //! Flutter calls [request] for every backend call; the loopback HTTP adapter
 //! (`server.rs`) serves the built-in Web UI and `/src/*` resources from the

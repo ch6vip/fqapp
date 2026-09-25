@@ -68,8 +68,8 @@ jobs:
 
       # The Go backend was replaced by the Rust core in rust/. There is no
       # private backend checkout and no Go installation in the product build.
-      # patches// is retained only as an offline oracle for regenerating
-      # golden vectors, and is never an input to this workflow.
+      # docs/migration/legacy-oracle/ retains the offline golden-vector provenance
+      # and patches; it is never an input to this workflow.
 
       - name: Install the pinned Rust toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -65,8 +65,11 @@ app.*.map.json
 *.keystore
 *.pepk
 
-# 本地临时文件
+# 本地工具状态与会话归档
 _sessionzip/
 .workbuddy/
-.agents/
 .zcode/
+
+# 本地决策笔记不随源码分发；用户可见结论保存在 docs/。
+# Note: .agents/notes/implemented/architecture/2026-09-25-project-directory-organization.md
+.agents/

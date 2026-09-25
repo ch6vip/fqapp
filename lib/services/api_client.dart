@@ -316,8 +316,8 @@ class ApiClient {
   ///
   /// A book ID is required: the `/api/content` speech bridge returns subtitles
   /// only (`speech_text`) and can never yield a playable URL (see
-  /// docs/native-media-api-validation-20260908.md), so silently querying it
-  /// would fail with a misleading error.
+  /// docs/validation/native-media-api-validation-20260908.md), so silently
+  /// querying it would fail with a misleading error.
   Future<AudioSource> audioSource(
     String itemId, {
     String? toneId,
