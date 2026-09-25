@@ -13,6 +13,7 @@ import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
 import '../models/playlet_comment.dart';
+import 'player/playlet_hot_comment_bar.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_player_panel.dart';
@@ -89,6 +90,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final int commentCount;
   final VoidCallback? onComments;
 
+  /// 热评胶囊（官方 \`SeriesHotCommentView\`）：列表来自 \`hotOf\` 的本地筛选，
+  /// 为空时整条不出现。
+  final List<PlayletComment> hotComments;
+  final ValueChanged<PlayletComment>? onHotCommentTap;
+
   /// 底部 band 的两块服务端装饰（官方截图第二十二轮）：完结状态
   /// （「选集 · 已完结 · 全82集」胶囊，`@string/ag_`/`e6r`）与
   /// 原著书卡（「原著《…》」，`/related` 的 book 关联）。缺省就不显示。
@@ -131,6 +137,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onLikeTap,
     this.commentCount = 0,
     this.onComments,
+    this.hotComments = const [],
+    this.onHotCommentTap,
   });
 
   @override
@@ -1136,6 +1144,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           // 旧底栏是 `bom.xml` 里 `e0t/iv7` 的「清屏/还原」文字（图标只是
           // 前缀）。手机旧底栏没有清屏项（pad 门），所以这里恒出「倍速」，
           // 清屏项由 `_clearScreenAvailable` 决定。
+          // 官方热评胶囊只在有热评、未清屏/锁定、竖屏且信息区可见时出现。
+          final hotBar =
+              widget.shortSeries &&
+              !_locked &&
+              !_clearScreen &&
+              !_seeking &&
+              widget.hotComments.isNotEmpty &&
+              (controls || bandVisible);
           final showTextActions =
               widget.shortSeries &&
               unobstructed &&
@@ -1292,6 +1308,16 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     children: [
                       if (!landscape && (controls || bandVisible))
                         _information(showPill: controls, showBook: bandVisible),
+                      // 官方热评胶囊在信息面板下方（\`e0.java:2136-2161\` 的
+                      // "below_abstract" 位），只在有热评时出现。
+                      if (!landscape && hotBar)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                          child: PlayletHotCommentBar(
+                            comments: widget.hotComments,
+                            onTap: widget.onHotCommentTap,
+                          ),
+                        ),
                       // 标题/原著卡排在操作行上方，文字放大时也不占它的点击区。
                       if (showTextActions)
                         Padding(

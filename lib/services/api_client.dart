@@ -749,6 +749,7 @@ class ApiClient {
     int count = 10,
     String cursor = '',
     String tag = '',
+    String insertCommentIds = '',
   }) async {
     final response = await _get(
       _url('/api/v1/series/${Uri.encodeComponent(seriesId)}/comments', {
@@ -756,6 +757,8 @@ class ApiClient {
         'count': '$count',
         if (cursor.isNotEmpty) 'cursor': cursor,
         if (tag.isNotEmpty) 'tag': tag,
+        // 官方从热评进入时把它插进列表（`gx1/m.java:236-241`）。
+        if (insertCommentIds.isNotEmpty) 'insert_comment_ids': insertCommentIds,
       }),
     );
     final status = response.statusCode;

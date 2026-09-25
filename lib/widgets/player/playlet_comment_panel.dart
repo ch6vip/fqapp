@@ -37,6 +37,7 @@ class PlayletCommentPanel extends StatefulWidget {
     required this.seriesId,
     this.loader,
     this.initialTotal = 0,
+    this.focusCommentId = '',
   });
 
   final String seriesId;
@@ -47,12 +48,18 @@ class PlayletCommentPanel extends StatefulWidget {
   /// 宿主已知的评论数（官方入口计数同源），用于首屏空态文案。
   final int initialTotal;
 
+  /// 官方从热评进入评论时带 `hot_comment_id`/`hot_reply_id`
+  /// （`SeriesHotCommentView.java:468-559`）。本地等价：用
+  /// `insert_comment_ids` 让服务端把这条插进列表，页面里高亮它。
+  final String focusCommentId;
+
   /// 打开面板：官方入口在右侧竖栏，竖屏走底部弹窗。
   static Future<void> show(
     BuildContext context, {
     required String seriesId,
     PlayletCommentPageLoader? loader,
     int total = 0,
+    String focusCommentId = '',
   }) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -65,6 +72,7 @@ class PlayletCommentPanel extends StatefulWidget {
       seriesId: seriesId,
       loader: loader,
       initialTotal: total,
+      focusCommentId: focusCommentId,
     ),
   );
 
@@ -122,6 +130,9 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
       count: count,
       cursor: cursor,
       tag: tag,
+      // 官方从热评进来时带 `hot_comment_id`（`gx1/m.java:236-241`），
+      // 本地等价是 `insert_comment_ids`；只在首页（cursor 为空）带。
+      insertCommentIds: cursor.isEmpty ? widget.focusCommentId : '',
     );
   }
 
@@ -335,8 +346,12 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
     );
   }
 
-  Widget _tile(PlayletComment comment) => Padding(
+  Widget _tile(PlayletComment comment) => Container(
     key: ValueKey('playlet-comment-${comment.id}'),
+    // 从热评进来的那条原本就高亮（官方 `force_refresh` 的等价反馈）。
+    color: comment.id == widget.focusCommentId
+        ? const Color(0x14FA6725)
+        : null,
     padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,

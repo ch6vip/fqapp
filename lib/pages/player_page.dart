@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/audio_extra.dart' show RelatedWork;
 import '../models/media_item.dart';
+import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
@@ -157,7 +158,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       unawaited(_loadVideo());
     }
     unawaited(_loadBandExtras());
+    unawaited(_loadHotComments());
   }
+
+  /// 热评（官方 `SeriesHotCommentView`）：与评论计数同源，来自
+  /// `comment/list` 的 `comment_source=4/count=20` 那次请求，
+  /// 由 [hotOf] 在本地筛出（**不是接口字段**）。
+  List<PlayletComment> _hotComments = const [];
 
   /// 底部 band 装饰，一个 `seriesDetail` 请求全出：完结状态
   /// （`series_status`：官方 `SeriesStatus` 1=已完结/0=更新中/3=今日更新/
@@ -203,6 +210,41 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       context,
       seriesId: widget.bookId,
       total: _commentCount,
+    );
+  }
+
+  /// 热评数据：官方与评论计数同源（`comment/list` 的
+  /// `comment_source=4/count=20` 那次请求，`a13/w.java:563-599`），
+  /// 本地筛出 `dataType in {4,9}` 的条目。best-effort：失败就不显示胶囊。
+  Future<void> _loadHotComments() async {
+    if (!widget.shortSeries || widget.bookId.isEmpty) return;
+    try {
+      final page = await ApiClient.instance.playletHotComments(
+        widget.bookId,
+        vid: widget.eps.isEmpty ? '' : widget.eps.first.itemId,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (page.totalCount > 0) _commentCount = page.totalCount;
+        _hotComments = page.hotComments;
+      });
+    } catch (_) {
+      // 热评是装饰，接口失败不能影响播放。
+    }
+  }
+
+  /// 热评点击：官方的联动是发 `show_hot_comment_dialog` 并带
+  /// `hot_comment_id`/`hot_reply_id`（Reply 型用父评论 id 当
+  /// `hot_comment_id`）。本地等价是打开评论面板并滚到该条。
+  void _openHotComment(PlayletComment comment) {
+    final target = comment.dataType == UgcRelativeType.reply
+        ? comment.parentCommentId
+        : comment.id;
+    PlayletCommentPanel.show(
+      context,
+      seriesId: widget.bookId,
+      total: _commentCount,
+      focusCommentId: target,
     );
   }
 
@@ -740,6 +782,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     onError: (error) => _fail(error, _loadGeneration),
     commentCount: _commentCount,
     onComments: widget.shortSeries ? _openComments : null,
+    hotComments: _hotComments,
+    onHotCommentTap: widget.shortSeries ? _openHotComment : null,
     newPlayerBottomStyle: style.useNewPlayerBottomStyle,
     hasBanner: style.hasBanner,
     padNewBottomStyle: style.padNewBottomStyle,
