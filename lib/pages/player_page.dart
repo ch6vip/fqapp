@@ -14,6 +14,7 @@ import '../services/playback_issue.dart';
 import '../services/player_history.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
+import '../services/player_style_config.dart';
 import '../services/swipe_guide_store.dart';
 import '../models/book_detail.dart' show formatCounter;
 import '../widgets/player/player_cover.dart';
@@ -679,7 +680,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) => VideoPlayerChrome(
+  Widget build(BuildContext context) {
+    // 官方播放页开关来自 config.json（`PlayerBottomStyleConfig` 等），
+    // 每次 build 重读，配置变化无需重启页面。
+    final style = PlayerStyleConfig.instance;
+    return VideoPlayerChrome(
     player: _player,
     title: widget.title,
     episodes: widget.eps,
@@ -694,6 +699,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         : null,
     onFollow: widget.onFollow,
     onLike: widget.onLike,
+    // 官方竖屏双击点赞（`jq3/x.q.onDoubleTap` → `holder.z7`）：动画由播放器
+    // 自己播，点赞动作走与右栏「点赞」同一条宿主回调，不另开一条链路。
+    onLikeTap: widget.onLike,
     aiGenerated: widget.aiGenerated,
     showSeekHint: _seekHintVisible,
     onSeekHintConsumed: _consumeSeekHint,
@@ -709,8 +717,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     onPagingChanged: _onPagingChanged,
     onSelectEpisode: _selectEpisode,
     onError: (error) => _fail(error, _loadGeneration),
+    newPlayerBottomStyle: style.useNewPlayerBottomStyle,
+    hasBanner: style.hasBanner,
+    padNewBottomStyle: style.padNewBottomStyle,
+    reverseClearScreen: style.reverseClearScreen,
+    landscapeLockEnabled: style.landscapeLockEnabled,
     child: _videoArea(),
-  );
+    );
+  }
 
   Widget _videoArea() {
     final generation = _loadGeneration;

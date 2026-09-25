@@ -4,5 +4,16 @@
     "anti_crawler": {
         "enabled": false,
         "redirect_url": "https://www.example.com"
-    }
+    },
+    "player_bottom_style_config": {
+        "use_new_player_bottom_style": true,
+        "has_banner": false
+    },
+    "func_reverse_of_clear_screen_v691": {
+        "reverse": false
+    },
+    "landscape_func_config_v705": {
+        "enable_lock": true
+    },
+    "pad_new_player_bottom_style": false
 }

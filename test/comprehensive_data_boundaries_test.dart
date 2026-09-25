@@ -8,6 +8,7 @@ import 'package:fqapp/main.dart' as app;
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
@@ -58,6 +59,9 @@ void main() {
           // 首页 feed 的冷启动缓存 box 与榜单缓存 box 也在 bootstrap 里开箱。
           await Hive.openBox<dynamic>('home_feed_cache_v1');
           await Hive.openBox<dynamic>('rank_cache_v1');
+          // 官方播放页开关在 bootstrap 里从 config.json 读取；提前读好，
+          // 避免 bundle 加载落在 widget 测试的 fake-async 路径上。
+          await PlayerStyleConfig.load();
           await history.put('kept-book', record);
         });
         const channel = MethodChannel('plugins.flutter.io/path_provider');

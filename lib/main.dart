@@ -17,6 +17,7 @@ import 'services/digg_store.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
+import 'services/player_style_config.dart';
 import 'services/poster_cache.dart';
 import 'services/shelf_store.dart';
 import 'services/swipe_guide_store.dart';
@@ -63,6 +64,9 @@ Future<void> _initializeLocalData() async {
   } catch (_) {
     // RankCache 自己把「不可用」当成「没有缓存」处理。
   }
+  // 官方播放页开关（PlayerBottomStyleConfig / 清屏反转 / 横屏锁）随同一份
+  // 运行时配置读取；读不到就用默认值，不能拖住启动。
+  await PlayerStyleConfig.load();
   // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
   unawaited(PosterCache.instance.enforceBudget());
   final sp = await SharedPreferences.getInstance();

@@ -43,11 +43,12 @@ void main() {
     _expectClearScreen();
     // 手势仍操作播放器，清屏状态独立于暂停反馈和自动收起计时器。
     await tester.tapAt(const Offset(200, 400));
-    await tester.pump(const Duration(milliseconds: 350));
+    // 官方竖屏注册了双击点赞，单击要等双击窗口（800ms）结束才确认。
+    await tester.pump(const Duration(milliseconds: 850));
     expect(player.isPlaying, isFalse);
     _expectClearScreen();
     await tester.tapAt(const Offset(200, 400));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 850));
     expect(player.isPlaying, isTrue);
     await tester.pump(const Duration(seconds: 4));
     _expectClearScreen();

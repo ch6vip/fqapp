@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lottie/lottie.dart';
 
 import '../models/audio_extra.dart';
 import '../models/media_item.dart';
@@ -57,6 +58,31 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool showSeekHint;
   final VoidCallback? onSeekHintConsumed;
 
+  /// 官方底栏配置 `player_bottom_style_config`（`use_new_player_bottom_style`
+  /// 与 `has_banner`，`PlayerBottomStyleConfig.a()`）。为真时清屏入口是右下
+  /// 文字行（`SingleVideoHolder.z8()`），为假时才轮到旧底栏图标
+  /// （`o.W7()` 门 `F6()`）。两条分支互斥，不是按自动收起计时器轮换。
+  final bool newPlayerBottomStyle;
+  final bool hasBanner;
+
+  /// 旧底栏（`jj3/i` + `bom.xml`）里「清屏」（Lottie + 文案）与「还原」两项
+  /// 只在 `NsUtilsDepend.isPadDevice() && PadFitPhaseTwo.newBottomStyle` 时
+  /// 可见（`jj3/i.java:620-637`）。手机上的旧底栏只有「清晰度 / 倍速」，
+  /// 没有清屏入口——不能凭 `PlayerBottomStyleConfig` 一个开关推断出来。
+  final bool padNewBottomStyle;
+
+  /// 官方 `func_reverse_of_clear_screen_v691.reverse`：为真时清屏整体不可用
+  /// （`o.H1()` 的第一道门）。
+  final bool reverseClearScreen;
+
+  /// 官方 `landscape_func_config_v705.enable_lock`：横屏防误触锁的配置门，
+  /// 默认关闭（`LandLockOptV705` 默认 false）。
+  final bool landscapeLockEnabled;
+
+  /// 当前剧是否已点赞。双击只播动画、只上报一次点击，**不做状态取反**。
+  final bool liked;
+  final VoidCallback? onLikeTap;
+
   /// 底部 band 的两块服务端装饰（官方截图第二十二轮）：完结状态
   /// （「选集 · 已完结 · 全82集」胶囊，`@string/ag_`/`e6r`）与
   /// 原著书卡（「原著《…》」，`/related` 的 book 关联）。缺省就不显示。
@@ -90,6 +116,13 @@ class VideoPlayerChrome extends StatefulWidget {
     this.seriesStatus,
     this.originalBook,
     this.onOpenOriginalBook,
+    this.newPlayerBottomStyle = true,
+    this.hasBanner = false,
+    this.padNewBottomStyle = false,
+    this.reverseClearScreen = false,
+    this.landscapeLockEnabled = false,
+    this.liked = false,
+    this.onLikeTap,
   });
 
   @override
@@ -97,7 +130,7 @@ class VideoPlayerChrome extends StatefulWidget {
 }
 
 class _VideoPlayerChromeState extends State<VideoPlayerChrome>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   late final PageController _pages;
   final _panel = DraggableScrollableController();
   final _panelExtent = ValueNotifier<double>(0);
@@ -129,9 +162,27 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _fullScreen = false;
 
   /// 清屏独立于控件自动收起，暂停、切集与旋转均保留本次会话的选择。
-  /// Note: 新底栏统一文字入口与手势取舍 — 见
-  /// .agents/notes/implemented/bug-fix/2026-09-25-short-drama-clear-screen.md
+  /// Note: 新底栏文字/图标两分支与手势取舍 — 见
+  /// .agents/notes/proposed/architecture/2026-09-25-f01-f03-official-evidence.md
   bool _clearScreen = false;
+
+  /// 横屏防误触锁（官方 `fullscreen.b` 单例的本地等价）：锁定后画面手势、
+  /// 播放控件、选集/更多面板与清屏全部被吞；退出横屏或换播放器即解除
+  /// （官方 `ShortSeriesLandActivity.onDestroy` → `EXIST_LAND_ACTIVITY`）。
+  bool _locked = false;
+  bool _lockVisible = true;
+  Timer? _lockHideTimer;
+
+  /// 官方 `uk3/c` 的 Lottie 驱动：`op`=20、`fr`=30 → 666ms；锁定时停在
+  /// 第 20 帧（`value == 1`），解锁时停在帧 0。
+  late final AnimationController _lockController;
+
+  /// 官方 `like_video_center.json`：`op`=39、`fr`=25 → 1560ms，单次播放。
+  late final AnimationController _likeController;
+  bool _likePlaying = false;
+
+  /// 双击落点（官方 `qf3/d.onDoubleTap` 用 raw 坐标把动画对齐到手指处）。
+  Offset? _likeOrigin;
   bool _boosting = false;
   bool _paging = false;
   bool _appActive = true;
@@ -198,14 +249,32 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _lockController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 666),
+    );
+    _likeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1560),
+    )..addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        setState(() => _likePlaying = false);
+      }
+    });
     unawaited(_loadRate());
     _scheduleHide();
+    _scheduleLockHide();
   }
 
   @override
   void didUpdateWidget(VideoPlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.player != widget.player) _listenToPosition();
+    if (oldWidget.player != widget.player) {
+      _listenToPosition();
+      // 换播放器等于换 holder：官方 `d.release()` 会摘掉锁监听，本地等价是
+      // 撤销锁态，避免下一个剧集继承上一个的锁定。
+      _releaseLock();
+    }
     if (oldWidget.player != widget.player ||
         oldWidget.enabled && !widget.enabled) {
       if (_boosting && oldWidget.player != null) {
@@ -246,6 +315,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _hideTimer?.cancel();
+    _lockHideTimer?.cancel();
+    _lockController.dispose();
+    _likeController.dispose();
     _pages.dispose();
     _panel.dispose();
     _panelExtent.dispose();
@@ -338,6 +410,70 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     });
   }
 
+  /// 官方 `fullscreen/d.G6()`：已锁定时把锁按钮的自动隐藏排在 5 秒后；
+  /// 未锁定时不排（锁按钮随控件条一起显示/隐藏）。
+  void _scheduleLockHide() {
+    _lockHideTimer?.cancel();
+    if (!_locked || !widget.landscapeLockEnabled) return;
+    _lockHideTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && _locked) setState(() => _lockVisible = false);
+    });
+  }
+
+  /// 官方 `d.K6`：点锁按钮就切换锁定状态，锁定时重新计时，解锁时立即
+  /// 恢复可见；锁本身不改变播放状态。
+  void _toggleLock() {
+    ++_interaction;
+    _endBoost();
+    final lock = !_locked;
+    setState(() {
+      _locked = lock;
+      _lockVisible = true;
+    });
+    // 官方 \`uk3/c.j(z)\`：锁 → 从第 20 帧反向播到 0；解锁 → 从 0 正向播到
+    // 第 20 帧，结束后停在对应端点。
+    if (lock) {
+      _lockController.value = 1;
+      _lockController.reverse(from: 1);
+    } else {
+      _lockController.value = 0;
+      _lockController.forward(from: 0);
+    }
+    _scheduleLockHide();
+  }
+
+  /// 官方 `jq3/x.q.onDoubleTap` → `holder.z7(e)` → `qf3/d.onDoubleTap`：
+  /// 双击只播放 `like_video_center.json` 动画并上报一次点赞动作，
+  /// **不取反点赞状态**（官方动画层没有任何状态逻辑）。
+  void _triggerLike() {
+    if (!_ready || _locked || _panelOpen || _modalOpen) return;
+    ++_interaction;
+    setState(() => _likePlaying = true);
+    widget.onLikeTap?.call();
+    _likeController.forward(from: 0);
+  }
+
+  /// 面板打开时按官方 `H6()/`自动隐藏规则同步锁按钮可见性（`getCurrentViewVisible`
+  /// 为真就隐藏，否则显示）。
+  void _refreshLockVisibility() {
+    if (!_locked) return;
+    if (_lockVisible) {
+      setState(() => _lockVisible = false);
+    } else {
+      setState(() => _lockVisible = true);
+      _scheduleLockHide();
+    }
+  }
+
+  /// 退出横屏 / 换播放器：官方在 Activity 销毁时无条件解锁
+  /// （`EXIST_LAND_ACTIVITY`），本地等价是离开横屏与替换播放器。
+  void _releaseLock() {
+    _lockHideTimer?.cancel();
+    if (!_locked && _lockVisible) return;
+    _locked = false;
+    _lockVisible = true;
+  }
+
   void _toggleControls() {
     // 控件显隐不退出清屏；短剧清屏时单击画面仍走播放/暂停。
     if (_clearScreen) return;
@@ -350,8 +486,23 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
   }
 
-  /// 沿用官方独立清屏状态；文字入口常驻是本地选择，详见源码对照文档 §32。
+  /// 官方 `o.H1(z)`：`func_reverse_of_clear_screen_v691.reverse` 为真时
+  /// 整个清屏入口不可用；`b7()` 取当前持有者的 `yp3.k.b()`，本地等价是
+  /// 「播放器就绪」。新底栏文字行与旧底栏图标都走这一个入口。
+  /// 官方 `o.H1()` 的门是 `!O1() || !yp3.k.a()`：前者是清屏反转配置，
+  /// 后者是「这个持有者允许清屏」。它**不要求视频已就绪**——加载中就退不出
+  /// 清屏会制造一个没有出口的状态，所以本地不把 `_ready` 放进门里。
+  bool get _clearScreenAvailable =>
+      !widget.reverseClearScreen &&
+      !_locked &&
+      (widget.newPlayerBottomStyle ||
+          widget.hasBanner ||
+          widget.padNewBottomStyle);
+
+  /// 沿用官方独立清屏状态；新底栏文字入口 vs 旧底栏图标的互斥分支见
+  /// .agents/notes/proposed/architecture/2026-09-25-f01-f03-official-evidence.md §1。
   void _setClearScreen(bool clear) {
+    if (!_clearScreenAvailable) return;
     _endBoost();
     _cancelSeek();
     ++_interaction;
@@ -373,6 +524,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 是否真是横滑由 [_updateDragSeek] 用横向主导的位移判定。
   void _startDragSeek(DragStartDetails details) {
     if (!_ready ||
+        _locked ||
         _panelOpen ||
         _modalOpen ||
         _seeking ||
@@ -441,6 +593,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void _togglePlayback() {
     if (!_ready ||
         !_appActive ||
+        _locked ||
         _panelOpen ||
         _modalOpen ||
         _seeking ||
@@ -551,6 +704,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   void _startBoost() {
     if (!_ready ||
+        _locked ||
         !widget.playing ||
         _seeking ||
         _paging ||
@@ -579,7 +733,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 都要服务端下发或账号链路，本仓库一律不显示占位（诚实清单，见对照
   /// 文档 §27）。
   Future<void> _showRates() async {
-    if (_modalOpen) return;
+    if (_modalOpen || _locked) return;
     _endBoost();
     _cancelSeek();
     _hideTimer?.cancel();
@@ -654,6 +808,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _openPanel() {
+    if (_locked) return;
     _endBoost();
     _cancelSeek();
     _hideTimer?.cancel();
@@ -826,9 +981,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Future<void> _toggleFullScreen() async {
     _endBoost();
     _cancelSeek();
+    // 官方在 Activity 退出横屏时无条件解锁（`EXIST_LAND_ACTIVITY`）。
+    if (_fullScreen) _releaseLock();
     setState(() => _fullScreen = !_fullScreen);
     await _applySystemUi();
-    if (mounted) _scheduleHide();
+    if (mounted) {
+      setState(() {});
+      _scheduleHide();
+    }
   }
 
   Future<void> _applySystemUi() async {
@@ -897,6 +1057,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     unawaited(_applySystemUi());
   }
 
+  /// 画面是否处于横屏全屏态。锁只在横屏有效，退出横屏即解锁。
+  bool get _isLandscape {
+    final window = MediaQuery.sizeOf(context);
+    return _fullScreen && window.width > window.height;
+  }
+
   Future<void> _restoreSystemUi() async {
     try {
       await SystemChrome.setPreferredOrientations([]);
@@ -928,13 +1094,25 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           );
           final durationMs = math.max(0, widget.duration.inMilliseconds);
           final unobstructed = !_panelOpen && !_modalOpen;
-          final showChrome = unobstructed && !_clearScreen;
+          // 退出横屏运行时解锁：官方 Activity 销毁时用 EXIST_LAND_ACTIVITY
+          // 复位全局锁态，本地没有独立 Activity，只能在布局里对账。
+          if (_locked && !landscape) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && !_isLandscape) setState(_releaseLock);
+            });
+          }
+          // 锁定时官方整条控件/清屏链路被吞（fullscreen/d.H6() 与
+          // jq3/x.q 的 B4()/G6() 早退），只留锁按钮本身。
+          final showChrome = unobstructed && !_clearScreen && !_locked;
           final controls = _visible && showChrome && !_seeking;
-          // 短剧竖屏及清屏态通过单击暂停/继续；不注册
-          // 双击——快速双击等价两次单击，回到原播放状态。
+          // 官方 jq3/x.q：竖屏播放页有完整的双击点赞链路，单击才切播放；
+          // 横屏（全屏 Activity）没有点赞链路，单击只切换控件条，
+          // 清屏态例外——清屏是竖屏专属，横屏清屏仍走单击暂停。
+          final likeGesture = widget.shortSeries && !landscape;
           final tapTogglesPlayback =
               widget.shortSeries && (!landscape || _clearScreen);
-          final canPage = unobstructed && !_seeking && !_boosting && !landscape;
+          final canPage =
+              unobstructed && !_seeking && !_boosting && !_locked && !landscape;
           // 短剧横屏底条（批次四）：官方 `c0i.xml` + `cw7.xml` 的形态，
           // 替换通用运输条在此朝向的全部残留（prev/±10/全屏钮）。
           final landscapeBar = widget.shortSeries && landscape;
@@ -946,23 +1124,52 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               !_visible &&
               !_seeking &&
               showChrome;
+          // 官方两个底栏分支都以文字收口：新底栏是 `z8()` 的右下文字行，
+          // 旧底栏是 `bom.xml` 里 `e0t/iv7` 的「清屏/还原」文字（图标只是
+          // 前缀）。手机旧底栏没有清屏项（pad 门），所以这里恒出「倍速」，
+          // 清屏项由 `_clearScreenAvailable` 决定。
           final showTextActions =
               widget.shortSeries &&
               unobstructed &&
+              !_locked &&
               !_seeking &&
               (!landscape || _clearScreen);
+          // 旧底栏图标分支（`o.W7()` → `q0.P1()` → `jj3.i`）：手机上只有
+          // 「清晰度 / 倍速」两项，清屏/还原被 `isPadDevice()` 门住，本地没有
+          // 平板形态，因此这个分支只保留倍速入口，不画清屏图标——
+          // 官方手机上本来就没有这个入口（`jj3/i.java:620-637`）。
           return Stack(
             fit: StackFit.expand,
             children: [
               GestureDetector(
                 key: const ValueKey('video-surface'),
                 behavior: HitTestBehavior.opaque,
-                onTap: tapTogglesPlayback ? _togglePlayback : _toggleControls,
-                onDoubleTap: tapTogglesPlayback ? null : _togglePlayback,
+                // 官方 G6()：锁定后每一次触摸只是「重新显示锁按钮」，
+                // 画面手势、播放控制与清屏出口全部被吞。
+                onTap: _locked
+                    ? () => _refreshLockVisibility()
+                    : (tapTogglesPlayback ? _togglePlayback : _toggleControls),
+                onDoubleTapDown: likeGesture && !_locked
+                    ? (details) => _likeOrigin = details.localPosition
+                    : null,
+                onDoubleTap: _locked
+                    ? () => _refreshLockVisibility()
+                    : likeGesture
+                    ? _triggerLike
+                    : (tapTogglesPlayback ? null : _togglePlayback),
                 onHorizontalDragStart: _startDragSeek,
                 onHorizontalDragUpdate: _updateDragSeek,
                 onHorizontalDragEnd: _endDragSeek,
-                onLongPressStart: (_) => _startBoost(),
+                // 官方 K6() 的中心热区检查只在 y7() 为真时才拦截长按
+                // （jq3/x.java:2250-2252）；y7() 的配置分支未取证，故不在此
+                // 私自收紧热区。锁定时由 _startBoost 自己拒绝。
+                onLongPressStart: (_) {
+                  if (_locked) {
+                    _refreshLockVisibility();
+                    return;
+                  }
+                  _startBoost();
+                },
                 onLongPressEnd: (_) => _endBoost(),
                 onLongPressCancel: _endBoost,
                 child: NotificationListener<ScrollNotification>(
@@ -1019,7 +1226,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               ),
               // 「左右滑动可调整进度」首次引导（`@string/cha`，距底 138dp，
               // `o.java K6` 的引导层）。
-              if (widget.showSeekHint && showChrome)
+              if (widget.showSeekHint && unobstructed && widget.enabled)
                 Positioned(
                   left: 0,
                   right: 0,
@@ -1291,6 +1498,26 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   ),
                 ),
               ],
+              _lockButton(window),
+              if (_likePlaying)
+                Positioned(
+                  left: (_likeOrigin?.dx ?? window.width / 2) - 48.5,
+                  top: (_likeOrigin?.dy ?? window.height / 2) - 75.5,
+                  child: IgnorePointer(
+                    child: SizedBox(
+                      width: 97,
+                      height: 151,
+                      child: Lottie.asset(
+                        'assets/lottie/like_video_center.json',
+                        key: const ValueKey('player-like-animation'),
+                        controller: _likeController,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stack) =>
+                            const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           );
         },
@@ -1449,11 +1676,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     runSpacing: 4,
     children: [
       _screenTextButton('player-rate-text', _rateText(_rate), _showRates),
-      _screenTextButton(
-        'player-clear-screen',
-        _clearScreen ? '恢复' : '清屏',
-        () => _setClearScreen(!_clearScreen),
-      ),
+      if (_clearScreenAvailable)
+        _screenTextButton(
+          'player-clear-screen',
+          _clearScreen ? '恢复' : '清屏',
+          () => _setClearScreen(!_clearScreen),
+        ),
     ],
   );
 
@@ -1922,6 +2150,53 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       ),
     ),
   );
+
+  /// 官方横屏防误触锁（`fullscreen/d.J6()`，配置门 `landscape_func_config_v705
+  /// .enable_lock`，默认关闭）：右缘偏上、`marginEnd = 屏宽 × 0.11`，36dp 的
+  /// `unlock_speed.json`（帧 0 解锁 / 帧 20 锁定）。未锁定时随控件条出现，
+  /// 锁定后 5 秒自动隐藏，任意触摸把它重新唤出（`d.G6()`）。
+  Widget _lockButton(Size window) {
+    if (!widget.shortSeries ||
+        !widget.landscapeLockEnabled ||
+        !_fullScreen ||
+        !_ready) {
+      return const SizedBox.shrink();
+    }
+    if (!_locked && !_visible) return const SizedBox.shrink();
+    return Positioned(
+      top: 0,
+      right: math.max(window.width * .11, 24),
+      child: SafeArea(
+        child: GestureDetector(
+          key: const ValueKey('landscape-lock'),
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleLock,
+          // 官方对锁按钮注册了吞掉长按的监听器（`uk3/c.java:237-243`），
+          // 避免长按穿透到画面的临时倍速。
+          onLongPress: () {},
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 300),
+              opacity: _lockVisible ? 1 : 0,
+              child: Lottie.asset(
+                'assets/lottie/unlock_speed.json',
+                // 官方 `uk3/c.j(z)`：锁 → 从第 20 帧反向播，解锁 → 从 0 帧正向播。
+                controller: _lockController,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stack) => Icon(
+                  _locked ? Icons.lock_rounded : Icons.lock_open_rounded,
+                  size: 28,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   /// 官方横屏时长格式（`o2()` → `d7.o(sec, true)`）：恒 `HH:MM:SS`，
   /// 与共享的 `mm:ss` 格式器（音频页同源）分开。
