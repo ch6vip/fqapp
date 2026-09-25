@@ -632,6 +632,14 @@ class _FakeReaderStore implements ReaderStore {
   }) async {
     readSeconds += seconds;
   }
+  @override
+  Future<Set<String>> watchedEpisodeIds(String id) async => <String>{};
+
+  @override
+  Future<void> markEpisodeWatched(String id, Iterable<String> episodeIds) async {}
+
+  @override
+  Future<void> forgetWatchedEpisodes(String id) async {}
 }
 
 /// Expands the 设置 section of the reading menu. The section keeps its state

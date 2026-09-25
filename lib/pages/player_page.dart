@@ -9,6 +9,7 @@ import '../models/series_detail.dart';
 import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
 import '../services/player_panel_preferences.dart';
+import '../services/watched_episodes.dart';
 import '../services/playlet_share.dart';
 import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
@@ -107,9 +108,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _seekHintVisible = false;
   Timer? _seekHintTimer;
 
-  /// 已看集（选集面板灰字）：续播点之前的集（本地历史的等价推断）+
-  /// 本次会话播过的集（切集时把离开的集记为已看）。
-  final Set<int> _watched = {};
+  /// 已看集（选集面板灰字）。
+  ///
+  /// 官方按 **vid 逐集**记录（`hj3/r0.java:445` 的 `bf3.b.b.q(seriesId, vid)`），
+  /// 本地同样以**剧集 id** 为准：`_watchedIds` 是持久化的稳定集合，
+  /// 渲染时再映射成下标（`watchedIndexes`）。
+  /// 曾经这里用「续播点之前的集都算已看」推断，跳集时会标错，已废弃。
+  Set<String> _watchedIds = <String>{};
+  WatchedEpisodes get _watched =>
+      WatchedEpisodes(widget.historyStore ?? LibraryStore.instance);
 
   /// 底部 band 装饰（官方截图第二十二轮）：完结状态与原著书卡，
   /// best-effort 拉取，失败保持缺省。
@@ -147,7 +154,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _index = widget.eps.isEmpty
         ? 0
         : widget.startIndex.clamp(0, widget.eps.length - 1);
-    _watched.addAll([for (var i = 0; i < _index; i++) i]);
+    // 已看集来自持久化记录，**不**从续播下标推断（F07 的核心修正）。
+    unawaited(_loadWatched());
     // 「左右滑动可调整进度」每台设备一次（`of3/a`）。只在 store 已初始化时
     // 判定，测试里未打开的 box 不显示；横滑或超时后写回并隐藏。
     if (SwipeGuideStore.instance.ready &&
@@ -312,6 +320,42 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     // 画面撑满的缺省值取决于竖/横屏（`FillScreenDataManager.a()` 的
     // `e.q()` 分支），因此要等 MediaQuery 可用之后才能读。
     unawaited(_loadPanelPreferences());
+  }
+
+  /// 读取持久化的已看集，并把旧历史记录迁移一次。
+  ///
+  /// 迁移只标记**旧记录里那一集**，绝不补造中间的集（工单 F07 的硬要求）。
+  Future<void> _loadWatched() async {
+    if (!widget.shortSeries || widget.bookId.isEmpty) return;
+    try {
+      final saved = await _history.load(widget.bookId);
+      final migrated = await _watched.migrateFromHistory(
+        seriesId: widget.bookId,
+        saved: saved,
+        episodes: widget.eps,
+      );
+      final ids = await _watched.ids(widget.bookId);
+      if (!mounted) return;
+      setState(() => _watchedIds = migrated.isEmpty
+          ? ids
+          : {...ids, ...migrated});
+    } catch (_) {
+      // 已看标记是装饰，读不到就当没有。
+    }
+  }
+
+  /// 标记一集已看（按剧集 id）。
+  Future<void> _markWatched(int index) async {
+    if (!widget.shortSeries ||
+        widget.bookId.isEmpty ||
+        index < 0 ||
+        index >= widget.eps.length) {
+      return;
+    }
+    final id = widget.eps[index].itemId;
+    if (id.isEmpty) return;
+    setState(() => _watchedIds = {..._watchedIds, id});
+    await _watched.mark(widget.bookId, [id]);
   }
 
   /// 更多面板的两个开关：画面撑满读 SP，默认静音取进程内静态值。
@@ -634,6 +678,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         // Keep the previous resume record until this episode is visible.
         // Note: .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
         _hasDisplayed = true;
+        // 官方「已看」是**这一集真的有进度**（`com/dragon/read/video/d.java:52-54`
+        // 按 vid 读 `video_progress`），因此只有出了首帧才算看过：
+        // 没出首帧就跳走的那一集不该被标记（工单 F07 的「未出首帧」用例）。
+        unawaited(_markWatched(_activeIndex ?? _index));
         unawaited(_persistProgress());
         _syncWatchClock();
       }
@@ -945,7 +993,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       return Future<void>.value();
     }
     setState(() {
-      _watched.add(_index);
       _index = index;
       // 切集：官方清时间线整池重灌（container/l.java:1496-1528）。
       _danmaku.reset();
@@ -970,7 +1017,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     duration: _duration,
     playing: _playing,
     shortSeries: widget.shortSeries,
-    watchedEpisodes: _watched,
+    watchedEpisodes: watchedIndexes(_watchedIds, widget.eps),
     followerLabel: widget.followerCount > 0
         ? formatCounter('${widget.followerCount}')
         : null,

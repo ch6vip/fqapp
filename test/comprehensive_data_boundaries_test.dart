@@ -59,6 +59,8 @@ void main() {
           // 首页 feed 的冷启动缓存 box 与榜单缓存 box 也在 bootstrap 里开箱。
           await Hive.openBox<dynamic>('home_feed_cache_v1');
           await Hive.openBox<dynamic>('rank_cache_v1');
+          // 已看集 box 也在 LibraryStore.init 里开箱（F07），同样要预开。
+          await Hive.openBox<dynamic>('watched_episodes');
           // 官方播放页开关在 bootstrap 里从 config.json 读取；提前读好，
           // 避免 bundle 加载落在 widget 测试的 fake-async 路径上。
           await PlayerStyleConfig.load();

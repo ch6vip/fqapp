@@ -26,6 +26,17 @@ abstract interface class ReaderStore {
     double seconds, {
     DateTime? at,
   });
+
+  /// 已看集的稳定标识集合（**剧集/视频 id**，不是下标）。
+  /// 官方用 `VideoGlobalManager.b(seriesId).c(vid)` 判「这一集看过」
+  /// （`hj3/r0.java:445`），键就是 vid。
+  Future<Set<String>> watchedEpisodeIds(String id);
+
+  /// 标记若干集为已看（按 id 并集写入）。
+  Future<void> markEpisodeWatched(String id, Iterable<String> episodeIds);
+
+  /// 删除该剧的观看记录时一并清掉已看集合。
+  Future<void> forgetWatchedEpisodes(String id);
 }
 
 /// Captures the clear boundary before a history wrapper waits for older saves.
@@ -70,6 +81,11 @@ class LibraryStore implements ReaderStore {
 
   static const _histBoxName = 'history';
   static const _readTimeBoxName = 'read_time';
+  /// 已看集（按剧集/视频 id）。官方把「这一集看过」存在
+  /// `video_progress` 一族 SP 里、以 vid 为键（`com/dragon/read/video/d.java:18-20`
+  /// 的 `video_progress` / `video_progress_time` / `video_newly_update_vids`），
+  /// 本地同样**按 id 存**、与续播位置分开，避免列表重排后用下标串集。
+  static const _watchedBoxName = 'watched_episodes';
   static const _legacyTimeKey = '_legacy_media_time_v1';
   static const _allocatedTimeKey = '_allocated_media_time_v1';
   static const _newTimeKey = '_new_media_time_v1';
@@ -88,6 +104,7 @@ class LibraryStore implements ReaderStore {
 
   late Box<dynamic> _histBox;
   late Box<dynamic> _readTimeBox;
+  late Box<dynamic> _watchedBox;
   Future<void> _writes = Future<void>.value();
 
   Future<void> _serialize(Future<void> Function() action) {
@@ -106,6 +123,7 @@ class LibraryStore implements ReaderStore {
   Future<void> init() async {
     _histBox = await Hive.openBox(_histBoxName);
     _readTimeBox = await Hive.openBox(_readTimeBoxName);
+    _watchedBox = await Hive.openBox(_watchedBoxName);
     // Hive has a directory now, so optional boxes may be opened too.
     ReaderUnderlineStore.hiveReady = true;
     await _migrateFromSp();
@@ -341,6 +359,47 @@ class LibraryStore implements ReaderStore {
     }
   });
 
+  /// 已看集：键是剧集 id，值是 `{vid: 毫秒时间戳}`（时间戳让「回看」也能
+  /// 保留记录，并可用于按时间清理）。官方把观看记录放在 SP
+  /// `video_progress` 一族（`com/dragon/read/video/d.java:18-20`），
+  /// 语义一致：**按 id 存、与进度分开**。
+  @override
+  Future<Set<String>> watchedEpisodeIds(String id) async {
+    if (id.isEmpty) return <String>{};
+    final raw = _watchedBox.get(id);
+    if (raw is Map) return raw.keys.map((key) => key.toString()).toSet();
+    // 旧数据兼容：早期若写成 List<String> 也认。
+    if (raw is List) {
+      return raw.map((value) => value.toString()).toSet();
+    }
+    return <String>{};
+  }
+
+  @override
+  Future<void> markEpisodeWatched(String id, Iterable<String> episodeIds) {
+    if (id.isEmpty) return Future<void>.value();
+    final ids = episodeIds.where((value) => value.isNotEmpty).toSet();
+    if (ids.isEmpty) return Future<void>.value();
+    return _serialize(() async {
+      final current = Map<String, dynamic>.from(
+        _watchedBox.get(id) is Map
+            ? _watchedBox.get(id) as Map
+            : const <String, dynamic>{},
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final episodeId in ids) {
+        current.putIfAbsent(episodeId, () => now);
+      }
+      await _watchedBox.put(id, current);
+    });
+  }
+
+  @override
+  Future<void> forgetWatchedEpisodes(String id) {
+    if (id.isEmpty) return Future<void>.value();
+    return _serialize(() => _watchedBox.delete(id));
+  }
+
   Future<void> clearHistory() {
     // Invalidate delayed wrapper saves synchronously, before they can enqueue.
     ReadingDataWriteGuard._forStore(this).history++;
@@ -348,6 +407,9 @@ class LibraryStore implements ReaderStore {
       final preferences = await SharedPreferences.getInstance();
       await _removeLegacySource(preferences, 'hist');
       await _histBox.clear();
+      // 已看集也来自观看历史：清历史必须一并清掉，「删除历史」不能在
+      // 选集面板里留下已看标记。
+      await _watchedBox.clear();
     });
   }
 
@@ -365,6 +427,7 @@ class LibraryStore implements ReaderStore {
       await _removeLegacySource(preferences, 'read_time_map');
       await _histBox.clear();
       await _readTimeBox.clear();
+      await _watchedBox.clear();
     });
   }
 

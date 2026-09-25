@@ -43,6 +43,21 @@ class MemoryReaderStore implements ReaderStore {
     double seconds, {
     DateTime? at,
   }) async => this.seconds += seconds;
+
+  /// 已看集（按剧集/视频 id）。
+  final Map<String, Set<String>> watched = {};
+
+  @override
+  Future<Set<String>> watchedEpisodeIds(String id) async =>
+      watched[id]?.toSet() ?? <String>{};
+
+  @override
+  Future<void> markEpisodeWatched(String id, Iterable<String> episodeIds) async {
+    (watched[id] ??= <String>{}).addAll(episodeIds);
+  }
+
+  @override
+  Future<void> forgetWatchedEpisodes(String id) async => watched.remove(id);
 }
 
 class MemoryChapterCache implements ChapterCache {

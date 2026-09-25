@@ -30,6 +30,9 @@ void main() {
       Hive.init(directory.path);
       history = await Hive.openBox<dynamic>('history');
       await Hive.openBox<dynamic>('read_time');
+      // 已看集 box 也在 LibraryStore.init 里开箱（F07），同样要预开，
+      // 否则 openBox 落在 widget 测试的 fake-async 路径上不会完成。
+      await Hive.openBox<dynamic>('watched_episodes');
       await history.put('kept', record);
     });
     addTearDown(() async {

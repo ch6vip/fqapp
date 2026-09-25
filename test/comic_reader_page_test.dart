@@ -569,4 +569,12 @@ class _ComicStore implements ReaderStore {
     double seconds, {
     DateTime? at,
   }) async {}
+  @override
+  Future<Set<String>> watchedEpisodeIds(String id) async => <String>{};
+
+  @override
+  Future<void> markEpisodeWatched(String id, Iterable<String> episodeIds) async {}
+
+  @override
+  Future<void> forgetWatchedEpisodes(String id) async {}
 }

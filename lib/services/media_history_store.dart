@@ -94,4 +94,18 @@ class _MediaHistoryStore implements ReaderStore {
     double seconds, {
     DateTime? at,
   }) => delegate.accumulateReadTime(_key(bookId), this.kind, seconds, at: at);
+
+  /// 已看集存储与 kind 无关：同一条剧在两个入口（短剧页/播放页）里看到的
+  /// 已看集合必须一致，因此不做 `kind:id` 作用域，直接透传。
+  @override
+  Future<Set<String>> watchedEpisodeIds(String id) =>
+      delegate.watchedEpisodeIds(id);
+
+  @override
+  Future<void> markEpisodeWatched(String id, Iterable<String> episodeIds) =>
+      delegate.markEpisodeWatched(id, episodeIds);
+
+  @override
+  Future<void> forgetWatchedEpisodes(String id) =>
+      delegate.forgetWatchedEpisodes(id);
 }
