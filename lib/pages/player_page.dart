@@ -10,7 +10,6 @@ import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
 import '../services/player_panel_preferences.dart';
 import '../services/watched_episodes.dart';
-import '../services/playlet_share.dart';
 import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
@@ -20,10 +19,8 @@ import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
 import '../services/player_style_config.dart';
 import '../services/swipe_guide_store.dart';
-import '../models/book_detail.dart' show formatCounter;
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_danmaku_layer.dart';
-import '../widgets/player/playlet_share_panel.dart';
 import '../widgets/player/story_player_panel.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
@@ -49,15 +46,8 @@ class PlayerPage extends StatefulWidget {
   /// 详情页的电影/电视剧走通用形态（默认 false）。
   final bool shortSeries;
 
-  /// 播放页沉浸式信息层（官方截图形态）：右栏追剧计数（`followed_cnt`，
-  /// 0 = 显示「追剧」）、AI 声明行、右栏/追剧的本地回调。
-  final int followerCount;
+  /// 播放页信息层的 AI 声明行。
   final bool aiGenerated;
-  final VoidCallback? onFollow;
-  final VoidCallback? onLike;
-  final VoidCallback? onLikeTap;
-  final bool liked;
-  final bool collected;
 
   const PlayerPage({
     super.key,
@@ -73,13 +63,7 @@ class PlayerPage extends StatefulWidget {
     this.loadDiagnostics,
     this.seriesLoader,
     this.shortSeries = false,
-    this.followerCount = 0,
     this.aiGenerated = false,
-    this.onFollow,
-    this.onLike,
-    this.onLikeTap,
-    this.liked = false,
-    this.collected = false,
   });
 
   @override
@@ -436,36 +420,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         content: Text(enabled ? danmakuEnabledToast : danmakuDisabledToast),
       ),
     );
-  }
-
-  /// 分享（官方 `SeriesShareView` → `showShortSeriesSharePanel`）：
-  /// 先取分享数据，再弹面板；取不到就按官方给「网络错误，请重试」。
-  Future<void> _openShare() async {
-    if (!widget.shortSeries || widget.bookId.isEmpty) return;
-    await _withPlayerOverlay(() async {
-      try {
-        final payload = await ApiClient.instance.playletShare(
-          widget.bookId,
-          currentChapterId: widget.eps.isEmpty ? '' : widget.eps[_index].itemId,
-          firstChapterId: widget.eps.isEmpty ? '' : widget.eps.first.itemId,
-          shareTimestamp: '${DateTime.now().millisecondsSinceEpoch}',
-          entrance: 'video_more',
-        );
-        if (!mounted) return;
-        await PlayletSharePanel.show(
-          context,
-          title: '《${widget.title}》免费看全集',
-          info: PlayletShareInfo.fromPayload(payload),
-          seriesName: widget.title,
-          resolveShortUrl: (target) => ApiClient.instance.shareShortUrl(target),
-        );
-      } catch (_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text(shareUnavailableToast)));
-      }
-    });
   }
 
   /// 选集面板头部下方的关联原著（官方 `a1.java:1819-1828`）。
@@ -1004,15 +958,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       playing: _playing,
       shortSeries: widget.shortSeries,
       watchedEpisodes: watchedIndexes(_watchedIds, widget.eps),
-      followerLabel: widget.followerCount > 0
-          ? formatCounter('${widget.followerCount}')
-          : null,
-      onFollow: widget.onFollow,
-      onLike: widget.onLike,
-      // 双击确认本机点赞，与右栏可取消的动作分开，不能复用 toggle 回调。
-      liked: widget.liked,
       interactionBlocked: _externalPanelOpen,
-      onLikeTap: widget.onLikeTap,
       aiGenerated: widget.aiGenerated,
       showSeekHint: _seekHintVisible,
       onSeekHintConsumed: _consumeSeekHint,
@@ -1037,19 +983,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onComments: widget.shortSeries ? _openComments : null,
       hotComments: _hotComments,
       onHotCommentTap: widget.shortSeries ? _openHotComment : null,
-      // 分享计数：官方来自分享上报服务（`m0.java:1343-1388`），本仓库
-      // 没有该数据源，因此按官方的「无计数」分支显示「分享」
-      // （`SeriesShareView.java:123-129`），不伪造数字。
-      onShare: widget.shortSeries ? _openShare : null,
       seriesTitle: _seriesTitle,
       seriesCover: _seriesCover,
       episodeLabel: _episodeLabel,
-      // 收藏复用播放页的追剧态与动作（官方头部 `ddg` 与右栏
-      // `SeriesCollectView` 是同一个关注态）。
-      // 头部收藏只有「宿主确实给了追剧动作」时才出现（官方头部 `ddg`
-      // 与右栏 `SeriesCollectView` 是同一个关注态）。
-      collected: widget.collected,
-      onCollect: widget.onFollow,
       fillScreen: _fillScreen,
       onFillScreenChanged: widget.shortSeries ? _setFillScreen : null,
       defaultMute: _defaultMute,

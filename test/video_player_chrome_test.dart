@@ -64,8 +64,8 @@ void main() {
       expect(find.byKey(const ValueKey('video-controls')), findsNothing);
       expect(find.byTooltip('快进10秒'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('video-surface')));
-      // 官方竖屏播放页注册了双击（点赞），单击要等双击窗口过去才确认
-      // （VideoGestureDetectLayout 的 800ms 门），必须推进假时钟。
+      // 双击点赞已移除，但仍识别双击以吞掉其单击事件；单击要等
+      // 手势识别窗口过去才确认，必须推进假时钟。
       await tester.pump(const Duration(milliseconds: 400));
       expect(player.calls.where((call) => call == 'pause'), isNotEmpty);
       await tester.tap(find.byKey(const ValueKey('video-surface')));
@@ -96,13 +96,7 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     final selected = <int>[];
     await tester.pumpWidget(
-      _app(
-        player,
-        shortSeries: true,
-        selected: selected,
-        onFollow: () {},
-        onLike: () {},
-      ),
+      _app(player, shortSeries: true, selected: selected),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
@@ -123,10 +117,10 @@ void main() {
     expect(find.text('00:00:20'), findsOneWidget);
     expect(find.text('00:02:00'), findsOneWidget);
     expect(find.byKey(const ValueKey('landscape-seek')), findsOneWidget);
-    // 功能行：追剧（图标+计数，无数据时「追剧」）；点赞无计数只出图标。
-    expect(find.byKey(const ValueKey('landscape-follow')), findsOneWidget);
-    expect(find.text('追剧'), findsOneWidget);
-    expect(find.byKey(const ValueKey('landscape-like')), findsOneWidget);
+    // 用户已移除追剧、点赞，横屏也不能残留入口。
+    expect(find.byKey(const ValueKey('landscape-follow')), findsNothing);
+    expect(find.text('追剧'), findsNothing);
+    expect(find.byKey(const ValueKey('landscape-like')), findsNothing);
     // 下一集 → 切到第二集（`a.java:963-976` 的 setCurrentItem 语义）。
     await tester.tap(find.byKey(const ValueKey('landscape-next')));
     await tester.pump();
@@ -269,16 +263,11 @@ void main() {
   });
 
   testWidgets(
-    'shortSeries portrait double tap likes without toggling playback',
+    'shortSeries portrait double tap has no like or playback action',
     (tester) async {
-      // 官方竖屏播放页有完整的双击点赞链路（\`jq3/x.q.onDoubleTap\` →
-      // \`holder.z7(e)\` → \`qf3/d.onDoubleTap\`）：只播 \`like_video_center.json\`
-      // 并上报一次动作，**不取反点赞状态**，也不等于两次单击。
+      // 用户移除了点赞；保留双击吞单击，避免一次双击被当成两次暂停。
       final player = FakeNativePlayer()..isPlaying = true;
-      var likes = 0;
-      await tester.pumpWidget(
-        _app(player, shortSeries: true, onLikeTap: () => likes++),
-      );
+      await tester.pumpWidget(_app(player, shortSeries: true));
       await tester.pumpAndSettle();
       final surface = tester.getCenter(
         find.byKey(const ValueKey('video-surface')),
@@ -287,19 +276,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 80));
       await tester.tapAt(surface);
       await tester.pump(const Duration(milliseconds: 80));
-      expect(likes, 1);
-      expect(
-        find.byKey(const ValueKey('player-like-animation')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('player-like-animation')), findsNothing);
       expect(player.calls.where((call) => call == 'pause'), isEmpty);
       expect(player.calls.where((call) => call == 'play'), isEmpty);
-      // 连续第三次双击不取消已点赞：只再加一次动画与动作。
+      // 连续双击同样不出现动画或切换播放。
       await tester.tapAt(surface);
       await tester.pump(const Duration(milliseconds: 80));
       await tester.tapAt(surface);
       await tester.pump(const Duration(milliseconds: 80));
-      expect(likes, 2);
+      expect(find.byKey(const ValueKey('player-like-animation')), findsNothing);
+      expect(player.calls.where((call) => call == 'pause'), isEmpty);
+      expect(player.calls.where((call) => call == 'play'), isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
       await player.dispose();
     },
@@ -341,14 +328,8 @@ void main() {
       await player.dispose();
 
       final locked = FakeNativePlayer()..isPlaying = true;
-      var likes = 0;
       await tester.pumpWidget(
-        _app(
-          locked,
-          shortSeries: true,
-          landscapeLockEnabled: true,
-          onLikeTap: () => likes++,
-        ),
+        _app(locked, shortSeries: true, landscapeLockEnabled: true),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
@@ -358,11 +339,10 @@ void main() {
       // 锁定时控件条与锁按钮一起保留；这里先锁定。
       await tester.tap(find.byKey(const ValueKey('landscape-lock')));
       await tester.pump();
-      // 锁定后单击画面不暂停、不点赞；可见锁会被收起。
+      // 锁定后单击画面不暂停；可见锁会被收起。
       await tester.tap(find.byKey(const ValueKey('video-surface')));
       await tester.pump(const Duration(milliseconds: 400));
       expect(locked.calls.where((call) => call == 'pause'), isEmpty);
-      expect(likes, 0);
       expect(find.byKey(const ValueKey('landscape-lock')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('landscape-lock')).hitTestable(),
@@ -772,9 +752,6 @@ Widget _app(
   bool padNewBottomStyle = false,
   bool reverseClearScreen = false,
   bool landscapeLockEnabled = false,
-  VoidCallback? onLikeTap,
-  VoidCallback? onFollow,
-  VoidCallback? onLike,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(textScaler: textScaler),
@@ -807,9 +784,6 @@ Widget _app(
       padNewBottomStyle: padNewBottomStyle,
       reverseClearScreen: reverseClearScreen,
       landscapeLockEnabled: landscapeLockEnabled,
-      onLikeTap: onLikeTap,
-      onFollow: onFollow,
-      onLike: onLike,
       child: const ColoredBox(color: Colors.black),
     ),
   ),

@@ -47,7 +47,7 @@ MediaItem _item(
 /// can tell which channel a feed is actually reading. The drama tab's override
 /// has to open on the 短剧 channel the way the real `dramaProvider` does.
 /// [intro]/[followerCount]/[categories] decorate the first card so the info
-/// panel cases can exercise the chips, the intro and the rail count.
+/// panel cases can exercise the chips, the intro and the removed rail count.
 HomeNotifier _notifier({
   int perTab = 1,
   int initialTabIndex = 0,
@@ -168,14 +168,12 @@ Future<void> _flush(WidgetTester tester) async {
 late Directory _hiveDir;
 
 void main() {
-  // The follow button writes the local shelf, so the box has to exist before a
-  // test taps it. Opening it in setUp keeps that I/O out of the fake-async zone
-  // the test bodies run in (see the bookshelf note's testing lesson).
+  // 本地列表和播放回归共用存储；开箱 I/O 保持在 fake-async 区外。
   setUp(() async {
     _hiveDir = await Directory.systemTemp.createTemp('fqapp-drama-test-');
     Hive.init(_hiveDir.path);
     await ShelfStore.instance.init();
-    // 点赞 与 追剧 一样落在本地 box，测试点它之前必须先开箱。
+    // 核对短剧手势不会再写入本机点赞。
     await DiggStore.instance.init();
     // 「上滑查看更多视频」引导带 8s 定时器：默认按「已显示过」处理，
     // 否则所有用例结束时都会留下 pending timer；引导自身的用例再 reset。
@@ -195,7 +193,7 @@ void main() {
     }
   });
 
-  testWidgets('完整播放页重复双击只确认本机点赞，右栏仍可取消', (tester) async {
+  testWidgets('短剧频道与完整播放页移除追剧点赞分享，播放与选集仍可用', (tester) async {
     SharedPreferences.setMockInitialValues({});
     const nativeChannel = MethodChannel('fqapp/native_player');
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -224,105 +222,61 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('drama_follow_button')), findsNothing);
+    expect(find.byKey(const Key('drama_like_button')), findsNothing);
+    expect(find.text('追剧'), findsNothing);
+    expect(find.text('点赞'), findsNothing);
     await tester.tap(find.byKey(const Key('drama_episode_pill')));
     await _flush(tester);
     await tester.pump(const Duration(milliseconds: 400));
     await _flush(tester);
     expect(find.byType(PlayerPage), findsOneWidget);
-    final item = _item('8-0');
     VideoPlayerChrome chrome() =>
         tester.widget<VideoPlayerChrome>(find.byType(VideoPlayerChrome));
     for (var attempt = 0; attempt < 30 && !chrome().enabled; attempt++) {
       await _flush(tester);
     }
-    expect(chrome().enabled, isTrue, reason: '等真实路由完成播放器初始化再操作');
-    expect(chrome().onLikeTap, isNotNull);
-    expect(chrome().collected, isFalse, reason: '服务端有 1200 名追剧者不代表本机已经收藏');
-    expect(chrome().liked, isFalse);
+    expect(chrome().enabled, isTrue);
+    for (final key in [
+      'player-follow-button',
+      'player-like-button',
+      'player-share-button',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsNothing);
+    }
+    expect(find.byKey(const ValueKey('player-comment-button')), findsOneWidget);
     final player = seams.players.last;
     player.calls.clear();
     final surface = tester.getCenter(
       find.byKey(const ValueKey('video-surface')),
     );
-    Future<void> afterWrite(
-      Listenable revision,
-      Future<void> Function() action,
-    ) async {
-      // Hive 的真实 I/O 和等待它的 Future 必须同处 runAsync，不能把 fake zone
-      // 创建的 Completer 带入真实异步区（那会等到返回 pump 时才完成）。
-      await tester.runAsync(() async {
-        final saved = Completer<void>();
-        void changed() {
-          if (!saved.isCompleted) saved.complete();
-        }
-
-        revision.addListener(changed);
-        try {
-          await action();
-          await saved.future.timeout(const Duration(seconds: 5));
-        } finally {
-          revision.removeListener(changed);
-        }
-      });
-      await tester.pump();
-    }
-
-    Future<void> doubleTap() async {
+    for (var gesture = 0; gesture < 2; gesture++) {
       await tester.tapAt(surface);
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+      await tester.pump(const Duration(milliseconds: 80));
       await tester.tapAt(surface);
+      await tester.pump(const Duration(milliseconds: 80));
     }
-
-    await afterWrite(DiggStore.instance.listenable, doubleTap);
-    expect(find.byKey(const ValueKey('player-like-animation')), findsOneWidget);
-    expect(DiggStore.instance.containsItem(item), isTrue);
-    expect(chrome().liked, isTrue);
-    await tester.runAsync(doubleTap);
-    await tester.pump(const Duration(milliseconds: 80));
-    expect(DiggStore.instance.containsItem(item), isTrue);
-    expect(chrome().liked, isTrue);
+    expect(find.byKey(const ValueKey('player-like-animation')), findsNothing);
+    expect(DiggStore.instance.containsItem(_item('8-0')), isFalse);
+    expect(ShelfStore.instance.containsItem(_item('8-0')), isFalse);
     expect(player.calls.where((call) => call == 'pause'), isEmpty);
-    await afterWrite(
-      DiggStore.instance.listenable,
-      () => tester.tap(find.byKey(const ValueKey('player-like-button'))),
+    await tester.pump(const Duration(milliseconds: 900));
+    await tester.tapAt(surface);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(player.calls.where((call) => call == 'pause'), hasLength(1));
+    await tester.tap(find.byKey(const ValueKey('player-catalog-bar')));
+    // sheet 在首帧布局后才启动 200ms 动画，再推进两帧让惰性格子挂载。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('story-episode-0')).hitTestable(),
+      findsOneWidget,
     );
-    expect(DiggStore.instance.containsItem(item), isFalse);
-    expect(chrome().liked, isFalse);
-    await afterWrite(
-      ShelfStore.instance.listenable,
-      () => tester.tap(find.byKey(const ValueKey('player-follow-button'))),
-    );
-    expect(ShelfStore.instance.containsItem(item), isTrue);
-    expect(chrome().collected, isTrue);
+    expect(find.byKey(const ValueKey('story-panel-collect')), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);
-  });
-
-  testWidgets('点赞 落进本地 digg box 并立刻把按钮变成 已赞', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-
-    await tester.pumpWidget(
-      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
-    );
-    await _flush(tester);
-    expect(find.text('点赞'), findsOneWidget);
-    expect(find.text('已赞'), findsNothing);
-    expect(DiggStore.instance.containsItem(_item('8-0')), isFalse);
-
-    await tester.runAsync(() async {
-      await tester.tap(find.byKey(const Key('drama_like_button')));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    });
-    await _flush(tester);
-
-    // 官方的成功文案 `@string/bzl`=「点赞成功，可在「我的-我的点赞」查看」。
-    expect(DiggStore.instance.containsItem(_item('8-0')), isTrue);
-    expect(find.text('已赞'), findsOneWidget);
-    expect(find.text('点赞'), findsNothing);
-    expect(find.textContaining('点赞成功'), findsOneWidget);
-    expect(tester.takeException(), isNull);
   });
 
   test('the channel strip is the official five, with their real tab types', () {
@@ -401,15 +355,12 @@ void main() {
     // 「点击新按钮 从书城进如搜索页」），不是刷新按钮。刷新在官方是下拉手势。
     expect(find.byKey(const Key('drama_strip_search_button')), findsOneWidget);
 
-    // One card, filling the page, with the official chrome: the right rail's
-    // 追剧 + 点赞 and the bottom info line. The three self-invented pills
-    // (观看完整短剧 / 查看剧集) are gone — the official card carries no buttons
-    // along its bottom edge (`cjq.xml` puts 追剧 in the right rail).
+    // 全屏卡片保留底部观看与信息入口，用户移除了右侧追剧、点赞栏。
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
     expect(find.text('8-0 作品'), findsOneWidget);
-    expect(find.byKey(const Key('drama_follow_button')), findsOneWidget);
-    expect(find.text('追剧'), findsOneWidget);
-    expect(find.byKey(const Key('drama_like_button')), findsOneWidget);
+    expect(find.byKey(const Key('drama_follow_button')), findsNothing);
+    expect(find.text('追剧'), findsNothing);
+    expect(find.byKey(const Key('drama_like_button')), findsNothing);
     expect(find.text('观看完整短剧'), findsNothing);
     expect(find.text('查看剧集'), findsNothing);
     // 官方卡片底部唯一的一颗按钮是居中的「观看全集」药丸（`ad9.xml`，文案
@@ -440,7 +391,7 @@ void main() {
 
     // 官方 `wp3.d0`：SharedPreferences 标记一旦写回就再也不弹。setUp 已把
     // 标记置真，先清掉模拟「首次安装」。Hive 写在假时钟区里永远不完成
-    // （见追剧用例的注释），必须走 runAsync 的真实异步区。
+    // 写入必须走 runAsync 的真实异步区。
     await tester.runAsync(SwipeGuideStore.instance.reset);
     expect(SwipeGuideStore.instance.shown, isFalse);
 
@@ -658,35 +609,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('追剧 落进本地书架并立刻把按钮变成 已追剧', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-
-    await tester.pumpWidget(
-      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('追剧'), findsOneWidget);
-    expect(find.text('已追剧'), findsNothing);
-    expect(ShelfStore.instance.records(), isEmpty);
-
-    // The tap starts a Hive write inside the page, so it has to run in the real
-    // async zone for the write (and the store's notification) to complete.
-    await tester.runAsync(() async {
-      await tester.tap(find.byKey(const Key('drama_follow_button')));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    });
-    await tester.pumpAndSettle();
-
-    expect(ShelfStore.instance.records().map((r) => r.item.id), ['8-0']);
-    expect(find.text('已追剧'), findsOneWidget);
-    expect(find.text('追剧'), findsNothing);
-    expect(find.textContaining('已追剧，可在「书架-短剧」查看'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('信息面板：药丸按集数出文案，追剧挂计数，chip 与简介可展开', (tester) async {
+  testWidgets('信息面板：药丸按集数出文案，chip 与简介可展开', (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 850));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -704,8 +627,8 @@ void main() {
 
     // 药丸：夹具 ep='全12集' 不是纯数字，按官方 ≤1 分支显示「观看全片」。
     expect(find.text('观看全片'), findsOneWidget);
-    // 右栏星标下显示追剧人数（`followed_cnt` → formatCounter）。
-    expect(find.text('4.6万'), findsOneWidget);
+    // 即使回包仍有追剧人数，短剧也不再显示追剧入口或计数。
+    expect(find.text('4.6万'), findsNothing);
     // 分类 chip（`d6f.xml` 的 `hdm` 行，12sp 白字 #33FFFFFF 底）。
     expect(find.text('喜剧'), findsOneWidget);
     // 简言行默认 2 行截断，带「展开」；点开后全文显示、「展开」消失。
@@ -750,8 +673,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(DramaPage), findsOneWidget);
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
-    // 右侧栏的 追剧 取代了原先那排自创药丸按钮。
-    expect(find.text('追剧'), findsOneWidget);
+    // 用户已移除右侧追剧入口。
+    expect(find.text('追剧'), findsNothing);
     // The shell mounts its own DramaPage without seams, so its inline session
     // starts a real directory request here. Advance past the client timeout to
     // drain that timer, which would otherwise outlive the test.

@@ -1,11 +1,9 @@
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/playlet_share.dart';
-import 'package:fqapp/widgets/player/playlet_share_panel.dart';
 
-/// 短剧分享的用例。
+/// 保留的分享服务兼容性用例；短剧分享面板已按用户要求移除。
 ///
 /// 官方依据：复制链接插在列表头部、海报分享插在 SYSTEM 之前
 /// （`m0.java:898-903,1409-1483`）；复制写剪贴板的是 title+链接、
@@ -74,27 +72,32 @@ void main() {
       expect(written, '标题https://short');
     });
 
-    test('copy falls back to the long url when the short url call fails', () async {
-      String? written;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-            if (call.method == 'Clipboard.setData') {
-              written = (call.arguments as Map)['text'] as String?;
-            }
-            return null;
-          });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(SystemChannels.platform, null),
-      );
-      final outcome = await PlayletShare.copyLink(
-        title: '标题',
-        info: const PlayletShareInfo(shareUrl: 'https://long'),
-        resolveShortUrl: (target) async => throw Exception('短链失败'),
-      );
-      expect(outcome, ShareCopyOutcome.copied);
-      expect(written, '标题https://long');
-    });
+    test(
+      'copy falls back to the long url when the short url call fails',
+      () async {
+        String? written;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+              if (call.method == 'Clipboard.setData') {
+                written = (call.arguments as Map)['text'] as String?;
+              }
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+        final outcome = await PlayletShare.copyLink(
+          title: '标题',
+          info: const PlayletShareInfo(shareUrl: 'https://long'),
+          resolveShortUrl: (target) async => throw Exception('短链失败'),
+        );
+        expect(outcome, ShareCopyOutcome.copied);
+        expect(written, '标题https://long');
+      },
+    );
 
     test('copy without any url reports unavailable', () async {
       final outcome = await PlayletShare.copyLink(
@@ -102,75 +105,6 @@ void main() {
         info: const PlayletShareInfo(),
       );
       expect(outcome, ShareCopyOutcome.unavailable);
-    });
-  });
-
-  group('面板', () {
-    Future<void> pump(
-      WidgetTester tester, {
-      PlayletShareInfo info = const PlayletShareInfo(
-        shareUrl: 'https://a.example/x',
-        shortUrl: 'https://s.example/y',
-      ),
-      VoidCallback? onPoster,
-    }) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PlayletSharePanel(
-              title: '《剧名》免费看全集',
-              info: info,
-              seriesName: '剧名',
-              onPoster: onPoster,
-            ),
-          ),
-        ),
-      );
-    }
-
-    testWidgets('the panel keeps the official item order', (tester) async {
-      await pump(tester, onPoster: () {});
-      expect(find.text('复制链接'), findsOneWidget);
-      expect(find.text('系统分享'), findsOneWidget);
-      expect(find.text('海报分享'), findsOneWidget);
-      // 复制链接在最前、海报分享在系统分享之后（官方把海报插在 SYSTEM 前，
-      // 本地面板按同一相对关系排列）。
-      final copyX = tester.getCenter(
-        find.byKey(const ValueKey('playlet-share-copy-link')),
-      ).dx;
-      final systemX = tester.getCenter(
-        find.byKey(const ValueKey('playlet-share-system')),
-      ).dx;
-      final posterX = tester.getCenter(
-        find.byKey(const ValueKey('playlet-share-poster')),
-      ).dx;
-      expect(copyX, lessThan(systemX));
-      // 官方是 `list2.add(size, item)`：海报插在第一个 SYSTEM 的**前面**，
-      // 所以顺序是 复制链接 -> 海报分享 -> 系统分享。
-      expect(posterX, lessThan(systemX));
-    });
-
-    testWidgets('poster sharing disappears without its callback', (
-      tester,
-    ) async {
-      await pump(tester);
-      expect(find.text('海报分享'), findsNothing);
-    });
-
-    testWidgets('an unavailable payload shows the official fallback', (
-      tester,
-    ) async {
-      await tester.pumpWidget(const MaterialApp(home: Scaffold()));
-      final context = tester.element(find.byType(Scaffold));
-      await PlayletSharePanel.show(
-        context,
-        title: 'x',
-        info: const PlayletShareInfo(),
-        seriesName: '剧名',
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('网络错误，请重试'), findsOneWidget);
-      expect(find.byType(PlayletSharePanel), findsNothing);
     });
   });
 
@@ -224,7 +158,10 @@ void main() {
       };
       await PlayletShare.systemShare(
         title: '标题',
-        info: const PlayletShareInfo(text: '正文', shareUrl: 'https://a.example/x'),
+        info: const PlayletShareInfo(
+          text: '正文',
+          shareUrl: 'https://a.example/x',
+        ),
         seriesName: '剧名',
       );
       expect(seen, '正文');

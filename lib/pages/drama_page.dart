@@ -6,11 +6,9 @@ import 'package:hive/hive.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lottie/lottie.dart';
 
-import '../models/book_detail.dart' show formatCounter;
 import '../models/channel_tab.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
-import '../services/digg_store.dart';
 import '../services/inline_video_playback.dart';
 
 import '../services/library_store.dart';
@@ -662,39 +660,23 @@ class _DramaPageState extends ConsumerState<DramaPage>
           // Only the card on screen may own a texture. The layer itself waits
           // for this drama to be the session's target.
           final onScreen = index == _screenIndex;
-          // The follow state comes from the store, so it is read through the
-          // store's own listenable: a 追剧 tap must flip the button immediately,
-          // and a removal from the shelf page must flip it back here too.
-          // Both the follow state and the like come from stores, so they are read
-          // through each store's own listenable: a 追剧 / 点赞 tap must flip its
-          // button immediately, and a removal elsewhere must flip it back.
-          return ValueListenableBuilder<int>(
-            valueListenable: ShelfStore.instance.listenable,
-            builder: (context, _, _) => ValueListenableBuilder<int>(
-              valueListenable: DiggStore.instance.listenable,
-              builder: (context, _, _) => _DramaFeedCard(
-                item: item,
-                opening: _openingId == item.id,
-                followed: ShelfStore.instance.containsItem(item),
-                liked: DiggStore.instance.containsItem(item),
-                playback: onScreen ? _inline : null,
-                video: onScreen
-                    ? _InlineVideoLayer(item: item, playback: _inline)
-                    : null,
-                errorOverlay: onScreen
-                    ? _InlineVideoError(
-                        item: item,
-                        playback: _inline,
-                        onRetry: () => unawaited(_inline.activate(item)),
-                      )
-                    : null,
-                // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
-                onFullscreen: () => _openPlayer(item),
-                onTogglePlay: _togglePlay,
-                onFollow: () => _toggleFollow(item),
-                onLike: () => _toggleLike(item),
-              ),
-            ),
+          return _DramaFeedCard(
+            item: item,
+            opening: _openingId == item.id,
+            playback: onScreen ? _inline : null,
+            video: onScreen
+                ? _InlineVideoLayer(item: item, playback: _inline)
+                : null,
+            errorOverlay: onScreen
+                ? _InlineVideoError(
+                    item: item,
+                    playback: _inline,
+                    onRetry: () => unawaited(_inline.activate(item)),
+                  )
+                : null,
+            // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
+            onFullscreen: () => _openPlayer(item),
+            onTogglePlay: _togglePlay,
           );
         },
       ),
@@ -748,40 +730,26 @@ class _DramaPageState extends ConsumerState<DramaPage>
       await Navigator.push(
         context,
         MaterialPageRoute<void>(
-          builder: (_) => ListenableBuilder(
-            listenable: Listenable.merge([
-              ShelfStore.instance.listenable,
-              DiggStore.instance.listenable,
-            ]),
-            builder: (context, child) => PlayerPage(
-              bookId: contentId,
-              kind: item.kind,
-              title: item.title,
-              cover: item.cover,
-              eps: eps,
-              startIndex: index.toInt(),
-              contentLoader: widget.contentLoader == null
-                  ? null
-                  : (episode) => widget.contentLoader!(episode.itemId, tab),
-              playerFactory: widget.playerFactory,
-              historyStore: widget.historyStore,
-              // 官方「观看全集」进播放器**不弹选集面板**：goToSingleFeed 虽然
-              // setLaunchCatalogPanel(true)，但消费端 catalogdialog/v2/k.q0()
-              // 被 AB `series_view_show_auto`（默认 enabled=false）门住——
-              // 默认进播放器续当前集，选集入口是底部目录条（更正 §22）。
-              // 进度不需要显式传——上面的 `disposePlayer()` 已把 feed 的
-              // 当前集与播放进度写进历史，PlayerPage 从同一条历史续播。
-              shortSeries: true,
-              // 播放页沉浸式信息层（官方截图）：右栏追剧计数、AI 声明行、
-              // 追剧/点赞写本地 store（feed 右栏同一条链路）。
-              followerCount: item.followerCount,
-              aiGenerated: item.aiGenerated,
-              onFollow: () => unawaited(_toggleFollow(item)),
-              onLike: () => unawaited(_toggleLike(item)),
-              onLikeTap: () => unawaited(_like(item)),
-              liked: DiggStore.instance.containsItem(item),
-              collected: ShelfStore.instance.containsItem(item),
-            ),
+          builder: (_) => PlayerPage(
+            bookId: contentId,
+            kind: item.kind,
+            title: item.title,
+            cover: item.cover,
+            eps: eps,
+            startIndex: index.toInt(),
+            contentLoader: widget.contentLoader == null
+                ? null
+                : (episode) => widget.contentLoader!(episode.itemId, tab),
+            playerFactory: widget.playerFactory,
+            historyStore: widget.historyStore,
+            // 官方「观看全集」进播放器**不弹选集面板**：goToSingleFeed 虽然
+            // setLaunchCatalogPanel(true)，但消费端 catalogdialog/v2/k.q0()
+            // 被 AB `series_view_show_auto`（默认 enabled=false）门住——
+            // 默认进播放器续当前集，选集入口是底部目录条（更正 §22）。
+            // 进度不需要显式传——上面的 `disposePlayer()` 已把 feed 的
+            // 当前集与播放进度写进历史，PlayerPage 从同一条历史续播。
+            shortSeries: true,
+            aiGenerated: item.aiGenerated,
           ),
         ),
       );
@@ -811,37 +779,6 @@ class _DramaPageState extends ConsumerState<DramaPage>
         ),
       ),
     );
-  }
-
-  Future<void> _toggleFollow(MediaItem item) async {
-    if (!ShelfStore.instance.isReady) return;
-    final followed = await ShelfStore.instance.toggle(item);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(followed ? '已追剧，可在「书架-短剧」查看' : '已取消追剧')),
-    );
-  }
-
-  /// 官方「点赞」(`SeriesDiggView`, 右侧栏第二项)：成功后 toast
-  /// 「点赞成功，可在「我的-我的点赞」查看」(`@string/bzl`)，取消时
-  /// 「已赞，可在[我的-赞过的短剧]中查看」(`@string/bzk`) 的反向。
-  /// 本仓库没有账号侧点赞接口，因此只保存状态（见 DiggStore 的说明）。
-  Future<void> _toggleLike(MediaItem item) async {
-    if (!DiggStore.instance.isReady) return;
-    final liked = await DiggStore.instance.toggle(item);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(liked ? '点赞成功，可在「我的-我的点赞」查看' : '已取消点赞')),
-    );
-  }
-
-  Future<void> _like(MediaItem item) async {
-    final store = DiggStore.instance;
-    if (!store.isReady || store.containsItem(item)) return;
-    if (!await store.like(item) || !mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('点赞成功，可在「我的-我的点赞」查看')));
   }
 
   void _openSearch() {
@@ -1065,41 +1002,32 @@ class _ChannelTab extends StatelessWidget {
 ///
 /// Layout of the official card (`cjc.xml` + the layers `o.java` injects):
 /// - the video plane is a 12dp-rounded `RoundFrameLayout`;
-/// - a RIGHT RAIL (`cjq.xml`) holds 追剧 / 点赞 (评论 and 分享 ship `gone` in the
-///   official layout, so they are not shown here either);
 /// - a seek bar (`cjt.xml`, 16dp) sits at the bottom;
 /// - a bottom info line (`cj3.xml`/`d6g.xml`) is the drama title at 16sp bold
 ///   plus an 8×16dp arrow and, when known, an episode label;
 /// - a `VideoGestureDetectLayout` covers the middle for double-tap and
 ///   long-press.
 ///
-/// Note: 右侧栏/进度条/信息层的官方数值出处 —
+/// 右侧追剧、点赞栏按用户要求移除（2026-09-26）。
+/// Note: 进度条/信息层的官方数值出处 —
 /// docs/research/short-drama-decompile-comparison-20260921.md §8
 class _DramaFeedCard extends StatelessWidget {
   final MediaItem item;
   final bool opening;
-  final bool followed;
-  final bool liked;
   final Widget? video;
   final Widget? errorOverlay;
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
   final VoidCallback onTogglePlay;
-  final VoidCallback onFollow;
-  final VoidCallback onLike;
 
   const _DramaFeedCard({
     required this.item,
     required this.opening,
-    required this.followed,
-    required this.liked,
     this.video,
     this.errorOverlay,
     this.playback,
     this.onFullscreen,
     required this.onTogglePlay,
-    required this.onFollow,
-    required this.onLike,
   });
 
   /// Whether the viewer may drive this card: only the on-screen page owns the
@@ -1191,24 +1119,6 @@ class _DramaFeedCard extends StatelessWidget {
         ),
         // Above the card's tap target, so the retry button wins its own taps.
         ?errorOverlay,
-        // 官方右侧竖向操作栏（`cjq.xml`，由 `rightview.a` inflate）：
-        // 头像 41.5dp（本仓库无账号侧数据，省略）、追剧、点赞（间距 12dp，
-        // 图标 46dp、文字 12sp bold、色 `@color/u`=#ccffffff）。追剧按钮下的
-        // 文字在有 `followed_cnt` 时就是它（官方截图上是「4.6万」这样的计数）。
-        // 官方 XML 里 评论(`c7u`) 与 分享(`hbw`) 默认 `gone`，这里同样不显示。
-        // 锚在右下、信息层之上：官方这一栏也是沿右缘靠下排列，且顶部被顶栏
-        // 的浮层覆盖（`ap3.xml` 的搜索行与频道条）。
-        Positioned(
-          right: 4,
-          bottom: 64,
-          child: _RightRail(
-            followed: followed,
-            followerCount: item.followerCount,
-            liked: liked,
-            onFollow: onFollow,
-            onLike: onLike,
-          ),
-        ),
         // 官方进度条（`cjt.xml`）：整条高 16dp、轨道 1.0dip、滑块 1.5dip，
         // 已播 `@color/agn`=#1affffff、底槽 `@color/b8`=#4dffffff，左右 padding 16dp。
         if (playback != null)
@@ -1525,102 +1435,6 @@ class _RateHint extends StatelessWidget {
         ),
       );
     },
-  );
-}
-
-/// The official right-hand rail (`cjq.xml`).
-///
-/// Only 追剧 and 点赞 appear: 评论 (`c7u`) and 分享 (`hbw`) ship with
-/// `android:visibility="gone"` in the official layout, and the avatar
-/// (`ViewStub` → `bk3.xml`) needs account data this app does not have.
-/// Item geometry: 46×46dp icon, 12sp bold label in `@color/u`=#ccffffff,
-/// 12dp between items.
-class _RightRail extends StatelessWidget {
-  final bool followed;
-  final int followerCount;
-  final bool liked;
-  final VoidCallback onFollow;
-  final VoidCallback onLike;
-
-  const _RightRail({
-    required this.followed,
-    required this.followerCount,
-    required this.liked,
-    required this.onFollow,
-    required this.onLike,
-  });
-  @override
-  Widget build(BuildContext context) => Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      _RailButton(
-        key: const Key('drama_follow_button'),
-        asset: 'assets/images/drama/rail_follow.webp',
-        // 官方截图：星标下显示的是追剧人数（如「4.6万」）。没有 followed_cnt
-        // 的卡退回「追剧/已追剧」文案。
-        label: switch ((followerCount, followed)) {
-          (> 0, _) => formatCounter('$followerCount'),
-          (_, true) => '已追剧',
-          _ => '追剧',
-        },
-        onTap: onFollow,
-      ),
-      const SizedBox(height: 12),
-      _RailButton(
-        key: const Key('drama_like_button'),
-        asset: 'assets/images/drama/rail_digg.webp',
-        label: liked ? '已赞' : '点赞',
-        onTap: onLike,
-      ),
-    ],
-  );
-}
-
-class _RailButton extends StatelessWidget {
-  final String asset;
-  final String label;
-  final VoidCallback onTap;
-
-  const _RailButton({
-    super.key,
-    required this.asset,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: label,
-    child: GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 46,
-            height: 46,
-            child: Image.asset(asset, fit: BoxFit.contain),
-          ),
-          SizedBox(
-            width: 46,
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12,
-                height: 1.1,
-                fontWeight: FontWeight.bold,
-                color: Color(0xCCFFFFFF),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
   );
 }
 
@@ -2278,7 +2092,7 @@ class _InlineVideoError extends StatelessWidget {
 /// Official recent/follow are **distribute lists**, not a video feed
 /// (`bex.xml`: 7:5 cover, 8dp radius, 14sp single-line title, 9sp corner
 /// tag). Neither may keep the inline player alive. 最近 reads this app's
-/// player history; 收藏 reads the local shelf the 追剧 button writes.
+/// player history; 收藏 reads existing local shelf records.
 ///
 /// 官方截图第二十三轮：最近 tab 顶部有「全部/短剧/漫剧」筛选 chips（选中
 /// 橙字浅橙底），卡片封面带「漫剧」左上角标与居中半透明 ▶，标题两行，

@@ -8,7 +8,7 @@ import 'package:fqapp/widgets/player/story_player_panel.dart';
 ///
 /// 官方依据：
 /// - 头部区块 `aa8.xml:7-15`（封面 `hdb`、标题 `hdt`、右箭头 `right_icon`、
-///   集数行 `he1`、免费角标 `dga`、收藏 `ddg`）
+///   集数行 `he1`、免费角标 `dga`）；收藏 `ddg` 按用户要求移除。
 /// - 集数/状态文案 `a1.java:554-568`（`A2()`）与 `:2034-2056`（`o1()`）：
 ///   电影 -> 「电影 · 共N分钟」；虚幻短剧 -> `d6d`「暂未上线」；
 ///   更新中 -> `e6s`「更新至%s集」（漫改 `e6u`「看到%s集/更新至%s集」）；
@@ -26,9 +26,7 @@ void main() {
     String cover = '',
     String label = '更新至12集',
     bool freeWatch = false,
-    bool collected = false,
     VoidCallback? onOpenSeries,
-    VoidCallback? onCollect,
   }) async {
     final scroll = ScrollController();
     addTearDown(scroll.dispose);
@@ -47,9 +45,7 @@ void main() {
               seriesCover: cover,
               episodeLabel: label,
               freeWatch: freeWatch,
-              collected: collected,
               onOpenSeries: onOpenSeries,
-              onCollect: onCollect,
               onSelectEpisode: (_) {},
               onDragStart: (_) {},
               onDragUpdate: (_) {},
@@ -151,7 +147,10 @@ void main() {
     });
 
     test('an unknown series with episodes still shows the count', () {
-      expect(seriesEpisodeLabel(status: null, count: 8, currentIndex: 0), '已完结 共8集');
+      expect(
+        seriesEpisodeLabel(status: null, count: 8, currentIndex: 0),
+        '已完结 共8集',
+      );
       expect(seriesEpisodeLabel(status: null, count: 0, currentIndex: 0), '');
     });
   });
@@ -166,9 +165,15 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('我的短剧'), findsOneWidget);
-      expect(find.byKey(const ValueKey('story-panel-episode-label')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('story-panel-episode-label')),
+        findsOneWidget,
+      );
       expect(find.text('更新至12集'), findsOneWidget);
-      expect(find.byKey(const ValueKey('story-panel-free-badge')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('story-panel-free-badge')),
+        findsOneWidget,
+      );
       expect(find.text('免费观看'), findsOneWidget);
     });
 
@@ -188,28 +193,23 @@ void main() {
       tester,
     ) async {
       await pump(tester);
-      expect(find.byKey(const ValueKey('story-panel-free-badge')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('story-panel-free-badge')),
+        findsNothing,
+      );
     });
 
-    testWidgets('the title row and the collect button report taps', (
+    testWidgets('the title still opens the series without a collect button', (
       tester,
     ) async {
       var opens = 0;
-      var collects = 0;
-      await pump(
-        tester,
-        onOpenSeries: () => opens++,
-        onCollect: () => collects++,
-        collected: true,
-      );
+      await pump(tester, onOpenSeries: () => opens++);
       await tester.tap(find.byKey(const ValueKey('story-panel-series-title')));
-      await tester.tap(find.byKey(const ValueKey('story-panel-collect')));
       await tester.pump();
       expect(opens, 1);
-      expect(collects, 1);
-      // 收藏态用实心星 + 「已收藏」（官方 `ddg` 的选中态）。
-      expect(find.text('已收藏'), findsOneWidget);
-      expect(find.byIcon(Icons.star_rounded), findsOneWidget);
+      expect(find.byKey(const ValueKey('story-panel-collect')), findsNothing);
+      expect(find.text('收藏'), findsNothing);
+      expect(find.text('已收藏'), findsNothing);
     });
 
     testWidgets('without callbacks the header has no arrow and no collect', (

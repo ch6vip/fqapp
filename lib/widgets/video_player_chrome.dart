@@ -15,12 +15,13 @@ import '../services/player_preferences.dart';
 import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
 import 'player/story_player_panel.dart';
-import '../services/playlet_share.dart';
 import 'player/playlet_hot_comment_bar.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_seek_bar.dart';
 
+// Note: 移除短剧互动入口的范围见
+// .agents/notes/implemented/simplification/2026-09-26-playlet-social-controls.md
 class VideoPlayerChrome extends StatefulWidget {
   final NativePlayer? player;
   final String title;
@@ -31,7 +32,7 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool playing;
   final bool enabled;
 
-  /// 评论、分享等由宿主打开的弹层也要中断画面手势。
+  /// 评论等由宿主打开的弹层也要中断画面手势。
   final bool interactionBlocked;
   final Widget child;
   final String coverUrl;
@@ -48,14 +49,6 @@ class VideoPlayerChrome extends StatefulWidget {
   /// （feed 卡同款）；横屏是官方底条（`c0i` 控制行 + `cw7` 进度块，见
   /// `_landscapeBar`）。详情页的电影/电视剧仍走通用形态（默认 false）。
   final bool shortSeries;
-
-  /// 官方播放页右侧竖栏（`rightview` 家族，与 feed 卡同款 46dp 图标 +
-  /// 12sp 文案）：星=追剧、心=点赞。追剧文案由宿主给（有 `followed_cnt`
-  /// 时是 formatCounter 后的计数，无则「追剧/已追剧」）；评论/分享需要
-  /// 账号或分享链路，不显示（官方也是默认 gone）。
-  final String? followerLabel;
-  final VoidCallback? onFollow;
-  final VoidCallback? onLike;
 
   /// 「作者声明：内容由AI生成」行（`video_detail.ai_usage_type`）。
   final bool aiGenerated;
@@ -89,10 +82,6 @@ class VideoPlayerChrome extends StatefulWidget {
   /// 官方 video_landscape_style_609.enable：横屏双击切换播放。
   final bool landscapeDoubleTapEnabled;
 
-  /// 当前剧是否已点赞。双击只播动画、只上报一次点击，**不做状态取反**。
-  final bool liked;
-  final VoidCallback? onLikeTap;
-
   /// 评论入口：官方右栏第三项。计数 0 时文案是「评论」。为 null 时该项
   /// 不出现（官方该项本身默认 gone，见 \`res/layout/cjs.xml:11\`）。
   final int commentCount;
@@ -115,24 +104,12 @@ class VideoPlayerChrome extends StatefulWidget {
   final String seriesCover;
   final String episodeLabel;
 
-  /// 头部与右栏共用本机收藏态；服务端追剧人数不能代替本机状态。
-  final bool collected;
-
-  /// 头部收藏动作；为 null 时头部不显示收藏按钮。
-  final VoidCallback? onCollect;
-
   /// 选集面板的关联原著条（官方 `series_relate_book_config_v659`
   /// 的 `relate_book_in_episodes_dialog`，**默认 false**）。
   final EpisodeRelateBook? relateBook;
   final VoidCallback? onOpenRelateBook;
 
   /// 弹幕（官方 \`DanmakuRequestHelper\`）：时间轴条目 + 开关状态。
-  /// 发送回调为 null 时不出现弹幕入口。
-  /// 分享（官方右栏第四项 `SeriesShareView`）：计数 0 时文案「分享」
-  /// （0x7f061a02）。为 null 时该项不出现（官方该项本身默认 gone）。
-  final int shareCount;
-  final VoidCallback? onShare;
-
   final List<PlayletComment> danmaku;
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
@@ -162,9 +139,6 @@ class VideoPlayerChrome extends StatefulWidget {
     required this.onSelectEpisode,
     required this.onError,
     this.shortSeries = false,
-    this.followerLabel,
-    this.onFollow,
-    this.onLike,
     this.aiGenerated = false,
     this.showSeekHint = false,
     this.onSeekHintConsumed,
@@ -177,8 +151,6 @@ class VideoPlayerChrome extends StatefulWidget {
     this.reverseClearScreen = false,
     this.landscapeLockEnabled = false,
     this.landscapeDoubleTapEnabled = false,
-    this.liked = false,
-    this.onLikeTap,
     this.commentCount = 0,
     this.onComments,
     this.hotComments = const [],
@@ -186,12 +158,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.seriesTitle = '',
     this.seriesCover = '',
     this.episodeLabel = '',
-    this.collected = false,
-    this.onCollect,
     this.relateBook,
     this.onOpenRelateBook,
-    this.shareCount = 0,
-    this.onShare,
     this.fillScreen = false,
     this.onFillScreenChanged,
     this.defaultMute = true,
@@ -255,12 +223,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 第 20 帧（`value == 1`），解锁时停在帧 0。
   late final AnimationController _lockController;
 
-  /// 官方 `like_video_center.json`：`op`=39、`fr`=25 → 1560ms，单次播放。
-  late final AnimationController _likeController;
-  bool _likePlaying = false;
-
-  /// 双击落点（官方 `qf3/d.onDoubleTap` 用 raw 坐标把动画对齐到手指处）。
-  Offset? _likeOrigin;
   bool _boosting = false;
   bool _paging = false;
   bool _appActive = true;
@@ -341,15 +303,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             }
           }
         });
-    _likeController =
-        AnimationController(
-          vsync: this,
-          duration: const Duration(milliseconds: 1560),
-        )..addStatusListener((status) {
-          if (status == AnimationStatus.completed && mounted) {
-            setState(() => _likePlaying = false);
-          }
-        });
     unawaited(_loadRate());
     _scheduleHide();
     _scheduleLockHide();
@@ -363,7 +316,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       // 换播放器等于换 holder：官方 `d.release()` 会摘掉锁监听，本地等价是
       // 撤销锁态，避免下一个剧集继承上一个的锁定。
       _releaseLock();
-      _resetLike();
+      _doubleTapGuard?.cancel();
     }
     if (oldWidget.landscapeLockEnabled && !widget.landscapeLockEnabled) {
       _releaseLock();
@@ -377,7 +330,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (!oldWidget.interactionBlocked && widget.interactionBlocked) {
       _endBoost();
       _cancelSeek();
-      _resetLike();
+      _doubleTapGuard?.cancel();
       _hideTimer?.cancel();
     } else if (oldWidget.interactionBlocked && !widget.interactionBlocked) {
       _visible = true;
@@ -396,7 +349,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _boosting = false;
       _dragSeekOrigin = null;
       _dragSeekActive = false;
-      _resetLike();
+      _doubleTapGuard?.cancel();
     }
     if (_ready && (oldWidget.player != widget.player || !oldWidget.enabled)) {
       unawaited(_control((player) => player.setRate(_rate)));
@@ -430,7 +383,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _lockHideTimer?.cancel();
     _panelDrawerTimer?.cancel();
     _lockController.dispose();
-    _likeController.dispose();
     _pages.dispose();
     _panel.dispose();
     _panelExtent.dispose();
@@ -495,7 +447,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           _ready && (_playbackRequested || (_seeking && _resumeAfterSeek));
       _cancelSeek(resume: false);
       _endBoost();
-      _resetLike();
+      _doubleTapGuard?.cancel();
       _hideTimer?.cancel();
       unawaited(_control((player) => player.pause()));
     } else if (active && !_appActive) {
@@ -542,7 +494,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     ++_interaction;
     _endBoost();
     _cancelSeek();
-    _resetLike();
+    _doubleTapGuard?.cancel();
     _hideTimer?.cancel();
     final lock = !_locked;
     setState(() {
@@ -561,31 +513,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (!lock) _scheduleHide();
   }
 
-  /// 官方 `jq3/x.q.onDoubleTap` → `holder.z7(e)` → `qf3/d.onDoubleTap`：
-  /// 双击只播放 `like_video_center.json` 动画并上报一次点赞动作，
-  /// **不取反点赞状态**（官方动画层没有任何状态逻辑）。
-  void _triggerLike() {
-    if (!_ready || _locked || _clearScreen || _panelOpen || _overlayOpen) {
-      return;
-    }
-    ++_interaction;
-    _guardDoubleTap();
-    setState(() => _likePlaying = true);
-    widget.onLikeTap?.call();
-    _likeController.forward(from: 0);
-  }
-
   void _guardDoubleTap() {
     _doubleTapGuard?.cancel();
     // 官方 VideoGestureDetectLayout.java:162 在双击后 800ms 内吞掉单击。
     _doubleTapGuard = Timer(const Duration(milliseconds: 800), () {});
-  }
-
-  void _resetLike() {
-    _likeController.stop();
-    _likePlaying = false;
-    _likeOrigin = null;
-    _doubleTapGuard?.cancel();
   }
 
   /// 按官方 `H6()` 自动隐藏规则同步锁按钮可见性（`getCurrentViewVisible`
@@ -644,7 +575,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (!_clearScreenAvailable) return;
     _endBoost();
     _cancelSeek();
-    _resetLike();
+    _doubleTapGuard?.cancel();
     ++_interaction;
     _hideTimer?.cancel();
     setState(() {
@@ -878,7 +809,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (_overlayOpen || _panelOpen || _locked) return;
     _endBoost();
     _cancelSeek();
-    _resetLike();
+    _doubleTapGuard?.cancel();
     _hideTimer?.cancel();
     setState(() => _modalOpen = true);
     var sheetDanmaku = widget.danmakuEnabled;
@@ -1051,7 +982,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (_locked || _overlayOpen || _panelOpen) return;
     _endBoost();
     _cancelSeek();
-    _resetLike();
+    _doubleTapGuard?.cancel();
     _hideTimer?.cancel();
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
@@ -1220,7 +1151,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Future<void> _toggleFullScreen() async {
     _endBoost();
     _cancelSeek();
-    _resetLike();
+    _doubleTapGuard?.cancel();
     // 官方在 Activity 退出横屏时无条件解锁（`EXIST_LAND_ACTIVITY`）。
     if (_fullScreen) _releaseLock();
     setState(() => _fullScreen = !_fullScreen);
@@ -1351,10 +1282,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           // jq3/x.q 的 B4()/G6() 早退），只留锁按钮本身。
           final showChrome = unobstructed && !_clearScreen && !_locked;
           final controls = _visible && showChrome && !_seeking;
-          // 官方 jq3/x.q：竖屏播放页有完整的双击点赞链路，单击才切播放；
-          // 横屏（全屏 Activity）没有点赞链路，单击只切换控件条，
-          // 清屏态例外——清屏是竖屏专属，横屏清屏仍走单击暂停。
-          final likeGesture = widget.shortSeries && !landscape;
+          // 短剧竖屏双击点赞按用户要求移除；单击仍控制播放。
+          // 横屏单击切换控件，双击播放继续由横屏配置控制。
+          final portraitSeries = widget.shortSeries && !landscape;
           final tapTogglesPlayback =
               widget.shortSeries && (!landscape || _clearScreen);
           final canPage =
@@ -1405,15 +1335,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     tapTogglesPlayback ? _togglePlayback() : _toggleControls();
                   }
                 },
-                onDoubleTapDown: likeGesture && !_locked && !_clearScreen
-                    ? (details) => _likeOrigin = details.localPosition
-                    : null,
                 onDoubleTap: () {
                   if (!unobstructed) return;
                   if (_locked) {
                     _refreshLockVisibility();
-                  } else if (likeGesture) {
-                    _triggerLike();
+                  } else if (portraitSeries) {
+                    // 保留吞单击窗口，避免双击尾部的触摸误切播放状态。
+                    if (_ready && !_clearScreen) _guardDoubleTap();
                   } else if (!widget.shortSeries ||
                       widget.landscapeDoubleTapEnabled) {
                     if (widget.shortSeries) _guardDoubleTap();
@@ -1769,8 +1697,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                           seriesTitle: widget.seriesTitle,
                           seriesCover: widget.seriesCover,
                           episodeLabel: widget.episodeLabel,
-                          collected: widget.collected,
-                          onCollect: widget.onCollect,
                           relateBook: widget.relateBook,
                           onOpenRelateBook: widget.onOpenRelateBook,
                           scrollController: scroll,
@@ -1799,31 +1725,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 ),
               ],
               _lockButton(window),
-              if (_likePlaying && showChrome)
-                Positioned(
-                  left: ((_likeOrigin?.dx ?? window.width / 2) - 48.5).clamp(
-                    0.0,
-                    math.max(0.0, window.width - 97),
-                  ),
-                  top: ((_likeOrigin?.dy ?? window.height / 2) - 75.5).clamp(
-                    0.0,
-                    math.max(0.0, window.height - 151),
-                  ),
-                  child: IgnorePointer(
-                    child: SizedBox(
-                      width: 97,
-                      height: 151,
-                      child: Lottie.asset(
-                        'assets/lottie/like_video_center.json',
-                        key: const ValueKey('player-like-animation'),
-                        controller: _likeController,
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stack) =>
-                            const SizedBox.shrink(),
-                      ),
-                    ),
-                  ),
-                ),
             ],
           );
         },
@@ -1914,100 +1815,42 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     ),
   );
 
-  /// 官方播放页右侧竖栏（`cjq.xml` + `cuv.xml`/`cuh.xml`：图标 **46dp**、
-  /// 12sp bold、色 `@color/u`=#ccffffff、图标与文案间距 2dp、项间距
-  /// **12dp**）：星=追剧、心=点赞。官方的评论/分享默认 gone，本仓库无
-  /// 数据也不显示。选集走目录条，清屏与倍速走右下文字行。
+  /// 追剧、点赞、分享移除后，右侧只保留已接入的评论入口。
   Widget _rightBar(EdgeInsets insets) {
-    Widget railButton(
-      String? key,
-      String label,
-      IconData icon,
-      VoidCallback? onTap, {
-      bool selected = false,
-    }) => Semantics(
-      selected: selected,
-      button: true,
-      child: GestureDetector(
-        key: key == null ? null : ValueKey(key),
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 46,
-              color: selected ? const Color(0xFFFA6725) : Colors.white,
-              shadows: const [Shadow(color: Colors.black38, blurRadius: 6)],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12,
-                height: 1.1,
-                fontWeight: FontWeight.bold,
-                color: Color(0xCCFFFFFF),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    if (widget.onComments == null) return const SizedBox.shrink();
     return Positioned(
       right: insets.right + 12,
       bottom: insets.bottom + 172,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (widget.onFollow != null)
-            railButton(
-              'player-follow-button',
-              widget.followerLabel ?? '追剧',
-              Icons.star_rounded,
-              widget.onFollow,
-              selected: widget.collected,
-            ),
-          if (widget.onLike != null) ...[
-            const SizedBox(height: 12),
-            railButton(
-              'player-like-button',
-              widget.liked ? '已赞' : '点赞',
-              Icons.favorite_rounded,
-              widget.onLike,
-              selected: widget.liked,
-            ),
-          ],
-          // 官方右栏第三项是评论（`res/layout/cjs.xml:11`），计数为 0 时
-          // 文案退化成「评论」（`SeriesCommentView.java:182-188`）。官方的
-          // 该项默认 gone，显示条件未取证，因此只在宿主开了评论链路
-          // （`onComments` 非空）时出现。
-          if (widget.onComments != null) ...[
-            const SizedBox(height: 12),
-            railButton(
-              'player-comment-button',
-              PlayletCommentPage.entryLabel(widget.commentCount),
-              Icons.mode_comment_rounded,
-              widget.onComments,
-            ),
-          ],
-          // 官方右栏第四项是分享（`res/layout/cjs.xml:13`）。计数 <= 0 时
-          // 文案是「分享」（`SeriesShareView.java:123-139`）。
-          if (widget.onShare != null) ...[
-            const SizedBox(height: 12),
-            railButton(
-              'player-share-button',
-              widget.shareCount > 0
-                  ? PlayletCommentPage.entryLabel(widget.shareCount)
-                  : shareEntryLabel,
-              Icons.ios_share_rounded,
-              widget.onShare,
-            ),
-          ],
-        ],
+      child: Semantics(
+        button: true,
+        child: GestureDetector(
+          key: const ValueKey('player-comment-button'),
+          onTap: widget.onComments,
+          behavior: HitTestBehavior.opaque,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.mode_comment_rounded,
+                size: 46,
+                color: Colors.white,
+                shadows: [Shadow(color: Colors.black38, blurRadius: 6)],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                PlayletCommentPage.entryLabel(widget.commentCount),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.1,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xCCFFFFFF),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2135,8 +1978,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   ///   `@color/avv`=#B3262626、图标 20dp + 14sp bold 白字）+ 剧名。
   /// - 控制条收起后：剧名 + 原著书卡（「原著《…》」，`/related` 的 book
   ///   关联，点击开原著详情）。
-  /// 官方截图里的「热评」行与分享箭头+计数需要评论/分享后端（§21 暂缓），
-  /// 不显示。
+  /// 热评由独立胶囊展示；分享入口按用户要求移除。
   Widget _information({required bool showPill, required bool showBook}) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -2438,8 +2280,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// - 控制行：播放/暂停 32dp（`btu/btv`）→ 下一集 32dp（仅集数>1）→
   ///   当前时长（拖动中实时）→ 橙色进度条（轨道 4/滑块 16）→ 总时长；
   ///   时长恒 `HH:MM:SS`（`o2()` → `d7.o(sec, true)`，截图 00:00:02/00:02:05）。
-  /// - 功能行：点赞（无计数数据源，只显示图标）、追剧+计数
-  ///   （`followed_cnt` → formatCounter）｜倍速文本、选集（仅集数>1）。
+  /// - 功能行：倍速文本、选集（仅集数>1）；追剧与点赞按用户要求移除。
   /// 官方该行还有评论计数、弹幕开关+弹幕输入框、720P 清晰度——均无数据
   /// 源，不显示（诚实清单）。
   Widget _landscapeBar(EdgeInsets insets) => Positioned(
@@ -2544,23 +2385,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             height: 40,
             child: Row(
               children: [
-                if (widget.onLike != null)
-                  _landRailItem(
-                    'landscape-like',
-                    Icons.favorite_rounded,
-                    null,
-                    widget.onLike,
-                    selected: widget.liked,
-                  ),
-                const SizedBox(width: 20),
-                if (widget.onFollow != null)
-                  _landRailItem(
-                    'landscape-follow',
-                    Icons.star_rounded,
-                    widget.followerLabel ?? '追剧',
-                    widget.onFollow,
-                    selected: widget.collected,
-                  ),
                 const Spacer(),
                 _landText('landscape-rate', _rateText(_rate), _showRates),
                 const SizedBox(width: 24),
@@ -2646,47 +2470,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     String p(int v) => v.toString().padLeft(2, '0');
     return '${p(seconds ~/ 3600)}:${p((seconds % 3600) ~/ 60)}:${p(seconds % 60)}';
   }
-
-  /// 横屏功能行的追剧/点赞项（官方截图：图标 + 下方计数）。计数由宿主给
-  /// （追剧 = followed_cnt；点赞/评论无数据源，只出图标或不出）。
-  Widget _landRailItem(
-    String key,
-    IconData icon,
-    String? label,
-    VoidCallback? onTap, {
-    bool selected = false,
-  }) => Semantics(
-    selected: selected,
-    button: true,
-    child: GestureDetector(
-      key: ValueKey(key),
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            icon,
-            size: 22,
-            color: selected ? const Color(0xFFFA6725) : Colors.white,
-            shadows: const [_landShadow],
-          ),
-          if (label != null)
-            Text(
-              label,
-              maxLines: 1,
-              style: const TextStyle(
-                fontSize: 11,
-                height: 1.2,
-                color: Colors.white,
-                shadows: [_landShadow],
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
 
   Widget _landIconButton(
     String key,

@@ -214,7 +214,7 @@ void main() {
     },
   );
 
-  testWidgets('external overlays end long press and remove like animations', (
+  testWidgets('external overlays end long press and block playback taps', (
     tester,
   ) async {
     final player = FakeNativePlayer()..isPlaying = true;
@@ -232,16 +232,6 @@ void main() {
     );
     await tester.pumpAndSettle();
     final point = tester.getCenter(find.byKey(const ValueKey('video-surface')));
-    await tester.tapAt(point);
-    await tester.pump(const Duration(milliseconds: 80));
-    await tester.tapAt(point);
-    await tester.pump(const Duration(milliseconds: 80));
-    expect(find.byKey(const ValueKey('player-like-animation')), findsOneWidget);
-    update(() => blocked = true);
-    await tester.pump();
-    expect(find.byKey(const ValueKey('player-like-animation')), findsNothing);
-    update(() => blocked = false);
-    await tester.pump();
     final gesture = await tester.startGesture(point);
     await tester.pump(const Duration(milliseconds: 700));
     expect(player.rate, 2);
@@ -249,6 +239,8 @@ void main() {
     await tester.pump();
     expect(player.rate, 1);
     await gesture.up();
+    await tester.tapAt(point);
+    await tester.pump(const Duration(milliseconds: 400));
     expect(player.calls.where((call) => call == 'pause'), isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();

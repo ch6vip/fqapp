@@ -14,11 +14,14 @@ import '../../models/media_item.dart';
 const _currentText = Color(0xFFFA6725);
 const _currentBg = Color(0x1AFA6725);
 const _watchedText = Color(0x66000000);
+
 /// 官方未选中普通格文字 `skin_color_catalog_unselect_item_text_normal_dark`
 /// = @color/skin_color_black_dark = **#CCFFFFFF**（不是纯黑）。
 const _normalText = Color(0xCCFFFFFF);
+
 /// 官方不可播格文字 `..._text_disable_light` = #33000000。
 const _disabledText = Color(0x33000000);
+
 /// 官方普通格底色 `skin_color_gray_03_light` = #08000000。
 const _tileBg = Color(0x08000000);
 
@@ -177,16 +180,14 @@ class StoryPlayerPanel extends StatefulWidget {
   final Set<int> watched;
 
   /// 头部剧信息（官方 `aa8.xml:7-15` 的 `hdp` 区块）：封面、标题、
-  /// 集数/状态文案、免费角标、收藏态。官方这些字段来自剧集详情。
+  /// 集数/状态文案、免费角标。官方这些字段来自剧集详情。
   final String seriesTitle;
   final String seriesCover;
   final String episodeLabel;
   final bool freeWatch;
-  final bool collected;
 
-  /// 点头部（官方 `right_icon` 箭头）与收藏。
+  /// 点头部（官方 `right_icon` 箭头）。
   final VoidCallback? onOpenSeries;
-  final VoidCallback? onCollect;
 
   /// 关联原著条（官方 `aa8.xml:17` 的 `gnh`，由
   /// `series_relate_book_config_v659.relate_book_in_episodes_dialog` 控制，
@@ -212,9 +213,7 @@ class StoryPlayerPanel extends StatefulWidget {
     this.seriesCover = '',
     this.episodeLabel = '',
     this.freeWatch = false,
-    this.collected = false,
     this.onOpenSeries,
-    this.onCollect,
     this.relateBook,
     this.onOpenRelateBook,
     required this.onSelectEpisode,
@@ -361,37 +360,6 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
             ],
           ),
         ),
-        if (widget.onCollect != null)
-          GestureDetector(
-            key: const ValueKey('story-panel-collect'),
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onCollect,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    widget.collected
-                        ? Icons.star_rounded
-                        : Icons.star_border_rounded,
-                    size: 22,
-                    color: widget.collected
-                        ? const Color(0xFFFA6725)
-                        : const Color(0xFF9499A0),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    widget.collected ? '已收藏' : '收藏',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF9499A0),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
       ],
     ),
   );
@@ -431,8 +399,10 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     _lastLocateViewport = position.viewportDimension;
     _locating = true;
     widget.scrollController.jumpTo(
-      (cellTop - position.viewportDimension / 2 + _tileHeight / 2 - 12)
-          .clamp(0.0, position.maxScrollExtent),
+      (cellTop - position.viewportDimension / 2 + _tileHeight / 2 - 12).clamp(
+        0.0,
+        position.maxScrollExtent,
+      ),
     );
     _locating = false;
   }
@@ -504,7 +474,10 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     final tabHeight = math.max(40.0, scale.scale(14) + 22);
     final showPaging = widget.episodes.length > _pageSize;
     final headerHeight =
-        12 + tabHeight + (showPaging ? 36 : 0) + (_hasHeader ? _headerHeight : 0);
+        12 +
+        tabHeight +
+        (showPaging ? 36 : 0) +
+        (_hasHeader ? _headerHeight : 0);
     // A sheet-height change only needs layout. Keep the existing header and
     // lazy list children; state/data/text-scale changes create a fresh build.
     Widget? contents;
@@ -610,45 +583,41 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
   }
 
   /// 官方关联原著条：封面 + 书名，右侧箭头（`aa8.xml:17` 的 `gnh`）。
-  Widget _relateBookRow(EpisodeRelateBook book) =>
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onOpenRelateBook,
-        child: Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            color: const Color(0x0A000000),
-            borderRadius: BorderRadius.circular(8),
+  Widget _relateBookRow(EpisodeRelateBook book) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: widget.onOpenRelateBook,
+    child: Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0x0A000000),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: _relateCover(book.cover),
           ),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: _relateCover(book.cover),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  book.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF1B1B1B),
-                  ),
-                ),
-              ),
-              if (widget.onOpenRelateBook != null)
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  size: 18,
-                  color: Color(0xFF9499A0),
-                ),
-            ],
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              book.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF1B1B1B)),
+            ),
           ),
-        ),
-      );
+          if (widget.onOpenRelateBook != null)
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: Color(0xFF9499A0),
+            ),
+        ],
+      ),
+    ),
+  );
 
   /// 原著封面；没有封面图时用统一的占位块。
   Widget _relateCover(String cover) {
