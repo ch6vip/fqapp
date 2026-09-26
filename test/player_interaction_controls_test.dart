@@ -82,7 +82,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('player-more-rate-row')), findsOneWidget);
     expect(find.byKey(const ValueKey('player-clear-screen')), findsNothing);
-    await tester.tap(find.widgetWithText(ChoiceChip, '1.25x'));
+    await tester.tap(find.byKey(const ValueKey('player-more-rate-1.25')));
     await tester.pumpAndSettle();
     expect(player.rate, 1.25);
     expect(find.text('1.25x'), findsOneWidget);

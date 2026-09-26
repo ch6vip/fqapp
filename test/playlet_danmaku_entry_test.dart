@@ -56,12 +56,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(toggles, 1);
     expect(
-      tester
-          .widget<Switch>(
-            find.byKey(const ValueKey('player-more-danmaku-switch')),
-          )
-          .value,
-      isFalse,
+      tester.getSemantics(
+        find.byKey(const ValueKey('player-more-danmaku-row')),
+      ),
+      matchesSemantics(
+        label: '弹幕',
+        hasToggledState: true,
+        isToggled: false,
+        hasTapAction: true,
+      ),
     );
     expect(find.text('发弹幕'), findsNothing);
     expect(find.byType(TextField), findsNothing);

@@ -16,6 +16,7 @@ import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
 import 'player/story_player_panel.dart';
 import 'player/playlet_hot_comment_bar.dart';
+import 'player/playlet_more_panel.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_seek_bar.dart';
@@ -803,13 +804,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _scheduleHide();
   }
 
-  /// 官方 ⋮ 更多面板（`ShortSeriesMorePanelDialogV2`，布局 `aae.xml`：顶部
-  /// 圆角 16dp、底 `@color/aae`=#fffafafa、拖拽把手、无行分隔；倍速行是
-  /// 行内档位 `b72/b74.xml` + `ScrollableMultipleOptionsView`，档位文案
-  /// `0.75x/1x/1.25x/1.5x/1.75x/2x`）。
-  ///
-  /// 已接入倍速、默认静音、画面撑满和弹幕开关；账号写入口按用户范围省略。
-  /// 清晰度、小窗和投屏需要后续数据或原生能力，暂不放置无法操作的入口。
+  /// 短剧采用官方 V2 新样式（style=1、enable=true）：深色底、12dp 圆角、
+  /// 200ms 底部进出场。普通播放器继续使用通用面板。
   Future<void> _showRates() async {
     if (_overlayOpen || _panelOpen || _locked) return;
     _endBoost();
@@ -823,118 +819,145 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     final selected = await showModalBottomSheet<double>(
       context: context,
       useSafeArea: true,
-      showDragHandle: true,
-      backgroundColor: const Color(0xFFFAFAFA),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => SafeArea(
-          top: false,
-          // 面板会随大字体变高；矮窗口下必须可滚，否则 RenderFlex 溢出
-          // （官方面板本身就是 RecyclerView）。
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  key: const ValueKey('player-more-rate-row'),
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 10),
-                      child: Text(
-                        '倍速',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF1B1B1B),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final rate in PlayerPreferences.playbackRates)
-                            ChoiceChip(
-                              label: Text(_rateChipLabel(rate)),
-                              selected: rate == _rate,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              onSelected: (_) => Navigator.pop(context, rate),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                // 官方更多面板第 5 行：弹幕开关（`oi3/k.java:554-568`，
-                // SP `video_danmaku_switch_sp/key_enable_danmaku_by_user`）。
-                // 只有宿主提供了开关回调时才出现。
-                if (widget.onToggleDanmaku != null) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    key: const ValueKey('player-more-danmaku-row'),
-                    children: [
-                      const Text(
-                        '弹幕',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF1B1B1B),
-                        ),
-                      ),
-                      const Spacer(),
-                      Switch(
-                        key: const ValueKey('player-more-danmaku-switch'),
-                        value: sheetDanmaku,
-                        onChanged: widget.onToggleDanmaku == null
-                            ? null
-                            : (value) {
-                                widget.onToggleDanmaku!.call();
-                                setSheetState(() => sheetDanmaku = value);
-                              },
-                      ),
-                    ],
-                  ),
-                ],
-                // 官方更多面板：默认静音行（`tm3.b`，只存在内存里）。
-                if (widget.onDefaultMuteChanged != null) ...[
-                  const SizedBox(height: 12),
-                  _sheetSwitch(
-                    'player-more-mute-row',
-                    'player-more-mute-switch',
-                    '默认静音',
-                    sheetMute,
-                    onChanged: (value) {
-                      widget.onDefaultMuteChanged!.call(value);
-                      setSheetState(() => sheetMute = value);
-                    },
-                  ),
-                ],
-                // 官方更多面板：画面撑满行（SP `is_fill_screen`）。
-                if (widget.onFillScreenChanged != null) ...[
-                  const SizedBox(height: 12),
-                  _sheetSwitch(
-                    'player-more-fill-row',
-                    'player-more-fill-switch',
-                    '画面撑满',
-                    sheetFill,
-                    onChanged: (value) {
-                      widget.onFillScreenChanged!.call(value);
-                      setSheetState(() => sheetFill = value);
-                    },
-                  ),
-                ],
-              ],
-            ),
-          ),
+      isScrollControlled: widget.shortSeries,
+      showDragHandle: !widget.shortSeries,
+      constraints: widget.shortSeries
+          ? const BoxConstraints(maxWidth: double.infinity)
+          : null,
+      sheetAnimationStyle: widget.shortSeries
+          ? const AnimationStyle(
+              duration: Duration(milliseconds: 200),
+              reverseDuration: Duration(milliseconds: 200),
+            )
+          : null,
+      barrierColor: widget.shortSeries ? Colors.transparent : null,
+      backgroundColor: widget.shortSeries
+          ? const Color(0xFF1C1C1C)
+          : const Color(0xFFFAFAFA),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(widget.shortSeries ? 12 : 16),
         ),
       ),
+      builder: (context) => widget.shortSeries
+          ? PlayletMorePanel(
+              rate: _rate,
+              fillScreen: widget.fillScreen,
+              onFillScreenChanged: widget.onFillScreenChanged,
+              defaultMute: widget.defaultMute,
+              onDefaultMuteChanged: widget.onDefaultMuteChanged,
+              danmakuEnabled: widget.danmakuEnabled,
+              onToggleDanmaku: widget.onToggleDanmaku,
+            )
+          : StatefulBuilder(
+              builder: (context, setSheetState) => SafeArea(
+                top: false,
+                // 面板会随大字体变高；矮窗口下必须可滚，否则 RenderFlex 溢出
+                // （官方面板本身就是 RecyclerView）。
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        key: const ValueKey('player-more-rate-row'),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.only(top: 10),
+                            child: Text(
+                              '倍速',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Color(0xFF1B1B1B),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                for (final rate
+                                    in PlayerPreferences.playbackRates)
+                                  ChoiceChip(
+                                    label: Text(_rateChipLabel(rate)),
+                                    selected: rate == _rate,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    onSelected: (_) =>
+                                        Navigator.pop(context, rate),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      // 官方更多面板第 5 行：弹幕开关（`oi3/k.java:554-568`，
+                      // SP `video_danmaku_switch_sp/key_enable_danmaku_by_user`）。
+                      // 只有宿主提供了开关回调时才出现。
+                      if (widget.onToggleDanmaku != null) ...[
+                        const SizedBox(height: 12),
+                        Row(
+                          key: const ValueKey('player-more-danmaku-row'),
+                          children: [
+                            const Text(
+                              '弹幕',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Color(0xFF1B1B1B),
+                              ),
+                            ),
+                            const Spacer(),
+                            Switch(
+                              key: const ValueKey('player-more-danmaku-switch'),
+                              value: sheetDanmaku,
+                              onChanged: widget.onToggleDanmaku == null
+                                  ? null
+                                  : (value) {
+                                      widget.onToggleDanmaku!.call();
+                                      setSheetState(() => sheetDanmaku = value);
+                                    },
+                            ),
+                          ],
+                        ),
+                      ],
+                      // 官方更多面板：默认静音行（`tm3.b`，只存在内存里）。
+                      if (widget.onDefaultMuteChanged != null) ...[
+                        const SizedBox(height: 12),
+                        _sheetSwitch(
+                          'player-more-mute-row',
+                          'player-more-mute-switch',
+                          '默认静音',
+                          sheetMute,
+                          onChanged: (value) {
+                            widget.onDefaultMuteChanged!.call(value);
+                            setSheetState(() => sheetMute = value);
+                          },
+                        ),
+                      ],
+                      // 官方更多面板：画面撑满行（SP `is_fill_screen`）。
+                      if (widget.onFillScreenChanged != null) ...[
+                        const SizedBox(height: 12),
+                        _sheetSwitch(
+                          'player-more-fill-row',
+                          'player-more-fill-switch',
+                          '画面撑满',
+                          sheetFill,
+                          onChanged: (value) {
+                            widget.onFillScreenChanged!.call(value);
+                            setSheetState(() => sheetFill = value);
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
     );
     if (!mounted) return;
     setState(() => _modalOpen = false);

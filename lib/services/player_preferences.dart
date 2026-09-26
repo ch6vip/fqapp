@@ -4,7 +4,7 @@ class PlayerPreferences {
   static const _playbackRateKey = 'player_playback_rate';
   static const _autoAdvanceKey = 'player_auto_advance';
   static Future<void>? _autoAdvanceWrites;
-  static const playbackRates = <double>[0.75, 1, 1.25, 1.5, 2];
+  static const playbackRates = <double>[0.75, 1, 1.25, 1.5, 1.75, 2];
 
   static Future<double> loadPlaybackRate() async {
     final preferences = await SharedPreferences.getInstance();

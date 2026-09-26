@@ -560,35 +560,46 @@ void main() {
     await player.dispose();
   });
 
-  testWidgets('an older rate reply cannot overwrite a newer saved selection', (
-    tester,
-  ) async {
-    final player = _RateAcknowledgementPlayer();
-    final olderReply = Completer<void>();
-    try {
-      await tester.pumpWidget(_app(player));
-      await tester.pumpAndSettle();
-      player.rateAcknowledgement = olderReply;
-      await tester.tap(find.byTooltip('更多'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '2x'));
-      await tester.pumpAndSettle();
-      player.rateAcknowledgement = null;
-      await tester.tap(find.byTooltip('更多'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '1.25x'));
-      await tester.pumpAndSettle();
-      expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
-      olderReply.complete();
-      await tester.pumpAndSettle();
-      expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
-      expect(player.rate, 1.25);
-    } finally {
-      if (!olderReply.isCompleted) olderReply.complete();
-      await tester.pumpWidget(const SizedBox.shrink());
-      await player.dispose();
-    }
-  });
+  for (final shortSeries in [false, true]) {
+    testWidgets(
+      'an older rate reply cannot overwrite a newer saved selection (short series: $shortSeries)',
+      (tester) async {
+        final player = _RateAcknowledgementPlayer();
+        final olderReply = Completer<void>();
+        try {
+          await tester.pumpWidget(_app(player, shortSeries: shortSeries));
+          await tester.pumpAndSettle();
+          player.rateAcknowledgement = olderReply;
+          await tester.tap(find.byTooltip('更多'));
+          await tester.pumpAndSettle();
+          await tester.tap(
+            shortSeries
+                ? find.byKey(const ValueKey('player-more-rate-2.0'))
+                : find.widgetWithText(ChoiceChip, '2x'),
+          );
+          await tester.pumpAndSettle();
+          player.rateAcknowledgement = null;
+          await tester.tap(find.byTooltip('更多'));
+          await tester.pumpAndSettle();
+          await tester.tap(
+            shortSeries
+                ? find.byKey(const ValueKey('player-more-rate-1.25'))
+                : find.widgetWithText(ChoiceChip, '1.25x'),
+          );
+          await tester.pumpAndSettle();
+          expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
+          olderReply.complete();
+          await tester.pumpAndSettle();
+          expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
+          expect(player.rate, 1.25);
+        } finally {
+          if (!olderReply.isCompleted) olderReply.complete();
+          await tester.pumpWidget(const SizedBox.shrink());
+          await player.dispose();
+        }
+      },
+    );
+  }
 
   testWidgets(
     'fullscreen back exits fullscreen and background playback pauses',

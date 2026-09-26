@@ -5,7 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/series_detail.dart';
 import 'package:fqapp/pages/player_page.dart';
+import 'package:fqapp/services/player_panel_preferences.dart';
+import 'package:fqapp/services/player_preferences.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/player/story_player_panel.dart';
 import 'package:fqapp/widgets/player/story_seek_bar.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
@@ -17,6 +21,7 @@ void main() {
     // 官方画面撑满的缺省值取决于方向（非竖屏时 = !default_video_size_aspect_fit
     // = true）。本套用例验的是 contain 铺排，所以显式把 SP 置成关闭。
     SharedPreferences.setMockInitialValues({'is_fill_screen': false});
+    PlayerPanelPreferences.setDefaultMute(true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('fqapp/native_player'),
@@ -25,6 +30,7 @@ void main() {
   });
 
   tearDown(() {
+    PlayerPanelPreferences.setDefaultMute(true);
     debugOnRebuildDirtyWidget = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -65,9 +71,9 @@ void main() {
         } else {
           expect(find.byKey(const ValueKey('story-panel')), findsOneWidget);
           // 官方无右上角关闭钮：点遮罩关（`AnimationBottomDialog:604`）。
-          final panelTop = tester.getTopLeft(
-            find.byKey(const ValueKey('story-panel')),
-          ).dy;
+          final panelTop = tester
+              .getTopLeft(find.byKey(const ValueKey('story-panel')))
+              .dy;
           await tester.tapAt(Offset(200, panelTop - 60));
           await tester.pumpAndSettle();
           expect(
@@ -82,6 +88,66 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'more settings preserve the paused page, position and clear screen',
+    (tester) async {
+      final originalStyle = PlayerStyleConfig.instance;
+      PlayerStyleConfig.instance = const PlayerStyleConfig(
+        useNewPlayerBottomStyle: true,
+      );
+      addTearDown(() => PlayerStyleConfig.instance = originalStyle);
+      final player = await _mount(tester, shortSeries: true);
+      player.emitPosition(const Duration(seconds: 35));
+      await player.pause();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+      await tester.pumpAndSettle();
+      player.calls.clear();
+      await tester.tap(find.byKey(const ValueKey('player-more-fill-row')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-more-mute-row')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<VideoPlayerChrome>(find.byType(VideoPlayerChrome))
+            .fillScreen,
+        isTrue,
+      );
+      expect(await PlayerPanelPreferences.loadFillScreen(), isTrue);
+      expect(PlayerPanelPreferences.defaultMute, isFalse);
+      await tester.tap(find.byKey(const ValueKey('player-more-rate-1.75')));
+      await tester.pumpAndSettle();
+      expect(player.calls, ['volume:1.0', 'rate:1.75']);
+      expect(player.isPlaying, isFalse);
+      expect(player.position, const Duration(seconds: 35));
+      expect(find.text('恢复'), findsOneWidget);
+      expect(await PlayerPreferences.loadPlaybackRate(), 1.75);
+      await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Semantics>(
+              find.byKey(const ValueKey('player-more-fill-row')),
+            )
+            .properties
+            .toggled,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<Semantics>(
+              find.byKey(const ValueKey('player-more-mute-row')),
+            )
+            .properties
+            .toggled,
+        isFalse,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('panel follows the finger without rebuilding the player chrome', (
     tester,
@@ -295,6 +361,7 @@ Future<ControlledNativePlayer> _mount(
   Duration duration = const Duration(minutes: 2),
   Size videoSize = const Size(1080, 1920),
   ControlledNativePlayer? player,
+  bool shortSeries = false,
 }) async {
   final activePlayer = (player ?? ControlledNativePlayer())
     ..width = videoSize.width.toInt()
@@ -312,6 +379,7 @@ Future<ControlledNativePlayer> _mount(
   await tester.pumpWidget(
     MaterialApp(
       home: PlayerPage(
+        shortSeries: shortSeries,
         bookId: 'rendering-book',
         title: '播放渲染测试',
         eps: [
@@ -324,6 +392,7 @@ Future<ControlledNativePlayer> _mount(
           'video_url': 'https://example.invalid/${chapter.itemId}.mp4',
         },
         playerFactory: () => activePlayer,
+        seriesLoader: (_) async => SeriesDetail.empty,
       ),
     ),
   );
