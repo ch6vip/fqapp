@@ -127,13 +127,9 @@ class PlayletSharePanel extends StatelessWidget {
                 shareCopyLinkLabel,
                 () => _copy(context),
               ),
-              _item(
-                'playlet-share-system',
-                Icons.ios_share_rounded,
-                shareSystemLabel,
-                () => _systemShare(context),
-              ),
-              // 官方把海报分享插在 SYSTEM 之前。
+              // 官方把海报分享**插在 `SYSTEM` 之前**（`m0.java:1409-1483` 的
+              // `list2.add(size, item)`，size 是第一个 SYSTEM 的下标），
+              // 所以顺序是 复制链接 -> 海报分享 -> 系统分享。
               if (onPoster != null)
                 _item(
                   'playlet-share-poster',
@@ -141,6 +137,12 @@ class PlayletSharePanel extends StatelessWidget {
                   sharePosterLabel,
                   onPoster!,
                 ),
+              _item(
+                'playlet-share-system',
+                Icons.ios_share_rounded,
+                shareSystemLabel,
+                () => _systemShare(context),
+              ),
             ],
           ),
         ],

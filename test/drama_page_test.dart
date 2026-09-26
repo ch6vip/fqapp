@@ -780,4 +780,99 @@ void main() {
     expect(find.text('精选'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('频道表加载失败时保留本地表且不抛异常', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => throw const ApiException('频道表不可用'),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('收藏'), findsOneWidget, reason: '失败要退回本地频道表');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('只映射出一个频道时不替换整条栏', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const [
+              ChannelTab(type: kChannelVideoFeed, title: '精选'),
+            ],
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // 一条频道顶掉整栏会把用户锁死在单一频道，所以仍然用本地表。
+    expect(find.text('精选'), findsNothing);
+    expect(find.text('收藏'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('映射不到的类型被丢掉，可映射的仍生效', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const [
+              // 官方枚举里的类型，但本地没有对应内容源。
+              ChannelTab(type: kChannelVideo, title: '视频'),
+              ChannelTab(type: kChannelVideoFeed, title: '精选'),
+              ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+            ],
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // `video` 能映射到「看剧」，所以三者都留；但 `收藏` 不该出现。
+    expect(find.text('精选'), findsOneWidget);
+    expect(find.text('收藏'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('频道表替换后订阅流跟着换（条与 feed 不能对不上）', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const [
+              // 「正片」映射到短剧 tab（tab_type 8）；本地第一条本来是
+              // 「推荐」（tab_type 16）。
+              ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+              ChannelTab(type: kChannelVideoFeed, title: '精选'),
+            ],
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('正片'), findsOneWidget);
+    // 高亮的是「正片」，所以下面的 feed 必须是 tab_type 8 的内容。
+    expect(find.text('8-0 作品'), findsOneWidget);
+    expect(find.text('16-0 作品'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

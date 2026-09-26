@@ -145,7 +145,9 @@ void main() {
         find.byKey(const ValueKey('playlet-share-poster')),
       ).dx;
       expect(copyX, lessThan(systemX));
-      expect(posterX, greaterThan(systemX));
+      // 官方是 `list2.add(size, item)`：海报插在第一个 SYSTEM 的**前面**，
+      // 所以顺序是 复制链接 -> 海报分享 -> 系统分享。
+      expect(posterX, lessThan(systemX));
     });
 
     testWidgets('poster sharing disappears without its callback', (

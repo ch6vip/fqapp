@@ -300,7 +300,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   channel.source == previous.source,
             );
       _channel = index < 0 ? 0 : index;
+      _screenIndex = 0;
     });
+    // 频道表换了以后，**订阅流也要跟着换**：否则频道条高亮的是新频道，
+    // 下面的 feed 还是旧的，两边对不上。这里复用 `_selectChannel` 的同一条
+    // 规则，不另开分支。
+    final current = _channels[_channel];
+    if (current.isFeed) {
+      ref.read(dramaProvider.notifier).selectTab(current.tabIndex);
+    } else {
+      unawaited(_inline.releaseAll());
+    }
+    if (_pages.hasClients) _pages.jumpToPage(0);
   }
 
   /// 进 tab 后弹一次引导。官方在 `onCreateContent` 里 `Ge()`，且被
