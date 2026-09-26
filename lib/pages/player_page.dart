@@ -8,6 +8,7 @@ import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import 'detail_page.dart' show DetailPage;
 import '../services/api_client.dart';
+import '../services/backend_transport.dart' show BackendRequest;
 import '../services/player_panel_preferences.dart';
 import '../services/watched_episodes.dart';
 import '../services/episode_source_cache.dart';
@@ -21,6 +22,7 @@ import '../services/player_style_config.dart';
 import '../services/swipe_guide_store.dart';
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_danmaku_layer.dart';
+import '../widgets/player/playlet_danmaku_loader.dart';
 import '../widgets/player/story_player_panel.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
@@ -42,6 +44,11 @@ class PlayerPage extends StatefulWidget {
   /// 失败就缺省，不打扰播放）。测试注入用。
   final Future<SeriesDetail> Function(String bookId)? seriesLoader;
 
+  /// 弹幕取数的可注入实现（默认走 ApiClient.playletDanmaku）。测试注入用，
+  /// 与 [seriesLoader] 同一套缝。
+  final Future<PlayletCommentPage> Function(DanmakuFetchRequest request)?
+  danmakuFetcher;
+
   /// 官方短剧播放页形态（`apf.xml`）：竖屏无运输条、单击=播放/暂停。
   /// 详情页的电影/电视剧走通用形态（默认 false）。
   final bool shortSeries;
@@ -62,6 +69,7 @@ class PlayerPage extends StatefulWidget {
     this.historyStore,
     this.loadDiagnostics,
     this.seriesLoader,
+    this.danmakuFetcher,
     this.shortSeries = false,
     this.aiGenerated = false,
   });
@@ -117,7 +125,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 0 表示「还没有人评论」，入口按官方文案显示「评论」。
   int _commentCount = 0;
   bool _externalPanelOpen = false;
-  int _danmakuGeneration = 0;
 
   /// 选集面板头部用的剧信息（官方 `aa8.xml:7-15`）。
   String _seriesTitle = '';
@@ -176,7 +183,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_loadBandExtras());
     unawaited(_loadHotComments());
     unawaited(_loadDanmakuPreference());
-    unawaited(_loadDanmaku());
+    // 进度心跳每秒喂一次调度器：进预取区间补拉下一批、落未覆盖处补数。
+    // 不挂在 200ms 进度流上，也不逐帧（上批逐帧滚动只属于渲染层）。
+    _danmakuProgressTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_danmakuEnabled || !_playing || !_appActive) return;
+      final player = _player;
+      if (player == null || player.buffering || _paging || _error != null) {
+        return;
+      }
+      _danmakuLoader.onProgress(player.position.inMilliseconds);
+    });
   }
 
   /// 热评（官方 `SeriesHotCommentView`）：与评论计数同源，来自
@@ -188,6 +204,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 时间轴对象负责切集清空与去重（官方 container/l.java 的规则）。
   final DanmakuTimeline _danmaku = DanmakuTimeline();
   bool _danmakuEnabled = DanmakuPreference.defaultEnabled;
+
+  /// 分段预加载 + seek 补数的调度器；一次只飞一个请求，旧响应按
+  /// 代际作废。取数实现可注入（[PlayerPage.danmakuFetcher]）。
+  late final DanmakuLoader _danmakuLoader = DanmakuLoader(
+    fetch: widget.danmakuFetcher ?? _fetchDanmaku,
+    onLoad: (page) {
+      if (!mounted) return;
+      setState(() => _danmaku.load(page));
+    },
+  );
+
+  /// 在飞的弹幕请求取消柄：切集与销毁时作废（官方 `w()` dispose 的等价）。
+  BackendRequest? _danmakuFlight;
+
+  /// 进度心跳（1 秒节流）。
+  Timer? _danmakuProgressTimer;
 
   /// 底部 band 装饰，一个 `seriesDetail` 请求全出：完结状态
   /// （`series_status`：官方 `SeriesStatus` 1=已完结/0=更新中/3=今日更新/
@@ -380,39 +412,66 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
-  /// 官方开关落盘（`video_danmaku_switch_sp`）。
+  /// 官方开关落盘（`video_danmaku_switch_sp`）。开关状态就绪后才允许
+  /// 发首批请求：关闭弹幕的用户一条请求都不该有（官方禁用时根本不建
+  /// 弹幕视图）。
   Future<void> _loadDanmakuPreference() async {
     final enabled = await DanmakuPreference.load();
     if (!mounted) return;
     setState(() => _danmakuEnabled = enabled);
+    _danmakuLoader.setEnabled(enabled);
+    if (enabled) _loadDanmaku();
+  }
+
+  /// 弹幕取数的默认实现：每次请求挂一个取消柄，切集/销毁时作废在飞
+  /// 请求（`ApiClient.withCancellation` 的既有机制，不另建链路）。
+  Future<PlayletCommentPage> _fetchDanmaku(DanmakuFetchRequest request) {
+    final flight = BackendRequest();
+    _danmakuFlight = flight;
+    return ApiClient.instance.withCancellation(flight, () {
+      return ApiClient.instance.playletDanmaku(
+        request.vid,
+        seriesId: widget.bookId,
+        startOffsetMs: request.startOffsetMs,
+        duration: _duration,
+        cursor: request.cursor,
+      );
+    });
   }
 
   /// 官方取数（`DanmakuRequestHelper.java:314-329`）：`:group_id` 是当前
   /// vid，剧集 id 进 `business_param.book_id`，时间毫秒。best-effort：
-  /// 失败不显示弹幕，不影响播放。
-  Future<void> _loadDanmaku() async {
+  /// 失败不显示弹幕，不影响播放。调度（预取/补数/竞态）都在
+  /// [DanmakuLoader] 里。
+  void _loadDanmaku() {
     if (!widget.shortSeries || widget.eps.isEmpty) return;
     final vid = widget.eps[_index].itemId;
     if (vid.isEmpty) return;
-    final request = ++_danmakuGeneration;
-    try {
-      final page = await ApiClient.instance.playletDanmaku(
-        vid,
-        seriesId: widget.bookId,
-        startOffsetMs: _player?.position.inMilliseconds ?? 0,
-        duration: _duration,
-      );
-      if (!mounted || request != _danmakuGeneration) return;
-      setState(() => _danmaku.load(danmakuFromPage(page), replace: true));
-    } catch (_) {
-      // 弹幕是装饰层，取数失败只是不显示。
-    }
+    _danmakuFlight?.cancel();
+    _danmakuFlight = null;
+    // 首批按官方 ON_VIDEO_PLAY 在起始位置取数：初始与切集都是 0，
+    // 开关重新打开时按当前集的播放位置续取。
+    final resumed = _activeIndex == _index;
+    _danmakuLoader.reset(
+      vid: vid,
+      startMs: resumed ? (_player?.position.inMilliseconds ?? 0) : 0,
+    );
   }
 
-  /// 官方开关切换：落盘 + Toast 文案（`i95/i.java:339-346`）。
+  /// chrome 上报的最终 seek 目标（官方 `ON_SEEK_FINISH`）：调度器自行
+  /// 判断目标是否已被覆盖、是否需要清游标重拉。
+  void _onDanmakuSeek(Duration target) {
+    if (!widget.shortSeries) return;
+    _danmakuLoader.onSeek(target.inMilliseconds);
+  }
+
+  /// 官方开关切换：落盘 + Toast 文案（`i95/i.java:339-346`）。重新打开时
+  /// 调度器整池重灌，按当前播放位置续取（官方重新 start 的语义）。
   Future<void> _toggleDanmaku() async {
     final enabled = !_danmakuEnabled;
     setState(() => _danmakuEnabled = enabled);
+    _danmakuLoader.setEnabled(enabled);
+    if (enabled) _loadDanmaku();
     await DanmakuPreference.save(enabled);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -462,6 +521,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(NativePlayer.setKeepScreenOn(false).catchError((Object _) {}));
     _progressTimer?.cancel();
     _prefetchTimer?.cancel();
+    _danmakuProgressTimer?.cancel();
+    _danmakuFlight?.cancel();
+    _danmakuLoader.dispose();
     _seekHintTimer?.cancel();
     _sources.dispose();
     _loadTrace?.finish('disposed');
@@ -937,7 +999,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       // 切集：官方清时间线整池重灌（container/l.java:1496-1528）。
       _danmaku.reset();
     });
-    unawaited(_loadDanmaku());
+    _loadDanmaku();
     // _loadVideo invalidates prior work synchronously; no network or history
     // operation may delay recording the user's newest target.
     return _loadVideo();
@@ -993,6 +1055,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       danmaku: _danmaku.entries,
       danmakuEnabled: _danmakuEnabled,
       onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,
+      onSeeked: widget.shortSeries ? _onDanmakuSeek : null,
       newPlayerBottomStyle: style.useNewPlayerBottomStyle,
       hasBanner: style.hasBanner,
       padNewBottomStyle: style.padNewBottomStyle,

@@ -187,6 +187,7 @@ class PlayletCommentPage {
     this.totalCount = 0,
     this.hasMore = false,
     this.cursor = '',
+    this.nextQueryMs = 0,
     this.hotComments = const [],
   });
 
@@ -194,6 +195,11 @@ class PlayletCommentPage {
   final int totalCount;
   final bool hasMore;
   final String cursor;
+
+  /// 官方建议的下一次弹幕查询时间（毫秒，`CommentListExtra` 的
+  /// `next_query_danmaku_list_time`，`DanmakuRequestHelper` 用它当作
+  /// 已取数区间的右端）。只在弹幕回包里有意义；0 表示回包未提供。
+  final int nextQueryMs;
 
   /// 官方热评 = 同一份列表里筛出的 [UgcRelativeType.comment]/[reply]
   /// （`a13/w.java:351-426`），不是接口字段。
@@ -259,11 +265,14 @@ class PlayletCommentPage {
         if (parsed != null) comments.add(parsed);
       }
     }
+    final extra = page['extra'];
+    final extraMap = extra is Map ? extra : const {};
     return PlayletCommentPage(
       comments: List.unmodifiable(comments),
       totalCount: _int(infoMap['total']),
       hasMore: infoMap['has_more'] == true,
       cursor: _string(infoMap['cursor']),
+      nextQueryMs: _int(extraMap['next_query_danmaku_list_time']),
     );
   }
 }

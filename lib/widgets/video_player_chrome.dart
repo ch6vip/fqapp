@@ -117,6 +117,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
 
+  /// 最终确定的 seek 目标（进度条拖动收尾、横滑收尾、±10s 快进/回拖、
+  /// 播完重播回零）。拖动过程中的实时 seek 不上报，只报收尾值，
+  /// 对齐官方 `seekTo()` 的 `ON_SEEK_FINISH` 时机（l.java:1213-1227）。
+  final void Function(Duration target)? onSeeked;
+
   /// 底部 band 的两块服务端装饰（官方截图第二十二轮）：完结状态
   /// （「选集 · 已完结 · 全82集」胶囊，`@string/ag_`/`e6r`）与
   /// 原著书卡（「原著《…》」，`/related` 的 book 关联）。缺省就不显示。
@@ -156,6 +161,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.landscapeDoubleTapEnabled = false,
     this.commentCount = 0,
     this.onComments,
+    this.onSeeked,
     this.hotComments = const [],
     this.onHotCommentTap,
     this.seriesTitle = '',
@@ -649,13 +655,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           : (_seekValue.value! * MediaQuery.sizeOf(context).width),
     );
     unawaited(() async {
-      await _control(
-        (player) => player.seek(
-          Duration(
-            milliseconds: (widget.duration.inMilliseconds * fraction).round(),
-          ),
-        ),
+      final target = Duration(
+        milliseconds: (widget.duration.inMilliseconds * fraction).round(),
       );
+      await _control((player) => player.seek(target));
+      // 横滑收尾才报最终目标；拖动中的实时 seek 不上报。
+      widget.onSeeked?.call(target);
       if (mounted && !_seeking) _seekValue.value = null;
     }());
     if (widget.showSeekHint) widget.onSeekHintConsumed?.call();
@@ -685,7 +690,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         if (pause) {
           await player.pause();
         } else {
-          if (player.completed) await player.seek(Duration.zero);
+          if (player.completed) {
+            await player.seek(Duration.zero);
+            // 播完重播回零也是一次最终 seek（官方 seekTo 的 ON_SEEK_FINISH）。
+            widget.onSeeked?.call(Duration.zero);
+          }
           if (!mounted ||
               widget.player != player ||
               interaction != _interaction ||
@@ -727,6 +736,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       if (!mounted || widget.player != player || interaction != _interaction) {
         return;
       }
+      // 进度条拖动的收尾 seek：只报真正落盘的目标。
+      widget.onSeeked?.call(target);
       if (_resumeAfterSeek && _appActive && _ready) await player.play();
     } catch (error) {
       if (mounted && widget.player == player && interaction == _interaction) {
@@ -768,6 +779,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     // Remember the optimistic target before awaiting the native seek so the
     // next relative tap accumulates on top of it.
     _pendingSeek = target;
+    // ±10s 的目标在点击时就已确定，直接上报；连续快进按累计目标取数。
+    widget.onSeeked?.call(target);
     unawaited(
       _control((player) async {
         try {
