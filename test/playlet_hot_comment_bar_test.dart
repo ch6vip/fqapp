@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/widgets/player/playlet_hot_comment_bar.dart';
 
-/// 热评胶囊的官方行为：第 0 条常显、条数 >1 时每 5 秒换下一条、
+/// 热评行保留轮播行为：第 0 条常显、条数 >1 时每 5 秒换下一条、
 /// 点击回调带上当前那条（官方据此组 hot_comment_id/hot_reply_id）。
 ///
 /// 取值依据 `SeriesHotCommentView.java:600`（取第 0 条）、`:98-129`
@@ -17,15 +17,17 @@ void main() {
     playletRoleType: roleType,
   );
 
-  Widget app(List<PlayletComment> comments, {ValueChanged<PlayletComment>? onTap}) =>
-      MaterialApp(
-        home: Scaffold(
-          backgroundColor: Colors.black,
-          body: Center(
-            child: PlayletHotCommentBar(comments: comments, onTap: onTap),
-          ),
-        ),
-      );
+  Widget app(
+    List<PlayletComment> comments, {
+    ValueChanged<PlayletComment>? onTap,
+  }) => MaterialApp(
+    home: Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: PlayletHotCommentBar(comments: comments, onTap: onTap),
+      ),
+    ),
+  );
 
   testWidgets('an empty list renders nothing at all', (tester) async {
     await tester.pumpWidget(app(const []));
@@ -37,29 +39,49 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(app([comment('c1')]));
-    expect(find.byKey(const ValueKey('playlet-hot-comment-c1')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('playlet-hot-comment-c1')),
+      findsOneWidget,
+    );
     expect(find.textContaining('内容c1'), findsOneWidget);
     // 5 秒后仍然只有第一条：官方只在条数 >1 时起定时器。
     await tester.pump(const Duration(seconds: 6));
-    expect(find.byKey(const ValueKey('playlet-hot-comment-c1')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('playlet-hot-comment-c1')),
+      findsOneWidget,
+    );
     await tester.pump(const Duration(seconds: 6));
-    expect(find.byKey(const ValueKey('playlet-hot-comment-c1')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('playlet-hot-comment-c1')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('two comments rotate every five seconds and wrap around', (
     tester,
   ) async {
     await tester.pumpWidget(app([comment('c1'), comment('c2')]));
-    expect(find.byKey(const ValueKey('playlet-hot-comment-c1')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('playlet-hot-comment-c1')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('playlet-hot-comment-c2')), findsNothing);
 
     await tester.pump(const Duration(seconds: 5));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(find.byKey(const ValueKey('playlet-hot-comment-c2')), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('playlet-hot-comment-c2')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('playlet-hot-comment-c1')), findsNothing);
 
     await tester.pump(const Duration(seconds: 5));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(find.byKey(const ValueKey('playlet-hot-comment-c1')), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('playlet-hot-comment-c1')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('playlet-hot-comment-c2')), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -69,7 +91,9 @@ void main() {
     await tester.pumpWidget(app([comment('lead', roleType: 2)]));
     expect(find.textContaining('主演说：'), findsOneWidget);
     await tester.pumpWidget(app([comment('plain')]));
-    expect(find.textContaining('热评：'), findsOneWidget);
+    expect(find.textContaining('热评：'), findsNothing);
+    expect(find.text('热评'), findsOneWidget);
+    expect(find.text('内容plain'), findsOneWidget);
   });
 
   testWidgets('tapping reports the comment currently shown', (tester) async {
@@ -80,9 +104,42 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('playlet-hot-comment-c1')));
     expect(tapped, ['c1']);
     await tester.pump(const Duration(seconds: 5));
-    await tester.pump(const Duration(milliseconds: 200));
-    await tester.tap(find.byKey(const ValueKey('playlet-hot-comment-c2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('展开'));
     expect(tapped, ['c1', 'c2']);
     await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('the expand action fits beside long text at large font sizes', (
+    tester,
+  ) async {
+    final tapped = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(2.5)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 220,
+              child: PlayletHotCommentBar(
+                comments: const [
+                  PlayletComment(id: 'long', text: '这是一条需要截断的很长很长的热评内容'),
+                ],
+                onTap: (comment) => tapped.add(comment.id),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.text('展开').hitTestable(), findsOneWidget);
+    await tester.tap(find.text('展开'));
+    expect(tapped, ['long']);
   });
 }

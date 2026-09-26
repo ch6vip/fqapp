@@ -156,7 +156,7 @@ void main() {
   });
 
   testWidgets(
-    'text actions stay reachable on a narrow screen with large text',
+    'clear screen and restore stay reachable on a narrow screen with large text',
     (tester) async {
       final player = FakeNativePlayer()..isPlaying = true;
       await _mount(tester, player, textScale: 2.5, shortSeries: true);
@@ -165,6 +165,14 @@ void main() {
       final clearAction = find.byKey(const ValueKey('player-clear-screen'));
       final rateAction = find.byKey(const ValueKey('player-rate-text'));
       expect(clearAction.hitTestable(), findsOneWidget);
+      expect(rateAction, findsNothing);
+      final iconRect = tester.getRect(clearAction);
+      expect(iconRect.left, greaterThanOrEqualTo(0));
+      expect(iconRect.right, lessThanOrEqualTo(280));
+      expect(iconRect.height, greaterThanOrEqualTo(48));
+      await tester.tap(clearAction);
+      await tester.pump();
+      _expectClearScreen();
       expect(rateAction.hitTestable(), findsOneWidget);
       for (final action in [clearAction, rateAction]) {
         final rect = tester.getRect(action);
@@ -172,12 +180,9 @@ void main() {
         expect(rect.right, lessThanOrEqualTo(280));
         expect(rect.height, greaterThanOrEqualTo(48));
       }
-      await tester.tap(clearAction);
-      await tester.pump();
-      _expectClearScreen();
       await tester.tap(find.text('恢复'));
       await tester.pump();
-      expect(find.text('清屏'), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-clear-icon')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

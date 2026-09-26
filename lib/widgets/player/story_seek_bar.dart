@@ -12,7 +12,7 @@ class StorySeekBar extends StatefulWidget {
   final VoidCallback onCancel;
 
   /// 贴底细条的轨道/滑块半径。官方横屏底条（cw7.xml：`abt` 轨道 4dip、
-  /// `ah6` 滑块 16dip）用 4/8；竖屏沿用原默认 2/3。
+  /// `ah6` 滑块 16dip）用 4/8；短剧竖屏用 4/3，通用播放器保留默认 2/3。
   final double trackWidth;
   final double thumbRadius;
 
@@ -162,7 +162,9 @@ class _SeekPainter extends CustomPainter {
     canvas.drawCircle(
       end,
       thumbRadius * (1 + .22 * emphasis),
-      line..style = PaintingStyle.fill..color = thumbColor,
+      line
+        ..style = PaintingStyle.fill
+        ..color = thumbColor,
     );
   }
 

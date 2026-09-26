@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/widgets/player/story_seek_bar.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
@@ -86,6 +87,87 @@ void main() {
       await player.dispose();
     },
   );
+
+  for (final scenario in [
+    (
+      name: 'wide video',
+      window: const Size(400, 888),
+      scale: 1.0,
+      vertical: false,
+    ),
+    (
+      name: 'narrow screen with large text',
+      window: const Size(280, 600),
+      scale: 2.5,
+      vertical: true,
+    ),
+  ]) {
+    testWidgets('portrait controls remain separated for ${scenario.name}', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(scenario.window);
+      final player = FakeNativePlayer(
+        width: scenario.vertical ? 1080 : 1920,
+        height: scenario.vertical ? 1920 : 1080,
+      )..isPlaying = true;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await player.dispose();
+        await tester.binding.setSurfaceSize(null);
+      });
+      var commentsOpened = 0;
+      const title = '深夜噩梦：我有一双诡眼与很长的剧名';
+      await tester.pumpWidget(
+        _app(
+          player,
+          shortSeries: true,
+          title: title,
+          textScaler: TextScaler.linear(scenario.scale),
+          padding: const EdgeInsets.fromLTRB(4, 32, 6, 24),
+          onComments: () => commentsOpened++,
+          hotComments: const [
+            PlayletComment(id: 'hot', text: '太好了，是新剧，我们有救了，这是一条很长的评论'),
+          ],
+          originalBook: const RelatedWork(
+            kind: 'book',
+            id: '42',
+            title: '恐怖噩梦：我有一双鬼眼',
+            label: '原著小说',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      Rect rect(String key) => tester.getRect(find.byKey(ValueKey(key)));
+      final pill = rect('player-fullscreen-pill');
+      final comments = rect('player-comment-button');
+      final titleRect = tester.getRect(find.text(title));
+      final seek = rect('video-seek-layer');
+      final catalog = rect('player-catalog-bar');
+      final clear = rect('player-clear-screen');
+      expect(pill.overlaps(comments), isFalse);
+      expect(pill.bottom, lessThan(titleRect.top));
+      expect(comments.bottom, lessThan(titleRect.top));
+      expect(seek.overlaps(catalog), isFalse);
+      expect(seek.overlaps(clear), isFalse);
+      expect(catalog.overlaps(clear), isFalse);
+      expect(clear.height, greaterThanOrEqualTo(48));
+      if (!scenario.vertical) {
+        final videoBottom = rect('video-frame').bottom;
+        expect(pill.top - videoBottom, inInclusiveRange(12, 28));
+      }
+      await tester.tap(find.byKey(const ValueKey('player-comment-button')));
+      expect(commentsOpened, 1);
+      // 满屏布局容器的空白处仍属于视频手势，不能拦住单击暂停。
+      await tester.tapAt(Offset(scenario.window.width / 2, 115));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(player.calls, contains('pause'));
+      await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
+      await tester.pump();
+      expect(find.text('恢复').hitTestable(), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-comment-button')), findsNothing);
+    });
+  }
 
   testWidgets('shortSeries landscape shows the official bottom bar', (
     tester,
@@ -196,10 +278,10 @@ void main() {
     await player.dispose();
   });
 
-  testWidgets('shortSeries text actions and band persist after auto-hide', (
+  testWidgets('shortSeries catalog and information persist after auto-hide', (
     tester,
   ) async {
-    // 本地选择新底栏文字入口常驻；自动收起不再切到另一套清屏图标。
+    // 本轮截图形态常驻「选集 + 清屏图标」，自动收起不切换入口。
     final player = FakeNativePlayer()..isPlaying = true;
     var opened = 0;
     await tester.pumpWidget(
@@ -217,13 +299,16 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // 控制条可见：pill + 剧名，无原著卡；清屏走文字行，无图标钮。
+    // 原著有数据就显示，不再等自动收起后才出现。
     expect(
       find.byKey(const ValueKey('player-fullscreen-pill')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('player-original-book')), findsNothing);
-    expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
+    expect(find.byKey(const ValueKey('player-original-book')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-clear-icon')), findsOneWidget);
+    final bookRect = tester.getRect(
+      find.byKey(const ValueKey('player-original-book')),
+    );
     final clearAction = find.byKey(const ValueKey('player-clear-screen'));
     final clearRect = tester.getRect(clearAction);
     final catalogRect = tester.getRect(
@@ -238,9 +323,13 @@ void main() {
     expect(find.byKey(const ValueKey('video-seek')), findsOneWidget);
     expect(find.byKey(const ValueKey('player-catalog-bar')), findsOneWidget);
     expect(find.text(' · 已完结 · 全2集'), findsOneWidget);
-    expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
+    expect(find.byKey(const ValueKey('player-clear-icon')), findsOneWidget);
     expect(clearAction.hitTestable(), findsOneWidget);
     expect(tester.getRect(clearAction), clearRect);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('player-original-book'))),
+      bookRect,
+    );
     expect(
       tester.getRect(find.byKey(const ValueKey('player-catalog-bar'))),
       catalogRect,
@@ -257,7 +346,7 @@ void main() {
     expect(find.byKey(const ValueKey('player-catalog-bar')), findsNothing);
     expect(find.byKey(const ValueKey('player-clear-icon')), findsNothing);
     expect(find.text('恢复'), findsOneWidget);
-    expect(tester.getRect(clearAction), clearRect);
+    expect(clearAction.hitTestable(), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });
@@ -449,20 +538,21 @@ void main() {
     },
   );
 
-  testWidgets('short-series text row shows the official rate copy', (
+  testWidgets('short-series clear screen row keeps rate and restore actions', (
     tester,
   ) async {
-    // 官方右下角文字行（`SingleVideoHolder.java:1131-1171`）：倍速 1.0 显示
-    // 「倍速」，其余 `数值x`（本用例档位 1.5 → 「1.5x」）；点它开更多面板，
-    // 「清屏」点后切文案为「恢复」。通用播放器（详情页影视）不显示这一行。
+    // 正常态按截图使用清屏图标，清屏后保留官方倍速文案与恢复出口。
     final player = FakeNativePlayer()..isPlaying = true;
     await tester.pumpWidget(_app(player));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('player-rate-text')), findsNothing);
     await tester.pumpWidget(_app(player, shortSeries: true));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-rate-text')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
+    await tester.pump();
     expect(find.text('1.5x'), findsOneWidget);
-    expect(find.text('清屏'), findsOneWidget);
+    expect(find.text('恢复'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('player-rate-text')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('player-more-rate-row')), findsOneWidget);
@@ -740,7 +830,11 @@ Widget _app(
   FakeNativePlayer player, {
   List<int>? selected,
   TextScaler textScaler = TextScaler.noScaling,
+  EdgeInsets padding = EdgeInsets.zero,
   bool shortSeries = false,
+  String title = '',
+  VoidCallback? onComments,
+  List<PlayletComment> hotComments = const [],
   bool showSeekHint = false,
   VoidCallback? onSeekHintConsumed,
   int currentIndex = 0,
@@ -754,7 +848,9 @@ Widget _app(
   bool landscapeLockEnabled = false,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
-    data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+    data: MediaQuery.of(
+      context,
+    ).copyWith(textScaler: textScaler, padding: padding),
     child: child!,
   ),
   home: StreamBuilder<bool>(
@@ -762,6 +858,9 @@ Widget _app(
     initialData: player.playing,
     builder: (context, playing) => VideoPlayerChrome(
       player: player,
+      title: title,
+      onComments: onComments,
+      hotComments: hotComments,
       episodes: [
         Chapter(itemId: '1', title: '第一集', volumeName: ''),
         Chapter(itemId: '2', title: '第二集', volumeName: ''),

@@ -22,6 +22,8 @@ import 'player/story_seek_bar.dart';
 
 // Note: 移除短剧互动入口的范围见
 // .agents/notes/implemented/simplification/2026-09-26-playlet-social-controls.md
+// Note: 截图形态、视频底边定位与触区取舍见
+// .agents/notes/implemented/bug-fix/2026-09-26-playlet-portrait-layout.md
 class VideoPlayerChrome extends StatefulWidget {
   final NativePlayer? player;
   final String title;
@@ -58,10 +60,10 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool showSeekHint;
   final VoidCallback? onSeekHintConsumed;
 
-  /// 官方底栏配置 `player_bottom_style_config`（`use_new_player_bottom_style`
-  /// 与 `has_banner`，`PlayerBottomStyleConfig.a()`）。为真时清屏入口是右下
-  /// 文字行（`SingleVideoHolder.z8()`），为假时才轮到旧底栏图标
-  /// （`o.W7()` 门 `F6()`）。两条分支互斥，不是按自动收起计时器轮换。
+  /// 官方底栏配置 `player_bottom_style_config`（`PlayerBottomStyleConfig.a()`）。
+  /// 当前新栏按用户选定截图使用「选集 + 清屏图标」，清屏后用文字恢复；
+  /// 这是本地外观选择，不将其推断成官方所有新栏配置的固定样式。
+  /// 旧栏仍保留独立配置门，自动收起不切换底栏分支。
   final bool newPlayerBottomStyle;
   final bool hasBanner;
 
@@ -87,7 +89,7 @@ class VideoPlayerChrome extends StatefulWidget {
   final int commentCount;
   final VoidCallback? onComments;
 
-  /// 热评胶囊（官方 \`SeriesHotCommentView\`）：列表来自 \`hotOf\` 的本地筛选，
+  /// 热评信息行（官方 `InfoPanelHotCommentView`）：列表来自 `hotOf` 的本地筛选，
   /// 为空时整条不出现。
   final List<PlayletComment> hotComments;
   final ValueChanged<PlayletComment>? onHotCommentTap;
@@ -568,6 +570,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           widget.padNewBottomStyle);
 
   bool get _clearScreenAvailable => _clearScreenConfigured && !_locked;
+
+  bool get _catalogStyle =>
+      widget.shortSeries && (widget.newPlayerBottomStyle || widget.hasBanner);
 
   /// 沿用官方独立清屏状态；新底栏文字入口 vs 旧底栏图标的互斥分支见
   /// .agents/notes/proposed/architecture/2026-09-25-f01-f03-official-evidence.md §1。
@@ -1247,7 +1252,18 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   @override
-  Widget build(BuildContext context) => PopScope(
+  Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
+    value: const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+      systemNavigationBarColor: Colors.black,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+    child: _buildChrome(context),
+  );
+
+  Widget _buildChrome(BuildContext context) => PopScope(
     canPop: !_panelOpen && !_fullScreen,
     onPopInvokedWithResult: (didPop, result) {
       if (!didPop && (_panelOpen || _fullScreen)) unawaited(_back());
@@ -1285,6 +1301,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           // 短剧竖屏双击点赞按用户要求移除；单击仍控制播放。
           // 横屏单击切换控件，双击播放继续由横屏配置控制。
           final portraitSeries = widget.shortSeries && !landscape;
+          final catalogStyle = _catalogStyle && !landscape;
           final tapTogglesPlayback =
               widget.shortSeries && (!landscape || _clearScreen);
           final canPage =
@@ -1300,11 +1317,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               !_visible &&
               !_seeking &&
               showChrome;
-          // 官方两个底栏分支都以文字收口：新底栏是 `z8()` 的右下文字行，
-          // 旧底栏是 `bom.xml` 里 `e0t/iv7` 的「清屏/还原」文字（图标只是
-          // 前缀）。手机旧底栏没有清屏项（pad 门），所以这里恒出「倍速」，
-          // 清屏项由 `_clearScreenAvailable` 决定。
-          // 官方热评胶囊只在有热评、未清屏/锁定、竖屏且信息区可见时出现。
+          // 热评只在信息区可见时出现；新栏采用截图中的无底色信息行。
           final hotBar =
               widget.shortSeries &&
               !_locked &&
@@ -1317,7 +1330,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               unobstructed &&
               !_locked &&
               !_seeking &&
-              (!landscape || _clearScreen);
+              ((!landscape && !catalogStyle) || _clearScreen);
           // 旧底栏清屏/还原只在 pad 配置开启时出现（`jj3/i.java:620-637`）。
           // 手机旧栏保留实际可用的倍速，清晰度等待多档流数据接入。
           return Stack(
@@ -1476,12 +1489,20 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 ),
               if (controls) ...[
                 _topBar(insets, landscape: landscape),
-                if (!landscape) _rightBar(insets),
+                if (!landscape && !catalogStyle) _rightBar(insets),
               ],
+              if (catalogStyle && (controls || bandVisible))
+                _portraitControls(
+                  insets: insets,
+                  videoBottom: layout.video.intersect(layout.viewport).bottom,
+                  controls: controls,
+                  hotBar: hotBar,
+                ),
               // 信息层/选集胶囊压在进度条与画面之上，但必须保持transport在
               // 其上方（Stack 后者在上）：通用播放器的运输条按钮不能被信息
               // 层的渐变 Container 挡住点击。
-              if ((!landscape && (controls || bandVisible)) || showTextActions)
+              if ((!catalogStyle && !landscape && (controls || bandVisible)) ||
+                  showTextActions)
                 Positioned(
                   left: insets.left,
                   right: insets.right,
@@ -1515,7 +1536,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     ],
                   ),
                 ),
-              if (!landscape && (controls || bandVisible)) _catalogBar(insets),
+              if (!landscape && (controls || bandVisible))
+                _catalogBar(insets, compact: catalogStyle),
               // 官方播放页（`apf.xml`）竖屏没有运输条；运输条只剩通用
               // 播放器（详情页影视）在用，短剧两个朝向都不走它。
               if (controls && _ready && !widget.shortSeries)
@@ -1534,11 +1556,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   // layer keyed so the active drag recognizer survives that
                   // sibling change until the finger is released.
                   key: const ValueKey('video-seek-layer'),
-                  left: insets.left + 12,
-                  right: insets.right + 12,
-                  // 官方 q6() 是底栏高度。进度线贴其上缘，文字在上方 15dp；
-                  // 30dp 的进度触区中心要减去半高，避免覆盖清屏/倍速文字。
-                  bottom: insets.bottom + (widget.shortSeries ? 41 : 60),
+                  left: insets.left + (catalogStyle ? 16 : 12),
+                  right: insets.right + (catalogStyle ? 16 : 12),
+                  // 新栏的 30dp 进度触区止于选集/清屏的 48dp 触区上沿。
+                  bottom:
+                      insets.bottom +
+                      (catalogStyle ? 60 : (widget.shortSeries ? 41 : 60)),
                   child: RepaintBoundary(
                     child: ListenableBuilder(
                       listenable: _timeline,
@@ -1551,6 +1574,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                         onChanged: (value) => _seekValue.value = value,
                         onEnd: (value) => unawaited(_finishSeek(value)),
                         onCancel: _cancelSeek,
+                        trackWidth: catalogStyle ? 4 : 2,
                         progressColor: widget.shortSeries
                             ? const Color(0xFFFA6725)
                             : Colors.white,
@@ -1821,39 +1845,90 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     return Positioned(
       right: insets.right + 12,
       bottom: insets.bottom + 172,
-      child: Semantics(
-        button: true,
-        child: GestureDetector(
-          key: const ValueKey('player-comment-button'),
-          onTap: widget.onComments,
-          behavior: HitTestBehavior.opaque,
+      child: _commentButton(),
+    );
+  }
+
+  Widget _commentButton() => Semantics(
+    button: true,
+    label: '评论',
+    child: GestureDetector(
+      key: const ValueKey('player-comment-button'),
+      onTap: widget.onComments,
+      behavior: HitTestBehavior.opaque,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset(
+              'assets/images/drama/rail_comment.webp',
+              width: 46,
+              height: 46,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              PlayletCommentPage.entryLabel(widget.commentCount),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.1,
+                fontWeight: FontWeight.bold,
+                color: Color(0xCCFFFFFF),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  /// 按视频下沿放全屏/评论，并用实际信息区高度让位，避免长字和原著卡
+  /// 挤住按钮。空白区域不参与命中测试，仍交给画面手势。
+  Widget _portraitControls({
+    required EdgeInsets insets,
+    required double videoBottom,
+    required bool controls,
+    required bool hotBar,
+  }) => Positioned.fill(
+    child: CustomMultiChildLayout(
+      delegate: _PortraitControlsLayout(
+        insets: insets,
+        videoBottom: videoBottom,
+      ),
+      children: [
+        LayoutId(
+          id: _PortraitSlot.information,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.mode_comment_rounded,
-                size: 46,
-                color: Colors.white,
-                shadows: [Shadow(color: Colors.black38, blurRadius: 6)],
-              ),
-              const SizedBox(height: 2),
-              Text(
-                PlayletCommentPage.entryLabel(widget.commentCount),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  height: 1.1,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xCCFFFFFF),
+              _information(showPill: false, showBook: false),
+              if (hotBar)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: PlayletHotCommentBar(
+                    comments: widget.hotComments,
+                    onTap: widget.onHotCommentTap,
+                  ),
                 ),
-              ),
+              if (widget.originalBook != null)
+                _originalBookCard(widget.originalBook!, edgeToEdge: true)
+              else
+                // 无原著条承接进度线时，热评触区必须留在进度触区之上。
+                const SizedBox(height: 24),
             ],
           ),
         ),
-      ),
-    );
-  }
+        if (controls)
+          LayoutId(id: _PortraitSlot.fullscreen, child: _fullscreenPill()),
+        if (controls && widget.onComments != null)
+          LayoutId(id: _PortraitSlot.comments, child: _commentButton()),
+      ],
+    ),
+  );
 
   /// 新底栏文字样式来自 `SingleVideoHolder.q8()`；48dp 点击区是本地取舍。
   /// 操作行独立于标题高度，窄屏大字可换行（源码对照文档 §32）。
@@ -1973,12 +2048,53 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         ),
       );
 
-  /// 底部信息层（官方截图第二十二轮，常驻 band）：
-  /// - 控制条可见时：居中「全屏观看」pill（`aqi.xml`：圆角 8dp、底
-  ///   `@color/avv`=#B3262626、图标 20dp + 14sp bold 白字）+ 剧名。
-  /// - 控制条收起后：剧名 + 原著书卡（「原著《…》」，`/related` 的 book
-  ///   关联，点击开原著详情）。
-  /// 热评由独立胶囊展示；分享入口按用户要求移除。
+  /// 当前短剧截图使用 `aqh.xml` 的 5dp 纵向内边距；通用播放器保留
+  /// `aqi.xml` 的 8dp。官方存在配置分支，不能把其中一套当作唯一规格。
+  Widget _fullscreenPill() => Semantics(
+    button: true,
+    child: GestureDetector(
+      key: const ValueKey('player-fullscreen-pill'),
+      onTap: _toggleFullScreen,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: widget.shortSeries ? 5 : 8,
+        ),
+        decoration: BoxDecoration(
+          color: const Color(0xB3262626),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset(
+              'assets/images/drama/fullscreen.webp',
+              width: 20,
+              height: 20,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(width: 4),
+            const Flexible(
+              child: Text(
+                '全屏观看',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  /// 新栏由 `_portraitControls` 分开定位全屏按钮与信息区；旧栏和通用
+  /// 播放器保留列布局。原著数据来自 `/related`，无数据不填占位卡片。
   Widget _information({required bool showPill, required bool showBook}) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -1993,44 +2109,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (showPill)
-            Center(
-              child: GestureDetector(
-                key: const ValueKey('player-fullscreen-pill'),
-                onTap: _toggleFullScreen,
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xB3262626),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Image.asset(
-                        'assets/images/drama/fullscreen.webp',
-                        width: 20,
-                        height: 20,
-                        fit: BoxFit.contain,
-                      ),
-                      const SizedBox(width: 4),
-                      const Text(
-                        '全屏观看',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          if (showPill) Center(child: _fullscreenPill()),
           if (showPill) const SizedBox(height: 12),
           Row(
             children: [
@@ -2039,11 +2118,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   _seriesTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 20,
+                    fontSize: widget.shortSeries ? 16 : 20,
                     fontWeight: FontWeight.bold,
-                    shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
+                    shadows: const [
+                      Shadow(color: Colors.black45, blurRadius: 8),
+                    ],
                   ),
                 ),
               ),
@@ -2085,112 +2166,162 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 原著书卡（官方截图第二十二轮）：深色圆角条，白色小方徽 + 深色书本
   /// 图标 + 「原著《书名》」14sp bold 白 + 8×16dp 右箭头（`info_arrow`），
   /// 点击进原著详情页（`/related` kind=book，audio 页同一条跳转链路）。
-  Widget _originalBookCard(RelatedWork book) => Padding(
-    padding: const EdgeInsets.only(top: 12),
-    child: GestureDetector(
-      key: const ValueKey('player-original-book'),
-      onTap: widget.onOpenOriginalBook,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: const Color(0x14FFFFFF),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 20,
-              height: 20,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.all(Radius.circular(5)),
-              ),
-              child: const Icon(
-                Icons.menu_book_rounded,
-                size: 13,
-                color: Color(0xFF1B1B1B),
-              ),
+  Widget _originalBookCard(RelatedWork book, {bool edgeToEdge = false}) =>
+      Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: GestureDetector(
+          key: const ValueKey('player-original-book'),
+          onTap: widget.onOpenOriginalBook,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            height: 44,
+            padding: EdgeInsets.symmetric(horizontal: edgeToEdge ? 16 : 12),
+            decoration: BoxDecoration(
+              color: edgeToEdge
+                  ? const Color(0xFF1C1C1C)
+                  : const Color(0x14FFFFFF),
+              borderRadius: edgeToEdge
+                  ? const BorderRadius.vertical(bottom: Radius.circular(12))
+                  : BorderRadius.circular(10),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '原著《${book.title}》',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+            child: Row(
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.all(Radius.circular(5)),
+                  ),
+                  child: const Icon(
+                    Icons.menu_book_rounded,
+                    size: 13,
+                    color: Color(0xFF1B1B1B),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '原著《${book.title}》',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 8,
+                  height: 16,
+                  child: Image.asset(
+                    'assets/images/drama/info_arrow.webp',
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 8,
-              height: 16,
-              child: Image.asset(
-                'assets/images/drama/info_arrow.webp',
-                fit: BoxFit.contain,
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-    ),
-  );
+      );
 
   /// 官方选集底栏（截图第二十二轮）：圆角深灰条「选集 · 已完结 · 全82集」
   /// + 上箭头，点击弹选集面板（`key_launch_catalog_panel` 弹的就是它）。
   /// 状态段用 `@string/ag_`（已完结）/`agb`（连载中），由宿主从
   /// `book_detail.creation_status` 取好传入；无数据只显示「选集 · 全N集」
   /// （官方文案 `@string/e6r`「全%s集」）。
-  Widget _catalogBar(EdgeInsets insets) => Positioned(
-    left: insets.left + 12,
-    right: insets.right + 12,
-    bottom: insets.bottom + 8,
-    child: GestureDetector(
+  Widget _catalogBar(EdgeInsets insets, {bool compact = false}) {
+    final catalog = GestureDetector(
       key: const ValueKey('player-catalog-bar'),
       onTap: _openPanel,
       behavior: HitTestBehavior.opaque,
-      child: Container(
+      child: SizedBox(
         height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: const Color(0xE6222222),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            const Text(
-              '选集',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+        child: Center(
+          child: Container(
+            height: compact ? 40 : 48,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xE6222222),
+              borderRadius: BorderRadius.circular(8),
             ),
-            Expanded(
-              child: Text(
-                widget.seriesStatus == null
-                    ? ' · 全${widget.episodes.length}集'
-                    : ' · ${widget.seriesStatus} · 全${widget.episodes.length}集',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+            child: Row(
+              children: [
+                const Text(
+                  '选集',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
+                Expanded(
+                  child: Text(
+                    widget.seriesStatus == null
+                        ? ' · 全${widget.episodes.length}集'
+                        : ' · ${widget.seriesStatus} · 全${widget.episodes.length}集',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.keyboard_arrow_up_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    return Positioned(
+      left: insets.left + (compact ? 16 : 12),
+      right: insets.right + (compact ? (_clearScreenAvailable ? 8 : 16) : 12),
+      bottom: insets.bottom + (compact ? 12 : 8),
+      child: compact
+          ? Row(
+              children: [
+                Expanded(child: catalog),
+                if (_clearScreenAvailable) ...[
+                  const SizedBox(width: 4),
+                  _clearScreenIcon(),
+                ],
+              ],
+            )
+          : catalog,
+    );
+  }
+
+  Widget _clearScreenIcon() => Semantics(
+    label: '清屏',
+    button: true,
+    child: GestureDetector(
+      key: const ValueKey('player-clear-screen'),
+      onTap: () => _setClearScreen(true),
+      behavior: HitTestBehavior.opaque,
+      child: const SizedBox(
+        width: 48,
+        height: 48,
+        child: Center(
+          child: SizedBox(
+            key: ValueKey('player-clear-icon'),
+            width: 28,
+            height: 28,
+            child: Center(
+              child: CustomPaint(
+                size: Size(20, 23),
+                painter: _ClearScreenIconPainter(),
               ),
             ),
-            const Icon(
-              Icons.keyboard_arrow_up_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
-          ],
+          ),
         ),
       ),
     ),
@@ -2562,6 +2693,121 @@ class _LegacyRatePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_LegacyRatePainter oldDelegate) => false;
+}
+
+enum _PortraitSlot { information, fullscreen, comments }
+
+class _PortraitControlsLayout extends MultiChildLayoutDelegate {
+  _PortraitControlsLayout({required this.insets, required this.videoBottom});
+
+  final EdgeInsets insets;
+  final double videoBottom;
+
+  @override
+  void performLayout(Size size) {
+    final width = math.max(0.0, size.width - insets.horizontal);
+    final information = layoutChild(
+      _PortraitSlot.information,
+      BoxConstraints.tightFor(width: width),
+    );
+    final minimumTop = insets.top + 56;
+    final informationTop = math.max(
+      minimumTop,
+      size.height - insets.bottom - 72 - information.height,
+    );
+    positionChild(
+      _PortraitSlot.information,
+      Offset(insets.left, informationTop),
+    );
+
+    if (!hasChild(_PortraitSlot.fullscreen)) return;
+    final pill = layoutChild(
+      _PortraitSlot.fullscreen,
+      BoxConstraints(maxWidth: math.max(0.0, width - 144)),
+    );
+    final comments = hasChild(_PortraitSlot.comments)
+        ? layoutChild(
+            _PortraitSlot.comments,
+            const BoxConstraints(maxWidth: 64),
+          )
+        : Size.zero;
+    final actionHeight = math.max(pill.height, comments.height - 4);
+    final maximumTop = math.max(minimumTop, informationTop - actionHeight - 16);
+    final top = math.min(math.max(videoBottom + 20, minimumTop), maximumTop);
+    positionChild(
+      _PortraitSlot.fullscreen,
+      Offset(insets.left + (width - pill.width) / 2, top),
+    );
+    if (hasChild(_PortraitSlot.comments)) {
+      positionChild(
+        _PortraitSlot.comments,
+        Offset(size.width - insets.right - 4 - comments.width, top - 4),
+      );
+    }
+  }
+
+  @override
+  bool shouldRelayout(_PortraitControlsLayout oldDelegate) =>
+      insets != oldDelegate.insets || videoBottom != oldDelegate.videoBottom;
+}
+
+class _ClearScreenIconPainter extends CustomPainter {
+  const _ClearScreenIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scale = size.width / 24;
+    canvas.save();
+    canvas.scale(1, size.height / size.width);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.7 * scale
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.white;
+    const badge = Offset(17.9, 17.6);
+    final page = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(3.2 * scale, 3.2 * scale, 16.3 * scale, 17.6 * scale),
+          Radius.circular(4 * scale),
+        ),
+      );
+    final center = Offset(badge.dx * scale, badge.dy * scale);
+    final cut = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: 6.1 * scale));
+    canvas.save();
+    canvas.clipPath(
+      Path.combine(
+        PathOperation.difference,
+        Path()..addRect(Offset.zero & size),
+        cut,
+      ),
+    );
+    canvas.drawPath(page, stroke);
+    canvas.restore();
+    canvas.drawLine(
+      Offset(7.8 * scale, 9 * scale),
+      Offset(16.4 * scale, 9 * scale),
+      stroke..strokeWidth = 1.5 * scale,
+    );
+    canvas.drawLine(
+      Offset(7.8 * scale, 13 * scale),
+      Offset(15.2 * scale, 13 * scale),
+      stroke,
+    );
+    final radius = 4.4 * scale;
+    canvas.drawCircle(center, radius, stroke);
+    final diagonal = radius / math.sqrt2;
+    canvas.drawLine(
+      Offset(center.dx - diagonal, center.dy + diagonal),
+      Offset(center.dx + diagonal, center.dy - diagonal),
+      stroke,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_ClearScreenIconPainter oldDelegate) => false;
 }
 
 /// 官方倍速文案（`SingleVideoHolder.java:1155-1171`）：1.0 显示「倍速」，
