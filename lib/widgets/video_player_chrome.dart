@@ -622,7 +622,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     final dy = details.localPosition.dy - origin.dy;
     if (!_dragSeekActive) {
       if (dx.abs() < kTouchSlop || dx.abs() < dy.abs()) return;
-      _dragSeekActive = true;
+      setState(() => _dragSeekActive = true);
       widget.onSeekHintConsumed?.call();
     }
     final fraction = _dragFraction(details.localPosition.dx);
@@ -641,7 +641,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void _endDragSeek(DragEndDetails details) {
     _dragSeekOrigin = null;
     if (!_dragSeekActive) return;
-    _dragSeekActive = false;
+    setState(() => _dragSeekActive = false);
     final fraction = _dragFraction(
       // DragEnd 没有位置；沿用最后一次 update 的预览值。
       _seekValue.value == null
@@ -1461,11 +1461,21 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 Positioned.fill(
                   child: SafeArea(
                     bottom: false,
-                    child: PlayletDanmakuLayer(
-                      key: const ValueKey('player-danmaku-layer'),
-                      entries: widget.danmaku,
-                      position: _position,
-                      rate: _rate,
+                    child: KeyedSubtree(
+                      key: ObjectKey(widget.player),
+                      child: PlayletDanmakuLayer(
+                        key: const ValueKey('player-danmaku-layer'),
+                        entries: widget.danmaku,
+                        position: _position,
+                        rate: _boosting ? 2 : _rate,
+                        playing:
+                            _ready &&
+                            widget.playing &&
+                            !(widget.player?.buffering ?? false) &&
+                            _appActive &&
+                            !_seeking &&
+                            !_dragSeekActive,
+                      ),
                     ),
                   ),
                 ),

@@ -1,4 +1,4 @@
-/// 短剧弹幕层：取数、时间轴渲染、开关与发送。
+/// 短剧弹幕层：取数、时间轴渲染与开关。
 ///
 /// 官方协议（DanmakuRequestHelper.java:303-329、hy1/l.java:86-113）：
 /// - 取数复用评论列表接口，:group_id = **vid**，group_type=30、
@@ -14,15 +14,14 @@
 /// - 开关落盘 video_danmaku_switch_sp 的 key_enable_danmaku_by_user
 ///   （i95/i.java:81-87），Toast「弹幕已开启」/「弹幕已关闭，长按视频可开启」
 ///
-/// 渲染时长、行高、透明度等渲染参数**未取证**，本层只保证官方已证的
-/// 时间轴语义与文案，视觉参数是本地的。
+/// 行数、行高、透明度等视觉参数是本地取值；飞行基准沿用已证的竖屏值。
 library;
 
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/playlet_comment.dart';
@@ -39,8 +38,10 @@ const _flightBaseMs = 10000.0;
 const danmakuMaxLength = 50;
 
 /// 飞行时长（供渲染层与用例共用）。
-double danmakuFlightMs(double rate) =>
-    _flightBaseMs / (rate <= 0 ? 1 : math.max(rate, 0.1));
+double danmakuFlightMs(double rate) => _flightBaseMs / _validRate(rate);
+
+double _validRate(double rate) =>
+    !rate.isFinite || rate <= 0 ? 1 : math.max(rate, 0.1);
 
 /// 官方弹幕发送长度提示（VideoDanmakuSettingConfig）：
 /// 「弹幕最多输入%d个字」/「弹幕最少输入%d个字」。
@@ -98,12 +99,12 @@ class DanmakuTimeline {
     _loaded = true;
   }
 
-  /// 某时刻应该显示的弹幕（毫秒坐标；倍速只改飞行时长，不重取数）。
-  List<PlayletComment> visibleAt(int nowMs, {double rate = 1}) {
-    final flight = danmakuFlightMs(rate);
+  /// 媒体时间已经包含倍速，窗口不能再除一次倍速，否则会变成倍速的平方。
+  List<PlayletComment> visibleAt(int nowMs) {
     return [
       for (final entry in entries)
-        if (nowMs - entry.offsetMs >= 0 && nowMs - entry.offsetMs <= flight)
+        if (nowMs - entry.offsetMs >= 0 &&
+            nowMs - entry.offsetMs < _flightBaseMs)
           entry,
     ];
   }
@@ -114,27 +115,32 @@ class DanmakuTimeline {
 
 /// 从上游响应取出弹幕时间轴。
 ///
-/// 官方回包的时间字段名**未取证**（F04 取证报告未取证第 11 条），这里按已证实的
-/// 发送侧字段名 offset（毫秒）读取；读不到时保持 0，会在片头出现。
+/// 模型已读取官方回包的 `expand.offset_time`（毫秒），这里保留原时间轴。
 List<PlayletComment> danmakuFromPage(PlayletCommentPage page) =>
     List<PlayletComment>.unmodifiable(page.comments);
 
 /// 弹幕渲染层：按当前进度把时间轴上的弹幕画到屏幕上。
+// Note: 200ms 进度事件与逐帧绘制分离，见
+// .agents/notes/implemented/bug-fix/2026-09-26-danmaku-frame-clock.md
 class PlayletDanmakuLayer extends StatefulWidget {
   const PlayletDanmakuLayer({
     super.key,
     required this.entries,
     required this.position,
     this.rate = 1,
+    this.playing = true,
     this.enabled = true,
   });
 
   /// 当前时间轴上的弹幕（毫秒坐标）。
   final List<PlayletComment> entries;
 
-  /// 播放进度；由外层用 ValueListenable 驱动，避免每帧重建整个 chrome。
+  /// 原生低频进度用于校准；两次回报之间由屏幕帧时钟推进。
   final ValueListenable<Duration> position;
   final double rate;
+
+  /// 实际播放状态；暂停、缓冲、拖动和后台时停止帧时钟。
+  final bool playing;
 
   /// 官方开关；关闭时整层不渲染。
   final bool enabled;
@@ -143,11 +149,38 @@ class PlayletDanmakuLayer extends StatefulWidget {
   State<PlayletDanmakuLayer> createState() => _PlayletDanmakuLayerState();
 }
 
-class _PlayletDanmakuLayerState extends State<PlayletDanmakuLayer> {
+class _PlayletDanmakuLayerState extends State<PlayletDanmakuLayer>
+    with SingleTickerProviderStateMixin {
+  // 原生每 200ms 回报一次。允许短暂抖动，但失联后不能让弹幕一直自己走。
+  static const _maxExtrapolationMs = 500.0;
+
+  late final Ticker _ticker;
+  late final ValueNotifier<double> _mediaMs;
+  late double _lastNativeMs;
+  Duration _lastTick = Duration.zero;
+  double _sinceSampleMs = 0;
+  bool _tickerMode = true;
+  List<PlayletComment> _entries = const [];
+  List<_DanmakuFlight> _flights = const [];
+  List<_DanmakuFlight> _visible = const [];
+  double _visibleAtMs = 0;
+  double _nextChangeMs = double.infinity;
+
   @override
   void initState() {
     super.initState();
+    _lastNativeMs = widget.position.value.inMicroseconds / 1000;
+    _mediaMs = ValueNotifier(_lastNativeMs);
+    _ticker = createTicker(_tick);
+    _scheduleEntries();
     widget.position.addListener(_onPosition);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tickerMode = TickerMode.valuesOf(context).enabled;
+    _syncTicker();
   }
 
   @override
@@ -156,17 +189,108 @@ class _PlayletDanmakuLayerState extends State<PlayletDanmakuLayer> {
     if (!identical(oldWidget.position, widget.position)) {
       oldWidget.position.removeListener(_onPosition);
       widget.position.addListener(_onPosition);
+      _lastNativeMs = widget.position.value.inMicroseconds / 1000;
+      _sinceSampleMs = 0;
+      _mediaMs.value = _lastNativeMs;
+      _updateVisible(force: true, rebuild: false);
     }
+    // 宿主原地更新 DanmakuTimeline.entries，因此需要与快照比较。
+    if (!listEquals(_entries, widget.entries)) {
+      _scheduleEntries();
+    }
+    _syncTicker();
   }
 
   @override
   void dispose() {
     widget.position.removeListener(_onPosition);
+    _ticker.dispose();
+    _mediaMs.dispose();
     super.dispose();
   }
 
   void _onPosition() {
-    if (mounted) setState(() {});
+    final positionMs = widget.position.value.inMicroseconds / 1000;
+    final backwards = positionMs < _lastNativeMs;
+    _lastNativeMs = positionMs;
+    _sinceSampleMs = 0;
+    // 正常回报的几毫秒误差不让文字倒退；回拖、暂停中的 seek 必须立即同步。
+    _mediaMs.value =
+        backwards || !widget.playing || !_tickerMode || !widget.enabled
+        ? positionMs
+        : math.max(positionMs, _mediaMs.value);
+    _updateVisible();
+    _syncTicker();
+  }
+
+  void _syncTicker() {
+    final shouldTick =
+        widget.enabled &&
+        widget.playing &&
+        _tickerMode &&
+        _sinceSampleMs < _maxExtrapolationMs &&
+        _flights.isNotEmpty &&
+        _mediaMs.value < _flights.last.endMs;
+    if (shouldTick && !_ticker.isActive) {
+      _lastTick = Duration.zero;
+      _ticker.start();
+    } else if (!shouldTick && _ticker.isActive) {
+      _ticker.stop();
+    }
+  }
+
+  void _tick(Duration elapsed) {
+    final deltaMs = (elapsed - _lastTick).inMicroseconds / 1000;
+    _lastTick = elapsed;
+    final advanceMs = math.min(deltaMs, _maxExtrapolationMs - _sinceSampleMs);
+    _sinceSampleMs += advanceMs;
+    _mediaMs.value += advanceMs * _validRate(widget.rate);
+    _updateVisible();
+    _syncTicker();
+  }
+
+  void _scheduleEntries() {
+    _entries = List.of(widget.entries);
+    final sorted = List.of(_entries)
+      ..sort((a, b) {
+        final offset = a.offsetMs.compareTo(b.offsetMs);
+        return offset == 0 ? a.id.compareTo(b.id) : offset;
+      });
+    final busyUntil = List<double>.filled(_trackCount, double.negativeInfinity);
+    final flights = <_DanmakuFlight>[];
+    for (final entry in sorted) {
+      final track = busyUntil.indexWhere((until) => until <= entry.offsetMs);
+      if (track < 0) continue;
+      final flight = _DanmakuFlight(entry, track);
+      busyUntil[track] = flight.endMs;
+      flights.add(flight);
+    }
+    _flights = flights;
+    _updateVisible(force: true, rebuild: false);
+  }
+
+  void _updateVisible({bool force = false, bool rebuild = true}) {
+    final now = _mediaMs.value;
+    if (!force && now >= _visibleAtMs && now < _nextChangeMs) return;
+    _visibleAtMs = now;
+    _nextChangeMs = double.infinity;
+    final visible = <_DanmakuFlight>[];
+    for (final flight in _flights) {
+      if (flight.entry.offsetMs > now) {
+        _nextChangeMs = math.min(
+          _nextChangeMs,
+          flight.entry.offsetMs.toDouble(),
+        );
+        break;
+      }
+      if (now >= flight.endMs) continue;
+      visible.add(flight);
+      _nextChangeMs = math.min(_nextChangeMs, flight.endMs);
+    }
+    if (listEquals(_visible, visible)) return;
+    _visible = visible;
+    // 只有弹幕入场/离场才重建；中间每帧只更新 Flow 的绘制变换。
+    if (rebuild) setState(() {});
   }
 
   @override
@@ -174,39 +298,12 @@ class _PlayletDanmakuLayerState extends State<PlayletDanmakuLayer> {
     if (!widget.enabled || widget.entries.isEmpty) {
       return const SizedBox.shrink();
     }
-    final nowMs = widget.position.value.inMilliseconds;
-    final flight = danmakuFlightMs(widget.rate);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        if (width <= 0) return const SizedBox.shrink();
-        final shown = <Widget>[];
-        final busyUntil = List<double>.filled(_trackCount, -1);
-        for (final entry in widget.entries) {
-          final elapsed = nowMs - entry.offsetMs;
-          if (elapsed < 0 || elapsed > flight) continue;
-          var track = -1;
-          for (var i = 0; i < _trackCount; i++) {
-            if (busyUntil[i] <= entry.offsetMs) {
-              track = i;
-              busyUntil[i] = entry.offsetMs + flight;
-              break;
-            }
-          }
-          if (track < 0) continue;
-          final progress = elapsed / flight;
-          shown.add(
-            Positioned(
-              top: 8.0 + track * 28,
-              left: width - progress * (width + 120),
-              child: _bubble(entry),
-            ),
-          );
-        }
-        return IgnorePointer(
-          child: ClipRect(child: Stack(children: shown)),
-        );
-      },
+    // Flow 自带重绘边界，并缓存每条文字的子图层；不会逐帧重新排版文字。
+    return IgnorePointer(
+      child: Flow(
+        delegate: _DanmakuFlowDelegate(_mediaMs, _visible),
+        children: [for (final flight in _visible) _bubble(flight.entry)],
+      ),
     );
   }
 
@@ -227,4 +324,48 @@ class _PlayletDanmakuLayerState extends State<PlayletDanmakuLayer> {
       ),
     ),
   );
+}
+
+class _DanmakuFlight {
+  const _DanmakuFlight(this.entry, this.track);
+
+  final PlayletComment entry;
+  final int track;
+
+  double get endMs => entry.offsetMs + _flightBaseMs;
+}
+
+class _DanmakuFlowDelegate extends FlowDelegate {
+  _DanmakuFlowDelegate(this.mediaMs, this.flights) : super(repaint: mediaMs);
+
+  final ValueListenable<double> mediaMs;
+  final List<_DanmakuFlight> flights;
+
+  @override
+  BoxConstraints getConstraintsForChild(int i, BoxConstraints constraints) =>
+      const BoxConstraints();
+
+  @override
+  void paintChildren(FlowPaintingContext context) {
+    for (var i = 0; i < flights.length; i++) {
+      final flight = flights[i];
+      final progress = (mediaMs.value - flight.entry.offsetMs) / _flightBaseMs;
+      if (progress < 0 || progress >= 1) continue;
+      // 按真实文字宽度出屏，长弹幕不会在尾部仍可见时突然消失。
+      final width = context.getChildSize(i)!.width;
+      context.paintChild(
+        i,
+        transform: Matrix4.translationValues(
+          context.size.width - progress * (context.size.width + width),
+          8.0 + flight.track * 28,
+          0,
+        ),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DanmakuFlowDelegate oldDelegate) =>
+      oldDelegate.mediaMs != mediaMs ||
+      !listEquals(oldDelegate.flights, flights);
 }
