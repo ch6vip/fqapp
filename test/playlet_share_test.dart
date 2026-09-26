@@ -173,4 +173,68 @@ void main() {
       expect(find.byType(PlayletSharePanel), findsNothing);
     });
   });
+
+  group('系统分享的落地结果', () {
+    test('没有注入桥时报告不可用（不假装已分享）', () async {
+      SharePlusLite.handler = null;
+      final outcome = await PlayletShare.systemShare(
+        title: '标题',
+        info: const PlayletShareInfo(shareUrl: 'https://a.example/x'),
+        seriesName: '剧名',
+      );
+      expect(outcome, ShareLaunchOutcome.unavailable);
+    });
+
+    test('桥回 false 时报告不可用', () async {
+      SharePlusLite.handler = ({required title, required text}) async => false;
+      final outcome = await PlayletShare.systemShare(
+        title: '标题',
+        info: const PlayletShareInfo(shareUrl: 'https://a.example/x'),
+        seriesName: '剧名',
+      );
+      expect(outcome, ShareLaunchOutcome.unavailable);
+    });
+
+    test('桥回 true 时才报告已调起', () async {
+      SharePlusLite.handler = ({required title, required text}) async => true;
+      final outcome = await PlayletShare.systemShare(
+        title: '标题',
+        info: const PlayletShareInfo(shareUrl: 'https://a.example/x'),
+        seriesName: '剧名',
+      );
+      expect(outcome, ShareLaunchOutcome.launched);
+    });
+
+    test('桥抛异常也报告不可用', () async {
+      SharePlusLite.handler = ({required title, required text}) async =>
+          throw Exception('没有可分享的应用');
+      final outcome = await PlayletShare.systemShare(
+        title: '标题',
+        info: const PlayletShareInfo(shareUrl: 'https://a.example/x'),
+        seriesName: '剧名',
+      );
+      expect(outcome, ShareLaunchOutcome.unavailable);
+    });
+
+    test('分享正文优先用 text，没有则用标题+链接', () async {
+      String? seen;
+      SharePlusLite.handler = ({required title, required text}) async {
+        seen = text;
+        return true;
+      };
+      await PlayletShare.systemShare(
+        title: '标题',
+        info: const PlayletShareInfo(text: '正文', shareUrl: 'https://a.example/x'),
+        seriesName: '剧名',
+      );
+      expect(seen, '正文');
+      await PlayletShare.systemShare(
+        title: '标题',
+        info: const PlayletShareInfo(shareUrl: 'https://a.example/x'),
+        seriesName: '剧名',
+      );
+      expect(seen, contains('https://a.example/x'));
+      expect(seen, contains('跟我一起免费看'));
+    });
+  });
 }

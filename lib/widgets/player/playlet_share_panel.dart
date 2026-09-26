@@ -91,12 +91,32 @@ class PlayletSharePanel extends StatelessWidget {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     navigator.pop();
-    await PlayletShare.systemShare(
+    final outcome = await PlayletShare.systemShare(
       title: title,
       info: info,
       seriesName: seriesName,
     );
-    messenger.showSnackBar(const SnackBar(content: Text('已调起系统分享')));
+    if (outcome == ShareLaunchOutcome.launched) {
+      messenger.showSnackBar(const SnackBar(content: Text('已调起系统分享')));
+      return;
+    }
+    // 设备上没有能接住分享的应用：**不能**说「已调起」。官方对不可用的
+    // 渠道是不把它放进面板（`ShareSdkManager.getDefaultPanelList()`），
+    // 本地等价做法是退回同样能达成目的的「复制链接」。
+    final copied = await PlayletShare.copyLink(
+      title: title,
+      info: info,
+      resolveShortUrl: resolveShortUrl,
+    );
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          copied == ShareCopyOutcome.copied
+              ? shareCopiedToast
+              : shareUnavailableToast,
+        ),
+      ),
+    );
   }
 
   @override

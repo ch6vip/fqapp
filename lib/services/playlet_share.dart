@@ -134,7 +134,11 @@ class PlayletShare {
 
   /// 官方系统分享：`Intent.ACTION_SEND` + `text/plain`，标题用
   /// [shareTitle]，正文优先 `text`，没有就用分享链接。
-  static Future<void> systemShare({
+  ///
+  /// **返回是否真的调起了系统选择器**：Android 侧 `startActivity` 抛异常
+  /// 时插件回 false（见 `SharePlugin.kt`），这里必须把它传出来——
+  /// 否则「没有可分享的应用」会被显示成「已调起系统分享」。
+  static Future<ShareLaunchOutcome> systemShare({
     required String title,
     required PlayletShareInfo info,
     String seriesName = '',
@@ -142,28 +146,42 @@ class PlayletShare {
     final body = info.text.isNotEmpty
         ? info.text
         : shareClipboardPayload(shareTitle(seriesName), info.shareUrl);
-    await SharePlusLite.share(title: title, text: body);
+    return SharePlusLite.share(title: title, text: body);
   }
+}
+
+/// 系统分享的落地结果。
+enum ShareLaunchOutcome {
+  /// 选择器已弹出。
+  launched,
+
+  /// 设备上没有能接住的分享目标（或宿主没注入桥）。
+  unavailable,
 }
 
 /// 极简的系统分享桥。避免为一个面板引入第三方插件：官方本来就是
 /// `Intent.ACTION_SEND`，这里交给宿主注入的实现（Android 侧用
-/// `Intent.createChooser`）。未注入时静默降级为复制链接。
+/// `Intent.createChooser`）。
 class SharePlusLite {
   const SharePlusLite._();
 
-  static Future<void> Function({required String title, required String text})?
+  /// 宿主注入：返回 **false 表示没能调起**（不是「已分享」）。
+  static Future<bool> Function({required String title, required String text})?
   handler;
 
-  static Future<void> share({
+  static Future<ShareLaunchOutcome> share({
     required String title,
     required String text,
   }) async {
     final h = handler;
-    if (h == null) {
-      await Clipboard.setData(ClipboardData(text: text));
-      return;
+    if (h == null) return ShareLaunchOutcome.unavailable;
+    try {
+      final launched = await h(title: title, text: text);
+      return launched
+          ? ShareLaunchOutcome.launched
+          : ShareLaunchOutcome.unavailable;
+    } catch (_) {
+      return ShareLaunchOutcome.unavailable;
     }
-    await h(title: title, text: text);
   }
 }

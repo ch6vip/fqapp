@@ -31,10 +31,13 @@ void main() {
   // 短剧分享的「系统分享」走 Android 的 Intent.ACTION_SEND
   //（官方同一条路径）。桥不可用时 PlayletShare 自动降级为复制链接，
   // 不会把失败说成成功。
+  // 插件回 false 表示没能调起选择器（没有可分享的应用），必须原样返回：
+  // 「调不起来」与「已分享」是两件事。
   SharePlusLite.handler = ({required title, required text}) async {
-    await const MethodChannel(
+    final launched = await const MethodChannel(
       'fqapp/share',
     ).invokeMethod<bool>('shareText', {'title': title, 'text': text});
+    return launched ?? false;
   };
   runApp(const ProviderScope(child: FqApp()));
 }

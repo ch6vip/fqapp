@@ -440,9 +440,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 发弹幕（官方 `comment/add`，`commit_source=1500`）：成功后按当前进度
   /// 就地插入，等价于官方的整池重灌。
   Future<void> _sendDanmaku(String text) async {
-    if (widget.eps.isEmpty) return;
+    // 拿不到 vid 时必须**报错**，不能静默返回：静默返回等于「弹幕发出去了」
+    // 的假象——调用方看不到异常就不会给用户任何反馈。
+    if (widget.eps.isEmpty || _index < 0 || _index >= widget.eps.length) {
+      throw const ApiException('当前剧集不可用，无法发送弹幕');
+    }
     final vid = widget.eps[_index].itemId;
-    if (vid.isEmpty) return;
+    if (vid.isEmpty) {
+      throw const ApiException('当前剧集缺少视频 ID，无法发送弹幕');
+    }
     final offset = _player?.position.inMilliseconds ?? 0;
     await ApiClient.instance.addPlayletDanmaku(
       vid,

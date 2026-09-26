@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
+import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/fakes.dart';
@@ -124,5 +125,24 @@ void main() {
     expect(find.byKey(const ValueKey('player-danmaku-layer')), findsOneWidget);
     // 假播放器起播在 20s，弹幕时间点要落在飞行窗口内才会出现。
     expect(find.byKey(const ValueKey('danmaku-d1')), findsOneWidget);
+  });
+
+  testWidgets('发弹幕失败时给用户反馈，不假装成功', (tester) async {
+    await tester.pumpWidget(
+      app(
+        onToggle: () {},
+        onSend: (text) async => throw const ApiException('当前剧集缺少视频 ID，无法发送弹幕'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openMore(tester);
+    await tester.tap(find.byKey(const ValueKey('player-more-danmaku-send')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('danmaku-input')), '测试');
+    await tester.tap(find.byKey(const ValueKey('danmaku-send')));
+    await tester.pumpAndSettle();
+    // 失败必须落到界面，而不是静静吞掉。
+    expect(find.textContaining('无法发送弹幕'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }
