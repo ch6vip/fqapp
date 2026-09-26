@@ -96,7 +96,13 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     final selected = <int>[];
     await tester.pumpWidget(
-      _app(player, shortSeries: true, selected: selected),
+      _app(
+        player,
+        shortSeries: true,
+        selected: selected,
+        onFollow: () {},
+        onLike: () {},
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
@@ -262,41 +268,42 @@ void main() {
     await player.dispose();
   });
 
-  testWidgets('shortSeries portrait double tap likes without toggling playback', (
-    tester,
-  ) async {
-    // 官方竖屏播放页有完整的双击点赞链路（\`jq3/x.q.onDoubleTap\` →
-    // \`holder.z7(e)\` → \`qf3/d.onDoubleTap\`）：只播 \`like_video_center.json\`
-    // 并上报一次动作，**不取反点赞状态**，也不等于两次单击。
-    final player = FakeNativePlayer()..isPlaying = true;
-    var likes = 0;
-    await tester.pumpWidget(
-      _app(player, shortSeries: true, onLikeTap: () => likes++),
-    );
-    await tester.pumpAndSettle();
-    final surface = tester.getCenter(
-      find.byKey(const ValueKey('video-surface')),
-    );
-    await tester.tapAt(surface);
-    await tester.pump(const Duration(milliseconds: 80));
-    await tester.tapAt(surface);
-    await tester.pump(const Duration(milliseconds: 80));
-    expect(likes, 1);
-    expect(
-      find.byKey(const ValueKey('player-like-animation')),
-      findsOneWidget,
-    );
-    expect(player.calls.where((call) => call == 'pause'), isEmpty);
-    expect(player.calls.where((call) => call == 'play'), isEmpty);
-    // 连续第三次双击不取消已点赞：只再加一次动画与动作。
-    await tester.tapAt(surface);
-    await tester.pump(const Duration(milliseconds: 80));
-    await tester.tapAt(surface);
-    await tester.pump(const Duration(milliseconds: 80));
-    expect(likes, 2);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await player.dispose();
-  });
+  testWidgets(
+    'shortSeries portrait double tap likes without toggling playback',
+    (tester) async {
+      // 官方竖屏播放页有完整的双击点赞链路（\`jq3/x.q.onDoubleTap\` →
+      // \`holder.z7(e)\` → \`qf3/d.onDoubleTap\`）：只播 \`like_video_center.json\`
+      // 并上报一次动作，**不取反点赞状态**，也不等于两次单击。
+      final player = FakeNativePlayer()..isPlaying = true;
+      var likes = 0;
+      await tester.pumpWidget(
+        _app(player, shortSeries: true, onLikeTap: () => likes++),
+      );
+      await tester.pumpAndSettle();
+      final surface = tester.getCenter(
+        find.byKey(const ValueKey('video-surface')),
+      );
+      await tester.tapAt(surface);
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.tapAt(surface);
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(likes, 1);
+      expect(
+        find.byKey(const ValueKey('player-like-animation')),
+        findsOneWidget,
+      );
+      expect(player.calls.where((call) => call == 'pause'), isEmpty);
+      expect(player.calls.where((call) => call == 'play'), isEmpty);
+      // 连续第三次双击不取消已点赞：只再加一次动画与动作。
+      await tester.tapAt(surface);
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.tapAt(surface);
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(likes, 2);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    },
+  );
 
   testWidgets('generic player keeps double tap as playback toggle', (
     tester,
@@ -318,70 +325,85 @@ void main() {
     await player.dispose();
   });
 
-  testWidgets('landscape lock follows the official gate, position and release', (
-    tester,
-  ) async {
-    // 官方 \`LandLockOptV705.enable_lock\`（默认 false）：配置关闭时锁按钮
-    // 根本不存在；开启后按钮在横屏右缘，点击切换锁定并吞掉画面手势，
-    // 每次触摸重新唤出按钮，退出全屏即解锁（\`EXIST_LAND_ACTIVITY\`）。
-    final player = FakeNativePlayer()..isPlaying = true;
-    await tester.pumpWidget(_app(player, shortSeries: true));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
-    expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await player.dispose();
+  testWidgets(
+    'landscape lock follows the official gate, position and release',
+    (tester) async {
+      // 官方 \`LandLockOptV705.enable_lock\`（默认 false）：配置关闭时锁按钮
+      // 根本不存在；开启后按钮在横屏右缘，点击切换锁定并吞掉画面手势，
+      // 每次触摸重新唤出按钮，退出全屏即解锁（\`EXIST_LAND_ACTIVITY\`）。
+      final player = FakeNativePlayer()..isPlaying = true;
+      await tester.pumpWidget(_app(player, shortSeries: true));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
 
-    final locked = FakeNativePlayer()..isPlaying = true;
-    var likes = 0;
-    await tester.pumpWidget(
-      _app(
-        locked,
-        shortSeries: true,
-        landscapeLockEnabled: true,
-        onLikeTap: () => likes++,
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
-    expect(find.byKey(const ValueKey('landscape-lock')), findsOneWidget);
-    // 锁定时控件条与锁按钮一起保留；这里先锁定。
-    await tester.tap(find.byKey(const ValueKey('landscape-lock')));
-    await tester.pump();
-    // 锁定后单击画面不暂停、不点赞，只把锁按钮重新唤出。
-    await tester.tap(find.byKey(const ValueKey('video-surface')));
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(locked.calls.where((call) => call == 'pause'), isEmpty);
-    expect(likes, 0);
-    expect(find.byKey(const ValueKey('landscape-lock')), findsOneWidget);
-    // 再点锁按钮解锁。
-    await tester.tap(find.byKey(const ValueKey('landscape-lock')));
-    await tester.pump();
-    expect(find.byKey(const ValueKey('landscape-play')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('video-surface')));
-    // 横屏没有点赞链路，但 onDoubleTap 仍注册为播放切换，单击要等双击窗口。
-    await tester.pump(const Duration(milliseconds: 400));
-    // 官方横屏单击只切换控件条（`d.H6()`），不动播放状态；解锁后这条
-    // 语义必须恢复，且不应把单击当成播放/暂停。
-    expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
-    expect(locked.calls.where((call) => call == 'pause'), isEmpty);
-    expect(locked.calls.where((call) => call == 'play'), isEmpty);
-    // 控件条已收起，锁按钮随之消失；再唤出控件后重新锁定，验证退出横屏复位。
-    expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('video-surface')));
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.byKey(const ValueKey('landscape-lock')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('landscape-lock')));
-    await tester.pump();
-    await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await locked.dispose();
-  });
+      final locked = FakeNativePlayer()..isPlaying = true;
+      var likes = 0;
+      await tester.pumpWidget(
+        _app(
+          locked,
+          shortSeries: true,
+          landscapeLockEnabled: true,
+          onLikeTap: () => likes++,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('landscape-lock')), findsOneWidget);
+      // 锁定时控件条与锁按钮一起保留；这里先锁定。
+      await tester.tap(find.byKey(const ValueKey('landscape-lock')));
+      await tester.pump();
+      // 锁定后单击画面不暂停、不点赞；可见锁会被收起。
+      await tester.tap(find.byKey(const ValueKey('video-surface')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(locked.calls.where((call) => call == 'pause'), isEmpty);
+      expect(likes, 0);
+      expect(find.byKey(const ValueKey('landscape-lock')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('landscape-lock')).hitTestable(),
+        findsNothing,
+      );
+      // 透明锁的位置必须交给画面：第一次只唤出锁，不能直接解锁。
+      await tester.tapAt(
+        tester.getRect(find.byKey(const ValueKey('landscape-lock'))).center,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('landscape-lock')).hitTestable(),
+        findsOneWidget,
+      );
+      // 再点锁按钮解锁。
+      await tester.tap(find.byKey(const ValueKey('landscape-lock')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('landscape-play')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('video-surface')));
+      // 横屏没有点赞链路，但 onDoubleTap 仍注册为播放切换，单击要等双击窗口。
+      await tester.pump(const Duration(milliseconds: 400));
+      // 官方横屏单击只切换控件条（`d.H6()`），不动播放状态；解锁后这条
+      // 语义必须恢复，且不应把单击当成播放/暂停。
+      expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
+      expect(locked.calls.where((call) => call == 'pause'), isEmpty);
+      expect(locked.calls.where((call) => call == 'play'), isEmpty);
+      // 控件条已收起，锁按钮随之消失；再唤出控件后重新锁定，验证退出横屏复位。
+      expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('video-surface')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('landscape-lock')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('landscape-lock')));
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await locked.dispose();
+    },
+  );
 
   testWidgets('a horizontal drag seeks the episode and consumes the hint', (
     tester,
@@ -751,6 +773,8 @@ Widget _app(
   bool reverseClearScreen = false,
   bool landscapeLockEnabled = false,
   VoidCallback? onLikeTap,
+  VoidCallback? onFollow,
+  VoidCallback? onLike,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(textScaler: textScaler),
@@ -784,6 +808,8 @@ Widget _app(
       reverseClearScreen: reverseClearScreen,
       landscapeLockEnabled: landscapeLockEnabled,
       onLikeTap: onLikeTap,
+      onFollow: onFollow,
+      onLike: onLike,
       child: const ColoredBox(color: Colors.black),
     ),
   ),

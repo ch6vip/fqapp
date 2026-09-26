@@ -69,6 +69,7 @@ class CommentReplyPage {
     this.replies = const [],
     this.totalCount = 0,
     this.hasMore = false,
+    this.cursor = '',
   });
 
   static const empty = CommentReplyPage();
@@ -76,6 +77,7 @@ class CommentReplyPage {
   final List<CommentReply> replies;
   final int totalCount;
   final bool hasMore;
+  final String cursor;
 
   bool get isEmpty => replies.isEmpty;
   bool get isNotEmpty => replies.isNotEmpty;
@@ -95,12 +97,14 @@ class CommentReplyPage {
         if (reply != null) replies.add(reply);
       }
     }
-    final info = data['comment_list_info'];
+    // 短剧使用 common_list_info，小说旧接口使用 comment_list_info。
+    final info = data['common_list_info'] ?? data['comment_list_info'];
     final infoMap = info is Map ? info : const {};
     return CommentReplyPage(
       replies: List.unmodifiable(replies),
       totalCount: _int(infoMap['total']),
       hasMore: infoMap['has_more'] == true,
+      cursor: _string(infoMap['cursor']),
     );
   }
 }

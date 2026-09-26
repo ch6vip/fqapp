@@ -382,6 +382,13 @@ fn match_series(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             // 发评论与读评论同一条上游，但本地分成两个路由：POST 的
             // `comments/add` 走写入（`comment/add/v1/`），`comments` 走列表。
             "comments" => {
+                if parts.len() == 4 && parts[3] == "replies" {
+                    p.set("comment_id", parts[2]);
+                    return Some(RouteMatch {
+                        api: "playlet_comment_replies",
+                        params: p,
+                    });
+                }
                 if parts.len() >= 3 && parts[2] == "add" {
                     return Some(RouteMatch {
                         api: "playlet_comment_add",

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +12,7 @@ import 'package:fqapp/main.dart';
 import 'package:fqapp/models/channel_tab.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/drama_page.dart';
+import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/library_store.dart';
@@ -18,7 +20,9 @@ import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 
 import 'package:fqapp/services/digg_store.dart';
+import 'package:fqapp/widgets/video_player_chrome.dart';
 import 'support/controlled_player.dart';
+
 MediaItem _item(
   String label, {
   String kind = 'video',
@@ -191,6 +195,109 @@ void main() {
     }
   });
 
+  testWidgets('完整播放页重复双击只确认本机点赞，右栏仍可取消', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    const nativeChannel = MethodChannel('fqapp/native_player');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      nativeChannel,
+      (call) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        nativeChannel,
+        null,
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final seams = _Seams(failContent: false);
+    await tester.pumpWidget(
+      _scope(
+        followerCount: 1200,
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集')],
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('drama_episode_pill')));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
+    expect(find.byType(PlayerPage), findsOneWidget);
+    final item = _item('8-0');
+    VideoPlayerChrome chrome() =>
+        tester.widget<VideoPlayerChrome>(find.byType(VideoPlayerChrome));
+    for (var attempt = 0; attempt < 30 && !chrome().enabled; attempt++) {
+      await _flush(tester);
+    }
+    expect(chrome().enabled, isTrue, reason: '等真实路由完成播放器初始化再操作');
+    expect(chrome().onLikeTap, isNotNull);
+    expect(chrome().collected, isFalse, reason: '服务端有 1200 名追剧者不代表本机已经收藏');
+    expect(chrome().liked, isFalse);
+    final player = seams.players.last;
+    player.calls.clear();
+    final surface = tester.getCenter(
+      find.byKey(const ValueKey('video-surface')),
+    );
+    Future<void> afterWrite(
+      Listenable revision,
+      Future<void> Function() action,
+    ) async {
+      // Hive 的真实 I/O 和等待它的 Future 必须同处 runAsync，不能把 fake zone
+      // 创建的 Completer 带入真实异步区（那会等到返回 pump 时才完成）。
+      await tester.runAsync(() async {
+        final saved = Completer<void>();
+        void changed() {
+          if (!saved.isCompleted) saved.complete();
+        }
+
+        revision.addListener(changed);
+        try {
+          await action();
+          await saved.future.timeout(const Duration(seconds: 5));
+        } finally {
+          revision.removeListener(changed);
+        }
+      });
+      await tester.pump();
+    }
+
+    Future<void> doubleTap() async {
+      await tester.tapAt(surface);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      await tester.tapAt(surface);
+    }
+
+    await afterWrite(DiggStore.instance.listenable, doubleTap);
+    expect(find.byKey(const ValueKey('player-like-animation')), findsOneWidget);
+    expect(DiggStore.instance.containsItem(item), isTrue);
+    expect(chrome().liked, isTrue);
+    await tester.runAsync(doubleTap);
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(DiggStore.instance.containsItem(item), isTrue);
+    expect(chrome().liked, isTrue);
+    expect(player.calls.where((call) => call == 'pause'), isEmpty);
+    await afterWrite(
+      DiggStore.instance.listenable,
+      () => tester.tap(find.byKey(const ValueKey('player-like-button'))),
+    );
+    expect(DiggStore.instance.containsItem(item), isFalse);
+    expect(chrome().liked, isFalse);
+    await afterWrite(
+      ShelfStore.instance.listenable,
+      () => tester.tap(find.byKey(const ValueKey('player-follow-button'))),
+    );
+    expect(ShelfStore.instance.containsItem(item), isTrue);
+    expect(chrome().collected, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+  });
+
   testWidgets('点赞 落进本地 digg box 并立刻把按钮变成 已赞', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -224,10 +331,13 @@ void main() {
 
     expect(container.read(homeProvider).tabIndex, 0);
     expect(container.read(dramaProvider).tabIndex, dramaTabIndex);
-    expect(
-      dramaChannels.map((channel) => channel.label),
-      ['推荐', '看剧', '漫剧', '最近', '收藏'],
-    );
+    expect(dramaChannels.map((channel) => channel.label), [
+      '推荐',
+      '看剧',
+      '漫剧',
+      '最近',
+      '收藏',
+    ]);
     // 推荐 = BookstoreTabType.video_feed(16), 看剧 = video_episode(8),
     // 漫剧 = dynamic_comic(24); the last two are device-local lists.
     // （预约=video_subscribe 28 无数据源，刻意不做。）
@@ -246,23 +356,26 @@ void main() {
     expect(dramaChannels[4].source, DramaChannelSource.shelf);
   });
 
-  test('the drama feed keeps its own cursor when the home page switches', () async {
-    final container = _container();
-    addTearDown(container.dispose);
+  test(
+    'the drama feed keeps its own cursor when the home page switches',
+    () async {
+      final container = _container();
+      addTearDown(container.dispose);
 
-    await container.read(dramaProvider.notifier).load();
-    await container.read(homeProvider.notifier).load();
-    final dramaItems = container.read(dramaProvider).items;
-    expect(dramaItems, isNotEmpty);
-    expect(dramaItems.every((item) => item.kind == 'video'), isTrue);
+      await container.read(dramaProvider.notifier).load();
+      await container.read(homeProvider.notifier).load();
+      final dramaItems = container.read(dramaProvider).items;
+      expect(dramaItems, isNotEmpty);
+      expect(dramaItems.every((item) => item.kind == 'video'), isTrue);
 
-    container.read(homeProvider.notifier).selectTab(5); // 听书 supersedes it.
-    await Future<void>.delayed(Duration.zero);
+      container.read(homeProvider.notifier).selectTab(5); // 听书 supersedes it.
+      await Future<void>.delayed(Duration.zero);
 
-    expect(container.read(dramaProvider).tabIndex, dramaTabIndex);
-    expect(container.read(dramaProvider).items, same(dramaItems));
-    expect(container.read(homeProvider).items.first.id, startsWith('5-'));
-  });
+      expect(container.read(dramaProvider).tabIndex, dramaTabIndex);
+      expect(container.read(dramaProvider).items, same(dramaItems));
+      expect(container.read(homeProvider).items.first.id, startsWith('5-'));
+    },
+  );
 
   testWidgets('the feed shows the official chrome and one full-screen card', (
     tester,
@@ -274,13 +387,9 @@ void main() {
     await tester.runAsync(SwipeGuideStore.instance.reset);
 
     await tester.pumpWidget(
-      _scope(
-        perTab: 4,
-        child: MaterialApp(home: _Seams().page()),
-      ),
+      _scope(perTab: 4, child: MaterialApp(home: _Seams().page())),
     );
     await _flush(tester);
-
 
     // Top bar: the official search hint and the channel strip (官方六个频道，
     // 顺序同截图；顶栏按 `ap4.xml` 根背景 @null 透明压在视频流上)。
@@ -322,7 +431,6 @@ void main() {
     await tester.pump(const Duration(seconds: 3, milliseconds: 700));
     expect(find.text('上滑查看更多视频'), findsNothing);
     expect(tester.takeException(), isNull);
-
   });
 
   testWidgets('上滑引导换频道立即收起，且每台设备只弹一次', (tester) async {
@@ -373,35 +481,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('swiping up reveals the next drama and switching channels swaps the feed', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+  testWidgets(
+    'swiping up reveals the next drama and switching channels swaps the feed',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(360, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 
-    await tester.pumpWidget(
-      _scope(perTab: 4, child: MaterialApp(home: _Seams().page())),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('8-0 作品'), findsOneWidget);
+      await tester.pumpWidget(
+        _scope(perTab: 4, child: MaterialApp(home: _Seams().page())),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('8-0 作品'), findsOneWidget);
 
-    await _swipeUp(tester);
-    expect(find.text('8-0 作品'), findsNothing);
-    expect(find.text('8-1 作品'), findsOneWidget);
+      await _swipeUp(tester);
+      expect(find.text('8-0 作品'), findsNothing);
+      expect(find.text('8-1 作品'), findsOneWidget);
 
-    // 看剧 is the official name for tab_type=8, the feed this page shows by
-    // default; 漫剧 keeps its own cursor behind it.
-    await tester.tap(find.text('漫剧'));
-    await tester.pumpAndSettle();
-    expect(find.text('24-0 作品'), findsOneWidget);
-    expect(find.text('8-1 作品'), findsNothing);
+      // 看剧 is the official name for tab_type=8, the feed this page shows by
+      // default; 漫剧 keeps its own cursor behind it.
+      await tester.tap(find.text('漫剧'));
+      await tester.pumpAndSettle();
+      expect(find.text('24-0 作品'), findsOneWidget);
+      expect(find.text('8-1 作品'), findsNothing);
 
-    await tester.tap(find.text('看剧'));
-    await tester.pumpAndSettle();
-    expect(find.text('8-0 作品'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      await tester.tap(find.text('看剧'));
+      await tester.pumpAndSettle();
+      expect(find.text('8-0 作品'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('a failed feed shows the official error copy and retries', (
     tester,
@@ -452,9 +561,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('全屏观看 loads the series directory before playing', (
-    tester,
-  ) async {
+  testWidgets('全屏观看 loads the series directory before playing', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -536,7 +643,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('drama_card_video_8-0')));
     await _flush(tester);
 
-
     // 暂停：播放器还在，但不再播放；没有 push、没有目录请求。
     expect(inline.disposed, isFalse);
     expect(inline.isPlaying, isFalse);
@@ -551,7 +657,6 @@ void main() {
     expect(inline.disposed, isFalse);
     expect(tester.takeException(), isNull);
   });
-
 
   testWidgets('追剧 落进本地书架并立刻把按钮变成 已追剧', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
@@ -659,80 +764,83 @@ void main() {
     '最近 tab：官方筛选 chips、漫剧角标与已看到第N集',
     timeout: Timeout(const Duration(minutes: 1)),
     (tester) async {
-    // 官方截图第二十三轮：chips 行（全部/短剧/漫剧，选中橙字浅橙底）、
-    // 封面左上「漫剧」角标 + 居中半透明 ▶、两行标题、灰字「已看到第N集」。
-    await tester.binding.setSurfaceSize(const Size(360, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-    // Hive 是真实文件 IO，必须逃出 FakeAsync 时区（runAsync），否则
-    // await 永不完成——这正是这用例第一次跑挂满 10 分钟的原因。
-    await tester.runAsync(() async {
-      SharedPreferences.setMockInitialValues({});
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final history = await Hive.openBox<dynamic>('history');
-      await history.put('d-video', {
-        'id': 'd-video',
-        'kind': 'video',
-        'title': '全球杀机 作品',
-        'episode': 0,
-        'ep': '82',
-        'time': now,
+      // 官方截图第二十三轮：chips 行（全部/短剧/漫剧，选中橙字浅橙底）、
+      // 封面左上「漫剧」角标 + 居中半透明 ▶、两行标题、灰字「已看到第N集」。
+      await tester.binding.setSurfaceSize(const Size(360, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      // Hive 是真实文件 IO，必须逃出 FakeAsync 时区（runAsync），否则
+      // await 永不完成——这正是这用例第一次跑挂满 10 分钟的原因。
+      await tester.runAsync(() async {
+        SharedPreferences.setMockInitialValues({});
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final history = await Hive.openBox<dynamic>('history');
+        await history.put('d-video', {
+          'id': 'd-video',
+          'kind': 'video',
+          'title': '全球杀机 作品',
+          'episode': 0,
+          'ep': '82',
+          'time': now,
+        });
+        await history.put('d-manju', {
+          'id': 'd-manju',
+          'kind': 'manju',
+          'title': '仙渊道尘 作品',
+          'episode': 0,
+          'time': now - 1000,
+        });
+        await LibraryStore.instance.init();
+        await SwipeGuideStore.instance.markShown();
       });
-      await history.put('d-manju', {
-        'id': 'd-manju',
-        'kind': 'manju',
-        'title': '仙渊道尘 作品',
-        'episode': 0,
-        'time': now - 1000,
-      });
-      await LibraryStore.instance.init();
-      await SwipeGuideStore.instance.markShown();
-    });
 
-    await tester.pumpWidget(_scope(perTab: 1, child: MaterialApp(home: _Seams().page())));
-    await _flush(tester);
-    await tester.tap(find.text('最近'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('drama_最近_grid')), findsOneWidget);
-    expect(find.text('全部'), findsOneWidget);
-    expect(find.text('已看到第1集'), findsNWidgets(2));
-    // 「漫剧」出现在 chip、封面角标与频道条上，共 3 处。
-    expect(find.text('漫剧'), findsNWidgets(3));
-    expect(find.text('全球杀机 作品'), findsOneWidget);
+      await tester.pumpWidget(
+        _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+      );
+      await _flush(tester);
+      await tester.tap(find.text('最近'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('drama_最近_grid')), findsOneWidget);
+      expect(find.text('全部'), findsOneWidget);
+      expect(find.text('已看到第1集'), findsNWidgets(2));
+      // 「漫剧」出现在 chip、封面角标与频道条上，共 3 处。
+      expect(find.text('漫剧'), findsNWidgets(3));
+      expect(find.text('全球杀机 作品'), findsOneWidget);
 
-    // 漫剧 chip（作用域限定在筛选行，避免命中频道条）→ 只剩漫剧卡。
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('drama_recent_filter')),
-        matching: find.text('漫剧'),
-      ),
-    );
-    await _flush(tester);
-    expect(find.text('仙渊道尘 作品'), findsOneWidget);
-    expect(find.text('全球杀机 作品'), findsNothing);
-    expect(find.text('已看到第1集'), findsOneWidget);
+      // 漫剧 chip（作用域限定在筛选行，避免命中频道条）→ 只剩漫剧卡。
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('drama_recent_filter')),
+          matching: find.text('漫剧'),
+        ),
+      );
+      await _flush(tester);
+      expect(find.text('仙渊道尘 作品'), findsOneWidget);
+      expect(find.text('全球杀机 作品'), findsNothing);
+      expect(find.text('已看到第1集'), findsOneWidget);
 
-    // 短剧 chip → 只剩短剧卡；全部 → 两张都回来。
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('drama_recent_filter')),
-        matching: find.text('短剧'),
-      ),
-    );
-    await _flush(tester);
-    expect(find.text('全球杀机 作品'), findsOneWidget);
-    expect(find.text('仙渊道尘 作品'), findsNothing);
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('drama_recent_filter')),
-        matching: find.text('全部'),
-      ),
-    );
-    await _flush(tester);
-    expect(find.text('全球杀机 作品'), findsOneWidget);
-    expect(find.text('仙渊道尘 作品'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      // 短剧 chip → 只剩短剧卡；全部 → 两张都回来。
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('drama_recent_filter')),
+          matching: find.text('短剧'),
+        ),
+      );
+      await _flush(tester);
+      expect(find.text('全球杀机 作品'), findsOneWidget);
+      expect(find.text('仙渊道尘 作品'), findsNothing);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('drama_recent_filter')),
+          matching: find.text('全部'),
+        ),
+      );
+      await _flush(tester);
+      expect(find.text('全球杀机 作品'), findsOneWidget);
+      expect(find.text('仙渊道尘 作品'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('服务端频道表替换本地频道条（F08）', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));

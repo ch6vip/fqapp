@@ -55,6 +55,78 @@ fn body_of(recorded: &common::Recorded) -> Value {
     serde_json::from_slice(&recorded.body).expect("upstream body is JSON")
 }
 
+/// y.java 的短剧回复参数不同于段评：Book(2/1)、NovelBookReply(501)、
+/// NovelPlayletCommentInnerList(34)、RealLevel3ReplyL2(3)。
+#[tokio::test]
+async fn anonymous_playlet_replies_use_the_series_context_and_official_enums() {
+    let upstream = MockUpstream::start(|_| {
+        MockReply::json(json!({
+            "code": 0,
+            "data": {"common_list_info": {"cursor": "next", "has_more": true, "total": 2}}
+        }))
+    })
+    .await;
+    let dir = TempDir::new("playlet-replies-list");
+    let server = server_with(&dir, &upstream.origin).await;
+    let (status, body) = json_body(
+        dispatch(
+            &server,
+            &api_get("/api/v1/series/123/comments/c9/replies", "count=10"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["data"]["common_list_info"]["cursor"], "next");
+    let request = upstream.last_request().expect("call");
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/novel/commentapi/reply/list/c9/v1/");
+    assert!(request.query.contains("aid=1967"));
+    let sent = body_of(&request);
+    assert_eq!(sent["comment_id"], "c9");
+    assert_eq!(sent["group_id"], "123");
+    assert_eq!(sent["comment_type"], 2);
+    assert_eq!(sent["group_type"], 1);
+    assert_eq!(sent["comment_source"], 501);
+    assert_eq!(sent["server_channel"], 34);
+    assert_eq!(sent["count"], 10);
+    assert_eq!(sent["business_param"]["book_id"], "123");
+    assert_eq!(sent["business_param"]["need_count"], true);
+    assert_eq!(sent["business_param"]["real_level"], 3);
+    assert!(sent["business_param"].get("insert_reply_ids").is_none());
+    assert!(sent["business_param"].get("client_ab_params").is_none());
+
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_get("/api/v1/series/123/comments/c9/replies", "cursor=next"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let sent = body_of(&upstream.last_request().expect("next page"));
+    assert_eq!(sent["cursor"], "next");
+    assert!(sent["business_param"].get("insert_reply_ids").is_none());
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn anonymous_playlet_replies_refuse_missing_context_without_an_upstream_call() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0}))).await;
+    let dir = TempDir::new("playlet-replies-missing");
+    let server = server_with(&dir, &upstream.origin).await;
+    for path in [
+        "/api/v1/series//comments/c9/replies",
+        "/api/v1/series/123/comments//replies",
+    ] {
+        let (status, _) = json_body(dispatch(&server, &api_get(path, "")).await).await;
+        assert_eq!(status, 400);
+    }
+    assert!(upstream.requests().is_empty());
+    upstream.shutdown();
+}
+
 /// 官方短剧剧评（`gx1/m.java:168-181`）：
 /// path 的 group_id = seriesId；comment_source=1、server_channel=34、
 /// group_type=1（Book）、comment_type=2（Book）、sort=1（SmartHot）、count=10、

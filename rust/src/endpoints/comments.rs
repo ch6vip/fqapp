@@ -806,6 +806,53 @@ fn handle_book_comments_legacy<'a>(
     })
 }
 
+/// Read-only playlet replies: playlet/detail/page/content/y.java:161-165,1143-1161.
+/// The book/paragraph reply route below uses different enums and cannot be reused.
+fn handle_playlet_comment_replies<'a>(
+    ctx: &'a Ctx,
+    params: &'a Params,
+) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let comment_id = params.get_str("comment_id");
+        let series_id = params.get_str("series_id");
+        if comment_id.is_empty() || series_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "缺少参数: comment_id / series_id 均为必填".to_string(),
+            ));
+        }
+        let cursor = params.get_str("cursor");
+        let business = json!({
+            "book_id": series_id,
+            "need_count": true,
+            "real_level": 3,
+        });
+        let body = json!({
+            "business_param": business,
+            "comment_id": comment_id,
+            "comment_source": 501,
+            "comment_type": 2,
+            "count": int_default(&params.get_str("count"), 10).clamp(1, 50),
+            "cursor": cursor,
+            "group_id": series_id,
+            "group_type": 1,
+            "server_channel": 34,
+        });
+        let body = serde_json::to_vec(&body).map_err(|e| ApiError::Internal(e.to_string()))?;
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                method: Some("POST".to_string()),
+                host: HOST_FQNOVEL.to_string(),
+                path: format!("{COMMENT_REPLIES_PATH}{}/v1/", go_path_escape(&comment_id)),
+                params: reading724_params(),
+                body: Some(body),
+                headers: dragon_read_json_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
 fn handle_comment_replies<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
     Box::pin(async move {
         let comment_id = params.get_str("comment_id");
@@ -881,6 +928,7 @@ fn handle_chapter_summary<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a,
 pub fn register(s: &mut Server) {
     s.add_route("book_reviews", handle_book_reviews);
     s.add_route("playlet_comments", handle_playlet_comments);
+    s.add_route("playlet_comment_replies", handle_playlet_comment_replies);
     s.add_route("playlet_danmaku", handle_playlet_danmaku);
     s.add_route("playlet_hot_comments", handle_playlet_hot_comments);
     s.add_route("playlet_comment_add", handle_playlet_comment_add);

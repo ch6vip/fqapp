@@ -76,7 +76,24 @@ void main() {
       );
       expect(page.totalCount, 5);
       expect(page.hasMore, isTrue);
+      expect(page.cursor, '5');
       expect(page.headerLabel, '共 5 条回复');
+    });
+
+    test('playlet replies use common_list_info for count and pagination', () {
+      final payload = _payload();
+      final data = payload['data'] as Map<String, dynamic>;
+      data.remove('comment_list_info');
+      data['common_list_info'] = {
+        'cursor': 'reply-cursor',
+        'has_more': true,
+        'total': 17,
+      };
+      final page = CommentReplyPage.fromPayload(payload);
+      expect(page.replies, hasLength(2));
+      expect(page.totalCount, 17);
+      expect(page.hasMore, isTrue);
+      expect(page.cursor, 'reply-cursor');
     });
 
     test('a zero total still yields a header', () {

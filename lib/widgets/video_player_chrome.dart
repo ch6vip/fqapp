@@ -12,7 +12,6 @@ import '../models/media_item.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
-import '../services/user_facing_error.dart';
 import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
 import 'player/story_player_panel.dart';
@@ -31,6 +30,9 @@ class VideoPlayerChrome extends StatefulWidget {
   final Duration duration;
   final bool playing;
   final bool enabled;
+
+  /// 评论、分享等由宿主打开的弹层也要中断画面手势。
+  final bool interactionBlocked;
   final Widget child;
   final String coverUrl;
   final ValueChanged<bool>? onPagingChanged;
@@ -84,6 +86,9 @@ class VideoPlayerChrome extends StatefulWidget {
   /// 默认关闭（`LandLockOptV705` 默认 false）。
   final bool landscapeLockEnabled;
 
+  /// 官方 video_landscape_style_609.enable：横屏双击切换播放。
+  final bool landscapeDoubleTapEnabled;
+
   /// 当前剧是否已点赞。双击只播动画、只上报一次点击，**不做状态取反**。
   final bool liked;
   final VoidCallback? onLikeTap;
@@ -110,9 +115,9 @@ class VideoPlayerChrome extends StatefulWidget {
   final String seriesCover;
   final String episodeLabel;
 
-  /// 头部收藏态（官方头部 \`ddg\` 与右栏 \`SeriesCollectView\` 共用同一个
-  /// 关注态；本地把 \`followerLabel == '已追剧'\` 当作已收藏）。
+  /// 头部与右栏共用本机收藏态；服务端追剧人数不能代替本机状态。
   final bool collected;
+
   /// 头部收藏动作；为 null 时头部不显示收藏按钮。
   final VoidCallback? onCollect;
 
@@ -131,7 +136,6 @@ class VideoPlayerChrome extends StatefulWidget {
   final List<PlayletComment> danmaku;
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
-  final Future<void> Function(String text)? onSendDanmaku;
 
   /// 底部 band 的两块服务端装饰（官方截图第二十二轮）：完结状态
   /// （「选集 · 已完结 · 全82集」胶囊，`@string/ag_`/`e6r`）与
@@ -150,6 +154,7 @@ class VideoPlayerChrome extends StatefulWidget {
     required this.duration,
     required this.playing,
     this.enabled = true,
+    this.interactionBlocked = false,
     required this.child,
     this.coverUrl = '',
     this.watchedEpisodes = const <int>{},
@@ -171,6 +176,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.padNewBottomStyle = false,
     this.reverseClearScreen = false,
     this.landscapeLockEnabled = false,
+    this.landscapeDoubleTapEnabled = false,
     this.liked = false,
     this.onLikeTap,
     this.commentCount = 0,
@@ -193,7 +199,6 @@ class VideoPlayerChrome extends StatefulWidget {
     this.danmaku = const [],
     this.danmakuEnabled = true,
     this.onToggleDanmaku,
-    this.onSendDanmaku,
   });
 
   @override
@@ -216,6 +221,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<bool>? _playWhenReadySubscription;
   Timer? _hideTimer;
+  Timer? _doubleTapGuard;
   bool _visible = true;
   bool _seeking = false;
   bool _resumeAfterSeek = false;
@@ -231,6 +237,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _panelWasVisible = false;
   bool _panelHeaderDragging = false;
   bool _fullScreen = false;
+  Size _viewportSize = Size.zero;
 
   /// 清屏独立于控件自动收起，暂停、切集与旋转均保留本次会话的选择。
   /// Note: 新底栏文字/图标两分支与手势取舍 — 见
@@ -296,6 +303,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   bool get _ready => widget.enabled && (widget.player?.isCreated ?? false);
+  bool get _overlayOpen => _modalOpen || widget.interactionBlocked;
   bool get _playbackRequested =>
       widget.playing ||
       ((widget.player?.playWhenReady ?? false) &&
@@ -320,18 +328,28 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
-    _lockController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 666),
-    );
-    _likeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1560),
-    )..addStatusListener((status) {
-      if (status == AnimationStatus.completed && mounted) {
-        setState(() => _likePlaying = false);
-      }
-    });
+    _lockController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 666),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed ||
+              status == AnimationStatus.dismissed) {
+            final endpoint = _locked ? 1.0 : 0.0;
+            if (_lockController.value != endpoint) {
+              _lockController.value = endpoint;
+            }
+          }
+        });
+    _likeController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 1560),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed && mounted) {
+            setState(() => _likePlaying = false);
+          }
+        });
     unawaited(_loadRate());
     _scheduleHide();
     _scheduleLockHide();
@@ -345,6 +363,25 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       // 换播放器等于换 holder：官方 `d.release()` 会摘掉锁监听，本地等价是
       // 撤销锁态，避免下一个剧集继承上一个的锁定。
       _releaseLock();
+      _resetLike();
+    }
+    if (oldWidget.landscapeLockEnabled && !widget.landscapeLockEnabled) {
+      _releaseLock();
+      _scheduleHide();
+    }
+    if (_clearScreen && !_clearScreenConfigured) {
+      _clearScreen = false;
+      _visible = true;
+      _scheduleHide();
+    }
+    if (!oldWidget.interactionBlocked && widget.interactionBlocked) {
+      _endBoost();
+      _cancelSeek();
+      _resetLike();
+      _hideTimer?.cancel();
+    } else if (oldWidget.interactionBlocked && !widget.interactionBlocked) {
+      _visible = true;
+      _scheduleHide();
     }
     if (oldWidget.player != widget.player ||
         oldWidget.enabled && !widget.enabled) {
@@ -357,6 +394,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _resumeAfterSeek = false;
       _resumeOnForeground = false;
       _boosting = false;
+      _dragSeekOrigin = null;
+      _dragSeekActive = false;
+      _resetLike();
     }
     if (_ready && (oldWidget.player != widget.player || !oldWidget.enabled)) {
       unawaited(_control((player) => player.setRate(_rate)));
@@ -386,7 +426,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _hideTimer?.cancel();
+    _doubleTapGuard?.cancel();
     _lockHideTimer?.cancel();
+    _panelDrawerTimer?.cancel();
     _lockController.dispose();
     _likeController.dispose();
     _pages.dispose();
@@ -453,6 +495,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           _ready && (_playbackRequested || (_seeking && _resumeAfterSeek));
       _cancelSeek(resume: false);
       _endBoost();
+      _resetLike();
       _hideTimer?.cancel();
       unawaited(_control((player) => player.pause()));
     } else if (active && !_appActive) {
@@ -467,10 +510,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _hideTimer?.cancel();
     if (!_ready ||
         _clearScreen ||
+        _locked ||
         !_appActive ||
         !widget.playing ||
         _seeking ||
-        _modalOpen ||
+        _overlayOpen ||
         _panelOpen ||
         _boosting ||
         _paging) {
@@ -494,41 +538,62 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 官方 `d.K6`：点锁按钮就切换锁定状态，锁定时重新计时，解锁时立即
   /// 恢复可见；锁本身不改变播放状态。
   void _toggleLock() {
+    if (!_isLandscape || _panelOpen || _overlayOpen || _clearScreen) return;
     ++_interaction;
     _endBoost();
+    _cancelSeek();
+    _resetLike();
+    _hideTimer?.cancel();
     final lock = !_locked;
     setState(() {
       _locked = lock;
       _lockVisible = true;
+      _visible = true;
     });
     // 官方 \`uk3/c.j(z)\`：锁 → 从第 20 帧反向播到 0；解锁 → 从 0 正向播到
     // 第 20 帧，结束后停在对应端点。
     if (lock) {
-      _lockController.value = 1;
       _lockController.reverse(from: 1);
     } else {
-      _lockController.value = 0;
       _lockController.forward(from: 0);
     }
     _scheduleLockHide();
+    if (!lock) _scheduleHide();
   }
 
   /// 官方 `jq3/x.q.onDoubleTap` → `holder.z7(e)` → `qf3/d.onDoubleTap`：
   /// 双击只播放 `like_video_center.json` 动画并上报一次点赞动作，
   /// **不取反点赞状态**（官方动画层没有任何状态逻辑）。
   void _triggerLike() {
-    if (!_ready || _locked || _panelOpen || _modalOpen) return;
+    if (!_ready || _locked || _clearScreen || _panelOpen || _overlayOpen) {
+      return;
+    }
     ++_interaction;
+    _guardDoubleTap();
     setState(() => _likePlaying = true);
     widget.onLikeTap?.call();
     _likeController.forward(from: 0);
   }
 
-  /// 面板打开时按官方 `H6()/`自动隐藏规则同步锁按钮可见性（`getCurrentViewVisible`
+  void _guardDoubleTap() {
+    _doubleTapGuard?.cancel();
+    // 官方 VideoGestureDetectLayout.java:162 在双击后 800ms 内吞掉单击。
+    _doubleTapGuard = Timer(const Duration(milliseconds: 800), () {});
+  }
+
+  void _resetLike() {
+    _likeController.stop();
+    _likePlaying = false;
+    _likeOrigin = null;
+    _doubleTapGuard?.cancel();
+  }
+
+  /// 按官方 `H6()` 自动隐藏规则同步锁按钮可见性（`getCurrentViewVisible`
   /// 为真就隐藏，否则显示）。
   void _refreshLockVisibility() {
     if (!_locked) return;
     if (_lockVisible) {
+      _lockHideTimer?.cancel();
       setState(() => _lockVisible = false);
     } else {
       setState(() => _lockVisible = true);
@@ -540,15 +605,17 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// （`EXIST_LAND_ACTIVITY`），本地等价是离开横屏与替换播放器。
   void _releaseLock() {
     _lockHideTimer?.cancel();
-    if (!_locked && _lockVisible) return;
+    if (_locked) _visible = true;
     _locked = false;
     _lockVisible = true;
+    _lockController.stop();
+    _lockController.value = 0;
   }
 
   void _toggleControls() {
     // 控件显隐不退出清屏；短剧清屏时单击画面仍走播放/暂停。
     if (_clearScreen) return;
-    if (_panelOpen || _modalOpen || _seeking || _boosting || _paging) return;
+    if (_panelOpen || _overlayOpen || _seeking || _boosting || _paging) return;
     setState(() => _visible = !_visible);
     if (_visible) {
       _scheduleHide();
@@ -563,12 +630,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 官方 `o.H1()` 的门是 `!O1() || !yp3.k.a()`：前者是清屏反转配置，
   /// 后者是「这个持有者允许清屏」。它**不要求视频已就绪**——加载中就退不出
   /// 清屏会制造一个没有出口的状态，所以本地不把 `_ready` 放进门里。
-  bool get _clearScreenAvailable =>
+  bool get _clearScreenConfigured =>
       !widget.reverseClearScreen &&
-      !_locked &&
       (widget.newPlayerBottomStyle ||
           widget.hasBanner ||
           widget.padNewBottomStyle);
+
+  bool get _clearScreenAvailable => _clearScreenConfigured && !_locked;
 
   /// 沿用官方独立清屏状态；新底栏文字入口 vs 旧底栏图标的互斥分支见
   /// .agents/notes/proposed/architecture/2026-09-25-f01-f03-official-evidence.md §1。
@@ -576,6 +644,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (!_clearScreenAvailable) return;
     _endBoost();
     _cancelSeek();
+    _resetLike();
     ++_interaction;
     _hideTimer?.cancel();
     setState(() {
@@ -597,7 +666,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (!_ready ||
         _locked ||
         _panelOpen ||
-        _modalOpen ||
+        _overlayOpen ||
         _seeking ||
         widget.duration <= Duration.zero) {
       return;
@@ -666,7 +735,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         !_appActive ||
         _locked ||
         _panelOpen ||
-        _modalOpen ||
+        _overlayOpen ||
         _seeking ||
         _paging) {
       return;
@@ -738,6 +807,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _cancelSeek({bool resume = true}) {
+    _dragSeekOrigin = null;
+    _dragSeekActive = false;
+    if (!_seeking) _seekValue.value = null;
     if (!_seeking) return;
     ++_interaction;
     final shouldResume = resume && _resumeAfterSeek && _appActive;
@@ -780,7 +852,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         _seeking ||
         _paging ||
         _panelOpen ||
-        _modalOpen) {
+        _overlayOpen) {
       return;
     }
     _hideTimer?.cancel();
@@ -800,15 +872,18 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 行内档位 `b72/b74.xml` + `ScrollableMultipleOptionsView`，档位文案
   /// `0.75x/1x/1.25x/1.5x/1.75x/2x`）。
   ///
-  /// 官方面板的其余行（清晰度/小窗/默认静音/画面撑满/一键发评/弹幕/投屏…）
-  /// 都要服务端下发或账号链路，本仓库一律不显示占位（诚实清单，见对照
-  /// 文档 §27）。
+  /// 已接入倍速、默认静音、画面撑满和弹幕开关；账号写入口按用户范围省略。
+  /// 清晰度、小窗和投屏需要后续数据或原生能力，暂不放置无法操作的入口。
   Future<void> _showRates() async {
-    if (_modalOpen || _locked) return;
+    if (_overlayOpen || _panelOpen || _locked) return;
     _endBoost();
     _cancelSeek();
+    _resetLike();
     _hideTimer?.cancel();
     setState(() => _modalOpen = true);
+    var sheetDanmaku = widget.danmakuEnabled;
+    var sheetMute = widget.defaultMute;
+    var sheetFill = widget.fillScreen;
     final selected = await showModalBottomSheet<double>(
       context: context,
       useSafeArea: true,
@@ -880,12 +955,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                       const Spacer(),
                       Switch(
                         key: const ValueKey('player-more-danmaku-switch'),
-                        value: widget.danmakuEnabled,
+                        value: sheetDanmaku,
                         onChanged: widget.onToggleDanmaku == null
                             ? null
-                            : (_) {
+                            : (value) {
                                 widget.onToggleDanmaku!.call();
-                                setSheetState(() {});
+                                setSheetState(() => sheetDanmaku = value);
                               },
                       ),
                     ],
@@ -898,10 +973,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     'player-more-mute-row',
                     'player-more-mute-switch',
                     '默认静音',
-                    widget.defaultMute,
+                    sheetMute,
                     onChanged: (value) {
                       widget.onDefaultMuteChanged!.call(value);
-                      setSheetState(() {});
+                      setSheetState(() => sheetMute = value);
                     },
                   ),
                 ],
@@ -912,28 +987,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     'player-more-fill-row',
                     'player-more-fill-switch',
                     '画面撑满',
-                    widget.fillScreen,
+                    sheetFill,
                     onChanged: (value) {
                       widget.onFillScreenChanged!.call(value);
-                      setSheetState(() {});
+                      setSheetState(() => sheetFill = value);
                     },
-                  ),
-                ],
-                // 官方在横屏全屏底栏有「发弹幕」入口
-                // （`lk3/u0.java:1096-1119`），文案「发弹幕」
-                // （strings.xml:8043）。
-                if (widget.onSendDanmaku != null) ...[
-                  const SizedBox(height: 4),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton(
-                      key: const ValueKey('player-more-danmaku-send'),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        unawaited(_publishDanmaku());
-                      },
-                      child: const Text('发弹幕'),
-                    ),
                   ),
                 ],
               ],
@@ -989,37 +1047,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     ),
   );
 
-  /// 官方弹幕输入：占位「发条友善的弹幕吧」，长度上下限来自
-  /// `VideoDanmakuSettingConfig`（超限文案「弹幕最多/最少输入%d个字」）。
-  Future<void> _publishDanmaku() async {
-    final send = widget.onSendDanmaku;
-    if (send == null) return;
-    final text = await showDialog<String>(
-      context: context,
-      builder: (context) => const _DanmakuComposer(),
-    );
-    if (text == null || text.isEmpty || !mounted) return;
-    try {
-      await send(text);
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(userFacingError(error))));
-    }
-    if (mounted) _scheduleHide();
-  }
-
   void _openPanel() {
-    if (_locked) return;
+    if (_locked || _overlayOpen || _panelOpen) return;
     _endBoost();
     _cancelSeek();
+    _resetLike();
     _hideTimer?.cancel();
     FocusManager.instance.primaryFocus?.unfocus();
-    final size = MediaQuery.sizeOf(context);
     setState(() {
-      _panelDrawer =
-          widget.shortSeries && _fullScreen && size.width > size.height;
+      _panelDrawer = widget.shortSeries && _isLandscape;
       _panelDrawerClosing = false;
       _panelRestFraction = PlayerVideoLayout.panelFractionFor(_videoSize);
       _panelMaxFraction = _panelRestFraction;
@@ -1184,6 +1220,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Future<void> _toggleFullScreen() async {
     _endBoost();
     _cancelSeek();
+    _resetLike();
     // 官方在 Activity 退出横屏时无条件解锁（`EXIST_LAND_ACTIVITY`）。
     if (_fullScreen) _releaseLock();
     setState(() => _fullScreen = !_fullScreen);
@@ -1225,9 +1262,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 官方「画面撑满」（SP `is_fill_screen`）：只改画面铺排，
   /// 不打断播放。`fillsFrame` 为假的横版片源会被降级成按宽度铺满，
   /// 与官方 `ShortVideoCropConfig.landscapeRatio` 的规则一致。
-  VideoFit get _videoFit => widget.fillScreen && !_locked
-      ? VideoFit.fillFrame
-      : VideoFit.contain;
+  VideoFit get _videoFit =>
+      widget.fillScreen ? VideoFit.fillFrame : VideoFit.contain;
 
   /// The player's reported video size; 0x0 until the media has loaded.
   Size get _playerVideoSize => Size(
@@ -1269,8 +1305,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   /// 画面是否处于横屏全屏态。锁只在横屏有效，退出横屏即解锁。
   bool get _isLandscape {
-    final window = MediaQuery.sizeOf(context);
-    return _fullScreen && window.width > window.height;
+    return _fullScreen && _viewportSize.width > _viewportSize.height;
   }
 
   Future<void> _restoreSystemUi() async {
@@ -1292,6 +1327,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         builder: (context, constraints) {
           final insets = MediaQuery.paddingOf(context);
           final window = constraints.biggest;
+          _viewportSize = window;
           final landscape = _fullScreen && window.width > window.height;
           final layout = PlayerVideoLayout.calculate(
             window: window,
@@ -1303,7 +1339,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             fullScreen: _fullScreen,
           );
           final durationMs = math.max(0, widget.duration.inMilliseconds);
-          final unobstructed = !_panelOpen && !_modalOpen;
+          final unobstructed = !_panelOpen && !_overlayOpen;
           // 退出横屏运行时解锁：官方 Activity 销毁时用 EXIST_LAND_ACTIVITY
           // 复位全局锁态，本地没有独立 Activity，只能在布局里对账。
           if (_locked && !landscape) {
@@ -1352,29 +1388,38 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               !_locked &&
               !_seeking &&
               (!landscape || _clearScreen);
-          // 旧底栏图标分支（`o.W7()` → `q0.P1()` → `jj3.i`）：手机上只有
-          // 「清晰度 / 倍速」两项，清屏/还原被 `isPadDevice()` 门住，本地没有
-          // 平板形态，因此这个分支只保留倍速入口，不画清屏图标——
-          // 官方手机上本来就没有这个入口（`jj3/i.java:620-637`）。
+          // 旧底栏清屏/还原只在 pad 配置开启时出现（`jj3/i.java:620-637`）。
+          // 手机旧栏保留实际可用的倍速，清晰度等待多档流数据接入。
           return Stack(
             fit: StackFit.expand,
             children: [
               GestureDetector(
                 key: const ValueKey('video-surface'),
                 behavior: HitTestBehavior.opaque,
-                // 官方 G6()：锁定后每一次触摸只是「重新显示锁按钮」，
-                // 画面手势、播放控制与清屏出口全部被吞。
-                onTap: _locked
-                    ? () => _refreshLockVisibility()
-                    : (tapTogglesPlayback ? _togglePlayback : _toggleControls),
-                onDoubleTapDown: likeGesture && !_locked
+                // 官方 G6()：锁定后触摸只切换锁按钮的可见性。
+                onTap: () {
+                  if (!unobstructed) return;
+                  if (_locked) {
+                    _refreshLockVisibility();
+                  } else if (!(_doubleTapGuard?.isActive ?? false)) {
+                    tapTogglesPlayback ? _togglePlayback() : _toggleControls();
+                  }
+                },
+                onDoubleTapDown: likeGesture && !_locked && !_clearScreen
                     ? (details) => _likeOrigin = details.localPosition
                     : null,
-                onDoubleTap: _locked
-                    ? () => _refreshLockVisibility()
-                    : likeGesture
-                    ? _triggerLike
-                    : (tapTogglesPlayback ? null : _togglePlayback),
+                onDoubleTap: () {
+                  if (!unobstructed) return;
+                  if (_locked) {
+                    _refreshLockVisibility();
+                  } else if (likeGesture) {
+                    _triggerLike();
+                  } else if (!widget.shortSeries ||
+                      widget.landscapeDoubleTapEnabled) {
+                    if (widget.shortSeries) _guardDoubleTap();
+                    _togglePlayback();
+                  }
+                },
                 onHorizontalDragStart: _startDragSeek,
                 onHorizontalDragUpdate: _updateDragSeek,
                 onHorizontalDragEnd: _endDragSeek,
@@ -1462,7 +1507,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 ),
               // 「左右滑动可调整进度」首次引导（`@string/cha`，距底 138dp，
               // `o.java K6` 的引导层）。
-              if (widget.showSeekHint && unobstructed && widget.enabled)
+              if (widget.showSeekHint && showChrome && widget.enabled)
                 Positioned(
                   left: 0,
                   right: 0,
@@ -1514,7 +1559,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   right: insets.right,
                   bottom:
                       insets.bottom +
-                      (widget.shortSeries ? (landscape ? 16 : 88) : 96),
+                      (widget.shortSeries ? (landscape ? 16 : 56) : 96),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -1533,7 +1578,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                       // 标题/原著卡排在操作行上方，文字放大时也不占它的点击区。
                       if (showTextActions)
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: Align(
                             alignment: Alignment.centerRight,
                             child: _screenTexts(),
@@ -1563,7 +1608,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   key: const ValueKey('video-seek-layer'),
                   left: insets.left + 12,
                   right: insets.right + 12,
-                  bottom: insets.bottom + 60,
+                  // 官方 q6() 是底栏高度。进度线贴其上缘，文字在上方 15dp；
+                  // 30dp 的进度触区中心要减去半高，避免覆盖清屏/倍速文字。
+                  bottom: insets.bottom + (widget.shortSeries ? 41 : 60),
                   child: RepaintBoundary(
                     child: ListenableBuilder(
                       listenable: _timeline,
@@ -1752,10 +1799,16 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 ),
               ],
               _lockButton(window),
-              if (_likePlaying)
+              if (_likePlaying && showChrome)
                 Positioned(
-                  left: (_likeOrigin?.dx ?? window.width / 2) - 48.5,
-                  top: (_likeOrigin?.dy ?? window.height / 2) - 75.5,
+                  left: ((_likeOrigin?.dx ?? window.width / 2) - 48.5).clamp(
+                    0.0,
+                    math.max(0.0, window.width - 97),
+                  ),
+                  top: ((_likeOrigin?.dy ?? window.height / 2) - 75.5).clamp(
+                    0.0,
+                    math.max(0.0, window.height - 151),
+                  ),
                   child: IgnorePointer(
                     child: SizedBox(
                       width: 97,
@@ -1870,33 +1923,38 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       String? key,
       String label,
       IconData icon,
-      VoidCallback? onTap,
-    ) => GestureDetector(
-      key: key == null ? null : ValueKey(key),
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 46,
-            color: Colors.white,
-            shadows: const [Shadow(color: Colors.black38, blurRadius: 6)],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              height: 1.1,
-              fontWeight: FontWeight.bold,
-              color: Color(0xCCFFFFFF),
+      VoidCallback? onTap, {
+      bool selected = false,
+    }) => Semantics(
+      selected: selected,
+      button: true,
+      child: GestureDetector(
+        key: key == null ? null : ValueKey(key),
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 46,
+              color: selected ? const Color(0xFFFA6725) : Colors.white,
+              shadows: const [Shadow(color: Colors.black38, blurRadius: 6)],
             ),
-          ),
-        ],
+            const SizedBox(height: 2),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.1,
+                fontWeight: FontWeight.bold,
+                color: Color(0xCCFFFFFF),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     return Positioned(
@@ -1905,19 +1963,24 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          railButton(
-            'player-follow-button',
-            widget.followerLabel ?? '追剧',
-            Icons.star_rounded,
-            widget.onFollow,
-          ),
-          const SizedBox(height: 12),
-          railButton(
-            'player-like-button',
-            '点赞',
-            Icons.favorite_rounded,
-            widget.onLike,
-          ),
+          if (widget.onFollow != null)
+            railButton(
+              'player-follow-button',
+              widget.followerLabel ?? '追剧',
+              Icons.star_rounded,
+              widget.onFollow,
+              selected: widget.collected,
+            ),
+          if (widget.onLike != null) ...[
+            const SizedBox(height: 12),
+            railButton(
+              'player-like-button',
+              widget.liked ? '已赞' : '点赞',
+              Icons.favorite_rounded,
+              widget.onLike,
+              selected: widget.liked,
+            ),
+          ],
           // 官方右栏第三项是评论（`res/layout/cjs.xml:11`），计数为 0 时
           // 文案退化成「评论」（`SeriesCommentView.java:182-188`）。官方的
           // 该项默认 gone，显示条件未取证，因此只在宿主开了评论链路
@@ -1949,21 +2012,94 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     );
   }
 
-  /// 文字样式参考官方 `SingleVideoHolder.q8()`；常驻入口与 48dp 点击区
-  /// 是本地取舍。操作行独立于标题高度，窄屏大字可换行（源码对照文档 §32）。
-  Widget _screenTexts() => Wrap(
-    alignment: WrapAlignment.end,
-    spacing: 24,
-    runSpacing: 4,
-    children: [
-      _screenTextButton('player-rate-text', _rateText(_rate), _showRates),
-      if (_clearScreenAvailable)
-        _screenTextButton(
-          'player-clear-screen',
-          _clearScreen ? '恢复' : '清屏',
-          () => _setClearScreen(!_clearScreen),
+  /// 新底栏文字样式来自 `SingleVideoHolder.q8()`；48dp 点击区是本地取舍。
+  /// 操作行独立于标题高度，窄屏大字可换行（源码对照文档 §32）。
+  Widget _screenTexts() => widget.newPlayerBottomStyle || widget.hasBanner
+      ? Wrap(
+          alignment: WrapAlignment.end,
+          spacing: 0,
+          runSpacing: 4,
+          children: [
+            _screenTextButton('player-rate-text', _rateText(_rate), _showRates),
+            if (_clearScreenAvailable)
+              _screenTextButton(
+                'player-clear-screen',
+                _clearScreen ? '恢复' : '清屏',
+                () => _setClearScreen(!_clearScreen),
+              ),
+          ],
+        )
+      : _legacyBottomActions();
+
+  /// bom.xml：手机旧栏无清屏；pad 分支是 28dp 图标 + 2dp 间距 + 文案。
+  /// 当前只有一个已解析流，旧栏的清晰度项留待多画质批次。
+  Widget _legacyBottomActions() => Padding(
+    padding: const EdgeInsets.only(right: 12),
+    child: Wrap(
+      key: const ValueKey('player-legacy-actions'),
+      alignment: WrapAlignment.end,
+      spacing: 16,
+      children: [
+        _legacyAction(
+          'player-rate-text',
+          _rateText(_rate),
+          const SizedBox(
+            width: 28,
+            height: 28,
+            child: CustomPaint(painter: _LegacyRatePainter()),
+          ),
+          _showRates,
         ),
-    ],
+        if (_clearScreenAvailable)
+          _legacyAction(
+            'player-clear-screen',
+            _clearScreen ? '还原' : '清屏',
+            _clearScreen
+                ? Image.asset(
+                    'assets/images/drama/legacy_restore.webp',
+                    width: 20,
+                    height: 20,
+                  )
+                : SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: Lottie.asset(
+                      'assets/lottie/immersive_mode_on_v2.json',
+                      animate: false,
+                    ),
+                  ),
+            () => _setClearScreen(!_clearScreen),
+          ),
+      ],
+    ),
+  );
+
+  Widget _legacyAction(
+    String key,
+    String label,
+    Widget icon,
+    VoidCallback onTap,
+  ) => Semantics(
+    button: true,
+    child: GestureDetector(
+      key: ValueKey(key),
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            icon,
+            const SizedBox(width: 2),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 14, color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+    ),
   );
 
   Widget _screenTextButton(String key, String label, VoidCallback onTap) =>
@@ -1975,16 +2111,18 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           onTap: onTap,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            child: Center(
-              widthFactor: 1,
-              heightFactor: 1,
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Center(
+                widthFactor: 1,
+                heightFactor: 1,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
@@ -2406,19 +2544,23 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             height: 40,
             child: Row(
               children: [
-                _landRailItem(
-                  'landscape-like',
-                  Icons.favorite_rounded,
-                  null,
-                  widget.onLike,
-                ),
+                if (widget.onLike != null)
+                  _landRailItem(
+                    'landscape-like',
+                    Icons.favorite_rounded,
+                    null,
+                    widget.onLike,
+                    selected: widget.liked,
+                  ),
                 const SizedBox(width: 20),
-                _landRailItem(
-                  'landscape-follow',
-                  Icons.star_rounded,
-                  widget.followerLabel ?? '追剧',
-                  widget.onFollow,
-                ),
+                if (widget.onFollow != null)
+                  _landRailItem(
+                    'landscape-follow',
+                    Icons.star_rounded,
+                    widget.followerLabel ?? '追剧',
+                    widget.onFollow,
+                    selected: widget.collected,
+                  ),
                 const Spacer(),
                 _landText('landscape-rate', _rateText(_rate), _showRates),
                 const SizedBox(width: 24),
@@ -2439,7 +2581,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Widget _lockButton(Size window) {
     if (!widget.shortSeries ||
         !widget.landscapeLockEnabled ||
-        !_fullScreen ||
+        !_isLandscape ||
+        _clearScreen ||
+        _panelOpen ||
+        _overlayOpen ||
         !_ready) {
       return const SizedBox.shrink();
     }
@@ -2448,28 +2593,43 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       top: 0,
       right: math.max(window.width * .11, 24),
       child: SafeArea(
-        child: GestureDetector(
-          key: const ValueKey('landscape-lock'),
-          behavior: HitTestBehavior.opaque,
-          onTap: _toggleLock,
-          // 官方对锁按钮注册了吞掉长按的监听器（`uk3/c.java:237-243`），
-          // 避免长按穿透到画面的临时倍速。
-          onLongPress: () {},
-          child: SizedBox(
-            width: 36,
-            height: 36,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 300),
-              opacity: _lockVisible ? 1 : 0,
-              child: Lottie.asset(
-                'assets/lottie/unlock_speed.json',
-                // 官方 `uk3/c.j(z)`：锁 → 从第 20 帧反向播，解锁 → 从 0 帧正向播。
-                controller: _lockController,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stack) => Icon(
-                  _locked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                  size: 28,
-                  color: Colors.white,
+        child: IgnorePointer(
+          ignoring: !_lockVisible,
+          child: Semantics(
+            button: true,
+            label: _locked ? '解锁屏幕' : '锁定屏幕',
+            child: GestureDetector(
+              key: const ValueKey('landscape-lock'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleLock,
+              // 官方对锁按钮注册了吞掉长按的监听器（`uk3/c.java:237-243`），
+              // 避免长按穿透到画面的临时倍速。
+              onLongPress: () {},
+              child: SizedBox(
+                width: 48,
+                height: 48,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 300),
+                  opacity: _lockVisible ? 1 : 0,
+                  child: Center(
+                    child: SizedBox(
+                      width: 36,
+                      height: 36,
+                      child: Lottie.asset(
+                        'assets/lottie/unlock_speed.json',
+                        // 官方 `uk3/c.j(z)`：锁 → 从第 20 帧反向播，解锁 → 从 0 帧正向播。
+                        controller: _lockController,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stack) => Icon(
+                          _locked
+                              ? Icons.lock_rounded
+                              : Icons.lock_open_rounded,
+                          size: 28,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -2493,28 +2653,38 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     String key,
     IconData icon,
     String? label,
-    VoidCallback? onTap,
-  ) => GestureDetector(
-    key: ValueKey(key),
-    behavior: HitTestBehavior.opaque,
-    onTap: onTap,
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(icon, size: 22, color: Colors.white, shadows: const [_landShadow]),
-        if (label != null)
-          Text(
-            label,
-            maxLines: 1,
-            style: const TextStyle(
-              fontSize: 11,
-              height: 1.2,
-              color: Colors.white,
-              shadows: [_landShadow],
-            ),
+    VoidCallback? onTap, {
+    bool selected = false,
+  }) => Semantics(
+    selected: selected,
+    button: true,
+    child: GestureDetector(
+      key: ValueKey(key),
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 22,
+            color: selected ? const Color(0xFFFA6725) : Colors.white,
+            shadows: const [_landShadow],
           ),
-      ],
+          if (label != null)
+            Text(
+              label,
+              maxLines: 1,
+              style: const TextStyle(
+                fontSize: 11,
+                height: 1.2,
+                color: Colors.white,
+                shadows: [_landShadow],
+              ),
+            ),
+        ],
+      ),
     ),
   );
 
@@ -2575,6 +2745,42 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 // so the two players can never drift apart again.
 String _rateLabel(double rate) => formatPlaybackRate(rate);
 
+/// 官方旧栏 drawable/b2t.xml 的 28dp 倍速图标。
+class _LegacyRatePainter extends CustomPainter {
+  const _LegacyRatePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 28, size.height / 28);
+    final paint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(
+      Path()
+        ..moveTo(8.408, 7.35)
+        ..cubicTo(5.331, 10.004, 5.331, 14.001, 5.331, 14.001)
+        ..cubicTo(5.331, 18.787, 9.211, 22.667, 13.997, 22.667)
+        ..cubicTo(18.784, 22.667, 22.664, 18.787, 22.664, 14.001)
+        ..cubicTo(22.664, 9.214, 18.784, 5.334, 13.997, 5.334)
+        ..cubicTo(13.997, 6.249, 13.997, 7.741, 13.997, 7.741),
+      paint,
+    );
+    canvas.drawLine(
+      const Offset(16.164, 11.834),
+      const Offset(11.831, 16.167),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_LegacyRatePainter oldDelegate) => false;
+}
+
 /// 官方倍速文案（`SingleVideoHolder.java:1155-1171`）：1.0 显示「倍速」，
 /// 其余 `数值x`（如 `1.5x`）。
 String _rateText(double rate) => rate == 1 ? '倍速' : '${_rateLabel(rate)}x';
@@ -2584,65 +2790,3 @@ String _rateText(double rate) => rate == 1 ? '倍速' : '${_rateLabel(rate)}x';
 String _rateChipLabel(double rate) => '${_rateLabel(rate)}x';
 
 String _time(Duration value) => formatPlaybackTime(value);
-
-
-/// 官方弹幕输入框（占位「发条友善的弹幕吧」；超出
-/// `VideoDanmakuSettingConfig` 的上下限时按官方文案提示）。
-///
-/// 单独做成 StatefulWidget 是因为 `TextEditingController` 必须活到
-/// 弹窗退场动画结束，直接在调用处 dispose 会触发
-/// 「A TextEditingController was used after being disposed」。
-class _DanmakuComposer extends StatefulWidget {
-  const _DanmakuComposer();
-
-  @override
-  State<_DanmakuComposer> createState() => _DanmakuComposerState();
-}
-
-class _DanmakuComposerState extends State<_DanmakuComposer> {
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final text = _controller.text.trim();
-    final error = danmakuLengthError(
-      text.characters.length,
-      min: 1,
-      max: danmakuMaxLength,
-    );
-    if (error.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-      return;
-    }
-    Navigator.pop(context, text);
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('发弹幕'),
-    content: TextField(
-      key: const ValueKey('danmaku-input'),
-      controller: _controller,
-      autofocus: true,
-      // 不用 maxLength 截断：官方是保留文本并提示
-      // 「弹幕最多输入%d个字」，截断会让用户看不到自己打了什么。
-      decoration: const InputDecoration(hintText: danmakuHint, counterText: ''),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
-      ),
-      TextButton(
-        key: const ValueKey('danmaku-send'),
-        onPressed: _submit,
-        child: const Text('发送'),
-      ),
-    ],
-  );
-}

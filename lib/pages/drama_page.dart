@@ -101,7 +101,8 @@ final dramaChannels = <DramaChannel>[
 /// 返回 null（宁可不显示，也不要放一个点了没反应的频道）。
 DramaChannel? serverChannelOf(ChannelTab tab) {
   // 服务端没给名字时用官方同义的中文兜底，避免出现空标签。
-  String label(String fallback) => tab.title.trim().isEmpty ? fallback : tab.title;
+  String label(String fallback) =>
+      tab.title.trim().isEmpty ? fallback : tab.title;
   switch (tab.type) {
     case kChannelVideoFeed:
       return DramaChannel(
@@ -154,7 +155,6 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
 /// .agents/notes/implemented/feature/2026-09-20-official-drama-tab.md
 /// 与 .agents/notes/implemented/feature/2026-09-21-drama-remaining-ui-alignment.md
 
-
 class DramaPage extends ConsumerStatefulWidget {
   const DramaPage({
     super.key,
@@ -185,12 +185,9 @@ class DramaPage extends ConsumerStatefulWidget {
 
 class _DramaPageState extends ConsumerState<DramaPage>
     with WidgetsBindingObserver {
-
-
   static const _searchRowHeight = 38.0;
   static const _stripHeight = 38.0;
   static const _pullRefreshTrigger = 64.0;
-
 
   final PageController _pages = PageController();
   int _channel = 0;
@@ -235,7 +232,6 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   late final InlineVideoPlayback _inline;
 
-
   DramaChannel get _current => _channels[_channel];
 
   @override
@@ -276,8 +272,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _channelsRequested = true;
     List<ChannelTab> tabs;
     try {
-      tabs = await (widget.channelLoader?.call() ??
-          ApiClient.instance.channelTabs());
+      tabs =
+          await (widget.channelLoader?.call() ??
+              ApiClient.instance.channelTabs());
     } catch (_) {
       return;
     }
@@ -527,7 +524,6 @@ class _DramaPageState extends ConsumerState<DramaPage>
     }
   }
 
-
   /// Restarting is only allowed while the feed is really the visible surface:
   /// a route may still sit on top of it, a drag may still be in flight, or the
   /// full page player may be loading.
@@ -579,7 +575,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
           ),
           if (_pullDistance > 0)
             Positioned(
-              top: MediaQuery.paddingOf(context).top +
+              top:
+                  MediaQuery.paddingOf(context).top +
                   _searchRowHeight +
                   _stripHeight +
                   8,
@@ -629,18 +626,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
     if (items.isEmpty) {
       if (state.isLoading || state.hasMore) {
         return const _FeedMessage(message: '正在刷新内容', showSpinner: true);
-
       }
       // Official single-column feed logs + hides loading on an empty list
       // (`SeriesBookMallTabFragment`); it has no dedicated empty card. The
       // copy `@string/d0n` still exists as a shared empty string, so the
       // page shows that and nothing else.
-      return const _FeedMessage(
-        key: Key('drama_empty'),
-        message: '暂无符合条件的短剧',
-      );
+      return const _FeedMessage(key: Key('drama_empty'), message: '暂无符合条件的短剧');
     }
-
 
     return NotificationListener<ScrollNotification>(
       onNotification: _onFeedScroll,
@@ -701,7 +693,6 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 onTogglePlay: _togglePlay,
                 onFollow: () => _toggleFollow(item),
                 onLike: () => _toggleLike(item),
-
               ),
             ),
           );
@@ -746,7 +737,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       final eps = volumes.expand((volume) => volume).toList(growable: false);
       if (eps.isEmpty) throw const ApiException('剧集列表暂时无法加载');
-      final saved = await PlayerHistory(LibraryStore.instance).load(contentId);
+      final saved = await PlayerHistory(
+        widget.historyStore ?? LibraryStore.instance,
+      ).load(contentId);
       final index = (resumeEpisodeIndex(saved, eps) ?? 0).clamp(
         0,
         eps.length - 1,
@@ -755,26 +748,40 @@ class _DramaPageState extends ConsumerState<DramaPage>
       await Navigator.push(
         context,
         MaterialPageRoute<void>(
-          builder: (_) => PlayerPage(
-            bookId: contentId,
-            kind: item.kind,
-            title: item.title,
-            cover: item.cover,
-            eps: eps,
-            startIndex: index.toInt(),
-            // 官方「观看全集」进播放器**不弹选集面板**：goToSingleFeed 虽然
-            // setLaunchCatalogPanel(true)，但消费端 catalogdialog/v2/k.q0()
-            // 被 AB `series_view_show_auto`（默认 enabled=false）门住——
-            // 默认进播放器续当前集，选集入口是底部目录条（更正 §22）。
-            // 进度不需要显式传——上面的 `disposePlayer()` 已把 feed 的
-            // 当前集与播放进度写进历史，PlayerPage 从同一条历史续播。
-            shortSeries: true,
-            // 播放页沉浸式信息层（官方截图）：右栏追剧计数、AI 声明行、
-            // 追剧/点赞写本地 store（feed 右栏同一条链路）。
-            followerCount: item.followerCount,
-            aiGenerated: item.aiGenerated,
-            onFollow: () => unawaited(_toggleFollow(item)),
-            onLike: () => unawaited(_toggleLike(item)),
+          builder: (_) => ListenableBuilder(
+            listenable: Listenable.merge([
+              ShelfStore.instance.listenable,
+              DiggStore.instance.listenable,
+            ]),
+            builder: (context, child) => PlayerPage(
+              bookId: contentId,
+              kind: item.kind,
+              title: item.title,
+              cover: item.cover,
+              eps: eps,
+              startIndex: index.toInt(),
+              contentLoader: widget.contentLoader == null
+                  ? null
+                  : (episode) => widget.contentLoader!(episode.itemId, tab),
+              playerFactory: widget.playerFactory,
+              historyStore: widget.historyStore,
+              // 官方「观看全集」进播放器**不弹选集面板**：goToSingleFeed 虽然
+              // setLaunchCatalogPanel(true)，但消费端 catalogdialog/v2/k.q0()
+              // 被 AB `series_view_show_auto`（默认 enabled=false）门住——
+              // 默认进播放器续当前集，选集入口是底部目录条（更正 §22）。
+              // 进度不需要显式传——上面的 `disposePlayer()` 已把 feed 的
+              // 当前集与播放进度写进历史，PlayerPage 从同一条历史续播。
+              shortSeries: true,
+              // 播放页沉浸式信息层（官方截图）：右栏追剧计数、AI 声明行、
+              // 追剧/点赞写本地 store（feed 右栏同一条链路）。
+              followerCount: item.followerCount,
+              aiGenerated: item.aiGenerated,
+              onFollow: () => unawaited(_toggleFollow(item)),
+              onLike: () => unawaited(_toggleLike(item)),
+              onLikeTap: () => unawaited(_like(item)),
+              liked: DiggStore.instance.containsItem(item),
+              collected: ShelfStore.instance.containsItem(item),
+            ),
           ),
         ),
       );
@@ -824,10 +831,17 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final liked = await DiggStore.instance.toggle(item);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(liked ? '点赞成功，可在「我的-我的点赞」查看' : '已取消点赞'),
-      ),
+      SnackBar(content: Text(liked ? '点赞成功，可在「我的-我的点赞」查看' : '已取消点赞')),
     );
+  }
+
+  Future<void> _like(MediaItem item) async {
+    final store = DiggStore.instance;
+    if (!store.isReady || store.containsItem(item)) return;
+    if (!await store.like(item) || !mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('点赞成功，可在「我的-我的点赞」查看')));
   }
 
   void _openSearch() {
@@ -1021,9 +1035,7 @@ class _ChannelTab extends StatelessWidget {
                     fontSize: 18,
                     height: 1.1,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-                    color: selected
-                        ? Colors.white
-                        : const Color(0x99FFFFFF),
+                    color: selected ? Colors.white : const Color(0x99FFFFFF),
                   ),
                 ),
                 // 官方指示条：高 `app:arw` = 3dp、宽 `app:auw` = 16dp（`ap3.xml`），
@@ -1076,7 +1088,6 @@ class _DramaFeedCard extends StatelessWidget {
   final VoidCallback onFollow;
   final VoidCallback onLike;
 
-
   const _DramaFeedCard({
     required this.item,
     required this.opening,
@@ -1090,7 +1101,6 @@ class _DramaFeedCard extends StatelessWidget {
     required this.onFollow,
     required this.onLike,
   });
-
 
   /// Whether the viewer may drive this card: only the on-screen page owns the
   /// player, so only it shows a seek bar (and only it reacts to gestures).
@@ -1301,7 +1311,6 @@ class _CardGestures extends StatelessWidget {
     this.onHorizontalDrag,
   });
 
-
   @override
   Widget build(BuildContext context) {
     if (!enabled) return const SizedBox.expand();
@@ -1335,7 +1344,6 @@ class _CardGestures extends StatelessWidget {
     );
   }
 }
-
 
 /// Official mute hint (`ck8.xml` / `mq3.c`).
 ///
@@ -1467,7 +1475,6 @@ class _MuteHintState extends State<_MuteHint> {
     );
   }
 }
-
 
 /// 官方「2倍速快进中」提示（`cjx.xml`）：高 83dp、黑底 `@color/d_`、
 /// 左侧 32dp Lottie + 16sp bold 白字 `@string/ec6`。本仓库没有那份
@@ -1708,7 +1715,6 @@ class _SeekTrack extends StatelessWidget {
                     ),
                   ),
                 ),
-
               ],
             ),
           ),
@@ -1958,7 +1964,6 @@ class _FullscreenRoundButton extends StatelessWidget {
   );
 }
 
-
 /// Official `d62.xml` / `cf_.xml` / `aq0.xml` surfaces of the feed.
 class _FeedMessage extends StatelessWidget {
   final String message;
@@ -1973,7 +1978,6 @@ class _FeedMessage extends StatelessWidget {
     this.onAction,
     this.showSpinner = false,
   });
-
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -2005,7 +2009,6 @@ class _FeedMessage extends StatelessWidget {
                 ),
               ),
               if (actionLabel != null && onAction != null) ...[
-
                 const SizedBox(height: 16),
                 GestureDetector(
                   onTap: onAction,
@@ -2115,7 +2118,6 @@ class _PullRefreshHint extends StatelessWidget {
     );
   }
 }
-
 
 /// The video rectangle of the on-screen card.
 ///
@@ -2300,6 +2302,7 @@ class _LocalListState extends State<_LocalList> {
   /// 「确定删除浏览历史吗？」确认框）。多选态在下方的 `_selected` 里。
   bool _editing = false;
   final Set<String> _selected = <String>{};
+
   /// 官方 `f.u()` 的取值：1=短剧(genreFilter==1)、2=漫剧、3=视频（其他视频）。
   String? _filter;
 
@@ -2358,8 +2361,7 @@ class _LocalListState extends State<_LocalList> {
               children: [
                 // 官方编辑头（`editHeaderLayout`）：全选/取消全选 + 删除，
                 // 右上角「编辑/完成」。收藏频道没有这套（官方只在浏览历史有）。
-                if (!shelfMode && filtered.isNotEmpty)
-                  _editHeader(filtered),
+                if (!shelfMode && filtered.isNotEmpty) _editHeader(filtered),
                 if (!fromShelf) ...[
                   // 官方 chips 行：固定在悬浮顶栏之下（grid 的 padding 让位）。
                   Padding(
@@ -2483,18 +2485,18 @@ class _LocalListState extends State<_LocalList> {
     final selected = _selected.toSet();
     // 只删选中的记录：按 kind+contentId 精确匹配，其它记录一律不动。
     final removed = await LibraryStore.instance.removeHistoryEntries(
-      _targets.where((target) => selected.contains(
-        '${target.kind}:${target.contentId}',
-      )),
+      _targets.where(
+        (target) => selected.contains('${target.kind}:${target.contentId}'),
+      ),
     );
     if (!mounted) return;
     setState(() {
       _selected.clear();
       if (removed == 0) _editing = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(removed > 0 ? '删除成功' : '删除失败')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(removed > 0 ? '删除成功' : '删除失败')));
   }
 
   Widget _filterChip(String? kind, String label) {
@@ -2513,7 +2515,9 @@ class _LocalListState extends State<_LocalList> {
             label,
             style: TextStyle(
               fontSize: 14,
-              color: selected ? const Color(0xFFFA6725) : const Color(0xB3FFFFFF),
+              color: selected
+                  ? const Color(0xFFFA6725)
+                  : const Color(0xB3FFFFFF),
             ),
           ),
         ),
@@ -2521,14 +2525,11 @@ class _LocalListState extends State<_LocalList> {
     );
   }
 
-  List<Map<String, dynamic>> _historyEntries() => LibraryStore
-      .instance
-      .historySnapshot()
-      .where((entry) {
+  List<Map<String, dynamic>> _historyEntries() =>
+      LibraryStore.instance.historySnapshot().where((entry) {
         final kind = entry['kind']?.toString() ?? '';
         return kind == 'video' || kind == 'manju';
-      })
-      .toList();
+      }).toList();
 
   List<MediaItem> _itemsOf(List<Map<String, dynamic>> entries) => [
     for (final entry in entries)
@@ -2546,7 +2547,6 @@ class _LocalListState extends State<_LocalList> {
   ];
 
   List<MediaItem> _shelfItems() => [
-
     for (final record in ShelfStore.instance.records())
       if (record.item.kind == 'video' || record.item.kind == 'manju')
         record.item,
@@ -2675,7 +2675,11 @@ class _DistributeCard extends StatelessWidget {
                         ),
                         child: const Padding(
                           padding: EdgeInsets.all(2),
-                          child: Icon(Icons.check, size: 14, color: Colors.white),
+                          child: Icon(
+                            Icons.check,
+                            size: 14,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),
@@ -2713,4 +2717,3 @@ class _DistributeCard extends StatelessWidget {
     );
   }
 }
-

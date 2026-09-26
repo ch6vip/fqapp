@@ -21,13 +21,16 @@ void main() {
     expect(config.padNewBottomStyle, isFalse);
     expect(config.reverseClearScreen, isFalse);
     expect(config.landscapeLockEnabled, isFalse);
+    expect(config.landscapeDoubleTapEnabled, isFalse);
   });
 
   test('the bottom style is an OR of both fields', () {
     expect(const PlayerStyleConfig().newBottomStyle, isFalse);
     expect(
-      const PlayerStyleConfig(useNewPlayerBottomStyle: false, hasBanner: true)
-          .newBottomStyle,
+      const PlayerStyleConfig(
+        useNewPlayerBottomStyle: false,
+        hasBanner: true,
+      ).newBottomStyle,
       isTrue,
     );
     expect(
@@ -44,12 +47,14 @@ void main() {
       },
       'func_reverse_of_clear_screen_v691': {'reverse': true},
       'landscape_func_config_v705': {'enable_lock': true},
+      'video_landscape_style_609': {'enable': true},
       'pad_new_player_bottom_style': true,
     });
     expect(config.useNewPlayerBottomStyle, isTrue);
     expect(config.hasBanner, isFalse);
     expect(config.reverseClearScreen, isTrue);
     expect(config.landscapeLockEnabled, isTrue);
+    expect(config.landscapeDoubleTapEnabled, isTrue);
     expect(config.padNewBottomStyle, isTrue);
   });
 
@@ -60,26 +65,29 @@ void main() {
     expect(config.landscapeLockEnabled, isFalse);
   });
 
-  test('load reads the bundled config and survives a malformed bundle', () async {
-    final loaded = await PlayerStyleConfig.load(
-      bundle: _StringBundle('''
+  test(
+    'load reads the bundled config and survives a malformed bundle',
+    () async {
+      final loaded = await PlayerStyleConfig.load(
+        bundle: _StringBundle('''
 {
   "player_bottom_style_config": {"use_new_player_bottom_style": true},
   "landscape_func_config_v705": {"enable_lock": true}
 }
 '''),
-    );
-    expect(loaded.useNewPlayerBottomStyle, isTrue);
-    expect(loaded.landscapeLockEnabled, isTrue);
-    expect(PlayerStyleConfig.instance.landscapeLockEnabled, isTrue);
+      );
+      expect(loaded.useNewPlayerBottomStyle, isTrue);
+      expect(loaded.landscapeLockEnabled, isTrue);
+      expect(PlayerStyleConfig.instance.landscapeLockEnabled, isTrue);
 
-    PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
-    final broken = await PlayerStyleConfig.load(
-      bundle: _StringBundle('not json at all'),
-    );
-    expect(broken, same(PlayerStyleConfig.defaults));
-    expect(PlayerStyleConfig.instance.landscapeLockEnabled, isFalse);
-  });
+      PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
+      final broken = await PlayerStyleConfig.load(
+        bundle: _StringBundle('not json at all'),
+      );
+      expect(broken, same(PlayerStyleConfig.defaults));
+      expect(PlayerStyleConfig.instance.landscapeLockEnabled, isFalse);
+    },
+  );
 }
 
 class _StringBundle extends CachingAssetBundle {

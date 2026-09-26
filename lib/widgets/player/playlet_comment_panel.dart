@@ -21,7 +21,8 @@ import 'package:flutter/material.dart';
 import '../../models/book_comment.dart' show formatCount;
 import '../../models/playlet_comment.dart';
 import '../../services/api_client.dart';
-import '../../services/user_facing_error.dart';
+import 'playlet_discussion_tile.dart';
+import 'playlet_reply_panel.dart';
 
 /// 一次「加载一页」的请求：宿主注入，测试可替身。
 typedef PlayletCommentPageLoader =
@@ -39,9 +40,7 @@ class PlayletCommentPanel extends StatefulWidget {
     this.loader,
     this.initialTotal = 0,
     this.focusCommentId = '',
-    this.submitComment,
-    this.diggComment,
-    this.replyComment,
+    this.replyLoader,
   });
 
   final String seriesId;
@@ -56,15 +55,7 @@ class PlayletCommentPanel extends StatefulWidget {
   /// （`SeriesHotCommentView.java:468-559`）。本地等价：用
   /// `insert_comment_ids` 让服务端把这条插进列表，页面里高亮它。
   final String focusCommentId;
-
-  /// 发表评论的回调；为 null 时输入条提示「当前页面不支持发表评论」。
-  final Future<void> Function(String text)? submitComment;
-
-  /// 点赞/取消点赞（官方独立 digg 接口）。为 null 时点赞按钮只读。
-  final Future<void> Function(PlayletComment comment, bool liked)? diggComment;
-
-  /// 回复某条评论（官方 reply/add）。为 null 时不显示「回复」入口。
-  final Future<void> Function(PlayletComment comment, String text)? replyComment;
+  final PlayletReplyPageLoader? replyLoader;
 
   /// 打开面板：官方入口在右侧竖栏，竖屏走底部弹窗。
   static Future<void> show(
@@ -73,9 +64,7 @@ class PlayletCommentPanel extends StatefulWidget {
     PlayletCommentPageLoader? loader,
     int total = 0,
     String focusCommentId = '',
-    Future<void> Function(String text)? submitComment,
-    Future<void> Function(PlayletComment comment, bool liked)? diggComment,
-    Future<void> Function(PlayletComment comment, String text)? replyComment,
+    PlayletReplyPageLoader? replyLoader,
   }) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -89,9 +78,7 @@ class PlayletCommentPanel extends StatefulWidget {
       loader: loader,
       initialTotal: total,
       focusCommentId: focusCommentId,
-      submitComment: submitComment,
-      diggComment: diggComment,
-      replyComment: replyComment,
+      replyLoader: replyLoader,
     ),
   );
 
@@ -118,9 +105,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
   bool _hasMore = true;
   Object? _error;
   int _generation = 0;
-
-  /// 当前回复目标（官方编辑器会把「回复 @某某」带进输入框）。
-  PlayletComment? _replyTo;
+  PlayletComment? _replyTarget;
 
   @override
   void initState() {
@@ -160,8 +145,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
 
   /// 官方分页：首页整表替换，加载更多按 cursor 追加。
   Future<void> _load({required bool reset}) async {
-    if (_loading) return;
-    if (!reset && !_hasMore) return;
+    if (!reset && (_loading || !_hasMore)) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -173,11 +157,12 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
     });
 
     final generation = ++_generation;
+    final requestedCursor = reset ? '' : _cursor;
     try {
       final page = await _fetch(
         sort: _sort,
         count: 10,
-        cursor: reset ? '' : _cursor,
+        cursor: requestedCursor,
         tag: _tag,
       );
       if (!mounted || generation != _generation) return;
@@ -187,11 +172,19 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
             ..clear()
             ..addAll(page.comments);
         } else {
-          _comments.addAll(page.comments);
+          final ids = _comments.map((comment) => comment.id).toSet();
+          _comments.addAll(
+            page.comments.where(
+              (comment) => comment.id.isEmpty || ids.add(comment.id),
+            ),
+          );
         }
         _total = page.totalCount > 0 ? page.totalCount : _total;
         _cursor = page.cursor;
-        _hasMore = page.hasMore && page.cursor.isNotEmpty;
+        _hasMore =
+            page.hasMore &&
+            page.cursor.isNotEmpty &&
+            page.cursor != requestedCursor;
         _loading = false;
       });
     } catch (error) {
@@ -204,7 +197,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
   }
 
   void _onScroll() {
-    if (!_scroll.hasClients || _loading || !_hasMore) return;
+    if (!_scroll.hasClients || _loading || !_hasMore || _error != null) return;
     final threshold = _scroll.position.maxScrollExtent - 240;
     if (_scroll.position.pixels >= threshold) {
       unawaited(_load(reset: false));
@@ -223,6 +216,25 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
   @override
   Widget build(BuildContext context) {
     final height = MediaQuery.sizeOf(context).height;
+    final replyTarget = _replyTarget;
+    if (replyTarget != null) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) setState(() => _replyTarget = null);
+        },
+        child: SizedBox(
+          height: height * .62,
+          child: PlayletReplyPanel(
+            key: ValueKey(replyTarget.id),
+            seriesId: widget.seriesId,
+            comment: replyTarget,
+            loader: widget.replyLoader,
+            onBack: () => setState(() => _replyTarget = null),
+          ),
+        ),
+      );
+    }
     return SizedBox(
       // 官方高度是屏幕高 × 系数（CommentDialogHelper.java:473-483）；竖屏用
       // 0.62 作为该系数在本布局下的等价，避免顶到状态栏。
@@ -234,95 +246,9 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
           _filters(),
           const Divider(height: 1),
           Expanded(child: _body()),
-          const Divider(height: 1),
-          if (_replyTo != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '回复 @${_replyTo!.userName.isEmpty ? '匿名用户' : _replyTo!.userName}',
-                      key: const ValueKey('playlet-comment-reply-target'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF9499A0),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    key: const ValueKey('playlet-comment-reply-cancel'),
-                    tooltip: '取消回复',
-                    onPressed: () => setState(() => _replyTo = null),
-                    icon: const Icon(
-                      Icons.close_rounded,
-                      size: 16,
-                      color: Color(0xFF9499A0),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          _CommentComposer(onSubmit: _submitComment),
         ],
       ),
     );
-  }
-
-  /// 官方发布链路：`comment/add`（`p0.java:211-256`）；有回复目标时走
-  /// `reply/add`（`nx1/d.java:217-231`）。成功后重拉第一页，等价于官方的
-  /// 本地插入（`gx1/n0.java:346-363`）。
-  Future<String?> _submitComment(String text) async {
-    final target = _replyTo;
-    final submit = target == null ? widget.submitComment : null;
-    final reply = target == null ? null : widget.replyComment;
-    if (target == null && submit == null) {
-      return '当前页面不支持发表评论';
-    }
-    if (target != null && reply == null) {
-      return '当前页面不支持回复';
-    }
-    try {
-      if (target != null) {
-        await reply!(target, text);
-      } else {
-        await submit!(text);
-      }
-    } catch (error) {
-      // 失败原因按官方「保留草稿 + 提示」的语义回传输入条。
-      return userFacingError(error);
-    }
-    if (mounted) setState(() => _replyTo = null);
-    await _load(reset: true);
-    return null;
-  }
-
-  Future<void> Function(PlayletComment comment, bool liked)? get _diggCallback =>
-      widget.diggComment;
-
-  /// 乐观更新：先改本地再打接口，失败回滚（官方 `gx1/n0.java:489-509`）。
-  Future<void> _toggleDigg(PlayletComment comment) async {
-    final digg = _diggCallback;
-    if (digg == null) return;
-    final index = _comments.indexWhere((c) => c.id == comment.id);
-    if (index < 0) return;
-    final before = _comments[index];
-    final liked = !before.userDigg;
-    setState(() => _comments[index] = before.withDigg(liked));
-    try {
-      await digg(before, liked);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        final now = _comments.indexWhere((c) => c.id == comment.id);
-        if (now >= 0) _comments[now] = before;
-      });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(userFacingError(error))));
-    }
   }
 
   Widget _header() => Padding(
@@ -382,9 +308,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             // 官方选中样式：橙字 #FFFA6725 + 浅橙底 #1AFA6725。
-            color: selected
-                ? const Color(0x1AFA6725)
-                : const Color(0xFFF5F5F7),
+            color: selected ? const Color(0x1AFA6725) : const Color(0xFFF5F5F7),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Text(
@@ -438,14 +362,20 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
       itemCount: _comments.length + (_hasMore ? 1 : 0),
       itemBuilder: (context, index) {
         if (index >= _comments.length) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
             child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              child: _loading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : TextButton(
+                      key: const ValueKey('playlet-comment-more'),
+                      onPressed: () => unawaited(_load(reset: false)),
+                      child: Text(_error == null ? '加载更多' : '加载失败，点击重试'),
+                    ),
             ),
           );
         }
@@ -454,195 +384,18 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
     );
   }
 
-  Widget _tile(PlayletComment comment) => Container(
+  Widget _tile(PlayletComment comment) => PlayletDiscussionTile(
     key: ValueKey('playlet-comment-${comment.id}'),
-    // 从热评进来的那条原本就高亮（官方 `force_refresh` 的等价反馈）。
-    color: comment.id == widget.focusCommentId
-        ? const Color(0x14FA6725)
-        : null,
-    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        CircleAvatar(
-          radius: 16,
-          backgroundColor: const Color(0xFFEDEDF0),
-          foregroundImage: comment.userAvatar.isEmpty
-              ? null
-              : NetworkImage(comment.userAvatar),
-          child: comment.userAvatar.isEmpty
-              ? Text(
-                  comment.userName.isEmpty
-                      ? '?'
-                      : comment.userName.characters.first,
-                  style: const TextStyle(fontSize: 13),
-                )
-              : null,
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                comment.userName.isEmpty ? '匿名用户' : comment.userName,
-                style: const TextStyle(fontSize: 13, color: Color(0xFF9499A0)),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                comment.text,
-                style: const TextStyle(fontSize: 15, color: Color(0xFF1B1B1B)),
-              ),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Text(
-                    comment.relativeTime(),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF9499A0),
-                    ),
-                  ),
-                  const Spacer(),
-                  // 官方点赞选中态用橙色图标（与面板选中色一致），
-                  // 点击先本地乐观更新，失败再回滚（gx1/n0.java:489-509）。
-                  GestureDetector(
-                    key: ValueKey('playlet-comment-like-${comment.id}'),
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _diggCallback == null ? null : () => _toggleDigg(comment),
-                    child: Row(
-                      children: [
-                        Icon(
-                          comment.userDigg
-                              ? Icons.thumb_up_alt_rounded
-                              : Icons.thumb_up_alt_outlined,
-                          size: 14,
-                          color: comment.userDigg
-                              ? const Color(0xFFFA6725)
-                              : const Color(0xFF9499A0),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${comment.diggCount}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: comment.userDigg
-                                ? const Color(0xFFFA6725)
-                                : const Color(0xFF9499A0),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  GestureDetector(
-                    key: ValueKey('playlet-comment-reply-${comment.id}'),
-                    behavior: HitTestBehavior.opaque,
-                    onTap: widget.replyComment == null
-                        ? null
-                        : () => setState(() => _replyTo = comment),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.mode_comment_outlined,
-                          size: 14,
-                          color: Color(0xFF9499A0),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${comment.replyCount}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF9499A0),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-/// 评论输入条（官方编辑器底部：输入框 + 「发布」）。
-///
-/// 文案取官方资源：占位「发条友善的评论吧」（0x7f061595 = `d_j`）、
-/// 按钮「发布」（0x7f0615a1 附近，`dtu`）——两者都是 APK 里真实存在的串。
-///
-/// 发送成功后官方会把新评论插到列表最前（`gx1/n0.java:346-363` 的本地
-/// 乐观更新），本地等价是回调让宿主重拉第一页。
-class _CommentComposer extends StatefulWidget {
-  const _CommentComposer({required this.onSubmit});
-
-  /// 返回 null 表示成功；返回文案表示失败原因（官方失败时保留草稿）。
-  final Future<String?> Function(String text) onSubmit;
-
-  @override
-  State<_CommentComposer> createState() => _CommentComposerState();
-}
-
-class _CommentComposerState extends State<_CommentComposer> {
-  final _controller = TextEditingController();
-  bool _sending = false;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty || _sending) return;
-    setState(() => _sending = true);
-    final error = await widget.onSubmit(text);
-    if (!mounted) return;
-    setState(() => _sending = false);
-    if (error == null) {
-      _controller.clear();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    top: false,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              key: const ValueKey('playlet-comment-input'),
-              controller: _controller,
-              maxLines: 3,
-              minLines: 1,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => unawaited(_submit()),
-              decoration: const InputDecoration(
-                hintText: '发条友善的评论吧',
-                isDense: true,
-                border: InputBorder.none,
-              ),
-            ),
-          ),
-          TextButton(
-            key: const ValueKey('playlet-comment-send'),
-            onPressed: _sending ? null : () => unawaited(_submit()),
-            child: const Text(
-              '发布',
-              style: TextStyle(color: Color(0xFFFA6725)),
-            ),
-          ),
-        ],
-      ),
-    ),
+    text: comment.text,
+    userName: comment.userName,
+    userAvatar: comment.userAvatar,
+    published: comment.relativeTime(),
+    diggCount: comment.diggCount,
+    replyCount: comment.replyCount,
+    highlighted: comment.id == widget.focusCommentId,
+    onReplies: comment.id.isEmpty
+        ? null
+        : () => setState(() => _replyTarget = comment),
   );
 }
 

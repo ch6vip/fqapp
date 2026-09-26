@@ -769,6 +769,27 @@ class ApiClient {
     );
   }
 
+  /// 短剧回复读取使用 Book/NovelBookReply 参数，不能走小说段评回复接口。
+  Future<CommentReplyPage> playletCommentReplies(
+    String seriesId,
+    String commentId, {
+    int count = 10,
+    String cursor = '',
+  }) async {
+    final response = await _get(
+      _url(
+        '/api/v1/series/${Uri.encodeComponent(seriesId)}/comments/'
+        '${Uri.encodeComponent(commentId)}/replies',
+        {'count': '$count', if (cursor.isNotEmpty) 'cursor': cursor},
+      ),
+    );
+    final status = response.statusCode;
+    final bytes = response.bodyBytes;
+    return Isolate.run(
+      () => CommentReplyPage.fromPayload(_decodeEnvelope(status, bytes)),
+    );
+  }
+
   /// 短剧弹幕取数（官方 `DanmakuRequestHelper.java:314-329`）。
   ///
   /// [vid] 是当前视频 id（官方把它当 path 的 group_id），[seriesId] 进
@@ -791,9 +812,8 @@ class ApiClient {
     final status = response.statusCode;
     final bytes = response.bodyBytes;
     return Isolate.run(
-      () => PlayletCommentPage.fromDanmakuPayload(
-        _decodeEnvelope(status, bytes),
-      ),
+      () =>
+          PlayletCommentPage.fromDanmakuPayload(_decodeEnvelope(status, bytes)),
     );
   }
 
@@ -1258,9 +1278,9 @@ class ApiClient {
   /// 由调用方回落到既有频道表。
   Future<List<ChannelTab>> channelTabs({int tabType = 16}) async {
     try {
-      final r = await _get(_url('/api/v1/recommend/channels', {
-        'tab_type': '$tabType',
-      }));
+      final r = await _get(
+        _url('/api/v1/recommend/channels', {'tab_type': '$tabType'}),
+      );
       final statusCode = r.statusCode;
       final bodyBytes = r.bodyBytes;
       return await Isolate.run(() {

@@ -55,6 +55,9 @@ class PlayerPage extends StatefulWidget {
   final bool aiGenerated;
   final VoidCallback? onFollow;
   final VoidCallback? onLike;
+  final VoidCallback? onLikeTap;
+  final bool liked;
+  final bool collected;
 
   const PlayerPage({
     super.key,
@@ -74,6 +77,9 @@ class PlayerPage extends StatefulWidget {
     this.aiGenerated = false,
     this.onFollow,
     this.onLike,
+    this.onLikeTap,
+    this.liked = false,
+    this.collected = false,
   });
 
   @override
@@ -126,13 +132,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 官方入口计数（`SeriesCommentView` 读 `du4.a.e()` 并回写 videoData）；
   /// 0 表示「还没有人评论」，入口按官方文案显示「评论」。
   int _commentCount = 0;
+  bool _externalPanelOpen = false;
   int _danmakuGeneration = 0;
+
   /// 选集面板头部用的剧信息（官方 `aa8.xml:7-15`）。
   String _seriesTitle = '';
   String _seriesCover = '';
   String _episodeLabel = '';
+
   /// 官方「画面撑满」（SP `is_fill_screen`）。
   bool _fillScreen = false;
+
   /// 官方「默认静音」：**不落盘**，只在进程内（`tm3/b.java:17-20`）。
   bool _defaultMute = PlayerPanelPreferences.defaultMute;
 
@@ -201,9 +211,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// （`comment_cnt`，官方入口「评论/抢首评」的判据）。
   /// 自吞异常——band 是装饰，接口再差也不能影响播放。
   Future<void> _loadBandExtras() async {
-    final series = await (widget.seriesLoader?.call(widget.bookId) ??
-            ApiClient.instance.seriesDetail(widget.bookId))
-        .catchError((Object _) => SeriesDetail.empty);
+    final series =
+        await (widget.seriesLoader?.call(widget.bookId) ??
+                ApiClient.instance.seriesDetail(widget.bookId))
+            .catchError((Object _) => SeriesDetail.empty);
     if (!mounted) return;
     // 评论计数与评论入口同源：有计数才显示入口（官方该项默认 gone，
     // 由数据驱动显隐，见 res/layout/cjs.xml:11 与 SeriesCommentView.java:479-491）。
@@ -243,38 +254,28 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   /// 官方右栏评论入口：竖屏走底部评论面板（`CommentDialogHelper`）。
   /// 面板数据走短剧剧评链路（`gx1/m.java:168-181`），与播放页共用剧集 id。
-  void _openComments() {
-    if (!widget.shortSeries) return;
-    PlayletCommentPanel.show(
-      context,
-      seriesId: widget.bookId,
-      total: _commentCount,
-      submitComment: _submitComment,
-      diggComment: _diggComment,
-      replyComment: _replyComment,
-    );
+  Future<void> _withPlayerOverlay(Future<void> Function() open) async {
+    if (_externalPanelOpen || !mounted) return;
+    setState(() => _externalPanelOpen = true);
+    try {
+      await open();
+    } finally {
+      if (mounted) setState(() => _externalPanelOpen = false);
+    }
   }
 
-  /// 发表剧评（官方 `comment/add`）。数据走真实接口，成功后由面板重拉。
-  Future<void> _submitComment(String text) =>
-      ApiClient.instance.addPlayletComment(widget.bookId, text);
-
-  /// 回复剧评（官方 `reply/add`）。
-  Future<void> _replyComment(PlayletComment comment, String text) =>
-      ApiClient.instance.replyPlayletComment(
-        comment.id,
-        seriesId: widget.bookId,
-        text: text,
-      );
-
-  /// 点赞/取消点赞（官方独立 digg 接口）。
-  Future<void> _diggComment(PlayletComment comment, bool liked) =>
-      ApiClient.instance.diggPlayletComment(
-        comment.id,
-        liked: liked,
-        bookId: widget.bookId,
-      );
-
+  void _openComments() {
+    if (!widget.shortSeries) return;
+    unawaited(
+      _withPlayerOverlay(
+        () => PlayletCommentPanel.show(
+          context,
+          seriesId: widget.bookId,
+          total: _commentCount,
+        ),
+      ),
+    );
+  }
 
   /// 热评数据：官方与评论计数同源（`comment/list` 的
   /// `comment_source=4/count=20` 那次请求，`a13/w.java:563-599`），
@@ -303,14 +304,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final target = comment.dataType == UgcRelativeType.reply
         ? comment.parentCommentId
         : comment.id;
-    PlayletCommentPanel.show(
-      context,
-      seriesId: widget.bookId,
-      total: _commentCount,
-      focusCommentId: target,
-      submitComment: _submitComment,
-      diggComment: _diggComment,
-      replyComment: _replyComment,
+    unawaited(
+      _withPlayerOverlay(
+        () => PlayletCommentPanel.show(
+          context,
+          seriesId: widget.bookId,
+          total: _commentCount,
+          focusCommentId: target,
+        ),
+      ),
     );
   }
 
@@ -336,9 +338,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       );
       final ids = await _watched.ids(widget.bookId);
       if (!mounted) return;
-      setState(() => _watchedIds = migrated.isEmpty
-          ? ids
-          : {...ids, ...migrated});
+      setState(
+        () => _watchedIds = migrated.isEmpty ? ids : {...ids, ...migrated},
+      );
     } catch (_) {
       // 已看标记是装饰，读不到就当没有。
     }
@@ -363,8 +365,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 两者都只改播放器的表现，不动进度：官方切换后不 pause 也不 seek
   /// （画面撑满 `FillScreenDataManager`；默认静音 `tm3/b`）。
   Future<void> _loadPanelPreferences() async {
-    final portrait =
-        MediaQuery.orientationOf(context) == Orientation.portrait;
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
     final fillScreen = await PlayerPanelPreferences.loadFillScreen(
       portrait: portrait,
     );
@@ -437,67 +438,34 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
-  /// 发弹幕（官方 `comment/add`，`commit_source=1500`）：成功后按当前进度
-  /// 就地插入，等价于官方的整池重灌。
-  Future<void> _sendDanmaku(String text) async {
-    // 拿不到 vid 时必须**报错**，不能静默返回：静默返回等于「弹幕发出去了」
-    // 的假象——调用方看不到异常就不会给用户任何反馈。
-    if (widget.eps.isEmpty || _index < 0 || _index >= widget.eps.length) {
-      throw const ApiException('当前剧集不可用，无法发送弹幕');
-    }
-    final vid = widget.eps[_index].itemId;
-    if (vid.isEmpty) {
-      throw const ApiException('当前剧集缺少视频 ID，无法发送弹幕');
-    }
-    final offset = _player?.position.inMilliseconds ?? 0;
-    await ApiClient.instance.addPlayletDanmaku(
-      vid,
-      seriesId: widget.bookId,
-      text: text,
-      offsetMs: offset,
-    );
-    if (!mounted) return;
-    setState(() {
-      _danmaku.entries.add(
-        PlayletComment(
-          id: 'local-${DateTime.now().microsecondsSinceEpoch}',
-          text: text,
-          dataType: UgcRelativeType.seriesVideo,
-          offsetMs: offset,
-        ),
-      );
-    });
-  }
-
   /// 分享（官方 `SeriesShareView` → `showShortSeriesSharePanel`）：
   /// 先取分享数据，再弹面板；取不到就按官方给「网络错误，请重试」。
   Future<void> _openShare() async {
     if (!widget.shortSeries || widget.bookId.isEmpty) return;
-    try {
-      final payload = await ApiClient.instance.playletShare(
-        widget.bookId,
-        currentChapterId: widget.eps.isEmpty
-            ? ''
-            : widget.eps[_index].itemId,
-        firstChapterId: widget.eps.isEmpty ? '' : widget.eps.first.itemId,
-        shareTimestamp: '${DateTime.now().millisecondsSinceEpoch}',
-        entrance: 'video_more',
-      );
-      if (!mounted) return;
-      await PlayletSharePanel.show(
-        context,
-        title: '《${widget.title}》免费看全集',
-        info: PlayletShareInfo.fromPayload(payload),
-        seriesName: widget.title,
-        resolveShortUrl: (target) =>
-            ApiClient.instance.shareShortUrl(target),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text(shareUnavailableToast)));
-    }
+    await _withPlayerOverlay(() async {
+      try {
+        final payload = await ApiClient.instance.playletShare(
+          widget.bookId,
+          currentChapterId: widget.eps.isEmpty ? '' : widget.eps[_index].itemId,
+          firstChapterId: widget.eps.isEmpty ? '' : widget.eps.first.itemId,
+          shareTimestamp: '${DateTime.now().millisecondsSinceEpoch}',
+          entrance: 'video_more',
+        );
+        if (!mounted) return;
+        await PlayletSharePanel.show(
+          context,
+          title: '《${widget.title}》免费看全集',
+          info: PlayletShareInfo.fromPayload(payload),
+          seriesName: widget.title,
+          resolveShortUrl: (target) => ApiClient.instance.shareShortUrl(target),
+        );
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text(shareUnavailableToast)));
+      }
+    });
   }
 
   /// 选集面板头部下方的关联原著（官方 `a1.java:1819-1828`）。
@@ -509,11 +477,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (!PlayerStyleConfig.instance.relateBookInEpisodesDialog) return null;
     final book = _originalBook;
     if (book == null) return null;
-    return EpisodeRelateBook(
-      id: book.id,
-      title: book.title,
-      cover: book.cover,
-    );
+    return EpisodeRelateBook(id: book.id, title: book.title, cover: book.cover);
   }
 
   /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。
@@ -1031,74 +995,75 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     // 每次 build 重读，配置变化无需重启页面。
     final style = PlayerStyleConfig.instance;
     return VideoPlayerChrome(
-    player: _player,
-    title: widget.title,
-    episodes: widget.eps,
-    currentIndex: _index,
-    playingIndex: _activeIndex,
-    duration: _duration,
-    playing: _playing,
-    shortSeries: widget.shortSeries,
-    watchedEpisodes: watchedIndexes(_watchedIds, widget.eps),
-    followerLabel: widget.followerCount > 0
-        ? formatCounter('${widget.followerCount}')
-        : null,
-    onFollow: widget.onFollow,
-    onLike: widget.onLike,
-    // 官方竖屏双击点赞（`jq3/x.q.onDoubleTap` → `holder.z7`）：动画由播放器
-    // 自己播，点赞动作走与右栏「点赞」同一条宿主回调，不另开一条链路。
-    onLikeTap: widget.onLike,
-    aiGenerated: widget.aiGenerated,
-    showSeekHint: _seekHintVisible,
-    onSeekHintConsumed: _consumeSeekHint,
-    seriesStatus: _seriesStatus,
-    originalBook: _originalBook,
-    onOpenOriginalBook: _openOriginalBook,
-    // 选集面板的关联原著条：官方由
-    // `series_relate_book_config_v659.relate_book_in_episodes_dialog`
-    // 控制且**默认 false**，本地照官方默认（配置里可打开）。
-    relateBook: _episodeRelateBook,
-    onOpenRelateBook: _episodeRelateBook == null ? null : _openOriginalBook,
-    coverUrl: ApiClient.instance.absoluteUrl(widget.cover),
-    enabled:
-        _player != null &&
-        _activeIndex != null &&
-        !_initVideo &&
-        _error == null,
-    onPagingChanged: _onPagingChanged,
-    onSelectEpisode: _selectEpisode,
-    onError: (error) => _fail(error, _loadGeneration),
-    commentCount: _commentCount,
-    onComments: widget.shortSeries ? _openComments : null,
-    hotComments: _hotComments,
-    onHotCommentTap: widget.shortSeries ? _openHotComment : null,
-    // 分享计数：官方来自分享上报服务（`m0.java:1343-1388`），本仓库
-    // 没有该数据源，因此按官方的「无计数」分支显示「分享」
-    // （`SeriesShareView.java:123-129`），不伪造数字。
-    onShare: widget.shortSeries ? _openShare : null,
-    seriesTitle: _seriesTitle,
-    seriesCover: _seriesCover,
-    episodeLabel: _episodeLabel,
-    // 收藏复用播放页的追剧态与动作（官方头部 `ddg` 与右栏
-    // `SeriesCollectView` 是同一个关注态）。
-    // 头部收藏只有「宿主确实给了追剧动作」时才出现（官方头部 `ddg`
-    // 与右栏 `SeriesCollectView` 是同一个关注态）。
-    collected: widget.followerCount > 0,
-    onCollect: widget.onFollow,
-    fillScreen: _fillScreen,
-    onFillScreenChanged: widget.shortSeries ? _setFillScreen : null,
-    defaultMute: _defaultMute,
-    onDefaultMuteChanged: widget.shortSeries ? _setDefaultMute : null,
-    danmaku: _danmaku.entries,
-    danmakuEnabled: _danmakuEnabled,
-    onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,
-    onSendDanmaku: widget.shortSeries ? _sendDanmaku : null,
-    newPlayerBottomStyle: style.useNewPlayerBottomStyle,
-    hasBanner: style.hasBanner,
-    padNewBottomStyle: style.padNewBottomStyle,
-    reverseClearScreen: style.reverseClearScreen,
-    landscapeLockEnabled: style.landscapeLockEnabled,
-    child: _videoArea(),
+      player: _player,
+      title: widget.title,
+      episodes: widget.eps,
+      currentIndex: _index,
+      playingIndex: _activeIndex,
+      duration: _duration,
+      playing: _playing,
+      shortSeries: widget.shortSeries,
+      watchedEpisodes: watchedIndexes(_watchedIds, widget.eps),
+      followerLabel: widget.followerCount > 0
+          ? formatCounter('${widget.followerCount}')
+          : null,
+      onFollow: widget.onFollow,
+      onLike: widget.onLike,
+      // 双击确认本机点赞，与右栏可取消的动作分开，不能复用 toggle 回调。
+      liked: widget.liked,
+      interactionBlocked: _externalPanelOpen,
+      onLikeTap: widget.onLikeTap,
+      aiGenerated: widget.aiGenerated,
+      showSeekHint: _seekHintVisible,
+      onSeekHintConsumed: _consumeSeekHint,
+      seriesStatus: _seriesStatus,
+      originalBook: _originalBook,
+      onOpenOriginalBook: _openOriginalBook,
+      // 选集面板的关联原著条：官方由
+      // `series_relate_book_config_v659.relate_book_in_episodes_dialog`
+      // 控制且**默认 false**，本地照官方默认（配置里可打开）。
+      relateBook: _episodeRelateBook,
+      onOpenRelateBook: _episodeRelateBook == null ? null : _openOriginalBook,
+      coverUrl: ApiClient.instance.absoluteUrl(widget.cover),
+      enabled:
+          _player != null &&
+          _activeIndex != null &&
+          !_initVideo &&
+          _error == null,
+      onPagingChanged: _onPagingChanged,
+      onSelectEpisode: _selectEpisode,
+      onError: (error) => _fail(error, _loadGeneration),
+      commentCount: _commentCount,
+      onComments: widget.shortSeries ? _openComments : null,
+      hotComments: _hotComments,
+      onHotCommentTap: widget.shortSeries ? _openHotComment : null,
+      // 分享计数：官方来自分享上报服务（`m0.java:1343-1388`），本仓库
+      // 没有该数据源，因此按官方的「无计数」分支显示「分享」
+      // （`SeriesShareView.java:123-129`），不伪造数字。
+      onShare: widget.shortSeries ? _openShare : null,
+      seriesTitle: _seriesTitle,
+      seriesCover: _seriesCover,
+      episodeLabel: _episodeLabel,
+      // 收藏复用播放页的追剧态与动作（官方头部 `ddg` 与右栏
+      // `SeriesCollectView` 是同一个关注态）。
+      // 头部收藏只有「宿主确实给了追剧动作」时才出现（官方头部 `ddg`
+      // 与右栏 `SeriesCollectView` 是同一个关注态）。
+      collected: widget.collected,
+      onCollect: widget.onFollow,
+      fillScreen: _fillScreen,
+      onFillScreenChanged: widget.shortSeries ? _setFillScreen : null,
+      defaultMute: _defaultMute,
+      onDefaultMuteChanged: widget.shortSeries ? _setDefaultMute : null,
+      danmaku: _danmaku.entries,
+      danmakuEnabled: _danmakuEnabled,
+      onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,
+      newPlayerBottomStyle: style.useNewPlayerBottomStyle,
+      hasBanner: style.hasBanner,
+      padNewBottomStyle: style.padNewBottomStyle,
+      reverseClearScreen: style.reverseClearScreen,
+      landscapeLockEnabled: style.landscapeLockEnabled,
+      landscapeDoubleTapEnabled: style.landscapeDoubleTapEnabled,
+      child: _videoArea(),
     );
   }
 

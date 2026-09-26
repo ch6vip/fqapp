@@ -3,22 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
-import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/fakes.dart';
 
-/// 更多面板里的弹幕开关与「发弹幕」入口的用例。
-///
-/// 官方依据：更多面板第 5 行是弹幕开关（`oi3/k.java:554-568`，
-/// SP `video_danmaku_switch_sp/key_enable_danmaku_by_user`，默认 true），
-/// 横屏全屏底栏有「发弹幕」入口（`lk3/u0.java:1096-1119`），
-/// 输入占位「发条友善的弹幕吧」、上限提示「弹幕最多输入%d个字」。
+/// 无账号模式保留弹幕开关与渲染，不显示发送入口。
 void main() {
   Widget app({
     bool danmakuEnabled = true,
     VoidCallback? onToggle,
-    Future<void> Function(String)? onSend,
     List<PlayletComment> danmaku = const [],
   }) {
     final player = FakeNativePlayer()..isPlaying = true;
@@ -36,7 +29,6 @@ void main() {
           danmaku: danmaku,
           danmakuEnabled: danmakuEnabled,
           onToggleDanmaku: onToggle,
-          onSendDanmaku: onSend,
           onSelectEpisode: (_) async {},
           onError: (error) => throw error,
           child: const ColoredBox(color: Colors.black),
@@ -55,65 +47,42 @@ void main() {
     await tester.pumpWidget(app(onToggle: () => toggles++));
     await tester.pumpAndSettle();
     await openMore(tester);
-    expect(find.byKey(const ValueKey('player-more-danmaku-row')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('player-more-danmaku-row')),
+      findsOneWidget,
+    );
     expect(find.text('弹幕'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('player-more-danmaku-switch')));
     await tester.pumpAndSettle();
     expect(toggles, 1);
+    expect(
+      tester
+          .widget<Switch>(
+            find.byKey(const ValueKey('player-more-danmaku-switch')),
+          )
+          .value,
+      isFalse,
+    );
+    expect(find.text('发弹幕'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
   });
 
   testWidgets('without a toggle callback the danmaku row is absent', (
     tester,
   ) async {
-    await tester.pumpWidget(app(onSend: (_) async {}));
+    await tester.pumpWidget(app());
     await tester.pumpAndSettle();
     await openMore(tester);
     expect(find.byKey(const ValueKey('player-more-danmaku-row')), findsNothing);
-    expect(find.byKey(const ValueKey('player-more-danmaku-send')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('player-more-danmaku-send')),
+      findsNothing,
+    );
   });
 
-  testWidgets('发弹幕 publishes the trimmed text with the current offset', (
+  testWidgets('the danmaku layer renders only for short series', (
     tester,
   ) async {
-    final sent = <String>[];
-    await tester.pumpWidget(
-      app(onToggle: () {}, onSend: (text) async => sent.add(text)),
-    );
-    await tester.pumpAndSettle();
-    await openMore(tester);
-    await tester.tap(find.byKey(const ValueKey('player-more-danmaku-send')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('danmaku-input')),
-      '  前方高能  ',
-    );
-    await tester.tap(find.byKey(const ValueKey('danmaku-send')));
-    await tester.pumpAndSettle();
-    expect(sent, ['前方高能']);
-  });
-
-  testWidgets('an over-long danmaku is refused with the official hint', (
-    tester,
-  ) async {
-    final sent = <String>[];
-    await tester.pumpWidget(
-      app(onToggle: () {}, onSend: (text) async => sent.add(text)),
-    );
-    await tester.pumpAndSettle();
-    await openMore(tester);
-    await tester.tap(find.byKey(const ValueKey('player-more-danmaku-send')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('danmaku-input')),
-      '弹' * 51,
-    );
-    await tester.tap(find.byKey(const ValueKey('danmaku-send')));
-    await tester.pumpAndSettle();
-    expect(sent, isEmpty);
-    expect(find.text('弹幕最多输入50个字'), findsOneWidget);
-  });
-
-  testWidgets('the danmaku layer renders only for short series', (tester) async {
     final entry = PlayletComment(
       id: 'd1',
       text: '前方高能',
@@ -125,24 +94,5 @@ void main() {
     expect(find.byKey(const ValueKey('player-danmaku-layer')), findsOneWidget);
     // 假播放器起播在 20s，弹幕时间点要落在飞行窗口内才会出现。
     expect(find.byKey(const ValueKey('danmaku-d1')), findsOneWidget);
-  });
-
-  testWidgets('发弹幕失败时给用户反馈，不假装成功', (tester) async {
-    await tester.pumpWidget(
-      app(
-        onToggle: () {},
-        onSend: (text) async => throw const ApiException('当前剧集缺少视频 ID，无法发送弹幕'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await openMore(tester);
-    await tester.tap(find.byKey(const ValueKey('player-more-danmaku-send')));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('danmaku-input')), '测试');
-    await tester.tap(find.byKey(const ValueKey('danmaku-send')));
-    await tester.pumpAndSettle();
-    // 失败必须落到界面，而不是静静吞掉。
-    expect(find.textContaining('无法发送弹幕'), findsOneWidget);
-    expect(tester.takeException(), isNull);
   });
 }

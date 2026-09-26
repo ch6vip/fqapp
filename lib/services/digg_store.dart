@@ -65,6 +65,16 @@ class DiggStore {
       _revision.value++;
       return false;
     }
+    return like(item);
+  }
+
+  /// A double tap confirms a local like; repeated gestures must never undo it.
+  /// Note: .agents/notes/implemented/bug-fix/2026-09-26-playback-guest-controls.md
+  Future<bool> like(MediaItem item) async {
+    final box = _openBox;
+    if (box == null) return false;
+    final key = keyOf(item);
+    if (box.containsKey(key)) return true;
     await box.put(key, {
       'id': item.id,
       'kind': item.kind,
