@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive/hive.dart';
 
 import 'package:fqapp/main.dart';
+import 'package:fqapp/models/channel_tab.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
@@ -133,8 +134,10 @@ class _Seams {
     Future<List<List<Chapter>>> Function(String id, String tab)?
     directoryLoader,
     Widget Function()? searchPageBuilder,
+    Future<List<ChannelTab>> Function()? channelLoader,
   }) => DramaPage(
     directoryLoader: directoryLoader,
+    channelLoader: channelLoader,
     contentLoader: (itemId, tab) async {
       contentCalls.add('$itemId:$tab');
       if (failContent) throw const ApiException('内联取址不可用');
@@ -728,6 +731,53 @@ void main() {
     await _flush(tester);
     expect(find.text('全球杀机 作品'), findsOneWidget);
     expect(find.text('仙渊道尘 作品'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('服务端频道表替换本地频道条（F08）', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const [
+              ChannelTab(type: kChannelVideoFeed, title: '精选'),
+              ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+              ChannelTab(type: kChannelRecent, title: '看过'),
+            ],
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // 名字来自服务端 title，顺序也按服务端给的顺序。
+    expect(find.text('精选'), findsOneWidget);
+    expect(find.text('正片'), findsOneWidget);
+    expect(find.text('看过'), findsOneWidget);
+    // 本地表里没被服务端下发的频道不该再出现。
+    expect(find.text('收藏'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('服务端频道表取不到时保留本地表', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(channelLoader: () async => const <ChannelTab>[]),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // 本地兜底里「收藏」在，服务端专用名不在。
+    expect(find.text('收藏'), findsOneWidget);
+    expect(find.text('精选'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

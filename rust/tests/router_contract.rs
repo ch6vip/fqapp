@@ -240,6 +240,14 @@ fn rest_paths_match_the_go_route_table() {
             vec![("tab_type", "2")],
         ),
         (
+            // 服务端频道表（F08）：同一上游路径，但不挑单个 tab，
+            // 客户端要整份 `tab_item`。
+            "/api/v1/recommend/channels",
+            vec![("tab_type", "16")],
+            "channel_tabs",
+            vec![("tab_type", "16")],
+        ),
+        (
             "/api/v1/rank/7098235271900037133",
             vec![("offset", "0")],
             "rank_data",

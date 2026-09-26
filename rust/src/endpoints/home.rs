@@ -266,7 +266,63 @@ fn series_feed<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<
     })
 }
 
+/// 频道表（官方 `GET /reading/bookapi/bookmall/tab/v`，`BookstoreTabResponse`
+/// 的 `data: TabDataList`，其 `tab_item` 是 `Vec<BookstoreTabData>`）。
+///
+/// 官方**不用静态频道表**：`m0.java:3051-3089` 把 `tab_item` 逐条转成
+/// `BookMallTabData`，名字直接取 `bookstoreTabData.title`（`:3058`），
+/// 类型取 `tab_type`（`:3086`）。本路由把这两段原样透传，客户端的频道条
+/// 就由服务端配置驱动。
+///
+/// 参数只有 `tab_type`（当前选中的频道）与 `offset`：与 `homepage_recommend`
+/// 不同的地方是这里**必须**原样返回整个 `tab_item`，不能只挑一个 tab。
+fn channel_tabs<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let tab_type = default_val(&params.get_str("tab_type"), "16");
+        let mut p = reading724_params();
+        p.set("tab_type", tab_type);
+        p.set("client_template", "0");
+        p.set("bottom_tab_type", "0");
+        p.set("landing_bottom_tab_type", "0");
+        p.set("client_req_type", "1");
+        p.set("app_mode", "0");
+        p.set("classic_tab_style", "v3");
+        p.set("lore_tab_style", "v5");
+        p.set("migration_top_tab_enable", "false");
+        p.set("auth_aweme", "false");
+        p.set("auth_backward", "true");
+        p.set("cold_start_is_double_gd", "false");
+        p.set("after_genre_preference_popup", "0");
+        p.set("first_use_category_select", "false");
+        p.set("current_name", "");
+        p.set("book_id", "0");
+        p.set("last_tab_index", "0");
+        p.set("last_tab_type", "0");
+        p.set("enable_search_box_collapse", "false");
+        p.set("top_tab_extra", "");
+
+        let spec = UpstreamRequestSpec {
+            mode: UpstreamMode::DeviceSigned,
+            host: HOST_FQNOVEL.to_string(),
+            path: HOMEPAGE_RECOMMEND_PATH.to_string(),
+            params: p.to_pairs(),
+            headers: dragon_read_headers(),
+            pin_device: params.get_str(INTERNAL_DEVICE_PIN_KEY),
+            ..Default::default()
+        };
+        let (raw, dev) = Upstream::new(ctx.up.clone()).raw_with_device(&spec).await?;
+        if !dev.device_id.is_empty() {
+            let opened = session_id_from_response(&raw);
+            if !opened.is_empty() {
+                record_device_session(&opened, &dev.device_id);
+            }
+        }
+        raw_json(&raw)
+    })
+}
+
 pub fn register(s: &mut Server) {
     s.add_route("homepage_recommend", homepage_recommend);
+    s.add_route("channel_tabs", channel_tabs);
     s.add_route("series_feed", series_feed);
 }

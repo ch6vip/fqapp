@@ -10,6 +10,7 @@ import '../models/author_profile.dart';
 import '../models/book_comment.dart';
 import '../models/book_detail.dart';
 import '../models/chapter_ideas.dart';
+import '../models/channel_tab.dart';
 import '../models/chapter_media.dart';
 import '../models/chapter_summary.dart';
 import '../models/comment_reply.dart';
@@ -1250,6 +1251,30 @@ class ApiClient {
     'unlimited_selector_change_type': offset > 0 ? '1' : '2',
     if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
   });
+
+  /// 服务端频道表（F08）：官方 `GET /reading/bookapi/bookmall/tab/v`
+  /// 的 `data.tab_item`（`TabDataList.tabItem`），客户端在 `m0.java:3051-3089`
+  /// 把 `title` 当频道名、`tab_type` 当类型。失败/空表返回空列表，
+  /// 由调用方回落到既有频道表。
+  Future<List<ChannelTab>> channelTabs({int tabType = 16}) async {
+    try {
+      final r = await _get(_url('/api/v1/recommend/channels', {
+        'tab_type': '$tabType',
+      }));
+      final statusCode = r.statusCode;
+      final bodyBytes = r.bodyBytes;
+      return await Isolate.run(() {
+        try {
+          final payload = _decodeEnvelope(statusCode, bodyBytes);
+          return ChannelTab.listFromPayload(payload);
+        } catch (_) {
+          return const <ChannelTab>[];
+        }
+      });
+    } catch (_) {
+      return const <ChannelTab>[];
+    }
+  }
 
   String _homepageUrl(int tabType, int offset, String? sessionId) =>
       _url('/api/v1/recommend/homepage', {

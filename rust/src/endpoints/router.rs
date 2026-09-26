@@ -434,6 +434,13 @@ fn match_recommend(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             params: q.clone(),
         });
     }
+    // 服务端频道表（`BookstoreTabData.title` / `tab_type`）。
+    if parts[0] == "channels" {
+        return Some(RouteMatch {
+            api: "channel_tabs",
+            params: q.clone(),
+        });
+    }
     None
 }
 

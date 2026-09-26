@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lottie/lottie.dart';
 
 import '../models/book_detail.dart' show formatCounter;
+import '../models/channel_tab.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/digg_store.dart';
@@ -93,6 +94,53 @@ final dramaChannels = <DramaChannel>[
   ),
 ];
 
+/// 服务端 `tab_type` -> 本地频道（F08：频道表由服务端下发）。
+///
+/// 官方 `m0.java:3051-3089` 把 `tab_item` 逐条转成频道：名字用服务端 `title`、
+/// 类型用 `tab_type`。本地只保留**能真正打开内容**的那些类型；映射不到的类型
+/// 返回 null（宁可不显示，也不要放一个点了没反应的频道）。
+DramaChannel? serverChannelOf(ChannelTab tab) {
+  // 服务端没给名字时用官方同义的中文兜底，避免出现空标签。
+  String label(String fallback) => tab.title.trim().isEmpty ? fallback : tab.title;
+  switch (tab.type) {
+    case kChannelVideoFeed:
+      return DramaChannel(
+        label: label('推荐'),
+        tabIndex: HomeNotifier.tabs.indexOf('视频'),
+        kind: 'video',
+      );
+    case kChannelVideoEpisode:
+    case kChannelVideo:
+      return DramaChannel(
+        label: label('看剧'),
+        tabIndex: HomeNotifier.tabs.indexOf('短剧'),
+        kind: 'video',
+      );
+    case kChannelDynamicComic:
+      return DramaChannel(
+        label: label('漫剧'),
+        tabIndex: HomeNotifier.tabs.indexOf('漫剧'),
+        kind: 'manju',
+      );
+    case kChannelRecent:
+      return DramaChannel(
+        label: label('最近'),
+        tabIndex: 0,
+        kind: 'video',
+        source: DramaChannelSource.history,
+      );
+    case kChannelFollow:
+      return DramaChannel(
+        label: label('收藏'),
+        tabIndex: 0,
+        kind: 'video',
+        source: DramaChannelSource.shelf,
+      );
+    default:
+      return null;
+  }
+}
+
 /// The bottom navigation's 短剧 destination, laid out like the official
 /// `SeriesMallFragment`: a full-screen vertical feed of dramas with a floating
 /// top bar (search row + channel strip) over it.
@@ -115,6 +163,7 @@ class DramaPage extends ConsumerStatefulWidget {
     this.playerFactory,
     this.historyStore,
     this.searchPageBuilder,
+    this.channelLoader,
   });
 
   /// Test seams. The official feed plays the on-screen card inline and still
@@ -126,6 +175,9 @@ class DramaPage extends ConsumerStatefulWidget {
   final NativePlayer Function()? playerFactory;
   final ReaderStore? historyStore;
   final Widget Function()? searchPageBuilder;
+
+  /// 服务端频道表加载器（测试缝）。默认走 `ApiClient.channelTabs()`。
+  final Future<List<ChannelTab>> Function()? channelLoader;
 
   @override
   ConsumerState<DramaPage> createState() => _DramaPageState();
@@ -143,6 +195,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
   final PageController _pages = PageController();
   int _channel = 0;
   String? _openingId;
+
+  /// 当前生效的频道条。默认是本地表；拉到服务端频道表后按服务端配置替换
+  /// （F08 要求「不以静态频道表替代动态配置」）。
+  List<DramaChannel> _channels = dramaChannels;
+
+  /// 是否已经尝试过服务端频道表（避免重复请求）。
+  bool _channelsRequested = false;
 
   /// Index of the page the viewer is on, the only card that may mount a
   /// texture.
@@ -177,7 +236,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   late final InlineVideoPlayback _inline;
 
 
-  DramaChannel get _current => dramaChannels[_channel];
+  DramaChannel get _current => _channels[_channel];
 
   @override
   void initState() {
@@ -191,6 +250,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(dramaProvider.notifier).load();
+      if (mounted) unawaited(_loadChannels());
       if (mounted) _showGuide();
     });
   }
@@ -204,6 +264,43 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _guideFadeOut?.cancel();
     _pages.dispose();
     super.dispose();
+  }
+
+  /// 拉服务端频道表（F08）。
+  ///
+  /// 官方频道条由 `data.tab_item` 驱动，所以这里以服务端为准；**但只在
+  /// 映射出至少两个频道时替换**——一个频道就能替代整条栏的话，
+  /// 网络抖动或半截响应会把用户锁死在单一频道里。取不到就静默保留本地表。
+  Future<void> _loadChannels() async {
+    if (_channelsRequested) return;
+    _channelsRequested = true;
+    List<ChannelTab> tabs;
+    try {
+      tabs = await (widget.channelLoader?.call() ??
+          ApiClient.instance.channelTabs());
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final mapped = <DramaChannel>[];
+    for (final tab in tabs) {
+      final channel = serverChannelOf(tab);
+      if (channel != null) mapped.add(channel);
+    }
+    if (mapped.length < 2) return;
+    final previous = _channels.isEmpty ? null : _channels[_channel];
+    setState(() {
+      _channels = List.unmodifiable(mapped);
+      // 频道换了之后下标可能越界：尽量停在「同一条」频道上。
+      final index = previous == null
+          ? 0
+          : _channels.indexWhere(
+              (channel) =>
+                  channel.label == previous.label &&
+                  channel.source == previous.source,
+            );
+      _channel = index < 0 ? 0 : index;
+    });
   }
 
   /// 进 tab 后弹一次引导。官方在 `onCreateContent` 里 `Ge()`，且被
@@ -321,7 +418,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   void _selectChannel(int index) {
     if (index == _channel) return;
-    final channel = dramaChannels[index];
+    final channel = _channels[index];
     // 官方横向频道 pager 一滚动就收起引导（`onPageScrolled` → `pp3.f.m()`）；
     // 这里的等价动作是切频道。
     _hideGuide();
@@ -486,7 +583,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             left: 0,
             right: 0,
             child: _TopBar(
-              channels: dramaChannels,
+              channels: _channels,
               selected: _channel,
               onSelect: _selectChannel,
               onSearch: _openSearch,
