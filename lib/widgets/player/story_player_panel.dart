@@ -15,9 +15,15 @@ const _currentText = Color(0xFFFA6725);
 const _currentBg = Color(0x1AFA6725);
 const _watchedText = Color(0x66000000);
 
-/// 官方未选中普通格文字 `skin_color_catalog_unselect_item_text_normal_dark`
-/// = @color/skin_color_black_dark = **#CCFFFFFF**（不是纯黑）。
-const _normalText = Color(0xCCFFFFFF);
+/// 官方未选中普通格文字，**浅色皮肤**变体
+/// `skin_color_catalog_unselect_item_text_normal_light`
+/// = @color/skin_color_black_light = #FF000000。
+///
+/// 注意别拿成深色皮肤的 `…_normal_dark` = #CCFFFFFF（白字）——那是配官方
+/// 深色面板的。本面板固定浅色（白底，见 `_panelSheet` 的 Colors.white），
+/// 错用深肤变体就是「浅灰格上白字」，数字几乎不可见（2026-09-27 真机截图
+/// 复盘；官方取值见 apktool `res/values/colors.xml:37,3293`）。
+const _normalText = Color(0xFF000000);
 
 /// 官方不可播格文字 `..._text_disable_light` = #33000000。
 const _disabledText = Color(0x33000000);
@@ -32,7 +38,8 @@ const _tileBg = Color(0x08000000);
 ///   字 `skin_color_catalog_select_item_text_light`=@color/aok=#FFFA6725
 /// - 不可播：字 `..._text_disable_light`=#33000000，点击 Toast「该选集暂时无法播放」
 /// - 已看：字 `..._text_played_light`=#66000000
-/// - 普通：字 `..._text_normal_dark`=@color/skin_color_black_dark=#CCFFFFFF
+/// - 普通：字 `..._text_normal_light`=@color/skin_color_black_light=#FF000000
+///   （深肤变体 `…_normal_dark`=#CCFFFFFF 配的是深色面板，本面板是浅色）
 /// - 普通格底 `skin_color_gray_03_light`=#08000000
 enum EpisodeTileState {
   normal,

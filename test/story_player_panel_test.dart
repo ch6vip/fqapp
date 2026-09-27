@@ -141,10 +141,11 @@ void main() {
       );
       // 已看集灰字 #66000000（`r0.java:224-235`）。
       expect(tileText(1).style?.color, const Color(0x66000000));
-      // 未看普通集：官方 skin_color_catalog_unselect_item_text_normal_dark
-      // = @color/skin_color_black_dark = #CCFFFFFF（此前这里写的是纯黑
-      // #FF000000，属于本地取值，本轮按 APK colors.xml 更正）。
-      expect(tileText(10).style?.color, const Color(0xCCFFFFFF));
+      // 未看普通集：浅色皮肤 normal_light（colors.xml:3293）
+      // = skin_color_black_light = #FF000000。深肤变体 …_normal_dark
+      // = #CCFFFFFF 配的是官方深色面板；本面板固定白底，取深肤值会让
+      // 白字落在浅灰格上（2026-09-27 真机截图复现过）。
+      expect(tileText(10).style?.color, const Color(0xFF000000));
       expect(tester.takeException(), isNull);
     },
   );

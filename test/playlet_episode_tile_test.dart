@@ -41,7 +41,9 @@ void main() {
     expect(EpisodeTileState.current.weight, FontWeight.bold);
     expect(EpisodeTileState.watched.textColor, const Color(0x66000000));
     expect(EpisodeTileState.disabled.textColor, const Color(0x33000000));
-    expect(EpisodeTileState.normal.textColor, const Color(0xCCFFFFFF));
+    // 普通=浅色皮肤的 normal_light（skin_color_black_light=#FF000000）；
+    // 深肤变体 #CCFFFFFF 配深色面板，本面板固定白底。
+    expect(EpisodeTileState.normal.textColor, const Color(0xFF000000));
     expect(EpisodeTileState.normal.backgroundColor, const Color(0x08000000));
   });
 
