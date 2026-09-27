@@ -614,14 +614,14 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _syncTickerMode();
     _scheduleInlineSync();
     // 官方看剧(8, CommonDoubleRow 两列)与漫剧(24, CommonThreeRow 三列)频道
-    // 都是浅色海报瀑布格（StaggeredFeedTab）；只有推荐(16)等视频流频道是
-    // 黑底竖滑播放。状态栏图标亮度跟着页面明暗走。
-    final isBrowse =
+    // 都是浅色海报瀑布格（StaggeredFeedTab）；最近/收藏列表也是浅色页；
+    // 只有推荐(16)等视频流频道是黑底竖滑播放。状态栏图标亮度跟着页面走。
+    final isVideoFlow =
         channel.source == DramaChannelSource.feed &&
-        (channel.kind == 'manju' ||
-            channel.serverType == kChannelVideoEpisode ||
-            channel.serverType == kChannelVideo);
-    final lightPage = isBrowse;
+        channel.kind != 'manju' &&
+        channel.serverType != kChannelVideoEpisode &&
+        channel.serverType != kChannelVideo;
+    final lightPage = !isVideoFlow;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: lightPage ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
       child: Scaffold(
@@ -658,7 +658,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   state,
                   items,
                 ),
-                _ => _LocalList(channel: channel, onOpen: _openDetail),
+                _ => _LocalList(
+                  channel: channel,
+                  onOpen: _openDetail,
+                  onFind: () => _selectChannel(0),
+                ),
               },
             ),
             if (_pullDistance > 0)
@@ -672,6 +676,35 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 right: 0,
                 child: _PullRefreshHint(
                   armed: _pullDistance >= _pullRefreshTrigger,
+                ),
+              ),
+            // 浅色页的顶栏背板：官方上滑时卡片从一条奶白渐变后面穿过，
+            // 搜索框/频道条不会和海报叠在一起（黑页保持透明压在视频上）。
+            if (lightPage)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SizedBox(
+                  height:
+                      MediaQuery.paddingOf(context).top +
+                      _searchRowHeight +
+                      _stripHeight +
+                      56,
+                  child: const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFFFFF3E6),
+                          Color(0xFFFFFFFF),
+                          Color(0x00FFFFFF),
+                        ],
+                        stops: [0.0, 0.5, 1.0],
+                      ),
+                    ),
+                  ),
                 ),
               ),
             Positioned(
@@ -2361,8 +2394,9 @@ class _GridMessage extends StatelessWidget {
   );
 }
 
-/// 瀑布格卡片：竖版海报（2:3）+ 片名 + 「分类·集数」。官方
+/// 瀑布格卡片：竖版海报（约 5:7）+ 片名 + 「分类·集数」。官方
 /// StaggeredFeedTab 的 CommonDoubleRow/ThreeRow 卡（`mw2.c` 供数）在浅色页上的形态。
+/// 最近/收藏列表复用同一张卡，另带左上角标（漫剧）、居中 ▶ 与编辑多选勾。
 class _BrowseCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
@@ -2370,11 +2404,27 @@ class _BrowseCard extends StatelessWidget {
   /// 官方两列格片名可换行（看剧），三列格单行省略（漫剧）。
   final int titleMaxLines;
 
+  /// 左上角角标文案（最近列表的「漫剧」等）；null 不显示。
+  final String? tagText;
+
+  /// 居中半透明 ▶（最近/收藏的卡片有，浏览格没有）。
+  final bool centerPlayIcon;
+
+  /// 编辑模式下的多选态（右上角打勾）。
+  final bool selected;
+
+  /// 覆盖内置「分类·集数」副标题（最近页传进度「已看到第N集」）。
+  final String? subtitle;
+
   const _BrowseCard({
     super.key,
     required this.item,
     required this.onTap,
     required this.titleMaxLines,
+    this.tagText,
+    this.centerPlayIcon = false,
+    this.selected = false,
+    this.subtitle,
   });
 
   /// 官方副标题 = 分类名（tag_info 取前两个）+ 集数（episode_cnt）。
@@ -2390,7 +2440,8 @@ class _BrowseCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = _subtitle;
+    final subtitle = this.subtitle ?? _subtitle;
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -2400,15 +2451,70 @@ class _BrowseCard extends StatelessWidget {
           Expanded(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: LayoutBuilder(
-                builder: (context, constraints) => StoryCover(
-                  item: item,
-                  cacheWidth:
-                      (constraints.maxWidth *
-                              MediaQuery.devicePixelRatioOf(context))
-                          .ceil(),
-                  alignment: Alignment.topCenter,
-                ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  LayoutBuilder(
+                    builder: (context, constraints) => StoryCover(
+                      item: item,
+                      cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
+                      alignment: Alignment.topCenter,
+                    ),
+                  ),
+                  if (tagText != null)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0x99000000),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          child: Text(
+                            tagText!,
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.white,
+                              height: 1.1,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (centerPlayIcon)
+                    const Center(
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        size: 40,
+                        color: Color(0xCCFFFFFF),
+                      ),
+                    ),
+                  // 编辑模式多选勾（右上角，官方选中打勾）。
+                  if (selected)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFA6725),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(2),
+                          child: Icon(
+                            Icons.check,
+                            size: 14,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -2443,11 +2549,92 @@ class _BrowseCard extends StatelessWidget {
   }
 }
 
+/// 瀑布格频道的浅色空态（官方 `CommonErrorView` 家族）：圆形插画位 +
+/// 文案 + 「找视频」跳回推荐流。
+class _HistoryEmpty extends StatelessWidget {
+  final String message;
+  final VoidCallback? onFind;
+
+  const _HistoryEmpty({super.key, required this.message, this.onFind});
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 官方是插画资源（纸箱），本地没有同款资产，用同色系圆形占位。
+        Container(
+          width: 96,
+          height: 96,
+          decoration: const BoxDecoration(
+            color: Color(0xFFFFE9C7),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.inventory_2_outlined,
+            size: 40,
+            color: Color(0xFFD9A94A),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          message,
+          style: const TextStyle(fontSize: 14, color: Color(0x99000000)),
+        ),
+        if (onFind != null) ...[
+          const SizedBox(height: 20),
+          GestureDetector(
+            key: const Key('drama_history_find'),
+            onTap: onFind,
+            behavior: HitTestBehavior.opaque,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFFFA6725),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+                child: Text(
+                  '找视频',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+/// 官方列表页脚「— 已显示全部内容 —」（`azj.xml`）。
+class _ListEndFooter extends StatelessWidget {
+  const _ListEndFooter();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        '— 已显示全部内容 —',
+        style: const TextStyle(fontSize: 12, color: Color(0x66000000)),
+      ),
+    ),
+  );
+}
+
 class _LocalList extends StatefulWidget {
   final DramaChannel channel;
   final void Function(MediaItem item) onOpen;
 
-  const _LocalList({required this.channel, required this.onOpen});
+  /// 官方空态的「找视频」按钮：跳回推荐频道。
+  final VoidCallback? onFind;
+
+  const _LocalList({required this.channel, required this.onOpen, this.onFind});
 
   @override
   State<_LocalList> createState() => _LocalListState();
@@ -2475,14 +2662,20 @@ class _LocalListState extends State<_LocalList> {
         builder: (context, _, _) {
           final entries = fromShelf ? null : _historyEntries();
           final items = fromShelf ? _shelfItems() : _itemsOf(entries!);
-          final filtered = _filter == null
-              ? items
-              : items.where((item) => item.kind == _filter).toList();
+          // 官方 chips：全部/短剧/漫剧/其他视频。「其他视频」= 影视综等
+          // 视频历史；本地历史只记 短剧/漫剧，因此恒为空（对应官方空态）。
+          final filtered = switch (_filter) {
+            null => items,
+            'other' => const <MediaItem>[],
+            _ => items.where((item) => item.kind == _filter).toList(),
+          };
+          final empty = _HistoryEmpty(
+            key: Key('drama_${widget.channel.label}_empty'),
+            message: fromShelf ? '暂无收藏的视频' : '暂无浏览历史',
+            onFind: widget.onFind,
+          );
           final body = filtered.isEmpty
-              ? _FeedMessage(
-                  key: Key('drama_${widget.channel.label}_empty'),
-                  message: '暂无符合条件的短剧',
-                )
+              ? empty
               : GridView.builder(
                   key: Key('drama_${widget.channel.label}_grid'),
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -2490,29 +2683,39 @@ class _LocalListState extends State<_LocalList> {
                     crossAxisCount: 2,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 16,
-                    childAspectRatio: 0.62,
+                    // 官方最近页为竖版海报卡（约 5:7），两行标题 + 进度行。
+                    childAspectRatio: 0.56,
                   ),
-                  itemCount: filtered.length,
-                  itemBuilder: (context, index) => _DistributeCard(
-                    key: ValueKey(
-                      'drama_local_${widget.channel.label}_${filtered[index].id}',
-                    ),
-                    item: filtered[index],
-                    subtitle: fromShelf
-                        ? null
-                        : _progressLabel(filtered[index]),
-                    selected: _selected.contains(_keyOf(filtered[index])),
-                    onTap: () {
-                      if (_editing) {
-                        setState(() {
-                          final key = _keyOf(filtered[index]);
-                          if (!_selected.add(key)) _selected.remove(key);
-                        });
-                        return;
-                      }
-                      widget.onOpen(filtered[index]);
-                    },
-                  ),
+                  // 尾部多一项「— 已显示全部内容 —」（官方 `azj.xml`）。
+                  itemCount: filtered.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == filtered.length) {
+                      return const _ListEndFooter();
+                    }
+                    return _BrowseCard(
+                      key: ValueKey(
+                        'drama_local_${widget.channel.label}_${filtered[index].id}',
+                      ),
+                      item: filtered[index],
+                      titleMaxLines: 2,
+                      tagText: filtered[index].kind == 'manju' ? '漫剧' : null,
+                      centerPlayIcon: true,
+                      subtitle: fromShelf
+                          ? null
+                          : _progressLabel(filtered[index]),
+                      selected: _selected.contains(_keyOf(filtered[index])),
+                      onTap: () {
+                        if (_editing) {
+                          setState(() {
+                            final key = _keyOf(filtered[index]);
+                            if (!_selected.add(key)) _selected.remove(key);
+                          });
+                          return;
+                        }
+                        widget.onOpen(filtered[index]);
+                      },
+                    );
+                  },
                 );
           final shelfMode = fromShelf;
           return SafeArea(
@@ -2533,6 +2736,8 @@ class _LocalListState extends State<_LocalList> {
                         _filterChip('video', '短剧'),
                         const SizedBox(width: 8),
                         _filterChip('manju', '漫剧'),
+                        const SizedBox(width: 8),
+                        _filterChip('other', '其他视频'),
                       ],
                     ),
                   ),
@@ -2559,7 +2764,7 @@ class _LocalListState extends State<_LocalList> {
   ];
 
   /// 官方编辑头（`editHeaderLayout`）：进编辑后顶部换成「全选」+「删除」，
-  /// 未进编辑时只显示「编辑」。收藏频道没有这套。
+  /// 未进编辑时只显示「编辑」。收藏频道没有这套。浅色页用深色文字。
   Widget _editHeader(List<MediaItem> filtered) {
     final allSelected =
         _editing && _selected.length == filtered.length && filtered.isNotEmpty;
@@ -2596,7 +2801,7 @@ class _LocalListState extends State<_LocalList> {
                 style: TextStyle(
                   fontSize: 14,
                   color: _selected.isEmpty
-                      ? const Color(0x66FFFFFF)
+                      ? const Color(0x33000000)
                       : const Color(0xFFFA6725),
                 ),
               ),
@@ -2612,7 +2817,7 @@ class _LocalListState extends State<_LocalList> {
             }),
             child: Text(
               _editing ? '完成' : '编辑',
-              style: const TextStyle(fontSize: 14, color: Color(0xB3FFFFFF)),
+              style: const TextStyle(fontSize: 14, color: Color(0xFF1B1B1B)),
             ),
           ),
         ],
@@ -2664,8 +2869,9 @@ class _LocalListState extends State<_LocalList> {
       behavior: HitTestBehavior.opaque,
       onTap: () => setState(() => _filter = kind),
       child: DecoratedBox(
+        // 官方浅色页 chips：未选中浅灰底深字，选中浅橙底橙字。
         decoration: BoxDecoration(
-          color: selected ? const Color(0x1AFA6725) : const Color(0x1AFFFFFF),
+          color: selected ? const Color(0x1AFA6725) : const Color(0x0F000000),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Padding(
@@ -2676,7 +2882,7 @@ class _LocalListState extends State<_LocalList> {
               fontSize: 14,
               color: selected
                   ? const Color(0xFFFA6725)
-                  : const Color(0xB3FFFFFF),
+                  : const Color(0xFF1B1B1B),
             ),
           ),
         ),
@@ -2720,159 +2926,5 @@ class _LocalListState extends State<_LocalList> {
       return null;
     }
     return null;
-  }
-}
-
-/// Official distribute-list card (`bex.xml`): 7:5 cover, 8dp radius, 14sp
-/// title, 9sp corner tag. 官方截图第二十三轮（最近 tab）：漫剧左上角标、
-/// 居中半透明 ▶、标题两行、下方灰字「已看到第N集」。
-class _DistributeCard extends StatelessWidget {
-  final MediaItem item;
-  final String? subtitle;
-  final VoidCallback onTap;
-
-  /// 编辑模式下的多选态（官方编辑态卡片右上角打勾）。
-  final bool selected;
-
-  const _DistributeCard({
-    super.key,
-    required this.item,
-    required this.onTap,
-    this.subtitle,
-    this.selected = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AspectRatio(
-            aspectRatio: 7 / 5,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) => StoryCover(
-                      item: item,
-                      cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
-                    ),
-                  ),
-                  if (item.kind == 'manju')
-                    Positioned(
-                      top: 6,
-                      left: 6,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0x99000000),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          child: Text(
-                            '漫剧',
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              height: 1.1,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  const Center(
-                    child: Icon(
-                      Icons.play_arrow_rounded,
-                      size: 40,
-                      color: Color(0xCCFFFFFF),
-                    ),
-                  ),
-                  if (item.ep.isNotEmpty)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0xCC000000),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          child: Text(
-                            item.ep,
-                            maxLines: 1,
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              height: 1.1,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  // 编辑态多选框（右上角，官方选中打勾）。
-                  if (selected)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFFA6725),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Padding(
-                          padding: EdgeInsets.all(2),
-                          child: Icon(
-                            Icons.check,
-                            size: 14,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 14,
-              color: Colors.white,
-              height: 1.25,
-            ),
-          ),
-          if (subtitle != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                subtitle!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF9499A0),
-                  height: 1.2,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
   }
 }
