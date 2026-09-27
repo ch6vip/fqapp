@@ -212,9 +212,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
   int _channel = 0;
   String? _openingId;
 
-  /// 最近频道处于官方编辑模式（`LatestShortVideoFragmentImpl` 的 `S()`）。
-  /// 官方进编辑时把 SeriesMall 的悬浮顶栏整个 `gone`（`af()`），由编辑头
-  /// （全选/标题/完成）顶替——所以这个状态必须提升到壳层来藏 [_TopBar]。
+  /// 最近/收藏频道处于官方编辑模式（`S()`）。官方进编辑时把 SeriesMall 的
+  /// 悬浮顶栏整个 `gone`（`af()`），由编辑头（全选/标题/完成）顶替——所以
+  /// 这个状态必须提升到壳层来藏 [_TopBar]。
   bool _recentEditing = false;
 
   /// 当前生效的频道条。默认是本地表；拉到服务端频道表后按服务端配置替换
@@ -665,9 +665,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 ),
                 _ => _LocalList(
                   channel: channel,
-                  // 官方最近卡点击直接进播放页续播（`staggered/b.I3` →
-                  // `openShortSeriesActivity`，不经过详情页）；收藏频道是另一
-                  // 套 fragment（VideoCollectionDeliveryFragmentImpl），仍走详情。
+                  // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
                   onOpen: _openDetail,
                   onPlay: _openPlayer,
                   onFind: () => _selectChannel(0),
@@ -2676,7 +2674,15 @@ class _HistoryEmpty extends StatelessWidget {
   final String message;
   final VoidCallback? onFind;
 
-  const _HistoryEmpty({super.key, required this.message, this.onFind});
+  /// 官方按钮文案：最近页是 `Fe()` 的「找短剧」，收藏页硬编码「找视频」。
+  final String buttonLabel;
+
+  const _HistoryEmpty({
+    super.key,
+    required this.message,
+    this.onFind,
+    this.buttonLabel = '找视频',
+  });
 
   @override
   Widget build(BuildContext context) => Center(
@@ -2713,12 +2719,12 @@ class _HistoryEmpty extends StatelessWidget {
                 color: const Color(0xFFFA6725),
                 borderRadius: BorderRadius.circular(22),
               ),
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 28, vertical: 12),
                 child: Text(
-                  // 官方 `Fe()`：`DynamicComicContentTypeCompatConfig` 开启时
-                  // 是「找短剧」（真机截图里漫剧角标可见，即该开关在线上是开的）。
-                  '找短剧',
+                  // 最近页 = `Fe()`（DynamicComic 开启时「找短剧」）；
+                  // 收藏页官方硬编码「找视频」。
+                  buttonLabel,
                   style: TextStyle(
                     fontSize: 14,
                     color: Colors.white,
@@ -2752,16 +2758,17 @@ class _ListEndFooter extends StatelessWidget {
 }
 
 class _LocalList extends StatefulWidget {
-  // Note: 最近频道按反编译源码对齐官方的证据链与取舍 —
+  // Note: 最近/收藏两频道按反编译源码对齐官方的证据链与取舍 —
   // 见 .agents/notes/implemented/feature/2026-09-27-recent-tab-decompile-replica.md
+  // 与 .agents/notes/implemented/feature/2026-09-27-follow-channel-decompile-replica.md
   final DramaChannel channel;
   final void Function(MediaItem item) onOpen;
 
-  /// 官方最近卡点击直接进播放页续播（`staggered/b.I3` →
-  /// `openShortSeriesActivity`）；收藏频道官方是另一套 fragment，仍走详情。
+  /// 官方最近/收藏卡点击都直接进播放页续播（`staggered/b.I3`、`m0:694` →
+  /// `openShortSeriesActivity`）；onOpen 只是测试缝缺省时的详情兜底。
   final Future<void> Function(MediaItem item)? onPlay;
 
-  /// 官方空态的「找短剧」按钮：跳回推荐频道。
+  /// 官方空态按钮（最近「找短剧」/收藏「找视频」）：跳回推荐频道。
   final VoidCallback? onFind;
 
   /// 编辑模式进出时通知壳层藏/显顶栏（官方 `af()` 把 SeriesMall 顶栏 gone）。
@@ -2818,7 +2825,15 @@ class _LocalListState extends State<_LocalList> {
     _ => '视频',
   };
 
-  /// 官方 `De()`（已选择后缀）：漫剧/短剧，其余一律「视频」（没有「其他视频」）。
+  /// 收藏频道官方 `ye()`：全部→「全部」（与最近不同，最近是「视频」）。
+  String get _shelfFilterTitle => switch (_filter) {
+    'manju' => '漫剧',
+    'video' => '短剧',
+    'other' => '视频',
+    _ => '全部',
+  };
+
+  /// 官方 `De()`/`xe()`（已选择后缀）：漫剧/短剧，其余一律「视频」。
   String get _selectionSuffix => switch (_filter) {
     'manju' => '漫剧',
     'video' => '短剧',
@@ -2835,18 +2850,21 @@ class _LocalListState extends State<_LocalList> {
         builder: (context, _, _) {
           final entries = fromShelf ? null : _historyEntries();
           final items = fromShelf ? _shelfItems() : _itemsOf(entries!);
-          // 官方 chips：全部/短剧/漫剧/其他视频。「其他视频」= 影视综等
-          // 视频历史；本地历史只记 短剧/漫剧，因此恒为空（对应官方空态）。
+          // 官方筛选行（最近 = chips `daj.xml`，收藏 = GenreScrollTabLayout，
+          // 选中态视觉同源）：全部/短剧/漫剧/其他视频。「其他视频」= 影视综
+          // 等视频历史；本地只记 短剧/漫剧，因此恒为空（对应官方空态）。
           final filtered = switch (_filter) {
             null => items,
             'other' => const <MediaItem>[],
             _ => items.where((item) => item.kind == _filter).toList(),
           };
-          final editingList = _editing && !fromShelf && filtered.isNotEmpty;
+          final editingList = _editing && filtered.isNotEmpty;
           final empty = _HistoryEmpty(
             key: Key('drama_${widget.channel.label}_empty'),
-            message: fromShelf ? '暂无收藏的视频' : '暂无浏览历史',
+            // 官方空态：最近「暂无浏览历史」；收藏 = 「暂无」+f()+「内容」。
+            message: fromShelf ? '暂无收藏内容' : '暂无浏览历史',
             onFind: widget.onFind,
+            buttonLabel: fromShelf ? '找视频' : '找短剧',
           );
           final body = filtered.isEmpty
               ? empty
@@ -2875,14 +2893,15 @@ class _LocalListState extends State<_LocalList> {
                       item: item,
                       editing: editingList,
                       selected: _selected.contains(_keyOf(item)),
-                      // 官方 `v3()`：漫剧角标只在非漫剧筛选下出现。
+                      // 官方 `v3()`/m0 角标条件同构：漫剧角标只在非漫剧
+                      // 筛选下出现。
                       tagText:
-                          !fromShelf &&
-                              item.kind == 'manju' &&
-                              _filter != 'manju'
+                          item.kind == 'manju' && _filter != 'manju'
                           ? '漫剧'
                           : null,
-                      subtitle: fromShelf ? null : _progressLabel(item),
+                      subtitle: fromShelf
+                          ? _shelfProgressLabel(item)
+                          : _progressLabel(item),
                       onTap: () {
                         if (editingList) {
                           setState(() {
@@ -2891,18 +2910,20 @@ class _LocalListState extends State<_LocalList> {
                           });
                           return;
                         }
+                        // 官方最近/收藏卡点击都直接进播放页续播
+                        //（`staggered/b.I3`、m0:694 → openShortSeriesActivity）。
                         final play = widget.onPlay;
-                        if (!fromShelf && play != null) {
+                        if (play != null) {
                           unawaited(play(item));
                         } else {
                           widget.onOpen(item);
                         }
                       },
-                      // 官方长按进编辑（`o.r3`），并选中被按的那张卡。
-                      onLongPress:
-                          !fromShelf && filtered.isNotEmpty && !_editing
-                          ? () => _setEditing(true, preselect: _keyOf(item))
-                          : null,
+                      // 官方长按进编辑（`o.r3` / 埋点 type=long_press），
+                      // 并选中被按的那张卡。
+                      onLongPress: filtered.isEmpty
+                          ? null
+                          : () => _setEditing(true, preselect: _keyOf(item)),
                     );
                   },
                 );
@@ -2910,10 +2931,10 @@ class _LocalListState extends State<_LocalList> {
             children: [
               if (editingList)
                 _editHeader(filtered)
-              else if (!fromShelf && filtered.isNotEmpty)
+              else if (filtered.isNotEmpty)
                 _normalHeader()
               else
-                // 收藏/空列表：只给悬浮顶栏让位。
+                // 空列表：只给悬浮顶栏让位。
                 SizedBox(height: MediaQuery.paddingOf(context).top + 76),
               Expanded(child: body),
               if (editingList) _bottomBar(filtered),
@@ -3035,7 +3056,8 @@ class _LocalListState extends State<_LocalList> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _filterTitle,
+                    // 最近 `Ee()`：全部→「视频」；收藏 `ye()`：全部→「全部」。
+                    fromShelfEdit ? _shelfFilterTitle : _filterTitle,
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -3062,13 +3084,16 @@ class _LocalListState extends State<_LocalList> {
     );
   }
 
-  /// 官方底部操作条（`v73.k` + `dc1.xml`）：白底 + 0.5dp `gray_06` 分隔线，
-  /// 居中排「追剧/追漫」（按筛选取名，`R1()`）与红色「删除」
-  /// （`skin_color_red_delete` #F43207）；无选中时整体 30% 透明（`Q1()`）。
+  /// 官方底部操作条：白底 + 0.5dp `gray_06` 分隔线，无选中时整体 30% 透明
+  /// （`Q1()`）。最近 = `v73.k`（`dc1.xml`）：「追剧/追漫」（按筛选取名）+
+  /// 红色「删除」；收藏 = `bb3.p0`：**只有**红色「删除」（都已在书架，没有
+  /// 追剧动作）。
   Widget _bottomBar(List<MediaItem> filtered) {
     final enabled = _selected.isNotEmpty;
     return DecoratedBox(
-      key: const Key('drama_recent_bottom_bar'),
+      key: Key(
+        fromShelfEdit ? 'drama_shelf_bottom_bar' : 'drama_recent_bottom_bar',
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
@@ -3082,16 +3107,20 @@ class _LocalListState extends State<_LocalList> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              if (!fromShelfEdit) ...[
+                _barAction(
+                  key: const Key('drama_recent_follow'),
+                  label: _filter == 'manju' ? '追漫' : '追剧',
+                  color: const Color(0xFF1B1B1B),
+                  enabled: enabled,
+                  onTap: enabled
+                      ? () => unawaited(_followSelected(filtered))
+                      : null,
+                ),
+                const SizedBox(width: 40),
+              ],
               _barAction(
-                key: const Key('drama_recent_follow'),
-                label: _filter == 'manju' ? '追漫' : '追剧',
-                color: const Color(0xFF1B1B1B),
-                enabled: enabled,
-                onTap: enabled ? () => unawaited(_followSelected(filtered)) : null,
-              ),
-              const SizedBox(width: 40),
-              _barAction(
-                key: const Key('drama_recent_delete'),
+                key: Key(fromShelfEdit ? 'drama_shelf_delete' : 'drama_recent_delete'),
                 label: '删除',
                 color: const Color(0xFFF43207),
                 enabled: enabled,
@@ -3103,6 +3132,9 @@ class _LocalListState extends State<_LocalList> {
       ),
     );
   }
+
+  bool get fromShelfEdit =>
+      widget.channel.source == DramaChannelSource.shelf;
 
   Widget _barAction({
     required Key key,
@@ -3157,40 +3189,62 @@ class _LocalListState extends State<_LocalList> {
     });
   }
 
-  /// 官方删除前先确认（`Te()` 的 `ConfirmDialogBuilder`：标题
-  /// 「确定删除浏览历史吗？」、确认/取消），成功 Toast「删除成功」、失败
-  /// 「删除失败」，两条路径最后都退出编辑（`P2`/`kb`）。
+  /// 官方删除前先确认（最近 `Te()`：标题「确定删除浏览历史吗？」、
+  /// 确认/取消；收藏 `re()`→`hy2.d0`：标题「确认删除吗？」、按钮文案
+  /// 「删除」）。成功 Toast「删除成功」/失败「删除失败」，500ms 后退出
+  /// 编辑（`P2`/`pb` 的 `postInForeground(500)`）。
   Future<void> _confirmDelete() async {
+    final fromShelf = fromShelfEdit;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('确定删除浏览历史吗？'),
+        title: Text(fromShelf ? '确认删除吗？' : '确定删除浏览历史吗？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('取消'),
           ),
           TextButton(
-            key: const Key('drama_recent_delete_confirm'),
+            key: Key(
+              fromShelf ? 'drama_shelf_delete_confirm' : 'drama_recent_delete_confirm',
+            ),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认'),
+            child: Text(fromShelf ? '删除' : '确认'),
           ),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
     final selected = _selected.toSet();
-    // 只删选中的记录：按 kind+contentId 精确匹配，其它记录一律不动。
-    final removed = await LibraryStore.instance.removeHistoryEntries(
-      _targets.where(
-        (target) => selected.contains('${target.kind}:${target.contentId}'),
-      ),
-    );
+    var removed = 0;
+    if (fromShelf) {
+      // 官方收藏删除 = 取消追剧记录（`xz2.c` 的 seriesId 维度）；
+      // 本地对应从 ShelfStore 摘掉，键与加入时一致（seriesId 优先）。
+      final store = ShelfStore.instance;
+      final keys = <String>[];
+      for (final item in _shelfItems()) {
+        if (selected.contains(_keyOf(item))) {
+          if (store.containsItem(item)) removed++;
+          keys.add(ShelfStore.keyOf(item));
+        }
+      }
+      await store.removeKeys(keys);
+    } else {
+      // 只删选中的记录：按 kind+contentId 精确匹配，其它记录一律不动。
+      removed = await LibraryStore.instance.removeHistoryEntries(
+        _targets.where(
+          (target) => selected.contains('${target.kind}:${target.contentId}'),
+        ),
+      );
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(removed > 0 ? '删除成功' : '删除失败')));
-    _setEditing(false);
+    // 官方删除两条路径都在 500ms 后退编辑（`ThreadUtils.postInForeground(500)`）。
+    Timer(const Duration(milliseconds: 500), () {
+      if (mounted) _setEditing(false);
+    });
   }
 
   Widget _filterChip(String? kind, String label) {
@@ -3257,5 +3311,29 @@ class _LocalListState extends State<_LocalList> {
       return null;
     }
     return null;
+  }
+
+  /// 收藏卡官方进度行 `F3()`：`%s集/%s集`（已看集数 = 播放下标+1，总数 =
+  /// 收藏时的剧集数）。本地收藏记录不存进度，总数取 item.ep，已看数从播放
+  /// 历史按剧 id 反查；两边都缺就不显示。
+  String? _shelfProgressLabel(MediaItem item) {
+    final total = int.tryParse(item.ep.trim());
+    final seriesId = item.seriesId ?? item.id;
+    var seen = 0;
+    var hasSeen = false;
+    for (final entry in _historyEntries()) {
+      final entrySeries =
+          entry['seriesId']?.toString() ?? historyContentId(entry);
+      if (entrySeries != seriesId) continue;
+      final index = entry['episode'];
+      if (index is num) {
+        seen = index.toInt() + 1;
+        hasSeen = true;
+      }
+      break;
+    }
+    if (total == null && !hasSeen) return null;
+    if (total == null) return '$seen集';
+    return '$seen集/$total集';
   }
 }

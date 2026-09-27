@@ -765,6 +765,91 @@ void main() {
     },
   );
 
+  testWidgets(
+    '收藏 tab：官方筛选行与编辑/删除（VideoCollectionDeliveryFragmentImpl 形态）',
+    timeout: Timeout(const Duration(minutes: 1)),
+    (tester) async {
+      // 反编译：收藏同样有编辑头/长按进编辑/删除专用底条（`bb3.p0`）与
+      // GenreScrollTabLayout 筛选行；编辑头标题 `ye()` 在筛选「全部」时就是
+      // 「全部」；删除确认框是「确认删除吗？」+ 按钮文案「删除」。
+      await tester.binding.setSurfaceSize(const Size(360, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      await tester.runAsync(() async {
+        SharedPreferences.setMockInitialValues({});
+        await LibraryStore.instance.init();
+        await ShelfStore.instance.init();
+        await ShelfStore.instance.clear();
+        await ShelfStore.instance.add(
+          MediaItem(
+            id: 's-video',
+            title: '收藏短剧甲',
+            cover: '',
+            author: '',
+            badge: '',
+            ep: '24',
+            kind: 'video',
+          ),
+        );
+        await ShelfStore.instance.add(
+          MediaItem(
+            id: 's-manju',
+            title: '收藏漫剧乙',
+            cover: '',
+            author: '',
+            badge: '',
+            ep: '',
+            kind: 'manju',
+          ),
+        );
+        await SwipeGuideStore.instance.markShown();
+      });
+
+      await tester.pumpWidget(
+        _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+      );
+      await _flush(tester);
+      // 频道条是横向 ListView，360dp 宽度下「收藏」与右端搜索按钮重叠，
+      // 先把条带往左滚再点（真机上手指也会这么做）。
+      await tester.drag(find.text('推荐'), const Offset(-120, 0));
+      await _flush(tester);
+      await tester.tap(find.text('收藏'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('drama_收藏_grid')), findsOneWidget);
+
+      // 长按进编辑并选中该卡（官方 type=long_press）：出现收藏专用删除底条。
+      await tester.longPress(find.text('收藏短剧甲'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('drama_shelf_bottom_bar')), findsOneWidget);
+      expect(find.byKey(const Key('drama_shelf_delete')), findsOneWidget);
+      // 已选择后缀 = 官方 `xe()`：漫剧/短剧之外一律「视频」。
+      expect(find.text('已选择 1 个视频'), findsOneWidget);
+
+      // 全选 → 删除 → 官方确认框「确认删除吗？」。
+      await tester.tap(find.byKey(const Key('drama_recent_select_all')));
+      await _flush(tester);
+      expect(find.text('已选择 2 个视频'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('drama_shelf_delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('确认删除吗？'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('drama_shelf_delete_confirm')));
+      await tester.pumpAndSettle();
+      // Hive 的写 Future 在真实异步里完成（删除即时生效于内存，revision
+      // 通知却等持久化 resolve），测试的 fake-async 需要放行真实时钟。
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pumpAndSettle();
+      // 官方删除成功后 500ms 才退编辑（postInForeground 500ms），先推时间
+      // 触发这个 Timer，避免测试收尾时报 Timer 挂起。
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无收藏内容'), findsOneWidget);
+      expect(ShelfStore.instance.records(), isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('服务端频道表替换本地频道条（F08）', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
