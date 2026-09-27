@@ -613,9 +613,15 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final items = _visibleItems(state);
     _syncTickerMode();
     _scheduleInlineSync();
-    // 官方漫剧频道是浅色页（StaggeredFeedTab 白底），其余频道黑底视频流；
-    // 状态栏图标亮度跟着页面明暗走（浅色页深色图标，黑页浅色图标）。
-    final lightPage = channel.kind == 'manju';
+    // 官方看剧(8, CommonDoubleRow 两列)与漫剧(24, CommonThreeRow 三列)频道
+    // 都是浅色海报瀑布格（StaggeredFeedTab）；只有推荐(16)等视频流频道是
+    // 黑底竖滑播放。状态栏图标亮度跟着页面明暗走。
+    final isBrowse =
+        channel.source == DramaChannelSource.feed &&
+        (channel.kind == 'manju' ||
+            channel.serverType == kChannelVideoEpisode ||
+            channel.serverType == kChannelVideo);
+    final lightPage = isBrowse;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: lightPage ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
       child: Scaffold(
@@ -624,13 +630,30 @@ class _DramaPageState extends ConsumerState<DramaPage>
           children: [
             Positioned.fill(
               // 最近 and 收藏 are lists in the official client too: the recent
-              // list comes from the device's own history and the follow list from
-              // the account, so neither is a video feed here either.
-              // 漫剧频道例外：官方 `client_template=13`（CommonThreeRow →
-              // StaggeredFeedTab）是浅色三列海报瀑布格，不是全屏竖滑播放流。
+              // list comes from the device's own history and the follow list
+              // from the account, so neither is a video feed here either.
+              // 看剧/漫剧是浅色海报瀑布格（官方 StaggeredFeedTab，
+              // `client_template` 12/13），只有推荐走全屏竖滑播放流。
               child: switch (channel) {
                 DramaChannel(source: DramaChannelSource.feed, kind: 'manju') =>
-                  _manjuGrid(state, items),
+                  _browseGrid(
+                    state,
+                    items,
+                    columns: 3,
+                    gridKey: 'drama_manju_grid',
+                    titleMaxLines: 1,
+                  ),
+                DramaChannel(
+                  source: DramaChannelSource.feed,
+                  serverType: kChannelVideoEpisode,
+                ) =>
+                  _browseGrid(
+                    state,
+                    items,
+                    columns: 2,
+                    gridKey: 'drama_episode_grid',
+                    titleMaxLines: 2,
+                  ),
                 DramaChannel(source: DramaChannelSource.feed) => _feed(
                   state,
                   items,
@@ -660,7 +683,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 selected: _channel,
                 onSelect: _selectChannel,
                 onSearch: _openSearch,
-                // 官方浅色页（漫剧）的顶栏换浅肤：深色字 + 浅灰搜索框。
+                // 官方浅色页（看剧/漫剧）的顶栏换浅肤：深色字 + 浅灰搜索框。
                 light: lightPage,
               ),
             ),
@@ -682,10 +705,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
   }
 
-  /// 官方漫剧频道（`client_template=13` CommonThreeRow → StaggeredFeedTab）：
-  /// 浅色三列海报格，卡 = 封面 + 片名 + 「分类·集数」，点击进详情。不是
-  /// 全屏竖滑播放流 —— 漫剧卡没有内联播放层，也不该有。
-  Widget _manjuGrid(HomeState state, List<MediaItem> items) {
+  /// 官方瀑布格频道（StaggeredFeedTab）：漫剧 = `client_template` 13
+  /// CommonThreeRow 三列；看剧 = 12 CommonDoubleRow 两列。浅色页，卡 =
+  /// 竖版海报 + 片名 + 「分类·集数」，点击直接进播放页（官方
+  /// `cv2/c.java:371-376` → `openShortSeriesActivity` → 沉浸播放器）。
+  /// 看剧官方副标题带「N万热度」，数据在第二段卡里才有，v1 先用分类·集数。
+  Widget _browseGrid(
+    HomeState state,
+    List<MediaItem> items, {
+    required int columns,
+    required String gridKey,
+    required int titleMaxLines,
+  }) {
     if (state.error != null) {
       return _FeedMessage(
         key: const Key('drama_error'),
@@ -698,12 +729,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
       if (state.isLoading || state.hasMore) {
         return const _GridMessage(message: '正在刷新内容', showSpinner: true);
       }
-      return const _GridMessage(key: Key('drama_manju_empty'), message: '暂无漫剧');
+      return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
     return NotificationListener<ScrollNotification>(
       onNotification: _onGridScroll,
       child: GridView.builder(
-        key: const Key('drama_manju_grid'),
+        key: Key(gridKey),
         padding: EdgeInsets.fromLTRB(
           12,
           MediaQuery.paddingOf(context).top +
@@ -713,17 +744,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
           12,
           24,
         ),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns,
           crossAxisSpacing: 8,
           mainAxisSpacing: 16,
-          // 海报 2:3 + 一行片名 + 一行「分类·集数」。
-          childAspectRatio: 0.52,
+          // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
+          childAspectRatio: columns == 2 ? 0.56 : 0.52,
         ),
         itemCount: items.length,
-        itemBuilder: (context, index) => _ManjuCard(
-          key: ValueKey('drama_manju_${items[index].id}'),
+        itemBuilder: (context, index) => _BrowseCard(
+          key: ValueKey('$gridKey.${items[index].id}'),
           item: items[index],
+          titleMaxLines: titleMaxLines,
           // 官方网格卡点击 = 直接进播放页（cv2/c.java:371-376 →
           // openShortSeriesActivity → ShortSeriesActivity 沉浸播放器），
           // 不经过详情页；详情是播放页里的入口。
@@ -733,7 +765,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
   }
 
-  /// 漫剧网格的滚动：保留下拉刷新（同一套手势与提示），把 feed 的
+  /// 瀑布格的滚动：保留下拉刷新（同一套手势与提示），把 feed 的
   /// 竖滑换页/内联同步换成触底翻页。
   bool _onGridScroll(ScrollNotification notification) {
     if (notification.depth != 0) return false;
@@ -2329,15 +2361,24 @@ class _GridMessage extends StatelessWidget {
   );
 }
 
-/// 漫剧瀑布格卡片：竖版海报（2:3）+ 一行片名 + 一行「分类·集数」。
-/// 官方 StaggeredFeedTab 的 CommonThreeRow 卡（`mw2.c` 供数）在浅色页上的形态。
-class _ManjuCard extends StatelessWidget {
+/// 瀑布格卡片：竖版海报（2:3）+ 片名 + 「分类·集数」。官方
+/// StaggeredFeedTab 的 CommonDoubleRow/ThreeRow 卡（`mw2.c` 供数）在浅色页上的形态。
+class _BrowseCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
 
-  const _ManjuCard({super.key, required this.item, required this.onTap});
+  /// 官方两列格片名可换行（看剧），三列格单行省略（漫剧）。
+  final int titleMaxLines;
+
+  const _BrowseCard({
+    super.key,
+    required this.item,
+    required this.onTap,
+    required this.titleMaxLines,
+  });
 
   /// 官方副标题 = 分类名（tag_info 取前两个）+ 集数（episode_cnt）。
+  /// 看剧官方展示「N万热度」（第二段卡才有该数据），v1 先用集数替代。
   String? get _subtitle {
     final cats = item.categories.take(2).join('·');
     final ep = item.ep.trim();
@@ -2374,7 +2415,7 @@ class _ManjuCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             item.title,
-            maxLines: 1,
+            maxLines: titleMaxLines,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 13,
