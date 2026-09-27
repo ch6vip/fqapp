@@ -138,7 +138,7 @@ class _Seams {
     Future<List<List<Chapter>>> Function(String id, String tab)?
     directoryLoader,
     Widget Function()? searchPageBuilder,
-    Future<List<ChannelTab>> Function()? channelLoader,
+    Future<ChannelTable> Function()? channelLoader,
   }) => DramaPage(
     directoryLoader: directoryLoader,
     channelLoader: channelLoader,
@@ -774,11 +774,13 @@ void main() {
         perTab: 1,
         child: MaterialApp(
           home: _Seams().page(
-            channelLoader: () async => const [
-              ChannelTab(type: kChannelVideoFeed, title: '精选'),
-              ChannelTab(type: kChannelVideoEpisode, title: '正片'),
-              ChannelTab(type: kChannelRecent, title: '看过'),
-            ],
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '精选'),
+                ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+                ChannelTab(type: kChannelRecent, title: '看过'),
+              ],
+            ),
           ),
         ),
       ),
@@ -801,7 +803,9 @@ void main() {
       _scope(
         perTab: 1,
         child: MaterialApp(
-          home: _Seams().page(channelLoader: () async => const <ChannelTab>[]),
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(tabs: <ChannelTab>[]),
+          ),
         ),
       ),
     );
@@ -840,9 +844,9 @@ void main() {
         perTab: 1,
         child: MaterialApp(
           home: _Seams().page(
-            channelLoader: () async => const [
-              ChannelTab(type: kChannelVideoFeed, title: '精选'),
-            ],
+            channelLoader: () async => const ChannelTable(
+              tabs: [ChannelTab(type: kChannelVideoFeed, title: '精选')],
+            ),
           ),
         ),
       ),
@@ -863,12 +867,14 @@ void main() {
         perTab: 1,
         child: MaterialApp(
           home: _Seams().page(
-            channelLoader: () async => const [
-              // 官方枚举里的类型，但本地没有对应内容源。
-              ChannelTab(type: kChannelVideo, title: '视频'),
-              ChannelTab(type: kChannelVideoFeed, title: '精选'),
-              ChannelTab(type: kChannelVideoEpisode, title: '正片'),
-            ],
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                // 官方枚举里的类型，但本地没有对应内容源。
+                ChannelTab(type: kChannelVideo, title: '视频'),
+                ChannelTab(type: kChannelVideoFeed, title: '精选'),
+                ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+              ],
+            ),
           ),
         ),
       ),
@@ -880,7 +886,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('频道表替换后订阅流跟着换（条与 feed 不能对不上）', (tester) async {
+  testWidgets('频道表替换后按 tab_type 续接当前频道（条与 feed 不能对不上）', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -889,21 +895,54 @@ void main() {
         perTab: 1,
         child: MaterialApp(
           home: _Seams().page(
-            channelLoader: () async => const [
-              // 「正片」映射到短剧 tab（tab_type 8）；本地第一条本来是
-              // 「推荐」（tab_type 16）。
-              ChannelTab(type: kChannelVideoEpisode, title: '正片'),
-              ChannelTab(type: kChannelVideoFeed, title: '精选'),
-            ],
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                // 本地选中的是「推荐」（tab_type 16），服务端把同一条流排在了
+                // 第二位并改叫「精选」：续接要看类型而不是位置或文案。
+                ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+                ChannelTab(type: kChannelVideoFeed, title: '精选'),
+              ],
+            ),
           ),
         ),
       ),
     );
     await _flush(tester);
-    expect(find.text('正片'), findsOneWidget);
-    // 高亮的是「正片」，所以下面的 feed 必须是 tab_type 8 的内容。
-    expect(find.text('8-0 作品'), findsOneWidget);
-    expect(find.text('16-0 作品'), findsNothing);
+    expect(find.text('精选'), findsOneWidget);
+    // 高亮的是「精选」（tab_type 16），所以下面的 feed 必须还是 16 的内容，
+    // 不能因为换表就跳到第一条「正片」（tab_type 8）。
+    expect(find.text('16-0 作品'), findsOneWidget);
+    expect(find.text('8-0 作品'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('续接不上时落服务端下发的默认选中下标', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              // 当前「推荐」（16）在这张表里没有对等频道；官方
+              // TabDataList.tab_index 指向第二条（漫剧）。
+              defaultIndex: 1,
+              tabs: [
+                ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+                ChannelTab(type: kChannelDynamicComic, title: '动漫'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // 高亮的是服务端指定的「动漫」，feed 也必须是漫剧（tab_type 24）的内容。
+    expect(find.text('动漫'), findsOneWidget);
+    expect(find.text('24-0 作品'), findsOneWidget);
+    expect(find.text('8-0 作品'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

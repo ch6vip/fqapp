@@ -297,15 +297,25 @@ class _RootShellState extends State<RootShell> {
     }
 
     return Scaffold(
-      body: LazyIndexedStack(
-        index: _index,
-        children: [
-          const HomePage(),
-          const DramaPage(),
-          // 空书架上的「去书城找书」切回首页 tab。
-          LibraryPage(onBrowse: () => setState(() => _index = 0)),
-          const MinePage(),
-        ],
+      // 状态栏图标亮度挂在壳层、按选中 tab 切换：短剧页是黑底视频流（官方
+      // SeriesMallFragment 的透明顶栏直接压在 feed 上），深色图标在黑底上
+      // 整条状态栏都看不见，必须浅色；其余三页浅色底用深色。样式放壳层而不是
+      // 各页内部，是因为 IndexedStack 里未选中的页不参与绘制，页内
+      // AnnotatedRegion 切走后会残留上一个页的样式。
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: _index == 1
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
+        child: LazyIndexedStack(
+          index: _index,
+          children: [
+            const HomePage(),
+            const DramaPage(),
+            // 空书架上的「去书城找书」切回首页 tab。
+            LibraryPage(onBrowse: () => setState(() => _index = 0)),
+            const MinePage(),
+          ],
+        ),
       ),
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(

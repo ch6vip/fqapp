@@ -86,4 +86,55 @@ void main() {
     expect(ChannelTab(type: kChannelFollow, title: '收藏').isLocal, isTrue);
     expect(ChannelTab(type: kChannelRecommend, title: '推荐').isLocal, isFalse);
   });
+
+  test('parses the server default tab index alongside the items', () {
+    // 官方 `TabDataList.tab_index` 是默认选中下标，`m0.U` 用它落频道。
+    final table = ChannelTable.fromPayload({
+      'code': 0,
+      'data': {
+        'tab_index': 2,
+        'tab_item': [
+          {'tab_type': 16, 'title': '推荐'},
+          {'tab_type': 8, 'title': '看剧'},
+          {'tab_type': 18, 'title': '最近'},
+        ],
+      },
+    });
+    expect(table.tabs.map((tab) => tab.type), [16, 8, 18]);
+    expect(table.defaultIndex, 2);
+  });
+
+  test('tab_index tolerates string values and falls back to -1', () {
+    // 数值字段偶发以字符串下发，与 tab_type 同一套容错。
+    expect(
+      ChannelTable.fromPayload({
+        'data': {
+          'tab_index': '1',
+          'tab_item': [],
+        },
+      }).defaultIndex,
+      1,
+    );
+    expect(
+      ChannelTable.fromPayload({
+        'data': {
+          'tab_item': [],
+        },
+      }).defaultIndex,
+      -1,
+    );
+  });
+
+  test('a malformed table yields an empty table without an index', () {
+    // 表不合法时下标一并作废：不能出现「有下标没条目」的半张表。
+    final broken = ChannelTable.fromPayload(
+      const {
+        'code': 1001,
+        'data': {'tab_index': 1},
+      },
+    );
+    expect(broken.tabs, isEmpty);
+    expect(broken.defaultIndex, -1);
+    expect(ChannelTable.fromPayload(const {}), same(ChannelTable.empty));
+  });
 }

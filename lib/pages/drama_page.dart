@@ -25,22 +25,23 @@ import 'home_provider.dart';
 import 'player_page.dart';
 import 'search_page.dart';
 
-/// One channel of the 短剧 tab.
-///
-/// The official tab hosts several channels behind one strip and names them from
 /// One entry of the 短剧 tab's channel strip.
 ///
 /// The official strip is server-driven (`BookstoreTabData.tabItem[]`, rendered
-/// by `m0.java:3051-3106`), but the backend we ship exposes the *bookstore*
-/// strip (`/recommend/homepage` returns 推荐/小说/听书/看剧/经典/短篇/知识/漫画/
-/// 新书/商城 for tab_type=8), not the seriesmall one, and it has no seriesmall
-/// tab route at all. So the five channels below are the official ones by
-/// `BookstoreTabType` with their real tab types, and the two that the official
-/// client fills from the device — 最近 (recent=18, `r73/m2.java:100-103`) and
-/// 收藏 (follow=30, `td4/o1.java:179-193`) — are served from our own history
-/// and shelf. 预约 (28) has no data source here and is deliberately absent.
+/// by `m0.java:3051-3106`). The server only returns the *seriesmall* strip
+/// (推荐/看剧/漫剧/最近/收藏) when the request carries the seriesmall context:
+/// `bottom_tab_type=VideoSeriesFeedTab(7)` + `client_req_type=Open(3)`
+/// (`SeriesMallVM.java:141-176`). With the bookstore context the same route
+/// returns the bookstore strip, whose mappable entries collapse to
+/// 看剧(8)/视频(16) — that was the "channel strip shrinks to two tabs" bug.
+/// Our proxy now sends the seriesmall context (rust `channel_tabs`), and the
+/// five channels below are both the offline fallback and the name backstop for
+/// empty server titles. The two the official client fills from the device —
+/// 最近 (recent=18, `r73/m2.java:100-103`) and 收藏 (follow=30,
+/// `td4/o1.java:179-193`) — are served from our own history and shelf.
+/// 预约 (28) has no data source here and is deliberately absent.
 ///
-/// Note: 频道映射与"为什么不是服务端列表"的完整理由 — 见
+/// Note: 频道映射与取证的完整理由 — 见
 /// .agents/notes/implemented/feature/2026-09-20-official-drama-tab.md
 enum DramaChannelSource { feed, history, shelf }
 
@@ -52,11 +53,20 @@ class DramaChannel {
   final String kind;
   final DramaChannelSource source;
 
+  /// 官方 `BookstoreTabType` 里这条频道的 `tab_type`。
+  ///
+  /// 本地表也按官方同义类型标注（即 [ChannelTab.typeOf] 的映射）。两个用途：
+  /// 服务端表到达后**按类型续接**当前频道（title 是服务端文案会变，类型才是
+  /// 身份），以及换表请求上报 `tab_type` / `last_tab_type`（官方
+  /// `SeriesMallVM` 行为）。
+  final int? serverType;
+
   const DramaChannel({
     required this.label,
     required this.tabIndex,
     required this.kind,
     this.source = DramaChannelSource.feed,
+    this.serverType,
   });
 
   bool get isFeed => source == DramaChannelSource.feed;
@@ -67,28 +77,33 @@ final dramaChannels = <DramaChannel>[
     label: '推荐',
     tabIndex: HomeNotifier.tabs.indexOf('视频'),
     kind: 'video',
+    serverType: kChannelVideoFeed,
   ),
   DramaChannel(
     label: '看剧',
     tabIndex: HomeNotifier.tabs.indexOf('短剧'),
     kind: 'video',
+    serverType: kChannelVideoEpisode,
   ),
   DramaChannel(
     label: '漫剧',
     tabIndex: HomeNotifier.tabs.indexOf('漫剧'),
     kind: 'manju',
+    serverType: kChannelDynamicComic,
   ),
   const DramaChannel(
     label: '最近',
     tabIndex: 0,
     kind: 'video',
     source: DramaChannelSource.history,
+    serverType: kChannelRecent,
   ),
   const DramaChannel(
     label: '收藏',
     tabIndex: 0,
     kind: 'video',
     source: DramaChannelSource.shelf,
+    serverType: kChannelFollow,
   ),
 ];
 
@@ -107,6 +122,7 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
         label: label('推荐'),
         tabIndex: HomeNotifier.tabs.indexOf('视频'),
         kind: 'video',
+        serverType: tab.type,
       );
     case kChannelVideoEpisode:
     case kChannelVideo:
@@ -114,12 +130,14 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
         label: label('看剧'),
         tabIndex: HomeNotifier.tabs.indexOf('短剧'),
         kind: 'video',
+        serverType: tab.type,
       );
     case kChannelDynamicComic:
       return DramaChannel(
         label: label('漫剧'),
         tabIndex: HomeNotifier.tabs.indexOf('漫剧'),
         kind: 'manju',
+        serverType: tab.type,
       );
     case kChannelRecent:
       return DramaChannel(
@@ -127,6 +145,7 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
         tabIndex: 0,
         kind: 'video',
         source: DramaChannelSource.history,
+        serverType: tab.type,
       );
     case kChannelFollow:
       return DramaChannel(
@@ -134,6 +153,7 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
         tabIndex: 0,
         kind: 'video',
         source: DramaChannelSource.shelf,
+        serverType: tab.type,
       );
     default:
       return null;
@@ -175,7 +195,7 @@ class DramaPage extends ConsumerStatefulWidget {
   final Widget Function()? searchPageBuilder;
 
   /// 服务端频道表加载器（测试缝）。默认走 `ApiClient.channelTabs()`。
-  final Future<List<ChannelTab>> Function()? channelLoader;
+  final Future<ChannelTable> Function()? channelLoader;
 
   @override
   ConsumerState<DramaPage> createState() => _DramaPageState();
@@ -264,37 +284,59 @@ class _DramaPageState extends ConsumerState<DramaPage>
   ///
   /// 官方频道条由 `data.tab_item` 驱动，所以这里以服务端为准；**但只在
   /// 映射出至少两个频道时替换**——一个频道就能替代整条栏的话，
-  /// 网络抖动或半截响应会把用户锁死在单一频道里。取不到就静默保留本地表。
+  /// 网络抖动或半截响应会把用户锁死在单一频道里。取不到就静默保留本地表
+  /// （官方失败是错误视图，这里刻意更稳：频道条是底级导航，不该因
+  /// 一次拉取失败把四个入口收走）。
   Future<void> _loadChannels() async {
     if (_channelsRequested) return;
     _channelsRequested = true;
-    List<ChannelTab> tabs;
+    ChannelTable table;
     try {
-      tabs =
-          await (widget.channelLoader?.call() ??
-              ApiClient.instance.channelTabs());
+      final current = _current;
+      table = await (widget.channelLoader?.call() ??
+          ApiClient.instance.channelTabs(
+            // 官方 SeriesMallVM：tabType 传当前频道、lastTabType 传上次选中
+            // 频道（SP last_tab_type，无值 -1），服务端据此算 tab_index。
+            tabType: current.serverType ?? kChannelVideoFeed,
+            lastTabType: current.serverType ?? -1,
+          ));
     } catch (_) {
       return;
     }
     if (!mounted) return;
     final mapped = <DramaChannel>[];
-    for (final tab in tabs) {
+    for (final tab in table.tabs) {
       final channel = serverChannelOf(tab);
       if (channel != null) mapped.add(channel);
     }
     if (mapped.length < 2) return;
     final previous = _channels.isEmpty ? null : _channels[_channel];
+    // 频道换了之后下标可能越界。默认选中按三级取：tab_type 对等续接
+    // （title 是服务端文案会变，类型才是频道的身份）→ label+source 兜底 →
+    // 服务端下发的默认选中下标（官方 `m0.U` 消费 `tab_index` 的行为）。
+    var index = -1;
+    final previousType = previous?.serverType;
+    if (previousType != null) {
+      index = mapped.indexWhere(
+        (channel) => channel.serverType == previousType,
+      );
+    }
+    if (index < 0 && previous != null) {
+      index = mapped.indexWhere(
+        (channel) =>
+            channel.label == previous.label &&
+            channel.source == previous.source,
+      );
+    }
+    if (index < 0) {
+      final serverDefault = table.defaultIndex;
+      index = serverDefault >= 0 && serverDefault < mapped.length
+          ? serverDefault
+          : 0;
+    }
     setState(() {
       _channels = List.unmodifiable(mapped);
-      // 频道换了之后下标可能越界：尽量停在「同一条」频道上。
-      final index = previous == null
-          ? 0
-          : _channels.indexWhere(
-              (channel) =>
-                  channel.label == previous.label &&
-                  channel.source == previous.source,
-            );
-      _channel = index < 0 ? 0 : index;
+      _channel = index;
       _screenIndex = 0;
     });
     // 频道表换了以后，**订阅流也要跟着换**：否则频道条高亮的是新频道，

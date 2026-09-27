@@ -274,17 +274,28 @@ fn series_feed<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<
 /// 类型取 `tab_type`（`:3086`）。本路由把这两段原样透传，客户端的频道条
 /// 就由服务端配置驱动。
 ///
-/// 参数只有 `tab_type`（当前选中的频道）与 `offset`：与 `homepage_recommend`
-/// 不同的地方是这里**必须**原样返回整个 `tab_item`，不能只挑一个 tab。
+/// 参数是 `tab_type`（当前选中的频道）与 `last_tab_type`（上次选中的频道，
+/// 官方存 SP `last_tab_type`，无值 -1）：与 `homepage_recommend` 不同的地方
+/// 是这里**必须**原样返回整个 `tab_item`，不能只挑一个 tab。
+///
+/// `bottom_tab_type` 必须是 7（官方 `BottomTabBarItemType.VideoSeriesFeedTab`
+/// = 7，书城才是 0）：服务端靠它区分语境，0 会拿到**书城**频道条
+///（书城把 video_feed=16 那条叫「视频」，且没有最近/收藏），短剧页的频道条
+/// 就会塌成「看剧/视频」两条。`client_req_type` 同理对齐官方进页语义
+/// `ClientReqType.Open` = 3（我们此前发 1 = Refresh）。
+/// 证据：J:seriesmall/SeriesMallVM.java:141-176、J:rpc/model/BottomTabBarItemType.java、
+/// J:rpc/model/ClientReqType.java。
 fn channel_tabs<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
     Box::pin(async move {
         let tab_type = default_val(&params.get_str("tab_type"), "16");
+        let last_tab_type = default_val(&params.get_str("last_tab_type"), "-1");
         let mut p = reading724_params();
         p.set("tab_type", tab_type);
+        p.set("last_tab_type", last_tab_type);
         p.set("client_template", "0");
-        p.set("bottom_tab_type", "0");
+        p.set("bottom_tab_type", "7");
         p.set("landing_bottom_tab_type", "0");
-        p.set("client_req_type", "1");
+        p.set("client_req_type", "3");
         p.set("app_mode", "0");
         p.set("classic_tab_style", "v3");
         p.set("lore_tab_style", "v5");
@@ -297,7 +308,6 @@ fn channel_tabs<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         p.set("current_name", "");
         p.set("book_id", "0");
         p.set("last_tab_index", "0");
-        p.set("last_tab_type", "0");
         p.set("enable_search_box_collapse", "false");
         p.set("top_tab_extra", "");
 

@@ -1273,26 +1273,33 @@ class ApiClient {
   });
 
   /// 服务端频道表（F08）：官方 `GET /reading/bookapi/bookmall/tab/v`
-  /// 的 `data.tab_item`（`TabDataList.tabItem`），客户端在 `m0.java:3051-3089`
-  /// 把 `title` 当频道名、`tab_type` 当类型。失败/空表返回空列表，
-  /// 由调用方回落到既有频道表。
-  Future<List<ChannelTab>> channelTabs({int tabType = 16}) async {
+  /// 的 `data.tab_item`（`TabDataList.tabItem`）+ `data.tab_index`
+  /// （官方默认选中下标），客户端在 `m0.java:3051-3089` 把 `title` 当频道名、
+  /// `tab_type` 当类型。失败/空表返回空表，由调用方回落到既有频道表。
+  ///
+  /// `tabType` 传当前频道的 `tab_type`；`lastTabType` 传上次选中频道的
+  /// `tab_type`（官方存 SP `last_tab_type`，无值 -1），服务端用它算
+  /// `tab_index` 续接用户位置。
+  Future<ChannelTable> channelTabs({int tabType = 16, int lastTabType = -1}) async {
     try {
       final r = await _get(
-        _url('/api/v1/recommend/channels', {'tab_type': '$tabType'}),
+        _url('/api/v1/recommend/channels', {
+          'tab_type': '$tabType',
+          'last_tab_type': '$lastTabType',
+        }),
       );
       final statusCode = r.statusCode;
       final bodyBytes = r.bodyBytes;
       return await Isolate.run(() {
         try {
           final payload = _decodeEnvelope(statusCode, bodyBytes);
-          return ChannelTab.listFromPayload(payload);
+          return ChannelTable.fromPayload(payload);
         } catch (_) {
-          return const <ChannelTab>[];
+          return ChannelTable.empty;
         }
       });
     } catch (_) {
-      return const <ChannelTab>[];
+      return ChannelTable.empty;
     }
   }
 
