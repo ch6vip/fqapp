@@ -86,14 +86,24 @@ void main() {
   });
 
   testWidgets('the role prefix follows playlet_role_type', (tester) async {
+    // 官方 roleType 0=主演、1=演员、其他=热评（z2()）；无角色条目不带前缀。
+    await tester.pumpWidget(app([comment('lead', roleType: 0)]));
+    expect(find.textContaining('主演说：'), findsOneWidget);
     await tester.pumpWidget(app([comment('actor', roleType: 1)]));
     expect(find.textContaining('演员说：'), findsOneWidget);
-    await tester.pumpWidget(app([comment('lead', roleType: 2)]));
-    expect(find.textContaining('主演说：'), findsOneWidget);
-    await tester.pumpWidget(app([comment('plain')]));
+    await tester.pumpWidget(app([comment('plain', roleType: 5)]));
     expect(find.textContaining('热评：'), findsNothing);
     expect(find.text('热评'), findsOneWidget);
     expect(find.text('内容plain'), findsOneWidget);
+  });
+
+  testWidgets('the expand affordance only shows when the text wraps', (
+    tester,
+  ) async {
+    // 单行内容不显示「展开」（官方 l2() 的 StaticLayout 折行判定）。
+    await tester.pumpWidget(app([comment('c1')]));
+    expect(find.text('展开'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('tapping reports the comment currently shown', (tester) async {
@@ -105,7 +115,7 @@ void main() {
     expect(tapped, ['c1']);
     await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('展开'));
+    await tester.tap(find.byKey(const ValueKey('playlet-hot-comment-c2')));
     expect(tapped, ['c1', 'c2']);
     await tester.pumpWidget(const SizedBox.shrink());
   });

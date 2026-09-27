@@ -23,7 +23,6 @@ class PlayerStyleConfig {
     this.padNewBottomStyle = false,
     this.reverseClearScreen = false,
     this.landscapeLockEnabled = false,
-    this.landscapeDoubleTapEnabled = false,
     this.defaultVideoSizeAspectFit = false,
     this.relateBookInEpisodesDialog = false,
   });
@@ -47,9 +46,6 @@ class PlayerStyleConfig {
   final bool padNewBottomStyle;
   final bool reverseClearScreen;
   final bool landscapeLockEnabled;
-
-  /// VideoLandStyleABValue 的无参默认值是 false；发布配置显式选新横屏样式。
-  final bool landscapeDoubleTapEnabled;
 
   /// 官方 `short_video_setting_opt_v679.default_video_size_aspect_fit`
   /// （默认 false）。它只决定「画面撑满」的缺省值
@@ -75,10 +71,6 @@ class PlayerStyleConfig {
       padNewBottomStyle: json['pad_new_player_bottom_style'] == true,
       reverseClearScreen: _bool(reverse, 'reverse'),
       landscapeLockEnabled: _bool(landscape, 'enable_lock'),
-      landscapeDoubleTapEnabled: _bool(
-        json['video_landscape_style_609'],
-        'enable',
-      ),
       defaultVideoSizeAspectFit: _bool(fill, 'default_video_size_aspect_fit'),
       relateBookInEpisodesDialog: _bool(
         json['series_relate_book_config_v659'],

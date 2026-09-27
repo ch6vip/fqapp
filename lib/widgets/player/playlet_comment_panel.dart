@@ -40,6 +40,7 @@ class PlayletCommentPanel extends StatefulWidget {
     this.loader,
     this.initialTotal = 0,
     this.focusCommentId = '',
+    this.focusReplyId = '',
     this.replyLoader,
   });
 
@@ -55,6 +56,10 @@ class PlayletCommentPanel extends StatefulWidget {
   /// （`SeriesHotCommentView.java:468-559`）。本地等价：用
   /// `insert_comment_ids` 让服务端把这条插进列表，页面里高亮它。
   final String focusCommentId;
+
+  /// 回复型热评带的回复 id（`hot_reply_id`）。非空时面板在父评论加载到
+  /// 后自动进入该楼层的回复列表，回复面板用它走 source=1002 定点读。
+  final String focusReplyId;
   final PlayletReplyPageLoader? replyLoader;
 
   /// 打开面板：官方入口在右侧竖栏，竖屏走底部弹窗。
@@ -64,6 +69,7 @@ class PlayletCommentPanel extends StatefulWidget {
     PlayletCommentPageLoader? loader,
     int total = 0,
     String focusCommentId = '',
+    String focusReplyId = '',
     PlayletReplyPageLoader? replyLoader,
   }) => showModalBottomSheet<void>(
     context: context,
@@ -78,6 +84,7 @@ class PlayletCommentPanel extends StatefulWidget {
       loader: loader,
       initialTotal: total,
       focusCommentId: focusCommentId,
+      focusReplyId: focusReplyId,
       replyLoader: replyLoader,
     ),
   );
@@ -187,6 +194,21 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
             page.cursor != requestedCursor;
         _loading = false;
       });
+      // 回复型热评（hot_reply_id 非空）：官方直接定位到该楼层所在
+      // 的回复列表（show_hot_comment_dialog）。父评论一出现就自动进楼，
+      // 回复面板再用 focusReplyId 做 source=1002 定点读。
+      if (reset &&
+          widget.focusReplyId.isNotEmpty &&
+          widget.focusCommentId.isNotEmpty &&
+          _replyTarget == null) {
+        final parent = _comments.firstWhere(
+          (comment) => comment.id == widget.focusCommentId,
+          orElse: () => const PlayletComment(),
+        );
+        if (parent.id.isNotEmpty && mounted) {
+          setState(() => _replyTarget = parent);
+        }
+      }
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -230,6 +252,10 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
             seriesId: widget.seriesId,
             comment: replyTarget,
             loader: widget.replyLoader,
+            // 回复型热评定位：父评论正是焦点评论时带上回复 id。
+            focusReplyId: replyTarget.id == widget.focusCommentId
+                ? widget.focusReplyId
+                : '',
             onBack: () => setState(() => _replyTarget = null),
           ),
         ),

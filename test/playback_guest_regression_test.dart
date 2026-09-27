@@ -119,37 +119,80 @@ void main() {
     await player.dispose();
   });
 
-  for (final enabled in [false, true]) {
-    testWidgets(
-      'landscape double tap follows video_landscape_style_609 ($enabled)',
-      (tester) async {
-        final player = FakeNativePlayer()..isPlaying = true;
-        await tester.pumpWidget(
-          MaterialApp(home: _chrome(player, doubleTap: enabled)),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-        await tester.pump();
-        final point = tester.getCenter(
-          find.byKey(const ValueKey('video-surface')),
-        );
-        await tester.tapAt(point);
-        await tester.pump(const Duration(milliseconds: 80));
-        await tester.tapAt(point);
-        await tester.pump(const Duration(milliseconds: 400));
-        expect(
-          player.calls.where((call) => call == 'pause'),
-          hasLength(enabled ? 1 : 0),
-        );
-        expect(
-          find.byKey(const ValueKey('player-like-animation')),
-          findsNothing,
-        );
-        await tester.pumpWidget(const SizedBox.shrink());
-        await player.dispose();
-      },
+  // 官方短剧双击从不切换播放（jq3/x$q.onDoubleTap:2155-2188）；中带
+  // （y ∈ 44dp..屏高-240dp）双击隐藏横屏控制条（x.X6()->o.x7()->f()）。
+  testWidgets('landscape double tap in the mid band hides the bar, not playback', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(MaterialApp(home: _chrome(player)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    final point = tester.getCenter(find.byKey(const ValueKey('video-surface')));
+    await tester.tapAt(point);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(point);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(player.calls.where((call) => call == 'pause'), isEmpty);
+    expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('landscape double tap outside the mid band keeps the bar', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(MaterialApp(home: _chrome(player)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
+    final point = Offset(surface.center.dx, surface.top + 20);
+    await tester.tapAt(point);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(point);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(player.calls.where((call) => call == 'pause'), isEmpty);
+    expect(find.byKey(const ValueKey('landscape-play')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  // 官方长按两分支（jq3/x.java:2250-2252 + K6():2690-2711）：横向中心带
+  // （竖屏 50%）内打开更多面板（y7 的 show_more_panel_from_long_click），
+  // 带外才进 2x 倍速覆盖层。
+  testWidgets('long press in the center band opens the more panel', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(MaterialApp(home: _chrome(player)));
+    await tester.pumpAndSettle();
+    await tester.longPressAt(
+      tester.getCenter(find.byKey(const ValueKey('video-surface'))),
     );
-  }
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
+    // 只允许初始的速率同步（rate:1.0），不允许长按倍速（rate:2.0）。
+    expect(player.calls.where((call) => call.startsWith('rate:')), everyElement('rate:1.0'));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('long press outside the center band boosts to 2x', (tester) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(MaterialApp(home: _chrome(player)));
+    await tester.pumpAndSettle();
+    final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
+    await tester.longPressAt(Offset(surface.left + 12, surface.center.dy));
+    expect(player.calls, contains('rate:2.0'));
+    // 松开恢复原速（官方 g.k() 的 d(true) 行为）。
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(player.calls, contains('rate:1.0'));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
 
   testWidgets(
     'lock timeout requires waking the button and preserves video crop',
@@ -231,7 +274,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final point = tester.getCenter(find.byKey(const ValueKey('video-surface')));
+    // 中心带内的长按现在打开更多面板（官方 y7 链路），倍速要压在带外。
+    final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
+    final point = Offset(surface.left + 12, surface.center.dy);
     final gesture = await tester.startGesture(point);
     await tester.pump(const Duration(milliseconds: 700));
     expect(player.rate, 2);
@@ -310,7 +355,6 @@ Widget _chrome(
   FakeNativePlayer player, {
   bool lockEnabled = false,
   bool reverse = false,
-  bool doubleTap = false,
   bool blocked = false,
   bool fillScreen = false,
   bool showSeekHint = false,
@@ -328,7 +372,6 @@ Widget _chrome(
   playing: true,
   shortSeries: true,
   landscapeLockEnabled: lockEnabled,
-  landscapeDoubleTapEnabled: doubleTap,
   interactionBlocked: blocked,
   fillScreen: fillScreen,
   showSeekHint: showSeekHint,

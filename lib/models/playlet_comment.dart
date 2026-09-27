@@ -95,10 +95,14 @@ class PlayletComment {
 
   bool get isEmpty => text.trim().isEmpty;
 
-  /// 官方热评前缀：0x7f061960/61/62 =「演员说：/主演说：/热评：」。
+  /// 官方热评前缀（`InfoPanelHotCommentView.z2()`，InfoPanelHotCommentView.java:324-378）：
+  /// roleType 0→「主演说：」(0x7f061961)、1→「演员说：」(0x7f061960)、
+  /// 其他→「热评：」(0x7f061962)。字符串证据 apktool values dze/dzf/dzg/dzh。
+  // Note: 映射曾被写成 1/2 档，2026-09-27 主源码复核后翻正 —
+  // 见 .agents/notes/implemented/bug-fix/2026-09-27-playlet-evidence-flips.md
   String get rolePrefix => switch (playletRoleType) {
+    0 => '主演说：',
     1 => '演员说：',
-    2 => '主演说：',
     _ => '热评：',
   };
 

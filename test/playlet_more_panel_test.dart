@@ -156,7 +156,8 @@ void main() {
         tester.getTopLeft(find.byKey(ValueKey('player-more-$id-row'))).dy,
     ];
     expect(positions, orderedEquals([...positions]..sort()));
-    expect(find.text('取消'), findsNothing);
+    // 官方 aae.xml 底部整行「取消」（@string/biu）。
+    expect(find.text('取消'), findsOneWidget);
     expect(find.byType(ChoiceChip), findsNothing);
     expect(find.text('分享'), findsNothing);
   });

@@ -107,7 +107,43 @@ async fn anonymous_playlet_replies_use_the_series_context_and_official_enums() {
     assert_eq!(status, 200);
     let sent = body_of(&upstream.last_request().expect("next page"));
     assert_eq!(sent["cursor"], "next");
+    // 未传 count 时落官方默认每页 5 条（`y.java:97-98` static{o=5;p=5}）。
+    assert_eq!(sent["count"], 5);
     assert!(sent["business_param"].get("insert_reply_ids").is_none());
+    upstream.shutdown();
+}
+
+/// 回复型热评/消息中心的定点读（`y.java` L():1163-1203）：
+/// comment_source=NovelBookReplyMessage(1002)，business_param 追加
+/// ref_reply_id + insert_reply_ids；普通分页（501）不受影响。
+#[tokio::test]
+async fn playlet_reply_pinpoint_read_uses_source_1002_with_ref_reply() {
+    let upstream = MockUpstream::start(|_| {
+        MockReply::json(json!({
+            "code": 0,
+            "data": {"common_list_info": {"cursor": "", "has_more": false}}
+        }))
+    })
+    .await;
+    let dir = TempDir::new("playlet-replies-pinpoint");
+    let server = server_with(&dir, &upstream.origin).await;
+    let (status, _) = json_body(
+        dispatch(
+            &server,
+            &api_get(
+                "/api/v1/series/123/comments/c9/replies",
+                "ref_reply_id=r7",
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let sent = body_of(&upstream.last_request().expect("pinpoint call"));
+    assert_eq!(sent["comment_source"], 1002);
+    assert_eq!(sent["business_param"]["ref_reply_id"], "r7");
+    assert_eq!(sent["business_param"]["insert_reply_ids"], json!(["r7"]));
+    assert_eq!(sent["count"], 5);
     upstream.shutdown();
 }
 

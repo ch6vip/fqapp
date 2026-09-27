@@ -770,17 +770,26 @@ class ApiClient {
   }
 
   /// 短剧回复读取使用 Book/NovelBookReply 参数，不能走小说段评回复接口。
+  ///
+  /// [refReplyId] 非空时走官方定点读：comment_source=1002，business_param
+  /// 追加 `ref_reply_id`/`insert_reply_ids`（`y.java` L():1163-1203），
+  /// 用于回复型热评定位到具体楼层。
   Future<CommentReplyPage> playletCommentReplies(
     String seriesId,
     String commentId, {
-    int count = 10,
+    int count = 5,
     String cursor = '',
+    String refReplyId = '',
   }) async {
     final response = await _get(
       _url(
         '/api/v1/series/${Uri.encodeComponent(seriesId)}/comments/'
         '${Uri.encodeComponent(commentId)}/replies',
-        {'count': '$count', if (cursor.isNotEmpty) 'cursor': cursor},
+        {
+          'count': '$count',
+          if (cursor.isNotEmpty) 'cursor': cursor,
+          if (refReplyId.isNotEmpty) 'ref_reply_id': refReplyId,
+        },
       ),
     );
     final status = response.statusCode;

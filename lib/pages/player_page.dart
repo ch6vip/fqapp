@@ -23,6 +23,7 @@ import '../services/swipe_guide_store.dart';
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_danmaku_layer.dart';
 import '../widgets/player/playlet_danmaku_loader.dart';
+import '../widgets/player/playlet_danmaku_settings.dart';
 import '../widgets/player/story_player_panel.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
@@ -183,6 +184,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_loadBandExtras());
     unawaited(_loadHotComments());
     unawaited(_loadDanmakuPreference());
+    unawaited(_loadDanmakuSettings());
     // 进度心跳每秒喂一次调度器：进预取区间补拉下一批、落未覆盖处补数。
     // 不挂在 200ms 进度流上，也不逐帧（上批逐帧滚动只属于渲染层）。
     _danmakuProgressTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -204,6 +206,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 时间轴对象负责切集清空与去重（官方 container/l.java 的规则）。
   final DanmakuTimeline _danmaku = DanmakuTimeline();
   bool _danmakuEnabled = DanmakuPreference.defaultEnabled;
+
+  /// 弹幕设置（官方 `danmaku_config` 五项，默认值同官方）。
+  DanmakuSettings _danmakuSettings = const DanmakuSettings();
 
   /// 分段预加载 + seek 补数的调度器；一次只飞一个请求，旧响应按
   /// 代际作废。取数实现可注入（[PlayerPage.danmakuFetcher]）。
@@ -332,11 +337,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   /// 热评点击：官方的联动是发 `show_hot_comment_dialog` 并带
   /// `hot_comment_id`/`hot_reply_id`（Reply 型用父评论 id 当
-  /// `hot_comment_id`）。本地等价是打开评论面板并滚到该条。
+  /// `hot_comment_id`）。本地等价是打开评论面板并滚到该条；
+  /// Reply 型再带回复 id，面板自动进楼并用 source=1002 定位楼层。
   void _openHotComment(PlayletComment comment) {
-    final target = comment.dataType == UgcRelativeType.reply
-        ? comment.parentCommentId
-        : comment.id;
+    final isReply = comment.dataType == UgcRelativeType.reply;
+    final target = isReply ? comment.parentCommentId : comment.id;
     unawaited(
       _withPlayerOverlay(
         () => PlayletCommentPanel.show(
@@ -344,6 +349,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           seriesId: widget.bookId,
           total: _commentCount,
           focusCommentId: target,
+          focusReplyId: isReply ? comment.id : '',
         ),
       ),
     );
@@ -379,7 +385,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
-  /// 标记一集已看（按剧集 id）。
+  /// 标记一集已看（按剧集 id）。同一集只写一次存储：进度保存点里
+  /// 含 2 秒定时器，不去重会反复落盘。
   Future<void> _markWatched(int index) async {
     if (!widget.shortSeries ||
         widget.bookId.isEmpty ||
@@ -388,8 +395,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       return;
     }
     final id = widget.eps[index].itemId;
-    if (id.isEmpty) return;
-    setState(() => _watchedIds = {..._watchedIds, id});
+    if (id.isEmpty || _watchedIds.contains(id)) return;
+    // 进度保存点会在页面销毁（dispose）时触发，元素已 defunct，
+    // 不能 setState；直接改字段，可见态由下一次既有 rebuild 带出。
+    _watchedIds = {..._watchedIds, id};
     await _watched.mark(widget.bookId, [id]);
   }
 
@@ -438,6 +447,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     setState(() => _danmakuEnabled = enabled);
     _danmakuLoader.setEnabled(enabled);
     if (enabled) _loadDanmaku();
+  }
+
+  /// 弹幕设置（官方 `danmaku_config`）：字号/透明度/速度/行数横竖屏密度。
+  Future<void> _loadDanmakuSettings() async {
+    final settings = await DanmakuSettings.load();
+    if (!mounted) return;
+    setState(() => _danmakuSettings = settings);
   }
 
   /// 弹幕取数的默认实现：每次请求挂一个取消柄，切集/销毁时作废在飞
@@ -710,11 +726,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         // Keep the previous resume record until this episode is visible.
         // Note: .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
         _hasDisplayed = true;
-        // 官方「已看」是**这一集真的有进度**（`com/dragon/read/video/d.java:52-54`
-        // 按 vid 读 `video_progress`），因此只有出了首帧才算看过：
-        // 没出首帧就跳走的那一集不该被标记（工单 F07 的「未出首帧」用例）。
-        unawaited(_markWatched(_activeIndex ?? _index));
-        unawaited(_persistProgress());
+        // 首帧只更新续播记录。官方「已看」= `video_progress` SP 有该 vid 的
+        // 条目（`com/dragon/read/video/d.java:56-58`），而 SP 只在**暂停/
+        // 切集/保存进度**时写入（`video/d.java:122-126` 的调用点）——
+        // 播放开始不写。因此已看标记挂在 _persistProgress 的保存点上，
+        // 不在首帧（工单 F07「未出首帧/看完即走」用例）。
+        unawaited(_persistProgress(markWatched: false));
         _syncWatchClock();
       }
     }
@@ -1011,12 +1028,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     };
   }
 
-  Future<void> _persistProgress() {
+  /// 保存当前集的续播进度；除首帧外的所有调用点都对应官方
+  /// `video_progress` 的写入时机（暂停/切集/完成/退出），同时把该集
+  /// 记为已看——官方「已看」判据就是这条进度记录存在
+  /// （`br3/p0.java:47` -> `video/d.java:56-58`）。
+  // Note: 已看标记曾挂首帧，2026-09-27 对齐官方保存点 —
+  // 见 .agents/notes/implemented/bug-fix/2026-09-27-playlet-evidence-flips.md
+  Future<void> _persistProgress({bool markWatched = true}) {
     final player = _player;
     final index = _activeIndex;
     if (player == null || index == null || !_hasDisplayed) {
       return Future<void>.value();
     }
+    if (markWatched) unawaited(_markWatched(index));
     // Capture identity and progress before any await. All writes (including a
     // new episode's history entry) share this queue to preserve their order.
     final history = _historyEntry(index, player);
@@ -1095,13 +1119,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       danmaku: _danmaku.entries,
       danmakuEnabled: _danmakuEnabled,
       onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,
+      danmakuSettings: _danmakuSettings,
+      onDanmakuSettingsChanged: widget.shortSeries
+          ? (settings) => setState(() => _danmakuSettings = settings)
+          : null,
       onSeeked: widget.shortSeries ? _onDanmakuSeek : null,
       newPlayerBottomStyle: style.useNewPlayerBottomStyle,
       hasBanner: style.hasBanner,
       padNewBottomStyle: style.padNewBottomStyle,
       reverseClearScreen: style.reverseClearScreen,
       landscapeLockEnabled: style.landscapeLockEnabled,
-      landscapeDoubleTapEnabled: style.landscapeDoubleTapEnabled,
       child: _videoArea(),
     );
   }

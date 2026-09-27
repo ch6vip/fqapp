@@ -179,11 +179,12 @@ void main() {
   });
 
   test('hot prefixes follow playlet_role_type', () {
+    // 官方映射：0=主演说、1=演员说、其他=热评（InfoPanelHotCommentView.z2()）。
+    const lead = PlayletComment(playletRoleType: 0);
     const actor = PlayletComment(playletRoleType: 1);
-    const lead = PlayletComment(playletRoleType: 2);
-    const plain = PlayletComment();
-    expect(actor.rolePrefix, '演员说：');
+    const plain = PlayletComment(playletRoleType: 2);
     expect(lead.rolePrefix, '主演说：');
+    expect(actor.rolePrefix, '演员说：');
     expect(plain.rolePrefix, '热评：');
   });
 

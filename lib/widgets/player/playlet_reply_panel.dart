@@ -12,6 +12,7 @@ typedef PlayletReplyPageLoader =
       required String commentId,
       required int count,
       required String cursor,
+      String refReplyId,
     });
 
 /// 官方剧评详情中的回复列表。保持同一个面板高度，返回时保留剧评排序和滚动位置。
@@ -22,12 +23,19 @@ class PlayletReplyPanel extends StatefulWidget {
     required this.comment,
     required this.onBack,
     this.loader,
+    this.focusReplyId = '',
   });
 
   final String seriesId;
   final PlayletComment comment;
   final VoidCallback onBack;
   final PlayletReplyPageLoader? loader;
+
+  /// 回复型热评定位（`hot_reply_id`）：非空时首页走官方 source=1002
+  /// 定点读（business_param.ref_reply_id/insert_reply_ids，
+  /// `y.java` L():1163-1203），失败回退普通列表（官方 zip 的
+  /// onErrorReturn → 仅 A 生效）。
+  final String focusReplyId;
 
   @override
   State<PlayletReplyPanel> createState() => _PlayletReplyPanelState();
@@ -42,9 +50,13 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
   Object? _error;
   late int _total = widget.comment.replyCount;
 
+  /// 首次加载是否还走定点读；失败后回退普通列表并不再重试定点。
+  bool _useFocus = false;
+
   @override
   void initState() {
     super.initState();
+    _useFocus = widget.focusReplyId.isNotEmpty;
     _scroll.addListener(_onScroll);
     unawaited(_load());
   }
@@ -70,25 +82,41 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
       _error = null;
     });
     final requestedCursor = _cursor;
+    // 官方定点读只在首页（cursor 为空）带 ref_reply_id（`L()` 的
+    // cursor=""），加载更多回到普通分页。
+    final refReplyId =
+        _useFocus && requestedCursor.isEmpty ? widget.focusReplyId : '';
+    final pinnedFirst = refReplyId.isNotEmpty;
     try {
+      // 官方回复分页每页 5 条（`y.java:97-98` static{o=5;p=5}）。
       final page =
           await (widget.loader?.call(
                 commentId: widget.comment.id,
-                count: 10,
+                count: 5,
                 cursor: requestedCursor,
+                refReplyId: refReplyId,
               ) ??
               ApiClient.instance.playletCommentReplies(
                 widget.seriesId,
                 widget.comment.id,
-                count: 10,
+                count: 5,
                 cursor: requestedCursor,
+                refReplyId: refReplyId,
               ));
       if (!mounted) return;
       setState(() {
+        final replies = List.of(page.replies);
+        // 定点读命中时把目标楼层提到父楼层之后（`c0()` 插入位置 i2）。
+        if (pinnedFirst && replies.length > 1) {
+          replies.sort((a, b) {
+            final aFocus = a.id == widget.focusReplyId;
+            final bFocus = b.id == widget.focusReplyId;
+            if (aFocus == bFocus) return 0;
+            return aFocus ? -1 : 1;
+          });
+        }
         final ids = _replies.map((reply) => reply.id).toSet();
-        _replies.addAll(
-          page.replies.where((reply) => reply.id.isEmpty || ids.add(reply.id)),
-        );
+        _replies.addAll(replies.where((reply) => reply.id.isEmpty || ids.add(reply.id)));
         if (page.totalCount > 0) _total = page.totalCount;
         _cursor = page.cursor;
         _hasMore =
@@ -96,6 +124,19 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
         _loading = false;
       });
     } catch (error) {
+      // 定点读失败：官方 onErrorReturn 让 B 请求退化为空、仅剩普通
+      // 列表。这里回退一次不带 ref_reply_id 的普通请求。
+      if (pinnedFirst) {
+        _useFocus = false;
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _error = null;
+          });
+          unawaited(_load());
+        }
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _error = error;

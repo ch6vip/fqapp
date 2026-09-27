@@ -57,7 +57,7 @@ void main() {
         'c&9',
         'replies',
       ]);
-      expect(uri.queryParameters['count'], '10');
+      expect(uri.queryParameters['count'], '5');
       await api.playletCommentReplies('剧集/1', 'c&9', cursor: page.cursor);
       expect(requests.last.url.queryParameters['cursor'], 'next&cursor');
       expect(

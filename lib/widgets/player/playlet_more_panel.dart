@@ -16,6 +16,9 @@ class PlayletMorePanel extends StatefulWidget {
     this.onDefaultMuteChanged,
     required this.danmakuEnabled,
     this.onToggleDanmaku,
+    this.clearScreen = false,
+    this.onToggleClearScreen,
+    this.onOpenDanmakuSettings,
   });
 
   final double rate;
@@ -25,6 +28,15 @@ class PlayletMorePanel extends StatefulWidget {
   final ValueChanged<bool>? onDefaultMuteChanged;
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
+
+  /// 清屏行（官方 `jm3.a`，`oi3/k.java:537-539` 的 `u()`=新面板门）：
+  /// 未清屏显示「清屏播放」，清屏态显示「退出清屏」，点击切换并关面板
+  /// （`jm3/a.java:76` 的 `p0(!zB0)`）。无回调（不支持清屏/锁定中）不显示。
+  final bool clearScreen;
+  final VoidCallback? onToggleClearScreen;
+
+  /// 「弹幕设置」入口（官方 `jm3.e`，label `a2v`，在弹幕开关之后）。
+  final VoidCallback? onOpenDanmakuSettings;
 
   @override
   State<PlayletMorePanel> createState() => _PlayletMorePanelState();
@@ -170,6 +182,17 @@ class _PlayletMorePanelState extends State<PlayletMorePanel> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _rateRow(context),
+                    // 官方 r() 里清屏行在倍速之后、弹幕之前（jm3.a）。
+                    if (widget.onToggleClearScreen != null)
+                      _actionRow(
+                        'clear',
+                        widget.clearScreen ? '退出清屏' : '清屏播放',
+                        widget.clearScreen ? 'clear_exit' : 'clear',
+                        () {
+                          widget.onToggleClearScreen!();
+                          Navigator.pop(context);
+                        },
+                      ),
                     // V2 的 options 在 actions 上方；保留 o() 中撑满、
                     // 静音、弹幕的相对顺序，省略用户排除及未接入的项目。
                     if (widget.onFillScreenChanged != null)
@@ -182,11 +205,35 @@ class _PlayletMorePanelState extends State<PlayletMorePanel> {
                         setState(() => _defaultMute = !_defaultMute);
                         widget.onDefaultMuteChanged!(_defaultMute);
                       }),
-                    if (widget.onToggleDanmaku != null)
+                    if (widget.onToggleDanmaku != null) ...[
                       _switchRow('danmaku', '弹幕', _danmakuEnabled, () {
                         setState(() => _danmakuEnabled = !_danmakuEnabled);
                         widget.onToggleDanmaku!();
                       }),
+                      if (widget.onOpenDanmakuSettings != null)
+                        _actionRow(
+                          'danmaku_settings',
+                          '弹幕设置',
+                          'danmaku_settings',
+                          widget.onOpenDanmakuSettings!,
+                        ),
+                    ],
+                    // aae.xml 底部整行「取消」按钮（@string/biu，16sp 居中、
+                    // 上下 16dip），点击仅关闭面板。
+                    Semantics(
+                      key: const ValueKey('player-more-cancel-row'),
+                      button: true,
+                      child: InkWell(
+                        key: const ValueKey('player-more-cancel'),
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          width: double.infinity,
+                          child: const Text('取消', style: _labelStyle),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -313,6 +360,33 @@ class _PlayletMorePanelState extends State<PlayletMorePanel> {
       ),
     ),
   );
+
+  /// 官方 jm3.a 行：图标 + 文案，整行点击，无开关尾件。
+  Widget _actionRow(String id, String label, String icon, VoidCallback onTap) =>
+      Semantics(
+        key: ValueKey('player-more-$id-row'),
+        label: label,
+        button: true,
+        onTap: onTap,
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: onTap,
+          excludeFromSemantics: true,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 52),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 16, 10),
+              child: Row(
+                children: [
+                  _PanelIcon(icon),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(label, style: _labelStyle)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
 
   Widget _switchRow(String id, String label, bool value, VoidCallback onTap) =>
       Semantics(

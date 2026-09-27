@@ -21,7 +21,6 @@ void main() {
     expect(config.padNewBottomStyle, isFalse);
     expect(config.reverseClearScreen, isFalse);
     expect(config.landscapeLockEnabled, isFalse);
-    expect(config.landscapeDoubleTapEnabled, isFalse);
   });
 
   test('the bottom style is an OR of both fields', () {
@@ -47,14 +46,12 @@ void main() {
       },
       'func_reverse_of_clear_screen_v691': {'reverse': true},
       'landscape_func_config_v705': {'enable_lock': true},
-      'video_landscape_style_609': {'enable': true},
       'pad_new_player_bottom_style': true,
     });
     expect(config.useNewPlayerBottomStyle, isTrue);
     expect(config.hasBanner, isFalse);
     expect(config.reverseClearScreen, isTrue);
     expect(config.landscapeLockEnabled, isTrue);
-    expect(config.landscapeDoubleTapEnabled, isTrue);
     expect(config.padNewBottomStyle, isTrue);
   });
 

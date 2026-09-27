@@ -184,7 +184,7 @@ void main() {
       final before = tester.getTopLeft(moving).dx;
       await tester.pump(const Duration(milliseconds: 16));
       final normalStep = before - tester.getTopLeft(moving).dx;
-      final gesture = await tester.startGesture(const Offset(200, 350));
+      final gesture = await tester.startGesture(const Offset(40, 350));
       await tester.pump(const Duration(milliseconds: 600));
       expect(player.rate, 2);
       player.currentPosition = const Duration(milliseconds: 20600);

@@ -14,6 +14,7 @@ import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
 import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
+import 'player/playlet_danmaku_settings.dart';
 import 'player/story_player_panel.dart';
 import 'player/playlet_hot_comment_bar.dart';
 import 'player/playlet_more_panel.dart';
@@ -82,9 +83,6 @@ class VideoPlayerChrome extends StatefulWidget {
   /// 默认关闭（`LandLockOptV705` 默认 false）。
   final bool landscapeLockEnabled;
 
-  /// 官方 video_landscape_style_609.enable：横屏双击切换播放。
-  final bool landscapeDoubleTapEnabled;
-
   /// 评论入口：官方右栏第三项。计数 0 时文案是「评论」。为 null 时该项
   /// 不出现（官方该项本身默认 gone，见 \`res/layout/cjs.xml:11\`）。
   final int commentCount;
@@ -116,6 +114,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final List<PlayletComment> danmaku;
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
+
+  /// 弹幕设置（官方 `danmaku_config`）。回调为 null 时「弹幕设置」
+  /// 入口不出现（官方 jm3.e 的 `e()` 门）。
+  final DanmakuSettings danmakuSettings;
+  final ValueChanged<DanmakuSettings>? onDanmakuSettingsChanged;
 
   /// 最终确定的 seek 目标（进度条拖动收尾、横滑收尾、±10s 快进/回拖、
   /// 播完重播回零）。拖动过程中的实时 seek 不上报，只报收尾值，
@@ -158,7 +161,6 @@ class VideoPlayerChrome extends StatefulWidget {
     this.padNewBottomStyle = false,
     this.reverseClearScreen = false,
     this.landscapeLockEnabled = false,
-    this.landscapeDoubleTapEnabled = false,
     this.commentCount = 0,
     this.onComments,
     this.onSeeked,
@@ -176,6 +178,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.danmaku = const [],
     this.danmakuEnabled = true,
     this.onToggleDanmaku,
+    this.danmakuSettings = const DanmakuSettings(),
+    this.onDanmakuSettingsChanged,
   });
 
   @override
@@ -199,6 +203,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   StreamSubscription<bool>? _playWhenReadySubscription;
   Timer? _hideTimer;
   Timer? _doubleTapGuard;
+
+  /// 「弹幕设置」级联打开标记：更多面板收起后再开设置面板。
+  bool _pendingDanmakuSettings = false;
+
+  /// 双击按下的位置：官方双击的中带判定需要 y 坐标
+  /// （`jq3/x$q.onDoubleTap` 的 44dp..屏高-240dp）。
+  Offset? _doubleTapDownPosition;
   bool _visible = true;
   bool _seeking = false;
   bool _resumeAfterSeek = false;
@@ -810,11 +821,70 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     unawaited(_control((player) => player.setRate(2)));
   }
 
+  /// 官方 K6() 的横向中心带：竖屏取屏宽 50%、横屏取 33%（J6()），
+  /// Y 方向不限。dx 是 Flutter 逻辑像素，与官方 dp 同单位可直接比较。
+  bool _inLongPressBand(double dx) {
+    final width = _viewportSize.width;
+    if (width <= 0) return false;
+    final factor = _fullScreen && width > _viewportSize.height ? 0.33 : 0.5;
+    final start = width * (1 - factor) / 2;
+    return dx >= start && dx <= width - start;
+  }
+
   void _endBoost() {
     if (!_boosting) return;
     setState(() => _boosting = false);
     unawaited(_control((player) => player.setRate(_rate)));
     _scheduleHide();
+  }
+
+  /// 弹幕设置面板（官方 `ay1/v.java`）：竖屏整宽底部，横屏 372dp 右对齐。
+  /// 滑杆变化实时回调宿主并落盘（官方 UpdateDanmakuConfigEvent）。
+  Future<void> _showDanmakuSettings() async {
+    final onSettings = widget.onDanmakuSettingsChanged;
+    if (onSettings == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _modalOpen = true);
+    final landscape = _fullScreen;
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: landscape ? Colors.transparent : const Color(0xFF1C1C1C),
+      shape: landscape
+          ? null
+          : RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+      builder: (sheetContext) {
+        final panel = PlayletDanmakuSettingsPanel(
+          settings: widget.danmakuSettings,
+          landscape: landscape,
+          onChanged: (settings) {
+            onSettings(settings);
+            unawaited(DanmakuSettings.save(settings));
+          },
+          onReset: () => messenger.showSnackBar(
+            const SnackBar(content: Text('设置成功')),
+          ),
+        );
+        if (!landscape) return panel;
+        return Container(
+          alignment: Alignment.bottomRight,
+          padding: const EdgeInsets.only(right: 8, bottom: 8),
+          child: SizedBox(
+            width: 372,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1C1C),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: panel,
+            ),
+          ),
+        );
+      },
+    );
+    if (mounted) setState(() => _modalOpen = false);
   }
 
   /// 短剧采用官方 V2 新样式（style=1、enable=true）：深色底、12dp 圆角、
@@ -861,6 +931,19 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               onDefaultMuteChanged: widget.onDefaultMuteChanged,
               danmakuEnabled: widget.danmakuEnabled,
               onToggleDanmaku: widget.onToggleDanmaku,
+              // 清屏态面板出口：官方清屏后的倍速文字仍打开面板，
+              // 面板内「退出清屏」行回画面（jm3.a 的 p0(!zB0)）。
+              clearScreen: _clearScreen,
+              onToggleClearScreen: _clearScreenAvailable
+                  ? () => _setClearScreen(!_clearScreen)
+                  : null,
+              // 官方 jm3.e：弹幕设置入口在弹幕开关之后。
+              onOpenDanmakuSettings: widget.onDanmakuSettingsChanged != null
+                  ? () {
+                      _pendingDanmakuSettings = true;
+                      Navigator.pop(context);
+                    }
+                  : null,
             )
           : StatefulBuilder(
               builder: (context, setSheetState) => SafeArea(
@@ -991,6 +1074,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           ).showSnackBar(const SnackBar(content: Text('倍速已生效，但未能保存设置')));
         }
       }
+    }
+    // 更多面板里的「弹幕设置」：等面板收起后再级联打开设置面板，
+    // 避免 _modalOpen 的置位被 _showRates 的收尾覆盖。
+    if (_pendingDanmakuSettings) {
+      _pendingDanmakuSettings = false;
+      unawaited(_showDanmakuSettings());
+      return;
     }
     if (mounted) _scheduleHide();
   }
@@ -1384,6 +1474,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     tapTogglesPlayback ? _togglePlayback() : _toggleControls();
                   }
                 },
+                onDoubleTapDown: (details) =>
+                    _doubleTapDownPosition = details.localPosition,
+                // Note: 官方短剧双击从不切播放，`video_landscape_style_609`
+                // 是点赞皮肤键（原挪用已删）— 见
+                // .agents/notes/implemented/bug-fix/2026-09-27-playlet-evidence-flips.md
                 onDoubleTap: () {
                   if (!unobstructed) return;
                   if (_locked) {
@@ -1391,21 +1486,42 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   } else if (portraitSeries) {
                     // 保留吞单击窗口，避免双击尾部的触摸误切播放状态。
                     if (_ready && !_clearScreen) _guardDoubleTap();
-                  } else if (!widget.shortSeries ||
-                      widget.landscapeDoubleTapEnabled) {
-                    if (widget.shortSeries) _guardDoubleTap();
+                  } else if (!widget.shortSeries) {
                     _togglePlayback();
+                  } else {
+                    // 官方短剧双击从不切换播放（jq3/x$q.onDoubleTap
+                    // :2155-2188）：中带（y ∈ 44dp..屏高-240dp）触发
+                    // x.X6()->o.x7()->fullscreen/c 的横屏控制条隐藏。
+                    _guardDoubleTap();
+                    final position = _doubleTapDownPosition;
+                    final height = window.height;
+                    if (landscape &&
+                        !_clearScreen &&
+                        _visible &&
+                        position != null &&
+                        height > 0 &&
+                        position.dy > 44 &&
+                        position.dy < height - 240) {
+                      _hideTimer?.cancel();
+                      setState(() => _visible = false);
+                    }
                   }
                 },
                 onHorizontalDragStart: _startDragSeek,
                 onHorizontalDragUpdate: _updateDragSeek,
                 onHorizontalDragEnd: _endDragSeek,
-                // 官方 K6() 的中心热区检查只在 y7() 为真时才拦截长按
-                // （jq3/x.java:2250-2252）；y7() 的配置分支未取证，故不在此
-                // 私自收紧热区。锁定时由 _startBoost 自己拒绝。
-                onLongPressStart: (_) {
+                // 官方长按分两支（jq3/x.java:2250-2252）：横向中心带
+                // （K6():2690-2711，竖屏 50%/横屏 33% 宽，Y 不限）命中且
+                // y7() 处理成功 → 打开「show_more_panel_from_long_click」
+                // 的更多面板；带外（或非短剧）才是倍速覆盖层。
+                onLongPressStart: (details) {
                   if (_locked) {
                     _refreshLockVisibility();
+                    return;
+                  }
+                  if (widget.shortSeries &&
+                      _inLongPressBand(details.localPosition.dx)) {
+                    if (!_seeking && !_paging) _showRates();
                     return;
                   }
                   _startBoost();
@@ -1481,6 +1597,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                         entries: widget.danmaku,
                         position: _position,
                         rate: _boosting ? 2 : _rate,
+                        // 官方横屏飞行 12000ms、竖屏 10000ms。
+                        landscape: landscape,
+                        settings: widget.danmakuSettings,
                         playing:
                             _ready &&
                             widget.playing &&
@@ -1568,6 +1687,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                           child: PlayletHotCommentBar(
                             comments: widget.hotComments,
                             onTap: widget.onHotCommentTap,
+                            // 官方 sel&&vis：页面不可见或被弹层遮挡即停表。
+                            active:
+                                _appActive && !_overlayOpen && !_panelOpen,
                           ),
                         ),
                       // 标题/原著卡排在操作行上方，文字放大时也不占它的点击区。
@@ -1958,6 +2080,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   child: PlayletHotCommentBar(
                     comments: widget.hotComments,
                     onTap: widget.onHotCommentTap,
+                    active: _appActive && !_overlayOpen && !_panelOpen,
                   ),
                 ),
               if (widget.originalBook != null)

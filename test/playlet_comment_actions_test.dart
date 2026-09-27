@@ -50,9 +50,9 @@ void main() {
     final calls = <String>[];
     await pump(
       tester,
-      replies: ({required commentId, required count, required cursor}) async {
+      replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async {
         calls.add('$commentId:$cursor');
-        expect(count, 10);
+        expect(count, 5);
         return cursor.isEmpty
             ? const CommentReplyPage(
                 replies: [CommentReply(id: 'r1', text: '第一条回复')],
@@ -101,7 +101,7 @@ void main() {
       final cursors = <String>[];
       await pump(
         tester,
-        replies: ({required commentId, required count, required cursor}) async {
+        replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async {
           cursors.add(cursor);
           if (cursors.length == 1) {
             return const CommentReplyPage(
@@ -136,7 +136,7 @@ void main() {
       await pump(
         tester,
         focusCommentId: 'c1',
-        replies: ({required commentId, required count, required cursor}) async {
+        replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async {
           requested.add(commentId);
           return const CommentReplyPage(
             replies: [CommentReply(id: 'r2', text: '讨论回复')],
@@ -157,7 +157,7 @@ void main() {
   ) async {
     await pump(
       tester,
-      replies: ({required commentId, required count, required cursor}) async =>
+      replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async =>
           CommentReplyPage.empty,
     );
     await tester.tap(find.text('2 条回复'));

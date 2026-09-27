@@ -821,17 +821,33 @@ fn handle_playlet_comment_replies<'a>(
             ));
         }
         let cursor = params.get_str("cursor");
-        let business = json!({
+        // 回复型热评/消息中心的定点读：官方 comment_source=1002，
+        // business_param 追加 ref_reply_id + insert_reply_ids
+        // （`y.java` L():1163-1203；普通列表仍是 NovelBookReply(501)）。
+        let ref_reply_id = params.get_str("ref_reply_id");
+        let mut business = json!({
             "book_id": series_id,
             "need_count": true,
             "real_level": 3,
         });
+        let mut insert_ids = split_csv(&params.get_str("insert_reply_ids"));
+        let source = if ref_reply_id.is_empty() {
+            501
+        } else {
+            if insert_ids.is_empty() {
+                insert_ids.push(ref_reply_id.clone());
+            }
+            business["ref_reply_id"] = json!(ref_reply_id);
+            business["insert_reply_ids"] = json!(insert_ids);
+            1002
+        };
         let body = json!({
             "business_param": business,
             "comment_id": comment_id,
-            "comment_source": 501,
+            "comment_source": source,
             "comment_type": 2,
-            "count": int_default(&params.get_str("count"), 10).clamp(1, 50),
+            // 官方回复分页每页 5 条（`y.java:97-98` static{o=5;p=5}）。
+            "count": int_default(&params.get_str("count"), 5).clamp(1, 50),
             "cursor": cursor,
             "group_id": series_id,
             "group_type": 1,
