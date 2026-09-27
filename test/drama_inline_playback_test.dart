@@ -12,6 +12,7 @@ import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/digg_store.dart';
+import 'package:fqapp/services/drama_mute_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 
@@ -25,21 +26,6 @@ MediaItem _item(String label) => MediaItem(
   badge: '',
   ep: '全12集',
   kind: 'video',
-);
-
-/// A notifier whose stream answers with `perTab` items per tab_type, so the feed
-/// can be driven without the backend. `_forceKind` turns the 漫剧 tab's items
-/// into `manju`, exactly like the real provider.
-HomeNotifier _notifier({int perTab = 4}) => HomeNotifier(
-  initialTabIndex: dramaTabIndex,
-  homepageLoader: ({int tabType = 2, int offset = 0, String? sessionId}) async {
-    return HomepagePage(
-      items: [for (var index = 0; index < perTab; index++) _item('$tabType-$index')],
-      nextOffset: null,
-      sessionId: null,
-    );
-  },
-  searchLoader: (query, {int page = 1}) async => const [],
 );
 
 /// One mounted feed with its own fake players, address loader and history
@@ -58,10 +44,34 @@ class _Session {
   final store = ControlledReaderStore();
   Object? failure;
 
+  /// Items per tab the fake backend answers with. Mutable on purpose: a test
+  /// flips it to 0 and re-loads to drive the feed empty mid-playback.
+  int itemsPerTab = 4;
+
+  /// The two notifiers the page's providers resolve to; kept as fields so a
+  /// test can re-load the feed without a gesture.
+  late final HomeNotifier home = _notifierFor(this);
+  late final HomeNotifier drama = _notifierFor(this);
+
+  static HomeNotifier _notifierFor(_Session session) => HomeNotifier(
+    initialTabIndex: dramaTabIndex,
+    homepageLoader: ({int tabType = 2, int offset = 0, String? sessionId}) async {
+      return HomepagePage(
+        items: [
+          for (var index = 0; index < session.itemsPerTab; index++)
+            _item('$tabType-$index'),
+        ],
+        nextOffset: null,
+        sessionId: null,
+      );
+    },
+    searchLoader: (query, {int page = 1}) async => const [],
+  );
+
   Widget app({bool tickerEnabled = true}) => ProviderScope(
     overrides: [
-      homeProvider.overrideWith(() => _notifier()),
-      dramaProvider.overrideWith(() => _notifier()),
+      homeProvider.overrideWith(() => home),
+      dramaProvider.overrideWith(() => drama),
     ],
     child: MaterialApp(
       home: TickerMode(
@@ -303,6 +313,28 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('内容刷新成空列表时，播放中的播放器入池前先暂停', (tester) async {
+    // 2026-09-27 真机回归：feed 起播后一次无滚动的刷新把内容换成空列表，
+    // `_syncInline` 走 `release()` 入池——此前入池不暂停，没挂 surface 的
+    // 僵尸继续出声（默认有声后用户听得见）。官方入池前先 pause
+    // （`jq3/x.java:4681`），池现在自己兜底，这里钉住整条链路。
+    final session = _Session(hasFirstFrame: true);
+    await _mount(tester, session);
+    final first = session.players.single;
+    expect(first.isPlaying, isTrue);
+
+    session.itemsPerTab = 0;
+    await session.drama.load();
+    await _flush(tester);
+
+    expect(find.text('暂无符合条件的短剧'), findsOneWidget);
+    // release 是入池不是销毁：滑回来还要复用同一个解码器。
+    expect(first.disposed, isFalse);
+    expect(first.calls, contains('pause'));
+    expect(first.isPlaying, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('滑回上一部剧复用池里的播放器，不再新建', (tester) async {
     final session = _Session();
     await _mount(tester, session);
@@ -484,21 +516,17 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('静音起播、长按 2 倍速、进度条可拖动', (tester) async {
+  testWidgets('默认有声起播，长按 2 倍速，进度条可拖动', (tester) async {
+    SharedPreferences.setMockInitialValues({});
     final session = _Session(hasFirstFrame: true);
     await _mount(tester, session);
     // 进度条只在拿到时长后才出现（`cjt.xml` 的 16dp 条随 duration 走）。
     session.players.single.emitDuration(const Duration(minutes: 2));
     await _flush(tester);
-    // 官方的自动播放是静音的，并给出「取消静音」提示（`ck8.xml` / `@string/e8d`）。
-    expect(session.players.single.calls, contains('volume:0.0'));
-    expect(find.byKey(const Key('drama_mute_hint')), findsOneWidget);
-    expect(find.text('取消静音'), findsOneWidget);
-    // 点它开启声音：音量置 1，短暂显示「已开启声音」(`@string/e8k`)。
-    await tester.tap(find.byKey(const Key('drama_mute_hint')));
-    await _flush(tester);
+    // 官方 `needMutePlay` 初始 false：出厂有声起播、无「取消静音」药丸
+    //（`tm3/b.java`、`holder/a.java:640 setIsMute(needMutePlay)`）。
     expect(session.players.single.calls, contains('volume:1.0'));
-    expect(find.text('已开启声音'), findsOneWidget);
+    expect(find.byKey(const Key('drama_mute_hint')), findsNothing);
 
 
     // 长按 = 官方 `VideoGestureDetectLayout.onLongPress` → 2 倍速
@@ -528,6 +556,31 @@ void main() {
       session.players.single.calls.any((call) => call.startsWith('seek:')),
       isTrue,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('开启「开启应用时默认静音」后静音起播，点药丸解除', (tester) async {
+    // 官方持久层 `open_mute_when_cold_start`（默认 false）：开启后短剧会话
+    // 静音起播并出现「取消静音」药丸（`mq3.c`+`bvf.xml`）；点击取消静音后
+    // 药丸直接消失（`z.y5` → setVisibility(GONE)），反馈走 toast。
+    SharedPreferences.setMockInitialValues({
+      'drama_mute_when_cold_start': true,
+    });
+    // store 是进程级单例，前面用例已把 `_loaded` 置位；不 reset 就读不到
+    // 这份 mock 初值（整文件跑挂、单跑过的根因）。
+    DramaMutePreferences.instance.resetForTest();
+    final session = _Session(hasFirstFrame: true);
+    await _mount(tester, session);
+    await _flush(tester);
+    expect(session.players.single.calls, contains('volume:0.0'));
+    expect(find.byKey(const Key('drama_mute_hint')), findsOneWidget);
+    expect(find.text('取消静音'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('drama_mute_hint')));
+    await _flush(tester);
+    expect(session.players.single.calls, contains('volume:1.0'));
+    expect(find.byKey(const Key('drama_mute_hint')), findsNothing);
+    expect(find.text('已开启声音'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

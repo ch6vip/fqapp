@@ -10,6 +10,7 @@ import 'package:lottie/lottie.dart';
 import '../models/channel_tab.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/drama_mute_preferences.dart';
 import '../services/inline_video_playback.dart';
 
 import '../services/library_store.dart';
@@ -268,6 +269,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
       playerFactory: widget.playerFactory,
       historyStore: widget.historyStore,
     );
+    // 预载冷启动静音设置（`_applyPlaybackPrefs` 在会话首卡建播放器时读取；
+    // 官方 `video/l.java` 的 `e()`→`g()`，默认 false＝有声起播）。
+    unawaited(DramaMutePreferences.instance.load());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(dramaProvider.notifier).load();
       if (mounted) unawaited(_loadChannels());
@@ -1397,10 +1401,9 @@ class _DramaFeedCard extends StatelessWidget {
             bottom: 0,
             child: _SeekBar(playback: playback!),
           ),
-        // 官方「取消静音」提示（`ck8.xml`，`ShortVideoMuteView`）：圆角 8dp、
-        // 底色 `@color/yb`=#66404040，左侧 16dp 图标 + 12sp 白字
-        // `@string/e8d`=「取消静音」（开启后 `@string/e8k`=「已开启声音」）。
-        // 官方 feed 默认静音起播，所以这一条只在静音时出现。
+        // 官方「取消静音」药丸（feed 变体 `mq3.c` + `bvf.xml`，108×36dp 展开），
+        // 不是播放页的 `ck8.xml` 变体（12sp+16dp lottie、3s 定时）。官方出厂
+        // 默认**有声**，药丸只在该会话静音时出现；形态细节见 _MuteHint 文档。
         if (playback != null)
           Positioned(
             left: 12,
@@ -1524,11 +1527,13 @@ class _CardGestures extends StatelessWidget {
   }
 }
 
-/// Official mute hint (`ck8.xml` / `mq3.c`).
+/// Official mute pill (`mq3.c` + `bvf.xml`).
 ///
-/// Expanded = 108dp, 16dp icon inset, 12sp 「取消静音」. After 5s it collapses
-/// to the 36dp icon (`mq3.c.f(false, true)`). Tapping unmutes; the official
-/// follow-up copy is `@string/e8k`=「已开启声音」, shown briefly then gone.
+/// 108×36dp 展开态（20dp 静音图标距左 16、「取消静音」14sp 白字距右 12，
+/// 背景 `mi`=#4D000000 + 0.5dp #33FFFFFF 描边、圆角 20）；展开 5s 后收回
+/// 36dp 圆形图标态（`f(false, true)` 的 300ms 动画）。只在静音播放时出现；
+/// 点击取消静音后整个药丸直接消失（`z.y5` 的 `setVisibility(GONE)`），
+/// 反馈走 toast。
 class _MuteHint extends StatefulWidget {
   final InlineVideoPlayback playback;
 
@@ -1540,9 +1545,7 @@ class _MuteHint extends StatefulWidget {
 
 class _MuteHintState extends State<_MuteHint> {
   bool _expanded = true;
-  bool _justUnmuted = false;
   Timer? _collapse;
-  Timer? _unmutedHide;
 
   @override
   void initState() {
@@ -1555,29 +1558,13 @@ class _MuteHintState extends State<_MuteHint> {
   void dispose() {
     widget.playback.muted.removeListener(_onMute);
     _collapse?.cancel();
-    _unmutedHide?.cancel();
     super.dispose();
   }
 
   void _onMute() {
-    if (!mounted) return;
-    if (widget.playback.muted.value) {
-      setState(() {
-        _justUnmuted = false;
-        _expanded = true;
-      });
-      _scheduleCollapse();
-      return;
-    }
-    _collapse?.cancel();
-    setState(() {
-      _justUnmuted = true;
-      _expanded = true;
-    });
-    _unmutedHide?.cancel();
-    _unmutedHide = Timer(const Duration(seconds: 1), () {
-      if (mounted) setState(() => _justUnmuted = false);
-    });
+    if (!mounted || !widget.playback.muted.value) return;
+    setState(() => _expanded = true);
+    _scheduleCollapse();
   }
 
   void _scheduleCollapse() {
@@ -1594,57 +1581,55 @@ class _MuteHintState extends State<_MuteHint> {
     return AnimatedBuilder(
       animation: widget.playback.muted,
       builder: (context, _) {
-        final muted = widget.playback.muted.value;
-        if (!muted && !_justUnmuted) return const SizedBox.shrink();
-        final label = muted ? '取消静音' : '已开启声音';
+        if (!widget.playback.muted.value) return const SizedBox.shrink();
         return Semantics(
-          button: muted,
-          label: label,
+          button: true,
+          label: '取消静音',
           child: GestureDetector(
             key: const Key('drama_mute_hint'),
-            onTap: muted ? () => unawaited(widget.playback.toggleMute()) : null,
+            onTap: () {
+              unawaited(widget.playback.toggleMute());
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('已开启声音')),
+              );
+            },
             behavior: HitTestBehavior.opaque,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
               width: _expanded ? 108 : 36,
+              height: 36,
               decoration: BoxDecoration(
-                color: const Color(0x66404040),
-                borderRadius: BorderRadius.circular(8),
+                color: const Color(0x4D000000),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0x33FFFFFF), width: 0.5),
               ),
-              padding: EdgeInsets.only(
-                left: _expanded ? 8 : 10,
-                right: 8,
-                top: 8,
-                bottom: 8,
-              ),
+              padding: EdgeInsets.only(left: _expanded ? 16 : 8),
+              alignment: Alignment.centerLeft,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   SizedBox(
-                    width: 16,
-                    height: 16,
+                    width: 20,
+                    height: 20,
                     child: Image.asset(
-                      muted
-                          ? 'assets/images/drama/mute_off.webp'
-                          : 'assets/images/drama/mute_on.webp',
+                      'assets/images/drama/mute_off.webp',
                       fit: BoxFit.contain,
                     ),
                   ),
-                  if (_expanded) ...[
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.white,
-                          height: 1.1,
-                        ),
+                  if (_expanded)
+                    // 108dp 内不另留图标与文案的间隙：14sp×4 字 + 16/12 边距
+                    // 已占满（官方 bvf.xml 的排布）。
+                    Text(
+                      '取消静音',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.white,
+                        height: 1.1,
                       ),
                     ),
-                  ],
+                  if (_expanded) const SizedBox(width: 12),
                 ],
               ),
             ),

@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/media_item.dart';
 import 'api_client.dart';
+import 'drama_mute_preferences.dart';
 import 'episode_source_cache.dart';
 import 'library_store.dart';
 import 'native_player.dart';
@@ -97,11 +98,12 @@ class InlineVideoPlayback {
 
   /// Whether playback is muted.
   ///
-  /// The official feed autoplays muted and invites the viewer to unmute: the
-  /// hint strip is built from `@string/ahx`=「取消静音」 with the
-  /// `series_cancel_mute.json` lottie, and unmuting answers with
-  /// `@string/e8k`=「已开启声音」 (`mq3/c.java`, `bvf.xml`, `ck8.xml`).
-  final ValueNotifier<bool> muted = ValueNotifier<bool>(true);
+  /// 官方信息流播放器的静音直接取会话态 `needMutePlay`（`tm3/b.java` 初始
+  /// false；`holder/a.java:640 setIsMute(needMutePlay)`）——**出厂默认有声**，
+  /// 只有用户开过「开启应用时默认静音」或在更多面板开「静音播放」才静音并
+  /// 出现「取消静音」药丸（`mq3/c.java` + `bvf.xml`）。这里取同一默认，
+  /// 冷启动静音由 [DramaMutePreferences] 决定（见 `_DramaPageState`）。
+  final ValueNotifier<bool> muted = ValueNotifier<bool>(false);
 
   /// Playback rate. `PlayerVideoSpeedTipsView` shows `@string/ec6`=
   /// 「2倍速快进中」 while the viewer holds a long press (`cjx.xml`, 83dp tall),
@@ -114,7 +116,8 @@ class InlineVideoPlayback {
   /// box; `PlayerVideoLayout` turns an unknown (0×0) size into that fallback.
   final ValueNotifier<Size> videoSize = ValueNotifier<Size>(Size.zero);
 
-  bool _muted = true;
+  bool _muted = false;
+  bool _coldStartMuteApplied = false;
   double _rate = 1.0;
 
   /// The tab a directory/content request must use. Only one activation runs at
@@ -416,8 +419,9 @@ class InlineVideoPlayback {
     if (identical(player, _player)) playing.value = _playbackRequested(player);
   }
 
-  /// Unmute / mute the current episode. The official feed starts muted and
-  /// offers 「取消静音」; this is the state that hint flips.
+  /// Unmute / mute the current episode. The hint pill (`mq3.c`) flips this;
+  /// once unmuted the session stays unmuted across cards — the same rule as
+  /// the official `needMutePlay`, which only a viewer action can turn back on.
   Future<void> toggleMute() async {
     _muted = !_muted;
     muted.value = _muted;
@@ -602,6 +606,15 @@ class InlineVideoPlayback {
   /// always starts unmuted at 1×, so they have to be pushed again after every
   /// `create` — the same reason resume/position are re-established here.
   Future<void> _applyPlaybackPrefs(NativePlayer player) async {
+    // 冷启动静音读持久化设置（官方 `open_mute_when_cold_start`，默认 false
+    // ＝有声）。只在会话内第一次建播放器时读一次：之后 `_muted` 完全由用户
+    // 操作接管——官方 `needMutePlay` 被用户解除后，会话内不再自动静音。
+    if (!_coldStartMuteApplied) {
+      _coldStartMuteApplied = true;
+      await DramaMutePreferences.instance.load();
+      _muted = DramaMutePreferences.instance.muteWhenColdStart.value;
+      muted.value = _muted;
+    }
     try {
       await player.setVolume(_muted ? 0.0 : 1.0);
     } catch (_) {

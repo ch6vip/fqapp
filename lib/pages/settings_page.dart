@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/backend_service.dart';
+import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/reading_goal_dialog.dart';
 import 'about_page.dart';
@@ -31,6 +34,12 @@ class SettingsPage extends StatelessWidget {
         title: '阅读',
         subtitle: '每日阅读目标',
         items: [_goalItem()],
+      ),
+      SettingsCategory(
+        icon: Icons.movie_outlined,
+        title: '短剧',
+        subtitle: '播放',
+        items: [_muteWhenColdStartItem()],
       ),
       SettingsCategory(
         icon: Icons.storage_outlined,
@@ -202,6 +211,28 @@ class SettingsPage extends StatelessWidget {
       }
     }
   }
+
+  // ── 短剧 ──────────────────────────────────────────────────────────────
+
+  /// 官方设置项「开启应用时默认静音」（`GlobalMuteConfig` 标题，持久层
+  /// `open_mute_when_cold_start`，默认 false＝有声起播）。
+  SettingsItem _muteWhenColdStartItem() => SettingsItem(
+    icon: Icons.volume_off_outlined,
+    title: '开启应用时默认静音',
+    subtitle: '进入短剧时静音播放，可在播放页取消',
+    // Switch 走 ValueListenableBuilder，翻转后无需依赖页面的 setState。
+    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: DramaMutePreferences.instance.muteWhenColdStart,
+      builder: (context, value, _) => Switch(
+        value: value,
+        onChanged: (v) => unawaited(DramaMutePreferences.instance.set(v)),
+      ),
+    ),
+    onTap: (context, setState) {
+      final current = DramaMutePreferences.instance.muteWhenColdStart.value;
+      unawaited(DramaMutePreferences.instance.set(!current));
+    },
+  );
 
   // ── 阅读 ──────────────────────────────────────────────────────────────
 
