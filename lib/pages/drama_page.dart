@@ -724,7 +724,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
         itemBuilder: (context, index) => _ManjuCard(
           key: ValueKey('drama_manju_${items[index].id}'),
           item: items[index],
-          onTap: () => _openDetail(items[index]),
+          // 官方网格卡点击 = 直接进播放页（cv2/c.java:371-376 →
+          // openShortSeriesActivity → ShortSeriesActivity 沉浸播放器），
+          // 不经过详情页；详情是播放页里的入口。
+          onTap: () => unawaited(_openPlayer(items[index])),
         ),
       ),
     );
