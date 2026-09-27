@@ -776,8 +776,9 @@ void main() {
           home: _Seams().page(
             channelLoader: () async => const ChannelTable(
               tabs: [
-                ChannelTab(type: kChannelVideoFeed, title: '精选'),
-                ChannelTab(type: kChannelVideoEpisode, title: '正片'),
+                // 短剧语境条带的特征：16 这条 feed 叫「推荐」。
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
                 ChannelTab(type: kChannelRecent, title: '看过'),
               ],
             ),
@@ -787,8 +788,8 @@ void main() {
     );
     await _flush(tester);
     // 名字来自服务端 title，顺序也按服务端给的顺序。
-    expect(find.text('精选'), findsOneWidget);
-    expect(find.text('正片'), findsOneWidget);
+    expect(find.text('推荐'), findsOneWidget);
+    expect(find.text('看剧'), findsOneWidget);
     expect(find.text('看过'), findsOneWidget);
     // 本地表里没被服务端下发的频道不该再出现。
     expect(find.text('收藏'), findsNothing);
@@ -858,6 +859,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('书城语境的频道条不替换（16 被叫「视频」）', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              // 本上游 bookmall/tab/v 实际回的书城条（2026-09-27 loopback
+              // 取证）：只有 8/16 可映射，且 16 叫「视频」。
+              tabs: [
+                ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+                ChannelTab(type: kChannelVideoFeed, title: '视频'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // 整栏换上去会把频道条塌成 看剧/视频 并收走最近/收藏 —— 必须保留本地表。
+    expect(find.text('推荐'), findsOneWidget);
+    expect(find.text('漫剧'), findsOneWidget);
+    expect(find.text('最近'), findsOneWidget);
+    expect(find.text('收藏'), findsOneWidget);
+    expect(find.text('视频'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('映射不到的类型被丢掉，可映射的仍生效', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -870,8 +902,8 @@ void main() {
             channelLoader: () async => const ChannelTable(
               tabs: [
                 // 官方枚举里的类型，但本地没有对应内容源。
-                ChannelTab(type: kChannelVideo, title: '视频'),
-                ChannelTab(type: kChannelVideoFeed, title: '精选'),
+                ChannelTab(type: kChannelVideo, title: '看剧'),
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
                 ChannelTab(type: kChannelVideoEpisode, title: '正片'),
               ],
             ),
@@ -881,8 +913,38 @@ void main() {
     );
     await _flush(tester);
     // `video` 能映射到「看剧」，所以三者都留；但 `收藏` 不该出现。
-    expect(find.text('精选'), findsOneWidget);
+    expect(find.text('推荐'), findsOneWidget);
     expect(find.text('收藏'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('漫剧频道是三列海报格，不是竖滑播放流（官方 StaggeredFeedTab 形态）', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+                ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    await tester.tap(find.text('漫剧'));
+    await _flush(tester);
+    // 漫剧 = 网格（数据来自 tab_type 24 的流），不再挂竖滑 feed。
+    expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
+    expect(find.byKey(const Key('drama_feed')), findsNothing);
+    expect(find.text('24-0 作品'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -898,9 +960,9 @@ void main() {
             channelLoader: () async => const ChannelTable(
               tabs: [
                 // 本地选中的是「推荐」（tab_type 16），服务端把同一条流排在了
-                // 第二位并改叫「精选」：续接要看类型而不是位置或文案。
-                ChannelTab(type: kChannelVideoEpisode, title: '正片'),
-                ChannelTab(type: kChannelVideoFeed, title: '精选'),
+                // 第二位：续接要看类型而不是位置。
+                ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
               ],
             ),
           ),
@@ -908,40 +970,10 @@ void main() {
       ),
     );
     await _flush(tester);
-    expect(find.text('精选'), findsOneWidget);
-    // 高亮的是「精选」（tab_type 16），所以下面的 feed 必须还是 16 的内容，
-    // 不能因为换表就跳到第一条「正片」（tab_type 8）。
+    expect(find.text('推荐'), findsOneWidget);
+    // 高亮的是「推荐」（tab_type 16），所以下面的 feed 必须还是 16 的内容，
+    // 不能因为换表就跳到第一条「看剧」（tab_type 8）。
     expect(find.text('16-0 作品'), findsOneWidget);
-    expect(find.text('8-0 作品'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('续接不上时落服务端下发的默认选中下标', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-    await tester.pumpWidget(
-      _scope(
-        perTab: 1,
-        child: MaterialApp(
-          home: _Seams().page(
-            channelLoader: () async => const ChannelTable(
-              // 当前「推荐」（16）在这张表里没有对等频道；官方
-              // TabDataList.tab_index 指向第二条（漫剧）。
-              defaultIndex: 1,
-              tabs: [
-                ChannelTab(type: kChannelVideoEpisode, title: '正片'),
-                ChannelTab(type: kChannelDynamicComic, title: '动漫'),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    await _flush(tester);
-    // 高亮的是服务端指定的「动漫」，feed 也必须是漫剧（tab_type 24）的内容。
-    expect(find.text('动漫'), findsOneWidget);
-    expect(find.text('24-0 作品'), findsOneWidget);
     expect(find.text('8-0 作品'), findsNothing);
     expect(tester.takeException(), isNull);
   });

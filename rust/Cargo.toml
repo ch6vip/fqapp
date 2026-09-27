@@ -37,6 +37,13 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 tower = "0.5"
 tower-http = { version = "0.6", default-features = false, features = ["fs", "set-header"] }
 futures = "0.3"
+log = "0.4"
+
+# The shipping app runs the core in-process on Android; `adb logcat` is the
+# only observability surface it has. Desktop/test builds keep log macros as
+# no-ops (no logger is installed there).
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.14"
 
 [profile.release]
 # Size-conscious but not size-obsessed: chapter/crypto work must not regress.

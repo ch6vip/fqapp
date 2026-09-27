@@ -174,7 +174,10 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
                 content_type,
                 body,
             }) => Response::text(status, content_type, body),
-            Err(e) => error_response(&e),
+            Err(e) => {
+                log::warn!("api {} failed: {}", m.api, e.message());
+                error_response(&e)
+            }
         };
     }
 
@@ -196,7 +199,12 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
             data = ctx.filters.apply(path, data);
             Response::json(200, &data)
         }
-        Err(e) => error_response(&e),
+        Err(e) => {
+            // Release builds have no console; this is the only trace a
+            // business failure leaves in logcat (tag fqapi_core).
+            log::warn!("api {} failed: {}", m.api, e.message());
+            error_response(&e)
+        }
     }
 }
 

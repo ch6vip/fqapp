@@ -97,6 +97,19 @@ pub async fn init(
     port: u16,
     mock_upstream_origin: String,
 ) -> Result<String, String> {
+    // The shipping core has no console; logcat (tag `fqapi_core`) is the only
+    // way to see upstream failures from a release build. `init_once` is
+    // idempotent and desktop builds simply never install a logger, where the
+    // `log` macros below compile to no-ops.
+    #[cfg(target_os = "android")]
+    {
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Info)
+                .with_tag("fqapi_core"),
+        );
+        log::info!("core init: port={port} config={config_path}");
+    }
     let mock = if mock_upstream_origin.trim().is_empty() {
         None
     } else {

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:hive/hive.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -282,24 +283,31 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// 拉服务端频道表（F08）。
   ///
-  /// 官方频道条由 `data.tab_item` 驱动，所以这里以服务端为准；**但只在
-  /// 映射出至少两个频道时替换**——一个频道就能替代整条栏的话，
-  /// 网络抖动或半截响应会把用户锁死在单一频道里。取不到就静默保留本地表
-  /// （官方失败是错误视图，这里刻意更稳：频道条是底级导航，不该因
-  /// 一次拉取失败把四个入口收走）。
+  /// 官方频道条由 `data.tab_item` 驱动，**但只在映射表确实是短剧语境的条带
+  /// 时才替换**。判定特征：「推荐」这条 feed（tab_type 16）以「推荐」命名
+  /// ——官方书城页与短剧页把同一条流分别叫 视频/推荐（取证见
+  /// test/channel_tab_test.dart 的注释）。书城语境的条带没有最近/收藏、
+  /// 把 16 叫视频，整栏换上去会把频道条塌成 看剧/视频 并顶掉默认频道
+  /// （2026-09-27 真机回归）。实测本上游对 JSON 表单请求永远回书城条
+  /// （bottom_tab_type=7、tab_type=-1/8/24 均不变，loopback 取证），官方
+  /// 的短剧条带走的是我们暂未复刻的 protobuf 链路——所以在这台上游上
+  /// 替换永不发生，频道条稳定为本地五频道；一旦上游开始下发短剧条带，
+  /// F08 的动态配置自动生效。取不到或语境不符都静默保留本地表：频道条
+  /// 是底级导航，不该因一次拉取失败把入口收走。
   Future<void> _loadChannels() async {
     if (_channelsRequested) return;
     _channelsRequested = true;
     ChannelTable table;
     try {
       final current = _current;
-      table = await (widget.channelLoader?.call() ??
-          ApiClient.instance.channelTabs(
-            // 官方 SeriesMallVM：tabType 传当前频道、lastTabType 传上次选中
-            // 频道（SP last_tab_type，无值 -1），服务端据此算 tab_index。
-            tabType: current.serverType ?? kChannelVideoFeed,
-            lastTabType: current.serverType ?? -1,
-          ));
+      table =
+          await (widget.channelLoader?.call() ??
+              ApiClient.instance.channelTabs(
+                // 官方 SeriesMallVM：tabType 传当前频道、lastTabType 传上次选中
+                // 频道（SP last_tab_type，无值 -1），服务端据此算 tab_index。
+                tabType: current.serverType ?? kChannelVideoFeed,
+                lastTabType: current.serverType ?? -1,
+              ));
     } catch (_) {
       return;
     }
@@ -309,7 +317,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
       final channel = serverChannelOf(tab);
       if (channel != null) mapped.add(channel);
     }
-    if (mapped.length < 2) return;
+    final isSeriesmallStrip = mapped.any(
+      (channel) =>
+          channel.serverType == kChannelVideoFeed && channel.label == '推荐',
+    );
+    if (mapped.length < 2 || !isSeriesmallStrip) return;
     final previous = _channels.isEmpty ? null : _channels[_channel];
     // 频道换了之后下标可能越界。默认选中按三级取：tab_type 对等续接
     // （title 是服务端文案会变，类型才是频道的身份）→ label+source 兜底 →
@@ -601,57 +613,161 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final items = _visibleItems(state);
     _syncTickerMode();
     _scheduleInlineSync();
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            // 最近 and 收藏 are lists in the official client too: the recent
-            // list comes from the device's own history and the follow list from
-            // the account, so neither is a video feed here either.
-            child: channel.isFeed
-                ? _feed(state, items)
-                : _LocalList(channel: channel, onOpen: _openDetail),
-          ),
-          if (_pullDistance > 0)
+    // 官方漫剧频道是浅色页（StaggeredFeedTab 白底），其余频道黑底视频流；
+    // 状态栏图标亮度跟着页面明暗走（浅色页深色图标，黑页浅色图标）。
+    final lightPage = channel.kind == 'manju';
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: lightPage ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: lightPage ? Colors.white : Colors.black,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              // 最近 and 收藏 are lists in the official client too: the recent
+              // list comes from the device's own history and the follow list from
+              // the account, so neither is a video feed here either.
+              // 漫剧频道例外：官方 `client_template=13`（CommonThreeRow →
+              // StaggeredFeedTab）是浅色三列海报瀑布格，不是全屏竖滑播放流。
+              child: switch (channel) {
+                DramaChannel(source: DramaChannelSource.feed, kind: 'manju') =>
+                  _manjuGrid(state, items),
+                DramaChannel(source: DramaChannelSource.feed) => _feed(
+                  state,
+                  items,
+                ),
+                _ => _LocalList(channel: channel, onOpen: _openDetail),
+              },
+            ),
+            if (_pullDistance > 0)
+              Positioned(
+                top:
+                    MediaQuery.paddingOf(context).top +
+                    _searchRowHeight +
+                    _stripHeight +
+                    8,
+                left: 0,
+                right: 0,
+                child: _PullRefreshHint(
+                  armed: _pullDistance >= _pullRefreshTrigger,
+                ),
+              ),
             Positioned(
-              top:
-                  MediaQuery.paddingOf(context).top +
-                  _searchRowHeight +
-                  _stripHeight +
-                  8,
+              top: 0,
               left: 0,
               right: 0,
-              child: _PullRefreshHint(
-                armed: _pullDistance >= _pullRefreshTrigger,
+              child: _TopBar(
+                channels: _channels,
+                selected: _channel,
+                onSelect: _selectChannel,
+                onSearch: _openSearch,
+                // 官方浅色页（漫剧）的顶栏换浅肤：深色字 + 浅灰搜索框。
+                light: lightPage,
               ),
             ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _TopBar(
-              channels: _channels,
-              selected: _channel,
-              onSelect: _selectChannel,
-              onSearch: _openSearch,
-            ),
-          ),
-          // 「上滑查看更多视频」：官方挂在全屏容器上、`gravity=bottom|center`
-          // + bottomMargin 94dp（`pp3.f.n()`）。注意官方主界面（`d5.xml`）的
-          // 底部 tab（50dp）是**悬浮压在 feed 上的**，所以 94dp 从 tab 底边算，
-          // 提示悬在 tab 栏上方约 44dp。本页 feed 止步于 NavigationBar 顶边，
-          // 同一视觉位置 = 94 - 官方 tab 高 50 = **44dp**。
-          if (_guideMounted)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 44,
-              child: _SwipeUpHint(visible: _guideVisible),
-            ),
-        ],
+            // 「上滑查看更多视频」：官方挂在全屏容器上、`gravity=bottom|center`
+            // + bottomMargin 94dp（`pp3.f.n()`）。注意官方主界面（`d5.xml`）的
+            // 底部 tab（50dp）是**悬浮压在 feed 上的**，所以 94dp 从 tab 底边算，
+            // 提示悬在 tab 栏上方约 44dp。本页 feed 止步于 NavigationBar 顶边，
+            // 同一视觉位置 = 94 - 官方 tab 高 50 = **44dp**。
+            if (_guideMounted)
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 44,
+                child: _SwipeUpHint(visible: _guideVisible),
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  /// 官方漫剧频道（`client_template=13` CommonThreeRow → StaggeredFeedTab）：
+  /// 浅色三列海报格，卡 = 封面 + 片名 + 「分类·集数」，点击进详情。不是
+  /// 全屏竖滑播放流 —— 漫剧卡没有内联播放层，也不该有。
+  Widget _manjuGrid(HomeState state, List<MediaItem> items) {
+    if (state.error != null) {
+      return _FeedMessage(
+        key: const Key('drama_error'),
+        message: '网络异常，请稍后再试',
+        actionLabel: '点击重试',
+        onAction: _refresh,
+      );
+    }
+    if (items.isEmpty) {
+      if (state.isLoading || state.hasMore) {
+        return const _GridMessage(message: '正在刷新内容', showSpinner: true);
+      }
+      return const _GridMessage(key: Key('drama_manju_empty'), message: '暂无漫剧');
+    }
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onGridScroll,
+      child: GridView.builder(
+        key: const Key('drama_manju_grid'),
+        padding: EdgeInsets.fromLTRB(
+          12,
+          MediaQuery.paddingOf(context).top +
+              _searchRowHeight +
+              _stripHeight +
+              12,
+          12,
+          24,
+        ),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 16,
+          // 海报 2:3 + 一行片名 + 一行「分类·集数」。
+          childAspectRatio: 0.52,
+        ),
+        itemCount: items.length,
+        itemBuilder: (context, index) => _ManjuCard(
+          key: ValueKey('drama_manju_${items[index].id}'),
+          item: items[index],
+          onTap: () => _openDetail(items[index]),
+        ),
+      ),
+    );
+  }
+
+  /// 漫剧网格的滚动：保留下拉刷新（同一套手势与提示），把 feed 的
+  /// 竖滑换页/内联同步换成触底翻页。
+  bool _onGridScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is OverscrollNotification && notification.overscroll < 0) {
+      setState(() {
+        _pullDistance = (_pullDistance - notification.overscroll).clamp(
+          0,
+          _pullRefreshTrigger,
+        );
+      });
+      return false;
+    }
+    if (notification is ScrollUpdateNotification &&
+        _pullDistance > 0 &&
+        (notification.scrollDelta ?? 0) > 0) {
+      setState(() {
+        _pullDistance = (_pullDistance - notification.scrollDelta!).clamp(
+          0,
+          _pullRefreshTrigger,
+        );
+      });
+    }
+    if (notification is ScrollEndNotification) {
+      final shouldRefresh = _pullDistance >= _pullRefreshTrigger;
+      if (_pullDistance > 0) {
+        setState(() => _pullDistance = 0);
+      }
+      if (shouldRefresh) {
+        unawaited(_refresh());
+        return false;
+      }
+      // 触底翻页：loadMore 自带 isLoadMore/hasMore 门。
+      if (notification.metrics.extentAfter < 600) {
+        ref.read(dramaProvider.notifier).loadMore();
+      }
+    }
+    return false;
   }
 
   Widget _feed(HomeState state, List<MediaItem> items) {
@@ -846,11 +962,16 @@ class _TopBar extends StatelessWidget {
   final ValueChanged<int> onSelect;
   final VoidCallback onSearch;
 
+  /// 官方浅色页（漫剧）的顶栏浅肤：深色字、浅灰搜索框。默认 false =
+  /// 黑底视频流的浅色字顶栏（书城/短剧语境）。
+  final bool light;
+
   const _TopBar({
     required this.channels,
     required this.selected,
     required this.onSelect,
     required this.onSearch,
+    this.light = false,
   });
 
   @override
@@ -875,7 +996,7 @@ class _TopBar extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               // 官方 `ap4.xml` 的搜索行 38dp、框体 36dp（`c5e.xml` `@dimen/zl`），
               // 垂直居中。
-              child: Center(child: _searchField(context)),
+              child: Center(child: _searchField(context, light: light)),
             ),
           ),
 
@@ -891,6 +1012,7 @@ class _TopBar extends StatelessWidget {
                     itemBuilder: (context, index) => _ChannelTab(
                       label: channels[index].label,
                       selected: index == selected,
+                      light: light,
                       onTap: () => onSelect(index),
                     ),
                   ),
@@ -906,7 +1028,7 @@ class _TopBar extends StatelessWidget {
                   tooltip: '搜索短剧',
                   onPressed: onSearch,
                   iconSize: 20,
-                  color: Colors.white,
+                  color: light ? const Color(0xFF1B1B1B) : Colors.white,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints.tightFor(
                     width: 20,
@@ -923,7 +1045,7 @@ class _TopBar extends StatelessWidget {
     );
   }
 
-  Widget _searchField(BuildContext context) {
+  Widget _searchField(BuildContext context, {required bool light}) {
     // 官方搜索框（`SearchWordDisplayView` inflate `c5e.xml`）：高 36dp
     // （`@dimen/zl`）、圆角 8dp（`ViewOutlineProvider.setRoundRect(…, 8f)` +
     // `setClipToOutline`）、图标 12dp 距左 16dp、文字距图标 8dp。配色取官方
@@ -931,6 +1053,7 @@ class _TopBar extends StatelessWidget {
     // `skin_color_search_bar_bg_v2_dark`=#1C1C1C、提示 14sp
     // `skin_color_search_bar_text_v2_dark`=#66FFFFFF（服务端 cue word 态更亮，
     // `skin_color_search_word_dark`=#99FFFFFF）、图标 `…_optimize_dark`。
+    // 浅色页（漫剧）换浅肤：底 #0F000000、深色字与图标。
     return Semantics(
       button: true,
       label: '搜索短剧',
@@ -941,7 +1064,7 @@ class _TopBar extends StatelessWidget {
         child: Container(
           height: 36,
           decoration: BoxDecoration(
-            color: const Color(0xFF1C1C1C),
+            color: light ? const Color(0x0F000000) : const Color(0xFF1C1C1C),
             borderRadius: BorderRadius.circular(8),
           ),
           padding: const EdgeInsets.only(left: 16),
@@ -951,18 +1074,29 @@ class _TopBar extends StatelessWidget {
               SizedBox(
                 width: 12,
                 height: 12,
-                child: Image.asset(
-                  'assets/images/drama/search.webp',
-                  fit: BoxFit.contain,
-                ),
+                child: light
+                    ? const Icon(
+                        LucideIcons.search,
+                        size: 12,
+                        color: Color(0x99000000),
+                      )
+                    : Image.asset(
+                        'assets/images/drama/search.webp',
+                        fit: BoxFit.contain,
+                      ),
               ),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
                   '请输入短剧名或主演名',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 14, color: Color(0x66FFFFFF)),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: light
+                        ? const Color(0x99000000)
+                        : const Color(0x66FFFFFF),
+                  ),
                 ),
               ),
             ],
@@ -984,10 +1118,14 @@ class _ChannelTab extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  /// 浅色页（漫剧）的深色文字变体，见 [_TopBar.light]。
+  final bool light;
+
   const _ChannelTab({
     required this.label,
     required this.selected,
     required this.onTap,
+    this.light = false,
   });
 
   @override
@@ -1014,7 +1152,11 @@ class _ChannelTab extends StatelessWidget {
                     fontSize: 18,
                     height: 1.1,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-                    color: selected ? Colors.white : const Color(0x99FFFFFF),
+                    color: selected
+                        ? (light ? const Color(0xFF1B1B1B) : Colors.white)
+                        : (light
+                              ? const Color(0x99000000)
+                              : const Color(0x99FFFFFF)),
                   ),
                 ),
                 // 官方指示条：高 `app:arw` = 3dp、宽 `app:auw` = 16dp（`ap3.xml`），
@@ -1024,7 +1166,9 @@ class _ChannelTab extends StatelessWidget {
                   width: 16,
                   height: 3,
                   decoration: BoxDecoration(
-                    color: selected ? Colors.white : Colors.transparent,
+                    color: selected
+                        ? (light ? const Color(0xFF1B1B1B) : Colors.white)
+                        : Colors.transparent,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -2140,6 +2284,121 @@ class _InlineVideoError extends StatelessWidget {
 /// 橙字浅橙底），卡片封面带「漫剧」左上角标与居中半透明 ▶，标题两行，
 /// 下方灰字「已看到第N集」（本仓库取自播放历史的 episode 索引）。「其他
 /// 视频」无数据源、「编辑」多选管理不做。
+/// 漫剧瀑布格的浅色提示（加载/空态）。
+class _GridMessage extends StatelessWidget {
+  final String message;
+  final bool showSpinner;
+
+  const _GridMessage({
+    super.key,
+    required this.message,
+    this.showSpinner = false,
+  });
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: Colors.white,
+    child: SafeArea(
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (showSpinner) ...[
+              const SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF1B1B1B),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, color: Color(0x99000000)),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// 漫剧瀑布格卡片：竖版海报（2:3）+ 一行片名 + 一行「分类·集数」。
+/// 官方 StaggeredFeedTab 的 CommonThreeRow 卡（`mw2.c` 供数）在浅色页上的形态。
+class _ManjuCard extends StatelessWidget {
+  final MediaItem item;
+  final VoidCallback onTap;
+
+  const _ManjuCard({super.key, required this.item, required this.onTap});
+
+  /// 官方副标题 = 分类名（tag_info 取前两个）+ 集数（episode_cnt）。
+  String? get _subtitle {
+    final cats = item.categories.take(2).join('·');
+    final ep = item.ep.trim();
+    final epText = RegExp(r'^\d+$').hasMatch(ep) ? '$ep集' : ep;
+    final parts = [if (cats.isNotEmpty) cats, if (epText.isNotEmpty) epText];
+    if (parts.isEmpty) return null;
+    return parts.join('·');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = _subtitle;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LayoutBuilder(
+                builder: (context, constraints) => StoryCover(
+                  item: item,
+                  cacheWidth:
+                      (constraints.maxWidth *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .ceil(),
+                  alignment: Alignment.topCenter,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            item.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.2,
+              color: Color(0xFF1B1B1B),
+            ),
+          ),
+          if (subtitle != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  height: 1.2,
+                  color: Color(0x99000000),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _LocalList extends StatefulWidget {
   final DramaChannel channel;
   final void Function(MediaItem item) onOpen;
