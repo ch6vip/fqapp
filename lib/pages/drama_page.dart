@@ -212,6 +212,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
   int _channel = 0;
   String? _openingId;
 
+  /// 最近频道处于官方编辑模式（`LatestShortVideoFragmentImpl` 的 `S()`）。
+  /// 官方进编辑时把 SeriesMall 的悬浮顶栏整个 `gone`（`af()`），由编辑头
+  /// （全选/标题/完成）顶替——所以这个状态必须提升到壳层来藏 [_TopBar]。
+  bool _recentEditing = false;
+
   /// 当前生效的频道条。默认是本地表；拉到服务端频道表后按服务端配置替换
   /// （F08 要求「不以静态频道表替代动态配置」）。
   List<DramaChannel> _channels = dramaChannels;
@@ -660,8 +665,15 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 ),
                 _ => _LocalList(
                   channel: channel,
+                  // 官方最近卡点击直接进播放页续播（`staggered/b.I3` →
+                  // `openShortSeriesActivity`，不经过详情页）；收藏频道是另一
+                  // 套 fragment（VideoCollectionDeliveryFragmentImpl），仍走详情。
                   onOpen: _openDetail,
+                  onPlay: _openPlayer,
                   onFind: () => _selectChannel(0),
+                  onEditingChanged: (editing) {
+                    if (mounted) setState(() => _recentEditing = editing);
+                  },
                 ),
               },
             ),
@@ -680,46 +692,51 @@ class _DramaPageState extends ConsumerState<DramaPage>
               ),
             // 浅色页的顶栏背板：官方上滑时卡片从一条奶白渐变后面穿过，
             // 搜索框/频道条不会和海报叠在一起（黑页保持透明压在视频上）。
-            if (lightPage)
+            // 最近频道进编辑后与官方一致：顶栏整个隐藏（`af()` gone）。
+            // 纯装饰背板必须放行点击——chips 行官方就落在它的淡出带里。
+            if (lightPage && !_recentEditing)
               Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
-                child: SizedBox(
-                  height:
-                      MediaQuery.paddingOf(context).top +
-                      _searchRowHeight +
-                      _stripHeight +
-                      56,
-                  child: const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0xFFFFF3E6),
-                          Color(0xFFFFFFFF),
-                          Color(0x00FFFFFF),
-                        ],
-                        stops: [0.0, 0.5, 1.0],
+                child: IgnorePointer(
+                  child: SizedBox(
+                    height:
+                        MediaQuery.paddingOf(context).top +
+                        _searchRowHeight +
+                        _stripHeight +
+                        56,
+                    child: const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0xFFFFF3E6),
+                            Color(0xFFFFFFFF),
+                            Color(0x00FFFFFF),
+                          ],
+                          stops: [0.0, 0.5, 1.0],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: _TopBar(
-                channels: _channels,
-                selected: _channel,
-                onSelect: _selectChannel,
-                onSearch: _openSearch,
-                // 官方浅色页（看剧/漫剧）的顶栏换浅肤：深色字 + 浅灰搜索框。
-                light: lightPage,
+            if (!_recentEditing)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _TopBar(
+                  channels: _channels,
+                  selected: _channel,
+                  onSelect: _selectChannel,
+                  onSearch: _openSearch,
+                  // 官方浅色页（看剧/漫剧）的顶栏换浅肤：深色字 + 浅灰搜索框。
+                  light: lightPage,
+                ),
               ),
-            ),
             // 「上滑查看更多视频」：官方挂在全屏容器上、`gravity=bottom|center`
             // + bottomMargin 94dp（`pp3.f.n()`）。注意官方主界面（`d5.xml`）的
             // 底部 tab（50dp）是**悬浮压在 feed 上的**，所以 94dp 从 tab 底边算，
@@ -2343,15 +2360,18 @@ class _InlineVideoError extends StatelessWidget {
 
 /// 最近 / 收藏: the two channels the official client fills from the device.
 ///
-/// Official recent/follow are **distribute lists**, not a video feed
-/// (`bex.xml`: 7:5 cover, 8dp radius, 14sp single-line title, 9sp corner
-/// tag). Neither may keep the inline player alive. 最近 reads this app's
+/// Official recent/follow are **distribute lists**, not a video feed. The
+/// recent channel is `LatestShortVideoFragmentImpl` + `LatestTimerVideoRecyclerView`
+/// （双列 staggered 网格，无时间分组头——吸顶时间标签 `SwitchTimeLabelView`
+/// 在这条链路上恒为 null，「今天/昨天/更早」分组是「我的-浏览历史」页的
+/// 形态）。Neither may keep the inline player alive. 最近 reads this app's
 /// player history; 收藏 reads existing local shelf records.
 ///
-/// 官方截图第二十三轮：最近 tab 顶部有「全部/短剧/漫剧」筛选 chips（选中
-/// 橙字浅橙底），卡片封面带「漫剧」左上角标与居中半透明 ▶，标题两行，
-/// 下方灰字「已看到第N集」（本仓库取自播放历史的 episode 索引）。「其他
-/// 视频」无数据源、「编辑」多选管理不做。
+/// 官方截图第二十三轮 + 反编译对齐：最近 tab 顶部有「全部/短剧/漫剧/其他视频」
+/// 筛选 chips（选中橙字浅橙底加粗），卡片封面带「漫剧」左上角标与居中 ▶，
+/// 14sp 粗体两行标题，下方灰字「已看到第N集」（本仓库取自播放历史的
+/// episode 索引）。「其他视频」无数据源（本地历史只记 短剧/漫剧，恒为空）；
+/// 「N播放」渐变角标、「已下架」、Album/PUGC 专属行没有数据源，不做。
 /// 漫剧瀑布格的浅色提示（加载/空态）。
 class _GridMessage extends StatelessWidget {
   final String message;
@@ -2394,9 +2414,179 @@ class _GridMessage extends StatelessWidget {
   );
 }
 
+/// 最近/收藏列表卡（官方 `staggered/b` holder + `ay3.xml`）：整卡白底 8dp
+/// 圆角（`m6.c(itemView,8)`）、10:14 封面、居中 24dp ▶（官方 `g5t`，封面加载
+/// 成功后才显示，这里恒显）、10sp 白字角标（`B3()`）、14sp 粗体两行标题、
+/// 12sp `gray_40` 进度行（`K3()` 的「已看到第N集」）。编辑态：卡底转
+/// `#FAFAFA`（`P3` 动画终点）、选中封面盖 `#33000000` 遮罩（`ko`）+ 右下
+/// 24dp 勾选框（`x3()`，右 8dp/下 6dp）。
+class _HistoryCard extends StatelessWidget {
+  final MediaItem item;
+  final VoidCallback onTap;
+
+  /// 官方 `o.r3`：长按卡片进编辑（并选中该卡）。
+  final VoidCallback? onLongPress;
+
+  final bool editing;
+  final bool selected;
+
+  /// 左上角角标（最近列表的「漫剧」）；null 不显示。
+  final String? tagText;
+
+  /// 「已看到第N集」进度行（收藏页不传）。
+  final String? subtitle;
+
+  const _HistoryCard({
+    super.key,
+    required this.item,
+    required this.onTap,
+    required this.editing,
+    this.onLongPress,
+    this.selected = false,
+    this.tagText,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      behavior: HitTestBehavior.opaque,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: editing ? const Color(0xFFFAFAFA) : Colors.white,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) => StoryCover(
+                        item: item,
+                        cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
+                        alignment: Alignment.topCenter,
+                      ),
+                    ),
+                    const Center(
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        size: 24,
+                        color: Colors.white,
+                        shadows: [
+                          Shadow(color: Color(0x80000000), blurRadius: 2),
+                        ],
+                      ),
+                    ),
+                    if (selected) const ColoredBox(color: Color(0x33000000)),
+                    if (tagText != null)
+                      Positioned(
+                        top: 10,
+                        left: 10,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: const Color(0x66000000),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              tagText!,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                height: 1.1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    // 官方勾选框在封面右下（右 8dp/下 6dp），不是右上角。
+                    if (editing)
+                      Positioned(
+                        right: 8,
+                        bottom: 6,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: selected
+                                ? const Color(0xFFFA6725)
+                                : Colors.transparent,
+                            border: selected
+                                ? null
+                                : Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: selected
+                                ? const Icon(
+                                    Icons.check,
+                                    size: 18,
+                                    color: Colors.white,
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        height: 1.25,
+                        color: Color(0xFF1B1B1B),
+                      ),
+                    ),
+                    if (subtitle != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          subtitle!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            height: 1.2,
+                            color: Color(0x66000000),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 瀑布格卡片：竖版海报（约 5:7）+ 片名 + 「分类·集数」。官方
 /// StaggeredFeedTab 的 CommonDoubleRow/ThreeRow 卡（`mw2.c` 供数）在浅色页上的形态。
-/// 最近/收藏列表复用同一张卡，另带左上角标（漫剧）、居中 ▶ 与编辑多选勾。
+/// 最近列表的卡带角标/勾选等编辑态，官方本就是另一套 holder
+/// （`staggered/b` + `ay3.xml`），见 [_HistoryCard]。
 class _BrowseCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
@@ -2404,27 +2594,11 @@ class _BrowseCard extends StatelessWidget {
   /// 官方两列格片名可换行（看剧），三列格单行省略（漫剧）。
   final int titleMaxLines;
 
-  /// 左上角角标文案（最近列表的「漫剧」等）；null 不显示。
-  final String? tagText;
-
-  /// 居中半透明 ▶（最近/收藏的卡片有，浏览格没有）。
-  final bool centerPlayIcon;
-
-  /// 编辑模式下的多选态（右上角打勾）。
-  final bool selected;
-
-  /// 覆盖内置「分类·集数」副标题（最近页传进度「已看到第N集」）。
-  final String? subtitle;
-
   const _BrowseCard({
     super.key,
     required this.item,
     required this.onTap,
     required this.titleMaxLines,
-    this.tagText,
-    this.centerPlayIcon = false,
-    this.selected = false,
-    this.subtitle,
   });
 
   /// 官方副标题 = 分类名（tag_info 取前两个）+ 集数（episode_cnt）。
@@ -2440,7 +2614,7 @@ class _BrowseCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = this.subtitle ?? _subtitle;
+    final subtitle = _subtitle;
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     return GestureDetector(
       onTap: onTap,
@@ -2461,59 +2635,6 @@ class _BrowseCard extends StatelessWidget {
                       alignment: Alignment.topCenter,
                     ),
                   ),
-                  if (tagText != null)
-                    Positioned(
-                      top: 6,
-                      left: 6,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0x99000000),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          child: Text(
-                            tagText!,
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              height: 1.1,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (centerPlayIcon)
-                    const Center(
-                      child: Icon(
-                        Icons.play_arrow_rounded,
-                        size: 40,
-                        color: Color(0xCCFFFFFF),
-                      ),
-                    ),
-                  // 编辑模式多选勾（右上角，官方选中打勾）。
-                  if (selected)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFFA6725),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(2),
-                          child: Icon(
-                            Icons.check,
-                            size: 14,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -2595,7 +2716,9 @@ class _HistoryEmpty extends StatelessWidget {
               child: const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 28, vertical: 12),
                 child: Text(
-                  '找视频',
+                  // 官方 `Fe()`：`DynamicComicContentTypeCompatConfig` 开启时
+                  // 是「找短剧」（真机截图里漫剧角标可见，即该开关在线上是开的）。
+                  '找短剧',
                   style: TextStyle(
                     fontSize: 14,
                     color: Colors.white,
@@ -2611,16 +2734,17 @@ class _HistoryEmpty extends StatelessWidget {
   );
 }
 
-/// 官方列表页脚「— 已显示全部内容 —」（`azj.xml`）。
+/// 官方最近列表页脚：`u4` 页脚件 `a()` 的「已显示全部内容」态
+/// （`ae4.xml`：12sp `gray_40`，marginTop 16 / marginBottom 24）。
 class _ListEndFooter extends StatelessWidget {
   const _ListEndFooter();
 
   @override
   Widget build(BuildContext context) => Center(
     child: Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 16, bottom: 24),
       child: Text(
-        '— 已显示全部内容 —',
+        '已显示全部内容',
         style: const TextStyle(fontSize: 12, color: Color(0x66000000)),
       ),
     ),
@@ -2628,13 +2752,28 @@ class _ListEndFooter extends StatelessWidget {
 }
 
 class _LocalList extends StatefulWidget {
+  // Note: 最近频道按反编译源码对齐官方的证据链与取舍 —
+  // 见 .agents/notes/implemented/feature/2026-09-27-recent-tab-decompile-replica.md
   final DramaChannel channel;
   final void Function(MediaItem item) onOpen;
 
-  /// 官方空态的「找视频」按钮：跳回推荐频道。
+  /// 官方最近卡点击直接进播放页续播（`staggered/b.I3` →
+  /// `openShortSeriesActivity`）；收藏频道官方是另一套 fragment，仍走详情。
+  final Future<void> Function(MediaItem item)? onPlay;
+
+  /// 官方空态的「找短剧」按钮：跳回推荐频道。
   final VoidCallback? onFind;
 
-  const _LocalList({required this.channel, required this.onOpen, this.onFind});
+  /// 编辑模式进出时通知壳层藏/显顶栏（官方 `af()` 把 SeriesMall 顶栏 gone）。
+  final ValueChanged<bool>? onEditingChanged;
+
+  const _LocalList({
+    required this.channel,
+    required this.onOpen,
+    this.onPlay,
+    this.onFind,
+    this.onEditingChanged,
+  });
 
   @override
   State<_LocalList> createState() => _LocalListState();
@@ -2643,14 +2782,48 @@ class _LocalList extends StatefulWidget {
 class _LocalListState extends State<_LocalList> {
   /// null = 全部；'video' / 'manju' = 官方 chips 的筛选（仅最近 tab 有）。
   ///
-  /// 官方编辑模式（`LatestShortVideoFragmentImpl`）：`Me()` 进编辑、
-  /// `Le()` 完成、`Ke()` 全选/取消全选、`ue()` 删除（先弹
-  /// 「确定删除浏览历史吗？」确认框）。多选态在下方的 `_selected` 里。
+  /// 官方编辑态（`LatestShortVideoFragmentImpl`）：长按卡片进编辑并选中该卡
+  /// （`o.r3` → `X5(true, view)` → `m3(position)`），全选/取消全选（`Ke`/`bf`），
+  /// 完成（`Le`）退出；删除与追剧都在底部操作条 `v73.k`（`dc1.xml`）上，
+  /// 删除前弹「确定删除浏览历史吗？」确认框（`Te`）。
   bool _editing = false;
   final Set<String> _selected = <String>{};
 
-  /// 官方 `f.u()` 的取值：1=短剧(genreFilter==1)、2=漫剧、3=视频（其他视频）。
+  /// 官方 `f.u()` 的取值：0=全部、1=短剧(genreFilter==1)、2=漫剧、3=其他视频。
   String? _filter;
+
+  @override
+  void dispose() {
+    // 带着编辑态被拆掉时壳层的顶栏会一直藏着——兜底还原。
+    if (_editing) widget.onEditingChanged?.call(false);
+    super.dispose();
+  }
+
+  void _setEditing(bool value, {String? preselect}) {
+    if (_editing == value) return;
+    setState(() {
+      _editing = value;
+      _selected.clear();
+      if (value && preselect != null) _selected.add(preselect);
+    });
+    widget.onEditingChanged?.call(value);
+  }
+
+  /// 官方 `Ee()`（编辑头标题）在 DynamicComicContentTypeCompatConfig（线上开）
+  /// 下的取值：全部→视频、短剧、漫剧、其他视频。
+  String get _filterTitle => switch (_filter) {
+    'other' => '其他视频',
+    'manju' => '漫剧',
+    'video' => '短剧',
+    _ => '视频',
+  };
+
+  /// 官方 `De()`（已选择后缀）：漫剧/短剧，其余一律「视频」（没有「其他视频」）。
+  String get _selectionSuffix => switch (_filter) {
+    'manju' => '漫剧',
+    'video' => '短剧',
+    _ => '视频',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -2669,6 +2842,7 @@ class _LocalListState extends State<_LocalList> {
             'other' => const <MediaItem>[],
             _ => items.where((item) => item.kind == _filter).toList(),
           };
+          final editingList = _editing && !fromShelf && filtered.isNotEmpty;
           final empty = _HistoryEmpty(
             key: Key('drama_${widget.channel.label}_empty'),
             message: fromShelf ? '暂无收藏的视频' : '暂无浏览历史',
@@ -2678,74 +2852,72 @@ class _LocalListState extends State<_LocalList> {
               ? empty
               : GridView.builder(
                   key: Key('drama_${widget.channel.label}_grid'),
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  // 官方 staggered 网格间距（`j0`）：左右 12dp、行/列间距 8dp。
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 16,
-                    // 官方最近页为竖版海报卡（约 5:7），两行标题 + 进度行。
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    // 官方封面 10:14 + 粗体两行标题 + 进度行。
                     childAspectRatio: 0.56,
                   ),
-                  // 尾部多一项「— 已显示全部内容 —」（官方 `azj.xml`）。
+                  // 尾部页脚「已显示全部内容」（官方 `u4.a()`）。
                   itemCount: filtered.length + 1,
                   itemBuilder: (context, index) {
                     if (index == filtered.length) {
                       return const _ListEndFooter();
                     }
-                    return _BrowseCard(
+                    final item = filtered[index];
+                    return _HistoryCard(
                       key: ValueKey(
-                        'drama_local_${widget.channel.label}_${filtered[index].id}',
+                        'drama_local_${widget.channel.label}_${item.id}',
                       ),
-                      item: filtered[index],
-                      titleMaxLines: 2,
-                      tagText: filtered[index].kind == 'manju' ? '漫剧' : null,
-                      centerPlayIcon: true,
-                      subtitle: fromShelf
-                          ? null
-                          : _progressLabel(filtered[index]),
-                      selected: _selected.contains(_keyOf(filtered[index])),
+                      item: item,
+                      editing: editingList,
+                      selected: _selected.contains(_keyOf(item)),
+                      // 官方 `v3()`：漫剧角标只在非漫剧筛选下出现。
+                      tagText:
+                          !fromShelf &&
+                              item.kind == 'manju' &&
+                              _filter != 'manju'
+                          ? '漫剧'
+                          : null,
+                      subtitle: fromShelf ? null : _progressLabel(item),
                       onTap: () {
-                        if (_editing) {
+                        if (editingList) {
                           setState(() {
-                            final key = _keyOf(filtered[index]);
+                            final key = _keyOf(item);
                             if (!_selected.add(key)) _selected.remove(key);
                           });
                           return;
                         }
-                        widget.onOpen(filtered[index]);
+                        final play = widget.onPlay;
+                        if (!fromShelf && play != null) {
+                          unawaited(play(item));
+                        } else {
+                          widget.onOpen(item);
+                        }
                       },
+                      // 官方长按进编辑（`o.r3`），并选中被按的那张卡。
+                      onLongPress:
+                          !fromShelf && filtered.isNotEmpty && !_editing
+                          ? () => _setEditing(true, preselect: _keyOf(item))
+                          : null,
                     );
                   },
                 );
-          final shelfMode = fromShelf;
-          return SafeArea(
-            child: Column(
-              children: [
-                // 官方编辑头（`editHeaderLayout`）：全选/取消全选 + 删除，
-                // 右上角「编辑/完成」。收藏频道没有这套（官方只在浏览历史有）。
-                if (!shelfMode && filtered.isNotEmpty) _editHeader(filtered),
-                if (!fromShelf) ...[
-                  // 官方 chips 行：固定在悬浮顶栏之下（grid 的 padding 让位）。
-                  Padding(
-                    key: const Key('drama_recent_filter'),
-                    padding: const EdgeInsets.fromLTRB(16, 96, 16, 8),
-                    child: Row(
-                      children: [
-                        _filterChip(null, '全部'),
-                        const SizedBox(width: 8),
-                        _filterChip('video', '短剧'),
-                        const SizedBox(width: 8),
-                        _filterChip('manju', '漫剧'),
-                        const SizedBox(width: 8),
-                        _filterChip('other', '其他视频'),
-                      ],
-                    ),
-                  ),
-                ] else
-                  const SizedBox(height: 96),
-                Expanded(child: body),
-              ],
-            ),
+          return Column(
+            children: [
+              if (editingList)
+                _editHeader(filtered)
+              else if (!fromShelf && filtered.isNotEmpty)
+                _normalHeader()
+              else
+                // 收藏/空列表：只给悬浮顶栏让位。
+                SizedBox(height: MediaQuery.paddingOf(context).top + 76),
+              Expanded(child: body),
+              if (editingList) _bottomBar(filtered),
+            ],
           );
         },
       ),
@@ -2763,61 +2935,46 @@ class _LocalListState extends State<_LocalList> {
       ),
   ];
 
-  /// 官方编辑头（`editHeaderLayout`）：进编辑后顶部换成「全选」+「删除」，
-  /// 未进编辑时只显示「编辑」。收藏频道没有这套。浅色页用深色文字。
-  Widget _editHeader(List<MediaItem> filtered) {
-    final allSelected =
-        _editing && _selected.length == filtered.length && filtered.isNotEmpty;
-    return Padding(
-      key: const Key('drama_recent_edit_header'),
-      padding: const EdgeInsets.fromLTRB(16, 96, 16, 0),
+  /// 非编辑态顶区（官方 `daj.xml` + `c4e.xml`）：可横滑的 chips 行
+  /// （14h/7v、圆角 6dp）+ 右侧「编辑」（14sp 粗体；官方 chips 行
+  /// marginEnd 52dp 给它让位）。悬浮顶栏（搜索 38 + 频道条 38）仍然压在
+  /// 页面上方，chips 行要整体让到它下面。
+  Widget _normalHeader() {
+    final top = MediaQuery.paddingOf(context).top;
+    return Container(
+      padding: EdgeInsets.fromLTRB(12, top + 84, 12, 8),
       child: Row(
         children: [
-          if (_editing) ...[
-            GestureDetector(
-              key: const Key('drama_recent_select_all'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() {
-                if (allSelected) {
-                  _selected.clear();
-                } else {
-                  _selected
-                    ..clear()
-                    ..addAll(filtered.map(_keyOf));
-                }
-              }),
-              child: Text(
-                allSelected ? '取消全选' : '全选',
-                style: const TextStyle(fontSize: 14, color: Color(0xFFFA6725)),
+          Expanded(
+            child: SingleChildScrollView(
+              key: const Key('drama_recent_filter'),
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _filterChip(null, '全部'),
+                  const SizedBox(width: 6),
+                  _filterChip('video', '短剧'),
+                  const SizedBox(width: 6),
+                  _filterChip('manju', '漫剧'),
+                  const SizedBox(width: 6),
+                  _filterChip('other', '其他视频'),
+                ],
               ),
             ),
-            const Spacer(),
-            GestureDetector(
-              key: const Key('drama_recent_delete'),
-              behavior: HitTestBehavior.opaque,
-              onTap: _selected.isEmpty ? null : _confirmDelete,
-              child: Text(
-                '删除',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: _selected.isEmpty
-                      ? const Color(0x33000000)
-                      : const Color(0xFFFA6725),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-          ],
+          ),
+          const SizedBox(width: 8),
           GestureDetector(
             key: const Key('drama_recent_edit'),
             behavior: HitTestBehavior.opaque,
-            onTap: () => setState(() {
-              _editing = !_editing;
-              if (!_editing) _selected.clear();
-            }),
-            child: Text(
-              _editing ? '完成' : '编辑',
-              style: const TextStyle(fontSize: 14, color: Color(0xFF1B1B1B)),
+            onTap: () => _setEditing(true),
+            child: const Text(
+              '编辑',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1B1B1B),
+              ),
             ),
           ),
         ],
@@ -2825,8 +2982,184 @@ class _LocalListState extends State<_LocalList> {
     );
   }
 
-  /// 官方删除前先确认（`Te()` 的 `ConfirmDialogBuilder`，标题
-  /// 「确定删除浏览历史吗？」，确认后删除并 Toast「删除成功」）。
+  /// 官方编辑头（`c4f.xml` 的 `cvl`）：左「全选/取消全选」、右「完成」
+  /// （16sp），中间当前筛选名（18sp 粗体）+「已选择 N 个xx」（12sp
+  /// `gray_40`，0 个时隐藏，`Ua()`）。官方进编辑把悬浮顶栏整个藏掉，
+  /// 这里因此自带状态栏内边距。
+  Widget _editHeader(List<MediaItem> filtered) {
+    final allSelected = _selected.length == filtered.length;
+    final top = MediaQuery.paddingOf(context).top;
+    return Container(
+      key: const Key('drama_recent_edit_header'),
+      color: Colors.white,
+      padding: EdgeInsets.fromLTRB(22, top + 4, 22, 4),
+      child: SizedBox(
+        height: 56,
+        child: Stack(
+          children: [
+            Row(
+              children: [
+                GestureDetector(
+                  key: const Key('drama_recent_select_all'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() {
+                    if (allSelected) {
+                      _selected.clear();
+                    } else {
+                      _selected
+                        ..clear()
+                        ..addAll(filtered.map(_keyOf));
+                    }
+                  }),
+                  child: Text(
+                    allSelected ? '取消全选' : '全选',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Color(0xFF1B1B1B),
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _setEditing(false),
+                  child: const Text(
+                    '完成',
+                    style: TextStyle(fontSize: 16, color: Color(0xFF1B1B1B)),
+                  ),
+                ),
+              ],
+            ),
+            Align(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _filterTitle,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1B1B1B),
+                    ),
+                  ),
+                  if (_selected.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        '已选择 ${_selected.length} 个$_selectionSuffix',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0x66000000),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 官方底部操作条（`v73.k` + `dc1.xml`）：白底 + 0.5dp `gray_06` 分隔线，
+  /// 居中排「追剧/追漫」（按筛选取名，`R1()`）与红色「删除」
+  /// （`skin_color_red_delete` #F43207）；无选中时整体 30% 透明（`Q1()`）。
+  Widget _bottomBar(List<MediaItem> filtered) {
+    final enabled = _selected.isNotEmpty;
+    return DecoratedBox(
+      key: const Key('drama_recent_bottom_bar'),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(color: const Color(0xFF1B1B1B).withAlpha(15)),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 48,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _barAction(
+                key: const Key('drama_recent_follow'),
+                label: _filter == 'manju' ? '追漫' : '追剧',
+                color: const Color(0xFF1B1B1B),
+                enabled: enabled,
+                onTap: enabled ? () => unawaited(_followSelected(filtered)) : null,
+              ),
+              const SizedBox(width: 40),
+              _barAction(
+                key: const Key('drama_recent_delete'),
+                label: '删除',
+                color: const Color(0xFFF43207),
+                enabled: enabled,
+                onTap: enabled ? _confirmDelete : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _barAction({
+    required Key key,
+    required String label,
+    required Color color,
+    required bool enabled,
+    required VoidCallback? onTap,
+  }) {
+    return Opacity(
+      opacity: enabled ? 1 : 0.3,
+      child: GestureDetector(
+        key: key,
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Text(label, style: TextStyle(fontSize: 14, color: color)),
+        ),
+      ),
+    );
+  }
+
+  /// 官方 `P0`：选中的作品批量追剧入书架。已在书架的跳过；全部都追过时只
+  /// 提示「视频已加入追剧」（`h0.b()`），成功后按筛选给
+  /// 「追剧/追漫后可在书架找到…」（`u7` → `h0.i()`），300ms 后退出编辑。
+  Future<void> _followSelected(List<MediaItem> filtered) async {
+    final targets = [
+      for (final item in filtered)
+        if (_selected.contains(_keyOf(item)) &&
+            !ShelfStore.instance.containsItem(item))
+          item,
+    ];
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('视频已加入追剧')));
+      return;
+    }
+    for (final item in targets) {
+      await ShelfStore.instance.add(item);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _filter == 'manju' ? '追漫后可在书架找到该漫剧' : '追剧后可在书架找到该短剧',
+        ),
+      ),
+    );
+    Timer(const Duration(milliseconds: 300), () {
+      if (mounted) _setEditing(false);
+    });
+  }
+
+  /// 官方删除前先确认（`Te()` 的 `ConfirmDialogBuilder`：标题
+  /// 「确定删除浏览历史吗？」、确认/取消），成功 Toast「删除成功」、失败
+  /// 「删除失败」，两条路径最后都退出编辑（`P2`/`kb`）。
   Future<void> _confirmDelete() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -2854,13 +3187,10 @@ class _LocalListState extends State<_LocalList> {
       ),
     );
     if (!mounted) return;
-    setState(() {
-      _selected.clear();
-      if (removed == 0) _editing = false;
-    });
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(removed > 0 ? '删除成功' : '删除失败')));
+    _setEditing(false);
   }
 
   Widget _filterChip(String? kind, String label) {
@@ -2869,17 +3199,18 @@ class _LocalListState extends State<_LocalList> {
       behavior: HitTestBehavior.opaque,
       onTap: () => setState(() => _filter = kind),
       child: DecoratedBox(
-        // 官方浅色页 chips：未选中浅灰底深字，选中浅橙底橙字。
+        // 官方 `c4e.xml` + `f.s()`：选中浅橙底橙字加粗，未选中浅灰底深字。
         decoration: BoxDecoration(
-          color: selected ? const Color(0x1AFA6725) : const Color(0x0F000000),
+          color: selected ? const Color(0x1AFA6725) : const Color(0x08000000),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
           child: Text(
             label,
             style: TextStyle(
               fontSize: 14,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
               color: selected
                   ? const Color(0xFFFA6725)
                   : const Color(0xFF1B1B1B),
