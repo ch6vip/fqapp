@@ -67,12 +67,21 @@ class PlayerPool {
 
   /// Keep [player] under [key]. A previously parked player for the same key (a
   /// restart, not a reuse) and anything beyond [capacity] are disposed.
+  ///
+  /// Parking also **pauses**: the pool's contract is "a paused player parked in
+  /// the pool", and the official cache does pause before parking
+  /// (`jq3/x.java:4681 cacheSharePlayerAndUnBindCurPlayer`). A player parked
+  /// mid-playback has no surface attached but keeps its audio track alive —
+  /// 2026-09-27 真机：内容刷新成空列表后幽灵出声，根因就是调用方 park 前不
+  /// 暂停、池也不兜底；默认有声起播后这个僵尸从「哑的」变成听得见。所以
+  /// pause 在池里补上，不依赖每个调用方记得。
   void park(String key, NativePlayer player, {Object? payload}) {
     final entry = ParkedPlayer(player, payload: payload);
     if (_disposed) {
       _queueDispose(player);
       return;
     }
+    unawaited(_pauseQuietly(player));
     final replaced = _entries.remove(key);
     if (replaced != null && !identical(replaced.player, player)) {
       _queueDispose(replaced.player);
@@ -107,6 +116,15 @@ class PlayerPool {
   /// concurrently, and the caller must not wait for one to finish a swipe.
   void _queueDispose(NativePlayer player) {
     _pending = _pending.then((_) => _disposeQuietly(player));
+  }
+
+  static Future<void> _pauseQuietly(NativePlayer player) async {
+    try {
+      await player.pause();
+    } catch (_) {
+      // Pausing is best effort: a player that refuses it is torn down by its
+      // owner or by the eviction queue anyway.
+    }
   }
 
   static Future<void> _disposeQuietly(NativePlayer player) async {

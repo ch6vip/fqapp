@@ -30,6 +30,18 @@ void main() {
     expect(pool.peek('a')?.payload, 'session-state');
   });
 
+  test('park 会把仍在播放的播放器暂停（入池即暂停是池的契约）', () {
+    // 2026-09-27 真机：换卡/空列表把播放中的播放器直接 park，池不暂停，
+    // 没 surface 的僵尸继续出声。官方 cacheSharePlayerAndUnBindCurPlayer
+    // 先 pause 再缓存，池在这里兜底而不是依赖调用方。
+    final pool = PlayerPool();
+    final player = ControlledNativePlayer()..emitFirstFrame();
+
+    pool.park('a', player);
+
+    expect(player.calls, contains('pause'));
+  });
+
   test('超出容量时淘汰最早放入的播放器并销毁它', () async {
     final pool = PlayerPool(capacity: 2);
     final first = ControlledNativePlayer();
