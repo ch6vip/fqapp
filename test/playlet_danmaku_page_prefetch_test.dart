@@ -66,7 +66,10 @@ void main() {
   });
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('fqapp/native_player'), null);
+        .setMockMethodCallHandler(
+          const MethodChannel('fqapp/native_player'),
+          null,
+        );
   });
 
   /// 测试体内卸载页面：页面的 1s 心跳定时器必须在
@@ -81,6 +84,7 @@ void main() {
     required _DanmakuFetch fetch,
     required List<ControlledNativePlayer> players,
     Map<String, Object> prefs = const {},
+    Map<String, dynamic>? history,
   }) async {
     SharedPreferences.setMockInitialValues(prefs);
     tester.view.devicePixelRatio = 1;
@@ -102,9 +106,10 @@ void main() {
           ],
           startIndex: 0,
           shortSeries: true,
-          historyStore: ControlledReaderStore(),
-          contentLoader: (chapter) async =>
-              {'video_url': 'https://example.invalid/${chapter.itemId}.mp4'},
+          historyStore: ControlledReaderStore(entry: history),
+          contentLoader: (chapter) async => {
+            'video_url': 'https://example.invalid/${chapter.itemId}.mp4',
+          },
           playerFactory: () => players.removeAt(0),
           danmakuFetcher: fetch.call,
         ),
@@ -217,9 +222,12 @@ void main() {
 
     // 旧集响应最后才回来：不装填、不影响新集状态。
     fetch.calls[0].complete(
-      pageOf(hasMore: true, cursor: 'old', nextQueryMs: 60000, comments: [
-        d('stale', 1000),
-      ]),
+      pageOf(
+        hasMore: true,
+        cursor: 'old',
+        nextQueryMs: 60000,
+        comments: [d('stale', 1000)],
+      ),
     );
     await _flush(tester);
     fetch.calls[1].complete(pageOf(comments: [d('fresh', 1000)]));
@@ -238,9 +246,14 @@ void main() {
     final fetch = _DanmakuFetch();
     final player = ControlledNativePlayer()
       ..totalDuration = const Duration(minutes: 2);
-    await mount(tester, fetch: fetch, players: [player], prefs: const {
-      'video_danmaku_switch_sp/key_enable_danmaku_by_user': false,
-    });
+    await mount(
+      tester,
+      fetch: fetch,
+      players: [player],
+      prefs: const {
+        'video_danmaku_switch_sp/key_enable_danmaku_by_user': false,
+      },
+    );
     await tester.pump(const Duration(seconds: 2));
     expect(fetch.requests, isEmpty);
 
@@ -252,6 +265,43 @@ void main() {
     expect(fetch.requests, hasLength(1));
     expect(fetch.requests.single.vid, 'v1');
     expect(fetch.requests.single.reason, DanmakuRequestReason.initial);
+    await unmount(tester);
+  });
+
+  testWidgets('restored history requests danmaku at that position', (
+    tester,
+  ) async {
+    final fetch = _DanmakuFetch();
+    final player = ControlledNativePlayer()
+      ..totalDuration = const Duration(minutes: 2);
+    await mount(
+      tester,
+      fetch: fetch,
+      players: [player],
+      history: {
+        'id': 'series-1',
+        'episodeId': 'v1',
+        'episode': 0,
+        'position': 42,
+        'duration': 120,
+      },
+    );
+    expect(fetch.requests, isNotEmpty);
+    final aimed = fetch.requests.any(
+      (request) => request.startOffsetMs == 42000 && request.cursor.isEmpty,
+    );
+    if (!aimed) {
+      expect(fetch.requests.single.startOffsetMs, 0);
+      fetch.calls.single.complete(pageOf(hasMore: false, nextQueryMs: 1000));
+      await _flush(tester);
+    }
+    final target = fetch.requests.last;
+    expect(target.startOffsetMs, 42000);
+    expect(target.cursor, isEmpty);
+    expect(
+      target.reason,
+      anyOf(DanmakuRequestReason.initial, DanmakuRequestReason.seek),
+    );
     await unmount(tester);
   });
 }

@@ -64,10 +64,7 @@ void main() {
       expect(fetch.requests.single.vid, 'v1');
       expect(fetch.requests.single.startOffsetMs, 0);
       expect(fetch.requests.single.cursor, '');
-      expect(
-        fetch.requests.single.reason,
-        DanmakuRequestReason.initial,
-      );
+      expect(fetch.requests.single.reason, DanmakuRequestReason.initial);
 
       fetch.serve(
         0,
@@ -143,21 +140,24 @@ void main() {
     });
   });
 
-  test('rapid seeks collapse to the newest target after the in-flight call', () {
-    fakeAsync((async) {
-      loader.reset(vid: 'v1');
-      loader.onSeek(30000);
-      loader.onSeek(45000);
-      loader.onSeek(50000);
-      expect(fetch.requests, hasLength(1)); // 单飞：后续只排队
-      fetch.serve(0, pageOf(hasMore: true, cursor: 'c1', nextQueryMs: 60000));
-      async.flushMicrotasks();
-      expect(fetch.requests, hasLength(2));
-      expect(fetch.requests.last.reason, DanmakuRequestReason.seek);
-      expect(fetch.requests.last.startOffsetMs, 50000);
-      expect(fetch.requests.last.cursor, '');
-    });
-  });
+  test(
+    'rapid seeks collapse to the newest target after the in-flight call',
+    () {
+      fakeAsync((async) {
+        loader.reset(vid: 'v1');
+        loader.onSeek(30000);
+        loader.onSeek(45000);
+        loader.onSeek(50000);
+        expect(fetch.requests, hasLength(1)); // 单飞：后续只排队
+        fetch.serve(0, pageOf(hasMore: true, cursor: 'c1', nextQueryMs: 60000));
+        async.flushMicrotasks();
+        expect(fetch.requests, hasLength(2));
+        expect(fetch.requests.last.reason, DanmakuRequestReason.seek);
+        expect(fetch.requests.last.startOffsetMs, 50000);
+        expect(fetch.requests.last.cursor, '');
+      });
+    },
+  );
 
   test('a queued seek is not replaced by a progress refill', () {
     fakeAsync((async) {
@@ -180,9 +180,12 @@ void main() {
       // 旧视频的响应迟到：不能装填、不能记覆盖区间。
       fetch.serve(
         0,
-        pageOf(hasMore: true, cursor: 'old', nextQueryMs: 60000, comments: [
-          d('old', 1000),
-        ]),
+        pageOf(
+          hasMore: true,
+          cursor: 'old',
+          nextQueryMs: 60000,
+          comments: [d('old', 1000)],
+        ),
       );
       async.flushMicrotasks();
       expect(loadedPages, isEmpty);
@@ -319,5 +322,121 @@ void main() {
     timeline.load([d('b', 10000), d('c', 20000)]);
     expect(timeline.entries.map((e) => e.id), ['b', 'c', 'a']);
     expect(timeline.entries.map((e) => e.offsetMs), [10000, 20000, 30000]);
+  });
+  test('a seek during the retry delay drops the stale request', () {
+    fakeAsync((async) {
+      loader.reset(vid: 'v1');
+      fetch.fail(0);
+      async.flushMicrotasks();
+      loader.onSeek(42000);
+      expect(fetch.requests.last.startOffsetMs, 42000);
+      expect(fetch.requests.last.reason, DanmakuRequestReason.seek);
+      expect(fetch.requests.last.cursor, isEmpty);
+      fetch.serve(
+        1,
+        pageOf(
+          hasMore: true,
+          cursor: 'new',
+          nextQueryMs: 80000,
+          comments: [d('n', 42000)],
+        ),
+      );
+      async.flushMicrotasks();
+      async.elapse(const Duration(seconds: 3));
+      expect(fetch.requests, hasLength(2));
+      loader.onProgress(50000);
+      expect(fetch.requests.last.reason, DanmakuRequestReason.prefetch);
+      expect(fetch.requests.last.startOffsetMs, 80000);
+      expect(fetch.requests.last.cursor, 'new');
+    });
+  });
+
+  test('same-second seek keeps the in-flight request retry', () {
+    fakeAsync((async) {
+      loader.reset(vid: 'v1', startMs: 42000);
+      loader.onSeek(42500);
+      expect(fetch.requests, hasLength(1));
+      expect(fetch.requests.single.reason, DanmakuRequestReason.initial);
+      fetch.fail(0);
+      async.flushMicrotasks();
+      async.elapse(const Duration(milliseconds: 999));
+      expect(fetch.requests, hasLength(1));
+      async.elapse(const Duration(milliseconds: 1));
+      expect(fetch.requests, hasLength(2));
+      expect(fetch.requests.last.startOffsetMs, 42000);
+      expect(fetch.requests.last.reason, DanmakuRequestReason.initial);
+      expect(fetch.requests.last.cursor, isEmpty);
+    });
+  });
+
+  test('dropping the tail uncovers it and refills with an empty cursor', () {
+    fakeAsync((async) {
+      loader.reset(vid: 'v1');
+      fetch.serve(
+        0,
+        pageOf(
+          hasMore: true,
+          cursor: 'tail',
+          nextQueryMs: 90000,
+          comments: [d('a', 1000)],
+        ),
+      );
+      async.flushMicrotasks();
+      loader.noteRetainedRange(
+        minOffsetMs: 1000,
+        maxOffsetMs: 1000,
+        droppedBehind: false,
+        droppedAhead: true,
+      );
+      loader.onProgress(1500);
+      expect(fetch.requests, hasLength(1));
+      loader.onProgress(2000);
+      expect(fetch.requests.last.reason, DanmakuRequestReason.progressRefill);
+      expect(fetch.requests.last.startOffsetMs, 2000);
+      expect(fetch.requests.last.cursor, isEmpty);
+    });
+  });
+
+  test('dropping comments behind the playhead lets seek refill them', () {
+    fakeAsync((async) {
+      loader.reset(vid: 'v1');
+      fetch.serve(
+        0,
+        pageOf(
+          hasMore: true,
+          cursor: 'c1',
+          nextQueryMs: 90000,
+          comments: [d('a', 1000)],
+        ),
+      );
+      async.flushMicrotasks();
+      loader.noteRetainedRange(
+        minOffsetMs: 20000,
+        maxOffsetMs: 30000,
+        droppedBehind: true,
+        droppedAhead: false,
+      );
+      loader.onSeek(5000);
+      expect(fetch.requests.last.reason, DanmakuRequestReason.seek);
+      expect(fetch.requests.last.startOffsetMs, 5000);
+      expect(fetch.requests.last.cursor, isEmpty);
+    });
+  });
+
+  test('the timeline keeps four official pages around the playhead', () {
+    final timeline = DanmakuTimeline();
+    final comments = <PlayletComment>[
+      for (var i = 0; i < 10; i++) d('old$i', i * 1000),
+      for (var i = 0; i < DanmakuTimeline.maxEntries; i++)
+        d('near$i', 30000 + i),
+      d('far', 120000),
+    ];
+    final retention = timeline.load(comments, focusMs: 30000);
+    expect(retention.droppedBehind, isTrue);
+    expect(retention.droppedAhead, isTrue);
+    expect(timeline.entries, hasLength(DanmakuTimeline.maxEntries));
+    expect(timeline.entries.first.offsetMs, greaterThanOrEqualTo(20000));
+    expect(timeline.entries.last.offsetMs, lessThan(120000));
+    expect(timeline.entries.map((e) => e.id), isNot(contains('far')));
   });
 }

@@ -76,7 +76,16 @@ class DanmakuPreference {
 
 /// 弹幕轴的纯逻辑：把「进度 -> 该显示的弹幕」抽出来，便于离线用例覆盖
 /// 官方的四条时间轴规则。
+///
+/// 官方 `DanmakuDataManager` 不裁弹幕池。工单要求缓存有上限：单次请求
+/// `count = 90`（`DanmakuRequestHelper.java:363`），这里保留 4 页。播放头
+/// 之前只留一个飞行窗口（[_flightBaseMs]），更早的条目回拖时由 seek 重取。
+// Note: 历史进度补数、取消过期重试、时间轴上限 — 见
+// .agents/notes/implemented/bug-fix/2026-09-27-danmaku-resume-retry-cap.md
 class DanmakuTimeline {
+  static const maxEntries = 360;
+  static const retainBehindMs = 10000;
+
   final List<PlayletComment> entries = [];
   bool _loaded = false;
 
@@ -89,28 +98,153 @@ class DanmakuTimeline {
   }
 
   /// 装填一页；同一集重复装填按 id 去重（官方按 vid 整池替换）。
-  void load(List<PlayletComment> page, {bool replace = false}) {
+  ///
+  /// [focusMs] 是当前播放位置。传入后才启用上限：不传则保持旧调用方的
+  /// 全量行为，页面侧每次成功回包都会传。
+  DanmakuLoadResult load(
+    List<PlayletComment> page, {
+    bool replace = false,
+    int? focusMs,
+  }) {
     if (replace) entries.clear();
     final seen = entries.map((e) => e.id).toSet();
     for (final entry in page) {
       if (seen.add(entry.id)) entries.add(entry);
     }
-    entries.sort((a, b) => a.offsetMs.compareTo(b.offsetMs));
+    entries.sort((a, b) {
+      final offset = a.offsetMs.compareTo(b.offsetMs);
+      return offset == 0 ? a.id.compareTo(b.id) : offset;
+    });
     _loaded = true;
+    if (focusMs == null) {
+      return DanmakuLoadResult.kept(entries);
+    }
+    return _trim(focusMs);
+  }
+
+  DanmakuLoadResult _trim(int focusMs) {
+    final before = entries.length;
+    final behindCut = focusMs - retainBehindMs;
+    entries.removeWhere((entry) => entry.offsetMs < behindCut);
+    var droppedBehind = entries.length != before;
+    var droppedAhead = false;
+    if (entries.length > maxEntries) {
+      var nearest = 0;
+      var best = (entries.first.offsetMs - focusMs).abs();
+      for (var i = 1; i < entries.length; i++) {
+        final distance = (entries[i].offsetMs - focusMs).abs();
+        if (distance < best) {
+          best = distance;
+          nearest = i;
+        }
+      }
+      var lower = nearest;
+      var upper = nearest;
+      while (upper - lower + 1 < maxEntries &&
+          (lower > 0 || upper < entries.length - 1)) {
+        final left = lower > 0
+            ? (entries[lower - 1].offsetMs - focusMs).abs()
+            : 1 << 62;
+        final right = upper + 1 < entries.length
+            ? (entries[upper + 1].offsetMs - focusMs).abs()
+            : 1 << 62;
+        if (left <= right && lower > 0) {
+          lower--;
+        } else if (upper + 1 < entries.length) {
+          upper++;
+        } else {
+          break;
+        }
+      }
+      if (lower > 0) droppedBehind = true;
+      if (upper < entries.length - 1) droppedAhead = true;
+      if (lower > 0 || upper < entries.length - 1) {
+        entries.removeRange(upper + 1, entries.length);
+        entries.removeRange(0, lower);
+      }
+    }
+    if (entries.isEmpty) {
+      return const DanmakuLoadResult(
+        droppedBehind: true,
+        droppedAhead: false,
+        minOffsetMs: 0,
+        maxOffsetMs: 0,
+        emptied: true,
+      );
+    }
+    return DanmakuLoadResult(
+      droppedBehind: droppedBehind,
+      droppedAhead: droppedAhead,
+      minOffsetMs: entries.first.offsetMs,
+      maxOffsetMs: entries.last.offsetMs,
+    );
   }
 
   /// 媒体时间已经包含倍速，窗口不能再除一次倍速，否则会变成倍速的平方。
   List<PlayletComment> visibleAt(int nowMs) {
-    return [
-      for (final entry in entries)
-        if (nowMs - entry.offsetMs >= 0 &&
-            nowMs - entry.offsetMs < _flightBaseMs)
-          entry,
-    ];
+    if (entries.isEmpty || nowMs < 0) return const [];
+    // offset > now-飞行窗口 且 offset <= now。列表按 offset 有序。
+    // 飞行窗口用渲染常量，不跟缓存保留窗口绑在一起。
+    final minExclusive = nowMs - _flightBaseMs.toInt();
+    final start = _firstAbove(minExclusive);
+    final end = _firstAbove(nowMs);
+    if (start >= end) return const [];
+    return [for (var i = start; i < end; i++) entries[i]];
+  }
+
+  /// 第一个 `offsetMs > bound` 的下标；全部都不大于 bound 时返回长度。
+  int _firstAbove(int bound) {
+    var lower = 0;
+    var upper = entries.length;
+    while (lower < upper) {
+      final mid = (lower + upper) >> 1;
+      if (entries[mid].offsetMs <= bound) {
+        lower = mid + 1;
+      } else {
+        upper = mid;
+      }
+    }
+    return lower;
   }
 
   /// 拖动进度后需要重新装填（官方 seekTo() 清游标）。
   bool get needsReload => !_loaded;
+}
+
+/// [DanmakuTimeline.load] 裁掉条目后的结果。页面把它交给调度器收窄覆盖区间。
+class DanmakuLoadResult {
+  const DanmakuLoadResult({
+    required this.droppedBehind,
+    required this.droppedAhead,
+    required this.minOffsetMs,
+    required this.maxOffsetMs,
+    this.emptied = false,
+  });
+
+  factory DanmakuLoadResult.kept(List<PlayletComment> entries) {
+    if (entries.isEmpty) {
+      return const DanmakuLoadResult(
+        droppedBehind: false,
+        droppedAhead: false,
+        minOffsetMs: 0,
+        maxOffsetMs: 0,
+      );
+    }
+    return DanmakuLoadResult(
+      droppedBehind: false,
+      droppedAhead: false,
+      minOffsetMs: entries.first.offsetMs,
+      maxOffsetMs: entries.last.offsetMs,
+    );
+  }
+
+  final bool droppedBehind;
+  final bool droppedAhead;
+  final int minOffsetMs;
+  final int maxOffsetMs;
+  final bool emptied;
+
+  bool get dropped => emptied || droppedBehind || droppedAhead;
 }
 
 /// 从上游响应取出弹幕时间轴。

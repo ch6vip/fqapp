@@ -20,6 +20,9 @@
 ///   **最新意图**且 seek 优先，因为覆盖检查每秒都会重新推导需求，被替换的
 ///   意图会在下一轮重新产生。
 /// - 官方失败后立即出队重试；这里隔 1 秒再重试，避免本地核心抖动时热循环。
+///   换了目标的 seek，或下一次真正发出的请求，会取消尚未触发的旧重试，
+///   避免旧位置在新请求成功后覆盖 cursor 和已覆盖区间。同一秒、游标为空的
+///   首批或 seek 已在飞时不再重排，也不作废它自己的失败重试。
 /// - 回包缺 `next_query_danmaku_list_time` 时（真实回包未取证到缺失情形），
 ///   已覆盖区间只记 `[start, start+1s)` 防同点重复请求；不足部分靠后续
 ///   进度补数按 cursor 续拉，宁可多问不可漏弹幕。
@@ -66,6 +69,8 @@ class _CoveredSpan {
 /// 覆盖竞态与生命周期。
 // Note: 单飞 + 最新意图排队、重试预算收窄与证据缺口 — 见
 // .agents/notes/implemented/feature/2026-09-27-danmaku-prefetch-seek.md
+// Note: 历史进度补数、取消过期重试、时间轴上限 — 见
+// .agents/notes/implemented/bug-fix/2026-09-27-danmaku-resume-retry-cap.md
 class DanmakuLoader {
   DanmakuLoader({required this.fetch, this.onLoad});
 
@@ -96,23 +101,30 @@ class DanmakuLoader {
   bool _enabled = true;
   bool _disposed = false;
   DanmakuFetchRequest? _queued;
+  DanmakuFetchRequest? _inflight;
   Timer? _retryTimer;
+  int _epoch = 0;
 
   /// 测试观察用：当前是否有请求在飞。
   bool get fetching => _fetching;
+
+  /// 当前调度所属视频。空字符串表示还没 [reset]，页面据此判断
+  /// 历史进度要不要先记下来等首批请求。
+  String get videoId => _vid;
 
   /// 切集/首集：整池作废（官方 `w()`），随后按起始时间发首批请求。
   void reset({required String vid, int startMs = 0}) {
     _vid = vid;
     _generation++;
-    _retryTimer?.cancel();
-    _retryTimer = null;
+    _cancelRetry();
     _covered.clear();
     _pendingPrefetch = null;
     _cursor = '';
     _hasMore = true;
     _retriesLeft = _maxRetries;
     _queued = null;
+    _inflight = null;
+    _fetching = false;
     if (_disposed || !_enabled || vid.isEmpty) return;
     _dispatch(
       DanmakuFetchRequest(
@@ -131,7 +143,24 @@ class DanmakuLoader {
   /// 重置；这里统一为每次 seek 给满预算，保证拖动总能拿到附近弹幕）。
   void onSeek(int targetMs) {
     if (_disposed || !_enabled || _vid.isEmpty || targetMs < 0) return;
-    if (_coveredAt(targetMs)) return;
+    if (_coveredAt(targetMs)) {
+      // 目标已有数据。旧失败重试不能再发出去改游标。
+      _cancelRetry();
+      return;
+    }
+    final inflight = _inflight;
+    if (_fetching &&
+        inflight != null &&
+        inflight.cursor.isEmpty &&
+        inflight.startOffsetMs ~/ 1000 == targetMs ~/ 1000 &&
+        (inflight.reason == DanmakuRequestReason.initial ||
+            inflight.reason == DanmakuRequestReason.seek)) {
+      // 首批或上一次 seek 已经在要这个时间点。不重排，也不作废它的
+      // 失败重试：历史恢复会在 reset 之后再回调一次同一秒的 seek。
+      return;
+    }
+    // 失败后的 1 秒重试窗口里如果已经发生 seek，旧位置不能再发出去。
+    _cancelRetry();
     _hasMore = true;
     _retriesLeft = _maxRetries;
     _submit(
@@ -183,8 +212,7 @@ class DanmakuLoader {
     if (_enabled == enabled) return;
     _enabled = enabled;
     if (!enabled) {
-      _retryTimer?.cancel();
-      _retryTimer = null;
+      _cancelRetry();
       _queued = null;
     }
   }
@@ -192,11 +220,72 @@ class DanmakuLoader {
   void dispose() {
     _disposed = true;
     _enabled = false;
-    _retryTimer?.cancel();
-    _retryTimer = null;
+    _cancelRetry();
     _queued = null;
     _covered.clear();
     _pendingPrefetch = null;
+  }
+
+  /// 时间轴丢掉超出上限的条目后，收窄已覆盖区间，避免「缓存说有、
+  /// 时间轴已经没有」。只丢掉尾部时清掉 cursor：那条游标属于被丢弃的
+  /// 最新一页，继续用它会跳过中间的弹幕。
+  void noteRetainedRange({
+    required int minOffsetMs,
+    required int maxOffsetMs,
+    required bool droppedBehind,
+    required bool droppedAhead,
+    bool emptied = false,
+  }) {
+    if (_disposed || (!emptied && !droppedBehind && !droppedAhead)) return;
+    if (emptied) {
+      _covered.clear();
+      _pendingPrefetch = null;
+      _cursor = '';
+      _hasMore = true;
+      _dropQueuedPrefetch();
+      return;
+    }
+    final startSec = droppedBehind ? minOffsetMs ~/ 1000 : null;
+    final endSec = droppedAhead ? maxOffsetMs ~/ 1000 + 1 : null;
+    final clipped = <_CoveredSpan>[];
+    for (final span in _covered) {
+      final lower = startSec != null && span.startSec < startSec
+          ? startSec
+          : span.startSec;
+      final upper = endSec != null && span.endSec > endSec
+          ? endSec
+          : span.endSec;
+      if (upper > lower) clipped.add(_CoveredSpan(lower, upper));
+    }
+    _covered
+      ..clear()
+      ..addAll(clipped);
+    if (droppedAhead) {
+      _cursor = '';
+      _pendingPrefetch = null;
+      _hasMore = true;
+      _dropQueuedPrefetch();
+      return;
+    }
+    final pending = _pendingPrefetch;
+    if (pending != null &&
+        startSec != null &&
+        pending.endMs ~/ 1000 <= startSec) {
+      _pendingPrefetch = null;
+    }
+  }
+
+  void _dropQueuedPrefetch() {
+    final queued = _queued;
+    if (queued != null && queued.reason != DanmakuRequestReason.seek) {
+      _queued = null;
+    }
+  }
+
+  void _cancelRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _epoch++;
   }
 
   /// 单飞 + 最新意图：在飞时只保留一个排队项。最新的 seek 压过一切
@@ -219,8 +308,11 @@ class DanmakuLoader {
 
   Future<void> _dispatch(DanmakuFetchRequest request) async {
     if (_disposed || !_enabled) return;
+    _cancelRetry();
     final generation = _generation;
+    final epoch = _epoch;
     _fetching = true;
+    _inflight = request;
     PlayletCommentPage page;
     try {
       page = await fetch(request);
@@ -229,11 +321,13 @@ class DanmakuLoader {
       // 新视频的请求可能还在飞。
       if (_disposed || generation != _generation) return;
       _fetching = false;
+      if (identical(_inflight, request)) _inflight = null;
       if (_retriesLeft > 0) {
         _retriesLeft--;
         _retryTimer = Timer(_retryDelay, () {
           _retryTimer = null;
           if (_disposed || !_enabled || generation != _generation) return;
+          if (epoch != _epoch) return;
           // 预算用尽就不再重试（官方在 tryRequest 入口按 n<=0 拦截）。
           if (_retriesLeft <= 0) return;
           // 失败按原意图重试；排队里有更新意图（如更新的 seek）则优先它。
@@ -247,6 +341,7 @@ class DanmakuLoader {
     }
     if (_disposed || generation != _generation) return;
     _fetching = false;
+    if (identical(_inflight, request)) _inflight = null;
     _retriesLeft = _maxRetries;
     _hasMore = page.hasMore;
     _cursor = page.cursor;
@@ -282,9 +377,7 @@ class DanmakuLoader {
     final merged = <_CoveredSpan>[];
     var inserted = false;
     for (final span in _covered) {
-      if (!inserted &&
-          startSec <= span.endSec &&
-          endSec >= span.startSec) {
+      if (!inserted && startSec <= span.endSec && endSec >= span.startSec) {
         // 与 [start, end) 重叠或相接的区间并入新区间。
         span.startSec = span.startSec < startSec ? span.startSec : startSec;
         span.endSec = span.endSec > endSec ? span.endSec : endSec;

@@ -211,9 +211,26 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     fetch: widget.danmakuFetcher ?? _fetchDanmaku,
     onLoad: (page) {
       if (!mounted) return;
-      setState(() => _danmaku.load(page));
+      final focus = _player?.position.inMilliseconds ?? 0;
+      setState(() {
+        final retention = _danmaku.load(page, focusMs: focus);
+        if (retention.dropped) {
+          _danmakuLoader.noteRetainedRange(
+            minOffsetMs: retention.minOffsetMs,
+            maxOffsetMs: retention.maxOffsetMs,
+            droppedBehind: retention.droppedBehind,
+            droppedAhead: retention.droppedAhead,
+            emptied: retention.emptied,
+          );
+        }
+      });
     },
   );
+
+  /// 历史进度的 seek 发生在调度器 reset 之前时，先记在这里。
+  /// 只对这一集有效，切走就丢。
+  int? _danmakuResumeIndex;
+  int? _danmakuResumeMs;
 
   /// 在飞的弹幕请求取消柄：切集与销毁时作废（官方 `w()` dispose 的等价）。
   BackendRequest? _danmakuFlight;
@@ -450,12 +467,25 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _danmakuFlight?.cancel();
     _danmakuFlight = null;
     // 首批按官方 ON_VIDEO_PLAY 在起始位置取数：初始与切集都是 0，
-    // 开关重新打开时按当前集的播放位置续取。
+    // 开关重新打开时按当前集的播放位置续取。历史进度如果已经知道、
+    // 但播放器还没把这一集标成活跃，用记下的恢复位置，避免先向 0ms
+    // 要一页然后被 hasMore=false 卡住。
     final resumed = _activeIndex == _index;
-    _danmakuLoader.reset(
-      vid: vid,
-      startMs: resumed ? (_player?.position.inMilliseconds ?? 0) : 0,
-    );
+    final resumeMs = _danmakuResumeIndex == _index ? _danmakuResumeMs : null;
+    _danmakuResumeIndex = null;
+    _danmakuResumeMs = null;
+    final startMs = resumed
+        ? (_player?.position.inMilliseconds ?? 0)
+        : (resumeMs ?? 0);
+    _danmakuLoader.reset(vid: vid, startMs: startMs < 0 ? 0 : startMs);
+  }
+
+  void _rememberDanmakuResume(int index, int positionMs) {
+    if (!widget.shortSeries || positionMs <= 0) return;
+    if (index < 0 || index >= widget.eps.length) return;
+    if (_danmakuLoader.videoId == widget.eps[index].itemId) return;
+    _danmakuResumeIndex = index;
+    _danmakuResumeMs = positionMs;
   }
 
   /// chrome 上报的最终 seek 目标（官方 `ON_SEEK_FINISH`）：调度器自行
@@ -829,8 +859,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           (durationSeconds <= 0 || savedPosition < durationSeconds)) {
         // Completed/out-of-range entries restart instead of immediately
         // reaching the end again. Unknown duration must not erase a valid seek.
-        await player.seek(Duration(milliseconds: requestedMs.round()));
+        final targetMs = requestedMs.round();
+        // chrome 的 onSeeked 只覆盖手势。恢复进度是直接 seek，不通知的话
+        // 调度器仍停在 0ms，首批 hasMore=false 后目标位置补不到。
+        _rememberDanmakuResume(index, targetMs);
+        await player.seek(Duration(milliseconds: targetMs));
         if (!_current(generation, player)) return;
+        if (widget.shortSeries &&
+            _danmakuLoader.videoId == widget.eps[index].itemId) {
+          _danmakuResumeIndex = null;
+          _danmakuResumeMs = null;
+          _onDanmakuSeek(Duration(milliseconds: targetMs));
+        }
       }
 
       trace.stage('pagingBeforePlay');
