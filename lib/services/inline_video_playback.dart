@@ -14,6 +14,7 @@ import 'library_store.dart';
 import 'native_player.dart';
 import 'player_history.dart';
 import 'player_panel_preferences.dart';
+import 'player_preferences.dart';
 import 'player_pool.dart';
 import 'user_facing_error.dart';
 
@@ -106,10 +107,15 @@ class InlineVideoPlayback {
   /// 冷启动静音由 [DramaMutePreferences] 决定（见 `_DramaPageState`）。
   final ValueNotifier<bool> muted = ValueNotifier<bool>(false);
 
-  /// Playback rate. `PlayerVideoSpeedTipsView` shows `@string/ec6`=
-  /// 「2倍速快进中」 while the viewer holds a long press (`cjx.xml`, 83dp tall),
-  /// which is the gesture `VideoGestureDetectLayout.onLongPress` forwards.
+  /// Playback rate. 面板倍速行选过的档位是会话级状态（换集由
+  /// [_applyPlaybackPrefs] 重放），冷启动初值读 [PlayerPreferences] 的
+  /// 全局播放配置——官方 jm3 倍速行写的也是全局配置，全页播放页读同一份。
   final ValueNotifier<double> rate = ValueNotifier<double>(1.0);
+
+  /// True while the viewer holds an out-of-band long press. 「2倍速快进中」
+  /// 提示必须挂这里而不是 `rate == 2`：更多面板也能选 2x，那不是快进中
+  /// （官方 `cjx.xml` 的速度提示只属于按住期间的速度层）。
+  final ValueNotifier<bool> boosting = ValueNotifier<bool>(false);
 
   /// Video pixel size of the current episode, `Size.zero` until the decoder
   /// reports one. The feed lays the texture out with the same contain rule as
@@ -119,7 +125,10 @@ class InlineVideoPlayback {
 
   bool _muted = false;
   bool _coldStartMuteApplied = false;
+  bool _coldStartRateApplied = false;
   double _rate = 1.0;
+  bool _boosting = false;
+  double _preBoostRate = 1.0;
 
   /// The tab a directory/content request must use. Only one activation runs at
   /// a time, so a single field is enough for the shared address cache loader.
@@ -526,6 +535,31 @@ class InlineVideoPlayback {
     }
   }
 
+  /// 长按带外的临时 2 倍速快进。按住期间生效，松手回到按之前的速率——
+  /// 面板选过 1.25x 时必须回到 1.25x，所以恢复点在 startBoost 捕获，
+  /// 不能像旧实现那样硬编码回 1.0。
+  Future<void> startBoost() async {
+    if (_boosting) return;
+    _boosting = true;
+    boosting.value = true;
+    _preBoostRate = _rate;
+    await setRate(2.0);
+  }
+
+  Future<void> endBoost() async {
+    if (!_boosting) return;
+    _boosting = false;
+    boosting.value = false;
+    await setRate(_preBoostRate);
+  }
+
+  /// 更多面板倍速行的选档。官方 jm3 倍速行写全局播放配置，feed 与全页
+  /// 播放页读同一份，所以这里同步持久化，冷启动与全页播放页跟随。
+  Future<void> selectRate(double value) async {
+    await setRate(value);
+    await PlayerPreferences.savePlaybackRate(value);
+  }
+
   /// Seek to [target] (`ExpandSeekBarDragFrameLayout`, the card's progress bar).
   Future<void> seek(Duration target) async {
     final player = _player;
@@ -538,8 +572,8 @@ class InlineVideoPlayback {
     await player.seek(clamped);
   }
 
-  /// Long-press fast-forward. The official view holds the raised rate only
-  /// while the gesture lasts and then shows 「2倍速快进中」 (`cjx.xml`).
+  /// Switch the playback rate. 长按快进（[startBoost]/[endBoost]）与更多
+  /// 面板的倍速行都落在这里；native 回复失败不致命，播放器可能正在销毁。
   Future<void> setRate(double value) async {
     if (value == _rate) return;
     _rate = value;
@@ -704,6 +738,13 @@ class InlineVideoPlayback {
       await DramaMutePreferences.instance.load();
       _muted = DramaMutePreferences.instance.muteWhenColdStart.value;
       muted.value = _muted;
+    }
+    // 冷启动倍速读全局播放配置（面板倍速行的持久化目标），会话内只读一次；
+    // 之后 `_rate` 完全由面板选档与快进接管。
+    if (!_coldStartRateApplied) {
+      _coldStartRateApplied = true;
+      _rate = await PlayerPreferences.loadPlaybackRate();
+      rate.value = _rate;
     }
     try {
       await player.setVolume(_muted ? 0.0 : 1.0);

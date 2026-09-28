@@ -21,6 +21,7 @@ import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/player/playlet_more_panel.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'detail_page.dart';
 import 'home_provider.dart';
@@ -247,6 +248,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// True while a route we pushed is on top of the feed.
   bool _modalOpen = false;
+
+  /// 长按中带打开的更多面板还在屏上（面板不销毁 inline 播放器，视频在
+  /// 面板后面继续播，同官方 dialog；只挡掉手势与翻页）。
+  bool _feedPanelOpen = false;
   bool _syncScheduled = false;
 
   /// Downward overscroll on the first card, in logical pixels. Official
@@ -649,6 +654,49 @@ class _DramaPageState extends ConsumerState<DramaPage>
     }
   }
 
+  /// 长按中带打开的更多面板。官方链路：`jq3/x` 的 onLongPress 命中 K6 中带
+  /// 且 `y7()` 成功 → `br3.y` 路由 → 与全页播放页同一个 `oi3/k` 面板构建器
+  /// （from = `show_more_panel_from_long_click`）。所以这里复用全页的 V2
+  /// 面板组件，只接 feed 实际支持的行：倍速（全局速率配置）与会话静音；
+  /// 清晰度/清屏/弹幕等 feed 没有的行由组件按回调判空隐藏，不留死入口。
+  ///
+  /// 官方的面板是 dialog（`DialogType.MORE_PANEL`），不暂停播放器——视频在
+  /// 面板后面继续播，这里同样只置 `_modalOpen` 挡手势，不走会销毁播放器的
+  /// [_pushOverFeed]。
+  Future<void> _showFeedMorePanel() async {
+    // 全页播放器正在接管（_openPlayer 已销毁 inline 播放器）时不开面板。
+    if (_feedPanelOpen || _openingId != null) return;
+    _feedPanelOpen = true;
+    try {
+      final selected = await showModalBottomSheet<double>(
+        context: context,
+        useSafeArea: true,
+        isScrollControlled: true,
+        // 样式与全页播放页的短剧面板一致（V2 style=1，参考版深色皮肤）。
+        backgroundColor: const Color(0xFF1C1C1C),
+        barrierColor: Colors.transparent,
+        sheetAnimationStyle: const AnimationStyle(
+          duration: Duration(milliseconds: 200),
+          reverseDuration: Duration(milliseconds: 200),
+        ),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+        ),
+        builder: (context) => PlayletMorePanel(
+          rate: _inline.rate.value,
+          // feed 没有画面撑满/弹幕，行随回调缺省隐藏。
+          fillScreen: false,
+          defaultMute: _inline.muted.value,
+          onDefaultMuteChanged: (_) => unawaited(_inline.toggleMute()),
+          danmakuEnabled: false,
+        ),
+      );
+      if (selected != null) unawaited(_inline.selectRate(selected));
+    } finally {
+      _feedPanelOpen = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(dramaProvider);
@@ -963,6 +1011,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
             onFullscreen: () => _openPlayer(item),
             onTogglePlay: _togglePlay,
+            onOpenMorePanel: () => unawaited(_showFeedMorePanel()),
           );
         },
       ),
@@ -1333,6 +1382,7 @@ class _DramaFeedCard extends StatelessWidget {
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
   final VoidCallback onTogglePlay;
+  final VoidCallback onOpenMorePanel;
 
   const _DramaFeedCard({
     required this.item,
@@ -1342,6 +1392,7 @@ class _DramaFeedCard extends StatelessWidget {
     this.playback,
     this.onFullscreen,
     required this.onTogglePlay,
+    required this.onOpenMorePanel,
   });
 
   /// Whether the viewer may drive this card: only the on-screen page owns the
@@ -1393,7 +1444,6 @@ class _DramaFeedCard extends StatelessWidget {
           ),
         ),
         // 官方 `VideoGestureDetectLayout`（`cjc.xml:7`，`marginTop=70dp` /
-        // 官方 `VideoGestureDetectLayout`（`cjc.xml:7`，`marginTop=70dp` /
         // `marginBottom=180dp`）：单击、长按、左右滑动由同一个层转发。
         //
         // **单击 = 播放/暂停当前视频，不跳任何页面。**
@@ -1412,8 +1462,9 @@ class _DramaFeedCard extends StatelessWidget {
             key: ValueKey('drama_card_${item.kind}_${item.id}'),
             enabled: _interactive,
             onTap: onTogglePlay,
-            onLongPressStart: () => unawaited(playback?.setRate(2.0)),
-            onLongPressEnd: () => unawaited(playback?.setRate(1.0)),
+            onPanelLongPress: onOpenMorePanel,
+            onBoostLongPressStart: () => unawaited(playback?.startBoost()),
+            onBoostLongPressEnd: () => unawaited(playback?.endBoost()),
             onHorizontalDrag: playback == null
                 ? null
                 : (fraction) {
@@ -1514,23 +1565,26 @@ class _DramaFeedCard extends StatelessWidget {
 /// 而真正处理双击点赞的是另一条链路（`o.z7` → `lh3.a.onDoubleTap`），本仓库
 /// 不实现点赞，所以这里也不注册双击。
 ///
-/// Long-press is a 2× fast-forward held only for the duration of the press:
-/// `VideoGestureDetectLayout.onLongPress` forwards to the speed layer, which
-/// shows 「2倍速快进中」 (`@string/ec6`, `cjx.xml`) while held. Horizontal
+/// Long-press is the official two-branch gesture (`jq3/x$q.onLongPress`
+/// `:2228-2262`）：命中横向中带（`K6()` `:2690-2711`，竖屏 50% / 横屏 33% 宽、
+/// 居中、Y 不限）且 `y7()` 处理成功 → 打开更多面板；带外才是速度层的 2×
+/// 快进，按住期间生效（`@string/ec6`=「2倍速快进中」，`cjx.xml`）。Horizontal
 /// drag seeks (`o.java:K6` mounts the drag helper with `bottomMargin=138dp`).
 class _CardGestures extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
-  final VoidCallback onLongPressStart;
-  final VoidCallback onLongPressEnd;
+  final VoidCallback onPanelLongPress;
+  final VoidCallback onBoostLongPressStart;
+  final VoidCallback onBoostLongPressEnd;
   final ValueChanged<double>? onHorizontalDrag;
 
   const _CardGestures({
     super.key,
     required this.enabled,
     required this.onTap,
-    required this.onLongPressStart,
-    required this.onLongPressEnd,
+    required this.onPanelLongPress,
+    required this.onBoostLongPressStart,
+    required this.onBoostLongPressEnd,
     this.onHorizontalDrag,
   });
 
@@ -1545,6 +1599,20 @@ class _CardGestures extends StatelessWidget {
           onHorizontalDrag!((dx / width).clamp(0.0, 1.0));
         }
 
+        // 官方 `jq3/x.K6()`：中带宽 = 视图宽 ×（竖屏 0.5 / 横屏 0.33），
+        // 居中放置，Y 不限。横竖屏分档来自官方 `J6()`。
+        final bandFraction =
+            MediaQuery.orientationOf(context) == Orientation.landscape
+            ? 0.33
+            : 0.5;
+        bool inBand(double dx) {
+          final width = constraints.maxWidth;
+          if (width <= 0) return false;
+          final half = width * bandFraction / 2;
+          final center = width / 2;
+          return dx >= center - half && dx <= center + half;
+        }
+
         return GestureDetector(
           key: const Key('drama_card_gestures'),
           // opaque：整块手势区必须自己吃指针，否则下方没有别的接收者，
@@ -1552,9 +1620,13 @@ class _CardGestures extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           // 没有双击手势了，单击立即派发（不再等双击窗口）。
           onTap: onTap,
-          onLongPressStart: (_) => onLongPressStart(),
-          onLongPressEnd: (_) => onLongPressEnd(),
-          onLongPressCancel: onLongPressEnd,
+          onLongPressStart: (details) => inBand(details.localPosition.dx)
+              ? onPanelLongPress()
+              : onBoostLongPressStart(),
+          // 带外快进的收尾由 endBoost 的 _boosting 门挡住：中带开面板的
+          // 那支从未 startBoost，松手不能动速率。
+          onLongPressEnd: (_) => onBoostLongPressEnd(),
+          onLongPressCancel: onBoostLongPressEnd,
           onHorizontalDragStart: onHorizontalDrag == null
               ? null
               : (details) => seekTo(details.localPosition.dx),
@@ -1684,6 +1756,8 @@ class _MuteHintState extends State<_MuteHint> {
 /// 官方「2倍速快进中」提示（`cjx.xml`）：高 83dp、黑底 `@color/d_`、
 /// 左侧 32dp Lottie + 16sp bold 白字 `@string/ec6`。本仓库没有那份
 /// `video_speed_2x_v2.json`，用同尺寸的倍速图标占位，高度与官方一致。
+/// 挂 `boosting` 而不是 `rate > 1`：更多面板也能选 2x，选档不是快进中，
+/// 提示不能因此常驻。
 class _RateHint extends StatelessWidget {
   final InlineVideoPlayback playback;
 
@@ -1691,9 +1765,9 @@ class _RateHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: playback.rate,
+    animation: playback.boosting,
     builder: (context, _) {
-      if (playback.rate.value <= 1.0) return const SizedBox.shrink();
+      if (!playback.boosting.value) return const SizedBox.shrink();
       return Center(
         child: SizedBox(
           height: 83,

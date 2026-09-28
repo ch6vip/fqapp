@@ -14,6 +14,7 @@ import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/drama_mute_preferences.dart';
+import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 
@@ -544,7 +545,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('默认有声起播，长按 2 倍速，进度条可拖动', (tester) async {
+  testWidgets('带外长按 2 倍速，松手回到按之前的速率，进度条可拖动', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final session = _Session(hasFirstFrame: true);
     await _mount(tester, session);
@@ -556,10 +557,11 @@ void main() {
     expect(session.players.single.calls, contains('volume:1.0'));
     expect(find.byKey(const Key('drama_mute_hint')), findsNothing);
 
-    // 长按 = 官方 `VideoGestureDetectLayout.onLongPress` → 2 倍速
-    //（`@string/ec6`=「2倍速快进中」，`cjx.xml`）。松开即回到 1 倍。
+    // 带外长按 = 官方速度层（`@string/ec6`=「2倍速快进中」，`cjx.xml`）。
+    // 中带留给更多面板，所以这里按在左 10% 处。松开回到按之前的速率。
+    final plane = tester.getRect(find.byKey(const Key('drama_card_gestures')));
     final gesture = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('drama_card_gestures'))),
+      Offset(plane.left + plane.width * 0.1, plane.center.dy),
     );
     await tester.pump(const Duration(milliseconds: 600));
     await _flush(tester);
@@ -583,6 +585,68 @@ void main() {
       session.players.single.calls.any((call) => call.startsWith('seek:')),
       isTrue,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('中带长按打开更多面板，选倍速生效并持久化，不挂快进提示', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final session = _Session(hasFirstFrame: true);
+    await _mount(tester, session);
+    session.players.single.emitDuration(const Duration(minutes: 2));
+    await _flush(tester);
+
+    // 中带（官方 jq3/x.K6：竖屏 50% 居中）长按 = y7() → 更多面板。
+    // tester.longPress 默认按控件中心，正好在带内。
+    await tester.longPress(find.byKey(const Key('drama_card_gestures')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
+    expect(find.text('倍速'), findsOneWidget);
+    // feed 不支持清屏/弹幕/清晰度，面板不留死入口。
+    expect(find.text('清屏播放'), findsNothing);
+    expect(find.text('弹幕'), findsNothing);
+
+    // 选 1.25x：面板回传后 feed 播放器立即生效，并写入全局速率配置
+    // （官方 jm3 倍速行写全局配置，全页播放页读同一份）。选档动画 300ms
+    // 完成后 pop；退场反向动画要跨帧推进才能把路由真正摘掉，中间的
+    // _flush 让路由状态回调在事件循环里落地。
+    await tester.tap(find.byKey(const ValueKey('player-more-rate-1.25')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 600));
+    await _flush(tester);
+    expect(find.byKey(const ValueKey('player-more-panel')), findsNothing);
+    expect(session.players.single.calls, contains('rate:1.25'));
+    expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
+    // 面板选速不是快进：速率≠1 也不出现「2倍速快进中」。
+    expect(find.byKey(const Key('drama_rate_hint')), findsNothing);
+
+    // 之后带外长按，松手必须回到面板选过的 1.25，而不是硬编码的 1.0。
+    final plane = tester.getRect(find.byKey(const Key('drama_card_gestures')));
+    final gesture = await tester.startGesture(
+      Offset(plane.left + plane.width * 0.1, plane.center.dy),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await _flush(tester);
+    expect(session.players.single.calls, contains('rate:2.0'));
+    expect(find.byKey(const Key('drama_rate_hint')), findsOneWidget);
+    await gesture.up();
+    await _flush(tester);
+    expect(session.players.single.calls, contains('rate:1.25'));
+    expect(find.byKey(const Key('drama_rate_hint')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('冷启动倍速读全局配置，起播即按持久化档位播放', (tester) async {
+    // 更多面板选过 1.25x 后冷启动：官方全局配置对 feed 新播放器同样生效。
+    SharedPreferences.setMockInitialValues({'player_playback_rate': 1.25});
+    final session = _Session(hasFirstFrame: true);
+    await _mount(tester, session);
+    session.players.single.emitDuration(const Duration(minutes: 2));
+    await _flush(tester);
+    expect(session.players.single.calls, contains('rate:1.25'));
+    expect(find.byKey(const Key('drama_rate_hint')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
