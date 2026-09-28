@@ -183,11 +183,11 @@ void main() {
     final session = _Session(hasFirstFrame: false);
     await _mount(tester, session);
 
-    expect(session.directoryCalls, ['8-0:短剧']);
+    expect(session.directoryCalls, ['16-0:短剧']);
     expect(session.players, hasLength(1));
     final player = session.players.single;
     expect(player.calls.where((call) => call.startsWith('create:')), [
-      'create:https://example.invalid/8-0-1.mp4',
+      'create:https://example.invalid/16-0-1.mp4',
     ]);
     expect(player.calls.where((call) => call == 'play'), ['play']);
     expect(player.playbackRequested, isTrue);
@@ -195,19 +195,19 @@ void main() {
     // Exactly one texture, owned by the on-screen card.
     expect(find.byType(Texture), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
       findsOneWidget,
     );
     // `create` completing is not a frame: the cover stays in front.
     expect(
-      find.byKey(const ValueKey('drama_inline_cover_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_cover_video_16-0')),
       findsOneWidget,
     );
 
     player.emitFirstFrame();
     await _flush(tester);
     expect(
-      find.byKey(const ValueKey('drama_inline_cover_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_cover_video_16-0')),
       findsNothing,
     );
     expect(find.byType(Texture), findsOneWidget);
@@ -220,7 +220,7 @@ void main() {
     await _mount(tester, session);
     final feed = tester.getRect(find.byKey(const Key('drama_feed')));
     final rect = tester.getRect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
     );
     // The letterbox follows the decoder's own ratio (16:9 here) instead of the
     // 9:16 fallback, and the video never leaves the visible feed.
@@ -240,7 +240,7 @@ void main() {
 
     final feed = tester.getRect(find.byKey(const Key('drama_feed')));
     final rect = tester.getRect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
     );
     // 官方 `cq3/o.java:181` 起手就是 mode 4（fill），9:16 源的宽高比 0.5625
     // 低于 `landscapeRatio` 1.666，所以不降级、按 cover 铺满整个卡片：
@@ -262,7 +262,7 @@ void main() {
       find
           .ancestor(
             of: find.byKey(
-              const ValueKey('drama_inline_texture_video_8-0'),
+              const ValueKey('drama_inline_texture_video_16-0'),
             ),
             matching: find.byType(ClipRRect),
           )
@@ -296,20 +296,20 @@ void main() {
     );
     expect(session.players, hasLength(2));
     final second = session.players.last;
-    expect(second.calls, contains('create:https://example.invalid/8-1-1.mp4'));
+    expect(second.calls, contains('create:https://example.invalid/16-1-1.mp4'));
     expect(second.isPlaying, isTrue);
 
     // 只有屏幕上那张卡挂纹理。
     expect(find.byType(Texture), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-1')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-1')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
       findsNothing,
     );
-    expect(find.text('8-1 作品'), findsOneWidget);
+    expect(find.text('16-1 作品'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -358,7 +358,7 @@ void main() {
       reason: '同一个解码器被复用，不能再次 create',
     );
     expect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
@@ -372,7 +372,7 @@ void main() {
     final session = _Session(hasFirstFrame: true);
     await _mount(tester, session);
     expect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
       findsOneWidget,
     );
 
@@ -380,18 +380,18 @@ void main() {
 
     // 第 2 张卡拿到纹理，且它的封面已经被首帧替换掉。
     expect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-1')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-1')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('drama_inline_cover_video_8-1')),
+      find.byKey(const ValueKey('drama_inline_cover_video_16-1')),
       findsNothing,
     );
     expect(find.byType(Texture), findsOneWidget);
 
     // 第 1 张卡不再持有任何视频层。
     expect(
-      find.byKey(const ValueKey('drama_inline_cover_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_cover_video_16-0')),
       findsNothing,
     );
     expect(tester.takeException(), isNull);
@@ -448,7 +448,7 @@ void main() {
     expect(player.isPlaying, isTrue);
     expect(session.players, hasLength(1));
     expect(
-      find.byKey(const ValueKey('drama_inline_texture_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
@@ -496,12 +496,12 @@ void main() {
     expect(session.players, isEmpty);
     expect(find.byType(Texture), findsNothing);
     expect(
-      find.byKey(const ValueKey('drama_inline_cover_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_cover_video_16-0')),
       findsOneWidget,
     );
     expect(find.text('网络异常，请稍后再试'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('drama_inline_retry_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_retry_video_16-0')),
       findsOneWidget,
     );
 
@@ -509,7 +509,7 @@ void main() {
 
     final callsBefore = session.contentCalls.length;
     await tester.tap(
-      find.byKey(const ValueKey('drama_inline_retry_video_8-0')),
+      find.byKey(const ValueKey('drama_inline_retry_video_16-0')),
     );
     await _flush(tester);
     expect(session.contentCalls.length, greaterThan(callsBefore));

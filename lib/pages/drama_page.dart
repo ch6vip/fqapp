@@ -274,7 +274,29 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // 官方 `video/l.java` 的 `e()`→`g()`，默认 false＝有声起播）。
     unawaited(DramaMutePreferences.instance.load());
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(dramaProvider.notifier).load();
+      // 首帧只加载**当前选中频道**的订阅流。provider 出厂停在
+      // tabIndex=2（看剧＝tab_type 8），而默认频道是推荐（tabIndex=6＝
+      // tab_type 16）：旧写法先 load tab=2，1~2s 后频道表回来再
+      // selectTab(6) 整换可见列表——真机表现为先闪另一份快照的封面再
+      // 起播（2026-09-28 DIAG 实锤：load tab=2 → 1.6s → load tab=6）。
+      // 官方不变量：只挂载选中频道的流（SeriesMallFragment.Fh/Gh 只
+      // attach selectIndex 那个 fragment，Xg 在响应前一直 loading），
+      // 这里对齐为"只加载选中频道的流"。
+      if (mounted) {
+        final notifier = ref.read(dramaProvider.notifier);
+        final tabIndex = ref.read(dramaProvider).tabIndex;
+        final channel = _current;
+        if (channel.isFeed) {
+          if (tabIndex == channel.tabIndex) {
+            // selectTab 对同下标是 no-op（重进页面时 provider 已停在本
+            // 频道 tab）：直接补加载，保留旧的"重进即刷新"行为。
+            unawaited(notifier.load());
+          } else {
+            // 目标 tab 尚未加载时 selectTab 内部会触发 load()。
+            notifier.selectTab(channel.tabIndex);
+          }
+        }
+      }
       if (mounted) unawaited(_loadChannels());
       if (mounted) _showGuide();
     });

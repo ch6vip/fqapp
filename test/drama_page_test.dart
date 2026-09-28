@@ -357,7 +357,9 @@ void main() {
 
     // 全屏卡片保留底部观看与信息入口，用户移除了右侧追剧、点赞栏。
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
-    expect(find.text('8-0 作品'), findsOneWidget);
+    // 默认频道是推荐（tab_type 16）：首帧加载的就是 16 的流，不再先打
+    // provider 初始的短剧 tab（8）再被频道表整换。
+    expect(find.text('16-0 作品'), findsOneWidget);
     expect(find.byKey(const Key('drama_follow_button')), findsNothing);
     expect(find.text('追剧'), findsNothing);
     expect(find.byKey(const Key('drama_like_button')), findsNothing);
@@ -373,7 +375,7 @@ void main() {
     // 距底 94dp）。官方 `pp3.f` 是 300ms 淡入后 **8 次 1s 计数**才淡出
     // （第二轮笔记的「1s 后消失」是误读），且每台设备只弹一次。
     expect(find.text('上滑查看更多视频'), findsOneWidget);
-    expect(find.text('8-1 作品'), findsNothing);
+    expect(find.text('16-1 作品'), findsNothing);
     // 8 秒内一直在。
     await tester.pump(const Duration(seconds: 5));
     expect(find.text('上滑查看更多视频'), findsOneWidget);
@@ -443,18 +445,19 @@ void main() {
         _scope(perTab: 4, child: MaterialApp(home: _Seams().page())),
       );
       await tester.pumpAndSettle();
-      expect(find.text('8-0 作品'), findsOneWidget);
+      // 推荐频道 = tab_type 16 的流；看剧才是 8（tabIndex=2）。
+      expect(find.text('16-0 作品'), findsOneWidget);
 
       await _swipeUp(tester);
-      expect(find.text('8-0 作品'), findsNothing);
-      expect(find.text('8-1 作品'), findsOneWidget);
+      expect(find.text('16-0 作品'), findsNothing);
+      expect(find.text('16-1 作品'), findsOneWidget);
 
       // 看剧 is the official name for tab_type=8, the feed this page shows by
       // default; 漫剧 keeps its own cursor behind it.
       await tester.tap(find.text('漫剧'));
       await tester.pumpAndSettle();
       expect(find.text('24-0 作品'), findsOneWidget);
-      expect(find.text('8-1 作品'), findsNothing);
+      expect(find.text('16-1 作品'), findsNothing);
 
       await tester.tap(find.text('看剧'));
       await tester.pumpAndSettle();
@@ -553,7 +556,7 @@ void main() {
     // The push waits for the inline release before the directory request, so
     // the second request is only recorded after the player is gone.
     await _flush(tester);
-    expect(calls, ['8-0:短剧', '8-0:短剧']);
+    expect(calls, ['16-0:短剧', '16-0:短剧']);
     expect(inline.disposed, isTrue);
     expect(find.text('视频加载中，请稍后'), findsOneWidget);
 
@@ -591,18 +594,18 @@ void main() {
     expect(inline.isPlaying, isTrue);
 
     // 已经没有双击手势了，单击立即派发。
-    await tester.tap(find.byKey(const ValueKey('drama_card_video_8-0')));
+    await tester.tap(find.byKey(const ValueKey('drama_card_video_16-0')));
     await _flush(tester);
 
     // 暂停：播放器还在，但不再播放；没有 push、没有目录请求。
     expect(inline.disposed, isFalse);
     expect(inline.isPlaying, isFalse);
     expect(inline.calls, contains('pause'));
-    expect(seams.contentCalls, ['8-0-1:短剧']);
+    expect(seams.contentCalls, ['16-0-1:短剧']);
     expect(find.text('视频加载中，请稍后'), findsNothing);
 
     // 再点一次继续播放。
-    await tester.tap(find.byKey(const ValueKey('drama_card_video_8-0')));
+    await tester.tap(find.byKey(const ValueKey('drama_card_video_16-0')));
     await _flush(tester);
     expect(inline.isPlaying, isTrue);
     expect(inline.disposed, isFalse);
@@ -1086,6 +1089,55 @@ void main() {
     expect(find.text('推荐'), findsOneWidget);
     // 高亮的是「推荐」（tab_type 16），所以下面的 feed 必须还是 16 的内容，
     // 不能因为换表就跳到第一条「看剧」（tab_type 8）。
+    expect(find.text('16-0 作品'), findsOneWidget);
+    expect(find.text('8-0 作品'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('首帧只加载选中频道的流，不再先打 provider 初始的短剧 tab', (
+    tester,
+  ) async {
+    // 2026-09-28 真机跳变复盘：initState 无条件 load() 打的是 provider
+    // 出厂的 tabIndex=2（短剧，tab_type 8），而可见频道是推荐
+    // （tabIndex=6，tab_type 16）——1~2s 后频道表回来 selectTab(6) 把
+    // 可见列表整换成另一份快照并起播。官方不变量是"只挂载选中频道的
+    // 流"（SeriesMallFragment.Fh/Gh 只 attach selectIndex 那个 fragment）。
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    final tabTypes = <int>[];
+    // 频道表永不返回：把 F08 替换路径隔离掉，只观察首帧加载。
+    final hangingChannels = Completer<ChannelTable>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(() => _notifier()),
+          dramaProvider.overrideWith(
+            () => HomeNotifier(
+              initialTabIndex: dramaTabIndex,
+              homepageLoader:
+                  ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                    tabTypes.add(tabType);
+                    return HomepagePage(
+                      items: [_item('$tabType-0')],
+                      nextOffset: null,
+                      sessionId: null,
+                    );
+                  },
+              searchLoader: (query, {int page = 1}) async => const [],
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          home: _Seams().page(channelLoader: () => hangingChannels.future),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 只有一次请求，且是推荐频道自己的 tab_type 16。
+    expect(tabTypes, [16]);
     expect(find.text('16-0 作品'), findsOneWidget);
     expect(find.text('8-0 作品'), findsNothing);
     expect(tester.takeException(), isNull);
