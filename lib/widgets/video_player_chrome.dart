@@ -1185,11 +1185,17 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         return;
       }
     }
-    await _panel.animateTo(
-      target,
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOutCubic,
-    );
+    // 跳集与换播放器并发时，sheet 的 scroll position 可能被重建替换，
+    // animateTo 的 future 会**永不完成**（真机实测：extent 冻结在 0.64，
+    // 面板悬空遮住画面，点遮罩才能恢复）。超时兜底让收起流程必然收敛；
+    // 用户拖动打断的场景由下方计数守卫接管，不受超时影响。
+    await _panel
+        .animateTo(
+          target,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+        )
+        .timeout(const Duration(milliseconds: 300), onTimeout: () {});
     if (!mounted || animation != _panelAnimation) return;
     _panelAnimating = false;
     if (target == 0) {
