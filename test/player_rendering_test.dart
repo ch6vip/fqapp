@@ -21,6 +21,11 @@ void main() {
     // 官方画面撑满的缺省值取决于方向（非竖屏时 = !default_video_size_aspect_fit
     // = true）。本套用例验的是 contain 铺排，所以显式把 SP 置成关闭。
     SharedPreferences.setMockInitialValues({'is_fill_screen': false});
+    // 生产 config.json 发新底栏（use_new_player_bottom_style=true）；测试
+    // 默认值是旧栏，而旧栏在 o.W7() 下进页即清屏，会压掉本套要验的控件。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+    );
     PlayerPanelPreferences.setDefaultMute(true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -30,6 +35,7 @@ void main() {
   });
 
   tearDown(() {
+    PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
     PlayerPanelPreferences.setDefaultMute(true);
     debugOnRebuildDirtyWidget = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

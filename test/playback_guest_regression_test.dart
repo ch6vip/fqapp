@@ -339,8 +339,8 @@ void main() {
         MaterialApp(home: _chrome(player, newStyle: false, padStyle: true)),
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
-      await tester.pump();
+      // o.W7：旧底栏（含 pad 分支）进页即清屏，栏内项直接亮「还原」；
+      // 点「还原」回正常画面。
       expect(find.text('还原'), findsOneWidget);
       await tester.tap(find.text('还原'));
       await tester.pump();

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/pages/player_page.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/player/playlet_danmaku_layer.dart';
 import 'package:fqapp/widgets/player/playlet_danmaku_loader.dart';
 
@@ -56,6 +57,11 @@ Future<void> _flush(WidgetTester tester) async {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // 生产 config.json 发新底栏（use_new_player_bottom_style=true）；测试
+    // 默认值是旧栏，而旧栏在 o.W7() 下进页即清屏，会压掉弹幕入口。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+    );
     // 没有这个 handler，setKeepScreenOn 会留一个 10s 的超时定时器，
     // 触发测试框架的 !timersPending 检查（player_page_test 同款）。
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -65,6 +71,7 @@ void main() {
         );
   });
   tearDown(() {
+    PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('fqapp/native_player'),

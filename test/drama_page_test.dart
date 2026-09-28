@@ -16,6 +16,7 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 
@@ -172,6 +173,11 @@ void main() {
   setUp(() async {
     _hiveDir = await Directory.systemTemp.createTemp('fqapp-drama-test-');
     Hive.init(_hiveDir.path);
+    // 生产 config.json 发新底栏（use_new_player_bottom_style=true）；测试
+    // 默认值是旧栏，而旧栏在 o.W7() 下进页即清屏，会压掉播放页右栏断言。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+    );
     await ShelfStore.instance.init();
     // 核对短剧手势不会再写入本机点赞。
     await DiggStore.instance.init();
@@ -182,6 +188,7 @@ void main() {
   });
 
   tearDown(() async {
+    PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
     await Hive.close().timeout(
       const Duration(seconds: 10),
       onTimeout: () => const <void>[],

@@ -9,6 +9,7 @@ import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
@@ -20,15 +21,18 @@ import 'package:fqapp/services/swipe_guide_store.dart';
 
 import 'support/controlled_player.dart';
 
-MediaItem _item(String label) => MediaItem(
-  id: label,
-  title: '$label 作品',
-  cover: '',
-  author: '演员',
-  badge: '',
-  ep: '全12集',
-  kind: 'video',
-);
+MediaItem _item(String label, {bool aiGenerated = false, String intro = ''}) =>
+    MediaItem(
+      id: label,
+      title: '$label 作品',
+      cover: '',
+      author: '演员',
+      badge: '',
+      ep: '全12集',
+      kind: 'video',
+      intro: intro,
+      aiGenerated: aiGenerated,
+    );
 
 /// One mounted feed with its own fake players, address loader and history
 /// store. Nothing in this session touches the network or Hive writes.
@@ -50,6 +54,15 @@ class _Session {
   /// flips it to 0 and re-loads to drive the feed empty mid-playback.
   int itemsPerTab = 4;
 
+  /// 热评加载缝的返回值，键为剧 id。未预置的剧回空（行不显示）。
+  final Map<String, List<PlayletComment>> hotComments = {};
+
+  /// 置真后所有条目带 `ai_usage_type > 0`（作者声明行）。
+  bool aiGeneratedItems = false;
+
+  /// 条目简介文案（官方信息槽的「第1集丨…」回落行）。
+  String itemIntro = '';
+
   /// The two notifiers the page's providers resolve to; kept as fields so a
   /// test can re-load the feed without a gesture.
   late final HomeNotifier home = _notifierFor(this);
@@ -62,7 +75,11 @@ class _Session {
           return HomepagePage(
             items: [
               for (var index = 0; index < session.itemsPerTab; index++)
-                _item('$tabType-$index'),
+                _item(
+                  '$tabType-$index',
+                  aiGenerated: session.aiGeneratedItems,
+                  intro: session.itemIntro,
+                ),
             ],
             nextOffset: null,
             sessionId: null,
@@ -92,6 +109,8 @@ class _Session {
             return {'video_url': 'https://example.invalid/$itemId.mp4'};
           },
           historyStore: store,
+          hotCommentsLoader: (seriesId) async =>
+              hotComments.putIfAbsent(seriesId, () => const []),
           playerFactory: () {
             final player = ControlledNativePlayer(hasFirstFrame: hasFirstFrame)
               ..width = width
@@ -647,6 +666,57 @@ void main() {
     await _flush(tester);
     expect(session.players.single.calls, contains('rate:1.25'));
     expect(find.byKey(const Key('drama_rate_hint')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('在屏卡热评整行替换简介槽，点击打开评论面板', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final session = _Session(hasFirstFrame: true)
+      ..itemIntro = '被公司开除的范理拒绝内耗，转身开起早餐店';
+    session.hotComments['16-0'] = const [
+      PlayletComment(id: 'hot-1', text: '这剧可以看，有种《万万没想到》的味道'),
+    ];
+    await _mount(tester, session);
+    session.players.single.emitDuration(const Duration(minutes: 2));
+    await _flush(tester);
+    // 官方 cj3.xml：InfoPanelHotCommentView(drs) 与简介 ExtendTextView(m6)
+    // 同槽约束，热评在场时整行替换简介。
+    expect(find.text('热评'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('playlet-hot-comment-hot-1')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('第1集丨'), findsNothing);
+
+    // 点击 = 官方 SeriesHotCommentView.E：打开评论面板并定点到该条。
+    await tester.tap(find.byKey(const ValueKey('playlet-hot-comment-hot-1')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
+    expect(
+      find.byKey(const ValueKey('playlet-comment-title')),
+      findsOneWidget,
+    );
+    // 收起面板后热评行仍在。
+    await tester.tap(find.byKey(const ValueKey('playlet-comment-close')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    expect(find.text('热评'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('热评不在场回落简介行，ai_usage_type > 0 显示作者声明行', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final session = _Session(hasFirstFrame: true)
+      ..aiGeneratedItems = true
+      ..itemIntro = '被公司开除的范理拒绝内耗，转身开起早餐店';
+    await _mount(tester, session);
+    session.players.single.emitDuration(const Duration(minutes: 2));
+    await _flush(tester);
+    // 无热评：简介行照旧；声明行来自 video_detail.ai_usage_type。
+    expect(find.textContaining('第1集丨'), findsOneWidget);
+    expect(find.text('热评'), findsNothing);
+    expect(find.text('作者声明：内容由AI生成'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

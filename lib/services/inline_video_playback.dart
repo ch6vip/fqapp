@@ -28,9 +28,9 @@ import 'user_facing_error.dart';
 ///
 /// Progress is saved when a player is stopped or released, using the same
 /// fields as the full page player (`player_page.dart`). Deliberately *not*
-/// implemented in this round: 累计阅读时长/统计、诊断日志、倍速、seek、自动连播、
-/// 相邻剧地址预取 — the inline feed only starts, stops and remembers where the
-/// viewer was.
+/// implemented in this round: 累计阅读时长/统计、诊断日志、自动连播、相邻剧
+/// 地址预取 — the inline feed only starts, stops and remembers where the
+/// viewer was. 倍速（面板选档 + 长按快进）与横滑 seek 已在会话内支持。
 class InlineVideoPlayback {
   InlineVideoPlayback({
     this.directoryLoader,

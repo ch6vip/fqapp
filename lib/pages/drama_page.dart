@@ -9,6 +9,7 @@ import 'package:lottie/lottie.dart';
 
 import '../models/channel_tab.dart';
 import '../models/media_item.dart';
+import '../models/playlet_comment.dart';
 import '../services/api_client.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/inline_video_playback.dart';
@@ -21,6 +22,8 @@ import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/player/playlet_comment_panel.dart';
+import '../widgets/player/playlet_hot_comment_bar.dart';
 import '../widgets/player/playlet_more_panel.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'detail_page.dart';
@@ -194,6 +197,7 @@ class DramaPage extends ConsumerStatefulWidget {
     this.historyStore,
     this.searchPageBuilder,
     this.channelLoader,
+    this.hotCommentsLoader,
   });
 
   /// Test seams. The official feed plays the on-screen card inline and still
@@ -208,6 +212,12 @@ class DramaPage extends ConsumerStatefulWidget {
 
   /// 服务端频道表加载器（测试缝）。默认走 `ApiClient.channelTabs()`。
   final Future<ChannelTable> Function()? channelLoader;
+
+  /// 热评列表加载器（测试缝）。官方 feed 卡信息槽的热评行
+  /// （`cj3.xml` 的 `InfoPanelHotCommentView`）与评论计数同源，缺省走
+  /// `ApiClient.playletHotComments`（评论列表的 `hotOf` 本地筛选）。
+  final Future<List<PlayletComment>> Function(String seriesId)?
+  hotCommentsLoader;
 
   @override
   ConsumerState<DramaPage> createState() => _DramaPageState();
@@ -253,6 +263,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// 面板后面继续播，同官方 dialog；只挡掉手势与翻页）。
   bool _feedPanelOpen = false;
   bool _syncScheduled = false;
+
+  /// 在屏卡的热评（官方 `SeriesHotCommentView`：holder 绑定时按剧拉评论
+  /// 列表再本地筛「热评」，best-effort，拉不到就不显示行）。键为剧 id，
+  /// 值先置空列表占位防止重复请求。
+  final Map<String, List<PlayletComment>> _feedHotComments = {};
 
   /// Downward overscroll on the first card, in logical pixels. Official
   /// `aq0.xml` shows 「下拉刷新内容」 (`@string/dhk`) while this is in flight.
@@ -694,6 +709,45 @@ class _DramaPageState extends ConsumerState<DramaPage>
       if (selected != null) unawaited(_inline.selectRate(selected));
     } finally {
       _feedPanelOpen = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// 在屏卡的热评列表。官方在 holder 绑定时按剧请求（评论列表与计数
+  /// 同源），这里只在剧首次上屏时请求一次，失败留空（行不显示）。
+  Future<void> _loadFeedHotComments(MediaItem item) async {
+    if (_feedHotComments.containsKey(item.id)) return;
+    _feedHotComments[item.id] = const [];
+    try {
+      final loader = widget.hotCommentsLoader;
+      final comments = loader != null
+          ? await loader(item.id)
+          : (await ApiClient.instance.playletHotComments(item.id)).hotComments;
+      if (!mounted) return;
+      setState(() => _feedHotComments[item.id] = comments);
+    } catch (_) {
+      // best-effort：官方拉不到热评同样整行不出现。
+    }
+  }
+
+  /// 官方 feed 热评点击 → 评论面板（`SeriesHotCommentView.E`
+  /// `:468-559` 按 dataType 组 Comment/Reply 定位参数）。面板是纯列表，
+  /// 不建播放器，所以不走会销毁 inline 播放器的 [_pushOverFeed]，视频在
+  /// 面板后面继续播（官方 dialog 语义）。
+  Future<void> _openFeedComments(MediaItem item, PlayletComment comment) async {
+    if (_modalOpen || _feedPanelOpen || _openingId != null) return;
+    final isReply = comment.dataType == UgcRelativeType.reply;
+    setState(() => _modalOpen = true);
+    try {
+      await PlayletCommentPanel.show(
+        context,
+        seriesId: item.id,
+        focusCommentId: isReply ? comment.parentCommentId : comment.id,
+        focusReplyId: isReply ? comment.id : '',
+      );
+    } finally {
+      _modalOpen = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -994,6 +1048,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
           // Only the card on screen may own a texture. The layer itself waits
           // for this drama to be the session's target.
           final onScreen = index == _screenIndex;
+          // 官方在 holder 绑定时拉热评；这里只在剧首次上屏时请求一次。
+          if (onScreen) unawaited(_loadFeedHotComments(item));
           return _DramaFeedCard(
             item: item,
             opening: _openingId == item.id,
@@ -1012,6 +1068,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
             onFullscreen: () => _openPlayer(item),
             onTogglePlay: _togglePlay,
             onOpenMorePanel: () => unawaited(_showFeedMorePanel()),
+            hotComments: _feedHotComments[item.id] ?? const [],
+            onHotCommentTap: (comment) =>
+                unawaited(_openFeedComments(item, comment)),
+            hotCommentActive:
+                onScreen && !_modalOpen && !_feedPanelOpen && !_paging,
           );
         },
       ),
@@ -1383,6 +1444,9 @@ class _DramaFeedCard extends StatelessWidget {
   final VoidCallback? onFullscreen;
   final VoidCallback onTogglePlay;
   final VoidCallback onOpenMorePanel;
+  final List<PlayletComment> hotComments;
+  final ValueChanged<PlayletComment> onHotCommentTap;
+  final bool hotCommentActive;
 
   const _DramaFeedCard({
     required this.item,
@@ -1393,6 +1457,9 @@ class _DramaFeedCard extends StatelessWidget {
     this.onFullscreen,
     required this.onTogglePlay,
     required this.onOpenMorePanel,
+    this.hotComments = const [],
+    required this.onHotCommentTap,
+    this.hotCommentActive = true,
   });
 
   /// Whether the viewer may drive this card: only the on-screen page owns the
@@ -1524,6 +1591,9 @@ class _DramaFeedCard extends StatelessWidget {
             playback: playback,
             onOpen: onTogglePlay,
             onFullscreen: onFullscreen,
+            hotComments: hotComments,
+            onHotCommentTap: onHotCommentTap,
+            hotCommentActive: hotCommentActive,
           ),
         ),
 
@@ -1936,12 +2006,18 @@ class _InfoPanel extends StatefulWidget {
   final InlineVideoPlayback? playback;
   final VoidCallback onOpen;
   final VoidCallback? onFullscreen;
+  final List<PlayletComment> hotComments;
+  final ValueChanged<PlayletComment> onHotCommentTap;
+  final bool hotCommentActive;
 
   const _InfoPanel({
     required this.item,
     required this.playback,
     required this.onOpen,
     required this.onFullscreen,
+    this.hotComments = const [],
+    required this.onHotCommentTap,
+    this.hotCommentActive = true,
   });
 
   @override
@@ -2031,7 +2107,16 @@ class _InfoPanelState extends State<_InfoPanel> {
           ),
           const SizedBox(height: 12),
         ],
-        if (item.intro.isNotEmpty)
+        // 信息槽（官方 `cj3.xml`：`InfoPanelHotCommentView`(`drs`) 与
+        // `ShortSeriesExtendTextView`(`m6`) 同一槽位约束——热评在场时
+        // 整行替换简介行；否则回落到「第1集丨…」简介）。
+        if (widget.hotComments.isNotEmpty)
+          PlayletHotCommentBar(
+            comments: widget.hotComments,
+            onTap: widget.onHotCommentTap,
+            active: widget.hotCommentActive,
+          )
+        else if (item.intro.isNotEmpty)
           GestureDetector(
             onTap: () => setState(() => _expanded = !_expanded),
             behavior: HitTestBehavior.opaque,
@@ -2064,6 +2149,25 @@ class _InfoPanelState extends State<_InfoPanel> {
               ],
             ),
           ),
+        // 作者声明行（`video_detail.ai_usage_type > 0`；播放页信息区同款，
+        // 见 `video_player_chrome.dart` 的 `aiGenerated` 行）。
+        if (item.aiGenerated) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: const [
+              Icon(Icons.info_outline, size: 13, color: Color(0x99FFFFFF)),
+              SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  '作者声明：内容由AI生成',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: Color(0x99FFFFFF)),
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }

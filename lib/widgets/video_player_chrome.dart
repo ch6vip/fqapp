@@ -334,6 +334,18 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           }
         });
     unawaited(_loadRate());
+    // 官方 o.W7()：holder 初始化时，若清屏未被反向禁用（O1()）且当前是
+    // 旧底栏分支（SingleVideoHolder.F6()：k9()=新栏样式为假、场景默认 1），
+    // 进页即清屏（T7(true)）。新栏分支 F6() 恒 false，不清屏；官方的听书
+    // 模式条件（T9/is_listen_mode）本客户端不存在。Z5 的「每 holder 一次」
+    // = 每个播放页实例一次（initState 天然满足）。旧底栏栏内无出口，
+    // 退出走更多面板的「退出清屏」行。
+    if (widget.shortSeries &&
+        !widget.newPlayerBottomStyle &&
+        !widget.hasBanner &&
+        !widget.reverseClearScreen) {
+      _clearScreen = true;
+    }
     _scheduleHide();
     _scheduleLockHide();
   }
@@ -352,7 +364,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _releaseLock();
       _scheduleHide();
     }
-    if (_clearScreen && !_clearScreenConfigured) {
+    // 清屏态的对账：栏内入口消失（配置翻转）时退出清屏，除非面板行还在
+    // ——官方旧底栏手机分支本来就没有栏内入口，出口只在面板行（jm3.a），
+    // 只要它可用就不许制造没有出口的状态。
+    if (_clearScreen && !_clearScreenConfigured && !_clearScreenPanelAvailable) {
       _clearScreen = false;
       _visible = true;
       _scheduleHide();
@@ -599,13 +614,22 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   bool get _clearScreenAvailable => _clearScreenConfigured && !_locked;
 
+  /// 更多面板「清屏播放/退出清屏」行的门（官方 `oi3/k.G()`：只看
+  /// `FuncReverseOfClearScreen.reverse`，与底栏样式无关）。旧底栏手机分支
+  /// 栏内没有清屏入口，面板行就是官方给的全部出口。非短剧的通用面板不
+  /// 消费这个回调，行本身只出现在短剧面板里。
+  bool get _clearScreenPanelAvailable =>
+      !widget.reverseClearScreen && !_locked;
+
   bool get _catalogStyle =>
       widget.shortSeries && (widget.newPlayerBottomStyle || widget.hasBanner);
 
   /// 沿用官方独立清屏状态；新底栏文字入口 vs 旧底栏图标的互斥分支见
   /// .agents/notes/proposed/architecture/2026-09-25-f01-f03-official-evidence.md §1。
+  /// 守门用面板级的 `_clearScreenPanelAvailable`：旧底栏手机分支没有栏内
+  /// 入口，但官方面板行仍可切换（jm3.a），守门不能把那条官方出口堵死。
   void _setClearScreen(bool clear) {
-    if (!_clearScreenAvailable) return;
+    if (!_clearScreenPanelAvailable) return;
     _endBoost();
     _cancelSeek();
     _doubleTapGuard?.cancel();
@@ -943,8 +967,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               onToggleDanmaku: widget.onToggleDanmaku,
               // 清屏态面板出口：官方清屏后的倍速文字仍打开面板，
               // 面板内「退出清屏」行回画面（jm3.a 的 p0(!zB0)）。
+              // 行随 jm3.a 的门（只看 reverse），不随底栏样式——旧底栏
+              // 手机分支栏内无入口，这条是官方给的全部出口。
               clearScreen: _clearScreen,
-              onToggleClearScreen: _clearScreenAvailable
+              onToggleClearScreen: _clearScreenPanelAvailable
                   ? () => _setClearScreen(!_clearScreen)
                   : null,
               // 官方 jm3.e：弹幕设置入口在弹幕开关之后。
@@ -1477,7 +1503,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               !_seeking &&
               ((!landscape && !catalogStyle) || _clearScreen);
           // 旧底栏清屏/还原只在 pad 配置开启时出现（`jj3/i.java:620-637`）。
-          // 手机旧栏保留实际可用的倍速，清晰度等待多档流数据接入。
+          // 手机旧栏项序「清晰度 / 倍速」（bom.xml），清晰度仅多档流在场。
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -2138,7 +2164,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       : _legacyBottomActions();
 
   /// bom.xml：手机旧栏无清屏；pad 分支是 28dp 图标 + 2dp 间距 + 文案。
-  /// 当前只有一个已解析流，旧栏的清晰度项留待多画质批次。
+  /// 官方项序「清晰度 → 倍速」（`bom.xml`：`@drawable/b2s`+`@string/dqa`
+  /// 在 `b2t`+`eby` 之前），清晰度仅多档流在场时出现（与面板同门，
+  /// `oi3/k.P()`），单流不冒充官方恒显的分辨率名。
   Widget _legacyBottomActions() => Padding(
     padding: const EdgeInsets.only(right: 12),
     child: Wrap(
@@ -2146,6 +2174,17 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       alignment: WrapAlignment.end,
       spacing: 16,
       children: [
+        if (widget.qualityVariants.length > 1)
+          _legacyAction(
+            'player-quality-text',
+            _qualityLabel(),
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CustomPaint(painter: _LegacyQualityPainter()),
+            ),
+            _showRates,
+          ),
         _legacyAction(
           'player-rate-text',
           _rateText(_rate),
@@ -2594,14 +2633,23 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     ),
   );
 
+  /// 当前播放档位的显示名（官方横屏/旧栏直接亮档名，如「720P」；
+  /// `jj3/i.e` 选中后 C(resolution) 更新同一文本）。
+  String _qualityLabel() {
+    for (final variant in widget.qualityVariants) {
+      if (variant.url == widget.currentQualityUrl) return variant.name;
+    }
+    return '清晰度';
+  }
+
   /// 官方横屏底条（官方截图第二十三轮，真实 app 形态，替代第二十一轮按
   /// `c0i/cw7` 取证的单行布局）：130dp 渐变上两行——
   /// - 控制行：播放/暂停 32dp（`btu/btv`）→ 下一集 32dp（仅集数>1）→
   ///   当前时长（拖动中实时）→ 橙色进度条（轨道 4/滑块 16）→ 总时长；
   ///   时长恒 `HH:MM:SS`（`o2()` → `d7.o(sec, true)`，截图 00:00:02/00:02:05）。
-  /// - 功能行：倍速文本、选集（仅集数>1）；追剧与点赞按用户要求移除。
-  /// 官方该行还有评论计数、弹幕开关+弹幕输入框、720P 清晰度——均无数据
-  /// 源，不显示（诚实清单）。
+  /// - 功能行：清晰度（多档流在场时）、倍速文本、选集（仅集数>1）；
+  ///   追剧与点赞按用户要求移除。官方该行还有评论计数、弹幕开关+弹幕输入框
+  ///   ——无数据源，不显示（诚实清单）。
   Widget _landscapeBar(EdgeInsets insets) => Positioned(
     left: 0,
     right: 0,
@@ -2705,6 +2753,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             child: Row(
               children: [
                 const Spacer(),
+                // 官方功能行序：… 720P 清晰度 → 倍速 → 选集（横屏控制条
+                // 第二十三轮）。清晰度与倍速在官方同开 jj3.q 弹层（速率 +
+                // 分辨率一屏），这里同样都进更多面板。
+                if (widget.qualityVariants.length > 1) ...[
+                  _landText('landscape-quality', _qualityLabel(), _showRates),
+                  const SizedBox(width: 24),
+                ],
                 _landText('landscape-rate', _rateText(_rate), _showRates),
                 const SizedBox(width: 24),
                 if (widget.episodes.length > 1)
@@ -2881,6 +2936,86 @@ class _LegacyRatePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_LegacyRatePainter oldDelegate) => false;
+}
+
+/// 官方旧栏 drawable/b2s.xml 的 28dp 清晰度图标：圆角框 + 「HD」字形。
+/// 路径坐标与官方 vector 逐点一致（`b2s.xml`，viewport 28×28）。
+class _LegacyQualityPainter extends CustomPainter {
+  const _LegacyQualityPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 28, size.height / 28);
+    final stroke = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    // 圆角外框：x 3.747..24.253，y 5.958..22.042，圆角 2.7。
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTRB(3.747, 5.958, 24.253, 22.042),
+        const Radius.circular(2.7),
+      ),
+      stroke,
+    );
+    // 「H」两横一竖由一条横线加两条竖线组成。
+    canvas.drawLine(const Offset(8.393, 13.918), const Offset(12.617, 13.918), stroke);
+    stroke.strokeCap = StrokeCap.butt;
+    canvas.drawLine(const Offset(8.484, 11.193), const Offset(8.484, 16.959), stroke);
+    canvas.drawLine(const Offset(12.783, 11.193), const Offset(12.783, 16.959), stroke);
+    // 「D」字形是官方 pathData 的五段填充（上下衬线、外碗、内碗、竖笔），
+    // 坐标原样搬运； winding 方向官方即 nonzero。
+    final fill = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    final d = Path()
+      ..moveTo(15.721, 16.809)
+      ..lineTo(14.921, 16.809)
+      ..cubicTo(14.921, 17.212, 15.221, 17.552, 15.622, 17.602)
+      ..lineTo(15.721, 16.809)
+      ..close()
+      ..moveTo(15.721, 11.178)
+      ..lineTo(15.622, 10.384)
+      ..cubicTo(15.221, 10.434, 14.921, 10.774, 14.921, 11.178)
+      ..lineTo(15.721, 11.178)
+      ..close()
+      ..moveTo(19.944, 13.993)
+      ..lineTo(19.144, 13.993)
+      ..cubicTo(19.144, 14.528, 18.902, 15.087, 18.393, 15.487)
+      ..cubicTo(17.889, 15.883, 17.06, 16.17, 15.82, 16.015)
+      ..lineTo(15.721, 16.809)
+      ..lineTo(15.622, 17.602)
+      ..cubicTo(17.197, 17.799, 18.479, 17.455, 19.382, 16.745)
+      ..cubicTo(20.281, 16.038, 20.744, 15.013, 20.744, 13.993)
+      ..lineTo(19.944, 13.993)
+      ..close()
+      ..moveTo(15.721, 11.178)
+      ..lineTo(15.82, 11.972)
+      ..cubicTo(17.06, 11.817, 17.889, 12.103, 18.393, 12.499)
+      ..cubicTo(18.902, 12.899, 19.144, 13.458, 19.144, 13.993)
+      ..lineTo(19.944, 13.993)
+      ..lineTo(20.744, 13.993)
+      ..cubicTo(20.744, 12.973, 20.281, 11.948, 19.382, 11.241)
+      ..cubicTo(18.479, 10.531, 17.197, 10.187, 15.622, 10.384)
+      ..lineTo(15.721, 11.178)
+      ..close()
+      ..moveTo(15.721, 11.178)
+      ..lineTo(14.921, 11.178)
+      ..lineTo(14.921, 16.809)
+      ..lineTo(15.721, 16.809)
+      ..lineTo(16.521, 16.809)
+      ..lineTo(16.521, 11.178)
+      ..lineTo(15.721, 11.178)
+      ..close();
+    canvas.drawPath(d, fill);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_LegacyQualityPainter oldDelegate) => false;
 }
 
 enum _PortraitSlot { information, fullscreen, comments }
