@@ -26,6 +26,7 @@ import 'detail_page.dart';
 import 'home_provider.dart';
 import 'player_page.dart';
 import 'search_page.dart';
+import 'series_pager_physics.dart';
 
 /// One entry of the 短剧 tab's channel strip.
 ///
@@ -883,6 +884,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
         key: const Key('drama_feed'),
         controller: _pages,
         scrollDirection: Axis.vertical,
+        // 官方翻页物理：fling 沿方向翻一页、恒速 1600px/s 吸附（100ms/英寸）。
+        // 默认 PageScrollPhysics 的弹簧收尾起步猛、收尾硬。
+        // Note: 物理对齐依据 — 见
+        // .agents/notes/implemented/feature/2026-09-28-series-pager-physics.md
+        physics: const SeriesPagerScrollPhysics(),
         itemCount: items.length,
         onPageChanged: (index) {
           // The page that owns the texture is decided by `_screenIndex`, so it
