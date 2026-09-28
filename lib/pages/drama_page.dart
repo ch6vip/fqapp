@@ -559,7 +559,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
     return false;
   }
 
-  Future<void> _refresh() => ref.read(dramaProvider.notifier).load();
+  Future<void> _refresh() =>
+      ref.read(dramaProvider.notifier).load(manualRefresh: true);
 
   /// 官方单击语义：**暂停 / 继续当前这条视频**，不跳任何界面。
   ///
@@ -897,6 +898,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
           // keeps showing its cover even though the session has already
           // switched to the new drama.
           setState(() => _screenIndex = index);
+
+          // 记录停留卡片，快照保存时作为下次冷启动的续接点（官方落地缓存
+          // `recordNextVideoData` 的等价物：单条视频 + 位置）。
+          if (index < items.length) {
+            ref.read(dramaProvider.notifier).noteCurrentVid(items[index].id);
+          }
 
           // Two cards of runway, so a swipe never lands on an empty page.
           if (index >= items.length - 2) {

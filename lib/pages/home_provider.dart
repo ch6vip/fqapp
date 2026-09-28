@@ -67,6 +67,17 @@ class _TabFeed {
   bool hasMore = true;
   bool loaded = false;
 
+  /// The card the user is currently on, reported by the page as it renders
+  /// feeds. Persisted with the snapshot so the next cold start can resume from
+  /// it (officially the landing cache keeps one video plus its position,
+  /// `recordNextVideoData`, and consumes it once on the first response).
+  String? lastVid;
+
+  /// Set when a load seeded its list from the snapshot's resume point; the
+  /// first network response then appends instead of replacing (official
+  /// `onMoreDataLoaded` path, `Te` → `uf`), and is cleared right after.
+  String? resumedVid;
+
   void reset() {
     items = [];
     offset = 0;
@@ -80,6 +91,9 @@ class _TabFeed {
     recommendExhausted = false;
     hasMore = true;
     loaded = false;
+    // A cancelled load must not leave its resume intent behind; lastVid is
+    // deliberately kept — it tracks the card on screen across refreshes.
+    resumedVid = null;
   }
 }
 
@@ -231,14 +245,52 @@ class HomeNotifier extends Notifier<HomeState> {
   _TabFeed _feedFor(int tabIndex) => _feeds.putIfAbsent(tabIndex, _TabFeed.new);
 
   /// Reloads the selected tab from page one.
-  Future<void> load() async {
+  ///
+  /// A manual refresh (pull-to-refresh, error retry) always replaces the list
+  /// (official `SaasClientReqType.Refresh` path). A background first load may
+  /// resume from the snapshot's last viewed card: the list is trimmed to start
+  /// at that card and the network response is appended after it, so the video
+  /// on screen never flips to a different one (official landing-cache flow,
+  /// `Se` → `sf(listOf(cache))` + `Te` → `uf` append).
+  Future<void> load({bool manualRefresh = false}) async {
     final tabIndex = state.tabIndex;
     final generation = ++_generation;
     final feed = _feedFor(tabIndex)..reset();
     // Stale-while-revalidate: show the last rendered cards while the network
     // refresh runs. The cursors stay reset, so the response replaces page one.
-    final snapshot = _feedCache?.load(tabIndex);
-    if (snapshot != null) feed.items = snapshot.items;
+    final snapshot = manualRefresh ? null : _feedCache?.load(tabIndex);
+    if (snapshot != null) {
+      final resumeIndex = snapshot.lastVid == null
+          ? -1
+          : snapshot.items.indexWhere((item) => item.id == snapshot.lastVid);
+      if (resumeIndex > 0) {
+        // Resume from the card the user was last on: earlier cards are
+        // dropped, matching the official single-video landing cache.
+        feed.items = snapshot.items.sublist(resumeIndex);
+        feed.resumedVid = snapshot.lastVid;
+        // Seed the reported position too: if the user never swipes this
+        // session, the next save keeps the same resume point.
+        feed.lastVid = snapshot.lastVid;
+      } else if (resumeIndex == 0) {
+        // Resume point is already the first card; nothing to trim, but the
+        // response must still append instead of replacing the visible card.
+        feed.resumedVid = snapshot.lastVid;
+        feed.lastVid = snapshot.lastVid;
+        feed.items = snapshot.items;
+      } else {
+        // No resume point (or it fell out of the snapshot): show the full
+        // snapshot and let the response replace it wholesale, as before.
+        feed.items = snapshot.items;
+      }
+      if (feed.resumedVid != null) {
+        // Every snapshot card counts as seen (the client-side equivalent of
+        // the official `filterIds` request parameter): a fresh response that
+        // still contains them is deduplicated away on append.
+        for (final item in snapshot.items) {
+          if (item.id.isNotEmpty) feed.seen.add('${item.kind}:${item.id}');
+        }
+      }
+    }
     state = state.copyWith(
       items: feed.items,
       isLoading: true,
@@ -260,7 +312,9 @@ class HomeNotifier extends Notifier<HomeState> {
           state.tabIndex != tabIndex) {
         return;
       }
-      _applyFetched(feed, fetched, replace: true);
+      final resume = feed.resumedVid != null;
+      feed.resumedVid = null;
+      _applyFetched(feed, fetched, replace: !resume);
       state = state.copyWith(
         items: feed.items,
         isLoading: false,
@@ -268,7 +322,12 @@ class HomeNotifier extends Notifier<HomeState> {
         hasMore: feed.hasMore,
       );
       unawaited(
-        _feedCache?.save(tabIndex, feed.items, hasMore: feed.hasMore),
+        _feedCache?.save(
+          tabIndex,
+          feed.items,
+          hasMore: feed.hasMore,
+          lastVid: feed.lastVid,
+        ),
       );
     } catch (error) {
       if (!ref.mounted ||
@@ -334,7 +393,12 @@ class HomeNotifier extends Notifier<HomeState> {
         hasMore: feed.hasMore,
       );
       unawaited(
-        _feedCache?.save(tabIndex, feed.items, hasMore: feed.hasMore),
+        _feedCache?.save(
+          tabIndex,
+          feed.items,
+          hasMore: feed.hasMore,
+          lastVid: feed.lastVid,
+        ),
       );
     } catch (_) {
       if (!ref.mounted ||
@@ -347,6 +411,13 @@ class HomeNotifier extends Notifier<HomeState> {
       feed.hasMore = false;
       state = state.copyWith(isLoadMore: false, hasMore: false);
     }
+  }
+
+  /// Records the card currently on screen so the next snapshot save can store
+  /// the resume point. The page reports this as the user swipes.
+  void noteCurrentVid(String vid) {
+    if (vid.isEmpty) return;
+    _feedFor(state.tabIndex).lastVid = vid;
   }
 
   Future<_FetchedFeed> _loadInitial(int tabIndex) async {

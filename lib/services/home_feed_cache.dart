@@ -10,10 +10,17 @@ class HomeFeedSnapshot {
   final bool hasMore;
   final DateTime savedAt;
 
+  /// The card the user was last on, if the page reported it. Officially the
+  /// short-drama landing cache stores a single video plus its position
+  /// (`recordNextVideoData` → `dm3.f.a.i(video, position)`), consumed once on
+  /// the first network response; restoring from this vid keeps that intent.
+  final String? lastVid;
+
   const HomeFeedSnapshot({
     required this.items,
     required this.hasMore,
     required this.savedAt,
+    this.lastVid,
   });
 }
 
@@ -105,10 +112,12 @@ class HomeFeedCache {
       }
     }
     if (items.isEmpty) return null;
+    final lastVid = raw['lastVid'];
     return HomeFeedSnapshot(
       items: items,
       hasMore: raw['hasMore'] != false,
       savedAt: DateTime.fromMillisecondsSinceEpoch(savedAt),
+      lastVid: lastVid is String && lastVid.isNotEmpty ? lastVid : null,
     );
   }
 
@@ -117,6 +126,7 @@ class HomeFeedCache {
     int tabIndex,
     List<MediaItem> items, {
     required bool hasMore,
+    String? lastVid,
   }) async {
     if (!hiveReady || items.isEmpty) return;
     try {
@@ -125,6 +135,7 @@ class HomeFeedCache {
         'v': 1,
         'savedAt': DateTime.now().millisecondsSinceEpoch,
         'hasMore': hasMore,
+        if (lastVid != null && lastVid.isNotEmpty) 'lastVid': lastVid,
         'items': items.take(maxItems).map((item) => item.toJson()).toList(),
       });
     } catch (_) {
