@@ -259,10 +259,6 @@ class HomeNotifier extends Notifier<HomeState> {
     // Stale-while-revalidate: show the last rendered cards while the network
     // refresh runs. The cursors stay reset, so the response replaces page one.
     final snapshot = manualRefresh ? null : _feedCache?.load(tabIndex);
-    // ignore: avoid_print
-    print('DIAG load tab=$tabIndex manual=$manualRefresh snap=${snapshot != null} '
-        'items=${snapshot?.items.length ?? 0} lastVid=${snapshot?.lastVid} '
-        'first=${snapshot?.items.isEmpty == false ? snapshot!.items.first.id : 'none'}');
     if (snapshot != null) {
       final resumeIndex = snapshot.lastVid == null
           ? -1
@@ -317,8 +313,6 @@ class HomeNotifier extends Notifier<HomeState> {
         return;
       }
         final resume = feed.resumedVid != null;
-      // ignore: avoid_print
-      print('DIAG firstResp tab=$tabIndex resume=$resume cur0=${feed.items.isEmpty ? 'none' : feed.items.first.id}');
       feed.resumedVid = null;
       _applyFetched(feed, fetched, replace: !resume);
       state = state.copyWith(
@@ -331,8 +325,6 @@ class HomeNotifier extends Notifier<HomeState> {
       // 当前列表首卡（它就是本次会话实际展示的第一张），让续接链在
       // 下一次冷启动成立。
       final savedVid = feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
-      // ignore: avoid_print
-      print('DIAG save tab=$tabIndex savedVid=$savedVid first=${feed.items.isEmpty ? 'none' : feed.items.first.id}');
       unawaited(
         _feedCache?.save(
           tabIndex,
