@@ -13,6 +13,7 @@ import 'episode_source_cache.dart';
 import 'library_store.dart';
 import 'native_player.dart';
 import 'player_history.dart';
+import 'player_panel_preferences.dart';
 import 'player_pool.dart';
 import 'user_facing_error.dart';
 
@@ -510,9 +511,14 @@ class InlineVideoPlayback {
   /// Unmute / mute the current episode. The hint pill (`mq3.c`) flips this;
   /// once unmuted the session stays unmuted across cards — the same rule as
   /// the official `needMutePlay`, which only a viewer action can turn back on.
+  ///
+  /// 官方的静音会话态是**全局单例**（`tm3.b`），feed 药丸写 `a()/m()` 后
+  /// 全屏播放页经广播跟随；这里同步到 [PlayerPanelPreferences] 单例，
+  /// 让同一会话内打开的全屏播放页与 feed 保持一致（官方广播语义的等价物）。
   Future<void> toggleMute() async {
     _muted = !_muted;
     muted.value = _muted;
+    PlayerPanelPreferences.setDefaultMute(_muted);
     final player = _player;
     if (player == null || !player.isCreated) return;
     try {
