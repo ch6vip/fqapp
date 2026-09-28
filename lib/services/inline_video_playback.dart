@@ -194,9 +194,7 @@ class InlineVideoPlayback {
             ],
           ]
         : volumes;
-    final episodes = <Chapter>[
-      for (final volume in resolved) ...volume,
-    ];
+    final episodes = <Chapter>[for (final volume in resolved) ...volume];
     if (episodes.isNotEmpty) _directories[key] = episodes;
     return episodes;
   }
@@ -589,8 +587,9 @@ class InlineVideoPlayback {
   Future<void> disposePlayer() async {
     if (_disposed) return;
     final generation = ++_generation;
-    await _persistProgress();
-    if (_disposed || generation != _generation) return;
+    // Capture the snapshot now, but stop native audio before waiting for the
+    // history store. Grid/list navigation must not leave a hidden player live.
+    final progress = _persistProgress();
     activeId.value = null;
     firstFrame.value = false;
     playing.value = false;
@@ -598,7 +597,8 @@ class InlineVideoPlayback {
     position.value = Duration.zero;
     duration.value = Duration.zero;
     await _teardown();
-    await pool.releaseAll();
+    if (!_disposed && generation == _generation) await pool.releaseAll();
+    await progress;
   }
 
   /// Page teardown: destroy the current player, the whole pool, the page-local
@@ -630,15 +630,11 @@ class InlineVideoPlayback {
 
   /// Leave the feed entirely: destroy the current player **and** empty the pool.
   ///
-  /// Used when the viewer switches to a local channel (最近 / 收藏), which has no
-  /// video at all — keeping parked decoders would waste memory for a list the
-  /// viewer may stay on. The official client does the same when it leaves:
+  /// Used when the viewer switches to a poster grid (看剧 / 漫剧) or a local
+  /// channel (最近 / 收藏), none of which plays inline. The official client
+  /// also frees its shared pool when it leaves the video feed:
   /// `ShortSeriesImpl.java:165 sharePlayerPoolRelease` → `gq3/b.java:47 h()`.
-  Future<void> releaseAll() async {
-    if (_disposed) return;
-    await release();
-    await pool.releaseAll();
-  }
+  Future<void> releaseAll() => disposePlayer();
 
   /// Move the current player into [pool] under its drama's key.
   ///
@@ -737,6 +733,7 @@ class InlineVideoPlayback {
     if (!_hasDisplayed) _hasDisplayed = true;
     firstFrame.value = true;
   }
+
   Future<void> _fail(Object failure) async {
     if (_disposed) return;
     ++_generation;

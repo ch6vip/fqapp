@@ -73,6 +73,14 @@ class DramaChannel {
   });
 
   bool get isFeed => source == DramaChannelSource.feed;
+
+  // Note: 海报格曾在背后起播，播放资格按渲染形态收口 — 见
+  // .agents/notes/implemented/bug-fix/2026-09-28-drama-grid-background-audio.md
+  bool get playsInline =>
+      isFeed &&
+      kind != 'manju' &&
+      serverType != kChannelVideoEpisode &&
+      serverType != kChannelVideo;
 }
 
 final dramaChannels = <DramaChannel>[
@@ -389,7 +397,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final current = _channels[_channel];
     if (current.isFeed) {
       ref.read(dramaProvider.notifier).selectTab(current.tabIndex);
-    } else {
+    }
+    if (!current.playsInline) {
       unawaited(_inline.releaseAll());
     }
     if (_pages.hasClients) _pages.jumpToPage(0);
@@ -480,7 +489,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// makes [_syncInline] release the inline player instead of leaving it
   /// decoding behind a list.
   MediaItem? _currentItem() {
-    if (!_current.isFeed) return null;
+    if (!_current.playsInline) return null;
     final items = _visibleItems(ref.read(dramaProvider));
     if (items.isEmpty) return null;
     return items[_screenIndex.clamp(0, items.length - 1)];
@@ -522,8 +531,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // silently load a feed nobody asked for.
     if (channel.isFeed) {
       ref.read(dramaProvider.notifier).selectTab(channel.tabIndex);
-    } else {
-      // A local channel has no video: destroy the player and empty the pool.
+    }
+    if (!channel.playsInline) {
+      // Grids and local lists have no inline video: free any hidden decoder.
       unawaited(_inline.releaseAll());
     }
     if (_pages.hasClients) _pages.jumpToPage(0);
@@ -649,11 +659,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // 官方看剧(8, CommonDoubleRow 两列)与漫剧(24, CommonThreeRow 三列)频道
     // 都是浅色海报瀑布格（StaggeredFeedTab）；最近/收藏列表也是浅色页；
     // 只有推荐(16)等视频流频道是黑底竖滑播放。状态栏图标亮度跟着页面走。
-    final isVideoFlow =
-        channel.source == DramaChannelSource.feed &&
-        channel.kind != 'manju' &&
-        channel.serverType != kChannelVideoEpisode &&
-        channel.serverType != kChannelVideo;
+    final isVideoFlow = channel.playsInline;
     final lightPage = !isVideoFlow;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: lightPage ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
@@ -1624,9 +1630,9 @@ class _MuteHintState extends State<_MuteHint> {
             key: const Key('drama_mute_hint'),
             onTap: () {
               unawaited(widget.playback.toggleMute());
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已开启声音')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('已开启声音')));
             },
             behavior: HitTestBehavior.opaque,
             child: AnimatedContainer(
@@ -2915,8 +2921,7 @@ class _LocalListState extends State<_LocalList> {
                       selected: _selected.contains(_keyOf(item)),
                       // 官方 `v3()`/m0 角标条件同构：漫剧角标只在非漫剧
                       // 筛选下出现。
-                      tagText:
-                          item.kind == 'manju' && _filter != 'manju'
+                      tagText: item.kind == 'manju' && _filter != 'manju'
                           ? '漫剧'
                           : null,
                       subtitle: fromShelf
@@ -3140,7 +3145,9 @@ class _LocalListState extends State<_LocalList> {
                 const SizedBox(width: 40),
               ],
               _barAction(
-                key: Key(fromShelfEdit ? 'drama_shelf_delete' : 'drama_recent_delete'),
+                key: Key(
+                  fromShelfEdit ? 'drama_shelf_delete' : 'drama_recent_delete',
+                ),
                 label: '删除',
                 color: const Color(0xFFF43207),
                 enabled: enabled,
@@ -3153,8 +3160,7 @@ class _LocalListState extends State<_LocalList> {
     );
   }
 
-  bool get fromShelfEdit =>
-      widget.channel.source == DramaChannelSource.shelf;
+  bool get fromShelfEdit => widget.channel.source == DramaChannelSource.shelf;
 
   Widget _barAction({
     required Key key,
@@ -3199,9 +3205,7 @@ class _LocalListState extends State<_LocalList> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          _filter == 'manju' ? '追漫后可在书架找到该漫剧' : '追剧后可在书架找到该短剧',
-        ),
+        content: Text(_filter == 'manju' ? '追漫后可在书架找到该漫剧' : '追剧后可在书架找到该短剧'),
       ),
     );
     Timer(const Duration(milliseconds: 300), () {
@@ -3226,7 +3230,9 @@ class _LocalListState extends State<_LocalList> {
           ),
           TextButton(
             key: Key(
-              fromShelf ? 'drama_shelf_delete_confirm' : 'drama_recent_delete_confirm',
+              fromShelf
+                  ? 'drama_shelf_delete_confirm'
+                  : 'drama_recent_delete_confirm',
             ),
             onPressed: () => Navigator.pop(context, true),
             child: Text(fromShelf ? '删除' : '确认'),

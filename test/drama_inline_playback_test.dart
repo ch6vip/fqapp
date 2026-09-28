@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -55,16 +56,17 @@ class _Session {
 
   static HomeNotifier _notifierFor(_Session session) => HomeNotifier(
     initialTabIndex: dramaTabIndex,
-    homepageLoader: ({int tabType = 2, int offset = 0, String? sessionId}) async {
-      return HomepagePage(
-        items: [
-          for (var index = 0; index < session.itemsPerTab; index++)
-            _item('$tabType-$index'),
-        ],
-        nextOffset: null,
-        sessionId: null,
-      );
-    },
+    homepageLoader:
+        ({int tabType = 2, int offset = 0, String? sessionId}) async {
+          return HomepagePage(
+            items: [
+              for (var index = 0; index < session.itemsPerTab; index++)
+                _item('$tabType-$index'),
+            ],
+            nextOffset: null,
+            sessionId: null,
+          );
+        },
     searchLoader: (query, {int page = 1}) async => const [],
   );
 
@@ -90,9 +92,7 @@ class _Session {
           },
           historyStore: store,
           playerFactory: () {
-            final player = ControlledNativePlayer(
-              hasFirstFrame: hasFirstFrame,
-            )
+            final player = ControlledNativePlayer(hasFirstFrame: hasFirstFrame)
               ..width = width
               ..height = height;
             players.add(player);
@@ -215,7 +215,6 @@ void main() {
   });
 
   testWidgets('内联矩形按解码尺寸排布，横屏剧不按 9:16', (tester) async {
-
     final session = _Session(width: 1920, height: 1080);
     await _mount(tester, session);
     final feed = tester.getRect(find.byKey(const Key('drama_feed')));
@@ -261,9 +260,7 @@ void main() {
     final clipper = tester.widget<ClipRRect>(
       find
           .ancestor(
-            of: find.byKey(
-              const ValueKey('drama_inline_texture_video_16-0'),
-            ),
+            of: find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
             matching: find.byType(ClipRRect),
           )
           .first,
@@ -345,7 +342,10 @@ void main() {
     expect(first.disposed, isFalse);
 
     // 滑回去：第 1 部剧的播放器还在池里，应当被取回复用。
-    await tester.drag(find.byKey(const Key('drama_feed')), const Offset(0, 600));
+    await tester.drag(
+      find.byKey(const Key('drama_feed')),
+      const Offset(0, 600),
+    );
     await tester.pumpAndSettle();
     await _flush(tester);
 
@@ -363,7 +363,6 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
-
 
   testWidgets('上滑后第二张卡挂的是视频层，不是只有封面', (tester) async {
     // 回归：`onPageChanged` 曾经只改 `_screenIndex` 而没 `setState`，于是卡片
@@ -396,7 +395,6 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
-
 
   testWidgets('滑走后进全屏观看会清空池，不留第二个播放器', (tester) async {
     // 官方约束：两个 ExoPlayer 不能同时活着。滑走会把播放器放进池，所以推
@@ -439,7 +437,10 @@ void main() {
     final player = session.players.single;
 
     // Not enough to change the page: this stops and restarts the same card.
-    await tester.drag(find.byKey(const Key('drama_feed')), const Offset(0, -60));
+    await tester.drag(
+      find.byKey(const Key('drama_feed')),
+      const Offset(0, -60),
+    );
     await tester.pumpAndSettle();
     await _flush(tester);
 
@@ -489,6 +490,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('看剧海报格不在背后起播，切回推荐才重新播放', (tester) async {
+    final session = _Session();
+    await _mount(tester, session);
+    final feedPlayer = session.players.single;
+    expect(feedPlayer.isPlaying, isTrue);
+
+    final historyWrite = Completer<void>();
+    session.store.writeGate = historyWrite;
+    await tester.tap(find.text('看剧'));
+    await _flush(tester);
+    await _flush(tester);
+
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+    expect(find.byType(Texture), findsNothing);
+    expect(feedPlayer.isPlaying, isFalse);
+    expect(feedPlayer.disposed, isTrue);
+    expect(session.players, hasLength(1), reason: '海报格不应创建隐藏播放器');
+
+    historyWrite.complete();
+    await _flush(tester);
+    await tester.tap(find.text('推荐'));
+    await _flush(tester);
+    expect(session.players, hasLength(2));
+    expect(session.players.last.isPlaying, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('内容加载失败回到封面并给出重试', (tester) async {
     final session = _Session()..failure = const ApiException('内容加载失败');
     await _mount(tester, session);
@@ -527,7 +555,6 @@ void main() {
     //（`tm3/b.java`、`holder/a.java:640 setIsMute(needMutePlay)`）。
     expect(session.players.single.calls, contains('volume:1.0'));
     expect(find.byKey(const Key('drama_mute_hint')), findsNothing);
-
 
     // 长按 = 官方 `VideoGestureDetectLayout.onLongPress` → 2 倍速
     //（`@string/ec6`=「2倍速快进中」，`cjx.xml`）。松开即回到 1 倍。
