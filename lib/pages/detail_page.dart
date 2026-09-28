@@ -997,6 +997,10 @@ class _DetailPageState extends State<DetailPage> {
         historyStore: widget.readerStore,
         eps: _allChapters,
         startIndex: startIndex,
+        // 搜索→详情页→播放与短剧页同源（kind 已是 video/manju），不传
+        // shortSeries 会让长按面板/弹幕/剧评/已看标记/清晰度整组失效
+        // （它们都挂在 PlayerPage.shortSeries 门上）。
+        shortSeries: true,
       ),
       'audio' => AudioPage(
         bookId: _contentId,
