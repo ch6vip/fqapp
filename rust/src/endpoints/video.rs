@@ -92,6 +92,9 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             "video_url": video_url,
             "key_hex": hex::encode(&content_key),
             "video_id": video_id,
+            // 全量兼容档（高→低）。官方面板按该列表渲染清晰度行；空数组
+            // 表示单流，客户端隐藏清晰度入口。
+            "variants": extract_stream_variants(ctx, &raw).await,
         });
         if stream_mode {
             return Ok(source);
@@ -273,33 +276,157 @@ fn extract_shortplay_video_model_source(model: &Map<String, Value>) -> VideoSour
 
     select_video_source(video_list.values(), |info| {
         // Missing keys may prevent resolution, but must not hide a codec rejection.
-        let key_seed = key_seed.as_deref()?;
-        let mut raw_url = info
-            .get("main_url")
+        decrypt_variant_entry(info, key_seed.as_deref())
+    })
+}
+
+/// Decrypts one `video_list` entry into a playable (url, content key) pair.
+/// Shared by the best-stream selector and the multi-variant listing so both
+/// apply the same URL decryption and per-variant spade key derivation.
+/// `key_seed` is the model-level decoded seed bytes shared by every variant.
+fn decrypt_variant_entry(
+    info: &Map<String, Value>,
+    key_seed: Option<&[u8]>,
+) -> Option<(String, Vec<u8>)> {
+    let key_seed = key_seed?;
+    let mut raw_url = info
+        .get("main_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if raw_url.is_empty() {
+        raw_url = info
+            .get("backup_url_1")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        if raw_url.is_empty() {
-            raw_url = info
-                .get("backup_url_1")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
-        if !raw_url.is_empty() && !raw_url.starts_with("http") {
-            if let Ok(dec) = audio_b64_decode(&raw_url) {
-                if !dec.is_empty() {
-                    raw_url = String::from_utf8_lossy(&dec).into_owned();
-                }
+    }
+    if !raw_url.is_empty() && !raw_url.starts_with("http") {
+        if let Ok(dec) = audio_b64_decode(&raw_url) {
+            if !dec.is_empty() {
+                raw_url = String::from_utf8_lossy(&dec).into_owned();
             }
         }
-        let u = decrypt_spade_url(&raw_url, key_seed);
-        if u.is_empty() {
-            return None;
+    }
+    let u = decrypt_spade_url(&raw_url, key_seed);
+    if u.is_empty() {
+        return None;
+    }
+    let spade_a = info.get("spade_a").and_then(|v| v.as_str()).unwrap_or("");
+    Some((u, derive_spade_content_key(spade_a)))
+}
+
+/// Display name for a variant height, mirroring the official mapping
+/// (`zj3/b.java:76-99`): 360P/480P/540P/720P/1080P. The official panel maps
+/// TwoK/FourK to an empty label, but the engine enum carries them
+/// (`ttvideoengine/Resolution.java`), so taller variants use 2K/4K instead of
+/// rendering a blank row.
+fn variant_display_name(height: i64) -> String {
+    if height <= 0 {
+        return String::new();
+    }
+    if height <= 360 {
+        "360P".to_string()
+    } else if height <= 480 {
+        "480P".to_string()
+    } else if height <= 540 {
+        "540P".to_string()
+    } else if height <= 720 {
+        "720P".to_string()
+    } else if height <= 1080 {
+        "1080P".to_string()
+    } else if height <= 1440 {
+        "2K".to_string()
+    } else {
+        "4K".to_string()
+    }
+}
+
+/// All playable variants of the first encrypted short-play video model,
+/// best-quality first (official panel lists resolutions high→low,
+/// `ShortSeriesMorePanelDialogV2$d$C0025d.a()` with `CollectionsKt.reversed`).
+/// The bytevc2 gate applies unchanged: rejected codecs never become variants.
+/// When the primary model yields no list, the fallback video-info endpoint is
+/// queried the same way `resolve_video_source` does. Returns `[]` when the
+/// response has no multi-variant model — the client then hides the quality
+/// row entirely (official `oi3/k.P()` gate).
+async fn extract_stream_variants(ctx: &Ctx, raw: &[u8]) -> Vec<Value> {
+    let Ok(resp) = serde_json::from_slice::<Value>(raw) else {
+        return Vec::new();
+    };
+    let Some(data) = resp.get("data").and_then(|d| d.as_object()) else {
+        return Vec::new();
+    };
+    for model in video_models(data) {
+        // NOTE: 不用 video_model_encrypted() 做前置——它只认数组形状的
+        // video_list；实测漫剧（series 7686494169098898456）的 video_list 是
+        // object 且未标 encrypt，但每档照常带 spade_a/kid，选流门照常适用。
+        let primary = variant_rows(model.get("video_list").and_then(|v| v.as_object()), model
+            .get("key_seed")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .and_then(|s| audio_b64_decode(s).ok()));
+        if !primary.is_empty() {
+            return primary;
         }
-        let spade_a = info.get("spade_a").and_then(|v| v.as_str()).unwrap_or("");
-        Some((u, derive_spade_content_key(spade_a)))
-    })
+        let fallback_url = fallback_api_url(&model);
+        if fallback_url.is_empty() {
+            continue;
+        }
+        let Some(fallback_data) = fetch_fallback_video_info(ctx, &fallback_url).await else {
+            continue;
+        };
+        let list = fallback_data
+            .get("video_info")
+            .and_then(|v| v.get("data"))
+            .and_then(|v| v.as_object());
+        let key_seed = list
+            .and_then(|d| d.get("key_seed"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .and_then(|s| audio_b64_decode(s).ok());
+        let list = list.and_then(|d| d.get("video_list")).and_then(|v| v.as_object());
+        let rows = variant_rows(list, key_seed);
+        if !rows.is_empty() {
+            return rows;
+        }
+    }
+    Vec::new()
+}
+
+/// Builds the sorted variant list from one `video_list` object.
+fn variant_rows(
+    video_list: Option<&Map<String, Value>>,
+    key_seed: Option<Vec<u8>>,
+) -> Vec<Value> {
+    let Some(video_list) = video_list else {
+        return Vec::new();
+    };
+    let mut rows: Vec<(i64, Value)> = video_list
+        .values()
+        .filter_map(|v| v.as_object())
+        .filter_map(|info| {
+            let score = video_quality_score(info)?;
+                let (url, key) = decrypt_variant_entry(info, key_seed.as_deref())?;
+                let w = int64_from_any(info.get("vwidth").unwrap_or(&Value::Null));
+                let h = int64_from_any(info.get("vheight").unwrap_or(&Value::Null));
+                // 档位语义按**短边**：竖屏剧 1280×720 是 720P 而非 2K
+                // （官方 Resolution 枚举同样以短边为准）。
+                let short_edge = if w > 0 && h > 0 { w.min(h) } else { w.max(h) };
+                Some((
+                    score,
+                    json!({
+                        "name": variant_display_name(short_edge),
+                        "width": w,
+                        "height": h,
+                        "url": url,
+                        "key_hex": hex::encode(&key),
+                    }),
+                ))
+        })
+        .collect();
+    rows.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    rows.into_iter().map(|(_, v)| v).collect()
 }
 
 pub(crate) fn decode_video_model_str(s: &str) -> Option<Map<String, Value>> {
@@ -1613,6 +1740,55 @@ mod spade_vectors {
             extract_fallback_video_source(map),
             VideoSourceResolution::CodecRejected
         );
+    }
+
+    #[test]
+    fn variant_display_name_follows_the_short_edge_mapping() {
+        assert_eq!(variant_display_name(360), "360P");
+        assert_eq!(variant_display_name(480), "480P");
+        assert_eq!(variant_display_name(540), "540P");
+        assert_eq!(variant_display_name(720), "720P");
+        assert_eq!(variant_display_name(1080), "1080P");
+        assert_eq!(variant_display_name(1440), "2K");
+        assert_eq!(variant_display_name(2160), "4K");
+        assert_eq!(variant_display_name(0), "");
+    }
+
+    #[test]
+    fn variant_rows_skip_bytevc2_and_sort_by_the_short_edge() {
+        // 竖屏漫剧（series 7686494169098898456 实测形状）：video_list 是
+        // object，vheight 是长边——档位名必须取短边，bytevc2 档被排除。
+        let video_list = json!({
+            "video_4": {
+                "main_url": "https://example.test/a.mp4",
+                "vwidth": 720, "vheight": 1280, "codec_type": "bytevc2"
+            },
+            "video_3": {
+                "main_url": "https://example.test/720.mp4",
+                "vwidth": 720, "vheight": 1280, "codec_type": "h264",
+                "spade_a": "orws8mOJLdlTlhnvZZQr32GULuhXkBvtUpAf7GWQKNtUohyPjw=="
+            },
+            "video_2": {
+                "main_url": "https://example.test/540.mp4",
+                "vwidth": 540, "vheight": 960, "codec_type": "h264",
+                "spade_a": "orws8mOJLdlTlhnvZZQr32GULuhXkBvtUpAf7GWQKNtUohyPjw=="
+            },
+            "video_1": {
+                "main_url": "https://example.test/360.mp4",
+                "vwidth": 360, "vheight": 640, "codec_type": "h264",
+                "spade_a": "orws8mOJLdlTlhnvZZQr32GULuhXkBvtUpAf7GWQKNtUohyPjw=="
+            }
+        });
+        let rows = variant_rows(video_list.as_object(), Some(b"AAAA".to_vec()));
+        let names: Vec<&str> = rows
+            .iter()
+            .map(|v| v["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["720P", "540P", "360P"]);
+        for row in &rows {
+            assert!(row["url"].as_str().unwrap().starts_with("https://"));
+            assert_eq!(row["key_hex"].as_str().unwrap().len(), 32);
+        }
     }
 
     #[test]

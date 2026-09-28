@@ -806,7 +806,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     try {
       final request = _sources.request(episode, refresh: refresh);
       trace.source = request.origin.name;
-      final source = await request.future;
+      var source = await request.future;
+      // 会话内记住的画质选择（官方=引擎当前档）：同一集重新加载时沿用。
+      final chosen = _chosen[episode.itemId];
+      if (chosen != null) source = source.withVariant(chosen);
+      _currentSource = source;
       if (!_current(generation)) return;
       final sourceUri = Uri.tryParse(source.url);
       if (sourceUri == null ||
@@ -935,6 +939,83 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _initVideo = false;
       _playing = false;
     });
+  }
+
+  /// The source the current player was created from (includes the rendition
+  /// list), and the session-level quality choice per episode id. The official
+  /// client keeps the resolution on the engine for the session only; no
+  /// cross-launch preference exists there, so none is stored here either.
+  EpisodeSource? _currentSource;
+  final Map<String, EpisodeVariant> _chosen = {};
+
+  /// Switches the playing episode to [variant]: reopen the crypto stream on
+  /// the new rendition, keep the playback position and rate, and report the
+  /// seek to the danmaku scheduler. The official client switches resolutions
+  /// inside one engine session; here every rendition is its own encrypted
+  /// URL, so an equivalent switch reopens the stream on the same episode.
+  Future<void> _switchVariant(EpisodeVariant variant) async {
+    final source = _currentSource;
+    final player = _player;
+    if (source == null || player == null || _initVideo) return;
+    if (source.variants.every((v) => v.url != variant.url)) return;
+    if (variant.url == source.url) return;
+    final generation = ++_loadGeneration;
+    final resume = player.position;
+    final resumeMs = resume.inMilliseconds;
+    final wasPlaying = _playing;
+    final episode = widget.eps[_index];
+    _chosen[episode.itemId] = variant;
+    _currentSource = source.withVariant(variant);
+    final release = _teardownPlayer();
+    NativePlayer? candidate;
+    try {
+      await release;
+      if (!_current(generation)) return;
+      final fresh = candidate = widget.playerFactory?.call() ?? NativePlayer();
+      _player = fresh;
+      await fresh.create(variant.url, variant.keyHex);
+      if (!_current(generation, fresh)) {
+        await fresh.dispose();
+        return;
+      }
+      if (fresh.lastError case final Object error) throw error;
+      _subscribe(fresh, generation);
+      _onFirstFrame(fresh, generation);
+      setState(() {});
+      var rate = 1.0;
+      try {
+        rate = await PlayerPreferences.loadPlaybackRate();
+      } catch (_) {}
+      if (!_current(generation, fresh)) return;
+      await fresh.setRate(rate);
+      if (!_current(generation, fresh)) return;
+      try {
+        await fresh.setVolume(_defaultMute ? 0 : 1);
+      } catch (_) {}
+      if (!_current(generation, fresh)) return;
+      if (resumeMs > 0) {
+        _rememberDanmakuResume(_index, resumeMs);
+        await fresh.seek(resume);
+        if (!_current(generation, fresh)) return;
+        if (widget.shortSeries &&
+            _danmakuLoader.videoId == episode.itemId) {
+          _danmakuResumeIndex = null;
+          _danmakuResumeMs = null;
+          _onDanmakuSeek(resume);
+        }
+      }
+      if (wasPlaying) {
+        await fresh.play();
+        if (!_current(generation, fresh)) return;
+      }
+      setState(() => _playing = wasPlaying);
+    } catch (error) {
+      if (_current(generation)) {
+        _fail(error, generation);
+      } else {
+        await candidate?.dispose();
+      }
+    }
   }
 
   void _subscribe(NativePlayer player, int generation) {
@@ -1122,6 +1203,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       danmakuSettings: _danmakuSettings,
       onDanmakuSettingsChanged: widget.shortSeries
           ? (settings) => setState(() => _danmakuSettings = settings)
+          : null,
+      // 官方 `oi3/k.P()` 门：上游只有单流时不显示清晰度行。
+      qualityVariants: _currentSource?.variants ?? const [],
+      currentQualityUrl: _currentSource?.url,
+      onQualitySelected: widget.shortSeries
+          ? (variant) {
+              // 官方 `bgw`：切换的 Toast 立即出，不等换流完成。
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('清晰度已成功切换至${variant.name}')),
+              );
+              unawaited(_switchVariant(variant));
+            }
           : null,
       onSeeked: widget.shortSeries ? _onDanmakuSeek : null,
       newPlayerBottomStyle: style.useNewPlayerBottomStyle,

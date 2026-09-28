@@ -300,7 +300,11 @@ class InlineVideoPlayback {
       );
       _episodes = episodes;
       _activeIndex = index;
-      final source = await _sources.request(episodes[index]).future;
+      var source = await _sources.request(episodes[index]).future;
+      // 会话内记住的画质选择（官方=引擎当前档）：同一集再次激活时沿用。
+      final chosen = _chosen[episodes[index].itemId];
+      if (chosen != null) source = source.withVariant(chosen);
+      _currentSource = source;
       if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
       if (uri == null ||
@@ -349,6 +353,90 @@ class InlineVideoPlayback {
   /// (`jq3/x.java:4687 gq3.b.a.g(str2 /*vid*/, ...)`) with this app's content
   /// id, which is what a feed card stands for.
   static String _poolKey(MediaItem series) => series.seriesId ?? series.id;
+
+  /// The source the current player was created from, including the rendition
+  /// list. Null while nothing plays.
+  EpisodeSource? _currentSource;
+
+  /// Session-level quality choice per episode id. The official client keeps
+  /// the resolution on the engine instance for the session only; there is no
+  /// cross-launch preference evidence, so none is stored here either.
+  final Map<String, EpisodeVariant> _chosen = {};
+
+  /// Renditions of the playing episode, best-quality first. Empty while
+  /// nothing plays or the upstream offered a single stream (the panel hides
+  /// the quality row then, mirroring the official `oi3/k.P()` gate).
+  List<EpisodeVariant> get variants => _currentSource?.variants ?? const [];
+
+  /// The rendition the current player streams. Null = auto (best stream).
+  EpisodeVariant? get currentVariant {
+    final source = _currentSource;
+    if (source == null) return null;
+    for (final variant in source.variants) {
+      if (variant.url == source.url) return variant;
+    }
+    return null;
+  }
+
+  /// Switches the playing episode to [variant]: reopen the crypto stream on
+  /// the new rendition and seek back to where the viewer was. The official
+  /// client switches resolutions inside one engine session; here every
+  /// rendition is its own encrypted URL, so an equivalent switch reopens the
+  /// stream on the same episode. Selection is remembered for the session.
+  Future<void> switchVariant(EpisodeVariant variant) async {
+    final source = _currentSource;
+    final player = _player;
+    final series = _active;
+    if (source == null || player == null || series == null || _disposed) return;
+    if (source.variants.every((v) => v.url != variant.url)) return;
+    if (variant.url == source.url) return;
+    final generation = ++_generation;
+    final resume = position.value;
+    final resumeWantsPlay = _wantsPlay && _playbackRequested(player);
+    _detachSubscriptions();
+    if (identical(_player, player)) _player = null;
+    _currentSource = source.withVariant(variant);
+    _chosen[series.id] = variant;
+    var release = _releases;
+    NativePlayer? candidate;
+    try {
+      // A rendition change makes the parked decoder stale, so the old player
+      // is disposed (destructive) instead of parked, and the new stream is
+      // created only after that dispose finished.
+      release = _releases = release.then((_) => player.dispose());
+      await release;
+      if (!_current(generation)) return;
+      final fresh = candidate = playerFactory?.call() ?? NativePlayer();
+      _player = fresh;
+      await fresh.create(variant.url, variant.keyHex);
+      if (!_current(generation, fresh)) {
+        if (identical(_player, fresh)) _player = null;
+        await fresh.dispose();
+        return;
+      }
+      if (fresh.lastError case final Object failure) throw failure;
+      _subscribe(fresh, generation);
+      textureId.value = fresh.textureId;
+      _adoptVideoSize(fresh);
+      rotation.value = fresh.videoRotationCorrection ~/ 90;
+      await _applyPlaybackPrefs(fresh);
+      if (!_current(generation, fresh)) return;
+      await fresh.seek(resume);
+      if (!_current(generation, fresh)) return;
+      if (resumeWantsPlay || _wantsPlay) {
+        await fresh.play();
+        if (!_current(generation, fresh)) return;
+      }
+      playing.value = _playbackRequested(fresh);
+      if (fresh.firstFrameRendered) _onFirstFrame(fresh, generation);
+    } catch (failure) {
+      if (_current(generation)) {
+        await _fail(failure);
+      } else if (candidate != null) {
+        await candidate.dispose();
+      }
+    }
+  }
 
   /// Drop the player subscriptions without touching the player itself. Used
   /// when a player is parked: it must stop feeding this session's notifiers,

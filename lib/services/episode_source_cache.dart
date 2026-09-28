@@ -4,11 +4,33 @@ import 'dart:convert';
 import '../models/media_item.dart';
 import 'api_client.dart';
 
+class EpisodeVariant {
+  final String name;
+  final String url;
+  final String keyHex;
+  final int height;
+
+  const EpisodeVariant({
+    required this.name,
+    required this.url,
+    required this.keyHex,
+    required this.height,
+  });
+}
+
 class EpisodeSource {
   final String url;
   final String keyHex;
 
-  const EpisodeSource(this.url, [this.keyHex = '']);
+  /// All playable renditions of this episode, best-quality first
+  /// (official panel lists resolutions high→low). Empty when the upstream
+  /// only offered one stream — the quality row is hidden then.
+  final List<EpisodeVariant> variants;
+
+  const EpisodeSource(this.url, [this.keyHex = '', this.variants = const []]);
+
+  EpisodeSource withVariant(EpisodeVariant variant) =>
+      EpisodeSource(variant.url, variant.keyHex, variants);
 
   factory EpisodeSource.fromResponse(Map<String, dynamic> response) {
     final data = response['data'] is Map
@@ -26,7 +48,33 @@ class EpisodeSource {
         uri.host.isEmpty) {
       throw ApiException('获取播放地址失败');
     }
-    return EpisodeSource(url, (data['key_hex'] ?? '').toString().trim());
+    final variants = <EpisodeVariant>[];
+    final rawVariants = data['variants'];
+    if (rawVariants is List) {
+      for (final row in rawVariants) {
+        if (row is! Map) continue;
+        final name = '${row['name']}'.trim();
+        final raw = '${row['url'] ?? ''}'.trim();
+        final key = '${row['key_hex'] ?? ''}'.trim();
+        if (name.isEmpty || raw.isEmpty) continue;
+        final vUrl = ApiClient.instance.absoluteUrl(raw);
+        final vUri = Uri.tryParse(vUrl);
+        if (vUri == null ||
+            (vUri.scheme != 'http' && vUri.scheme != 'https') ||
+            vUri.host.isEmpty) {
+          continue;
+        }
+        variants.add(
+          EpisodeVariant(
+            name: name,
+            url: vUrl,
+            keyHex: key,
+            height: int.tryParse('${row['height'] ?? ''}') ?? 0,
+          ),
+        );
+      }
+    }
+    return EpisodeSource(url, (data['key_hex'] ?? '').toString().trim(), variants);
   }
 }
 

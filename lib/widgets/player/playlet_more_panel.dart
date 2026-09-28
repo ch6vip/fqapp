@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../services/episode_source_cache.dart';
 import '../../services/player_preferences.dart';
 
 // Note: 官方分支、档位动画和关闭边界见
@@ -19,6 +20,9 @@ class PlayletMorePanel extends StatefulWidget {
     this.clearScreen = false,
     this.onToggleClearScreen,
     this.onOpenDanmakuSettings,
+    this.qualityVariants = const [],
+    this.currentQualityUrl,
+    this.onQualitySelected,
   });
 
   final double rate;
@@ -38,6 +42,16 @@ class PlayletMorePanel extends StatefulWidget {
   /// 「弹幕设置」入口（官方 `jm3.e`，label `a2v`，在弹幕开关之后）。
   final VoidCallback? onOpenDanmakuSettings;
 
+  /// 可选播放档位（高→低，官方面板同序）。空 = 上游只有单流，
+  /// 清晰度行整体隐藏（官方 `oi3/k.P()` 门：无多档不显示）。
+  final List<EpisodeVariant> qualityVariants;
+
+  /// 当前播放档位的 URL，用于列表中的选中态（官方 `dVar.b()` 高亮+对勾）。
+  final String? currentQualityUrl;
+
+  /// 选择档位回调。非空才显示清晰度行。
+  final ValueChanged<EpisodeVariant>? onQualitySelected;
+
   @override
   State<PlayletMorePanel> createState() => _PlayletMorePanelState();
 }
@@ -51,6 +65,7 @@ class _PlayletMorePanelState extends State<PlayletMorePanel> {
   bool _ratePending = false;
   double _optionWidth = 48;
   double? _dragPosition;
+  bool _qualityExpanded = false;
 
   @override
   void initState() {
@@ -193,6 +208,13 @@ class _PlayletMorePanelState extends State<PlayletMorePanel> {
                           Navigator.pop(context);
                         },
                       ),
+                    // 官方更多面板的「清晰度」项（ShortSeriesMorePanelDialogV2
+                    // 的 resolutionList 区块，zj3/b 显示名）：行尾显示当前档，
+                    // 点击展开档位列表，选中档高亮+对勾（zj3/b.java:126-135）。
+                    // 上游单流时整行隐藏（官方无多档不显示同语义）。
+                    if (widget.onQualitySelected != null &&
+                        widget.qualityVariants.length > 1)
+                      _qualityRow(context),
                     // V2 的 options 在 actions 上方；保留 o() 中撑满、
                     // 静音、弹幕的相对顺序，省略用户排除及未接入的项目。
                     if (widget.onFillScreenChanged != null)
@@ -387,6 +409,88 @@ class _PlayletMorePanelState extends State<PlayletMorePanel> {
           ),
         ),
       );
+
+  /// 「清晰度」行 + 展开的档位列表。行首标出当前档（官方行内同序），
+  /// 点击展开/收起；档位行选中态高亮+对勾（官方 `zj3/b.java:126-135`）。
+  Widget _qualityRow(BuildContext context) {
+    final current = widget.qualityVariants.where(
+      (v) => v.url == widget.currentQualityUrl,
+    );
+    final currentName = current.isEmpty ? '' : current.first.name;
+    return Column(
+      key: const ValueKey('player-more-quality'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Semantics(
+          key: const ValueKey('player-more-quality-row'),
+          label: '清晰度',
+          button: true,
+          onTap: () => setState(() => _qualityExpanded = !_qualityExpanded),
+          excludeSemantics: true,
+          child: InkWell(
+            onTap: () => setState(() => _qualityExpanded = !_qualityExpanded),
+            excludeFromSemantics: true,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 52),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 16, 10),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text('清晰度', style: _labelStyle),
+                    ),
+                    if (currentName.isNotEmpty)
+                      Text(currentName, style: _labelStyle),
+                    const SizedBox(width: 6),
+                    AnimatedRotation(
+                      duration: const Duration(milliseconds: 200),
+                      turns: _qualityExpanded ? .5 : 0,
+                      child: const Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 18,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_qualityExpanded)
+          for (final (index, variant) in widget.qualityVariants.indexed)
+            InkWell(
+              key: ValueKey('player-more-quality-$index'),
+              onTap: () {
+                Navigator.pop(context);
+                widget.onQualitySelected!(variant);
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(36, 8, 16, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          variant.name,
+                          style: _labelStyle.copyWith(
+                            color: variant.url == widget.currentQualityUrl
+                                ? const Color(0xFFFA6725)
+                                : Colors.white,
+                          ),
+                        ),
+                      ),
+                      if (variant.url == widget.currentQualityUrl)
+                        const Icon(Icons.check, size: 18, color: Color(0xFFFA6725)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+      ],
+    );
+  }
 
   Widget _switchRow(String id, String label, bool value, VoidCallback onTap) =>
       Semantics(

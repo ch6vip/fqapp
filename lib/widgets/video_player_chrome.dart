@@ -9,6 +9,7 @@ import 'package:lottie/lottie.dart';
 
 import '../models/audio_extra.dart';
 import '../models/media_item.dart';
+import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
@@ -120,6 +121,12 @@ class VideoPlayerChrome extends StatefulWidget {
   final DanmakuSettings danmakuSettings;
   final ValueChanged<DanmakuSettings>? onDanmakuSettingsChanged;
 
+  /// 可选播放档位（高→低）与当前档 URL。空列表 = 上游单流，
+  /// 「清晰度」行不显示（官方 `oi3/k.P()` 门）。
+  final List<EpisodeVariant> qualityVariants;
+  final String? currentQualityUrl;
+  final ValueChanged<EpisodeVariant>? onQualitySelected;
+
   /// 最终确定的 seek 目标（进度条拖动收尾、横滑收尾、±10s 快进/回拖、
   /// 播完重播回零）。拖动过程中的实时 seek 不上报，只报收尾值，
   /// 对齐官方 `seekTo()` 的 `ON_SEEK_FINISH` 时机（l.java:1213-1227）。
@@ -180,6 +187,9 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onToggleDanmaku,
     this.danmakuSettings = const DanmakuSettings(),
     this.onDanmakuSettingsChanged,
+    this.qualityVariants = const [],
+    this.currentQualityUrl,
+    this.onQualitySelected,
   });
 
   @override
@@ -944,6 +954,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                       Navigator.pop(context);
                     }
                   : null,
+              qualityVariants: widget.qualityVariants,
+              currentQualityUrl: widget.currentQualityUrl,
+              onQualitySelected: widget.onQualitySelected,
             )
           : StatefulBuilder(
               builder: (context, setSheetState) => SafeArea(
