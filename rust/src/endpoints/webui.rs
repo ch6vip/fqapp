@@ -396,7 +396,11 @@ async fn handle_web_content(server: &Server, q: &Params) -> Response {
             }
             call_endpoint(server, "wkcontent", &p).await
         }
-        "短剧" => {
+        // 漫剧与短剧同为 series vid，同一 video_model 选流链路（实测
+        // series 7686494169098898456 首集在 video 端点 200 返回 url+key）。
+        // 漫剧此前落进下方图文 content 分支，响应没有 video_url，客户端
+        // 报「获取播放地址失败」，feed 内嵌播放器无法播放任何漫剧。
+        "短剧" | "漫剧" => {
             let mut p = Params::new();
             p.set("video_id", item_id.clone());
             p.set("item_ids", item_id.clone());
