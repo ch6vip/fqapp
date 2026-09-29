@@ -11,8 +11,11 @@ import 'package:hive/hive.dart';
 import 'package:fqapp/main.dart';
 import 'package:fqapp/models/channel_tab.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/playlet_comment.dart';
+import 'package:fqapp/models/series_detail.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/player_page.dart';
+import 'package:fqapp/pages/series_detail_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/library_store.dart';
@@ -140,9 +143,13 @@ class _Seams {
     directoryLoader,
     Widget Function()? searchPageBuilder,
     Future<ChannelTable> Function()? channelLoader,
+    Future<SeriesDetail> Function(String seriesId)? seriesDetailLoader,
+    Future<PlayletCommentPage> Function(String seriesId)? seriesCommentLoader,
   }) => DramaPage(
     directoryLoader: directoryLoader,
     channelLoader: channelLoader,
+    seriesDetailLoader: seriesDetailLoader,
+    seriesCommentLoader: seriesCommentLoader,
     contentLoader: (itemId, tab) async {
       contentCalls.add('$itemId:$tab');
       if (failContent) throw const ApiException('内联取址不可用');
@@ -1148,5 +1155,67 @@ void main() {
     expect(find.text('16-0 作品'), findsOneWidget);
     expect(find.text('8-0 作品'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('feed 卡片标题行「剧名 >」进剧集详情页，点选集经目录推播放页', (
+    tester,
+  ) async {
+    // 官方 ql3/v0.a1()：feed 信息区标题点击 enter_from="title"，落点
+    // series_detail（此前误接成播放/暂停，用户真机反馈点不动）。
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    const nativeChannel = MethodChannel('fqapp/native_player');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      nativeChannel,
+      (call) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        nativeChannel,
+        null,
+      ),
+    );
+    final seams = _Seams(failContent: false);
+    await tester.pumpWidget(
+      _scope(
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [
+                Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集'),
+                Chapter(itemId: '$id-2', title: '第2集', volumeName: '剧集'),
+              ],
+            ],
+            seriesDetailLoader: (_) async => const SeriesDetail(
+              seriesId: '2-0',
+              title: '2-0 作品',
+              cover: '',
+              episodeCount: 2,
+              status: 1,
+            ),
+            seriesCommentLoader: (_) async => const PlayletCommentPage(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 点标题行 → 详情页（feed 侧 entry，无播放器实例跟随）。
+    await tester.tap(find.byKey(const Key('drama-series-title')));
+    await _flush(tester);
+    await tester.pumpAndSettle();
+    expect(find.byType(SeriesDetailPage), findsOneWidget);
+    expect(find.byKey(const ValueKey('series-detail-page')), findsOneWidget);
+    expect(find.text('2-0 作品'), findsWidgets);
+
+    // 详情页点选集格 → pop 详情回 feed，再经 _openPlayer 拉目录推播放页
+    // （下层路由保持挂载是 MaterialApp 的常态，只断言播放器在顶上）。
+    await tester.tap(find.byKey(const ValueKey('series-episode-1')));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
+    expect(find.byType(PlayerPage), findsOneWidget);
   });
 }

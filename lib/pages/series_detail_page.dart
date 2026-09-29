@@ -45,6 +45,7 @@ class SeriesDetailPage extends StatefulWidget {
     this.watchedIds = const <String>{},
     this.seriesLoader,
     this.commentLoader,
+    this.directoryLoader,
     this.onPlayEpisode,
   });
 
@@ -69,6 +70,11 @@ class SeriesDetailPage extends StatefulWidget {
   /// 测试注入缝；默认走 `ApiClient.playletComments`。
   final Future<PlayletCommentPage> Function(String seriesId)? commentLoader;
 
+  /// 目录加载器（测试缝）。宿主（播放页）已拉过目录时直接传 [episodes]；
+  /// 从 feed 等没有目录的入口进来时，页面自己拉（官方详情页也持有目录），
+  /// 缺省走 `ApiClient.directoryChapters(id, tab: '短剧')`。
+  final Future<List<List<Chapter>>> Function(String seriesId)? directoryLoader;
+
   /// 点选集格或底部播放钮的目标行为。默认推整页播放器；宿主播放页打开
   /// 详情时传入「关闭详情 + 切集」，不叠第二个播放器。
   final ValueChanged<int>? onPlayEpisode;
@@ -90,6 +96,11 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   SeriesDetail _detail = SeriesDetail.empty;
   bool _detailDone = false;
+
+  /// feed 等入口没带目录时自拉的剧集（宿主传了 [SeriesDetailPage.episodes]
+  /// 就以宿主为准，不重复请求）。
+  List<Chapter> _loadedEpisodes = const [];
+  bool _episodesDone = false;
   PlayletCommentPage? _comments;
   int _tab = 0;
   int _episodePage = 0;
@@ -109,6 +120,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     super.initState();
     _episodePage = _pageOf(widget.startIndex);
     unawaited(_loadDetail());
+    unawaited(_loadEpisodes());
     unawaited(_loadComments());
     _scroll.addListener(_onScroll);
   }
@@ -148,7 +160,36 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     }
   }
 
-  Set<int> get _watched => watchedIndexes(widget.watchedIds, widget.episodes);
+  Future<void> _loadEpisodes() async {
+    if (widget.episodes.isNotEmpty || widget.seriesId.isEmpty) {
+      _episodesDone = true;
+      return;
+    }
+    try {
+      final volumes =
+          await (widget.directoryLoader?.call(widget.seriesId) ??
+              ApiClient.instance.directoryChapters(
+                widget.seriesId,
+                tab: '短剧',
+              ));
+      if (!mounted) return;
+      setState(() {
+        _loadedEpisodes = volumes.expand((volume) => volume).toList(
+          growable: false,
+        );
+        _episodesDone = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _episodesDone = true);
+    }
+  }
+
+  /// 生效剧集：宿主带的优先，否则用自拉的。
+  List<Chapter> get _episodes =>
+      widget.episodes.isNotEmpty ? widget.episodes : _loadedEpisodes;
+
+  Set<int> get _watched => watchedIndexes(widget.watchedIds, _episodes);
 
   String get _titleText =>
       _detail.title.isNotEmpty ? _detail.title : widget.title;
@@ -159,16 +200,16 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   int _pageOf(int index) =>
       (index ~/ _pageSize).clamp(0, _lastEpisodePage);
 
-  int get _lastEpisodePage => widget.episodes.isEmpty
+  int get _lastEpisodePage => _episodes.isEmpty
       ? 0
-      : (widget.episodes.length - 1) ~/ _pageSize;
+      : (_episodes.length - 1) ~/ _pageSize;
 
   /// 封面右上角状态角标（官方 `jgn`，10sp 白字圆角胶囊）：分支顺序照
   /// `story_player_panel.seriesEpisodeLabel` 的源码顺序，只取短态。
   String? get _coverBadge {
     final count = _detail.episodeCount > 0
         ? _detail.episodeCount
-        : widget.episodes.length;
+        : _episodes.length;
     return switch (_detail.status) {
       SeriesStatus.finished => '已完结',
       SeriesStatus.updating => count > 0 ? '更新至$count集' : '更新中',
@@ -232,8 +273,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   }
 
   void _play(int index) {
-    if (widget.episodes.isEmpty) return;
-    final target = index.clamp(0, widget.episodes.length - 1);
+    if (_episodes.isEmpty) return;
+    final target = index.clamp(0, _episodes.length - 1);
     if (widget.onPlayEpisode != null) {
       widget.onPlayEpisode!(target);
       return;
@@ -247,7 +288,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             kind: 'video',
             title: _titleText.isEmpty ? '第${target + 1}集' : _titleText,
             cover: _coverText,
-            eps: widget.episodes,
+            eps: _episodes,
             startIndex: target,
             shortSeries: true,
           ),
@@ -317,7 +358,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                 ],
               ),
             ),
-            if (widget.episodes.isNotEmpty)
+            if (_episodes.isNotEmpty)
               Positioned(left: 0, right: 0, bottom: 0, child: _bottomBar()),
           ],
         ),
@@ -587,7 +628,24 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   // ---- 选集区 ----
 
   Widget _episodeSection() {
-    if (widget.episodes.isEmpty) {
+    if (_episodes.isEmpty) {
+      // 自拉目录在途先不出「暂无」，避免 feed 入口闪一下空态。
+      if (!_episodesDone) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Center(
+            child: SizedBox(
+              key: ValueKey('series-episodes-loading'),
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0x99FFFFFF),
+              ),
+            ),
+          ),
+        );
+      }
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(
@@ -599,7 +657,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
         ),
       );
     }
-    if (widget.episodes.length <= _pageSize) return _episodeGrid();
+    if (_episodes.length <= _pageSize) return _episodeGrid();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -626,7 +684,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               child: Center(
                 child: Text(
                   '${page * _pageSize + 1}-'
-                  '${((page + 1) * _pageSize).clamp(0, widget.episodes.length)}',
+                  '${((page + 1) * _pageSize).clamp(0, _episodes.length)}',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: page == _episodePage
@@ -648,7 +706,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   /// 当前集橙字橙底、已看灰字、普通格底 #08000000。竖屏 6 列。
   Widget _episodeGrid() {
     final start = _episodePage * _pageSize;
-    final end = ((start + _pageSize)).clamp(0, widget.episodes.length);
+    final end = ((start + _pageSize)).clamp(0, _episodes.length);
     final count = end - start;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
@@ -670,7 +728,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   }
 
   Widget _episodeTile(int index) {
-    final episode = widget.episodes[index];
+    final episode = _episodes[index];
     final state = EpisodeTileState.of(
       current: index == widget.startIndex,
       watched: _watched.contains(index),

@@ -10,6 +10,7 @@ import 'package:lottie/lottie.dart';
 import '../models/channel_tab.dart';
 import '../models/media_item.dart';
 import '../models/playlet_comment.dart';
+import '../models/series_detail.dart';
 import '../services/api_client.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/inline_video_playback.dart';
@@ -32,6 +33,7 @@ import 'detail_page.dart';
 import 'home_provider.dart';
 import 'player_page.dart';
 import 'search_page.dart';
+import 'series_detail_page.dart';
 import 'series_pager_physics.dart';
 
 /// One entry of the 短剧 tab's channel strip.
@@ -200,6 +202,8 @@ class DramaPage extends ConsumerStatefulWidget {
     this.searchPageBuilder,
     this.channelLoader,
     this.hotCommentsLoader,
+    this.seriesDetailLoader,
+    this.seriesCommentLoader,
   });
 
   /// Test seams. The official feed plays the on-screen card inline and still
@@ -220,6 +224,14 @@ class DramaPage extends ConsumerStatefulWidget {
   /// `ApiClient.playletHotComments`（评论列表的 `hotOf` 本地筛选）。
   final Future<List<PlayletComment>> Function(String seriesId)?
   hotCommentsLoader;
+
+  /// 详情页数据加载器（测试缝）。标题行「剧名 >」打开的 SeriesDetailPage
+  /// 缺省走 `ApiClient.seriesDetail`；与 [hotCommentsLoader] 同一套缝。
+  final Future<SeriesDetail> Function(String seriesId)? seriesDetailLoader;
+
+  /// 详情页剧评加载器（测试缝）。缺省走 `ApiClient.playletComments`。
+  final Future<PlayletCommentPage> Function(String seriesId)?
+  seriesCommentLoader;
 
   @override
   ConsumerState<DramaPage> createState() => _DramaPageState();
@@ -1077,6 +1089,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 : null,
             // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
             onFullscreen: () => _openPlayer(item),
+            // 标题行「剧名 >」= 官方进剧集详情页的入口（ql3/v0.a1）。
+            onOpenSeriesDetail: () => _openSeriesDetail(item),
             onTogglePlay: _togglePlay,
             onOpenMorePanel: () => unawaited(_showFeedMorePanel()),
             hotComments: _feedHotComments[item.id] ?? const [],
@@ -1093,7 +1107,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// The official card opens the play page directly
   /// (`VideoInfiniteHolderV3` → `ShortSeriesLaunchArgs`), so the directory is
   /// fetched here and the player is pushed with the resume episode selected.
-  Future<void> _openPlayer(MediaItem item) async {
+  ///
+  /// [startEpisodeIndex] 非空时跳过续播推断（详情页点选集进来指定目标集）。
+  Future<void> _openPlayer(MediaItem item, {int? startEpisodeIndex}) async {
     if (_openingId != null) return;
     setState(() => _openingId = item.id);
     // The full page player creates its own native instance, so the inline one
@@ -1129,10 +1145,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
       final saved = await PlayerHistory(
         widget.historyStore ?? LibraryStore.instance,
       ).load(contentId);
-      final index = (resumeEpisodeIndex(saved, eps) ?? 0).clamp(
-        0,
-        eps.length - 1,
-      );
+      final index = (startEpisodeIndex ??
+              resumeEpisodeIndex(saved, eps) ??
+              0)
+          .clamp(0, eps.length - 1);
       if (!mounted) return;
       await Navigator.push(
         context,
@@ -1183,6 +1199,41 @@ class _DramaPageState extends ConsumerState<DramaPage>
         () => Navigator.push(
           context,
           MaterialPageRoute<void>(builder: (_) => DetailPage(item: item)),
+        ),
+      ),
+    );
+  }
+
+  /// feed 卡片标题行「剧名 >」→ 剧集详情页（官方 `ql3/v0.a1()` 默认分支，
+  /// 埋点 `enter_from="title"`；feed 信息区与播放页信息区共用这个 Presenter）。
+  ///
+  /// 详情页点播放/选集时：先 pop 详情回到 feed，再走 `_openPlayer` 拉目录
+  /// 推整页播放器（`_pushOverFeed` 已把 inline 播放器销毁，不会双实例）。
+  void _openSeriesDetail(MediaItem item) {
+    unawaited(
+      _pushOverFeed(
+        () => Navigator.push(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => SeriesDetailPage(
+              seriesId: item.seriesId ?? item.id,
+              title: item.title,
+              cover: item.cover,
+              // feed 入口没带目录，详情页自拉；测试缝跟随 DramaPage 的
+              // directoryLoader（tab 固定短剧）。
+              directoryLoader: widget.directoryLoader == null
+                  ? null
+                  : (sid) => widget.directoryLoader!(sid, '短剧'),
+              seriesLoader: widget.seriesDetailLoader,
+              commentLoader: widget.seriesCommentLoader,
+              onPlayEpisode: (index) {
+                Navigator.of(context).pop();
+                unawaited(
+                  _openPlayer(item, startEpisodeIndex: index),
+                );
+              },
+            ),
+          ),
         ),
       ),
     );
@@ -1455,6 +1506,7 @@ class _DramaFeedCard extends StatelessWidget {
   final VoidCallback? onFullscreen;
   final VoidCallback onTogglePlay;
   final VoidCallback onOpenMorePanel;
+  final VoidCallback onOpenSeriesDetail;
   final List<PlayletComment> hotComments;
   final ValueChanged<PlayletComment> onHotCommentTap;
   final bool hotCommentActive;
@@ -1468,6 +1520,7 @@ class _DramaFeedCard extends StatelessWidget {
     this.onFullscreen,
     required this.onTogglePlay,
     required this.onOpenMorePanel,
+    required this.onOpenSeriesDetail,
     this.hotComments = const [],
     required this.onHotCommentTap,
     this.hotCommentActive = true,
@@ -1600,7 +1653,7 @@ class _DramaFeedCard extends StatelessWidget {
           child: _InfoPanel(
             item: item,
             playback: playback,
-            onOpen: onTogglePlay,
+            onOpenSeriesDetail: onOpenSeriesDetail,
             onFullscreen: onFullscreen,
             hotComments: hotComments,
             onHotCommentTap: onHotCommentTap,
@@ -2006,6 +2059,8 @@ class _SeekTrack extends StatelessWidget {
 ///   （`vk3.a.a`：`!saasVideoData.isVertical()` 才可见），点击走
 ///   `zf3.c.w(…, "horizontal", …)`，同样进全页播放器。
 /// - **标题行**：`d6g.xml`，16sp bold 白字 + 8×16dp 箭头（`@drawable/ead`）。
+///   点击进剧集详情页（官方 `ql3/v0.a1()`，埋点 `enter_from="title"`；此前
+///   误记为播放/暂停切换——卡片手势层才是 play/pause，标题行是详情入口）。
 /// - **分类 chip 行**：`d6f.xml` 的 `hdm`（marginTop 4dp、marginBottom 12dp、
 ///   divider `@drawable/aai`），chip 由 `ql3.c0.V()` 运行时构造：12sp 白字、
 ///   背景 `@color/ags`=#33FFFFFF、圆角 2dp、padding 6/2/6/2。
@@ -2015,8 +2070,10 @@ class _SeekTrack extends StatelessWidget {
 class _InfoPanel extends StatefulWidget {
   final MediaItem item;
   final InlineVideoPlayback? playback;
-  final VoidCallback onOpen;
   final VoidCallback? onFullscreen;
+
+  /// 标题行「剧名 >」点击 → 剧集详情页。
+  final VoidCallback onOpenSeriesDetail;
   final List<PlayletComment> hotComments;
   final ValueChanged<PlayletComment> onHotCommentTap;
   final bool hotCommentActive;
@@ -2024,8 +2081,8 @@ class _InfoPanel extends StatefulWidget {
   const _InfoPanel({
     required this.item,
     required this.playback,
-    required this.onOpen,
     required this.onFullscreen,
+    required this.onOpenSeriesDetail,
     this.hotComments = const [],
     required this.onHotCommentTap,
     this.hotCommentActive = true,
@@ -2063,9 +2120,11 @@ class _InfoPanelState extends State<_InfoPanel> {
           ),
           const SizedBox(height: 12),
         ],
-        // 标题行：官方 `d6g.xml`。点击 = 播放/暂停（与卡片手势层同一语义）。
+        // 标题行：官方 `d6g.xml`。点击进剧集详情页（ql3/v0 `a1()` 默认分支），
+        // 与播放页标题行同一路跳转；播放/暂停由卡片手势层承担。
         GestureDetector(
-          onTap: widget.onOpen,
+          key: const Key('drama-series-title'),
+          onTap: widget.onOpenSeriesDetail,
           behavior: HitTestBehavior.opaque,
           child: Row(
             children: [
