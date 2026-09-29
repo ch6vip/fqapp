@@ -187,17 +187,21 @@ class _ListenModePageState extends State<ListenModePage> {
     );
   }
 
+  void _exitWithResult() =>
+      Navigator.pop(context, (_index, _player?.position ?? Duration.zero));
+
   @override
   Widget build(BuildContext context) {
     final player = _player;
     final playing = player?.playWhenReady ?? false;
     final position = player?.position ?? Duration.zero;
     final duration = player?.duration ?? Duration.zero;
-    // 返回时把最终进度交给宿主：视频播放页 seek 到同一位置续看。
+    // 返回时把「听到哪一集 + 进度」一起交给宿主：听书页可能已自动连播
+    // 跨集，宿主要跟到那一集续看（官方 sync_progress_strategy_listen_mode）。
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) Navigator.pop(context, player?.position ?? Duration.zero);
+        if (!didPop) _exitWithResult();
       },
       child: Scaffold(
       key: const ValueKey('listen-page'),
@@ -208,8 +212,7 @@ class _ListenModePageState extends State<ListenModePage> {
         elevation: 0,
         leading: IconButton(
           key: const ValueKey('listen-page-back'),
-          onPressed: () =>
-              Navigator.pop(context, player?.position ?? Duration.zero),
+          onPressed: _exitWithResult,
           icon: const Icon(Icons.arrow_back),
         ),
         title: Text(

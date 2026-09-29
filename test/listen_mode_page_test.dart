@@ -66,14 +66,28 @@ void main() {
     expect(find.text('第 2 集 · 第二集'), findsOneWidget);
   });
 
-  testWidgets('返回回传最终进度给宿主', (tester) async {
+  testWidgets('返回回传 (集号, 进度) 给宿主', (tester) async {
     final created = <FakeNativePlayer>[];
     await _pump(tester, created: created);
     await tester.pumpAndSettle();
     created.first.currentPosition = const Duration(seconds: 45);
     await tester.tap(find.byKey(const ValueKey('listen-page-back')));
     await tester.pumpAndSettle();
-    expect(popped, const Duration(seconds: 45));
+    expect(popped, (0, const Duration(seconds: 45)));
+  });
+
+  testWidgets('连播跨集后回传新集号与该集进度', (tester) async {
+    // 听书页在后台连播到第 2 集：退出必须把集号一起带回，宿主才能跟到
+    // 第 2 集续看（官方 sync_progress_strategy_listen_mode 语义）。
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    await tester.pumpAndSettle();
+    created.first.completedEvents.add(true);
+    await tester.pumpAndSettle();
+    created[1].currentPosition = const Duration(seconds: 33);
+    await tester.tap(find.byKey(const ValueKey('listen-page-back')));
+    await tester.pumpAndSettle();
+    expect(popped, (1, const Duration(seconds: 33)));
   });
 
   testWidgets('倍速药丸写全局速率并作用于当前播放器', (tester) async {
@@ -87,8 +101,9 @@ void main() {
   });
 }
 
-/// 听书页是被推入的路由：宿主页按钮 push，pop 的回传值落在 [popped]。
-Duration? popped;
+/// 听书页是被推入的路由：宿主页按钮 push，pop 的回传值落在 [popped]
+/// （(集号, 进度)）。
+(int, Duration)? popped;
 
 Future<void> _pump(
   WidgetTester tester, {
@@ -103,8 +118,8 @@ Future<void> _pump(
         builder: (context) => Center(
           child: TextButton(
             onPressed: () async {
-              popped = await Navigator.of(context).push<Duration>(
-                MaterialPageRoute<Duration>(
+              popped = await Navigator.of(context).push<(int, Duration)>(
+                MaterialPageRoute<(int, Duration)>(
                   builder: (_) => ListenModePage(
                     seriesTitle: '测试剧',
                     coverUrl: 'https://cdn.example/cover.jpg',

@@ -873,12 +873,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       final durationSeconds = player.duration > Duration.zero
           ? player.duration.inMilliseconds / 1000
           : savedDuration;
-      final requestedMs = savedPosition * 1000;
-      if (savedIndex == index &&
+      // 听书回传的锚点优先于历史存档（更「新」）；只消费一次，非本集
+      // （load 被抢先换到别的集）则丢弃。
+      final pendingResume = _listenResume;
+      _listenResume = null;
+      final listenResumeMs =
+          pendingResume != null && pendingResume.$1 == index
+          ? pendingResume.$2.inMilliseconds.toDouble()
+          : -1.0;
+      final requestedMs =
+          listenResumeMs >= 0 ? listenResumeMs : savedPosition * 1000;
+      final resumeSeconds = requestedMs / 1000;
+      if ((listenResumeMs >= 0 || savedIndex == index) &&
           requestedMs.isFinite &&
           requestedMs > 0 &&
           requestedMs < 0x7fffffffffffffff &&
-          (durationSeconds <= 0 || savedPosition < durationSeconds)) {
+          (durationSeconds <= 0 || resumeSeconds < durationSeconds)) {
         // Completed/out-of-range entries restart instead of immediately
         // reaching the end again. Unknown duration must not erase a valid seek.
         final targetMs = requestedMs.round();
@@ -948,6 +958,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// cross-launch preference exists there, so none is stored here either.
   EpisodeSource? _currentSource;
   final Map<String, EpisodeVariant> _chosen = {};
+
+  /// 听书页回传的续看锚点 (集号, 进度)：[_openListenMode] 在自动连播跨集
+  /// 时设置，只对匹配集的下一次 [_loadVideo] 生效一次——此时本地历史
+  /// 存档还停在原集，听书进度比它新。
+  (int, Duration)? _listenResume;
 
   /// Switches the playing episode to [variant]: reopen the crypto stream on
   /// the new rendition, keep the playback position and rate, and report the
@@ -1233,15 +1248,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// 听视频（官方 `jm3.d0.y()` 的听书模式页语义）：视频页暂停，推入独立
-  /// 听书页；关闭时把最终进度 seek 回视频页并恢复播放（官方的
+  /// 听书页；关闭时把「听到哪一集 + 进度」写回视频页续看（官方的
   /// `sync_progress_strategy_listen_mode` 进度同步的本地等价）。
   Future<void> _openListenMode() async {
     final player = _player;
     final wasPlaying = _playing;
     if (player != null) await player.pause();
     if (!mounted) return;
-    final position = await Navigator.of(context).push<Duration>(
-      MaterialPageRoute<Duration>(
+    final result = await Navigator.of(context).push<(int, Duration)>(
+      MaterialPageRoute<(int, Duration)>(
         builder: (_) => ListenModePage(
           seriesTitle: _seriesTitle,
           coverUrl: widget.cover,
@@ -1255,7 +1270,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ),
     );
     if (!mounted || player == null) return;
-    if (position != null && position > Duration.zero) {
+    final (listenIndex, position) = result ?? (_index, Duration.zero);
+    final targetIndex =
+        listenIndex >= 0 && listenIndex < widget.eps.length ? listenIndex : _index;
+    if (targetIndex != _index) {
+      // 听书页自动连播跨了集：切到那一集，进度由 _loadVideo 消费
+      // [_listenResume] 恢复；起播交给切集链路自己的自动播放。
+      if (position > Duration.zero) _listenResume = (targetIndex, position);
+      await _selectEpisode(targetIndex);
+      return;
+    }
+    if (position > Duration.zero) {
       await player.seek(position);
     }
     if (wasPlaying) await player.play();
