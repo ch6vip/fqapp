@@ -5,12 +5,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/widgets/player/playlet_comment_panel.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/fakes.dart';
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    // 面板交互用例钉住深色分支（play_control_panel_style_v681.style=1）。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+      morePanelStyle: 1,
+    );
+  });
+  tearDown(() => PlayerStyleConfig.instance = PlayerStyleConfig.defaults);
 
   testWidgets('anonymous comments expose no unavailable editor', (
     tester,

@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/player/playlet_danmaku_layer.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
@@ -11,7 +12,12 @@ import 'support/fakes.dart';
 
 /// 无账号模式保留弹幕开关与渲染，不显示发送入口。
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    // 弹幕开关行用例走深色 V2 面板（player-more-danmaku-*）；浅色分支
+    // （style 未下发，发布默认）另有用例覆盖，这里钉 style=1 保持原对象。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(morePanelStyle: 1);
+  });
 
   Widget app({
     bool danmakuEnabled = true,

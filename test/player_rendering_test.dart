@@ -23,8 +23,10 @@ void main() {
     SharedPreferences.setMockInitialValues({'is_fill_screen': false});
     // 生产 config.json 发新底栏（use_new_player_bottom_style=true）；测试
     // 默认值是旧栏，而旧栏在 o.W7() 下进页即清屏，会压掉本套要验的控件。
+    // 面板用例验深色 V2（撑满/静音行），钉 style=1；浅色分支另有覆盖。
     PlayerStyleConfig.instance = const PlayerStyleConfig(
       useNewPlayerBottomStyle: true,
+      morePanelStyle: 1,
     );
     PlayerPanelPreferences.setDefaultMute(true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -101,6 +103,7 @@ void main() {
       final originalStyle = PlayerStyleConfig.instance;
       PlayerStyleConfig.instance = const PlayerStyleConfig(
         useNewPlayerBottomStyle: true,
+        morePanelStyle: 1,
       );
       addTearDown(() => PlayerStyleConfig.instance = originalStyle);
       final player = await _mount(tester, shortSeries: true);

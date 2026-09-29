@@ -615,27 +615,34 @@ void main() {
     await _flush(tester);
 
     // 中带（官方 jq3/x.K6：竖屏 50% 居中）长按 = y7() → 更多面板。
-    // tester.longPress 默认按控件中心，正好在带内。
+    // tester.longPress 默认按控件中心，正好在带内。发布配置不下发
+    // play_control_panel_style_v681.style → 浅色分支（用户设备同款）。
     await tester.longPress(find.byKey(const Key('drama_card_gestures')));
     await tester.pump(const Duration(milliseconds: 300));
     await _flush(tester);
-    expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('player-more-light-panel')),
+      findsOneWidget,
+    );
     expect(find.text('倍速'), findsOneWidget);
     // feed 不支持清屏/弹幕/清晰度，面板不留死入口。
     expect(find.text('清屏播放'), findsNothing);
     expect(find.text('弹幕'), findsNothing);
+    // 浅色支没有取消行（官方 aae 布局同款）。
+    expect(find.text('取消'), findsNothing);
 
-    // 选 1.25x：面板回传后 feed 播放器立即生效，并写入全局速率配置
-    // （官方 jm3 倍速行写全局配置，全页播放页读同一份）。选档动画 300ms
-    // 完成后 pop；退场反向动画要跨帧推进才能把路由真正摘掉，中间的
-    // _flush 让路由状态回调在事件循环里落地。
-    await tester.tap(find.byKey(const ValueKey('player-more-rate-1.25')));
+    // 选 1.25x：药丸点击立即回传（官方 jj3/i.e 语义），feed 播放器生效并
+    // 写入全局速率配置（全页播放页读同一份）。面板退场动画跨帧推进。
+    await tester.tap(find.byKey(const ValueKey('player-more-light-rate-1.25')));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 300));
     await _flush(tester);
     await tester.pump(const Duration(milliseconds: 600));
     await _flush(tester);
-    expect(find.byKey(const ValueKey('player-more-panel')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('player-more-light-panel')),
+      findsNothing,
+    );
     expect(session.players.single.calls, contains('rate:1.25'));
     expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
     // 面板选速不是快进：速率≠1 也不出现「2倍速快进中」。

@@ -13,12 +13,15 @@ import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
+import '../services/player_style_config.dart';
 import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
 import 'player/playlet_danmaku_settings.dart';
 import 'player/story_player_panel.dart';
 import 'player/playlet_hot_comment_bar.dart';
 import 'player/playlet_more_panel.dart';
+import 'player/playlet_more_panel_light.dart';
+import 'player/quality_icon.dart';
 import 'player/player_cover.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_seek_bar.dart';
@@ -921,19 +924,23 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (mounted) setState(() => _modalOpen = false);
   }
 
-  /// 短剧采用官方 V2 新样式（style=1、enable=true）：深色底、12dp 圆角、
-  /// 200ms 底部进出场。普通播放器继续使用通用面板。
+  /// 更多面板样式分支：官方 `play_control_panel_style_v681.style` 未下发
+  /// 或为 0 时是浅色面板（`#FAFAFA`、药丸选项、无取消行），下发 1/2 才是
+  /// 深色 V2（`Q0()` 染 `#FF1C1C1C`）。两支共用弹层门控与速率持久化。
+  /// Note: 深/浅两支并存的配置门与死行取舍 — 见
+  /// .agents/notes/implemented/feature/2026-09-29-more-panel-light-branch.md
   Future<void> _showRates() async {
     if (_overlayOpen || _panelOpen || _locked) return;
     _endBoost();
     _cancelSeek();
     _doubleTapGuard?.cancel();
     _hideTimer?.cancel();
+    final dark = PlayerStyleConfig.instance.morePanelDarkStyle;
     setState(() => _modalOpen = true);
     var sheetDanmaku = widget.danmakuEnabled;
     var sheetMute = widget.defaultMute;
     var sheetFill = widget.fillScreen;
-    final selected = await showModalBottomSheet<double>(
+    final selected = await showModalBottomSheet<Object>(
       context: context,
       useSafeArea: true,
       isScrollControlled: widget.shortSeries,
@@ -949,42 +956,58 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           : null,
       barrierColor: widget.shortSeries ? Colors.transparent : null,
       backgroundColor: widget.shortSeries
-          ? const Color(0xFF1C1C1C)
+          ? (dark ? const Color(0xFF1C1C1C) : const Color(0xFFFAFAFA))
           : const Color(0xFFFAFAFA),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
-          top: Radius.circular(widget.shortSeries ? 12 : 16),
+          // aae.xml 的 ak1：浅色支 16dp 顶圆角；深色支沿用已核对的 12dp。
+          top: Radius.circular(widget.shortSeries ? (dark ? 12 : 16) : 16),
         ),
       ),
-      builder: (context) => widget.shortSeries
-          ? PlayletMorePanel(
-              rate: _rate,
-              fillScreen: widget.fillScreen,
-              onFillScreenChanged: widget.onFillScreenChanged,
-              defaultMute: widget.defaultMute,
-              onDefaultMuteChanged: widget.onDefaultMuteChanged,
-              danmakuEnabled: widget.danmakuEnabled,
-              onToggleDanmaku: widget.onToggleDanmaku,
-              // 清屏态面板出口：官方清屏后的倍速文字仍打开面板，
-              // 面板内「退出清屏」行回画面（jm3.a 的 p0(!zB0)）。
-              // 行随 jm3.a 的门（只看 reverse），不随底栏样式——旧底栏
-              // 手机分支栏内无入口，这条是官方给的全部出口。
-              clearScreen: _clearScreen,
-              onToggleClearScreen: _clearScreenPanelAvailable
-                  ? () => _setClearScreen(!_clearScreen)
-                  : null,
-              // 官方 jm3.e：弹幕设置入口在弹幕开关之后。
-              onOpenDanmakuSettings: widget.onDanmakuSettingsChanged != null
-                  ? () {
-                      _pendingDanmakuSettings = true;
-                      Navigator.pop(context);
-                    }
-                  : null,
-              qualityVariants: widget.qualityVariants,
-              currentQualityUrl: widget.currentQualityUrl,
-              onQualitySelected: widget.onQualitySelected,
-            )
-          : StatefulBuilder(
+      builder: (context) {
+        if (widget.shortSeries && !dark) {
+          return PlayletMorePanelLight(
+            rate: _rate,
+            qualityVariants: widget.qualityVariants,
+            currentQualityUrl: widget.currentQualityUrl,
+            onQualitySelected: widget.onQualitySelected,
+            clearScreen: _clearScreen,
+            onToggleClearScreen: _clearScreenPanelAvailable
+                ? () => _setClearScreen(!_clearScreen)
+                : null,
+            danmakuEnabled: widget.danmakuEnabled,
+            onToggleDanmaku: widget.onToggleDanmaku,
+          );
+        }
+        return widget.shortSeries
+            ? PlayletMorePanel(
+                rate: _rate,
+                fillScreen: widget.fillScreen,
+                onFillScreenChanged: widget.onFillScreenChanged,
+                defaultMute: widget.defaultMute,
+                onDefaultMuteChanged: widget.onDefaultMuteChanged,
+                danmakuEnabled: widget.danmakuEnabled,
+                onToggleDanmaku: widget.onToggleDanmaku,
+                // 清屏态面板出口：官方清屏后的倍速文字仍打开面板，
+                // 面板内「退出清屏」行回画面（jm3.a 的 p0(!zB0)）。
+                // 行随 jm3.a 的门（只看 reverse），不随底栏样式——旧底栏
+                // 手机分支栏内无入口，这条是官方给的全部出口。
+                clearScreen: _clearScreen,
+                onToggleClearScreen: _clearScreenPanelAvailable
+                    ? () => _setClearScreen(!_clearScreen)
+                    : null,
+                // 官方 jm3.e：弹幕设置入口在弹幕开关之后。
+                onOpenDanmakuSettings: widget.onDanmakuSettingsChanged != null
+                    ? () {
+                        _pendingDanmakuSettings = true;
+                        Navigator.pop(context);
+                      }
+                    : null,
+                qualityVariants: widget.qualityVariants,
+                currentQualityUrl: widget.currentQualityUrl,
+                onQualitySelected: widget.onQualitySelected,
+              )
+            : StatefulBuilder(
               builder: (context, setSheetState) => SafeArea(
                 top: false,
                 // 面板会随大字体变高；矮窗口下必须可滚，否则 RenderFlex 溢出
@@ -1092,19 +1115,24 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   ),
                 ),
               ),
-            ),
+            );
+      }
     );
     if (!mounted) return;
     setState(() => _modalOpen = false);
-    if (selected != null) {
+    // 浅色支回传 EpisodeVariant（清晰度），深色支回传 double（倍速）。
+    if (selected is EpisodeVariant) {
+      widget.onQualitySelected?.call(selected);
+    } else if (selected is double) {
+      final rate = selected;
       final generation = ++_rateGeneration;
-      setState(() => _rate = selected);
+      setState(() => _rate = rate);
       try {
         // Persist in selection order. A slow reply to an older native rate
         // change must not save that value after the user's newer selection.
         await Future.wait<void>([
-          PlayerPreferences.savePlaybackRate(selected),
-          _control((player) => player.setRate(selected)),
+          PlayerPreferences.savePlaybackRate(rate),
+          _control((player) => player.setRate(rate)),
         ]);
       } catch (_) {
         if (mounted && generation == _rateGeneration) {
@@ -2181,7 +2209,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             const SizedBox(
               width: 28,
               height: 28,
-              child: CustomPaint(painter: _LegacyQualityPainter()),
+              child: CustomPaint(painter: QualityIconPainter()),
             ),
             _showRates,
           ),
@@ -2936,86 +2964,6 @@ class _LegacyRatePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_LegacyRatePainter oldDelegate) => false;
-}
-
-/// 官方旧栏 drawable/b2s.xml 的 28dp 清晰度图标：圆角框 + 「HD」字形。
-/// 路径坐标与官方 vector 逐点一致（`b2s.xml`，viewport 28×28）。
-class _LegacyQualityPainter extends CustomPainter {
-  const _LegacyQualityPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.scale(size.width / 28, size.height / 28);
-    final stroke = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.6
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    // 圆角外框：x 3.747..24.253，y 5.958..22.042，圆角 2.7。
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTRB(3.747, 5.958, 24.253, 22.042),
-        const Radius.circular(2.7),
-      ),
-      stroke,
-    );
-    // 「H」两横一竖由一条横线加两条竖线组成。
-    canvas.drawLine(const Offset(8.393, 13.918), const Offset(12.617, 13.918), stroke);
-    stroke.strokeCap = StrokeCap.butt;
-    canvas.drawLine(const Offset(8.484, 11.193), const Offset(8.484, 16.959), stroke);
-    canvas.drawLine(const Offset(12.783, 11.193), const Offset(12.783, 16.959), stroke);
-    // 「D」字形是官方 pathData 的五段填充（上下衬线、外碗、内碗、竖笔），
-    // 坐标原样搬运； winding 方向官方即 nonzero。
-    final fill = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.fill;
-    final d = Path()
-      ..moveTo(15.721, 16.809)
-      ..lineTo(14.921, 16.809)
-      ..cubicTo(14.921, 17.212, 15.221, 17.552, 15.622, 17.602)
-      ..lineTo(15.721, 16.809)
-      ..close()
-      ..moveTo(15.721, 11.178)
-      ..lineTo(15.622, 10.384)
-      ..cubicTo(15.221, 10.434, 14.921, 10.774, 14.921, 11.178)
-      ..lineTo(15.721, 11.178)
-      ..close()
-      ..moveTo(19.944, 13.993)
-      ..lineTo(19.144, 13.993)
-      ..cubicTo(19.144, 14.528, 18.902, 15.087, 18.393, 15.487)
-      ..cubicTo(17.889, 15.883, 17.06, 16.17, 15.82, 16.015)
-      ..lineTo(15.721, 16.809)
-      ..lineTo(15.622, 17.602)
-      ..cubicTo(17.197, 17.799, 18.479, 17.455, 19.382, 16.745)
-      ..cubicTo(20.281, 16.038, 20.744, 15.013, 20.744, 13.993)
-      ..lineTo(19.944, 13.993)
-      ..close()
-      ..moveTo(15.721, 11.178)
-      ..lineTo(15.82, 11.972)
-      ..cubicTo(17.06, 11.817, 17.889, 12.103, 18.393, 12.499)
-      ..cubicTo(18.902, 12.899, 19.144, 13.458, 19.144, 13.993)
-      ..lineTo(19.944, 13.993)
-      ..lineTo(20.744, 13.993)
-      ..cubicTo(20.744, 12.973, 20.281, 11.948, 19.382, 11.241)
-      ..cubicTo(18.479, 10.531, 17.197, 10.187, 15.622, 10.384)
-      ..lineTo(15.721, 11.178)
-      ..close()
-      ..moveTo(15.721, 11.178)
-      ..lineTo(14.921, 11.178)
-      ..lineTo(14.921, 16.809)
-      ..lineTo(15.721, 16.809)
-      ..lineTo(16.521, 16.809)
-      ..lineTo(16.521, 11.178)
-      ..lineTo(15.721, 11.178)
-      ..close();
-    canvas.drawPath(d, fill);
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_LegacyQualityPainter oldDelegate) => false;
 }
 
 enum _PortraitSlot { information, fullscreen, comments }

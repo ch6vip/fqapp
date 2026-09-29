@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/player_page.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/controlled_player.dart';
@@ -19,6 +20,12 @@ import 'support/fakes.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // 面板交互用例钉住深色分支（play_control_panel_style_v681.style=1）：
+    // 药丸拖选/取消行是深色面板独有的交互，浅色分支另有用例覆盖。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+      morePanelStyle: 1,
+    );
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('fqapp/native_player'),
@@ -27,6 +34,7 @@ void main() {
   });
 
   tearDown(() {
+    PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('fqapp/native_player'),

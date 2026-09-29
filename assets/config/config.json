@@ -1,22 +1,23 @@
 {
-    "algorithm_type": "8404",
-    "port": 8080,
-    "anti_crawler": {
-        "enabled": false,
-        "redirect_url": "https://www.example.com"
-    },
-    "player_bottom_style_config": {
-        "use_new_player_bottom_style": true,
-        "has_banner": false
-    },
-    "func_reverse_of_clear_screen_v691": {
-        "reverse": false
-    },
-    "landscape_func_config_v705": {
-        "enable_lock": true
-    },
-    "video_landscape_style_609": {
-        "enable": true
-    },
-    "pad_new_player_bottom_style": false
+  "algorithm_type": "8404",
+  "port": 8080,
+  "anti_crawler": {
+    "enabled": false,
+    "redirect_url": "https://www.example.com"
+  },
+  "player_bottom_style_config": {
+    "use_new_player_bottom_style": true,
+    "has_banner": false
+  },
+  "func_reverse_of_clear_screen_v691": {
+    "reverse": false
+  },
+  "landscape_func_config_v705": {
+    "enable_lock": true
+  },
+  "video_landscape_style_609": {
+    "enable": true
+  },
+  "pad_new_player_bottom_style": false,
+  "play_control_panel_style_v681": {}
 }

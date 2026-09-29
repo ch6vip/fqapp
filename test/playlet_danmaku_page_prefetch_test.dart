@@ -59,8 +59,10 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     // 生产 config.json 发新底栏（use_new_player_bottom_style=true）；测试
     // 默认值是旧栏，而旧栏在 o.W7() 下进页即清屏，会压掉弹幕入口。
+    // 弹幕开关用例走深色 V2 面板的开关行，钉 style=1；浅色分支另有覆盖。
     PlayerStyleConfig.instance = const PlayerStyleConfig(
       useNewPlayerBottomStyle: true,
+      morePanelStyle: 1,
     );
     // 没有这个 handler，setKeepScreenOn 会留一个 10s 的超时定时器，
     // 触发测试框架的 !timersPending 检查（player_page_test 同款）。

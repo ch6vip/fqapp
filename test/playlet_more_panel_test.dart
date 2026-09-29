@@ -22,7 +22,9 @@ import 'support/fakes.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
+    // 本套用例验的是深色 V2 面板（撑满/静音行、取消行、药丸拖选）；浅色
+    // 分支（style 未下发，发布默认）另有用例覆盖。钉 style=1 走深色支。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(morePanelStyle: 1);
     PlayerPanelPreferences.setDefaultMute(true);
   });
 

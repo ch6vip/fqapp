@@ -14,8 +14,11 @@ import 'package:flutter/services.dart';
 /// - `func_reverse_of_clear_screen_v691.reverse`（默认 false）
 /// - `landscape_func_config_v705.enable_lock`（默认 false）
 /// - `pad_new_player_bottom_style`（官方 `PadFitPhaseTwo.newBottomStyle`）
+/// - `play_control_panel_style_v681.style`（默认不下发 = 浅色更多面板；
+///   官方 `MorePanelV681.d()`：style 为 null 或 0 → 浅色，1/2 → 深色）
 ///
-/// 证据见 .agents/notes/proposed/architecture/2026-09-25-f01-f03-official-evidence.md。
+/// 证据见 .agents/notes/proposed/architecture/2026-09-25-f01-f03-official-evidence.md
+/// 与 2026-09-29-more-panel-light-branch-evidence.md。
 class PlayerStyleConfig {
   const PlayerStyleConfig({
     this.useNewPlayerBottomStyle = false,
@@ -25,6 +28,7 @@ class PlayerStyleConfig {
     this.landscapeLockEnabled = false,
     this.defaultVideoSizeAspectFit = false,
     this.relateBookInEpisodesDialog = false,
+    this.morePanelStyle,
   });
 
   /// 无配置时的形态：**旧底栏**、无横幅、无清屏反转、无横屏锁——
@@ -57,14 +61,26 @@ class PlayerStyleConfig {
   /// 官方默认关，所以本地也默认关——不会在官方未显示的配置下强制添加。
   final bool relateBookInEpisodesDialog;
 
+  /// 官方 `play_control_panel_style_v681.style`：更多面板样式分支。null
+  /// （未下发）与 0 都是浅色面板（`aae.xml` 的 `#FAFAFA` 底），1/2 才是
+  /// 被 `Q0()` 染成 `#FF1C1C1C` 的深色分支。发布的 config.json 不下发
+  /// style——与用户设备命中浅色分支一致。
+  /// Note: 两支并存的门与取舍 — 见
+  /// .agents/notes/implemented/feature/2026-09-29-more-panel-light-branch.md
+  final int? morePanelStyle;
+
   /// 官方 `PlayerBottomStyleConfig.a()`：两个字段任一为真即走新底栏。
   bool get newBottomStyle => useNewPlayerBottomStyle || hasBanner;
+
+  /// 官方 `MorePanelV681.d()`：style 下发且非 0 时走深色更多面板。
+  bool get morePanelDarkStyle => morePanelStyle != null && morePanelStyle != 0;
 
   static PlayerStyleConfig fromJson(Map<String, dynamic> json) {
     final bottom = json['player_bottom_style_config'];
     final reverse = json['func_reverse_of_clear_screen_v691'];
     final landscape = json['landscape_func_config_v705'];
     final fill = json['short_video_setting_opt_v679'];
+    final panel = json['play_control_panel_style_v681'];
     return PlayerStyleConfig(
       useNewPlayerBottomStyle: _bool(bottom, 'use_new_player_bottom_style'),
       hasBanner: _bool(bottom, 'has_banner'),
@@ -76,6 +92,7 @@ class PlayerStyleConfig {
         json['series_relate_book_config_v659'],
         'relate_book_in_episodes_dialog',
       ),
+      morePanelStyle: _int(panel, 'style'),
     );
   }
 
@@ -109,5 +126,11 @@ class PlayerStyleConfig {
   static bool _bool(dynamic section, String key) {
     if (section is! Map) return false;
     return section[key] == true;
+  }
+
+  static int? _int(dynamic section, String key) {
+    if (section is! Map) return null;
+    final value = section[key];
+    return value is int ? value : null;
   }
 }

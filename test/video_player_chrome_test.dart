@@ -7,7 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
+import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/player_preferences.dart';
+import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/player/story_seek_bar.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
@@ -15,9 +17,16 @@ import 'support/fakes.dart';
 import 'support/controlled_player.dart';
 
 void main() {
-  setUp(
-    () => SharedPreferences.setMockInitialValues({'player_playback_rate': 1.5}),
-  );
+  setUp(() {
+    SharedPreferences.setMockInitialValues({'player_playback_rate': 1.5});
+    // 本文件的面板用例钉住深色分支（style=1）：药丸拖选/取消行/开关行是
+    // 深色面板的交互；浅色分支（发布的默认）另有用例覆盖。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+      morePanelStyle: 1,
+    );
+  });
+  tearDown(() => PlayerStyleConfig.instance = PlayerStyleConfig.defaults);
 
   testWidgets('paused scrubbing stays paused, seek clamps and speed is saved', (
     tester,
@@ -207,6 +216,194 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('landscape-next')));
     await tester.pump();
     expect(selected, [1]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('旧底栏项序「清晰度 / 倍速」，多档流在场才显示清晰度', (tester) async {
+    // bom.xml：`b2s`+`dqa`(清晰度) 在 `b2t`+`eby`(倍速) 之前；门同面板
+    // `oi3/k.P()`（无多档不显示）。
+    final player = FakeNativePlayer()..isPlaying = true;
+    const variants = [
+      EpisodeVariant(name: '1080P', url: 'u1080', keyHex: 'k', height: 1080),
+      EpisodeVariant(name: '720P', url: 'u720', keyHex: 'k', height: 720),
+    ];
+    await tester.pumpWidget(
+      _app(
+        player,
+        shortSeries: true,
+        newPlayerBottomStyle: false,
+        qualityVariants: variants,
+        currentQualityUrl: 'u720',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-quality-text')), findsOneWidget);
+    expect(find.text('720P'), findsOneWidget);
+    final quality = tester.getRect(
+      find.byKey(const ValueKey('player-quality-text')),
+    );
+    final rate = tester.getRect(find.byKey(const ValueKey('player-rate-text')));
+    expect(quality.right, lessThanOrEqualTo(rate.left));
+    // 单流：整行不出现，不冒充官方恒显的分辨率名。
+    await tester.pumpWidget(
+      _app(player, shortSeries: true, newPlayerBottomStyle: false),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-quality-text')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('横屏功能行清晰度入口亮当前档名', (tester) async {
+    const variants = [
+      EpisodeVariant(name: '1080P', url: 'u1080', keyHex: 'k', height: 1080),
+      EpisodeVariant(name: '720P', url: 'u720', keyHex: 'k', height: 720),
+    ];
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(
+      _app(
+        player,
+        shortSeries: true,
+        qualityVariants: variants,
+        currentQualityUrl: 'u720',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('landscape-quality')), findsOneWidget);
+    expect(find.text('720P'), findsOneWidget);
+    final quality = tester.getRect(
+      find.byKey(const ValueKey('landscape-quality')),
+    );
+    final rate = tester.getRect(find.byKey(const ValueKey('landscape-rate')));
+    expect(quality.right, lessThanOrEqualTo(rate.left));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('旧底栏进页自动清屏（o.W7），出口在面板行', (tester) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(
+      _app(
+        player,
+        shortSeries: true,
+        newPlayerBottomStyle: false,
+        onComments: () {},
+        hotComments: const [PlayletComment(id: 'hot', text: '热评一条')],
+      ),
+    );
+    await tester.pumpAndSettle();
+    // W7 → T7(true)：清屏态压掉控制行与热评行。
+    expect(find.byKey(const ValueKey('player-comment-button')), findsNothing);
+    expect(find.text('热评'), findsNothing);
+    // 面板行是官方给的全部出口（jm3.a 与底栏样式无关）：清屏后倍速文本
+    // 仍在（showTextActions 的 _clearScreen 分支），打开见「退出清屏」。
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-more-clear-row')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('player-more-clear-row')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-comment-button')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('旧底栏 reverse 配置下不自动清屏', (tester) async {
+    // FuncReverseOfClearScreen.reverse = true（O1() 为假）→ W7 第一道门挡下。
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(
+      _app(
+        player,
+        shortSeries: true,
+        newPlayerBottomStyle: false,
+        reverseClearScreen: true,
+        onComments: () {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-comment-button')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('浅色更多面板（style 未下发）：药丸行在场，死行不出现', (tester) async {
+    // 文件级 setUp 钉的是深色分支（style=1）；这里覆盖为发布配置的真实形态
+    // （play_control_panel_style_v681 不下发 style）走浅色支。旧底栏 W7
+    // 自动清屏给出倍速文字出口（同上面 W7 用例的链路）。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+    );
+    addTearDown(() => PlayerStyleConfig.instance = PlayerStyleConfig.defaults);
+    final player = FakeNativePlayer()..isPlaying = true;
+    final qualitySelections = <EpisodeVariant>[];
+    const variants = [
+      EpisodeVariant(name: '1080P', url: 'u1080', keyHex: 'k', height: 1080),
+      EpisodeVariant(name: '720P', url: 'u720', keyHex: 'k', height: 720),
+    ];
+    await tester.pumpWidget(
+      _app(
+        player,
+        shortSeries: true,
+        newPlayerBottomStyle: false,
+        qualityVariants: variants,
+        currentQualityUrl: 'u720',
+        qualitySelections: qualitySelections,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('player-more-light-panel')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('player-more-light-rate-row')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('player-more-light-quality-row')),
+      findsOneWidget,
+    );
+    // 「720P」限定在面板内断言：旧底栏的清晰度文字入口同款文案在场。
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-more-light-panel')),
+        matching: find.text('720P'),
+      ),
+      findsOneWidget,
+    );
+    // 追样式不追死行：官方浅色分支的 投屏/离线缓存/听视频/举报/不感兴趣
+    // 在本客户端无后端链路（不留死入口）；取消/画面撑满/默认静音是深色
+    // V2 布局的内容，浅色布局（aae）里没有。
+    expect(find.text('取消'), findsNothing);
+    expect(find.byKey(const ValueKey('player-more-fill-row')), findsNothing);
+    expect(find.byKey(const ValueKey('player-more-mute-row')), findsNothing);
+    expect(find.text('投屏'), findsNothing);
+    expect(find.text('离线缓存'), findsNothing);
+    expect(find.text('听视频'), findsNothing);
+    expect(find.text('举报'), findsNothing);
+    // 清晰度药丸点击立即回传 EpisodeVariant（浅色支独有的回传通道）。
+    await tester.tap(find.byKey(const ValueKey('player-more-light-quality-0')));
+    await tester.pumpAndSettle();
+    expect(qualitySelections.map((v) => v.url), ['u1080']);
+    expect(
+      find.byKey(const ValueKey('player-more-light-panel')),
+      findsNothing,
+    );
+    // 倍速药丸走原速率持久化链路（与深色支同一条收尾）。
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-more-light-rate-1.25')));
+    await tester.pumpAndSettle();
+    expect(player.calls, contains('rate:1.25'));
+    expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
+    expect(
+      find.byKey(const ValueKey('player-more-light-panel')),
+      findsNothing,
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });
@@ -857,6 +1054,9 @@ Widget _app(
   bool padNewBottomStyle = false,
   bool reverseClearScreen = false,
   bool landscapeLockEnabled = false,
+  List<EpisodeVariant> qualityVariants = const [],
+  String? currentQualityUrl,
+  List<EpisodeVariant>? qualitySelections,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(
@@ -894,6 +1094,9 @@ Widget _app(
       padNewBottomStyle: padNewBottomStyle,
       reverseClearScreen: reverseClearScreen,
       landscapeLockEnabled: landscapeLockEnabled,
+      qualityVariants: qualityVariants,
+      currentQualityUrl: currentQualityUrl,
+      onQualitySelected: qualitySelections?.add,
       child: const ColoredBox(color: Colors.black),
     ),
   ),

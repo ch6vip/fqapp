@@ -17,6 +17,7 @@ import '../services/inline_video_playback.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
 import '../services/player_history.dart';
+import '../services/player_style_config.dart';
 import '../services/shelf_store.dart';
 import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
@@ -25,6 +26,7 @@ import '../widgets/home/home_media_card.dart';
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_hot_comment_bar.dart';
 import '../widgets/player/playlet_more_panel.dart';
+import '../widgets/player/playlet_more_panel_light.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'detail_page.dart';
 import 'home_provider.dart';
@@ -671,9 +673,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// 长按中带打开的更多面板。官方链路：`jq3/x` 的 onLongPress 命中 K6 中带
   /// 且 `y7()` 成功 → `br3.y` 路由 → 与全页播放页同一个 `oi3/k` 面板构建器
-  /// （from = `show_more_panel_from_long_click`）。所以这里复用全页的 V2
-  /// 面板组件，只接 feed 实际支持的行：倍速（全局速率配置）与会话静音；
-  /// 清晰度/清屏/弹幕等 feed 没有的行由组件按回调判空隐藏，不留死入口。
+  /// （from = `show_more_panel_from_long_click`）。样式跟随
+  /// `play_control_panel_style_v681`：浅色支（`#FAFAFA`、药丸、无取消行）
+  /// 与深色 V2 同源，feed 只接实际支持的行（倍速）；清晰度/清屏/弹幕等
+  /// feed 没有的行由组件按回调判空隐藏，不留死入口。
   ///
   /// 官方的面板是 dialog（`DialogType.MORE_PANEL`），不暂停播放器——视频在
   /// 面板后面继续播，这里同样只置 `_modalOpen` 挡手势，不走会销毁播放器的
@@ -682,31 +685,39 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // 全页播放器正在接管（_openPlayer 已销毁 inline 播放器）时不开面板。
     if (_feedPanelOpen || _openingId != null) return;
     _feedPanelOpen = true;
+    final dark = PlayerStyleConfig.instance.morePanelDarkStyle;
     try {
-      final selected = await showModalBottomSheet<double>(
+      final selected = await showModalBottomSheet<Object>(
         context: context,
         useSafeArea: true,
         isScrollControlled: true,
-        // 样式与全页播放页的短剧面板一致（V2 style=1，参考版深色皮肤）。
-        backgroundColor: const Color(0xFF1C1C1C),
+        backgroundColor: dark
+            ? const Color(0xFF1C1C1C)
+            : const Color(0xFFFAFAFA),
         barrierColor: Colors.transparent,
         sheetAnimationStyle: const AnimationStyle(
           duration: Duration(milliseconds: 200),
           reverseDuration: Duration(milliseconds: 200),
         ),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(dark ? 12 : 16)),
         ),
-        builder: (context) => PlayletMorePanel(
-          rate: _inline.rate.value,
-          // feed 没有画面撑满/弹幕，行随回调缺省隐藏。
-          fillScreen: false,
-          defaultMute: _inline.muted.value,
-          onDefaultMuteChanged: (_) => unawaited(_inline.toggleMute()),
-          danmakuEnabled: false,
-        ),
+        builder: (context) {
+          if (!dark) {
+            // 浅色支：feed 只有倍速可操作（无多档流、无清屏/弹幕）。
+            return PlayletMorePanelLight(rate: _inline.rate.value);
+          }
+          return PlayletMorePanel(
+            rate: _inline.rate.value,
+            // feed 没有画面撑满/弹幕，行随回调缺省隐藏。
+            fillScreen: false,
+            defaultMute: _inline.muted.value,
+            onDefaultMuteChanged: (_) => unawaited(_inline.toggleMute()),
+            danmakuEnabled: false,
+          );
+        },
       );
-      if (selected != null) unawaited(_inline.selectRate(selected));
+      if (selected is double) unawaited(_inline.selectRate(selected));
     } finally {
       _feedPanelOpen = false;
       if (mounted) setState(() {});
