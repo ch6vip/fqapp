@@ -69,6 +69,10 @@ object CryptoNative {
  */
 @Keep
 object HttpBridge {
+    // One id space for both bridges: the native side treats stream ids as
+    // opaque jlongs, but they must never collide across the two maps.
+    private val streamIds = AtomicLong(1L)
+
     private val bridge = HttpRangeClient(okhttp3.OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -78,39 +82,190 @@ object HttpBridge {
         // defaults to ProxySelector.getDefault(), which picks up a per-network
         // proxy and breaks playback when that proxy is unreachable.
         .proxy(Proxy.NO_PROXY)
-        .build())
+        .build(),
+        nextId = streamIds)
+
+    private val fileBridge = OfflineFileBridge(streamIds)
 
     @JvmStatic
     fun httpRange(url: String, start: Long, end: Long): ByteArray? =
-        bridge.httpRange(url, start, end)
+        if (url.startsWith("file://")) fileBridge.httpRange(url, start, end)
+        else bridge.httpRange(url, start, end)
 
     @JvmStatic
-    fun httpSize(url: String): Long = bridge.httpSize(url)
+    fun httpSize(url: String): Long =
+        if (url.startsWith("file://")) fileBridge.httpSize(url)
+        else bridge.httpSize(url)
 
     @JvmStatic
     fun streamPrepare(url: String, start: Long, expectedSize: Long): Long =
-        bridge.streamPrepare(url, start, expectedSize)
+        if (url.startsWith("file://")) fileBridge.streamPrepare(url, start, expectedSize)
+        else bridge.streamPrepare(url, start, expectedSize)
 
     @JvmStatic
-    fun streamConnect(id: Long): Boolean = bridge.streamConnect(id)
+    fun streamConnect(id: Long): Boolean =
+        if (fileBridge.owns(id)) fileBridge.streamConnect(id) else bridge.streamConnect(id)
 
     @JvmStatic
-    fun streamOpen(url: String, start: Long): Long = bridge.streamOpen(url, start)
+    fun streamOpen(url: String, start: Long): Long =
+        if (url.startsWith("file://")) fileBridge.streamOpen(url, start)
+        else bridge.streamOpen(url, start)
 
     @JvmStatic
-    fun streamRead(id: Long, buf: ByteArray): Int = bridge.streamRead(id, buf)
+    fun streamRead(id: Long, buf: ByteArray): Int = streamRead(id, buf, buf.size)
 
     @JvmStatic
-    fun streamRead(id: Long, buf: ByteArray, length: Int): Int = bridge.streamRead(id, buf, length)
+    fun streamRead(id: Long, buf: ByteArray, length: Int): Int =
+        if (fileBridge.owns(id)) fileBridge.streamRead(id, buf, length)
+        else bridge.streamRead(id, buf, length)
 
     @JvmStatic
-    fun streamClose(id: Long) = bridge.streamClose(id)
+    fun streamClose(id: Long) {
+        if (fileBridge.owns(id)) fileBridge.streamClose(id) else bridge.streamClose(id)
+    }
+}
+
+/**
+ * Local-file twin of the HTTP range bridge, used for offline-cached episodes:
+ * the download store keeps the original CENC-encrypted MP4 bytes plus the
+ * per-episode key, and playback passes a file:// URL so the native crypto
+ * core reads (and decrypts) from disk through the same sp_io contract. The
+ * native layer treats URLs as opaque strings, so no JNI/C changes are needed.
+ *
+ * Mirrors HttpRangeClient's contract exactly: size > 0 or -1, stream ids > 0
+ * (0 on prepare failure), read returns >0, 0 at EOF, -1 on error, and a
+ * prepared stream must hit exactly [expectedSize] total or connect fails —
+ * which is what surfaces a truncated/corrupted download to the player.
+ */
+@Keep
+private class OfflineFileBridge(streamIds: AtomicLong) {
+    private val nextId = streamIds
+
+    private class OfflineStream(val file: java.io.File, val start: Long, var remaining: Long) {
+        var raf: java.io.RandomAccessFile? = null
+        var closed = false
+        var connected = false
+    }
+
+    private val streams = java.util.concurrent.ConcurrentHashMap<Long, OfflineStream>()
+
+    private fun fileOf(url: String): java.io.File? {
+        val path = runCatching { android.net.Uri.parse(url).path }.getOrNull()
+        if (path.isNullOrEmpty()) return null
+        val file = java.io.File(path)
+        return if (file.isFile) file else null
+    }
+
+    fun owns(id: Long): Boolean = streams.containsKey(id)
+
+    fun httpSize(url: String): Long {
+        val file = fileOf(url) ?: return -1L
+        val length = file.length()
+        return if (length > 0L) length else -1L
+    }
+
+    fun httpRange(url: String, start: Long, end: Long): ByteArray? {
+        if (start < 0 || end < start || end - start >= Int.MAX_VALUE) return null
+        val file = fileOf(url) ?: return null
+        val length = (end - start + 1).toInt()
+        return try {
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                if (file.length() < end + 1) return null
+                raf.seek(start)
+                val buf = ByteArray(length)
+                var read = 0
+                while (read < length) {
+                    val n = raf.read(buf, read, length - read)
+                    if (n < 0) break
+                    read += n
+                }
+                if (read != length) null else buf
+            }
+        } catch (t: Throwable) {
+            android.util.Log.e("sp_crypto", "file httpRange threw: ${t.message}")
+            null
+        }
+    }
+
+    fun streamPrepare(url: String, start: Long, expectedSize: Long): Long {
+        if (start < 0 || expectedSize < -1 || (expectedSize >= 0 && start >= expectedSize)) return 0L
+        val file = fileOf(url) ?: return 0L
+        val total = file.length()
+        if (total <= 0L || (expectedSize >= 0 && total != expectedSize)) return 0L
+        if (start >= total) return 0L
+        val id = nextId.getAndIncrement()
+        if (id <= 0L) return 0L
+        streams[id] = OfflineStream(file, start, total - start)
+        return id
+    }
+
+    fun streamConnect(id: Long): Boolean {
+        val s = streams[id] ?: return false
+        synchronized(s) {
+            if (s.closed || s.connected) return s.connected && !s.closed
+            val raf = try {
+                java.io.RandomAccessFile(s.file, "r").apply { seek(s.start) }
+            } catch (t: Throwable) {
+                android.util.Log.e("sp_crypto", "file streamConnect threw: ${t.message}")
+                return false
+            }
+            s.raf = raf
+            s.connected = true
+            return true
+        }
+    }
+
+    fun streamOpen(url: String, start: Long): Long {
+        val id = streamPrepare(url, start, -1)
+        return if (id != 0L && streamConnect(id)) id else 0L
+    }
+
+    fun streamRead(id: Long, buf: ByteArray, length: Int): Int {
+        if (length < 0 || length > buf.size) return -1
+        val s = streams[id] ?: return -1
+        if (length == 0) return 0
+        synchronized(s) {
+            if (s.closed) return -1
+            val raf = s.raf ?: return -1
+            return try {
+                if (s.remaining == 0L) return 0
+                val toRead = minOf(length.toLong(), s.remaining).toInt()
+                val read = raf.read(buf, 0, toRead)
+                when {
+                    read < 0 -> if (s.remaining > 0L) -1 else 0
+                    read == 0 -> -1
+                    else -> {
+                        s.remaining -= read
+                        read
+                    }
+                }
+            } catch (t: Throwable) {
+                streamClose(id)
+                android.util.Log.e("sp_crypto", "file streamRead threw id=$id: ${t.message}")
+                -1
+            }
+        }
+    }
+
+    fun streamClose(id: Long) {
+        val s = streams.remove(id) ?: return
+        synchronized(s) {
+            s.closed = true
+            try {
+                s.raf?.close()
+            } catch (_: Throwable) {
+            }
+            s.raf = null
+        }
+    }
 }
 
 /** Network implementation kept independent of JNI so its HTTP contract can be tested. */
 internal class HttpRangeClient(
     private val client: okhttp3.OkHttpClient,
     private val logError: (String) -> Unit = { Log.e("sp_crypto", it) },
+    // Shared with OfflineFileBridge so both maps never hand out the same id.
+    private val nextId: AtomicLong = AtomicLong(1L),
 ) {
     private data class ResponseRange(val length: Long, val total: Long?)
     private val contentRange = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", RegexOption.IGNORE_CASE)
@@ -223,7 +378,6 @@ internal class HttpRangeClient(
     }
 
     private val streams = ConcurrentHashMap<Long, Stream>()
-    private val nextId = AtomicLong(1L)
 
     /** Register the request before execute so native close can cancel response headers too. */
     fun streamPrepare(url: String, start: Long, expectedSize: Long): Long {

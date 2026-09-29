@@ -504,6 +504,36 @@ void main() {
     await player.dispose();
   });
 
+  testWidgets('浅色面板离线缓存行：宿主接线后真功能（点击回调），未接时占位', (tester) async {
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+    );
+    addTearDown(() => PlayerStyleConfig.instance = PlayerStyleConfig.defaults);
+    final player = FakeNativePlayer()..isPlaying = true;
+    var opened = 0;
+    await tester.pumpWidget(
+      _app(
+        player,
+        shortSeries: true,
+        newPlayerBottomStyle: false,
+        onOpenOfflineCache: () => opened++,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('player-more-light-download-row')),
+    );
+    await tester.pumpAndSettle();
+    // 官方 jm3.u 语义：面板收起并打开下载弹窗（这里以回调记录代替）。
+    expect(opened, 1);
+    expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
+    expect(find.text('离线缓存暂未支持'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
   testWidgets('landscape episode panel is the official right drawer', (
     tester,
   ) async {
@@ -1153,6 +1183,7 @@ Widget _app(
   List<EpisodeVariant> qualityVariants = const [],
   String? currentQualityUrl,
   List<EpisodeVariant>? qualitySelections,
+  VoidCallback? onOpenOfflineCache,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(
@@ -1190,6 +1221,7 @@ Widget _app(
       padNewBottomStyle: padNewBottomStyle,
       reverseClearScreen: reverseClearScreen,
       landscapeLockEnabled: landscapeLockEnabled,
+      onOpenOfflineCache: onOpenOfflineCache,
       qualityVariants: qualityVariants,
       currentQualityUrl: currentQualityUrl,
       onQualitySelected: qualitySelections?.add,

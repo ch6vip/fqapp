@@ -38,6 +38,7 @@ class PlayletMorePanelLight extends StatelessWidget {
     this.fontScaleLabel,
     this.onOpenFontSettings,
     this.onOpenListenMode,
+    this.onOpenOfflineCache,
   });
 
   final double rate;
@@ -62,6 +63,10 @@ class PlayletMorePanelLight extends StatelessWidget {
 
   /// 官方 `jm3.d0.y()`：点击关闭面板并打开听书模式页。null 时整行不出现。
   final VoidCallback? onOpenListenMode;
+
+  /// 官方 `jm3.u`：点击关闭面板并打开选集下载弹窗。null 时退化为
+  /// 「暂未支持」占位（feed 长按面板未接下载）。
+  final VoidCallback? onOpenOfflineCache;
 
   static Color _foreground(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -142,12 +147,24 @@ class PlayletMorePanelLight extends StatelessWidget {
                           Navigator.pop(context);
                         },
                       ),
-                    _placeholderRow(
-                      context,
-                      key: 'player-more-light-download',
-                      icon: 'more_download',
-                      label: '离线缓存',
-                    ),
+                    if (onOpenOfflineCache != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-download',
+                        icon: 'more_download',
+                        label: '离线缓存',
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenOfflineCache!();
+                        },
+                      )
+                    else
+                      _placeholderRow(
+                        context,
+                        key: 'player-more-light-download',
+                        icon: 'more_download',
+                        label: '离线缓存',
+                      ),
                   ]),
                   const SizedBox(height: 10),
                   _panelCard(context, [

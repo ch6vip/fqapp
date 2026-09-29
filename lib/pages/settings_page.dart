@@ -11,6 +11,7 @@ import '../services/library_store.dart';
 import '../widgets/reading_goal_dialog.dart';
 import 'about_page.dart';
 import 'cached_books_page.dart';
+import 'cached_dramas_page.dart';
 import 'settings_category_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
@@ -44,7 +45,7 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: Icons.storage_outlined,
         title: '数据',
-        subtitle: '章节缓存、阅读与播放历史',
+        subtitle: '章节缓存、离线缓存、阅读与播放历史',
         items: [
           SettingsItem(
             icon: Icons.download_for_offline_outlined,
@@ -53,6 +54,15 @@ class SettingsPage extends StatelessWidget {
             onTap: (context, setState) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const CachedBooksPage()),
+            ),
+          ),
+          SettingsItem(
+            icon: Icons.movie_filter_outlined,
+            title: '剧集离线缓存',
+            subtitle: '短剧下载、离线播放和清理缓存',
+            onTap: (context, setState) => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CachedDramasPage()),
             ),
           ),
           _clearHistItem(),

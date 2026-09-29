@@ -1,6 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
+import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
+import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/native_player.dart';
 
@@ -97,6 +102,103 @@ class MemoryChapterCache implements ChapterCache {
   @override
   Future<Set<String>> cachedChapterIds(String bookId) async =>
       content[bookId]?.keys.toSet() ?? {};
+}
+
+class MemoryDramaDownloadStore implements DramaDownloadStore {
+  MemoryDramaDownloadStore({this.videoDirectory});
+
+  /// 下载文件根目录（测试用临时目录；缺省时现建临时目录）。
+  final Directory? videoDirectory;
+  final Map<String, CachedEpisode> _episodes = {};
+  final Map<String, CachedDrama> _dramas = {};
+
+  @override
+  final ValueNotifier<int> changes = ValueNotifier(0);
+
+  void touch() => changes.value++;
+
+  @override
+  Future<void> ensureCatalogue(CachedDrama drama) async {
+    if (drama.id.isEmpty || drama.episodes.isEmpty) return;
+    _dramas[drama.id] = drama;
+    touch();
+  }
+
+  @override
+  Future<void> saveEpisode(CachedEpisode episode) async {
+    if (episode.seriesId.isEmpty || episode.itemId.isEmpty) return;
+    _episodes[episode.itemId] = episode;
+    touch();
+  }
+
+  @override
+  Future<bool> isDownloaded(String itemId) async => _episodes.containsKey(itemId);
+
+  @override
+  Future<CachedEpisode?> episode(String itemId) async => _episodes[itemId];
+
+  @override
+  Future<bool> hasCatalogue(String seriesId) async => _dramas.containsKey(seriesId);
+
+  @override
+  Future<List<CachedDramaSummary>> dramas() async {
+    final bySeries = <String, List<CachedEpisode>>{};
+    for (final episode in _episodes.values) {
+      (bySeries[episode.seriesId] ??= []).add(episode);
+    }
+    final summaries = <CachedDramaSummary>[];
+    for (final entry in bySeries.entries) {
+      final drama =
+          _dramas[entry.key] ??
+          CachedDrama(
+            id: entry.key,
+            title: entry.key,
+            cover: '',
+            episodes: [
+              for (final episode in entry.value)
+                Chapter(
+                  itemId: episode.itemId,
+                  title: episode.title,
+                  volumeName: '',
+                ),
+            ],
+          );
+      entry.value.sort((a, b) => a.index.compareTo(b.index));
+      summaries.add(CachedDramaSummary(drama, entry.value));
+    }
+    return summaries;
+  }
+
+  @override
+  Future<int> totalBytes() async =>
+      _episodes.values.fold<int>(0, (sum, episode) => sum + episode.bytes);
+
+  @override
+  Future<void> removeEpisode(String itemId) async {
+    final episode = _episodes.remove(itemId);
+    final directory = videoDirectory;
+    if (episode != null && directory != null) {
+      final file = File(episode.filePath);
+      if (file.existsSync() && file.parent.path == directory.path) {
+        await file.delete();
+      }
+    }
+    touch();
+  }
+
+  @override
+  Future<void> removeDrama(String seriesId) async {
+    _dramas.remove(seriesId);
+    _episodes.removeWhere((_, episode) => episode.seriesId == seriesId);
+    touch();
+  }
+
+  @override
+  Future<Directory> directory() async {
+    final existing = videoDirectory;
+    if (existing != null) return existing;
+    return Directory.systemTemp.createTemp('fqapp-drama-download-');
+  }
 }
 
 class FakeNativePlayer extends NativePlayer {

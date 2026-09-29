@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -13,6 +14,8 @@ import '../services/player_panel_preferences.dart';
 import '../services/watched_episodes.dart';
 import 'listen_mode_page.dart';
 import '../services/episode_source_cache.dart';
+import '../services/drama_download_store.dart';
+import 'drama_download_sheet.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
 import '../services/playback_issue.dart';
@@ -805,18 +808,30 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
     NativePlayer? candidate;
     try {
-      final request = _sources.request(episode, refresh: refresh);
-      trace.source = request.origin.name;
-      var source = await request.future;
-      // 会话内记住的画质选择（官方=引擎当前档）：同一集重新加载时沿用。
-      final chosen = _chosen[episode.itemId];
-      if (chosen != null) source = source.withVariant(chosen);
+      // 离线优先（官方 isOfflineVideo 语义）：已缓存的集直接读本地加密
+      // 文件，不请求取流接口；文件被用户清掉时静默回退在线链路。
+      final offline = await _offlineSource(episode);
+      final EpisodeSource source;
+      if (offline != null) {
+        trace.source = 'offline';
+        source = offline;
+      } else {
+        final request = _sources.request(episode, refresh: refresh);
+        trace.source = request.origin.name;
+        var online = await request.future;
+        // 会话内记住的画质选择（官方=引擎当前档）：同一集重新加载时沿用。
+        final chosen = _chosen[episode.itemId];
+        if (chosen != null) online = online.withVariant(chosen);
+        source = online;
+      }
       _currentSource = source;
       if (!_current(generation)) return;
       final sourceUri = Uri.tryParse(source.url);
-      if (sourceUri == null ||
-          (sourceUri.scheme != 'http' && sourceUri.scheme != 'https') ||
-          sourceUri.host.isEmpty) {
+      final isRemote =
+          sourceUri != null &&
+          (sourceUri.scheme == 'http' || sourceUri.scheme == 'https') &&
+          sourceUri.host.isNotEmpty;
+      if (!isRemote && sourceUri?.scheme != 'file') {
         throw const ApiException('获取播放地址失败');
       }
       trace.stage('releaseWait');
@@ -1225,6 +1240,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onOpenListenMode: widget.shortSeries && widget.eps.isNotEmpty
           ? () => unawaited(_openListenMode())
           : null,
+      // 离线缓存（官方 `jm3.u`）：面板行 → 选集下载弹窗（弹窗头部可进
+      // 管理页）。feed 面板未接（保持占位）。
+      onOpenOfflineCache: widget.shortSeries && widget.eps.isNotEmpty
+          ? () => unawaited(_openDownloadSheet())
+          : null,
       // 官方 `oi3/k.P()` 门：上游只有单流时不显示清晰度行。
       qualityVariants: _currentSource?.variants ?? const [],
       currentQualityUrl: _currentSource?.url,
@@ -1247,6 +1267,42 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
+  /// 选集下载弹窗（官方 `jm3.u` 的面板行语义）：先把剧集目录交给下载
+  /// 引擎，弹窗内选集并入队；管理页从弹窗头部进入。
+  Future<void> _openDownloadSheet() async {
+    await DramaDownloadSheet.show(
+      context,
+      seriesId: widget.bookId,
+      title: _seriesTitle,
+      cover: widget.cover,
+      episodes: widget.eps,
+    );
+  }
+
+  /// 已缓存的集 → 本地取流结果（`file://` + keyHex，回放时原生层从磁盘
+  /// 读加密字节解密）；记录在但文件被清掉则返回 null 回退在线。
+  ///
+  /// store 未就绪（Hive 未初始化的测试环境）直接跳过，不触碰 openBox。
+  Future<EpisodeSource?> _offlineSource(Chapter episode) async {
+    final store = HiveDramaDownloadStore.instance;
+    if (!store.isReady) return null;
+    try {
+      final cached = await store.episode(episode.itemId);
+      if (cached == null) return null;
+      if (!File(cached.filePath).existsSync()) return null;
+      return cached.toSource();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 听书页与播放页共用的取流入口：离线优先，在线走取流缓存。
+  Future<EpisodeSource?> _resolveSource(Chapter episode) async {
+    final offline = await _offlineSource(episode);
+    if (offline != null) return offline;
+    return _sources.request(episode).future;
+  }
+
   /// 听视频（官方 `jm3.d0.y()` 的听书模式页语义）：视频页暂停，推入独立
   /// 听书页；关闭时把「听到哪一集 + 进度」写回视频页续看（官方的
   /// `sync_progress_strategy_listen_mode` 进度同步的本地等价）。
@@ -1262,10 +1318,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           coverUrl: widget.cover,
           episodes: widget.eps,
           initialIndex: _index,
-          resolveSource: (episode) async {
-            final source = await _sources.request(episode).future;
-            return source;
-          },
+          resolveSource: _resolveSource,
         ),
       ),
     );

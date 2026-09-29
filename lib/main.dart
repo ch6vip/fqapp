@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,6 +16,9 @@ import 'pages/mine_page.dart';
 import 'services/app_theme.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
+import 'services/drama_download_store.dart';
+import 'services/drama_downloader.dart';
+import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
@@ -83,6 +87,23 @@ Future<void> _initializeLocalData() async {
   await PlayerStyleConfig.load();
   // 官方播放页字号档（jk3/b 的 SP）同理：读失败回标准档，不拖启动。
   await ShortSeriesFontScale.load();
+  // 离线缓存的记录箱启动即打开：播放器的离线命中只在 box 就绪时才查
+  // （避免运行中途首次 openBox 失败产生游离异步错误）。可选数据，失败
+  // 只退化为「本会话不查离线」。
+  try {
+    await HiveDramaDownloadStore.instance.warmUp();
+  } catch (_) {}
+  // 离线缓存的网络门（官方 onNetChangeCheck）：断网/只剩计费链路时
+  // 自动暂停下载队列，半成品保留。监听失败只退化为「无自动暂停」。
+  try {
+    Connectivity().onConnectivityChanged.listen((results) {
+      final view = foldConnectivity(results);
+      DramaDownloader.instance.updateConnectivity(
+        online: view.online,
+        metered: view.metered,
+      );
+    });
+  } catch (_) {}
   // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
   unawaited(PosterCache.instance.enforceBudget());
   final sp = await SharedPreferences.getInstance();

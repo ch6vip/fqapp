@@ -129,6 +129,10 @@ class VideoPlayerChrome extends StatefulWidget {
   /// 听视频行不出现（feed 长按未接）。
   final VoidCallback? onOpenListenMode;
 
+  /// 离线缓存（官方 `jm3.u`：打开选集下载弹窗）。null 时浅色面板的
+  /// 离线缓存行退化为「暂未支持」占位。
+  final VoidCallback? onOpenOfflineCache;
+
   /// 可选播放档位（高→低）与当前档 URL。空列表 = 上游单流，
   /// 「清晰度」行不显示（官方 `oi3/k.P()` 门）。
   final List<EpisodeVariant> qualityVariants;
@@ -196,6 +200,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.danmakuSettings = const DanmakuSettings(),
     this.onDanmakuSettingsChanged,
     this.onOpenListenMode,
+    this.onOpenOfflineCache,
     this.qualityVariants = const [],
     this.currentQualityUrl,
     this.onQualitySelected,
@@ -1110,6 +1115,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             fontScaleLabel: ShortSeriesFontScale.label,
             onOpenFontSettings: () => _pendingFontScale = true,
             onOpenListenMode: widget.onOpenListenMode,
+            onOpenOfflineCache: widget.onOpenOfflineCache,
           );
         }
         return widget.shortSeries

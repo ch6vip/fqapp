@@ -61,6 +61,8 @@ void main() {
           await Hive.openBox<dynamic>('rank_cache_v1');
           // 已看集 box 也在 LibraryStore.init 里开箱（F07），同样要预开。
           await Hive.openBox<dynamic>('watched_episodes');
+          // 短剧离线缓存的记录箱随 bootstrap 预热（F08），同样要预开。
+          await Hive.openBox<dynamic>('drama_download_v1');
           // 官方播放页开关在 bootstrap 里从 config.json 读取；提前读好，
           // 避免 bundle 加载落在 widget 测试的 fake-async 路径上。
           await PlayerStyleConfig.load();
