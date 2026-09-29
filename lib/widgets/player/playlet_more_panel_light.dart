@@ -10,11 +10,11 @@ import 'quality_icon.dart';
 /// 16dp 顶圆角，不被 `Q0()` 染成 `#FF1C1C1C`）。
 ///
 /// 行集与官方截图对齐后按用户拍板裁剪（2026-09-29）：白卡 1 = 倍速、
-/// 清晰度、清屏播放、离线缓存；白卡 2 = 听视频、弹幕、字体大小。无取消行。
-/// Note: 举报/投屏/不感兴趣是**明确不做**的产品裁剪，不是待办 — 见
-/// docs/validation/short-drama-light-panel-row-cuts-20260929.md。
-/// 可下钻行（离线缓存/听视频/字体大小）暂无后端链路，点击关面板并提示
-/// 「暂未支持」——不是静默死入口。
+/// 清晰度、清屏播放、离线缓存；白卡 2 = 听视频、弹幕、字体大小。无取消行，
+/// 举报/投屏/不感兴趣三行明确不做。真功能行：倍速/清晰度/清屏播放/弹幕
+/// /听视频（官方 `jm3.d0`：打开听书模式页）/字体大小（官方 `jm3.t0`：
+/// 打开字号弹层，行尾档位文案）。离线缓存暂无后端链路，点击关面板并
+/// 提示「暂未支持」——不是静默死入口。
 ///
 /// 色值（日间皮肤）：面板底 `#FAFAFA`，卡片白底 12dp 圆角；行文字与图标
 /// `skin_color_black_light`=#000000；未选中档位
@@ -35,6 +35,9 @@ class PlayletMorePanelLight extends StatelessWidget {
     this.onToggleClearScreen,
     this.danmakuEnabled = false,
     this.onToggleDanmaku,
+    this.fontScaleLabel,
+    this.onOpenFontSettings,
+    this.onOpenListenMode,
   });
 
   final double rate;
@@ -49,6 +52,16 @@ class PlayletMorePanelLight extends StatelessWidget {
 
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
+
+  /// 官方 `jm3.t0`：行尾展示当前字号档（`jk3/b.f()`）。null 时不显示档位。
+  final String? fontScaleLabel;
+
+  /// 官方 `jm3.t0.m()`：点击关闭面板并打开字号弹层（`nm3.e`）。null 时
+  /// 整行不出现（feed 长按面板未接字号）。
+  final VoidCallback? onOpenFontSettings;
+
+  /// 官方 `jm3.d0.y()`：点击关闭面板并打开听书模式页。null 时整行不出现。
+  final VoidCallback? onOpenListenMode;
 
   static Color _foreground(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -138,15 +151,31 @@ class PlayletMorePanelLight extends StatelessWidget {
                   ]),
                   const SizedBox(height: 10),
                   _panelCard(context, [
-                    _placeholderRow(
-                      context,
-                      key: 'player-more-light-listen',
-                      icon: 'more_listen',
-                      label: '听视频',
-                    ),
+                    if (onOpenListenMode != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-listen',
+                        icon: 'more_listen',
+                        label: '听视频',
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenListenMode!();
+                        },
+                      ),
                     if (onToggleDanmaku != null)
                       _danmakuRow(context, _foreground(context)),
-                    _fontRow(context),
+                    if (onOpenFontSettings != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-font',
+                        icon: 'more_font',
+                        label: '字体大小',
+                        trailing: fontScaleLabel,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenFontSettings!();
+                        },
+                      ),
                   ]),
                 ],
               ),
@@ -321,7 +350,9 @@ class PlayletMorePanelLight extends StatelessWidget {
     ),
   );
 
-  /// 官方有、本客户端无后端链路的行：点击关闭面板并提示，不留静默死入口。
+  /// 官方有、本客户端暂无后端链路的行（当前仅剩离线缓存）：点击关闭面板
+  /// 并提示，不留静默死入口。听视频/字体大小已是真功能；举报/投屏/
+  /// 不感兴趣是明确不做（docs/validation/short-drama-light-panel-row-cuts）。
   Widget _placeholderRow(
     BuildContext context, {
     required String key,
@@ -346,15 +377,6 @@ class PlayletMorePanelLight extends StatelessWidget {
       onTap: onTap,
     );
   }
-
-  /// 官方字体大小行的尾注是当前档位（截图为「标准」）。
-  Widget _fontRow(BuildContext context) => _placeholderRow(
-    context,
-    key: 'player-more-light-font',
-    icon: 'more_font',
-    label: '字体大小',
-    trailing: '标准',
-  );
 }
 
 /// 30dp 选项药丸：选中白底黑粗体、未选中灰字（官方浅色截图形态）。

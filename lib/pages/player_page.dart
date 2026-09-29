@@ -11,6 +11,7 @@ import '../services/api_client.dart';
 import '../services/backend_transport.dart' show BackendRequest;
 import '../services/player_panel_preferences.dart';
 import '../services/watched_episodes.dart';
+import 'listen_mode_page.dart';
 import '../services/episode_source_cache.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
@@ -1204,6 +1205,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onDanmakuSettingsChanged: widget.shortSeries
           ? (settings) => setState(() => _danmakuSettings = settings)
           : null,
+      // 听视频（官方 `jm3.d0.y()`）：暂停视频页播放，打开听书页；关闭时
+      // 回传进度写回视频页续看。
+      onOpenListenMode: widget.shortSeries && widget.eps.isNotEmpty
+          ? () => unawaited(_openListenMode())
+          : null,
       // 官方 `oi3/k.P()` 门：上游只有单流时不显示清晰度行。
       qualityVariants: _currentSource?.variants ?? const [],
       currentQualityUrl: _currentSource?.url,
@@ -1226,12 +1232,40 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
+  /// 听视频（官方 `jm3.d0.y()` 的听书模式页语义）：视频页暂停，推入独立
+  /// 听书页；关闭时把最终进度 seek 回视频页并恢复播放（官方的
+  /// `sync_progress_strategy_listen_mode` 进度同步的本地等价）。
+  Future<void> _openListenMode() async {
+    final player = _player;
+    final wasPlaying = _playing;
+    if (player != null) await player.pause();
+    if (!mounted) return;
+    final position = await Navigator.of(context).push<Duration>(
+      MaterialPageRoute<Duration>(
+        builder: (_) => ListenModePage(
+          seriesTitle: _seriesTitle,
+          coverUrl: widget.cover,
+          episodes: widget.eps,
+          initialIndex: _index,
+          resolveSource: (episode) async {
+            final source = await _sources.request(episode).future;
+            return source;
+          },
+        ),
+      ),
+    );
+    if (!mounted || player == null) return;
+    if (position != null && position > Duration.zero) {
+      await player.seek(position);
+    }
+    if (wasPlaying) await player.play();
+  }
+
   Widget _videoArea() {
     final generation = _loadGeneration;
     void retry() {
       if (_current(generation)) unawaited(_loadVideo(refresh: true));
     }
-
     final texture = _player?.textureId;
     final waiting =
         _initVideo || texture == null || !_player!.firstFrameRendered;

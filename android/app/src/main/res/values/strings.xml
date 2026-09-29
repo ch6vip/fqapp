@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 听视频（listen mode）前台服务的通知文案（官方听书模式语义）。 -->
+    <string name="listen_channel_name">听视频播放</string>
+    <string name="listen_notification_title">正在听视频</string>
+    <string name="listen_notification_text">音频播放中，退出页面仍会继续</string>
+</resources>

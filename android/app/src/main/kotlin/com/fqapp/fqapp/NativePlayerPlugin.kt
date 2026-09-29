@@ -2,7 +2,9 @@ package com.fqapp.fqapp
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.WindowManager
@@ -157,6 +159,31 @@ class NativePlayerPlugin internal constructor(
                         else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     }
                 }
+                result.success(null)
+            }
+            "startListenForeground" -> {
+                // 听视频（listen mode）前台保活：服务只抬进程优先级，不碰播放器。
+                val context = activity ?: flutterBinding.applicationContext
+                val intent = Intent(context, ListenKeepAliveService::class.java).apply {
+                    putExtra(ListenKeepAliveService.EXTRA_TITLE, call.argument<String>("title"))
+                    putExtra(ListenKeepAliveService.EXTRA_EPISODE, call.argument<String>("episode"))
+                }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(intent)
+                    } else {
+                        context.startService(intent)
+                    }
+                    result.success(null)
+                } catch (error: Throwable) {
+                    // 通知权限被禁或后台启动受限：听视频退化为尽力而为，不报错。
+                    android.util.Log.w("NativePlayerPlugin", "listen foreground start failed", error)
+                    result.success(null)
+                }
+            }
+            "stopListenForeground" -> {
+                val context = activity ?: flutterBinding.applicationContext
+                context.stopService(Intent(context, ListenKeepAliveService::class.java))
                 result.success(null)
             }
             else -> result.notImplemented()

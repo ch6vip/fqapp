@@ -19,6 +19,7 @@ import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
 import 'services/player_style_config.dart';
+import 'services/short_series_font_scale.dart';
 import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
 import 'services/shelf_store.dart';
@@ -80,6 +81,8 @@ Future<void> _initializeLocalData() async {
   // 官方播放页开关（PlayerBottomStyleConfig / 清屏反转 / 横屏锁）随同一份
   // 运行时配置读取；读不到就用默认值，不能拖住启动。
   await PlayerStyleConfig.load();
+  // 官方播放页字号档（jk3/b 的 SP）同理：读失败回标准档，不拖启动。
+  await ShortSeriesFontScale.load();
   // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
   unawaited(PosterCache.instance.enforceBudget());
   final sp = await SharedPreferences.getInstance();

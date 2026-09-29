@@ -10,6 +10,7 @@ import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/services/player_style_config.dart';
+import 'package:fqapp/services/short_series_font_scale.dart';
 import 'package:fqapp/widgets/player/story_seek_bar.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
@@ -387,12 +388,22 @@ void main() {
       find.byKey(const ValueKey('player-more-light-download-row')),
       findsOneWidget,
     );
+    // 听视频行要宿主接线（onOpenListenMode）才出现：feed 长按面板与测试
+    // 助手都不接——整行隐藏，与官方未接行的可见性一致。
     expect(
       find.byKey(const ValueKey('player-more-light-listen-row')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(const ValueKey('player-more-light-font-row')),
+      findsOneWidget,
+    );
+    // 字体大小行尾注当前档名（官方 jk3/b.f()），chrome 恒接字号出口。
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-more-light-panel')),
+        matching: find.text('标准'),
+      ),
       findsOneWidget,
     );
     // 清晰度药丸点击立即回传 EpisodeVariant（浅色支独有的回传通道）。
@@ -414,16 +425,81 @@ void main() {
       find.byKey(const ValueKey('player-more-light-panel')),
       findsNothing,
     );
-    // 无后端链路的行：点击关面板并提示「暂未支持」，不留静默死入口。
+    // 占位行只剩离线缓存：点击关面板并提示「暂未支持」，不留静默死入口。
     await tester.tap(find.byKey(const ValueKey('player-rate-text')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-more-light-listen-row')));
+    await tester.tap(
+      find.byKey(const ValueKey('player-more-light-download-row')),
+    );
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('player-more-light-panel')),
       findsNothing,
     );
-    expect(find.text('听视频暂未支持'), findsOneWidget);
+    expect(find.text('离线缓存暂未支持'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('浅色面板字号档：级联弹层选档即生效并持久化', (tester) async {
+    // 官方 jm3.t0：点击「字体大小」关面板并打开字号弹层（nm3.e），行尾
+    // 档名（jk3/b.f()）随之刷新。档位系数 eh3/c：1.0/1.15/1.3。
+    PlayerStyleConfig.instance = const PlayerStyleConfig(
+      useNewPlayerBottomStyle: true,
+    );
+    addTearDown(() => PlayerStyleConfig.instance = PlayerStyleConfig.defaults);
+    // 静态实例是进程级状态：进出都归零，别污染同文件后续用例。
+    ShortSeriesFontScale.instance = 0;
+    addTearDown(() => ShortSeriesFontScale.instance = 0);
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(
+      _app(player, shortSeries: true, newPlayerBottomStyle: false),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-more-light-font-row')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('player-more-light-panel')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('player-font-scale-sheet')),
+      findsOneWidget,
+    );
+    // 选「大号」：实例立即生效（save 同步写 instance），弹层不关——
+    // 预览行要留在原地对比各档效果（官方样张语义）。
+    await tester.tap(find.byKey(const ValueKey('player-font-scale-1')));
+    await tester.pump();
+    expect(ShortSeriesFontScale.instance, 1);
+    expect(ShortSeriesFontScale.scale, 1.15);
+    expect(
+      find.byKey(const ValueKey('player-font-scale-sheet')),
+      findsOneWidget,
+    );
+    // 点弹层外的 modal barrier 收掉弹层，重开面板看行尾档名。
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('player-font-scale-sheet')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-more-light-panel')),
+        matching: find.text('大号'),
+      ),
+      findsOneWidget,
+    );
+    // 持久化 SP（jk3/b 静态块），下次启动 load() 恢复。
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getInt('short_series_font_scale_manager/current_selected_index'),
+      1,
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });

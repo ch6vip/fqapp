@@ -106,6 +106,9 @@ class FakeNativePlayer extends NativePlayer {
   FakeNativePlayer({this.width = 1920, this.height = 1080});
 
   final calls = <String>[];
+  /// create 收到的 keyHex（按序）：用来断言「档位的 key」而非主地址的
+  /// key 被传进播放器。
+  final createdKeys = <String>[];
   Duration currentPosition = const Duration(seconds: 20);
   Duration totalDuration = const Duration(minutes: 2);
   bool isPlaying = false;
@@ -162,6 +165,7 @@ class FakeNativePlayer extends NativePlayer {
   @override
   Future<int> create(String cdnUrl, String keyHex) async {
     calls.add('create:$cdnUrl');
+    createdKeys.add(keyHex);
     return 1;
   }
 

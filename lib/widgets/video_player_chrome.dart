@@ -14,6 +14,7 @@ import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_preferences.dart';
 import '../services/player_style_config.dart';
+import '../services/short_series_font_scale.dart';
 import '../models/playlet_comment.dart';
 import 'player/playlet_danmaku_layer.dart';
 import 'player/playlet_danmaku_settings.dart';
@@ -124,6 +125,10 @@ class VideoPlayerChrome extends StatefulWidget {
   final DanmakuSettings danmakuSettings;
   final ValueChanged<DanmakuSettings>? onDanmakuSettingsChanged;
 
+  /// 听视频（官方 `jm3.d0.y()`：打开听书模式页）。null 时浅色面板的
+  /// 听视频行不出现（feed 长按未接）。
+  final VoidCallback? onOpenListenMode;
+
   /// 可选播放档位（高→低）与当前档 URL。空列表 = 上游单流，
   /// 「清晰度」行不显示（官方 `oi3/k.P()` 门）。
   final List<EpisodeVariant> qualityVariants;
@@ -190,6 +195,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onToggleDanmaku,
     this.danmakuSettings = const DanmakuSettings(),
     this.onDanmakuSettingsChanged,
+    this.onOpenListenMode,
     this.qualityVariants = const [],
     this.currentQualityUrl,
     this.onQualitySelected,
@@ -219,6 +225,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   /// 「弹幕设置」级联打开标记：更多面板收起后再开设置面板。
   bool _pendingDanmakuSettings = false;
+
+  /// 「字体大小」级联打开标记：官方 `jm3.t0.m()` 同款——更多面板收起后
+  /// 再开字号弹层（`nm3.e`）。
+  bool _pendingFontScale = false;
 
   /// 双击按下的位置：官方双击的中带判定需要 y 坐标
   /// （`jq3/x$q.onDoubleTap` 的 44dp..屏高-240dp）。
@@ -924,6 +934,121 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (mounted) setState(() => _modalOpen = false);
   }
 
+  /// 字号弹层（官方 `nm3.e`）：标准/大号/超大号三档药丸 + 选中档的预览
+  /// 文本（官方是 `ShortSeriesScaleTextView` 样张）。选中即生效并持久化
+  /// （SP `short_series_font_scale_manager/current_selected_index`）。
+  /// Note: 字号档作用域/弹幕豁免/弹层不自动关的取舍 — 见
+  /// .agents/notes/implemented/feature/2026-09-29-listen-mode-and-font-scale.md
+  Future<void> _showFontScaleSheet() async {
+    if (_overlayOpen || _panelOpen || _locked) return;
+    setState(() => _modalOpen = true);
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      sheetAnimationStyle: const AnimationStyle(
+        duration: Duration(milliseconds: 200),
+        reverseDuration: Duration(milliseconds: 200),
+      ),
+      barrierColor: Colors.transparent,
+      backgroundColor: const Color(0xFFFAFAFA),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          final current = ShortSeriesFontScale.instance.clamp(0, 2);
+          return SafeArea(
+            top: false,
+            child: Padding(
+              key: const ValueKey('player-font-scale-sheet'),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '字体大小',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF000000),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      for (final (index, label) in ShortSeriesFontScale.labels
+                          .indexed)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Semantics(
+                            label: label,
+                            button: true,
+                            selected: index == current,
+                            onTap: () {},
+                            excludeSemantics: true,
+                            child: InkWell(
+                              key: ValueKey('player-font-scale-$index'),
+                              onTap: () {
+                                unawaited(ShortSeriesFontScale.save(index));
+                                setState(() {});
+                                setSheetState(() {});
+                              },
+                              borderRadius: BorderRadius.circular(15),
+                              child: Container(
+                                height: 30,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                ),
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: index == current
+                                      ? Colors.white
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(15),
+                                  border: Border.all(
+                                    color: index == current
+                                        ? const Color(0x1F000000)
+                                        : Colors.transparent,
+                                  ),
+                                ),
+                                child: Text(
+                                  label,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: index == current
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                    color: index == current
+                                        ? const Color(0xFF000000)
+                                        : const Color(0x66000000),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  // 预览行按选中档即时缩放（官方样张语义）。
+                  Text(
+                    '播放页文字大小预览',
+                    key: const ValueKey('player-font-scale-preview'),
+                    textScaler: TextScaler.linear(ShortSeriesFontScale.scale),
+                    style: TextStyle(fontSize: 14, color: const Color(0xFF000000)),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    if (mounted) setState(() => _modalOpen = false);
+    if (mounted) _scheduleHide();
+  }
+
   /// 更多面板样式分支：官方 `play_control_panel_style_v681.style` 未下发
   /// 或为 0 时是浅色面板（`#FAFAFA`、药丸选项、无取消行），下发 1/2 才是
   /// 深色 V2（`Q0()` 染 `#FF1C1C1C`）。两支共用弹层门控与速率持久化。
@@ -981,6 +1106,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 : null,
             danmakuEnabled: widget.danmakuEnabled,
             onToggleDanmaku: widget.onToggleDanmaku,
+            // 官方 `jm3.t0`：行尾当前档 + 点击级联打开字号弹层。
+            fontScaleLabel: ShortSeriesFontScale.label,
+            onOpenFontSettings: () => _pendingFontScale = true,
+            onOpenListenMode: widget.onOpenListenMode,
           );
         }
         return widget.shortSeries
@@ -1151,6 +1280,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (_pendingDanmakuSettings) {
       _pendingDanmakuSettings = false;
       unawaited(_showDanmakuSettings());
+      return;
+    }
+    // 「字体大小」同款级联（官方 `jm3.t0.m()`：面板收起 → 字号弹层）。
+    if (_pendingFontScale) {
+      _pendingFontScale = false;
+      unawaited(_showFontScaleSheet());
       return;
     }
     if (mounted) _scheduleHide();
@@ -1466,12 +1601,25 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     child: _buildChrome(context),
   );
 
-  Widget _buildChrome(BuildContext context) => PopScope(
+  Widget _buildChrome(BuildContext context) {
+    // 官方字号档（`jk3/b`：标准 1.0/大号 1.15/超大号 1.3）作用在播放页
+    // UI 文本上：外层 scaler 再乘档位系数。弹幕层在内部单独还原外层
+    // scaler（弹幕有自己的字号配置，官方 `ShortSeriesScaleTextView`
+    // 也不覆盖弹幕）。弹出的 sheet 走根 Navigator 的 overlay，不受此作用域影响。
+    final outerScaler = MediaQuery.textScalerOf(context);
+    final scaledScaler = TextScaler.linear(
+      outerScaler.scale(14) * ShortSeriesFontScale.scale / 14,
+    );
+    return PopScope(
     canPop: !_panelOpen && !_fullScreen,
     onPopInvokedWithResult: (didPop, result) {
       if (!didPop && (_panelOpen || _fullScreen)) unawaited(_back());
     },
-    child: Scaffold(
+    child: MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: scaledScaler),
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: LayoutBuilder(
         builder: (context, constraints) {
@@ -1669,21 +1817,28 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     bottom: false,
                     child: KeyedSubtree(
                       key: ObjectKey(widget.player),
-                      child: PlayletDanmakuLayer(
-                        key: const ValueKey('player-danmaku-layer'),
-                        entries: widget.danmaku,
-                        position: _position,
-                        rate: _boosting ? 2 : _rate,
-                        // 官方横屏飞行 12000ms、竖屏 10000ms。
-                        landscape: landscape,
-                        settings: widget.danmakuSettings,
-                        playing:
-                            _ready &&
-                            widget.playing &&
-                            !(widget.player?.buffering ?? false) &&
-                            _appActive &&
-                            !_seeking &&
-                            !_dragSeekActive,
+                      // 弹幕不受官方字号档影响（弹幕有自己的字号配置）：
+                      // 还原外层 textScaler。
+                      child: MediaQuery(
+                        data: MediaQuery.of(context).copyWith(
+                          textScaler: outerScaler,
+                        ),
+                        child: PlayletDanmakuLayer(
+                          key: const ValueKey('player-danmaku-layer'),
+                          entries: widget.danmaku,
+                          position: _position,
+                          rate: _boosting ? 2 : _rate,
+                          // 官方横屏飞行 12000ms、竖屏 10000ms。
+                          landscape: landscape,
+                          settings: widget.danmakuSettings,
+                          playing:
+                              _ready &&
+                              widget.playing &&
+                              !(widget.player?.buffering ?? false) &&
+                              _appActive &&
+                              !_seeking &&
+                              !_dragSeekActive,
+                        ),
                       ),
                     ),
                   ),
@@ -1998,8 +2153,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           );
         },
       ),
+      ),
     ),
-  );
+    );
+  }
 
   Widget _positionVideo({
     required Size window,
