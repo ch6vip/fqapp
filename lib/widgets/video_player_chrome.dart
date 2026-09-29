@@ -107,6 +107,10 @@ class VideoPlayerChrome extends StatefulWidget {
 
   /// 选集面板头部的剧信息（官方 \`aa8.xml:7-15\`）。
   final String seriesTitle;
+
+  /// 标题行「剧名 >」点击 → 官方进剧集详情页（`series_detail`，ql3/v0
+  /// `a1()` 的默认分支）。null 时不响应（非短剧形态）。
+  final VoidCallback? onOpenSeriesDetail;
   final String seriesCover;
   final String episodeLabel;
 
@@ -186,6 +190,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.hotComments = const [],
     this.onHotCommentTap,
     this.seriesTitle = '',
+    this.onOpenSeriesDetail,
     this.seriesCover = '',
     this.episodeLabel = '',
     this.relateBook,
@@ -2133,6 +2138,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                           seriesTitle: widget.seriesTitle,
                           seriesCover: widget.seriesCover,
                           episodeLabel: widget.episodeLabel,
+                          // 选集面板头部箭头与播放页标题行同一路跳转
+                          // （官方详情入口）。
+                          onOpenSeries: widget.onOpenSeriesDetail,
                           relateBook: widget.relateBook,
                           onOpenRelateBook: widget.onOpenRelateBook,
                           scrollController: scroll,
@@ -2539,33 +2547,40 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         children: [
           if (showPill) Center(child: _fullscreenPill()),
           if (showPill) const SizedBox(height: 12),
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  _seriesTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: widget.shortSeries ? 16 : 20,
-                    fontWeight: FontWeight.bold,
-                    shadows: const [
-                      Shadow(color: Colors.black45, blurRadius: 8),
-                    ],
+          // 官方标题行整行可点（ql3/v0 `a1()`，埋点 enter_from="title"），
+          // 落点是剧集详情页。
+          GestureDetector(
+            key: const ValueKey('player-series-title'),
+            onTap: widget.onOpenSeriesDetail,
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    _seriesTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: widget.shortSeries ? 16 : 20,
+                      fontWeight: FontWeight.bold,
+                      shadows: const [
+                        Shadow(color: Colors.black45, blurRadius: 8),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              SizedBox(
-                width: 8,
-                height: 16,
-                child: Image.asset(
-                  'assets/images/drama/info_arrow.webp',
-                  fit: BoxFit.contain,
+                const SizedBox(width: 4),
+                SizedBox(
+                  width: 8,
+                  height: 16,
+                  child: Image.asset(
+                    'assets/images/drama/info_arrow.webp',
+                    fit: BoxFit.contain,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           if (widget.aiGenerated) ...[
             const SizedBox(height: 8),

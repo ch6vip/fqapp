@@ -8,6 +8,7 @@ import '../models/media_item.dart';
 import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import 'detail_page.dart' show DetailPage;
+import 'series_detail_page.dart' show SeriesDetailPage;
 import '../services/api_client.dart';
 import '../services/backend_transport.dart' show BackendRequest;
 import '../services/player_panel_preferences.dart';
@@ -304,6 +305,37 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     } finally {
       if (mounted) setState(() => _externalPanelOpen = false);
     }
+  }
+
+  /// 标题行「剧名 >」→ 剧集详情页（官方 `ql3/v0.a1()` 默认分支：
+  /// `openShortSeriesDetailActivity`，页面名 `series_detail`）。
+  ///
+  /// 官方进详情时播放器**继续活着**（返回即续看），这里同样不销毁；
+  /// 详情页点「继续播放/选集」只是关掉详情并切集，不叠第二个播放器。
+  void _openSeriesDetail() {
+    if (!widget.shortSeries || widget.bookId.isEmpty) return;
+    unawaited(
+      _withPlayerOverlay(
+        () => Navigator.push(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => SeriesDetailPage(
+              seriesId: widget.bookId,
+              title: _seriesTitle,
+              cover: _seriesCover,
+              episodes: widget.eps,
+              startIndex: _index,
+              watchedIds: _watchedIds,
+              onPlayEpisode: (index) {
+                // 详情页就在本播放器之上，pop 一次即回到播放页。
+                Navigator.of(context).pop();
+                if (index != _index) _selectEpisode(index);
+              },
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _openComments() {
@@ -1222,6 +1254,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       hotComments: _hotComments,
       onHotCommentTap: widget.shortSeries ? _openHotComment : null,
       seriesTitle: _seriesTitle,
+      // 官方播放页标题行「剧名 >」（ql3/v0 `a1()`）与选集面板头部箭头
+      // 都进剧集详情页（`series_detail`）。
+      onOpenSeriesDetail: widget.shortSeries ? _openSeriesDetail : null,
       seriesCover: _seriesCover,
       episodeLabel: _episodeLabel,
       fillScreen: _fillScreen,
