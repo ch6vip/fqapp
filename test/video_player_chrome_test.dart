@@ -375,11 +375,13 @@ void main() {
       ),
       findsOneWidget,
     );
-    // 全行集对齐（2026-09-29 拍板）：官方浅色布局的 6 个可下钻行在场；
-    // 取消/画面撑满/默认静音是深色 V2 布局的内容，浅色布局里没有。
+    // 全行集对齐（2026-09-29 拍板，举报行单独拍板移除）：官方浅色布局的
+    // 可下钻行在场；取消/画面撑满/默认静音是深色 V2 布局的内容，浅色布局
+    // 里没有。
     expect(find.text('取消'), findsNothing);
     expect(find.byKey(const ValueKey('player-more-fill-row')), findsNothing);
     expect(find.byKey(const ValueKey('player-more-mute-row')), findsNothing);
+    expect(find.text('举报'), findsNothing);
     expect(
       find.byKey(const ValueKey('player-more-light-download-row')),
       findsOneWidget,
@@ -398,10 +400,6 @@ void main() {
     );
     expect(
       find.byKey(const ValueKey('player-more-light-font-row')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('player-more-light-report-row')),
       findsOneWidget,
     );
     // 清晰度药丸点击立即回传 EpisodeVariant（浅色支独有的回传通道）。
@@ -426,13 +424,13 @@ void main() {
     // 无后端链路的行：点击关面板并提示「暂未支持」，不留静默死入口。
     await tester.tap(find.byKey(const ValueKey('player-rate-text')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-more-light-report-row')));
+    await tester.tap(find.byKey(const ValueKey('player-more-light-cast-row')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('player-more-light-panel')),
       findsNothing,
     );
-    expect(find.text('举报暂未支持'), findsOneWidget);
+    expect(find.text('投屏暂未支持'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });
