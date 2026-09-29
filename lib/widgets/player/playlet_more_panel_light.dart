@@ -9,11 +9,11 @@ import 'quality_icon.dart';
 /// `MorePanelV681.d()==false`：内容布局 `aae.xml` 的 `#FAFAFA` 底 +
 /// 16dp 顶圆角，不被 `Q0()` 染成 `#FF1C1C1C`）。
 ///
-/// 行集与官方截图对齐（2026-09-29 用户拍板：全行集，装机后与官方一致；
-/// 举报行随后单独拍板移除）：白卡 1 = 倍速、清晰度、清屏播放、离线缓存；
-/// 白卡 2 = 投屏、不感兴趣、听视频、弹幕、字体大小。无取消行。可下钻行
-/// （离线缓存/投屏/不感兴趣/听视频/字体大小）本客户端没有对应后端链路，
-/// 点击关面板并提示「暂未支持」——不是静默死入口。
+/// 行集与官方截图对齐后按用户拍板裁剪（2026-09-29）：白卡 1 = 倍速、
+/// 清晰度、清屏播放、离线缓存；白卡 2 = 听视频、弹幕、字体大小。无取消行，
+/// 举报/投屏/不感兴趣三行单独拍板移除。可下钻行（离线缓存/听视频/
+/// 字体大小）本客户端没有对应后端链路，点击关面板并提示「暂未支持」
+/// ——不是静默死入口。
 ///
 /// 色值（日间皮肤）：面板底 `#FAFAFA`，卡片白底 12dp 圆角；行文字与图标
 /// `skin_color_black_light`=#000000；未选中档位
@@ -137,18 +137,6 @@ class PlayletMorePanelLight extends StatelessWidget {
                   ]),
                   const SizedBox(height: 10),
                   _panelCard(context, [
-                    _placeholderRow(
-                      context,
-                      key: 'player-more-light-cast',
-                      icon: 'more_cast',
-                      label: '投屏',
-                    ),
-                    _placeholderRow(
-                      context,
-                      key: 'player-more-light-dislike',
-                      icon: 'more_dislike',
-                      label: '不感兴趣',
-                    ),
                     _placeholderRow(
                       context,
                       key: 'player-more-light-listen',
