@@ -956,7 +956,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           : null,
       barrierColor: widget.shortSeries ? Colors.transparent : null,
       backgroundColor: widget.shortSeries
-          ? (dark ? const Color(0xFF1C1C1C) : const Color(0xFFFAFAFA))
+          // 浅色支也跟随夜间皮肤（官方 SkinDelegate 翻白），否则夜间
+          // 主题下 FAFAFA 底配白字不可见。
+          ? (dark || Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF1C1C1C)
+                : const Color(0xFFFAFAFA))
           : const Color(0xFFFAFAFA),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(

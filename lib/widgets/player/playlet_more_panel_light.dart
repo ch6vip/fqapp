@@ -6,22 +6,23 @@ import 'quality_icon.dart';
 
 /// 短剧更多面板的**浅色分支**（官方 `ShortSeriesMorePanelDialogV2` 在
 /// `play_control_panel_style_v681.style` 未下发或为 0 时的形态，
-/// `MorePanelV681.d()==false`：保留内容布局 `aae.xml` 的 `#FAFAFA` 底 +
+/// `MorePanelV681.d()==false`：内容布局 `aae.xml` 的 `#FAFAFA` 底 +
 /// 16dp 顶圆角，不被 `Q0()` 染成 `#FF1C1C1C`）。
 ///
-/// 行集按用户设备截图（该分支的真实渲染）：倍速、清晰度（药丸选项，
-/// `ScrollableMultipleOptionsView` + `useNewOptionItemStyle` 的 30dp 药丸）、
-/// 清屏播放、弹幕开关；**无取消行**。官方同分支还有 投屏/离线缓存/不感兴趣/
-/// 听视频/字体大小/举报（`oi3/k.o()` 按各自配置门补齐），本客户端没有对应
-/// 后端链路，按「不留死入口」的取舍不显示——追样式不追死行。
+/// 行集与官方截图对齐（2026-09-29 用户拍板：全行集，装机后与官方一致）：
+/// 白卡 1 = 倍速、清晰度、清屏播放、离线缓存；白卡 2 = 投屏、不感兴趣、
+/// 听视频、弹幕、字体大小、举报。无取消行。可下钻行（离线缓存/投屏/
+/// 不感兴趣/听视频/字体大小/举报）本客户端没有对应后端链路，点击关面板
+/// 并提示「暂未支持」——不是静默死入口。
 ///
-/// 色值（日间皮肤）：行文字与图标 `skin_color_black_light`=#000000，
-/// 未选中档位 `skin_color_gray_40_light`=#66000000，开关开启
-/// `skin_color_orange_brand_light`=#FA6725；选中药丸为白底描边（截图）。
+/// 色值（日间皮肤）：面板底 `#FAFAFA`，卡片白底 12dp 圆角；行文字与图标
+/// `skin_color_black_light`=#000000；未选中档位
+/// `skin_color_gray_40_light`=#66000000；开关开启
+/// `skin_color_orange_brand_light`=#FA6725；药丸行是浅灰轨道上排开、
+/// 选中档白底黑粗体。
 ///
-/// 选档即返回：官方药丸点击立即生效（`jj3/i.e` → `playerController.e()`），
-/// 与深色分支「先动画再回传」不同。倍速回传 double，清晰度回传
-/// [EpisodeVariant]，宿主按类型分派。
+/// 浅色支图标是官方 APK 的本地 drawable（jm3 行类 + 弹层级各自绑定），
+/// 夜间皮肤官方走 SkinDelegate 翻白，这里按 MaterialApp 亮度做等价切换。
 class PlayletMorePanelLight extends StatelessWidget {
   const PlayletMorePanelLight({
     super.key,
@@ -48,17 +49,32 @@ class PlayletMorePanelLight extends StatelessWidget {
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
 
-  /// 日间肤色的行前景色。官方走 SkinDelegate（夜间翻白），本面板跟随
-  /// MaterialApp 亮度做等价切换。
   static Color _foreground(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
       ? const Color(0xCCFFFFFF)
       : const Color(0xFF000000);
 
+  static Color _muted(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? const Color(0x66FFFFFF)
+      : const Color(0x66000000);
+
   static Color _handleColor(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
       ? const Color(0x33FFFFFF)
       : const Color(0x1F000000);
+
+  /// 白卡片：官方浅色截图的两块圆角白底（夜间等价翻为亮 overlay）。
+  static Color _cardColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? const Color(0x14FFFFFF)
+      : Colors.white;
+
+  /// 官方药丸行 `ScrollableMultipleOptionsView` 的浅灰轨道。
+  static Color _trackColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? const Color(0x1FFFFFFF)
+      : const Color(0x0F000000);
 
   TextStyle _labelStyle(BuildContext context) => TextStyle(
     fontSize: 16,
@@ -68,7 +84,6 @@ class PlayletMorePanelLight extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = _foreground(context);
     return SafeArea(
       top: false,
       child: Column(
@@ -92,29 +107,64 @@ class PlayletMorePanelLight extends StatelessWidget {
           ),
           Flexible(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _rateRow(context),
-                  // 官方 r() 行序：清屏行在选项之后（jm3.a 的 p0(!zB0)）。
-                  if (onToggleClearScreen != null)
-                    _actionRow(
+                  _panelCard(context, [
+                    _rateRow(context),
+                    if (onQualitySelected != null && qualityVariants.length > 1)
+                      _qualityRow(context),
+                    // 官方行序：清屏行在选项之后（jm3.a 的 p0(!zB0)）。
+                    if (onToggleClearScreen != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-clear',
+                        icon: 'more_clear',
+                        label: clearScreen ? '退出清屏' : '清屏播放',
+                        onTap: () {
+                          onToggleClearScreen!();
+                          Navigator.pop(context);
+                        },
+                      ),
+                    _placeholderRow(
                       context,
-                      key: 'player-more-light-clear',
-                      icon: 'more_clear',
-                      label: clearScreen ? '退出清屏' : '清屏播放',
-                      onTap: () {
-                        onToggleClearScreen!();
-                        Navigator.pop(context);
-                      },
+                      key: 'player-more-light-download',
+                      icon: 'more_download',
+                      label: '离线缓存',
                     ),
-                  if (onQualitySelected != null &&
-                      qualityVariants.length > 1)
-                    _qualityRow(context),
-                  if (onToggleDanmaku != null)
-                    _danmakuRow(context, foreground),
+                  ]),
+                  const SizedBox(height: 10),
+                  _panelCard(context, [
+                    _placeholderRow(
+                      context,
+                      key: 'player-more-light-cast',
+                      icon: 'more_cast',
+                      label: '投屏',
+                    ),
+                    _placeholderRow(
+                      context,
+                      key: 'player-more-light-dislike',
+                      icon: 'more_dislike',
+                      label: '不感兴趣',
+                    ),
+                    _placeholderRow(
+                      context,
+                      key: 'player-more-light-listen',
+                      icon: 'more_listen',
+                      label: '听视频',
+                    ),
+                    if (onToggleDanmaku != null)
+                      _danmakuRow(context, _foreground(context)),
+                    _fontRow(context),
+                    _placeholderRow(
+                      context,
+                      key: 'player-more-light-report',
+                      icon: 'more_report',
+                      label: '举报',
+                    ),
+                  ]),
                 ],
               ),
             ),
@@ -124,10 +174,34 @@ class PlayletMorePanelLight extends StatelessWidget {
     );
   }
 
-  /// 倍速行：图标 + 标签 + 药丸档位（官方 30dp 新药丸样式）。
+  Widget _panelCard(BuildContext context, List<Widget> rows) => Container(
+    decoration: BoxDecoration(
+      color: _cardColor(context),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Column(mainAxisSize: MainAxisSize.min, children: rows),
+  );
+
+  /// 药丸轨道：浅灰圆角底 + 横向滚动（官方 ScrollableMultipleOptionsView）。
+  Widget _pillTrack(BuildContext context, Widget child) => Container(
+    height: 36,
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: _trackColor(context),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const ClampingScrollPhysics(),
+      child: child,
+    ),
+  );
+
+  /// 倍速行：图标 + 标签 + 药丸档位（浅色支档位与深色 V2 不同，无 1.75x）。
   Widget _rateRow(BuildContext context) => Padding(
     key: const ValueKey('player-more-light-rate-row'),
-    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     child: SizedBox(
       height: 30,
       child: Row(
@@ -137,13 +211,11 @@ class PlayletMorePanelLight extends StatelessWidget {
           Text('倍速', style: _labelStyle(context)),
           const SizedBox(width: 16),
           Expanded(
-            child: SingleChildScrollView(
-              key: const ValueKey('player-more-light-rate-scroll'),
-              scrollDirection: Axis.horizontal,
-              physics: const ClampingScrollPhysics(),
-              child: Row(
+            child: _pillTrack(
+              context,
+              Row(
                 children: [
-                  for (final rate in PlayerPreferences.playbackRates)
+                  for (final rate in PlayerPreferences.lightPanelPlaybackRates)
                     _OptionPill(
                       key: ValueKey('player-more-light-rate-$rate'),
                       label:
@@ -160,10 +232,10 @@ class PlayletMorePanelLight extends StatelessWidget {
     ),
   );
 
-  /// 清晰度行：药丸直接铺开（官方浅色分支同形态），选中档即当前流。
+  /// 清晰度行：多档流药丸直接铺开，选中档即当前流。
   Widget _qualityRow(BuildContext context) => Padding(
     key: const ValueKey('player-more-light-quality-row'),
-    padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
     child: SizedBox(
       height: 30,
       child: Row(
@@ -179,10 +251,9 @@ class PlayletMorePanelLight extends StatelessWidget {
           Text('清晰度', style: _labelStyle(context)),
           const SizedBox(width: 16),
           Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              physics: const ClampingScrollPhysics(),
-              child: Row(
+            child: _pillTrack(
+              context,
+              Row(
                 children: [
                   for (final (index, variant) in qualityVariants.indexed)
                     _OptionPill(
@@ -210,7 +281,7 @@ class PlayletMorePanelLight extends StatelessWidget {
       onTap: onToggleDanmaku,
       excludeFromSemantics: true,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         child: SizedBox(
           height: 48,
           child: Row(
@@ -227,12 +298,13 @@ class PlayletMorePanelLight extends StatelessWidget {
     ),
   );
 
-  /// 官方行：图标 + 文案整行点击（jm3 行语义），点击后随面板关闭。
+  /// 官方可下钻行：图标 + 文案 + 尾注/箭头，点击随面板关闭（jm3 行语义）。
   Widget _actionRow(
     BuildContext context, {
     required String key,
     required String icon,
     required String label,
+    String? trailing,
     required VoidCallback onTap,
   }) => Semantics(
     key: ValueKey('$key-row'),
@@ -244,7 +316,7 @@ class PlayletMorePanelLight extends StatelessWidget {
       onTap: onTap,
       excludeFromSemantics: true,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         child: SizedBox(
           key: ValueKey(key),
           height: 48,
@@ -253,15 +325,56 @@ class PlayletMorePanelLight extends StatelessWidget {
               _PanelIconLight(name: icon, color: _foreground(context)),
               const SizedBox(width: 8),
               Text(label, style: _labelStyle(context)),
+              const Spacer(),
+              if (trailing != null) ...[
+                Text(trailing, style: TextStyle(fontSize: 14, color: _muted(context))),
+                const SizedBox(width: 4),
+              ],
+              Icon(Icons.chevron_right, size: 22, color: _muted(context)),
             ],
           ),
         ),
       ),
     ),
   );
+
+  /// 官方有、本客户端无后端链路的行：点击关闭面板并提示，不留静默死入口。
+  Widget _placeholderRow(
+    BuildContext context, {
+    required String key,
+    required String icon,
+    required String label,
+    String? trailing,
+  }) {
+    void onTap() {
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.pop(context);
+      messenger.showSnackBar(
+        SnackBar(content: Text('$label暂未支持')),
+      );
+    }
+
+    return _actionRow(
+      context,
+      key: key,
+      icon: icon,
+      label: label,
+      trailing: trailing,
+      onTap: onTap,
+    );
+  }
+
+  /// 官方字体大小行的尾注是当前档位（截图为「标准」）。
+  Widget _fontRow(BuildContext context) => _placeholderRow(
+    context,
+    key: 'player-more-light-font',
+    icon: 'more_font',
+    label: '字体大小',
+    trailing: '标准',
+  );
 }
 
-/// 30dp 选项药丸：选中白底描边 + 黑色粗体，未选中灰字（官方浅色截图形态）。
+/// 30dp 选项药丸：选中白底黑粗体、未选中灰字（官方浅色截图形态）。
 class _OptionPill extends StatelessWidget {
   const _OptionPill({
     super.key,
@@ -296,16 +409,11 @@ class _OptionPill extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              // 选中白底描边只在浅色底上可辨：深色底配色反转。
+              // 选中白底在浅灰轨道上可辨：深色底配色反转。
               color: selected
                   ? (dark ? const Color(0x33FFFFFF) : Colors.white)
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(15),
-              border: Border.all(
-                color: selected
-                    ? (dark ? const Color(0x66FFFFFF) : const Color(0x1F000000))
-                    : Colors.transparent,
-              ),
             ),
             child: Text(
               label,
@@ -357,7 +465,8 @@ class _LightSwitch extends StatelessWidget {
   }
 }
 
-/// 浅色行的官方图标资产（与深色面板同一批 webp），日间染黑、夜间翻白。
+/// 浅色行的官方图标资产（jm3 行类 / 弹层级绑定的 drawable），日间染黑、
+/// 夜间翻白。
 class _PanelIconLight extends StatelessWidget {
   const _PanelIconLight({required this.name, required this.color});
 

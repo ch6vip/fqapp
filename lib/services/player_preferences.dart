@@ -6,6 +6,10 @@ class PlayerPreferences {
   static Future<void>? _autoAdvanceWrites;
   static const playbackRates = <double>[0.75, 1, 1.25, 1.5, 1.75, 2];
 
+  /// 官方浅色更多面板（style 未下发）的药丸档位，与深色 V2 不同：
+  /// 无 1.75x，多 2x/3x（官方截图对照）。
+  static const lightPanelPlaybackRates = <double>[0.75, 1, 1.25, 1.5, 2, 3];
+
   static Future<double> loadPlaybackRate() async {
     final preferences = await SharedPreferences.getInstance();
     final saved = preferences.get(_playbackRateKey);
