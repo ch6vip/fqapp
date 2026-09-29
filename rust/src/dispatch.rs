@@ -117,6 +117,20 @@ async fn read_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, St
     Ok(out)
 }
 
+/// APIs that submit user actions under the device identity (comments add /
+/// digg / reply; the danmaku add route reuses `playlet_comment_add`). The
+/// loopback adapter is callable by other local HTTP clients, so a GET must
+/// never turn into an upstream POST just because the path matched one of
+/// these. New device-bound write routes must be added here and to the
+/// contract test; the list lives apart from router.rs's route table on
+/// purpose — see
+/// .agents/notes/implemented/bug-fix/2026-09-28-loopback-write-methods.md.
+const DEVICE_BOUND_WRITE_APIS: &[&str] = &[
+    "playlet_comment_add",
+    "playlet_comment_digg",
+    "playlet_comment_reply",
+];
+
 pub async fn dispatch(server: &Server, req: &Request) -> Response {
     let path = req.path.as_str();
     let ctx = &server.ctx;
@@ -165,6 +179,19 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
         }
     };
     params = m.params;
+
+    // Method enforcement for device-bound writes: see DEVICE_BOUND_WRITE_APIS
+    // and the note it references.
+    if DEVICE_BOUND_WRITE_APIS.contains(&m.api) && !req.method.eq_ignore_ascii_case("POST") {
+        let mut response = Response::json(
+            405,
+            &json!({ "success": false, "error": "method not allowed" }),
+        );
+        response
+            .headers
+            .push(("allow".to_string(), "POST".to_string()));
+        return response;
+    }
 
     // HTML page endpoints write their own response and bypass the envelope.
     if let Some(raw) = server.raw_handler(m.api) {

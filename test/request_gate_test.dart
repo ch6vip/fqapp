@@ -107,6 +107,73 @@ void main() {
     await expectLater(shared, throwsA(isA<BackendRequestAborted>()));
   });
 
+  test('a cancelled joiner stops waiting without aborting its owner', () async {
+    final gate = RequestGate();
+    final ownerResult = Completer<String>();
+    final joinerRequest = BackendRequest();
+    var joinerSends = 0;
+    final owner = gate.run<String>(
+      'GET /shared',
+      send: () => ownerResult.future,
+    );
+    final joiner = gate.run<String>(
+      'GET /shared',
+      request: joinerRequest,
+      send: () async {
+        joinerSends++;
+        return 'unexpected';
+      },
+    );
+
+    joinerRequest.cancel();
+    await expectLater(
+      joiner.timeout(const Duration(seconds: 1)),
+      throwsA(isA<BackendRequestAborted>()),
+    );
+    expect(joinerSends, 0);
+    ownerResult.complete('owner-result');
+    expect(await owner, 'owner-result');
+  });
+
+  test('a cancellation at grant does not send or release twice', () async {
+    final gate = RequestGate(maxConcurrent: 1);
+    final blocker = Completer<String>();
+    final request = BackendRequest();
+    var cancelledSends = 0;
+    final occupied = gate.run<String>('GET /owner', send: () => blocker.future);
+    final cancelled = gate.run<String>(
+      'GET /cancelled',
+      request: request,
+      send: () async {
+        cancelledSends++;
+        return 'unexpected';
+      },
+    );
+    // The owner's result is published before it grants the waiting slot. Its
+    // listener cancels the waiter after the grant and before it resumes.
+    occupied.then((_) => request.cancel());
+    blocker.complete('done');
+    expect(await occupied, 'done');
+    await expectLater(cancelled, throwsA(isA<BackendRequestAborted>()));
+    expect(cancelledSends, 0);
+
+    final next = Completer<String>();
+    var followingSends = 0;
+    final running = gate.run<String>('GET /next', send: () => next.future);
+    final following = gate.run<String>(
+      'GET /following',
+      send: () async {
+        followingSends++;
+        return 'following';
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(followingSends, 0);
+    next.complete('next');
+    expect(await running, 'next');
+    expect(await following, 'following');
+  });
+
   test('a cancelled caller never joins or sends', () async {
     final gate = RequestGate();
     final request = BackendRequest()..cancel();

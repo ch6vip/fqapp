@@ -17,6 +17,7 @@ use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::endpoints::base::{
     dragon_read_headers, Upstream, UpstreamMode, UpstreamRequestSpec, UA_WINDOWS_BROWSER,
@@ -372,12 +373,11 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
             Err(_) => continue,
         };
         let format = detect_image_format(&dec, &pic.pic_url);
-        let mut name = original_file_name(&pic.pic_url, &format);
-        if name.is_empty() {
-            name = format!("img_{i}.{format}");
-        }
+        // Note: content-addressed manga files prevent chapter URL basename
+        // collisions; see .agents/notes/implemented/bug-fix/2026-09-28-manga-image-collisions.md.
+        let name = image_file_name(&dec, &format);
         let fp = std::path::Path::new(&ctx.src_dir).join(&name);
-        if std::fs::write(&fp, &dec).is_err() {
+        if write_image_once(&fp, &dec).await.is_err() {
             continue;
         }
         let served = format!("/src/{name}");
@@ -393,6 +393,29 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
         }
     }
     (urls, html)
+}
+
+fn image_file_name(image: &[u8], format: &str) -> String {
+    format!("img_{}.{format}", hex::encode(Sha256::digest(image)))
+}
+
+/// Publish a complete file under its content hash. The temporary name is
+/// unique because two chapters can download the same image concurrently.
+async fn write_image_once(path: &std::path::Path, image: &[u8]) -> Result<(), String> {
+    if tokio::fs::metadata(path).await.is_ok() {
+        return Ok(());
+    }
+    let tmp = path.with_extension(format!("{}.part", rand::random::<u64>()));
+    tokio::fs::write(&tmp, image)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Err(rename_err) = tokio::fs::rename(&tmp, path).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        if tokio::fs::metadata(path).await.is_err() {
+            return Err(rename_err.to_string());
+        }
+    }
+    Ok(())
 }
 
 /// Manga.download: fetches an image body with the Windows browser UA.
@@ -526,7 +549,10 @@ fn detect_image_format(data: &[u8], u: &str) -> String {
     let ext_raw = go_path_ext(&path);
     let ext = ext_raw.strip_prefix('.').unwrap_or("").to_lowercase();
     match ext.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" => return ext,
+        // "jpeg" folds into "jpg" (what sniffing already yields) so one image
+        // cannot land under two extensions.
+        "jpg" | "jpeg" => return "jpg".to_string(),
+        "png" | "gif" | "webp" => return ext,
         _ => {}
     }
     if data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
@@ -542,18 +568,6 @@ fn detect_image_format(data: &[u8], u: &str) -> String {
         return "webp".to_string();
     }
     "png".to_string()
-}
-
-/// originalFileName: derives a file name from the URL and format.
-fn original_file_name(u: &str, format: &str) -> String {
-    let path = url_path(u);
-    let base_full = go_path_base(&path);
-    let ext = go_path_ext(&base_full);
-    let base = &base_full[..base_full.len() - ext.len()];
-    if base.is_empty() || base == "." || base == "/" {
-        return String::new();
-    }
-    format!("{base}.{format}")
 }
 
 /// Go url.Parse(...).Path: the decoded path, or (for relative references that
@@ -573,24 +587,6 @@ fn url_path(u: &str) -> String {
                 .into_owned()
         }
     }
-}
-
-/// Go path.Base.
-fn go_path_base(path: &str) -> String {
-    if path.is_empty() {
-        return ".".to_string();
-    }
-    let mut p = path;
-    while p.ends_with('/') {
-        p = &p[..p.len() - 1];
-    }
-    if let Some(i) = p.rfind('/') {
-        p = &p[i + 1..];
-    }
-    if p.is_empty() {
-        return "/".to_string();
-    }
-    p.to_string()
 }
 
 /// Go path.Ext.
@@ -3140,20 +3136,18 @@ mod manga_image_fixture {
     }
 
     #[test]
-    fn keeps_the_original_file_name_extension_swapped() {
+    fn image_names_depend_on_content_and_contain_no_url_path() {
         let fixture = fixture();
         let f = &fixture["manga_image"];
-        // Go: path.Base minus path.Ext, then "." + format. For the tplv URL the
-        // extension is ".image", so the base keeps "1.png~tplv-x".
-        assert_eq!(
-            original_file_name(f["url_png"].as_str().unwrap(), "png"),
-            "1.png~tplv-x.png"
-        );
-        assert_eq!(
-            original_file_name(f["url_with_query"].as_str().unwrap(), "jpg"),
-            "2.jpg"
-        );
-        // A path with no base name produces no name, exactly like the reference.
-        assert_eq!(original_file_name("https://cdn/", "png"), "");
+        let plain = hex::decode(f["large_plain_hex"].as_str().unwrap()).unwrap();
+        let name = image_file_name(&plain, "png");
+        assert!(name.starts_with("img_"));
+        assert!(name.ends_with(".png"));
+        assert_eq!(name.len(), 4 + 64 + 4);
+        assert_eq!(name, image_file_name(&plain, "png"));
+        let mut other = plain;
+        other[100] ^= 1;
+        assert_ne!(name, image_file_name(&other, "png"));
+        assert_ne!(name, image_file_name(&other, "jpg"));
     }
 }

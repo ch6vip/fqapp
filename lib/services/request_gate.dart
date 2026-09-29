@@ -21,6 +21,8 @@ import 'backend_transport.dart';
 /// cancellation retries standalone, so its own data does not die with somebody
 /// else's request.
 class RequestGate {
+  // Note: Shared-flight cancellation and queued slot ownership — see
+  // .agents/notes/implemented/bug-fix/2026-09-28-request-gate-cancellation.md.
   RequestGate({this.maxConcurrent = 16});
 
   final int maxConcurrent;
@@ -43,7 +45,7 @@ class RequestGate {
     if (share) {
       final existing = _inflight[key];
       if (existing != null) {
-        return existing.then<T>(
+        final joined = existing.then<T>(
           (value) => value as T,
           onError: (Object error, StackTrace stack) {
             if (error is BackendRequestAborted &&
@@ -55,6 +57,15 @@ class RequestGate {
             Error.throwWithStackTrace(error, stack);
           },
         );
+        if (request == null) return joined;
+        // Joining does not own the transport flight. Race only this caller's
+        // result against its cancellation, leaving the owner's send intact.
+        return Future.any<T>([
+          joined,
+          request.whenCancelled.then<T>(
+            (_) => throw BackendRequestAborted('请求已取消'),
+          ),
+        ]);
       }
     }
     final completer = Completer<T>();
@@ -97,14 +108,17 @@ class RequestGate {
       } else {
         await waiter.grant.future;
       }
-      if (cancelled && !waiter.granted) {
-        _waiters.remove(waiter);
+      if (cancelled || request?.isCancelled == true) {
+        // A grant and cancellation can complete in the same event-loop turn.
+        // If the slot moved to us, hand it on exactly once; run() must not
+        // start send() or release that same slot again.
+        if (waiter.granted) {
+          _release();
+        } else {
+          _waiters.remove(waiter);
+        }
         throw BackendRequestAborted('请求已取消');
       }
-      // Granted (possibly after the cancel flag was already set): the slot is
-      // ours. A caller that was cancelled anyway releases it unused — the
-      // transport aborts the send the moment it starts.
-      if (cancelled) _release();
       return;
     }
   }

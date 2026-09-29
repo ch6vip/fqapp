@@ -361,11 +361,14 @@ async fn extract_stream_variants(ctx: &Ctx, raw: &[u8]) -> Vec<Value> {
         // NOTE: 不用 video_model_encrypted() 做前置——它只认数组形状的
         // video_list；实测漫剧（series 7686494169098898456）的 video_list 是
         // object 且未标 encrypt，但每档照常带 spade_a/kid，选流门照常适用。
-        let primary = variant_rows(model.get("video_list").and_then(|v| v.as_object()), model
-            .get("key_seed")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .and_then(|s| audio_b64_decode(s).ok()));
+        let primary = variant_rows(
+            model.get("video_list").and_then(|v| v.as_object()),
+            model
+                .get("key_seed")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .and_then(|s| audio_b64_decode(s).ok()),
+        );
         if !primary.is_empty() {
             return primary;
         }
@@ -385,7 +388,9 @@ async fn extract_stream_variants(ctx: &Ctx, raw: &[u8]) -> Vec<Value> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .and_then(|s| audio_b64_decode(s).ok());
-        let list = list.and_then(|d| d.get("video_list")).and_then(|v| v.as_object());
+        let list = list
+            .and_then(|d| d.get("video_list"))
+            .and_then(|v| v.as_object());
         let rows = variant_rows(list, key_seed);
         if !rows.is_empty() {
             return rows;
@@ -395,10 +400,7 @@ async fn extract_stream_variants(ctx: &Ctx, raw: &[u8]) -> Vec<Value> {
 }
 
 /// Builds the sorted variant list from one `video_list` object.
-fn variant_rows(
-    video_list: Option<&Map<String, Value>>,
-    key_seed: Option<Vec<u8>>,
-) -> Vec<Value> {
+fn variant_rows(video_list: Option<&Map<String, Value>>, key_seed: Option<Vec<u8>>) -> Vec<Value> {
     let Some(video_list) = video_list else {
         return Vec::new();
     };
@@ -407,22 +409,22 @@ fn variant_rows(
         .filter_map(|v| v.as_object())
         .filter_map(|info| {
             let score = video_quality_score(info)?;
-                let (url, key) = decrypt_variant_entry(info, key_seed.as_deref())?;
-                let w = int64_from_any(info.get("vwidth").unwrap_or(&Value::Null));
-                let h = int64_from_any(info.get("vheight").unwrap_or(&Value::Null));
-                // 档位语义按**短边**：竖屏剧 1280×720 是 720P 而非 2K
-                // （官方 Resolution 枚举同样以短边为准）。
-                let short_edge = if w > 0 && h > 0 { w.min(h) } else { w.max(h) };
-                Some((
-                    score,
-                    json!({
-                        "name": variant_display_name(short_edge),
-                        "width": w,
-                        "height": h,
-                        "url": url,
-                        "key_hex": hex::encode(&key),
-                    }),
-                ))
+            let (url, key) = decrypt_variant_entry(info, key_seed.as_deref())?;
+            let w = int64_from_any(info.get("vwidth").unwrap_or(&Value::Null));
+            let h = int64_from_any(info.get("vheight").unwrap_or(&Value::Null));
+            // 档位语义按**短边**：竖屏剧 1280×720 是 720P 而非 2K
+            // （官方 Resolution 枚举同样以短边为准）。
+            let short_edge = if w > 0 && h > 0 { w.min(h) } else { w.max(h) };
+            Some((
+                score,
+                json!({
+                    "name": variant_display_name(short_edge),
+                    "width": w,
+                    "height": h,
+                    "url": url,
+                    "key_hex": hex::encode(&key),
+                }),
+            ))
         })
         .collect();
     rows.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
@@ -1780,10 +1782,7 @@ mod spade_vectors {
             }
         });
         let rows = variant_rows(video_list.as_object(), Some(b"AAAA".to_vec()));
-        let names: Vec<&str> = rows
-            .iter()
-            .map(|v| v["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = rows.iter().map(|v| v["name"].as_str().unwrap()).collect();
         assert_eq!(names, ["720P", "540P", "360P"]);
         for row in &rows {
             assert!(row["url"].as_str().unwrap().starts_with("https://"));

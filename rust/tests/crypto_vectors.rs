@@ -322,6 +322,26 @@ fn decrypt_register_key_matches_go_vector() {
 }
 
 #[test]
+fn decrypt_register_key_rejects_unaligned_upstream_ciphertext() {
+    use base64::Engine as _;
+    let malformed = base64::engine::general_purpose::STANDARD.encode([0u8; 17]);
+    assert!(decrypt_register_key(&malformed)
+        .unwrap_err()
+        .contains("not block-aligned"));
+}
+
+#[test]
+fn decrypt_register_key_rejects_empty_ciphertext() {
+    use base64::Engine as _;
+    // 16 bytes = IV only: block-aligned, but decrypting it would yield an
+    // empty key instead of an error.
+    let malformed = base64::engine::general_purpose::STANDARD.encode([0u8; 16]);
+    assert!(decrypt_register_key(&malformed)
+        .unwrap_err()
+        .contains("empty"));
+}
+
+#[test]
 fn encrypt_register_key_request_matches_go_vector() {
     let v = device_vectors();
     let got = encrypt_register_key_request(

@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{build_server, pool_json, MockReply, MockUpstream, TempDir};
+use common::{build_server, pool_json, start_loopback, MockReply, MockUpstream, TempDir};
 use fqapi_core::dispatch::{dispatch, Request};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -53,6 +53,40 @@ async fn json_body(resp: fqapi_core::dispatch::Response) -> (u16, Value) {
 
 fn body_of(recorded: &common::Recorded) -> Value {
     serde_json::from_slice(&recorded.body).expect("upstream body is JSON")
+}
+
+#[tokio::test]
+async fn write_routes_reject_get_before_any_upstream_request() {
+    let upstream = MockUpstream::start(|_| MockReply::json(json!({"code": 0}))).await;
+    let dir = TempDir::new("playlet-write-method");
+    let server = server_with(&dir, &upstream.origin).await;
+    for (path, query) in [
+        ("/api/v1/series/123/comments/add", "text=x"),
+        ("/api/v1/videos/456/danmaku/add", "series_id=123&text=x"),
+        ("/api/v1/comments/c9/reply", "series_id=123&text=x"),
+        ("/api/v1/comments/c9/digg", "liked=true"),
+    ] {
+        let response = dispatch(&server, &api_get(path, query)).await;
+        assert_eq!(response.status, 405, "GET {path}");
+        assert!(response
+            .headers
+            .iter()
+            .any(|(name, value)| { name.eq_ignore_ascii_case("allow") && value == "POST" }));
+    }
+    assert!(upstream.requests().is_empty());
+
+    // Exercise the actual loopback adapter as well as direct dispatch.
+    let (port, task) = start_loopback(server).await;
+    let response = reqwest::get(format!(
+        "http://127.0.0.1:{port}/api/v1/series/123/comments/add?text=x"
+    ))
+    .await
+    .expect("loopback GET");
+    assert_eq!(response.status().as_u16(), 405);
+    assert_eq!(response.headers()["allow"], "POST");
+    assert!(upstream.requests().is_empty());
+    task.abort();
+    upstream.shutdown();
 }
 
 /// y.java 的短剧回复参数不同于段评：Book(2/1)、NovelBookReply(501)、
@@ -130,10 +164,7 @@ async fn playlet_reply_pinpoint_read_uses_source_1002_with_ref_reply() {
     let (status, _) = json_body(
         dispatch(
             &server,
-            &api_get(
-                "/api/v1/series/123/comments/c9/replies",
-                "ref_reply_id=r7",
-            ),
+            &api_get("/api/v1/series/123/comments/c9/replies", "ref_reply_id=r7"),
         )
         .await,
     )

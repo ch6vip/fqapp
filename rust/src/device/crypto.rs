@@ -48,6 +48,8 @@ pub fn tt_encrypt(data: &[u8], random_bytes32: Option<[u8; 32]>) -> Result<Vec<u
 
 /// Decrypts a registerkey response `data.key` into the raw secret-key bytes.
 pub fn decrypt_register_key(encrypted_key_b64: &str) -> Result<Vec<u8>, String> {
+    // Note: reject malformed upstream blocks before the CBC helper asserts —
+    // see .agents/notes/implemented/bug-fix/2026-09-28-registerkey-ciphertext.md.
     let data = base64::engine::general_purpose::STANDARD
         .decode(encrypted_key_b64)
         .map_err(|e| e.to_string())?;
@@ -57,6 +59,14 @@ pub fn decrypt_register_key(encrypted_key_b64: &str) -> Result<Vec<u8>, String> 
     let key = hex::decode(REGISTER_KEY_MASTER_HEX).expect("master key");
     let iv = &data[..16];
     let ct = &data[16..];
+    // An empty ciphertext is block-aligned but would yield an empty key that
+    // only surfaces later as a confusing signature failure — reject it here.
+    if ct.is_empty() {
+        return Err("registerkey ciphertext empty".to_string());
+    }
+    if !ct.len().is_multiple_of(crate::crypto::BLOCK) {
+        return Err("registerkey ciphertext not block-aligned".to_string());
+    }
     let pt = crate::crypto::aes_cbc_decrypt(ct, &key, iv);
     Ok(crate::crypto::pkcs7_unpad(&pt, 16).to_vec())
 }
