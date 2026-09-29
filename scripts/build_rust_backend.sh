@@ -80,6 +80,11 @@ case "$(uname -s)" in
 esac
 TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG/bin"
 CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang"
+# Windows 的 NDK 里不带扩展名的 clang 是 shell 脚本，cargo 无法 exec
+# （os error 193）；与 .ps1 同策略优先选 .cmd 包装器。
+if [ "$HOST_TAG" = "windows-x86_64" ] && [ -f "$CC_PATH.cmd" ]; then
+  CC_PATH="$CC_PATH.cmd"
+fi
 if [ ! -f "$CC_PATH" ]; then
   echo "错误：在 $TOOLCHAIN 下找不到 aarch64-linux-android21-clang。" >&2
   exit 1
