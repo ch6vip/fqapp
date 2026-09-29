@@ -601,10 +601,12 @@ void main() {
     await player.dispose();
   });
 
-  testWidgets('shortSeries catalog and information persist after auto-hide', (
+  testWidgets('shortSeries catalog and information stay resident', (
     tester,
   ) async {
-    // 本轮截图形态常驻「选集 + 清屏图标」，自动收起不切换入口。
+    // 本轮截图形态常驻「选集 + 清屏图标」；官方竖屏新栏没有整层自动收起
+    // （apf/cjc 链路取证，见 chrome._scheduleHide 注释），顶栏/药丸/信息区
+    // 播放中也不消失。
     final player = FakeNativePlayer()..isPlaying = true;
     var opened = 0;
     await tester.pumpWidget(
@@ -637,9 +639,9 @@ void main() {
     final catalogRect = tester.getRect(
       find.byKey(const ValueKey('player-catalog-bar')),
     );
-    // 3s 自动收起 → 常驻 band。
+    // 播放 4s 后控件仍全部在场：没有自动收起。
     await tester.pump(const Duration(seconds: 4));
-    expect(find.byKey(const ValueKey('player-fullscreen-pill')), findsNothing);
+    expect(find.byKey(const ValueKey('player-fullscreen-pill')), findsOneWidget);
     expect(find.byKey(const ValueKey('player-follow-button')), findsNothing);
     expect(find.byKey(const ValueKey('player-original-book')), findsOneWidget);
     expect(find.text('原著《从宿舍逃杀开始》'), findsOneWidget);

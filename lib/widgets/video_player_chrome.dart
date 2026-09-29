@@ -523,6 +523,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   void _scheduleHide() {
     _hideTimer?.cancel();
+    // 官方竖屏新底栏播放页没有整层隐藏控件的定时器（apf.xml/cjc.xml 链路
+    // 取证：顶栏、全屏观看、信息区、选集栏常驻，右栏淡出只跟追剧/点赞状态
+    // 走；淡出仅随面板滑出 o.g6(1-f2) 与清屏发生）。此前的 3s 自动收起是
+    // 推断值（f01-f08 总表:117「官方自动收起计时值未定位」），按官方行为
+    // 让该形态常驻；通用播放器与横屏保留原计时。
+    if (widget.shortSeries && _catalogStyle && !_isLandscape) return;
     if (!_ready ||
         _clearScreen ||
         _locked ||
