@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -26,14 +25,21 @@ import 'player_page.dart' show PlayerPage;
 /// `GetVideoDetailRequest(seriesId, VideoSeriesIdType.SeriesId,
 /// source=FromDetailPage)`，本地对应 `/api/v1/series/{id}`。
 ///
+/// 2026-09-30 真机取证（官方 7.0.9.32，抽象三国第一季详情页截图）后重排：
+/// 区块顺序 = 头部 → 基本信息（简介/演职人员）→ 剧评 → 选集 → 原著小说；
+/// 钉住 tab = 基本信息/剧评/原著小说（**没有选集 tab**，选集区滚过时点亮
+/// 的是剧评，与官方一致）；顶栏剧名在返回键右侧左对齐；背景为**清晰**
+/// 封面 + 压暗渐变（非模糊）；选集区头部右侧带「已完结 共105集 ›」状态。
+///
 /// 与官方的差异（都有据）：
 /// - 官方底部是「收藏 + 继续播放」双钮；收藏要走账号，本仓库按
 ///   「无账号范围」裁掉（2026-09-26 short-drama-no-account-scope 笔记），
 ///   保留单个主钮，宽度照 `g1.c` 单钮分支 = 70% 屏宽。
-/// - 官方背景 `i9u` 是全屏封面图，是否加模糊**未取证**，这里给轻模糊 +
-///   压暗遮罩保证白字可读。
-/// - 剧评 tab 官方是完整列表；本地复用 PlayletCommentPanel 的链路，
-///   页内放预览 + 「查看全部」入口。
+/// - 官方 tab 还有「相关作品」「猜你喜欢」，且剧评头部有评分入口（轻点
+///   评分）——本地 `video_detail` 链路没有相关剧集与评分数据，裁掉；
+///   相关作品的取数接口是后续取证项。
+/// - 官方剧评是完整列表；本地复用 PlayletCommentPanel 的链路，页内放
+///   横滑卡片预览 + 「全部剧评 ›」入口。
 class SeriesDetailPage extends StatefulWidget {
   const SeriesDetailPage({
     super.key,
@@ -204,14 +210,13 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       ? 0
       : (_episodes.length - 1) ~/ _pageSize;
 
-  /// 封面右上角状态角标（官方 `jgn`，10sp 白字圆角胶囊）：分支顺序照
-  /// `story_player_panel.seriesEpisodeLabel` 的源码顺序，只取短态。
-  String? get _coverBadge {
+  /// 选集区头部右侧的状态文案（官方实机：`已完结 共105集 ›`）。
+  String? get _episodeStatusText {
     final count = _detail.episodeCount > 0
         ? _detail.episodeCount
         : _episodes.length;
     return switch (_detail.status) {
-      SeriesStatus.finished => '已完结',
+      SeriesStatus.finished => count > 0 ? '已完结 共$count集' : '已完结',
       SeriesStatus.updating => count > 0 ? '更新至$count集' : '更新中',
       SeriesStatus.updateToday => '今日更新',
       SeriesStatus.updateStop => '断更',
@@ -223,9 +228,10 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     // 官方 VideoCommonTitleBar 初始 gone，滚过头部后浮现。
     final scrolled = _scroll.hasClients && _scroll.offset > _topBarRevealOffset;
     // 官方 tab 与锚点区联动；滚动经过哪个区就点亮哪个 tab。
+    // 选集区没有自己的 tab（官方如此），归到上方的剧评。
     var tab = 0;
     if (_userScrolling) {
-      for (var i = _sectionKeys.length - 1; i >= 0; i--) {
+      for (var i = _tabNames.length - 1; i >= 0; i--) {
         if (_sectionTop(i) <= 0) {
           tab = i;
           break;
@@ -239,6 +245,15 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       if (_userScrolling) _tab = tab;
     });
   }
+
+  /// 官方 tab（实机 7.0.9.32）：基本信息 / 剧评 / 原著小说 / 相关作品 /
+  /// 猜你喜欢，**没有选集**。后两个本地无数据源，裁掉；原著小说仅在
+  /// 确有关联书时出现。
+  List<String> get _tabNames => [
+    '基本信息',
+    '剧评',
+    ?(_detail.originalBook != null ? '原著小说' : null),
+  ];
 
   /// 区块顶相对视口顶的偏移。
   double _sectionTop(int index) {
@@ -366,23 +381,22 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
-  /// 官方 `apc.xml` 的全屏 `i9u` 封面背景；模糊未取证，本地加轻模糊与
-  /// 压暗渐变保证白字可读。
+  /// 官方 `apc.xml` 的全屏 `i9u` 封面背景。真机取证是**清晰**图（无模糊），
+  /// 只压暗渐变保证白字可读；暖色调随封面自然带入。
   Widget _backdrop() {
     final url = ApiClient.instance.absoluteUrl(_coverText);
     return Stack(
       fit: StackFit.expand,
       children: [
         if (url.isNotEmpty)
-          ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-            child: CachedNetworkImage(
-              imageUrl: url,
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-              errorWidget: (_, _, _) => const SizedBox.shrink(),
-            ),
-          ),
+          CachedNetworkImage(
+            imageUrl: url,
+            fit: BoxFit.cover,
+            alignment: Alignment.topCenter,
+            errorWidget: (_, _, _) => const SizedBox.shrink(),
+          )
+        else
+          const ColoredBox(color: Color(0xFF141414)),
         const DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -397,13 +411,19 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   }
 
   /// 官方 44dp 顶栏（`c3` + VideoCommonTitleBar）：返回键常驻，剧名滚过
-  /// 头部后浮现。
+  /// 头部后在返回键右侧浮现（实机：`‹ 抽象三国第一季`，左对齐非居中）。
   Widget _topBar() => SizedBox(
     key: const ValueKey('series-detail-topbar'),
     height: 44,
-    child: Stack(
+    child: Row(
       children: [
-        Center(
+        IconButton(
+          key: const ValueKey('series-detail-back'),
+          tooltip: '返回',
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+        ),
+        Expanded(
           child: AnimatedOpacity(
             opacity: _scrolled ? 1 : 0,
             duration: const Duration(milliseconds: 160),
@@ -413,20 +433,11 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 16,
+                fontSize: 17,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
             ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: IconButton(
-            key: const ValueKey('series-detail-back'),
-            tooltip: '返回',
-            onPressed: () => Navigator.of(context).maybePop(),
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
           ),
         ),
       ],
@@ -434,15 +445,22 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   );
 
   Widget _content() => ListView(
+    key: const ValueKey('series-detail-content'),
     controller: _scroll,
     padding: EdgeInsets.only(
       bottom: 88 + MediaQuery.paddingOf(context).bottom,
     ),
     children: [
       _header(),
-      KeyedSubtree(key: _sectionKeys[0], child: _episodeSection()),
-      KeyedSubtree(key: _sectionKeys[1], child: _introSection()),
-      KeyedSubtree(key: _sectionKeys[2], child: _commentSection()),
+      // 区块顺序照官方实机：基本信息 → 剧评 → 选集（无 tab）→ 原著小说。
+      KeyedSubtree(key: _sectionKeys[0], child: _introSection()),
+      KeyedSubtree(key: _sectionKeys[1], child: _commentSection()),
+      _episodeSection(),
+      if (_detail.originalBook != null)
+        KeyedSubtree(
+          key: _sectionKeys[2],
+          child: _bookSection(_detail.originalBook!),
+        ),
     ],
   );
 
@@ -471,59 +489,34 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     ),
   );
 
-  /// 官方封面 98×140dp 圆角 12（MultiGenreBookCover），右上角状态胶囊。
+  /// 官方封面 98×140dp 圆角 12（MultiGenreBookCover）。实机详情页封面
+  /// 不带状态角标——状态在状态行与选集区头部。
   Widget _cover() {
     final url = ApiClient.instance.absoluteUrl(_coverText);
     return SizedBox(
       width: 98,
       height: 140,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: url.isEmpty
-                  ? Container(
-                      color: const Color(0x14FFFFFF),
-                      child: const Icon(
-                        Icons.movie_creation_outlined,
-                        color: Color(0x99FFFFFF),
-                      ),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: url,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, _, _) => Container(
-                        color: const Color(0x14FFFFFF),
-                        child: const Icon(
-                          Icons.movie_creation_outlined,
-                          color: Color(0x99FFFFFF),
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-          if (_coverBadge != null)
-            Positioned(
-              top: 4,
-              right: 4,
-              child: Container(
-                key: const ValueKey('series-detail-cover-badge'),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 4,
-                  vertical: 1,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: url.isEmpty
+            ? Container(
+                color: const Color(0x14FFFFFF),
+                child: const Icon(
+                  Icons.movie_creation_outlined,
+                  color: Color(0x99FFFFFF),
                 ),
-                decoration: BoxDecoration(
-                  color: const Color(0x99000000),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  _coverBadge!,
-                  style: const TextStyle(fontSize: 9, color: Colors.white),
+              )
+            : CachedNetworkImage(
+                imageUrl: url,
+                fit: BoxFit.cover,
+                errorWidget: (_, _, _) => Container(
+                  color: const Color(0x14FFFFFF),
+                  child: const Icon(
+                    Icons.movie_creation_outlined,
+                    color: Color(0x99FFFFFF),
+                  ),
                 ),
               ),
-            ),
-        ],
       ),
     );
   }
@@ -569,7 +562,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     return parts.join(' · ');
   }
 
-  /// 官方 RecommendTagLayout 分类 chips（8dp 间距）。
+  /// 官方 RecommendTagLayout 分类 chips（8dp 间距，右侧带 › 箭头，
+  /// 实机「逆袭 ›」「时空之旅 ›」）。
   Widget _categories() => Wrap(
     key: const ValueKey('series-detail-categories'),
     spacing: 8,
@@ -577,22 +571,33 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     children: [
       for (final name in _detail.categories)
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          padding: const EdgeInsets.fromLTRB(8, 3, 4, 3),
           decoration: BoxDecoration(
             color: const Color(0x14FFFFFF),
             borderRadius: BorderRadius.circular(4),
           ),
-          child: Text(
-            name,
-            style: const TextStyle(fontSize: 12, color: Color(0xE6FFFFFF)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                name,
+                style: const TextStyle(fontSize: 12, color: Color(0xE6FFFFFF)),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 14,
+                color: Color(0x99FFFFFF),
+              ),
+            ],
           ),
         ),
     ],
   );
 
-  /// 官方 40dp tab 行（`cm` TabLayout：padding 12、无指示器）。
+  /// 官方 40dp tab 行（`cm` TabLayout：padding 12、无指示器），tab 集合
+  /// 照实机：基本信息 / 剧评 /（有原著时）原著小说。
   Widget _tabs() {
-    const names = ['选集', '基本信息', '剧评'];
+    final names = _tabNames;
     return SizedBox(
       key: const ValueKey('series-detail-tabs'),
       height: 40,
@@ -628,10 +633,12 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   // ---- 选集区 ----
 
   Widget _episodeSection() {
+    final statusText = _episodes.isEmpty ? null : _episodeStatusText;
+    Widget body;
     if (_episodes.isEmpty) {
       // 自拉目录在途先不出「暂无」，避免 feed 入口闪一下空态。
       if (!_episodesDone) {
-        return const Padding(
+        body = const Padding(
           padding: EdgeInsets.symmetric(vertical: 24),
           child: Center(
             child: SizedBox(
@@ -645,27 +652,97 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             ),
           ),
         );
-      }
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(
-          child: Text(
-            '暂无剧集',
-            key: ValueKey('series-episodes-empty'),
-            style: TextStyle(color: Color(0x99FFFFFF)),
+      } else {
+        body = const Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Center(
+            child: Text(
+              '暂无剧集',
+              key: ValueKey('series-episodes-empty'),
+              style: TextStyle(color: Color(0x99FFFFFF)),
+            ),
           ),
+        );
+      }
+      return _sectionPadding(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [_sectionHeader('选集'), body],
         ),
       );
     }
-    if (_episodes.length <= _pageSize) return _episodeGrid();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _pagingStrip(),
-        _episodeGrid(),
-      ],
+    if (_episodes.length <= _pageSize) {
+      body = _episodeGrid();
+    } else {
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [_pagingStrip(), _episodeGrid()],
+      );
+    }
+    return _sectionPadding(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeader(
+            '选集',
+            trailing: statusText == null
+                ? null
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        statusText,
+                        key: const ValueKey('series-episode-status'),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0x99FFFFFF),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 16,
+                        color: Color(0x99FFFFFF),
+                      ),
+                    ],
+                  ),
+          ),
+          body,
+        ],
+      ),
     );
   }
+
+  Padding _sectionPadding({Key? key, required Widget child}) => Padding(
+    key: key,
+    padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+    child: child,
+  );
+
+  /// 区块标题（实机 18sp 白粗）+ 可选灰色计数与右侧入口。
+  Widget _sectionHeader(String title, {String? leadingCount, Widget? trailing}) =>
+      Row(
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          if (leadingCount != null)
+            Text(
+              leadingCount,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Color(0x99FFFFFF),
+              ),
+            ),
+          const Spacer(),
+          ?trailing,
+        ],
+      );
 
   /// 官方长剧分页条（1-30 / 31-60 …）。
   Widget _pagingStrip() => SizedBox(
@@ -775,7 +852,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   Widget _introSection() {
     final hasIntro = !_detailDone || _detail.intro.isNotEmpty;
     final hasCast = _detail.cast.isNotEmpty;
-    final book = _detail.originalBook;
     return Padding(
       key: const ValueKey('series-detail-intro-section'),
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
@@ -784,27 +860,18 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
         children: [
           if (hasIntro) _introBlock(),
           if (hasCast) ...[
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             const Text(
               '演职人员',
               key: ValueKey('series-detail-cast-title'),
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
             ),
             const SizedBox(height: 12),
             _castRow(),
-          ],
-          if (book != null) ...[
-            const SizedBox(height: 20),
-            GestureDetector(
-              key: const ValueKey('series-detail-original-book'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _openOriginalBook(book),
-              child: _bookRow(book),
-            ),
           ],
         ],
       ),
@@ -900,9 +967,29 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     ),
   );
 
+  // ---- 原著小说区 ----
+
+  /// 官方独立区块「原著小说」：标题 + 书行（封面/书名/灰色状态行）+
+  /// 右侧「立即阅读」胶囊钮（实机样式）。
+  Widget _bookSection(SeriesRelateBook book) => _sectionPadding(
+    key: const ValueKey('series-detail-original-book'),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader('原著小说'),
+        const SizedBox(height: 12),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _openOriginalBook(book),
+          child: _bookRow(book),
+        ),
+      ],
+    ),
+  );
+
   Widget _bookRow(SeriesRelateBook book) => Container(
-    height: 56,
-    padding: const EdgeInsets.symmetric(horizontal: 8),
+    height: 64,
+    padding: const EdgeInsets.symmetric(horizontal: 10),
     decoration: BoxDecoration(
       color: const Color(0x0AFFFFFF),
       borderRadius: BorderRadius.circular(8),
@@ -913,46 +1000,46 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
           borderRadius: BorderRadius.circular(4),
           child: book.cover.isEmpty
               ? const SizedBox(
-                  width: 36,
-                  height: 44,
+                  width: 40,
+                  height: 52,
                   child: ColoredBox(color: Color(0x14FFFFFF)),
                 )
               : CachedNetworkImage(
                   imageUrl: ApiClient.instance.absoluteUrl(book.cover),
-                  width: 36,
-                  height: 44,
+                  width: 40,
+                  height: 52,
                   fit: BoxFit.cover,
                   errorWidget: (_, _, _) => const SizedBox(
-                    width: 36,
-                    height: 44,
+                    width: 40,
+                    height: 52,
                     child: ColoredBox(color: Color(0x14FFFFFF)),
                   ),
                 ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 12),
         Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '原著小说',
-                style: TextStyle(fontSize: 11, color: Color(0x99FFFFFF)),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                book.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 14, color: Colors.white),
-              ),
-            ],
+          child: Text(
+            book.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Colors.white,
+            ),
           ),
         ),
-        const Icon(
-          Icons.chevron_right_rounded,
-          size: 18,
-          color: Color(0x99FFFFFF),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0x14FFFFFF),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: const Text(
+            '立即阅读',
+            style: TextStyle(fontSize: 13, color: Colors.white),
+          ),
         ),
       ],
     ),
@@ -960,36 +1047,44 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   // ---- 剧评区 ----
 
+  /// 官方样式（实机）：头部「剧评 · 127」+ 右侧「全部剧评 ›」，下方横滑
+  /// 大卡片（头像/昵称 + 右上点赞数 + 正文）。官方卡片里的星级评分来自
+  /// 评分体系，本地链路无该字段，不画星。
   Widget _commentSection() {
     final comments = _comments?.comments ?? const <PlayletComment>[];
     final total = _comments?.totalCount ?? _detail.commentCount;
-    return Padding(
+    return _sectionPadding(
       key: const ValueKey('series-detail-comment-section'),
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Text(
-                '剧评',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              if (total > 0) ...[
-                const SizedBox(width: 6),
-                Text(
-                  formatCounter('$total'),
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0x99FFFFFF),
+          _sectionHeader(
+            '剧评',
+            leadingCount: total > 0 ? ' · ${formatCounter('$total')}' : null,
+            trailing: comments.isEmpty
+                ? null
+                : GestureDetector(
+                    key: const ValueKey('series-detail-comments-all'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _openAllComments,
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '全部剧评',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0x99FFFFFF),
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          size: 16,
+                          color: Color(0x99FFFFFF),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ],
           ),
           const SizedBox(height: 12),
           if (comments.isEmpty)
@@ -1001,83 +1096,113 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                 color: Color(0x99FFFFFF),
               ),
             )
-          else ...[
-            for (final comment in comments.take(3))
-              _commentRow(comment),
-            const SizedBox(height: 8),
-            GestureDetector(
-              key: const ValueKey('series-detail-comments-all'),
-              behavior: HitTestBehavior.opaque,
-              onTap: _openAllComments,
-              child: Container(
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: const Color(0x0AFFFFFF),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  '查看全部剧评',
-                  style: TextStyle(fontSize: 14, color: Color(0xB3FFFFFF)),
-                ),
+          else
+            SizedBox(
+              height: 148,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: comments.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) =>
+                    _commentCard(comments[index]),
               ),
             ),
-          ],
         ],
       ),
     );
   }
 
-  Widget _commentRow(PlayletComment comment) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: Row(
+  /// 官方横滑剧评卡：宽约 73% 屏宽、微亮底、圆角 12。
+  Widget _commentCard(PlayletComment comment) => Container(
+    width: MediaQuery.sizeOf(context).width * 0.73,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: const Color(0x0FFFFFFF),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: const BoxDecoration(
-            color: Color(0x14FFFFFF),
-            shape: BoxShape.circle,
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            comment.userName.isEmpty
-                ? '?'
-                : String.fromCharCode(comment.userName.runes.first),
-            style: const TextStyle(fontSize: 13, color: Colors.white),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
+        Row(
+          children: [
+            Container(
+              width: 26,
+              height: 26,
+              decoration: const BoxDecoration(
+                color: Color(0x14FFFFFF),
+                shape: BoxShape.circle,
+              ),
+              clipBehavior: Clip.antiAlias,
+              alignment: Alignment.center,
+              child: comment.userAvatar.isEmpty
+                  ? Text(
+                      comment.userName.isEmpty
+                          ? '?'
+                          : String.fromCharCode(
+                              comment.userName.runes.first,
+                            ),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white,
+                      ),
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: ApiClient.instance.absoluteUrl(
+                        comment.userAvatar,
+                      ),
+                      fit: BoxFit.cover,
+                      errorWidget: (_, _, _) => Text(
+                        comment.userName.isEmpty
+                            ? '?'
+                            : String.fromCharCode(
+                                comment.userName.runes.first,
+                              ),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
                 comment.userName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0x99FFFFFF),
+                  fontSize: 13,
+                  color: Color(0xCCFFFFFF),
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                comment.text,
-                style: const TextStyle(
-                  fontSize: 14,
-                  height: 1.35,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.favorite_border_rounded,
+              size: 15,
+              color: Color(0x99FFFFFF),
+            ),
+            const SizedBox(width: 3),
+            Text(
+              comment.diggCount > 0
+                  ? formatCounter('${comment.diggCount}')
+                  : '',
+              style: const TextStyle(fontSize: 12, color: Color(0x99FFFFFF)),
+            ),
+          ],
         ),
-        const SizedBox(width: 8),
-        Text(
-          comment.diggCount > 0 ? formatCounter('${comment.diggCount}') : '',
-          style: const TextStyle(fontSize: 12, color: Color(0x99FFFFFF)),
+        const SizedBox(height: 10),
+        Expanded(
+          child: Text(
+            comment.text,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 15,
+              height: 1.35,
+              color: Colors.white,
+            ),
+          ),
         ),
       ],
     ),
@@ -1086,12 +1211,10 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   // ---- 底部栏 ----
 
   /// 官方 56dp 底栏（`hp`）；单主钮宽 70% 屏宽（`g1.c` 单钮分支）、
-  /// 白底深字圆角胶囊。文案：官方 `@string/bcs`=「继续播放」，本地续播
-  /// 场景带目标集号；无进度时用「立即播放」。
+  /// 白底深字圆角胶囊。文案照官方 `@string/bcs`=「继续播放」（实机核对，
+  /// 不带集号）；无进度时的「立即播放」未逐字取证。
   Widget _bottomBar() {
-    final label = widget.startIndex > 0
-        ? '继续播放 第${widget.startIndex + 1}集'
-        : '立即播放';
+    final label = widget.startIndex > 0 ? '继续播放' : '立即播放';
     return Container(
       key: const ValueKey('series-detail-bottombar'),
       color: const Color(0xFF141414),
