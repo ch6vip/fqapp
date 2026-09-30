@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:lottie/lottie.dart';
 
 import '../models/book_detail.dart' show formatCounter;
 import '../models/media_item.dart';
@@ -12,7 +13,7 @@ import '../services/api_client.dart';
 import '../services/watched_episodes.dart' show watchedIndexes;
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/story_player_panel.dart'
-    show EpisodeTileState, SeriesStatus, episodeTileLabel;
+    show SeriesStatus, episodeTileLabel;
 import 'detail_page.dart' show DetailPage;
 import 'player_page.dart' show PlayerPage;
 
@@ -33,19 +34,26 @@ import 'player_page.dart' show PlayerPage;
 ///
 /// 背景/主题色（反编译源码复核，`BaseSeriesDetailFragment.Zf`/`Df`/`s0`）：
 /// 服务端 `series_color_hex` 经双段 HSL 映射出顶部色与底部主色，背景 =
-/// 顶部 400dp 的垂直渐变 + 其余纯主色；当前集格子与播放钮用主色。
-/// 映射的分段点 knee 恒为 `t0` 默认 0.625，输出永远落在暗色带——所以
-/// 官方任何剧的背景都压得深、白字可读。不是封面图，也不是固定素材
-/// ——同一素材图（img_665）只是 30% 亮度的半透明纹理盖在渐变上，
-/// 本地省略。
+/// 顶部 400dp 的垂直渐变 + 其余纯主色；映射的分段点 knee 恒为 `t0` 默认
+/// 0.625，输出永远落在暗色带——所以官方任何剧的背景都压得深、白字可读。
+/// `Zf` 还算第三个亮 accent `HSLToColor([h, 0.5, 0.39])`（保留色相），真机
+/// 实证当前集格子与「继续播放」钮用它（#943295 = HSL(300,0.5,0.39)），
+/// 「收藏」钮白底、图标文字用主色，底栏本体是主色的透明→不透明渐变
+/// scrim（`g1.b`）。不是封面图，也不是固定素材——同一素材图（img_665）
+/// 只是 30% 亮度的半透明纹理盖在渐变上，本地省略。
+///
+/// 区块顺序照 2026-09-30 官方截图：头部 → 钉住 tab 行（滚过头部后吸顶）
+/// → 基本信息 → 剧评（评分入口卡 + 横滑卡片）→ 选集 → 原著小说。
 ///
 /// 与官方的差异（都有据）：
-/// - 官方底部是「收藏 + 继续播放」双钮；收藏要走账号，本仓库按
-///   「无账号范围」裁掉（2026-09-26 short-drama-no-account-scope 笔记），
-///   保留单个主钮，宽度照 `g1.c` 单钮分支 = 70% 屏宽。
-/// - 官方 tab 还有「相关作品」「猜你喜欢」，且剧评头部有评分入口（轻点
-///   评分）——本地 `video_detail` 链路没有相关剧集与评分数据，裁掉；
-///   相关作品的取数接口是后续取证项。
+/// - 官方 tab 还有「相关作品」「猜你喜欢」。取数链路已定位：
+///   `requestMultiVideoDetail`（`co3.d`）+ 相关流 `GET /reading/bookapi/
+///   bookmall/cell/change/v:{n}/`——需要官方推荐上下文参数（cell/algo/AB），
+///   没有真机抓包前不复刻，避免造假区块。
+/// - 底部「收藏」与剧评头部评分入口卡（「看5分钟参与评分」+ 五星）按
+///   无账号范围渲染但占位（SnackBar「暂未支持」，同 light more panel 先例）；
+///   顶栏右侧 ⋮ 同。
+/// - 剧评卡的星级来自评分体系，本地 comment 回包无该字段，不画星。
 /// - 官方剧评是完整列表；本地复用 PlayletCommentPanel 的链路，页内放
 ///   横滑卡片预览 + 「全部剧评 ›」入口。
 class SeriesDetailPage extends StatefulWidget {
@@ -121,6 +129,10 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   bool _introExpanded = false;
   bool _userScrolling = false;
   bool _scrolled = false;
+
+  /// tab 行（SliverPersistentHeader）是否已吸顶：吸顶后内容会从下面穿过，
+  /// 需要不透明背景；未吸顶时保持透明融入背景渐变。
+  bool _tabsPinned = false;
 
   final ScrollController _scroll = ScrollController();
   final List<GlobalKey> _sectionKeys = [
@@ -309,9 +321,30 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     0.325,
   );
 
+  /// 亮 accent（`Zf` 的第二个颜色 `HSLToColor([hue, 0.5, 0.39])`）：保留
+  /// `series_color_hex` 色相、S=0.5、L=0.39，比背景亮一档。真机实证
+  /// （#943295 = HSL(300°, 0.5, 0.39)）：当前集格子与「继续播放」钮用它。
+  /// hex 解析失败或灰色系时官方 catch 回退 base 主色。
+  Color get _themeAccent {
+    final match = RegExp(
+      r'^#?([0-9a-fA-F]{6})$',
+    ).firstMatch(_detail.seriesColorHex.trim());
+    if (match == null) return _themeBase;
+    final hsl = HSLColor.fromColor(
+      Color(0xFF000000 | int.parse(match.group(1)!, radix: 16)),
+    );
+    if (hsl.saturation < 0.05) return _themeBase;
+    return HSLColor.fromAHSL(1.0, hsl.hue, 0.5, 0.39).toColor();
+  }
+
   void _onScroll() {
     // 官方 VideoCommonTitleBar 初始 gone，滚过头部后浮现。
     final scrolled = _scroll.hasClients && _scroll.offset > _topBarRevealOffset;
+    // tab 行吸顶判定：基本信息区顶被压到 tab 行下沿（44+40）以下时，
+    // SliverPersistentHeader 已钉在顶部。
+    final introTop = _sectionTop(0);
+    final tabsPinned =
+        _scroll.hasClients && introTop <= 44 + 40 && introTop.isFinite;
     // 官方 tab 与锚点区联动；滚动经过哪个区就点亮哪个 tab。
     // 选集区没有自己的 tab（官方如此），归到上方的剧评。
     var tab = 0;
@@ -324,9 +357,14 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       }
     }
     if (!mounted) return;
-    if (scrolled == _scrolled && (!_userScrolling || tab == _tab)) return;
+    if (scrolled == _scrolled &&
+        tabsPinned == _tabsPinned &&
+        (!_userScrolling || tab == _tab)) {
+      return;
+    }
     setState(() {
       _scrolled = scrolled;
+      _tabsPinned = tabsPinned;
       if (_userScrolling) _tab = tab;
     });
   }
@@ -442,9 +480,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               child: Column(
                 children: [
                   _topBar(),
-                  // 官方 TabLayout 挂在 AppBarLayout 上（`cm`，40dp），
-                  // 滚动时钉在顶栏下方，不随内容滚走。
-                  _tabs(),
                   Expanded(
                     child: NotificationListener<UserScrollNotification>(
                       onNotification: (notification) {
@@ -452,7 +487,53 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                             notification.direction != ScrollDirection.idle;
                         return false;
                       },
-                      child: _content(),
+                      // 官方 AppBarLayout 结构：头部随内容滚走，TabLayout
+                      //（40dp）滚到顶后钉在顶栏下方 —— SliverPersistentHeader
+                      // 的 pinned 语义与之一致。
+                      child: CustomScrollView(
+                        key: const ValueKey('series-detail-content'),
+                        controller: _scroll,
+                        slivers: [
+                          SliverToBoxAdapter(child: _header()),
+                          SliverPersistentHeader(
+                            pinned: true,
+                            delegate: _PinnedTabsDelegate(
+                              names: _tabNames,
+                              activeIndex: _tab,
+                              pinned: _tabsPinned,
+                              background: _themeTop,
+                              onTap: _selectTab,
+                            ),
+                          ),
+                          SliverToBoxAdapter(
+                            child: KeyedSubtree(
+                              key: _sectionKeys[0],
+                              child: _introSection(),
+                            ),
+                          ),
+                          SliverToBoxAdapter(
+                            child: KeyedSubtree(
+                              key: _sectionKeys[1],
+                              child: _commentSection(),
+                            ),
+                          ),
+                          SliverToBoxAdapter(child: _episodeSection()),
+                          if (_detail.originalBook != null)
+                            SliverToBoxAdapter(
+                              child: KeyedSubtree(
+                                key: _sectionKeys[2],
+                                child: _bookSection(_detail.originalBook!),
+                              ),
+                            ),
+                          // 底栏是悬浮 scrim，尾部留出其高度，末行格子
+                          // 滚到底也能完整露出。
+                          SliverPadding(
+                            padding: EdgeInsets.only(
+                              bottom: 88 + MediaQuery.paddingOf(context).bottom,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -498,10 +579,13 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   );
 
   /// 官方 44dp 顶栏（`c3` + VideoCommonTitleBar）：返回键常驻，剧名滚过
-  /// 头部后在返回键右侧浮现（实机：`‹ 抽象三国第一季`，左对齐非居中）。
-  Widget _topBar() => SizedBox(
+  /// 头部后在返回键右侧浮现（实机：`‹ 抽象三国第一季`，左对齐非居中），
+  /// 右侧 ⋮ 更多钮（实机）。背景用渐变顶色 —— 背景渐变不随内容滚动，
+  /// 顶栏处露出的一直是渐变顶端，同色即无缝；官方用截位背景图同理。
+  Widget _topBar() => Container(
     key: const ValueKey('series-detail-topbar'),
     height: 44,
+    color: _themeTop,
     child: Row(
       children: [
         IconButton(
@@ -527,31 +611,25 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             ),
           ),
         ),
+        IconButton(
+          key: const ValueKey('series-detail-more'),
+          tooltip: '更多',
+          onPressed: _showMorePlaceholder,
+          icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+        ),
       ],
     ),
   );
 
-  Widget _content() => ListView(
-    key: const ValueKey('series-detail-content'),
-    controller: _scroll,
-    padding: EdgeInsets.only(
-      bottom: 88 + MediaQuery.paddingOf(context).bottom,
-    ),
-    children: [
-      _header(),
-      // 区块顺序照官方实机：基本信息 → 剧评 → 选集（无 tab）→ 原著小说。
-      KeyedSubtree(key: _sectionKeys[0], child: _introSection()),
-      KeyedSubtree(key: _sectionKeys[1], child: _commentSection()),
-      _episodeSection(),
-      if (_detail.originalBook != null)
-        KeyedSubtree(
-          key: _sectionKeys[2],
-          child: _bookSection(_detail.originalBook!),
-        ),
-    ],
-  );
+  void _showMorePlaceholder() {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('更多操作暂未支持')));
+  }
 
-  /// 头部（官方 a34.xml）：封面 + 标题 + 状态行 + 分类 chips + 分隔线。
+  /// 头部（官方 a34.xml）：封面 + 右列（标题 + 状态行 + 分类 chips）+
+  /// 分隔线。chips（he3）约束在标题列内、状态行下 16dp，分隔线（2px
+  /// `@color/agl`）挂在封面下方 24dp。
   Widget _header() => Padding(
     key: const ValueKey('series-detail-header'),
     padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
@@ -563,13 +641,20 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
           children: [
             _cover(),
             const SizedBox(width: 16),
-            Expanded(child: _titleBlock()),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _titleBlock(),
+                  if (_detail.categories.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _categories(),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
-        if (_detail.categories.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _categories(),
-        ],
         const SizedBox(height: 24),
         Container(height: 2, color: const Color(0x11FFFFFF)),
       ],
@@ -608,7 +693,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
-  /// 标题（20sp bold 白，最多 2 行）+ 状态行（集数/播放量/追更数）。
+  /// 标题（20sp bold 白，最多 2 行）+ 状态行（`bp`：集数/播放量；实机
+  /// 无追更数）。
   Widget _titleBlock() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -624,9 +710,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
           height: 1.2,
         ),
       ),
-      if (_detail.episodeLabel.isNotEmpty ||
-          _detail.playCount > 0 ||
-          _detail.followerCount > 0) ...[
+      if (_detail.episodeLabel.isNotEmpty || _detail.playCount > 0) ...[
         const SizedBox(height: 8),
         Text(
           _statusLine(),
@@ -639,13 +723,12 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     ],
   );
 
+  /// 实机状态行 = `episodeLabel · 播放量`，没有追更段（官方 `bp` 布局
+  /// 只有集数与播放量）。
   String _statusLine() {
     final parts = <String>[];
     if (_detail.episodeLabel.isNotEmpty) parts.add(_detail.episodeLabel);
     if (_detail.playCount > 0) parts.add('${_detail.playLabel}次播放');
-    if (_detail.followerCount > 0) {
-      parts.add('${formatCounter('${_detail.followerCount}')}人追更');
-    }
     return parts.join(' · ');
   }
 
@@ -681,46 +764,36 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     ],
   );
 
-  /// 官方 40dp tab 行（`cm` TabLayout：padding 12、无指示器），tab 集合
-  /// 照实机：基本信息 / 剧评 /（有原著时）原著小说。
-  Widget _tabs() {
-    final names = _tabNames;
-    return SizedBox(
-      key: const ValueKey('series-detail-tabs'),
-      height: 40,
-      child: Row(
-        children: [
-          for (var i = 0; i < names.length; i++)
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _selectTab(i),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Center(
-                  child: Text(
-                    names[i],
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: i == _tab
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: i == _tab
-                          ? Colors.white
-                          : const Color(0xB3FFFFFF),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   // ---- 选集区 ----
 
+  /// 选集区块（官方 `cin.xml`）：顶部 1px `@color/agh`=#08FFFFFF 分隔线
+  /// （左右缩进 16、上下留 20），标题行（16sp 白粗 + 右侧 12sp `@color/agw`
+  /// =#66FFFFFF 状态 + 箭头），分页条与格子网格。
   Widget _episodeSection() {
     final statusText = _episodes.isEmpty ? null : _episodeStatusText;
+    final header = _sectionHeader(
+      '选集',
+      trailing: statusText == null
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  statusText,
+                  key: const ValueKey('series-episode-status'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0x66FFFFFF),
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 14,
+                  color: Color(0x66FFFFFF),
+                ),
+              ],
+            ),
+    );
     Widget body;
     if (_episodes.isEmpty) {
       // 自拉目录在途先不出「暂无」，避免 feed 入口闪一下空态。
@@ -751,12 +824,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
           ),
         );
       }
-      return _sectionPadding(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [_sectionHeader('选集'), body],
-        ),
-      );
+      return _episodeSectionShell(header, body);
     }
     if (_episodes.length <= _pageSize) {
       body = _episodeGrid();
@@ -766,38 +834,27 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
         children: [_pagingStrip(), _episodeGrid()],
       );
     }
-    return _sectionPadding(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _sectionHeader(
-            '选集',
-            trailing: statusText == null
-                ? null
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        statusText,
-                        key: const ValueKey('series-episode-status'),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0x99FFFFFF),
-                        ),
-                      ),
-                      const Icon(
-                        Icons.chevron_right_rounded,
-                        size: 16,
-                        color: Color(0x99FFFFFF),
-                      ),
-                    ],
-                  ),
-          ),
-          body,
-        ],
-      ),
-    );
+    return _episodeSectionShell(header, body);
   }
+
+  /// `cin.xml` 骨架：分隔线 + 标题行 + 内容（分页条/格子）。
+  Widget _episodeSectionShell(Widget header, Widget body) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        margin: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+        height: 1,
+        color: const Color(0x08FFFFFF),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [header, const SizedBox(height: 12), body],
+        ),
+      ),
+    ],
+  );
 
   Padding _sectionPadding({Key? key, required Widget child}) => Padding(
     key: key,
@@ -805,14 +862,15 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     child: child,
   );
 
-  /// 区块标题（实机 18sp 白粗）+ 可选灰色计数与右侧入口。
+  /// 区块标题（官方 `cin.xml`/`a36.xml`：16sp 白粗）+ 可选灰色计数与右侧
+  /// 入口。
   Widget _sectionHeader(String title, {String? leadingCount, Widget? trailing}) =>
       Row(
         children: [
           Text(
             title,
             style: const TextStyle(
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
               color: Colors.white,
             ),
@@ -866,8 +924,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     ),
   );
 
-  /// 官方选集格子（`bbw.xml` 规格，与播放页选集面板同源）：
-  /// 当前集橙字橙底、已看灰字、普通格底 #08000000。竖屏 6 列。
+  /// 官方选集网格（`cin.xml` d0a 分页 + czs 网格；格子规格见
+  /// `_episodeTile`）。竖屏 6 列。
   Widget _episodeGrid() {
     final start = _episodePage * _pageSize;
     final end = ((start + _pageSize)).clamp(0, _episodes.length);
@@ -891,22 +949,27 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
+  /// 官方详情页选集格子（`bbw.xml` 53×52dp 圆角 8，深色皮肤）：当前集
+  /// 亮 accent 底白字（真机 #943295，`HSLToColor([h,0.5,0.39])`）+ 右上角
+  /// `video_playing_orange.json` 角标（12×12dp，margin 4）；普通格白 10% 底
+  /// （实机量得）白字；已看 #66FFFFFF 灰字；不可播压暗。角标静止——
+  /// 官方 lottie 也只在确认真实播放时才 autoplay，详情页不追踪播放状态。
   Widget _episodeTile(int index) {
     final episode = _episodes[index];
     final isCurrent = index == widget.startIndex;
-    final state = EpisodeTileState.of(
-      current: isCurrent,
-      watched: _watched.contains(index),
-      disabled: episode.disabled,
-    );
-    // 官方详情页当前集 = 主题主色底白字（非播放页面板的橙色常量，
-    // `R.f(baseColor)` 的本地对应）。
-    final background = isCurrent && !episode.disabled
-        ? _themeBase
-        : state.backgroundColor;
-    final textColor = isCurrent && !episode.disabled
+    final watched = _watched.contains(index);
+    final background = episode.disabled
+        ? const Color(0x0DFFFFFF)
+        : isCurrent
+        ? _themeAccent
+        : const Color(0x1AFFFFFF);
+    final textColor = episode.disabled
+        ? const Color(0x33FFFFFF)
+        : isCurrent
         ? Colors.white
-        : state.textColor;
+        : watched
+        ? const Color(0x66FFFFFF)
+        : Colors.white;
     return Semantics(
       key: ValueKey('series-episode-$index'),
       label: '第 ${index + 1} 集',
@@ -922,21 +985,41 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => _play(index),
-          child: Center(
-            child: Text(
-              episodeTileLabel(
-                index: index,
-                trailer: episode.trailer,
-                highlight: episode.highlight,
+          child: Stack(
+            children: [
+              Center(
+                child: Text(
+                  episodeTileLabel(
+                    index: index,
+                    trailer: episode.trailer,
+                    highlight: episode.highlight,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: isCurrent && !episode.disabled
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    color: textColor,
+                  ),
+                ),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: state.weight,
-                color: textColor,
-              ),
-            ),
+              if (isCurrent && !episode.disabled)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: Lottie.asset(
+                      'assets/lottie/video_playing_orange.json',
+                      animate: false,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -954,14 +1037,33 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (hasIntro) _introBlock(),
+          // 官方 a36.xml：区块标题 16sp 白粗（`@dimen/r2` + style x4），
+          // 40dp 行高。
+          SizedBox(
+            height: 40,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '基本信息',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+          if (hasIntro) ...[
+            const SizedBox(height: 7),
+            _introBlock(),
+          ],
           if (hasCast) ...[
             const SizedBox(height: 24),
             const Text(
               '演职人员',
               key: ValueKey('series-detail-cast-title'),
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
@@ -974,32 +1076,135 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
-  /// 官方 DetailIntroductionLayout：两行收起 + 展开按钮。
-  Widget _introBlock() => GestureDetector(
+  static const _introCollapsedLines = 3;
+
+  /// 官方 `awv` = #FF82A5CD，2026-09-30 取证定位到的「展开/收起」链接色。
+  static const _introLinkColor = Color(0xFF82A5CD);
+
+  /// 官方简介折叠态（a36.xml + `DetailIntroductionLayout`）：正文 14sp
+  /// `@color/b6`=#B3FFFFFF 最多 3 行，蓝色「展开」叠在正文右下角（约束
+  /// bottom/right 对齐正文）；官方靠 `checkIsEllipsized` 给标签留位。
+  /// Flutter 没有原生"末行留白"，用 TextPainter 二分出恰好容纳
+  /// 「…＋标签宽」的前缀，正文全宽渲染、标签叠右下，观感与官方一致。
+  Widget _introBlock() {
+    const bodyStyle = TextStyle(
+      fontSize: 14,
+      height: 1.4,
+      color: Color(0xB3FFFFFF),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        if (_introExpanded) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _detail.intro,
+                key: const ValueKey('series-detail-intro'),
+                style: bodyStyle,
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: _introToggleLabel('收起'),
+              ),
+            ],
+          );
+        }
+        final prefix = _collapsedIntroPrefix(
+          _detail.intro,
+          maxWidth,
+          bodyStyle,
+        );
+        if (prefix == null) {
+          // 不足 3 行：官方直接不显示展开钮。
+          return Text(
+            _detail.intro,
+            key: const ValueKey('series-detail-intro'),
+            style: bodyStyle,
+          );
+        }
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _introExpanded = true),
+          child: Stack(
+            children: [
+              // 前缀按「末行让出标签宽度」二分裁剪，正文全宽渲染。
+              Text(
+                '$prefix…',
+                key: const ValueKey('series-detail-intro'),
+                style: bodyStyle,
+              ),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Text(
+                  '展开',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: _introLinkColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _introToggleLabel(String label) => GestureDetector(
     behavior: HitTestBehavior.opaque,
     onTap: () => setState(() => _introExpanded = !_introExpanded),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          _detail.intro,
-          key: const ValueKey('series-detail-intro'),
-          maxLines: _introExpanded ? 20 : 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 14,
-            height: 1.4,
-            color: Color(0xE6FFFFFF),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          _introExpanded ? '收起' : '展开',
-          style: const TextStyle(fontSize: 13, color: Color(0x99FFFFFF)),
-        ),
-      ],
+    child: Text(
+      label,
+      style: const TextStyle(fontSize: 14, color: _introLinkColor),
     ),
   );
+
+  /// 折叠前缀：正文 3 行放不下时，二分出「`prefix…` 不超 3 行且末行宽度
+  /// 给右下角标签让位」的最大前缀；不溢出返回 null（调用方整段展示）。
+  String? _collapsedIntroPrefix(
+    String text,
+    double maxWidth,
+    TextStyle style,
+  ) {
+    final overflowProbe = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+    if (overflowProbe.computeLineMetrics().length <= _introCollapsedLines) {
+      return null;
+    }
+    final labelProbe = TextPainter(
+      text: const TextSpan(text: ' 展开', style: TextStyle(fontSize: 14)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final reserved = labelProbe.width + 8;
+    String? best;
+    var lo = 0;
+    var hi = text.length;
+    while (lo <= hi) {
+      final mid = (lo + hi) >> 1;
+      final probe = TextPainter(
+        text: TextSpan(
+          text: '${text.substring(0, mid)}…',
+          style: style,
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: maxWidth);
+      final metrics = probe.computeLineMetrics();
+      if (metrics.length > _introCollapsedLines ||
+          metrics.last.width > maxWidth - reserved) {
+        hi = mid - 1;
+      } else {
+        best = text.substring(0, mid);
+        lo = mid + 1;
+      }
+    }
+    return best ?? '';
+  }
 
   /// 官方 ShortSeriesDetailCelebrityLayoutV2：圆头像 + 「演员 饰 角色」。
   Widget _castRow() => SizedBox(
@@ -1183,6 +1388,51 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                   ),
           ),
           const SizedBox(height: 12),
+          // 官方评分入口卡（实机）：左侧引导文案 + 右侧五星，评分走账号
+          // 体系，本地按占位渲染（轻点 SnackBar，同 light more panel 先例）。
+          GestureDetector(
+            key: const ValueKey('series-detail-rate-card'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('评分暂未支持')),
+              );
+            },
+            child: Container(
+              height: 56,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: const Color(0x14FFFFFF),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '看5分钟参与评分',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  for (var i = 0; i < 5; i++)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child: Icon(
+                        Icons.star_rounded,
+                        size: 24,
+                        color: Color(0x66FFFFFF),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           if (comments.isEmpty)
             Text(
               _comments == null ? '' : '期待你的第一条剧评',
@@ -1208,12 +1458,12 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
-  /// 官方横滑剧评卡：宽约 73% 屏宽、微亮底、圆角 12。
+  /// 官方横滑剧评卡：宽约 78% 屏宽（实机量得 ≈0.79）、白 7% 底、圆角 12。
   Widget _commentCard(PlayletComment comment) => Container(
-    width: MediaQuery.sizeOf(context).width * 0.73,
+    width: MediaQuery.sizeOf(context).width * 0.78,
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: const Color(0x0FFFFFFF),
+      color: const Color(0x12FFFFFF),
       borderRadius: BorderRadius.circular(12),
     ),
     child: Column(
@@ -1306,62 +1556,187 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   // ---- 底部栏 ----
 
-  /// 官方 56dp 底栏（`hp`）；单主钮宽 70% 屏宽（`g1.c` 单钮分支）、圆角胶囊
-  /// 底色=主题主色白字（实机：抽象三国金钮 / 转业保安青蓝钮，都来自
-  /// `series_color_hex` 推导的 base color）。文案照官方 `@string/bcs`=
-  /// 「继续播放」（实机核对，不带集号）；无进度时的「立即播放」未逐字取证。
+  /// 官方底栏（`g1.b`，ConstraintLayout 背景是主色四段渐变 scrim：
+  /// [α0, α0xB4, αFF, αFF] 自上而下，内容从半透明区穿过）+ 双钮：
+  /// 「收藏」白底胶囊、图标文字用主色（`n(i(), -1)` 白底 + setColorFilter
+  /// 主色）；「继续播放」亮 accent 底（`n(l(), i3)`）白字白图标。文案照
+  /// 官方 `@string/bcs`=「继续播放」（实机核对，不带集号）；无进度时
+  /// 「立即播放」未逐字取证。收藏走账号，按无账号范围占位（SnackBar）。
   Widget _bottomBar() {
     final label = widget.startIndex > 0 ? '继续播放' : '立即播放';
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
     return Container(
       key: const ValueKey('series-detail-bottombar'),
-      color: _themeBase,
       padding: EdgeInsets.fromLTRB(
         16,
-        6,
+        12,
         16,
-        6 + MediaQuery.paddingOf(context).bottom,
+        12 + bottomInset,
       ),
-      child: Center(
-        child: SizedBox(
-          width: MediaQuery.sizeOf(context).width * 0.7,
-          height: 44,
-          child: GestureDetector(
-            key: const ValueKey('series-detail-play-button'),
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _play(widget.startIndex),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: _themeBase,
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.play_arrow_rounded,
-                    size: 22,
-                    color: Colors.white,
-                  ),
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          stops: const [0, 1 / 3, 2 / 3, 1],
+          colors: [
+            _themeBase.withAlpha(0x00),
+            _themeBase.withAlpha(0xB4),
+            _themeBase,
+            _themeBase,
+          ],
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              key: const ValueKey('series-detail-fav-button'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('收藏暂未支持')),
+                );
+              },
+              child: Container(
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.star_border_rounded,
+                      size: 20,
+                      color: _themeBase,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        '收藏',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: _themeBase,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              key: const ValueKey('series-detail-play-button'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _play(widget.startIndex),
+              child: Container(
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _themeAccent,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.play_arrow_rounded,
+                      size: 22,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 官方 `cm` TabLayout 的吸顶实现：40dp 钉住头，滚过头部前透明融入背景
+/// 渐变，吸顶后垫 `background`（顶色）避免内容从字下穿过。
+class _PinnedTabsDelegate extends SliverPersistentHeaderDelegate {
+  const _PinnedTabsDelegate({
+    required this.names,
+    required this.activeIndex,
+    required this.pinned,
+    required this.background,
+    required this.onTap,
+  });
+
+  final List<String> names;
+  final int activeIndex;
+  final bool pinned;
+  final Color background;
+  final ValueChanged<int> onTap;
+
+  @override
+  double get minExtent => 40;
+
+  @override
+  double get maxExtent => 40;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      key: const ValueKey('series-detail-tabs'),
+      height: 40,
+      color: pinned ? background : Colors.transparent,
+      child: Row(
+        children: [
+          for (var i = 0; i < names.length; i++)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => onTap(i),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Center(
+                  child: Text(
+                    names[i],
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: i == activeIndex
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                      color: i == activeIndex
+                          ? Colors.white
+                          : const Color(0xB3FFFFFF),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 
-  /// 主钮/当前集格子用 base 主色本体（官方 `R.f(baseColor)` 的 accent 落点）。
+  @override
+  bool shouldRebuild(_PinnedTabsDelegate oldDelegate) =>
+      oldDelegate.activeIndex != activeIndex ||
+      oldDelegate.pinned != pinned ||
+      oldDelegate.background != background ||
+      oldDelegate.names.length != names.length;
 }

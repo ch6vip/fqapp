@@ -20,10 +20,11 @@ SeriesDetail _detail({
   String episodeLabel = '全12集',
   SeriesRelateBook? originalBook,
   String seriesColorHex = '#F5E6C8',
+  String intro = '这是一段剧集简介，用于基本信息区块的展开收起验证。',
 }) => SeriesDetail(
   seriesId: 'series-1',
   title: '抽象三国第一季',
-  intro: '这是一段剧集简介，用于基本信息区块的展开收起验证。',
+  intro: intro,
   cover: '',
   cast: const [
     CastMember(id: 'c1', actor: '张三', role: '刘备'),
@@ -76,22 +77,42 @@ Future<void> _pump(
           commentLoader: comments == null
               ? (_) async => const PlayletCommentPage()
               : (_) async => comments,
-          onPlayEpisode: onPlay ?? (_) {},
+          // null 时走页面默认「推新播放器」；此时当前集 lottie 角标静止，
+          // 宿主接线（onPlay 传入）才视为播放中——与真机语义一致。
+          onPlayEpisode: onPlay,
         ),
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  // 宿主接线用例里当前集 lottie 会循环动画，pumpAndSettle 永不收敛，
+  // 统一用固定步进 pump 等布局与惯性滚动落地。
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 600));
 }
 
-/// 把内容滚到目标组件可见（选集/原著等区块在首屏之下）。
-Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
+/// 把内容滚到目标组件可见（选集/原著等区块在首屏之下）；[extra] 再额外
+/// 上移（贴底、会被底栏盖住的目标用）。
+Future<void> _scrollTo(
+  WidgetTester tester,
+  Finder finder, {
+  double extra = 0,
+}) async {
   await tester.dragUntilVisible(
     finder,
     find.byKey(const ValueKey('series-detail-content')),
     const Offset(0, -160),
   );
-  await tester.pumpAndSettle();
+  if (extra != 0) {
+    await tester.drag(
+      find.byKey(const ValueKey('series-detail-content')),
+      Offset(0, -extra),
+    );
+  }
+  // 拖拽末端的惯性滚动需要落地，步进 pump 而不是 pumpAndSettle
+  // （宿主接线用例的播放中 lottie 循环动画永不收敛）。
+  for (var i = 0; i < 12; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 void main() {
@@ -111,8 +132,8 @@ void main() {
       find.byKey(const ValueKey('series-detail-cover-badge')),
       findsNothing,
     );
-    // 状态行：官方 episodeLabel「全12集」+ 播放量 + 追更数。
-    expect(find.text('全12集 · 8.7万次播放 · 1200人追更'), findsOneWidget);
+    // 状态行：官方 `bp` 布局 = episodeLabel「全12集」+ 播放量（实机无追更段）。
+    expect(find.text('全12集 · 8.7万次播放'), findsOneWidget);
     // 分类 chips（官方 RecommendTagLayout）。
     expect(find.byKey(const ValueKey('series-detail-categories')), findsOneWidget);
     expect(find.text('历史'), findsOneWidget);
@@ -192,16 +213,20 @@ void main() {
       watchedIds: {'ep-0', 'ep-1', 'ep-2'},
       onPlay: (index) => played.add(index),
     );
-    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-6')));
-    // 当前集（第 4 格）主题主色底白字。#F5E6C8 经官方 Zf 双段 HSL 映射：
-    // base = HSL(40°, 0.667, 0.193) ≈ #533D0F（s0.b：knee 恒 0.625）。
+    await _scrollTo(
+      tester,
+      find.byKey(const ValueKey('series-episode-6')),
+      extra: 160,
+    );
+    // 当前集（第 4 格）亮 accent 底白字（真机实证 accent=HSL(色相,0.5,0.39)；
+    // #F5E6C8 → #957432），右上角挂播放中 lottie 角标。
     final currentTile = tester.widget<Material>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
         matching: find.byType(Material),
       ),
     );
-    expect(currentTile.color, const Color(0xFF533D0F));
+    expect(currentTile.color, const Color(0xFF957432));
     final current = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
@@ -210,14 +235,15 @@ void main() {
     );
     expect(current.style?.color, Colors.white);
     expect(current.style?.fontWeight, FontWeight.bold);
-    // 已看集（第 1 格）灰字 #66000000（官方 skin_color_gray_40_light）。
+    // 已看集（第 1 格）灰字 #66FFFFFF（详情页深色皮肤，@color/agw 同族；
+    // 播放页面板同款白系灰字）。
     final watched = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-0')),
         matching: find.text('1'),
       ),
     );
-    expect(watched.style?.color, const Color(0x66000000));
+    expect(watched.style?.color, const Color(0x66FFFFFF));
     // 点普通格回传该集下标。
     await tester.tap(find.byKey(const ValueKey('series-episode-6')));
     expect(played, [6]);
@@ -237,18 +263,24 @@ void main() {
       find.byKey(const ValueKey('series-detail-page')),
     );
     expect(scaffold.backgroundColor, const Color(0xFF533D0F));
+    // 底栏 scrim 也是渐变 DecoratedBox，这里只认背景那条两色渐变。
     final gradientBox = tester.widget<DecoratedBox>(
       find.byWidgetPredicate(
         (w) =>
             w is DecoratedBox &&
             w.decoration is BoxDecoration &&
-            (w.decoration as BoxDecoration).gradient is LinearGradient,
+            (w.decoration as BoxDecoration).gradient is LinearGradient &&
+            ((w.decoration as BoxDecoration).gradient as LinearGradient)
+                    .colors
+                    .length ==
+                2,
       ),
     );
     final gradient = (gradientBox.decoration as BoxDecoration).gradient!
         as LinearGradient;
     expect(gradient.colors, const [Color(0xFF776033), Color(0xFF533D0F)]);
-    // 底部主钮 = 主色底白字（官方 R.f(baseColor) 的 accent 落点）。
+    // 底部「继续播放」钮 = 亮 accent 底白字（`g1.b` 的 n(l(), bright)；
+    // #F5E6C8 的 accent = HSL(40°, 0.5, 0.39) ≈ #957432）。
     final button = tester.widget<DecoratedBox>(
       find.descendant(
         of: find.byKey(const ValueKey('series-detail-play-button')),
@@ -257,7 +289,7 @@ void main() {
     );
     expect(
       (button.decoration as BoxDecoration).color,
-      const Color(0xFF533D0F),
+      const Color(0xFF957432),
     );
   });
 
@@ -290,12 +322,17 @@ void main() {
     );
     expect(scaffold.backgroundColor, const Color(0xFF492E12));
     // 渐变顶部同样是暗色（muted 棕），不再是高亮色。
+    // 底栏 scrim 也是渐变 DecoratedBox，这里只认背景那条两色渐变。
     final gradientBox = tester.widget<DecoratedBox>(
       find.byWidgetPredicate(
         (w) =>
             w is DecoratedBox &&
             w.decoration is BoxDecoration &&
-            (w.decoration as BoxDecoration).gradient is LinearGradient,
+            (w.decoration as BoxDecoration).gradient is LinearGradient &&
+            ((w.decoration as BoxDecoration).gradient as LinearGradient)
+                    .colors
+                    .length ==
+                2,
       ),
     );
     final gradient = (gradientBox.decoration as BoxDecoration).gradient!
@@ -327,6 +364,70 @@ void main() {
       episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
     );
     expect(find.text('立即播放'), findsOneWidget);
+  });
+
+  testWidgets('底栏照官方 g1 双钮：白底收藏（占位）+ accent 继续播放', (tester) async {
+    await _pump(
+      tester,
+      detail: _detail(),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+    );
+    expect(
+      find.byKey(const ValueKey('series-detail-fav-button')),
+      findsOneWidget,
+    );
+    expect(find.text('收藏'), findsOneWidget);
+    // 收藏走账号，本地占位：轻点出 SnackBar 提示（同 light more panel 先例）。
+    await tester.tap(find.byKey(const ValueKey('series-detail-fav-button')));
+    await tester.pump();
+    final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+    expect((snackBar.content as Text).data, '收藏暂未支持');
+  });
+
+  testWidgets('剧评区头部有评分入口卡（看5分钟参与评分 + 五星占位）', (tester) async {
+    await _pump(
+      tester,
+      detail: _detail(),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+      comments: _comments(),
+    );
+    expect(
+      find.byKey(const ValueKey('series-detail-rate-card')),
+      findsOneWidget,
+    );
+    expect(find.text('看5分钟参与评分'), findsOneWidget);
+  });
+
+  testWidgets('长简介折叠 3 行：蓝色展开钮，点开展开全文并出现收起', (tester) async {
+    const longIntro =
+        '被公司开除的范理拒绝内耗，转身开起下午才营业的早餐店。凭真材实料和'
+        '极致手艺，他把冷清侧门变成烟火聚场，也让邻里看见认真做事的人，终会被'
+        '认可。可客流突然暴涨，神秘系统也在深夜亮起了面板，接下来他要面对的，'
+        '是连锁品牌的挖角、供应商的刁难与一场突如其来的美食大赛。深夜的面板'
+        '再次刷新，奖励从一笼小笼包升级到整套早餐车，也把麻烦一并送上了门：'
+        '隔壁街的王记要搞买一送一，房东忽然要收回铺面，而系统任务倒计时只剩'
+        '七天。范理决定不再一个人硬扛，他拉上早市上认识的老陈和夜班司机小'
+        '林，把这份下午才营业的倔强，做成了整条街的早餐地图。';
+    await _pump(
+      tester,
+      detail: _detail(intro: longIntro),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+    );
+    // 折叠态：正文截断出「…」，右下角蓝色「展开」（官方 awv=#82A5CD）。
+    final collapsed = tester.widget<Text>(
+      find.byKey(const ValueKey('series-detail-intro')),
+    );
+    expect(collapsed.data, endsWith('…'));
+    final expand = tester.widget<Text>(find.text('展开'));
+    expect(expand.style?.color, const Color(0xFF82A5CD));
+    // 展开后全文 + 「收起」。
+    await tester.tap(find.byKey(const ValueKey('series-detail-intro')));
+    await tester.pumpAndSettle();
+    final expanded = tester.widget<Text>(
+      find.byKey(const ValueKey('series-detail-intro')),
+    );
+    expect(expanded.data, longIntro);
+    expect(find.text('收起'), findsOneWidget);
   });
 
   testWidgets('剧评区：头部计数 + 全部剧评入口 + 横滑卡片；锚点滚动可达', (tester) async {
@@ -382,7 +483,6 @@ void main() {
           episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
           seriesLoader: (_) async => SeriesDetail.empty,
           commentLoader: (_) async => const PlayletCommentPage(),
-          onPlayEpisode: (_) {},
         ),
       ),
     );
@@ -411,7 +511,6 @@ void main() {
                   episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
                   seriesLoader: (_) async => _detail(),
                   commentLoader: (_) async => const PlayletCommentPage(),
-                  onPlayEpisode: (_) {},
                 ),
               ),
             ),
