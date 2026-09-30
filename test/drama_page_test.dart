@@ -1108,9 +1108,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('首帧只加载选中频道的流，不再先打 provider 初始的短剧 tab', (
-    tester,
-  ) async {
+  testWidgets('首帧只加载选中频道的流，不再先打 provider 初始的短剧 tab', (tester) async {
     // 2026-09-28 真机跳变复盘：initState 无条件 load() 打的是 provider
     // 出厂的 tabIndex=2（短剧，tab_type 8），而可见频道是推荐
     // （tabIndex=6，tab_type 16）——1~2s 后频道表回来 selectTab(6) 把
@@ -1157,9 +1155,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('feed 卡片标题行「剧名 >」进剧集详情页，点选集经目录推播放页', (
-    tester,
-  ) async {
+  testWidgets('feed 卡片标题行「剧名 >」进剧集详情页，点选集经目录推播放页', (tester) async {
     // 官方 ql3/v0.a1()：feed 信息区标题点击 enter_from="title"，落点
     // series_detail（此前误接成播放/暂停，用户真机反馈点不动）。
     SharedPreferences.setMockInitialValues({});
@@ -1178,16 +1174,20 @@ void main() {
       ),
     );
     final seams = _Seams(failContent: false);
+    var directoryCalls = 0;
     await tester.pumpWidget(
       _scope(
         child: MaterialApp(
           home: seams.page(
-            directoryLoader: (id, tab) async => [
-              [
-                Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集'),
-                Chapter(itemId: '$id-2', title: '第2集', volumeName: '剧集'),
-              ],
-            ],
+            directoryLoader: (id, tab) async {
+              directoryCalls++;
+              return [
+                [
+                  Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集'),
+                  Chapter(itemId: '$id-2', title: '第2集', volumeName: '剧集'),
+                ],
+              ];
+            },
             seriesDetailLoader: (_) async => const SeriesDetail(
               seriesId: '2-0',
               title: '2-0 作品',
@@ -1210,12 +1210,17 @@ void main() {
     expect(find.byKey(const ValueKey('series-detail-page')), findsOneWidget);
     expect(find.text('2-0 作品'), findsWidgets);
 
-    // 详情页点选集格 → pop 详情回 feed，再经 _openPlayer 拉目录推播放页
+    final callsBeforePlay = directoryCalls;
+    // 详情页点选集格 → pop 详情回 feed，再经 _openPlayer 复用目录推播放页
     // （下层路由保持挂载是 MaterialApp 的常态，只断言播放器在顶上）。
     await tester.tap(find.byKey(const ValueKey('series-episode-1')));
     await _flush(tester);
     await tester.pump(const Duration(milliseconds: 400));
     await _flush(tester);
     expect(find.byType(PlayerPage), findsOneWidget);
+    expect(directoryCalls, callsBeforePlay);
+    final playerPage = tester.widget<PlayerPage>(find.byType(PlayerPage));
+    expect(playerPage.startIndex, 1);
+    expect(playerPage.initialSeriesDetail?.title, '2-0 作品');
   });
 }

@@ -994,18 +994,27 @@ class ApiClient {
   ///
   /// The reading-API detail and directory responses carry no cast data, so the
   /// actor row needs this call. A failure yields [SeriesDetail.empty] — the row
-  /// is decoration and must not break a playable series.
-  Future<SeriesDetail> seriesDetail(String seriesId) async {
+  /// is decoration and must not break a playable series. Detail pages use
+  /// [strict] to expose failures for local retry instead of rendering emptiness.
+  Future<SeriesDetail> seriesDetail(
+    String seriesId, {
+    bool strict = false,
+  }) async {
     try {
       final response = await _get(
         _url('/api/v1/series/${Uri.encodeComponent(seriesId)}', {}),
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      return await Isolate.run(
+      final detail = await Isolate.run(
         () => SeriesDetail.fromPayload(_decodeEnvelope(status, bytes)),
       );
+      if (strict && detail.isEmpty) {
+        throw const ApiException('剧集详情暂时无法加载');
+      }
+      return detail;
     } on Exception {
+      if (strict) rethrow;
       return SeriesDetail.empty;
     }
   }
@@ -1289,7 +1298,10 @@ class ApiClient {
   /// `tabType` 传当前频道的 `tab_type`；`lastTabType` 传上次选中频道的
   /// `tab_type`（官方存 SP `last_tab_type`，无值 -1），服务端用它算
   /// `tab_index` 续接用户位置。
-  Future<ChannelTable> channelTabs({int tabType = 16, int lastTabType = -1}) async {
+  Future<ChannelTable> channelTabs({
+    int tabType = 16,
+    int lastTabType = -1,
+  }) async {
     try {
       final r = await _get(
         _url('/api/v1/recommend/channels', {

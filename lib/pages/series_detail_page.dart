@@ -10,52 +10,20 @@ import '../models/media_item.dart';
 import '../models/playlet_comment.dart';
 import '../models/series_detail.dart' show SeriesDetail, SeriesRelateBook;
 import '../services/api_client.dart';
-import '../services/watched_episodes.dart' show watchedIndexes;
+import '../services/backend_transport.dart';
+import '../services/library_store.dart';
+import '../services/player_history.dart';
+import '../services/shelf_store.dart';
+import '../services/watched_episodes.dart' show WatchedEpisodes, watchedIndexes;
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/story_player_panel.dart'
     show SeriesStatus, episodeTileLabel;
 import 'detail_page.dart' show DetailPage;
 import 'player_page.dart' show PlayerPage;
 
-/// 官方 V2 短剧详情页（播放页标题「剧名 >」点击的落点）。
-///
-/// 对齐对象：`ShortSeriesDetailActivity`（页面名 `series_detail`）→
-/// `SeriesDetailFragmentV2`，根布局 `apc.xml`、头部 `a34.xml`
-/// （DetailBaseInfoLayout）、底部栏 `g1.java` + `ButtonComposeBinding`
-/// （Compose 双钮，默认文案「收藏 / 继续播放」）。数据请求
-/// `GetVideoDetailRequest(seriesId, VideoSeriesIdType.SeriesId,
-/// source=FromDetailPage)`，本地对应 `/api/v1/series/{id}`。
-///
-/// 2026-09-30 真机取证（官方 7.0.9.32，抽象三国第一季详情页截图）后重排：
-/// 区块顺序 = 头部 → 基本信息（简介/演职人员）→ 剧评 → 选集 → 原著小说；
-/// 钉住 tab = 基本信息/剧评/原著小说（**没有选集 tab**，选集区滚过时点亮
-/// 的是剧评，与官方一致）；顶栏剧名在返回键右侧左对齐；选集区头部右侧带
-/// 「已完结 共105集 ›」状态。
-///
-/// 背景/主题色（反编译源码复核，`BaseSeriesDetailFragment.Zf`/`Df`/`s0`）：
-/// 服务端 `series_color_hex` 经双段 HSL 映射出顶部色与底部主色，背景 =
-/// 顶部 400dp 的垂直渐变 + 其余纯主色；映射的分段点 knee 恒为 `t0` 默认
-/// 0.625，输出永远落在暗色带——所以官方任何剧的背景都压得深、白字可读。
-/// `Zf` 还算第三个亮 accent `HSLToColor([h, 0.5, 0.39])`（保留色相），真机
-/// 实证当前集格子与「继续播放」钮用它（#943295 = HSL(300,0.5,0.39)），
-/// 「收藏」钮白底、图标文字用主色，底栏本体是主色的透明→不透明渐变
-/// scrim（`g1.b`）。不是封面图，也不是固定素材——同一素材图（img_665）
-/// 只是 30% 亮度的半透明纹理盖在渐变上，本地省略。
-///
-/// 区块顺序照 2026-09-30 官方截图：头部 → 钉住 tab 行（滚过头部后吸顶）
-/// → 基本信息 → 剧评（评分入口卡 + 横滑卡片）→ 选集 → 原著小说。
-///
-/// 与官方的差异（都有据）：
-/// - 官方 tab 还有「相关作品」「猜你喜欢」。取数链路已定位：
-///   `requestMultiVideoDetail`（`co3.d`）+ 相关流 `GET /reading/bookapi/
-///   bookmall/cell/change/v:{n}/`——需要官方推荐上下文参数（cell/algo/AB），
-///   没有真机抓包前不复刻，避免造假区块。
-/// - 底部「收藏」与剧评头部评分入口卡（「看5分钟参与评分」+ 五星）按
-///   无账号范围渲染但占位（SnackBar「暂未支持」，同 light more panel 先例）；
-///   顶栏右侧 ⋮ 同。
-/// - 剧评卡的星级来自评分体系，本地 comment 回包无该字段，不画星。
-/// - 官方剧评是完整列表；本地复用 PlayletCommentPanel 的链路，页内放
-///   横滑卡片预览 + 「全部剧评 ›」入口。
+/// 短剧详情：保留官方深色主题与区块顺序，提供本地续播、收藏和局部重试。
+/// Note: 入口数据复用与占位裁撤见
+/// .agents/notes/implemented/bug-fix/2026-09-30-series-detail-usability.md
 class SeriesDetailPage extends StatefulWidget {
   const SeriesDetailPage({
     super.key,
@@ -63,7 +31,11 @@ class SeriesDetailPage extends StatefulWidget {
     this.title = '',
     this.cover = '',
     this.episodes = const [],
-    this.startIndex = 0,
+    this.startIndex,
+    this.initialDetail,
+    this.hasPlaybackProgress = false,
+    this.historyStore,
+    this.onPlaySelection,
     this.watchedIds = const <String>{},
     this.seriesLoader,
     this.commentLoader,
@@ -80,8 +52,15 @@ class SeriesDetailPage extends StatefulWidget {
   /// 剧集目录：宿主已有，避免二次拉目录。
   final List<Chapter> episodes;
 
-  /// 续播/当前集下标（进详情前的播放位置）。
-  final int startIndex;
+  /// 宿主当前集优先；null 时从本地历史恢复。
+  final int? startIndex;
+  final SeriesDetail? initialDetail;
+  final bool hasPlaybackProgress;
+  final ReaderStore? historyStore;
+
+  /// 携带已加载目录，feed 开播放器时无需再次请求。
+  final void Function(int index, List<Chapter> episodes, SeriesDetail detail)?
+  onPlaySelection;
 
   /// 已看集 id（映射成下标给选集格子灰字）。
   final Set<String> watchedIds;
@@ -110,6 +89,9 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   /// 分隔线 `@color/agl`=#11FFFFFF 2px、外边距水平 16。
   static const _columns = 6;
 
+  double get _tabsHeight =>
+      40 * (MediaQuery.textScalerOf(context).scale(16) / 16).clamp(1.0, 2.0);
+
   /// 官方长剧分页（`gj3/o.java:731` setGroupByCount(30)）。
   static const _pageSize = 30;
 
@@ -118,6 +100,25 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   SeriesDetail _detail = SeriesDetail.empty;
   bool _detailDone = false;
+  bool _detailFailed = false;
+  bool _episodesFailed = false;
+  bool _commentsLoading = true;
+  bool _commentsFailed = false;
+  bool _historyDone = false;
+  bool _hasProgress = false;
+  bool _shelfBusy = false;
+  int _currentIndex = 0;
+  Map<String, dynamic>? _savedHistory;
+  Set<String> _watchedIds = {};
+  Set<int> _watched = {};
+  final BackendRequest _requests = BackendRequest();
+  final GlobalKey _viewportKey = GlobalKey();
+  final GlobalKey _episodeKey = GlobalKey();
+  final GlobalKey _selectedPageKey = GlobalKey();
+  final ScrollController _episodePageScroll = ScrollController();
+  int? _visiblePage;
+  Object? _introCacheKey;
+  String? _introCacheValue;
 
   /// feed 等入口没带目录时自拉的剧集（宿主传了 [SeriesDetailPage.episodes]
   /// 就以宿主为准，不重复请求）。
@@ -135,17 +136,22 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   bool _tabsPinned = false;
 
   final ScrollController _scroll = ScrollController();
-  final List<GlobalKey> _sectionKeys = [
-    GlobalKey(),
-    GlobalKey(),
-    GlobalKey(),
-  ];
+  final List<GlobalKey> _sectionKeys = [GlobalKey(), GlobalKey(), GlobalKey()];
 
   @override
   void initState() {
     super.initState();
-    _episodePage = _pageOf(widget.startIndex);
-    unawaited(_loadDetail());
+    _currentIndex = widget.startIndex ?? 0;
+    _hasProgress = widget.hasPlaybackProgress || _currentIndex > 0;
+    _watchedIds = {...widget.watchedIds};
+    _syncEpisodes();
+    final initial = widget.initialDetail;
+    if (initial != null && !initial.isEmpty) {
+      _detail = initial;
+      _detailDone = true;
+    }
+    unawaited(_loadHistory());
+    if (!_detailDone) unawaited(_loadDetail());
     unawaited(_loadEpisodes());
     unawaited(_loadComments());
     _scroll.addListener(_onScroll);
@@ -153,36 +159,96 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   @override
   void dispose() {
+    _requests.cancel();
+    _episodePageScroll.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
-  Future<void> _loadDetail() async {
+  Future<T> _request<T>(Future<T> Function() body) =>
+      ApiClient.instance.withCancellation(_requests, body);
+
+  Future<void> _loadHistory() async {
     try {
-      final detail =
-          await (widget.seriesLoader?.call(widget.seriesId) ??
-              ApiClient.instance.seriesDetail(widget.seriesId));
+      final store = widget.historyStore ?? LibraryStore.instance;
+      final values = await Future.wait<Object?>([
+        PlayerHistory(store).load(widget.seriesId),
+        WatchedEpisodes(store).ids(widget.seriesId),
+      ]);
+      if (!mounted) return;
+      _savedHistory = values[0] as Map<String, dynamic>?;
+      _watchedIds.addAll(values[1] as Set<String>);
+    } catch (_) {
+      // 本地历史不可用不阻断目录和播放。
+    }
+    if (!mounted) return;
+    setState(() {
+      _historyDone = true;
+      _syncEpisodes();
+    });
+  }
+
+  void _syncEpisodes() {
+    if (_episodes.isNotEmpty) {
+      if (widget.startIndex == null) {
+        final savedIndex = resumeEpisodeIndex(_savedHistory, _episodes);
+        _currentIndex = savedIndex ?? 0;
+        _hasProgress = savedIndex != null;
+      }
+      _currentIndex = _currentIndex.clamp(0, _episodes.length - 1);
+    }
+    _episodePage = _pageOf(_currentIndex);
+    _watched = watchedIndexes(_watchedIds, _episodes);
+  }
+
+  Future<void> _loadDetail() async {
+    setState(() {
+      _detailDone = false;
+      _detailFailed = false;
+    });
+    try {
+      final detail = await _request(
+        () =>
+            widget.seriesLoader?.call(widget.seriesId) ??
+            ApiClient.instance.seriesDetail(widget.seriesId, strict: true),
+      );
       if (!mounted) return;
       setState(() {
         _detail = detail;
         _detailDone = true;
+        _detailFailed = detail.isEmpty;
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _detailDone = true);
+      setState(() {
+        _detailDone = true;
+        _detailFailed = true;
+      });
     }
   }
 
   Future<void> _loadComments() async {
-    if (widget.seriesId.isEmpty) return;
+    setState(() {
+      _commentsLoading = true;
+      _commentsFailed = false;
+    });
     try {
-      final page =
-          await (widget.commentLoader?.call(widget.seriesId) ??
-              ApiClient.instance.playletComments(widget.seriesId, count: 10));
+      final page = await _request(
+        () =>
+            widget.commentLoader?.call(widget.seriesId) ??
+            ApiClient.instance.playletComments(widget.seriesId, count: 10),
+      );
       if (!mounted) return;
-      setState(() => _comments = page);
+      setState(() {
+        _comments = page;
+        _commentsLoading = false;
+      });
     } catch (_) {
-      // 剧评是装饰，失败静默。
+      if (!mounted) return;
+      setState(() {
+        _commentsLoading = false;
+        _commentsFailed = true;
+      });
     }
   }
 
@@ -191,31 +257,65 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       _episodesDone = true;
       return;
     }
+    setState(() {
+      _episodesDone = false;
+      _episodesFailed = false;
+    });
     try {
-      final volumes =
-          await (widget.directoryLoader?.call(widget.seriesId) ??
-              ApiClient.instance.directoryChapters(
-                widget.seriesId,
-                tab: '短剧',
-              ));
+      final volumes = await _request(
+        () =>
+            widget.directoryLoader?.call(widget.seriesId) ??
+            ApiClient.instance.directoryChapters(widget.seriesId, tab: '短剧'),
+      );
       if (!mounted) return;
       setState(() {
-        _loadedEpisodes = volumes.expand((volume) => volume).toList(
-          growable: false,
-        );
+        _loadedEpisodes = volumes
+            .expand((volume) => volume)
+            .toList(growable: false);
         _episodesDone = true;
+        _syncEpisodes();
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _episodesDone = true);
+      setState(() {
+        _episodesDone = true;
+        _episodesFailed = true;
+      });
     }
   }
+
+  Widget _retry(String message, VoidCallback retry) => Wrap(
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 8,
+    children: [
+      Text(message, style: const TextStyle(color: Color(0xB3FFFFFF))),
+      TextButton(onPressed: retry, child: const Text('重试')),
+    ],
+  );
+
+  Widget _skeleton() => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 14,
+          width: double.infinity,
+          child: ColoredBox(color: Color(0x14FFFFFF)),
+        ),
+        SizedBox(height: 10),
+        SizedBox(
+          height: 14,
+          width: 180,
+          child: ColoredBox(color: Color(0x14FFFFFF)),
+        ),
+      ],
+    ),
+  );
 
   /// 生效剧集：宿主带的优先，否则用自拉的。
   List<Chapter> get _episodes =>
       widget.episodes.isNotEmpty ? widget.episodes : _loadedEpisodes;
-
-  Set<int> get _watched => watchedIndexes(widget.watchedIds, _episodes);
 
   String get _titleText =>
       _detail.title.isNotEmpty ? _detail.title : widget.title;
@@ -223,12 +323,10 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   String get _coverText =>
       _detail.cover.isNotEmpty ? _detail.cover : widget.cover;
 
-  int _pageOf(int index) =>
-      (index ~/ _pageSize).clamp(0, _lastEpisodePage);
+  int _pageOf(int index) => (index ~/ _pageSize).clamp(0, _lastEpisodePage);
 
-  int get _lastEpisodePage => _episodes.isEmpty
-      ? 0
-      : (_episodes.length - 1) ~/ _pageSize;
+  int get _lastEpisodePage =>
+      _episodes.isEmpty ? 0 : (_episodes.length - 1) ~/ _pageSize;
 
   /// 选集区头部右侧的状态文案（官方实机：`已完结 共105集 ›`）。
   String? get _episodeStatusText {
@@ -299,27 +397,13 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   /// 渐变底部主色（`Zf` 的 base color：outLow=0.55、上段起点 0.7、
   /// outKnee=0.625；L：0.18 / 0.2 / 0.19）。
-  Color get _themeBase => _colorFromHex(
-    _detail.seriesColorHex,
-    0.55,
-    0.7,
-    0.625,
-    0.18,
-    0.2,
-    0.19,
-  );
+  Color get _themeBase =>
+      _colorFromHex(_detail.seriesColorHex, 0.55, 0.7, 0.625, 0.18, 0.2, 0.19);
 
   /// 渐变顶部色（`Zf` 的 top color：outLow=0.35、上段起点 0.4、
   /// outKnee=0.375；L：0.3 / 0.35 / 0.325）。
-  Color get _themeTop => _colorFromHex(
-    _detail.seriesColorHex,
-    0.35,
-    0.4,
-    0.375,
-    0.3,
-    0.35,
-    0.325,
-  );
+  Color get _themeTop =>
+      _colorFromHex(_detail.seriesColorHex, 0.35, 0.4, 0.375, 0.3, 0.35, 0.325);
 
   /// 亮 accent（`Zf` 的第二个颜色 `HSLToColor([hue, 0.5, 0.39])`）：保留
   /// `series_color_hex` 色相、S=0.5、L=0.39，比背景亮一档。真机实证
@@ -338,19 +422,21 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   }
 
   void _onScroll() {
+    _revealEpisodePage();
     // 官方 VideoCommonTitleBar 初始 gone，滚过头部后浮现。
     final scrolled = _scroll.hasClients && _scroll.offset > _topBarRevealOffset;
-    // tab 行吸顶判定：基本信息区顶被压到 tab 行下沿（44+40）以下时，
-    // SliverPersistentHeader 已钉在顶部。
+    // 统一使用滚动视口坐标，安全区和顶栏已经排除在视口之外。
     final introTop = _sectionTop(0);
     final tabsPinned =
-        _scroll.hasClients && introTop <= 44 + 40 && introTop.isFinite;
+        _scroll.hasClients &&
+        introTop <= _tabsHeight + 0.5 &&
+        introTop.isFinite;
     // 官方 tab 与锚点区联动；滚动经过哪个区就点亮哪个 tab。
     // 选集区没有自己的 tab（官方如此），归到上方的剧评。
     var tab = 0;
     if (_userScrolling) {
       for (var i = _tabNames.length - 1; i >= 0; i--) {
-        if (_sectionTop(i) <= 0) {
+        if (_sectionTop(i) <= _tabsHeight + 8) {
           tab = i;
           break;
         }
@@ -378,29 +464,32 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     ?(_detail.originalBook != null ? '原著小说' : null),
   ];
 
-  /// 区块顶相对视口顶的偏移。
+  /// 区块顶相对滚动视口顶的偏移。
   double _sectionTop(int index) {
     final context = _sectionKeys[index].currentContext;
     if (context == null) return double.infinity;
     final box = context.findRenderObject();
     if (box is! RenderBox) return double.infinity;
-    return box.localToGlobal(Offset.zero).dy;
+    final viewport = _viewportKey.currentContext?.findRenderObject();
+    if (viewport is! RenderBox) return double.infinity;
+    return box.localToGlobal(Offset.zero).dy -
+        viewport.localToGlobal(Offset.zero).dy;
   }
 
   void _selectTab(int index) {
     setState(() => _tab = index);
+    _scrollToSection(_sectionKeys[index]);
+  }
+
+  void _scrollToSection(GlobalKey key) {
     if (!_scroll.hasClients) return;
-    double target;
-    if (index == 0) {
-      target = 0;
-    } else {
-      final context = _sectionKeys[index].currentContext;
-      if (context == null) return;
-      final box = context.findRenderObject();
-      if (box is! RenderBox) return;
-      // 104 ≈ 顶栏 44 + tab 行 40 + 呼吸 20：锚点吸在 tab 行下沿。
-      target = _scroll.offset + _sectionTop(index) - 104;
-    }
+    final box = key.currentContext?.findRenderObject();
+    final viewport = _viewportKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || viewport is! RenderBox) return;
+    final top =
+        box.localToGlobal(Offset.zero).dy -
+        viewport.localToGlobal(Offset.zero).dy;
+    final target = _scroll.offset + top - _tabsHeight - 8;
     unawaited(
       _scroll.animateTo(
         target.clamp(0.0, _scroll.position.maxScrollExtent),
@@ -413,6 +502,16 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   void _play(int index) {
     if (_episodes.isEmpty) return;
     final target = index.clamp(0, _episodes.length - 1);
+    if (_episodes[target].disabled) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('该剧集暂不可播放')));
+      return;
+    }
+    if (widget.onPlaySelection != null) {
+      widget.onPlaySelection!(target, _episodes, _detail);
+      return;
+    }
     if (widget.onPlayEpisode != null) {
       widget.onPlayEpisode!(target);
       return;
@@ -429,6 +528,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             eps: _episodes,
             startIndex: target,
             shortSeries: true,
+            initialSeriesDetail: _detail,
+            historyStore: widget.historyStore,
           ),
         ),
       ),
@@ -481,6 +582,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                 children: [
                   _topBar(),
                   Expanded(
+                    key: _viewportKey,
                     child: NotificationListener<UserScrollNotification>(
                       onNotification: (notification) {
                         _userScrolling =
@@ -499,6 +601,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                             pinned: true,
                             delegate: _PinnedTabsDelegate(
                               names: _tabNames,
+                              height: _tabsHeight,
                               activeIndex: _tab,
                               pinned: _tabsPinned,
                               background: _themeTop,
@@ -517,7 +620,12 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                               child: _commentSection(),
                             ),
                           ),
-                          SliverToBoxAdapter(child: _episodeSection()),
+                          SliverToBoxAdapter(
+                            child: KeyedSubtree(
+                              key: _episodeKey,
+                              child: _episodeSection(),
+                            ),
+                          ),
                           if (_detail.originalBook != null)
                             SliverToBoxAdapter(
                               child: KeyedSubtree(
@@ -529,7 +637,14 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                           // 滚到底也能完整露出。
                           SliverPadding(
                             padding: EdgeInsets.only(
-                              bottom: 88 + MediaQuery.paddingOf(context).bottom,
+                              bottom:
+                                  88 *
+                                      (MediaQuery.textScalerOf(
+                                                context,
+                                              ).scale(14) /
+                                              14)
+                                          .clamp(1.0, 3.0) +
+                                  MediaQuery.paddingOf(context).bottom,
                             ),
                           ),
                         ],
@@ -539,8 +654,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                 ],
               ),
             ),
-            if (_episodes.isNotEmpty)
-              Positioned(left: 0, right: 0, bottom: 0, child: _bottomBar()),
+            Positioned(left: 0, right: 0, bottom: 0, child: _bottomBar()),
           ],
         ),
       ),
@@ -592,7 +706,10 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
           key: const ValueKey('series-detail-back'),
           tooltip: '返回',
           onPressed: () => Navigator.of(context).maybePop(),
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          icon: const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white,
+          ),
         ),
         Expanded(
           child: AnimatedOpacity(
@@ -611,21 +728,9 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             ),
           ),
         ),
-        IconButton(
-          key: const ValueKey('series-detail-more'),
-          tooltip: '更多',
-          onPressed: _showMorePlaceholder,
-          icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-        ),
       ],
     ),
   );
-
-  void _showMorePlaceholder() {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('更多操作暂未支持')));
-  }
 
   /// 头部（官方 a34.xml）：封面 + 右列（标题 + 状态行 + 分类 chips）+
   /// 分隔线。chips（he3）约束在标题列内、状态行下 16dp，分隔线（2px
@@ -650,6 +755,13 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                     const SizedBox(height: 16),
                     _categories(),
                   ],
+                  TextButton.icon(
+                    key: const ValueKey('series-detail-episodes-shortcut'),
+                    onPressed: () => _scrollToSection(_episodeKey),
+                    icon: const Icon(Icons.grid_view_rounded, size: 16),
+                    label: const Text('选集'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  ),
                 ],
               ),
             ),
@@ -732,8 +844,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     return parts.join(' · ');
   }
 
-  /// 官方 RecommendTagLayout 分类 chips（8dp 间距，右侧带 › 箭头，
-  /// 实机「逆袭 ›」「时空之旅 ›」）。
+  /// 仅展示分类；未接入分类导航时不显示跳转箭头。
   Widget _categories() => Wrap(
     key: const ValueKey('series-detail-categories'),
     spacing: 8,
@@ -752,11 +863,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               Text(
                 name,
                 style: const TextStyle(fontSize: 12, color: Color(0xE6FFFFFF)),
-              ),
-              const Icon(
-                Icons.chevron_right_rounded,
-                size: 14,
-                color: Color(0x99FFFFFF),
               ),
             ],
           ),
@@ -786,11 +892,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                     color: Color(0x66FFFFFF),
                   ),
                 ),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  size: 14,
-                  color: Color(0x66FFFFFF),
-                ),
               ],
             ),
     );
@@ -812,6 +913,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             ),
           ),
         );
+      } else if (_episodesFailed) {
+        body = _retry('剧集加载失败', () => unawaited(_loadEpisodes()));
       } else {
         body = const Padding(
           padding: EdgeInsets.symmetric(vertical: 24),
@@ -864,65 +967,96 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   /// 区块标题（官方 `cin.xml`/`a36.xml`：16sp 白粗）+ 可选灰色计数与右侧
   /// 入口。
-  Widget _sectionHeader(String title, {String? leadingCount, Widget? trailing}) =>
-      Row(
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+  Widget _sectionHeader(
+    String title, {
+    String? leadingCount,
+    Widget? trailing,
+  }) => Wrap(
+    alignment: WrapAlignment.spaceBetween,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 16,
+    runSpacing: 8,
+    children: [
+      Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: title,
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-          ),
-          if (leadingCount != null)
-            Text(
-              leadingCount,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color: Color(0x99FFFFFF),
+            if (leadingCount != null)
+              TextSpan(
+                text: leadingCount,
+                style: const TextStyle(fontSize: 14, color: Color(0x99FFFFFF)),
               ),
-            ),
-          const Spacer(),
-          ?trailing,
-        ],
-      );
+          ],
+        ),
+        style: const TextStyle(fontSize: 16, color: Colors.white),
+      ),
+      ?trailing,
+    ],
+  );
 
   /// 官方长剧分页条（1-30 / 31-60 …）。
-  Widget _pagingStrip() => SizedBox(
-    key: const ValueKey('series-episode-pages'),
-    height: 36,
-    child: ListView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      children: [
-        for (var page = 0; page <= _lastEpisodePage; page++)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _episodePage = page),
-              child: Center(
-                child: Text(
-                  '${page * _pageSize + 1}-'
-                  '${((page + 1) * _pageSize).clamp(0, _episodes.length)}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: page == _episodePage
-                        ? FontWeight.bold
-                        : FontWeight.normal,
-                    color: page == _episodePage
-                        ? Colors.white
-                        : const Color(0xB3FFFFFF),
+  void _revealEpisodePage() {
+    if (_visiblePage == _episodePage) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_episodePageScroll.hasClients ||
+          _visiblePage == _episodePage) {
+        return;
+      }
+      final target = _selectedPageKey.currentContext?.findRenderObject();
+      if (target is! RenderBox || !target.attached || !target.hasSize) return;
+      _visiblePage = _episodePage;
+      // 只移动横向分页条；Scrollable.ensureVisible 会同时移动外层详情。
+      unawaited(
+        _episodePageScroll.position.ensureVisible(target, alignment: 0.5),
+      );
+    });
+  }
+
+  Widget _pagingStrip() {
+    _revealEpisodePage();
+    return SizedBox(
+      key: const ValueKey('series-episode-pages'),
+      height:
+          40 *
+          (MediaQuery.textScalerOf(context).scale(14) / 14).clamp(1.0, 2.0),
+      child: SingleChildScrollView(
+        controller: _episodePageScroll,
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var page = 0; page <= _lastEpisodePage; page++)
+              Padding(
+                key: page == _episodePage ? _selectedPageKey : null,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() => _episodePage = page),
+                  child: Center(
+                    child: Text(
+                      '${page * _pageSize + 1}-'
+                      '${((page + 1) * _pageSize).clamp(0, _episodes.length)}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: page == _episodePage
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        color: page == _episodePage
+                            ? Colors.white
+                            : const Color(0xB3FFFFFF),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
-      ],
-    ),
-  );
+          ],
+        ),
+      ),
+    );
+  }
 
   /// 官方选集网格（`cin.xml` d0a 分页 + czs 网格；格子规格见
   /// `_episodeTile`）。竖屏 6 列。
@@ -931,20 +1065,28 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     final end = ((start + _pageSize)).clamp(0, _episodes.length);
     final count = end - start;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-      child: GridView.count(
-        key: const ValueKey('series-episode-grid'),
-        crossAxisCount: _columns,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        padding: EdgeInsets.zero,
-        // 官方格子高≈宽×52/53（story_player_panel 同式）。
-        childAspectRatio: 53 / 52,
-        children: [
-          for (var i = start; i < start + count; i++) _episodeTile(i),
-        ],
+      padding: const EdgeInsets.only(top: 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+          final columns = ((constraints.maxWidth + 8) / (48 * scale + 8))
+              .floor()
+              .clamp(3, _columns);
+          return GridView.count(
+            key: const ValueKey('series-episode-grid'),
+            crossAxisCount: columns,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            // 官方格子高≈宽×52/53（story_player_panel 同式）。
+            childAspectRatio: 53 / 52,
+            children: [
+              for (var i = start; i < start + count; i++) _episodeTile(i),
+            ],
+          );
+        },
       ),
     );
   }
@@ -956,7 +1098,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   /// 官方 lottie 也只在确认真实播放时才 autoplay，详情页不追踪播放状态。
   Widget _episodeTile(int index) {
     final episode = _episodes[index];
-    final isCurrent = index == widget.startIndex;
+    final isCurrent = index == _currentIndex;
     final watched = _watched.contains(index);
     final background = episode.disabled
         ? const Color(0x0DFFFFFF)
@@ -975,8 +1117,9 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       label: '第 ${index + 1} 集',
       button: true,
       selected: isCurrent,
+      enabled: !episode.disabled,
       excludeSemantics: true,
-      onTap: () => _play(index),
+      onTap: episode.disabled ? null : () => _play(index),
       child: Material(
         color: background,
         shape: const RoundedRectangleBorder(
@@ -984,7 +1127,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => _play(index),
+          onTap: episode.disabled ? null : () => _play(index),
           child: Stack(
             children: [
               Center(
@@ -1053,7 +1196,11 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               ),
             ),
           ),
-          if (hasIntro) ...[
+          if (!_detailDone)
+            _skeleton()
+          else if (_detailFailed)
+            _retry('详情加载失败', () => unawaited(_loadDetail())),
+          if (_detailDone && hasIntro) ...[
             const SizedBox(height: 7),
             _introBlock(),
           ],
@@ -1141,10 +1288,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                 bottom: 0,
                 child: Text(
                   '展开',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: _introLinkColor,
-                  ),
+                  style: const TextStyle(fontSize: 14, color: _introLinkColor),
                 ),
               ),
             ],
@@ -1165,51 +1309,59 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   /// 折叠前缀：正文 3 行放不下时，二分出「`prefix…` 不超 3 行且末行宽度
   /// 给右下角标签让位」的最大前缀；不溢出返回 null（调用方整段展示）。
-  String? _collapsedIntroPrefix(
-    String text,
-    double maxWidth,
-    TextStyle style,
-  ) {
+  String? _collapsedIntroPrefix(String text, double maxWidth, TextStyle style) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    final cacheKey = (text, maxWidth, style, scaler, direction);
+    if (_introCacheKey == cacheKey) return _introCacheValue;
+    _introCacheKey = cacheKey;
+    _introCacheValue = null;
     final overflowProbe = TextPainter(
       text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
+      textDirection: direction,
+      textScaler: scaler,
     )..layout(maxWidth: maxWidth);
-    if (overflowProbe.computeLineMetrics().length <= _introCollapsedLines) {
+    final fits =
+        overflowProbe.computeLineMetrics().length <= _introCollapsedLines;
+    overflowProbe.dispose();
+    if (fits) {
       return null;
     }
     final labelProbe = TextPainter(
       text: const TextSpan(text: ' 展开', style: TextStyle(fontSize: 14)),
-      textDirection: TextDirection.ltr,
+      textDirection: direction,
+      textScaler: scaler,
     )..layout();
     final reserved = labelProbe.width + 8;
+    labelProbe.dispose();
     String? best;
     var lo = 0;
-    var hi = text.length;
+    final characters = text.characters.toList();
+    var hi = characters.length;
     while (lo <= hi) {
       final mid = (lo + hi) >> 1;
       final probe = TextPainter(
-        text: TextSpan(
-          text: '${text.substring(0, mid)}…',
-          style: style,
-        ),
-        textDirection: TextDirection.ltr,
+        text: TextSpan(text: '${characters.take(mid).join()}…', style: style),
+        textDirection: direction,
+        textScaler: scaler,
       )..layout(maxWidth: maxWidth);
       final metrics = probe.computeLineMetrics();
+      probe.dispose();
       if (metrics.length > _introCollapsedLines ||
           metrics.last.width > maxWidth - reserved) {
         hi = mid - 1;
       } else {
-        best = text.substring(0, mid);
+        best = characters.take(mid).join();
         lo = mid + 1;
       }
     }
-    return best ?? '';
+    return _introCacheValue = best ?? '';
   }
 
   /// 官方 ShortSeriesDetailCelebrityLayoutV2：圆头像 + 「演员 饰 角色」。
   Widget _castRow() => SizedBox(
     key: const ValueKey('series-detail-cast'),
-    height: 96,
+    height: 64 + 38 * MediaQuery.textScalerOf(context).scale(11) / 11,
     child: ListView.separated(
       scrollDirection: Axis.horizontal,
       itemCount: _detail.cast.length,
@@ -1217,7 +1369,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       itemBuilder: (context, index) {
         final member = _detail.cast[index];
         return SizedBox(
-          width: 64,
+          width: 80,
           child: Column(
             children: [
               Container(
@@ -1238,9 +1390,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                         ),
                       )
                     : CachedNetworkImage(
-                        imageUrl: ApiClient.instance.absoluteUrl(
-                          member.avatar,
-                        ),
+                        imageUrl: ApiClient.instance.absoluteUrl(member.avatar),
                         fit: BoxFit.cover,
                         errorWidget: (_, _, _) => Text(
                           member.initial,
@@ -1253,14 +1403,21 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               ),
               const SizedBox(height: 6),
               Text(
-                member.label,
+                member.actor,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0x99FFFFFF),
-                ),
+                style: const TextStyle(fontSize: 11, color: Color(0x99FFFFFF)),
               ),
+              if (member.role.isNotEmpty)
+                Text(
+                  '饰 ${member.role}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0x99FFFFFF),
+                  ),
+                ),
             ],
           ),
         );
@@ -1289,8 +1446,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   );
 
   Widget _bookRow(SeriesRelateBook book) => Container(
-    height: 64,
-    padding: const EdgeInsets.symmetric(horizontal: 10),
+    constraints: const BoxConstraints(minHeight: 64),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
     decoration: BoxDecoration(
       color: const Color(0x0AFFFFFF),
       borderRadius: BorderRadius.circular(8),
@@ -1388,69 +1545,24 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                   ),
           ),
           const SizedBox(height: 12),
-          // 官方评分入口卡（实机）：左侧引导文案 + 右侧五星，评分走账号
-          // 体系，本地按占位渲染（轻点 SnackBar，同 light more panel 先例）。
-          GestureDetector(
-            key: const ValueKey('series-detail-rate-card'),
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('评分暂未支持')),
-              );
-            },
-            child: Container(
-              height: 56,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: const Color(0x14FFFFFF),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      '看5分钟参与评分',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                  for (var i = 0; i < 5; i++)
-                    const Padding(
-                      padding: EdgeInsets.only(left: 6),
-                      child: Icon(
-                        Icons.star_rounded,
-                        size: 24,
-                        color: Color(0x66FFFFFF),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (comments.isEmpty)
+          if (_commentsLoading)
+            _skeleton()
+          else if (_commentsFailed)
+            _retry('剧评加载失败', () => unawaited(_loadComments()))
+          else if (comments.isEmpty)
             Text(
-              _comments == null ? '' : '期待你的第一条剧评',
+              '暂无剧评',
               key: const ValueKey('series-detail-comments-empty'),
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(0x99FFFFFF),
-              ),
+              style: const TextStyle(fontSize: 13, color: Color(0x99FFFFFF)),
             )
           else
             SizedBox(
-              height: 148,
+              height: 70 + 88 * MediaQuery.textScalerOf(context).scale(15) / 15,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: comments.length,
                 separatorBuilder: (_, _) => const SizedBox(width: 12),
-                itemBuilder: (context, index) =>
-                    _commentCard(comments[index]),
+                itemBuilder: (context, index) => _commentCard(comments[index]),
               ),
             ),
         ],
@@ -1484,13 +1596,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                   ? Text(
                       comment.userName.isEmpty
                           ? '?'
-                          : String.fromCharCode(
-                              comment.userName.runes.first,
-                            ),
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.white,
-                      ),
+                          : String.fromCharCode(comment.userName.runes.first),
+                      style: const TextStyle(fontSize: 13, color: Colors.white),
                     )
                   : CachedNetworkImage(
                       imageUrl: ApiClient.instance.absoluteUrl(
@@ -1500,9 +1607,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                       errorWidget: (_, _, _) => Text(
                         comment.userName.isEmpty
                             ? '?'
-                            : String.fromCharCode(
-                                comment.userName.runes.first,
-                              ),
+                            : String.fromCharCode(comment.userName.runes.first),
                         style: const TextStyle(
                           fontSize: 13,
                           color: Colors.white,
@@ -1516,10 +1621,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                 comment.userName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xCCFFFFFF),
-                ),
+                style: const TextStyle(fontSize: 13, color: Color(0xCCFFFFFF)),
               ),
             ),
             const SizedBox(width: 8),
@@ -1556,22 +1658,65 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   // ---- 底部栏 ----
 
-  /// 官方底栏（`g1.b`，ConstraintLayout 背景是主色四段渐变 scrim：
-  /// [α0, α0xB4, αFF, αFF] 自上而下，内容从半透明区穿过）+ 双钮：
-  /// 「收藏」白底胶囊、图标文字用主色（`n(i(), -1)` 白底 + setColorFilter
-  /// 主色）；「继续播放」亮 accent 底（`n(l(), i3)`）白字白图标。文案照
-  /// 官方 `@string/bcs`=「继续播放」（实机核对，不带集号）；无进度时
-  /// 「立即播放」未逐字取证。收藏走账号，按无账号范围占位（SnackBar）。
+  Future<void> _toggleShelf() async {
+    if (_shelfBusy) return;
+    final shelf = ShelfStore.instance;
+    if (!shelf.isReady) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('本地收藏暂不可用，请稍后重试')));
+      return;
+    }
+    setState(() => _shelfBusy = true);
+    try {
+      final added = await shelf.toggle(
+        MediaItem(
+          id: widget.seriesId,
+          seriesId: widget.seriesId,
+          title: _titleText,
+          cover: _coverText,
+          author: '',
+          badge: '短剧',
+          ep: _detail.episodeLabel,
+          kind: 'video',
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(added ? '已收藏到本机书架' : '已取消收藏')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('收藏失败，请重试')));
+    } finally {
+      if (mounted) setState(() => _shelfBusy = false);
+    }
+  }
+
   Widget _bottomBar() {
-    final label = widget.startIndex > 0 ? '继续播放' : '立即播放';
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final loading = !_episodesDone || !_historyDone;
+    final playable =
+        !loading && _episodes.isNotEmpty && !_episodes[_currentIndex].disabled;
+    final label = loading
+        ? '加载中…'
+        : _episodesFailed
+        ? '重试加载'
+        : _episodes.isEmpty
+        ? '暂无剧集'
+        : !playable
+        ? '暂不可播放'
+        : _hasProgress
+        ? '继续播放 · 第${_currentIndex + 1}集'
+        : '立即播放';
     return Container(
       key: const ValueKey('series-detail-bottombar'),
       padding: EdgeInsets.fromLTRB(
         16,
         12,
         16,
-        12 + bottomInset,
+        12 + MediaQuery.paddingOf(context).bottom,
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -1579,7 +1724,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
           end: Alignment.bottomCenter,
           stops: const [0, 1 / 3, 2 / 3, 1],
           colors: [
-            _themeBase.withAlpha(0x00),
+            _themeBase.withAlpha(0),
             _themeBase.withAlpha(0xB4),
             _themeBase,
             _themeBase,
@@ -1588,85 +1733,46 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       ),
       child: Row(
         children: [
-          Expanded(
-            child: GestureDetector(
-              key: const ValueKey('series-detail-fav-button'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('收藏暂未支持')),
-                );
-              },
-              child: Container(
-                height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(22),
+          ValueListenableBuilder<int>(
+            valueListenable: ShelfStore.instance.listenable,
+            builder: (context, _, _) {
+              final saved = ShelfStore.instance.contains(
+                'video',
+                widget.seriesId,
+              );
+              return FilledButton(
+                key: const ValueKey('series-detail-fav-button'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: _themeBase,
+                  minimumSize: const Size(80, 48),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.star_border_rounded,
-                      size: 20,
-                      color: _themeBase,
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        '收藏',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: _themeBase,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+                onPressed: _shelfBusy || widget.seriesId.isEmpty
+                    ? null
+                    : _toggleShelf,
+                child: Text(saved ? '已收藏' : '收藏'),
+              );
+            },
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: GestureDetector(
+            child: FilledButton(
               key: const ValueKey('series-detail-play-button'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _play(widget.startIndex),
-              child: Container(
-                height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _themeAccent,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.play_arrow_rounded,
-                      size: 22,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
+              style: FilledButton.styleFrom(
+                backgroundColor: _themeAccent,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 48),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
                 ),
               ),
+              onPressed: _episodesFailed
+                  ? () => unawaited(_loadEpisodes())
+                  : playable
+                  ? () => _play(_currentIndex)
+                  : null,
+              child: Text(label, textAlign: TextAlign.center),
             ),
           ),
         ],
@@ -1680,6 +1786,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 class _PinnedTabsDelegate extends SliverPersistentHeaderDelegate {
   const _PinnedTabsDelegate({
     required this.names,
+    required this.height,
     required this.activeIndex,
     required this.pinned,
     required this.background,
@@ -1687,54 +1794,63 @@ class _PinnedTabsDelegate extends SliverPersistentHeaderDelegate {
   });
 
   final List<String> names;
+  final double height;
   final int activeIndex;
   final bool pinned;
   final Color background;
   final ValueChanged<int> onTap;
 
   @override
-  double get minExtent => 40;
+  double get minExtent => height;
 
   @override
-  double get maxExtent => 40;
+  double get maxExtent => height;
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
     return Container(
       key: const ValueKey('series-detail-tabs'),
-      height: 40,
+      height: height,
       color: pinned ? background : Colors.transparent,
-      child: Row(
-        children: [
-          for (var i = 0; i < names.length; i++)
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onTap(i),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Center(
-                  child: Text(
-                    names[i],
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: i == activeIndex
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: i == activeIndex
-                          ? Colors.white
-                          : const Color(0xB3FFFFFF),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < names.length; i++)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onTap(i),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Center(
+                    child: Text(
+                      names[i],
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: i == activeIndex
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        color: i == activeIndex
+                            ? Colors.white
+                            : const Color(0xB3FFFFFF),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   @override
   bool shouldRebuild(_PinnedTabsDelegate oldDelegate) =>
+      oldDelegate.height != height ||
       oldDelegate.activeIndex != activeIndex ||
       oldDelegate.pinned != pinned ||
       oldDelegate.background != background ||

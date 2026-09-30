@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:hive/hive.dart';
+import 'package:fqapp/services/shelf_store.dart';
+import 'support/fakes.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -68,6 +73,7 @@ Future<void> _pump(
         key: UniqueKey(),
         child: SeriesDetailPage(
           seriesId: 'series-1',
+          historyStore: MemoryReaderStore(),
           title: detail.title,
           cover: detail.cover,
           episodes: episodes,
@@ -116,9 +122,19 @@ Future<void> _scrollTo(
 }
 
 void main() {
-  testWidgets('头部按官方 a34 规格：标题 2 行内、状态行、分类 chips、无封面角标', (
-    tester,
-  ) async {
+  late Directory directory;
+  setUpAll(() async {
+    directory = await Directory.systemTemp.createTemp('series-detail-test-');
+    Hive.init(directory.path);
+    await ShelfStore.instance.init();
+  });
+  tearDownAll(() async {
+    await Hive.close();
+    await directory.delete(recursive: true);
+  });
+  setUp(() async => ShelfStore.instance.clear());
+
+  testWidgets('头部按官方 a34 规格：标题 2 行内、状态行、分类 chips、无封面角标', (tester) async {
     await _pump(
       tester,
       detail: _detail(),
@@ -135,14 +151,15 @@ void main() {
     // 状态行：官方 `bp` 布局 = episodeLabel「全12集」+ 播放量（实机无追更段）。
     expect(find.text('全12集 · 8.7万次播放'), findsOneWidget);
     // 分类 chips（官方 RecommendTagLayout）。
-    expect(find.byKey(const ValueKey('series-detail-categories')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('series-detail-categories')),
+      findsOneWidget,
+    );
     expect(find.text('历史'), findsOneWidget);
     expect(find.text('搞笑'), findsOneWidget);
   });
 
-  testWidgets('tab 结构照实机：基本信息/剧评，无选集；有原著时出现原著小说', (
-    tester,
-  ) async {
+  testWidgets('tab 结构照实机：基本信息/剧评，无选集；有原著时出现原著小说', (tester) async {
     await _pump(
       tester,
       detail: _detail(),
@@ -153,7 +170,10 @@ void main() {
       find.descendant(of: tabs, matching: find.text('基本信息')),
       findsOneWidget,
     );
-    expect(find.descendant(of: tabs, matching: find.text('剧评')), findsOneWidget);
+    expect(
+      find.descendant(of: tabs, matching: find.text('剧评')),
+      findsOneWidget,
+    );
     // 官方 tab 没有「选集」（选集区在剧评与原著之间，无自己的 tab）。
     expect(find.descendant(of: tabs, matching: find.text('选集')), findsNothing);
     expect(
@@ -177,9 +197,7 @@ void main() {
       find.descendant(of: tabs2, matching: find.text('原著小说')),
       findsOneWidget,
     );
-    await tester.tap(
-      find.descendant(of: tabs2, matching: find.text('原著小说')),
-    );
+    await tester.tap(find.descendant(of: tabs2, matching: find.text('原著小说')));
     await tester.pumpAndSettle();
     // 书区在列表底部，懒加载要先滚过去（区块未构建时锚点滚动无 context）。
     await _scrollTo(tester, find.text('立即阅读'));
@@ -194,13 +212,16 @@ void main() {
       episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
     );
     // 选集区在首屏之下（基本信息/剧评在前），懒加载列表要先滚过去。
-    await _scrollTo(tester, find.text('选集'));
+    await _scrollTo(
+      tester,
+      find.byKey(const ValueKey('series-episode-status')),
+    );
     final status = tester.widget<Text>(
       find.byKey(const ValueKey('series-episode-status')),
     );
     expect(status.data, '已完结 共12集');
     // 选集区块标题存在（无 tab，但区块在）。
-    expect(find.text('选集'), findsOneWidget);
+    expect(find.text('选集'), findsWidgets);
   });
 
   testWidgets('选集格子状态与点击：当前集主题色、已看灰字、点击回传下标', (tester) async {
@@ -276,21 +297,15 @@ void main() {
                 2,
       ),
     );
-    final gradient = (gradientBox.decoration as BoxDecoration).gradient!
-        as LinearGradient;
+    final gradient =
+        (gradientBox.decoration as BoxDecoration).gradient! as LinearGradient;
     expect(gradient.colors, const [Color(0xFF776033), Color(0xFF533D0F)]);
     // 底部「继续播放」钮 = 亮 accent 底白字（`g1.b` 的 n(l(), bright)；
     // #F5E6C8 的 accent = HSL(40°, 0.5, 0.39) ≈ #957432）。
-    final button = tester.widget<DecoratedBox>(
-      find.descendant(
-        of: find.byKey(const ValueKey('series-detail-play-button')),
-        matching: find.byType(DecoratedBox),
-      ),
+    final button = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('series-detail-play-button')),
     );
-    expect(
-      (button.decoration as BoxDecoration).color,
-      const Color(0xFF957432),
-    );
+    expect(button.style!.backgroundColor!.resolve({}), const Color(0xFF957432));
   });
 
   testWidgets('品牌色缺失/灰色系时回退官方 #404040（w4）', (tester) async {
@@ -305,9 +320,7 @@ void main() {
     expect(scaffold.backgroundColor, const Color(0xFF404040));
   });
 
-  testWidgets('暗色品牌色不发散成浅背景（真机回归：#302010 深棕、白字可读）', (
-    tester,
-  ) async {
+  testWidgets('暗色品牌色不发散成浅背景（真机回归：#302010 深棕、白字可读）', (tester) async {
     // apiprobe 实抓 video_detail 样本 series_color_hex=#302010（HSL 30°,
     // 0.20, 0.125）。首版移植把 s0.b 上段起点误当分段点、上段终点误当 1.0，
     // 暗色输入 L 被映射到 0.949 → 近白背景配白字不可读。官方 s0.b 输出
@@ -335,8 +348,8 @@ void main() {
                 2,
       ),
     );
-    final gradient = (gradientBox.decoration as BoxDecoration).gradient!
-        as LinearGradient;
+    final gradient =
+        (gradientBox.decoration as BoxDecoration).gradient! as LinearGradient;
     expect(gradient.colors.first, const Color(0xFF694D30));
   });
 
@@ -349,9 +362,12 @@ void main() {
       startIndex: 4,
       onPlay: (index) => played.add(index),
     );
-    expect(find.byKey(const ValueKey('series-detail-bottombar')), findsOneWidget);
-    // 实机官方文案是「继续播放」，不带集号。
-    expect(find.text('继续播放'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('series-detail-bottombar')),
+      findsOneWidget,
+    );
+    // 本地详情页明确展示续播集数。
+    expect(find.text('继续播放 · 第5集'), findsOneWidget);
     expect(find.text('继续播放 第5集'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('series-detail-play-button')));
     expect(played, [4]);
@@ -366,7 +382,7 @@ void main() {
     expect(find.text('立即播放'), findsOneWidget);
   });
 
-  testWidgets('底栏照官方 g1 双钮：白底收藏（占位）+ accent 继续播放', (tester) async {
+  testWidgets('底栏收藏写入本机书架并可取消', (tester) async {
     await _pump(
       tester,
       detail: _detail(),
@@ -378,24 +394,34 @@ void main() {
     );
     expect(find.text('收藏'), findsOneWidget);
     // 收藏走账号，本地占位：轻点出 SnackBar 提示（同 light more panel 先例）。
-    await tester.tap(find.byKey(const ValueKey('series-detail-fav-button')));
+    await tester.runAsync(() async {
+      await tester.tap(find.byKey(const ValueKey('series-detail-fav-button')));
+      // Hive 的文件写入需要真实事件循环，不能依赖 fake async 的 pump。
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    });
     await tester.pump();
     final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
-    expect((snackBar.content as Text).data, '收藏暂未支持');
+    expect((snackBar.content as Text).data, '已收藏到本机书架');
+    expect(ShelfStore.instance.contains('video', 'series-1'), isTrue);
+    await tester.runAsync(() async {
+      await tester.tap(find.byKey(const ValueKey('series-detail-fav-button')));
+      // Hive 的文件写入需要真实事件循环，不能依赖 fake async 的 pump。
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    });
+    await tester.pumpAndSettle();
+    expect(ShelfStore.instance.contains('video', 'series-1'), isFalse);
   });
 
-  testWidgets('剧评区头部有评分入口卡（看5分钟参与评分 + 五星占位）', (tester) async {
+  testWidgets('移除不可用的评分与更多入口', (tester) async {
     await _pump(
       tester,
       detail: _detail(),
       episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
       comments: _comments(),
     );
-    expect(
-      find.byKey(const ValueKey('series-detail-rate-card')),
-      findsOneWidget,
-    );
-    expect(find.text('看5分钟参与评分'), findsOneWidget);
+    expect(find.byKey(const ValueKey('series-detail-rate-card')), findsNothing);
+    expect(find.text('看5分钟参与评分'), findsNothing);
+    expect(find.byKey(const ValueKey('series-detail-more')), findsNothing);
   });
 
   testWidgets('长简介折叠 3 行：蓝色展开钮，点开展开全文并出现收起', (tester) async {
@@ -446,9 +472,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     // 头部：剧评 + 计数 + 右侧「全部剧评」（「剧评」另有 tab 一份）。
-    expect(find.text('剧评'), findsNWidgets(2));
-    expect(find.text(' · 952'), findsOneWidget);
-    expect(find.byKey(const ValueKey('series-detail-comments-all')), findsOneWidget);
+    expect(find.text('剧评'), findsOneWidget);
+    expect(find.text('剧评 · 952'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('series-detail-comments-all')),
+      findsOneWidget,
+    );
     // 横滑卡片渲染两条评论。
     expect(find.text('这剧可以看'), findsOneWidget);
     expect(find.text('武将技不太对劲'), findsOneWidget);
@@ -478,6 +507,7 @@ void main() {
       _host(
         SeriesDetailPage(
           seriesId: 'series-1',
+          historyStore: MemoryReaderStore(),
           title: '兜底剧名',
           cover: '',
           episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
@@ -489,11 +519,11 @@ void main() {
     await tester.pumpAndSettle();
     // 顶栏与头部各渲染一份兜底剧名。
     expect(find.text('兜底剧名'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('series-detail-title')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('series-detail-title')),
+      find.byKey(const ValueKey('series-detail-play-button')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('series-detail-play-button')), findsOneWidget);
   });
 
   testWidgets('顶栏返回键 pop 页面', (tester) async {
@@ -506,6 +536,7 @@ void main() {
               MaterialPageRoute<void>(
                 builder: (_) => SeriesDetailPage(
                   seriesId: 'series-1',
+                  historyStore: MemoryReaderStore(),
                   title: '抽象三国第一季',
                   cover: '',
                   episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
@@ -525,5 +556,248 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('series-detail-back')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('series-detail-page')), findsNothing);
+  });
+
+  testWidgets('异步目录按稳定 ID 恢复续播并定位第 31-60 集', (tester) async {
+    final directory = Completer<List<List<Chapter>>>();
+    final store = MemoryReaderStore(
+      entry: {'episodeId': 'ep-45', 'episode': 2, 'position': 20.0},
+    );
+    store.watched['series-1'] = {'ep-45'};
+    int? played;
+    List<Chapter>? selectedEpisodes;
+    await tester.pumpWidget(
+      _host(
+        SeriesDetailPage(
+          seriesId: 'series-1',
+          historyStore: store,
+          initialDetail: _detail(episodeCount: 90),
+          directoryLoader: (_) => directory.future,
+          commentLoader: (_) async => const PlayletCommentPage(),
+          onPlaySelection: (index, episodes, _) {
+            played = index;
+            selectedEpisodes = episodes;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('加载中…'), findsOneWidget);
+    final episodes = [for (var i = 0; i < 90; i++) _chapter(i)];
+    directory.complete([episodes]);
+    await tester.pumpAndSettle();
+    expect(find.text('继续播放 · 第46集'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('series-detail-play-button')));
+    expect(played, 45);
+    expect(selectedEpisodes, episodes);
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-45')));
+    expect(find.byKey(const ValueKey('series-episode-0')), findsNothing);
+  });
+
+  testWidgets('第一集有历史也显示续播，宿主显式当前集优先于历史', (tester) async {
+    final store = MemoryReaderStore(
+      entry: {'episodeId': 'ep-0', 'position': 25},
+    );
+    for (final explicitIndex in <int?>[null, 2]) {
+      await tester.pumpWidget(
+        _host(
+          SeriesDetailPage(
+            key: UniqueKey(),
+            seriesId: 'series-1',
+            historyStore: store,
+            initialDetail: _detail(),
+            startIndex: explicitIndex,
+            episodes: [for (var i = 0; i < 3; i++) _chapter(i)],
+            commentLoader: (_) async => const PlayletCommentPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('继续播放 · 第${explicitIndex == null ? 1 : 3}集'),
+        findsOneWidget,
+      );
+    }
+  });
+
+  testWidgets('不可播集禁止触摸和语义点击，底部按钮禁用', (tester) async {
+    var played = false;
+    await _pump(
+      tester,
+      detail: _detail(),
+      episodes: [_chapter(0, disabled: true)],
+      onPlay: (_) => played = true,
+    );
+    final button = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('series-detail-play-button')),
+    );
+    expect(button.onPressed, isNull);
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-0')));
+    final tile = tester.widget<Semantics>(
+      find.byKey(const ValueKey('series-episode-0')),
+    );
+    expect(tile.properties.enabled, isFalse);
+    expect(tile.properties.onTap, isNull);
+    await tester.tap(find.byKey(const ValueKey('series-episode-0')));
+    expect(played, isFalse);
+  });
+
+  testWidgets('目录失败可重试，空目录和失败文案区分', (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      _host(
+        SeriesDetailPage(
+          seriesId: 'series-1',
+          historyStore: MemoryReaderStore(),
+          initialDetail: _detail(),
+          directoryLoader: (_) async {
+            if (++calls == 1) throw StateError('offline');
+            return [
+              [_chapter(0)],
+            ];
+          },
+          commentLoader: (_) async => const PlayletCommentPage(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('重试加载'), findsOneWidget);
+    expect(find.text('暂无剧集'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('series-detail-play-button')));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.text('立即播放'), findsOneWidget);
+  });
+
+  testWidgets('详情与剧评分别重试，不重复加载成功的目录', (tester) async {
+    var detailCalls = 0;
+    var commentCalls = 0;
+    var directoryCalls = 0;
+    await tester.pumpWidget(
+      _host(
+        SeriesDetailPage(
+          seriesId: 'series-1',
+          title: '兜底标题',
+          historyStore: MemoryReaderStore(),
+          seriesLoader: (_) async =>
+              ++detailCalls == 1 ? SeriesDetail.empty : _detail(),
+          directoryLoader: (_) async {
+            directoryCalls++;
+            return [
+              [_chapter(0)],
+            ];
+          },
+          commentLoader: (_) async {
+            if (++commentCalls == 1) throw StateError('offline');
+            return _comments();
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('详情加载失败'), findsOneWidget);
+    await _scrollTo(tester, find.text('详情加载失败'));
+    await tester.tap(find.text('重试').first);
+    await tester.pumpAndSettle();
+    expect(detailCalls, 2);
+    expect(find.text('详情加载失败'), findsNothing);
+    await _scrollTo(tester, find.text('剧评加载失败'));
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(commentCalls, 2);
+    expect(directoryCalls, 1);
+    expect(find.text('剧评加载失败'), findsNothing);
+  });
+
+  testWidgets('已有详情不重复请求，晚到响应不更新已销毁页面', (tester) async {
+    final comments = Completer<PlayletCommentPage>();
+    var calls = 0;
+    await tester.pumpWidget(
+      _host(
+        SeriesDetailPage(
+          seriesId: 'series-1',
+          initialDetail: _detail(),
+          episodes: [_chapter(0)],
+          historyStore: MemoryReaderStore(),
+          seriesLoader: (_) async {
+            calls++;
+            return _detail();
+          },
+          commentLoader: (_) => comments.future,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(calls, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+    comments.complete(_comments());
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('窄屏大字体与安全区：快捷选集可达，内容没有溢出', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 780));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(1.8),
+            padding: const EdgeInsets.only(top: 32, bottom: 24),
+          ),
+          child: child!,
+        ),
+        home: SeriesDetailPage(
+          seriesId: 'series-1',
+          historyStore: MemoryReaderStore(),
+          initialDetail: _detail(
+            intro: '长简介包含表情👨‍👩‍👧‍👦，验证文字折叠和展开。' * 20,
+            originalBook: const SeriesRelateBook(id: 'b1', title: '很长的原著小说书名'),
+          ),
+          episodes: [for (var i = 0; i < 90; i++) _chapter(i)],
+          commentLoader: (_) async => _comments(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(
+      find.byKey(const ValueKey('series-detail-episodes-shortcut')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('series-episode-0')).hitTestable(),
+      findsOneWidget,
+    );
+    final firstTile = tester.getRect(
+      find.byKey(const ValueKey('series-episode-0')),
+    );
+    final tabs = tester.getRect(
+      find.byKey(const ValueKey('series-detail-tabs')),
+    );
+    expect(firstTile.top, greaterThanOrEqualTo(tabs.bottom));
+    expect(tester.takeException(), isNull);
+    await _scrollTo(tester, find.text('立即阅读'));
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('长剧当前分组自动露出，横向定位不挪动详情锚点', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _pump(
+      tester,
+      detail: _detail(episodeCount: 300),
+      episodes: [for (var i = 0; i < 300; i++) _chapter(i)],
+      startIndex: 245,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('series-detail-episodes-shortcut')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('241-270').hitTestable(), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('series-episode-240')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 }

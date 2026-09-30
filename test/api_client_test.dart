@@ -7,6 +7,29 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test(
+    'series detail strict failures preserve legacy best-effort callers',
+    () async {
+      for (final response in [
+        http.Response('offline', 503),
+        http.Response('{"code":0,"data":{}}', 200),
+        http.Response('{"code":500,"message":"unavailable"}', 200),
+      ]) {
+        final transport = MockClient((_) async => response);
+        addTearDown(transport.close);
+        final api = ApiClient(
+          client: transport,
+          baseUrl: 'http://localhost:9000',
+        );
+        expect((await api.seriesDetail('s1')).isEmpty, isTrue);
+        await expectLater(
+          api.seriesDetail('s1', strict: true),
+          throwsA(isA<ApiException>()),
+        );
+      }
+    },
+  );
+
   const special = 'id &mode=changed#+/中文%';
 
   group('paragraph comments from saved catalogues', () {
@@ -127,7 +150,9 @@ void main() {
                   {
                     'comment': {
                       'comment_id': 'c2',
-                      'common': {'content': {'text': '第二页的段评'}},
+                      'common': {
+                        'content': {'text': '第二页的段评'},
+                      },
                     },
                   },
                 ],

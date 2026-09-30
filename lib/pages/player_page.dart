@@ -44,6 +44,7 @@ class PlayerPage extends StatefulWidget {
   final Future<Map<String, dynamic>> Function(Chapter)? contentLoader;
   final NativePlayer Function()? playerFactory;
   final ReaderStore? historyStore;
+  final SeriesDetail? initialSeriesDetail;
   final PlayerLoadDiagnostics? loadDiagnostics;
 
   /// 底部 band 装饰数据的可注入 loader（默认走 ApiClient，best-effort：
@@ -75,6 +76,7 @@ class PlayerPage extends StatefulWidget {
     this.historyStore,
     this.loadDiagnostics,
     this.seriesLoader,
+    this.initialSeriesDetail,
     this.danmakuFetcher,
     this.shortSeries = false,
     this.aiGenerated = false,
@@ -124,6 +126,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   /// 底部 band 装饰（官方截图第二十二轮）：完结状态与原著书卡，
   /// best-effort 拉取，失败保持缺省。
+  SeriesDetail? _seriesDetail;
   String? _seriesStatus;
   RelatedWork? _originalBook;
 
@@ -254,10 +257,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// （`comment_cnt`，官方入口「评论/抢首评」的判据）。
   /// 自吞异常——band 是装饰，接口再差也不能影响播放。
   Future<void> _loadBandExtras() async {
-    final series =
-        await (widget.seriesLoader?.call(widget.bookId) ??
-                ApiClient.instance.seriesDetail(widget.bookId))
-            .catchError((Object _) => SeriesDetail.empty);
+    final initial = widget.initialSeriesDetail;
+    final series = initial != null && !initial.isEmpty
+        ? initial
+        : await (widget.seriesLoader?.call(widget.bookId) ??
+                  ApiClient.instance.seriesDetail(widget.bookId))
+              .catchError((Object _) => SeriesDetail.empty);
     if (!mounted) return;
     // 评论计数与评论入口同源：有计数才显示入口（官方该项默认 gone，
     // 由数据驱动显隐，见 res/layout/cjs.xml:11 与 SeriesCommentView.java:479-491）。
@@ -274,6 +279,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ? series.episodeCount
         : widget.eps.length;
     setState(() {
+      _seriesDetail = series;
       _seriesStatus = status;
       _seriesTitle = series.title;
       _seriesCover = series.cover;
@@ -326,6 +332,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               episodes: widget.eps,
               startIndex: _index,
               watchedIds: _watchedIds,
+              initialDetail: _seriesDetail,
+              historyStore: widget.historyStore,
+              hasPlaybackProgress: (_player?.position.inMilliseconds ?? 0) > 0,
+              seriesLoader: widget.seriesLoader,
               onPlayEpisode: (index) {
                 // 详情页就在本播放器之上，pop 一次即回到播放页。
                 Navigator.of(context).pop();
@@ -924,12 +934,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       // （load 被抢先换到别的集）则丢弃。
       final pendingResume = _listenResume;
       _listenResume = null;
-      final listenResumeMs =
-          pendingResume != null && pendingResume.$1 == index
+      final listenResumeMs = pendingResume != null && pendingResume.$1 == index
           ? pendingResume.$2.inMilliseconds.toDouble()
           : -1.0;
-      final requestedMs =
-          listenResumeMs >= 0 ? listenResumeMs : savedPosition * 1000;
+      final requestedMs = listenResumeMs >= 0
+          ? listenResumeMs
+          : savedPosition * 1000;
       final resumeSeconds = requestedMs / 1000;
       if ((listenResumeMs >= 0 || savedIndex == index) &&
           requestedMs.isFinite &&
@@ -1060,8 +1070,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _rememberDanmakuResume(_index, resumeMs);
         await fresh.seek(resume);
         if (!_current(generation, fresh)) return;
-        if (widget.shortSeries &&
-            _danmakuLoader.videoId == episode.itemId) {
+        if (widget.shortSeries && _danmakuLoader.videoId == episode.itemId) {
           _danmakuResumeIndex = null;
           _danmakuResumeMs = null;
           _onDanmakuSeek(resume);
@@ -1359,8 +1368,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
     if (!mounted || player == null) return;
     final (listenIndex, position) = result ?? (_index, Duration.zero);
-    final targetIndex =
-        listenIndex >= 0 && listenIndex < widget.eps.length ? listenIndex : _index;
+    final targetIndex = listenIndex >= 0 && listenIndex < widget.eps.length
+        ? listenIndex
+        : _index;
     if (targetIndex != _index) {
       // 听书页自动连播跨了集：切到那一集，进度由 _loadVideo 消费
       // [_listenResume] 恢复；起播交给切集链路自己的自动播放。
@@ -1379,6 +1389,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     void retry() {
       if (_current(generation)) unawaited(_loadVideo(refresh: true));
     }
+
     final texture = _player?.textureId;
     final waiting =
         _initVideo || texture == null || !_player!.firstFrameRendered;

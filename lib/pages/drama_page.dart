@@ -712,7 +712,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
           reverseDuration: Duration(milliseconds: 200),
         ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(dark ? 12 : 16)),
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(dark ? 12 : 16),
+          ),
         ),
         builder: (context) {
           if (!dark) {
@@ -1109,7 +1111,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// fetched here and the player is pushed with the resume episode selected.
   ///
   /// [startEpisodeIndex] 非空时跳过续播推断（详情页点选集进来指定目标集）。
-  Future<void> _openPlayer(MediaItem item, {int? startEpisodeIndex}) async {
+  Future<void> _openPlayer(
+    MediaItem item, {
+    int? startEpisodeIndex,
+    List<Chapter>? loadedEpisodes,
+    SeriesDetail? initialDetail,
+  }) async {
     if (_openingId != null) return;
     setState(() => _openingId = item.id);
     // The full page player creates its own native instance, so the inline one
@@ -1125,7 +1132,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
       final loader = widget.directoryLoader;
       // `tab` is a named parameter of the client, so the real call passes it by
       // name; a positional tear-off would degrade into a dynamic call.
-      var volumes = loader != null
+      var volumes = loadedEpisodes != null
+          ? [loadedEpisodes]
+          : loader != null
           ? await loader(contentId, tab)
           : await ApiClient.instance.directoryChapters(contentId, tab: tab);
       if (volumes.isEmpty && item.episodeId != null) {
@@ -1145,9 +1154,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       final saved = await PlayerHistory(
         widget.historyStore ?? LibraryStore.instance,
       ).load(contentId);
-      final index = (startEpisodeIndex ??
-              resumeEpisodeIndex(saved, eps) ??
-              0)
+      final index = (startEpisodeIndex ?? resumeEpisodeIndex(saved, eps) ?? 0)
           .clamp(0, eps.length - 1);
       if (!mounted) return;
       await Navigator.push(
@@ -1159,6 +1166,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             title: item.title,
             cover: item.cover,
             eps: eps,
+            initialSeriesDetail: initialDetail,
             startIndex: index.toInt(),
             contentLoader: widget.contentLoader == null
                 ? null
@@ -1207,7 +1215,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// feed 卡片标题行「剧名 >」→ 剧集详情页（官方 `ql3/v0.a1()` 默认分支，
   /// 埋点 `enter_from="title"`；feed 信息区与播放页信息区共用这个 Presenter）。
   ///
-  /// 详情页点播放/选集时：先 pop 详情回到 feed，再走 `_openPlayer` 拉目录
+  /// 详情页点播放/选集时：先 pop 详情回到 feed，再走 `_openPlayer` 复用目录
   /// 推整页播放器（`_pushOverFeed` 已把 inline 播放器销毁，不会双实例）。
   void _openSeriesDetail(MediaItem item) {
     unawaited(
@@ -1224,12 +1232,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
               directoryLoader: widget.directoryLoader == null
                   ? null
                   : (sid) => widget.directoryLoader!(sid, '短剧'),
+              historyStore: widget.historyStore,
               seriesLoader: widget.seriesDetailLoader,
               commentLoader: widget.seriesCommentLoader,
-              onPlayEpisode: (index) {
+              onPlaySelection: (index, episodes, detail) {
                 Navigator.of(context).pop();
                 unawaited(
-                  _openPlayer(item, startEpisodeIndex: index),
+                  _openPlayer(
+                    item,
+                    startEpisodeIndex: index,
+                    loadedEpisodes: episodes,
+                    initialDetail: detail,
+                  ),
                 );
               },
             ),
