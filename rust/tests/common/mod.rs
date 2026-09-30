@@ -74,14 +74,31 @@ pub async fn build_server(
     src: &[(&str, &str)],
     pool_json: &str,
 ) -> Arc<Server> {
+    build_server_with_config(
+        dir,
+        mock_origin,
+        web,
+        src,
+        pool_json,
+        r#"{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}"#,
+    )
+    .await
+}
+
+/// [`build_server`] with an explicit `config.json` body.
+pub async fn build_server_with_config(
+    dir: &TempDir,
+    mock_origin: Option<String>,
+    web: &[(&str, &str)],
+    src: &[(&str, &str)],
+    pool_json: &str,
+    config_json: &str,
+) -> Arc<Server> {
     let root = dir.path().to_path_buf();
     std::fs::create_dir_all(root.join("src")).expect("src dir");
     std::fs::create_dir_all(root.join("web")).expect("web dir");
 
-    let config_path = dir.write(
-        "config/config.json",
-        r#"{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}"#,
-    );
+    let config_path = dir.write("config/config.json", config_json);
     let pool_path = dir.write("config/device_pool.json", pool_json);
     // A missing filter.json yields a no-op manager, matching the Go behaviour.
     let filter_path = dir.join("config/filter.json");

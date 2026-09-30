@@ -166,11 +166,14 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
         Some(m) => m,
         None => {
             if ctx.cfg.anti_crawler.enabled && !ctx.cfg.anti_crawler.redirect_url.is_empty() {
-                return Response::text(
-                    302,
-                    "text/plain; charset=utf-8",
-                    ctx.cfg.anti_crawler.redirect_url.clone().into_bytes(),
-                );
+                // A 302 without Location is not a redirect; clients just show
+                // the body. The URL stays in the body for the FFI transport,
+                // which surfaces status and body only.
+                let url = ctx.cfg.anti_crawler.redirect_url.clone();
+                let mut response =
+                    Response::text(302, "text/plain; charset=utf-8", url.clone().into_bytes());
+                response.headers.push(("location".to_string(), url));
+                return response;
             }
             return Response::json(
                 404,
