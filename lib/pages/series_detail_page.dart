@@ -28,8 +28,14 @@ import 'player_page.dart' show PlayerPage;
 /// 2026-09-30 真机取证（官方 7.0.9.32，抽象三国第一季详情页截图）后重排：
 /// 区块顺序 = 头部 → 基本信息（简介/演职人员）→ 剧评 → 选集 → 原著小说；
 /// 钉住 tab = 基本信息/剧评/原著小说（**没有选集 tab**，选集区滚过时点亮
-/// 的是剧评，与官方一致）；顶栏剧名在返回键右侧左对齐；背景为**清晰**
-/// 封面 + 压暗渐变（非模糊）；选集区头部右侧带「已完结 共105集 ›」状态。
+/// 的是剧评，与官方一致）；顶栏剧名在返回键右侧左对齐；选集区头部右侧带
+/// 「已完结 共105集 ›」状态。
+///
+/// 背景/主题色（反编译源码复核，`BaseSeriesDetailFragment.Zf`/`Df`/`s0`）：
+/// 服务端 `series_color_hex` 经双段 HSL 映射出顶部色与底部主色，背景 =
+/// 上（到距底 400dp）垂直渐变 + 底部纯主色；当前集格子与播放钮用主色。
+/// 不是封面图，也不是固定素材——同一素材图（img_665）只是 30% 亮度的
+/// 半透明纹理盖在渐变上，本地省略。
 ///
 /// 与官方的差异（都有据）：
 /// - 官方底部是「收藏 + 继续播放」双钮；收藏要走账号，本仓库按
@@ -224,6 +230,70 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     };
   }
 
+  // ---- 官方主题色（BaseSeriesDetailFragment.Zf 的移植）----
+
+  /// 官方 hex 解析/HSL 映射失败、或饱和度 <0.05 时的回退色
+  /// （`@color/w4`）。
+  static const _fallbackTheme = Color(0xFF404040);
+
+  /// `s0.b` 的分段线性重映射：x 夹到 [0.25, 1]，x≤knee 时 [0.25,knee] 线性
+  /// 映到 [outLow, outKnee]，否则 [knee,1] 映到 [outKnee,1]（暗端反向拉亮）。
+  static double _remapHsl(double x, double outLow, double knee, double outKnee) {
+    final v = x.clamp(0.25, 1.0);
+    if (v <= knee) {
+      return outLow + (v - 0.25) / (knee - 0.25) * (outKnee - outLow);
+    }
+    return outKnee + (1.0 - v) / (1.0 - knee) * (1.0 - outKnee);
+  }
+
+  /// `s0.a`：品牌色 → HSL →（S<0.05 走回退）S/L 分别重映射 → 颜色。
+  static Color _colorFromHex(
+    String hex,
+    double satLow,
+    double satKnee,
+    double satOut,
+    double lumLow,
+    double lumKnee,
+    double lumOut,
+  ) {
+    var base = _fallbackTheme;
+    var parsed = false;
+    final text = hex.trim();
+    final match = RegExp(r'^#?([0-9a-fA-F]{6})$').firstMatch(text);
+    if (match != null) {
+      base = Color(0xFF000000 | int.parse(match.group(1)!, radix: 16));
+      parsed = true;
+    }
+    if (!parsed) return _fallbackTheme;
+    final hsl = HSLColor.fromColor(base);
+    if (hsl.saturation < 0.05) return _fallbackTheme;
+    final s = _remapHsl(hsl.saturation, satLow, satKnee, satOut);
+    final l = _remapHsl(hsl.lightness, lumLow, lumKnee, lumOut);
+    return hsl.withSaturation(s).withLightness(l).toColor();
+  }
+
+  /// 渐变底部主色（`Zf` 的 base color：S→[0.55,0.625]@0.7，L→[0.18,0.19]@0.2）。
+  Color get _themeBase => _colorFromHex(
+    _detail.seriesColorHex,
+    0.55,
+    0.7,
+    0.625,
+    0.18,
+    0.2,
+    0.19,
+  );
+
+  /// 渐变顶部色（`Zf` 的 top color：S→[0.35,0.375]@0.4，L→[0.3,0.325]@0.4）。
+  Color get _themeTop => _colorFromHex(
+    _detail.seriesColorHex,
+    0.35,
+    0.4,
+    0.375,
+    0.3,
+    0.4,
+    0.325,
+  );
+
   void _onScroll() {
     // 官方 VideoCommonTitleBar 初始 gone，滚过头部后浮现。
     final scrolled = _scroll.hasClients && _scroll.offset > _topBarRevealOffset;
@@ -349,7 +419,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       data: ThemeData.dark(useMaterial3: true),
       child: Scaffold(
         key: const ValueKey('series-detail-page'),
-        backgroundColor: const Color(0xFF141414),
+        backgroundColor: _themeBase,
         body: Stack(
           children: [
             Positioned.fill(child: _backdrop()),
@@ -381,34 +451,34 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
-  /// 官方 `apc.xml` 的全屏 `i9u` 封面背景。真机取证是**清晰**图（无模糊），
-  /// 只压暗渐变保证白字可读；暖色调随封面自然带入。
-  Widget _backdrop() {
-    final url = ApiClient.instance.absoluteUrl(_coverText);
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (url.isNotEmpty)
-          CachedNetworkImage(
-            imageUrl: url,
-            fit: BoxFit.cover,
-            alignment: Alignment.topCenter,
-            errorWidget: (_, _, _) => const SizedBox.shrink(),
-          )
-        else
-          const ColoredBox(color: Color(0xFF141414)),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0x8A000000), Color(0xF2000000)],
+  /// 官方背景（`apc.xml` i9u + `Zf`/`Df`）：`series_color_hex` 推导的
+  /// 顶部色→底部主色渐变层（到距底 400dp 为止）+ 底部纯主色。源码里还有
+  /// 一张 CDN 纹理（`img_665_short_video_detail_background.png`，FIT_XY +
+  /// MULTIPLY 30% 白）盖在上面，CDN 前缀是服务端 AB 配置拿不到，本地省略
+  /// ——半透明纹理只带来轻微颗粒感，不影响色调。
+  Widget _backdrop() => LayoutBuilder(
+    builder: (context, constraints) {
+      final gradientHeight = constraints.maxHeight - 400.0;
+      return Column(
+        children: [
+          if (gradientHeight > 0)
+            SizedBox(
+              height: gradientHeight,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [_themeTop, _themeBase],
+                  ),
+                ),
+              ),
             ),
-          ),
-        ),
-      ],
-    );
-  }
+          Expanded(child: ColoredBox(color: _themeBase)),
+        ],
+      );
+    },
+  );
 
   /// 官方 44dp 顶栏（`c3` + VideoCommonTitleBar）：返回键常驻，剧名滚过
   /// 头部后在返回键右侧浮现（实机：`‹ 抽象三国第一季`，左对齐非居中）。
@@ -806,20 +876,29 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   Widget _episodeTile(int index) {
     final episode = _episodes[index];
+    final isCurrent = index == widget.startIndex;
     final state = EpisodeTileState.of(
-      current: index == widget.startIndex,
+      current: isCurrent,
       watched: _watched.contains(index),
       disabled: episode.disabled,
     );
+    // 官方详情页当前集 = 主题主色底白字（非播放页面板的橙色常量，
+    // `R.f(baseColor)` 的本地对应）。
+    final background = isCurrent && !episode.disabled
+        ? _themeBase
+        : state.backgroundColor;
+    final textColor = isCurrent && !episode.disabled
+        ? Colors.white
+        : state.textColor;
     return Semantics(
       key: ValueKey('series-episode-$index'),
       label: '第 ${index + 1} 集',
       button: true,
-      selected: index == widget.startIndex,
+      selected: isCurrent,
       excludeSemantics: true,
       onTap: () => _play(index),
       child: Material(
-        color: state.backgroundColor,
+        color: background,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(8)),
         ),
@@ -838,7 +917,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: state.weight,
-                color: state.textColor,
+                color: textColor,
               ),
             ),
           ),
@@ -1210,14 +1289,15 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 
   // ---- 底部栏 ----
 
-  /// 官方 56dp 底栏（`hp`）；单主钮宽 70% 屏宽（`g1.c` 单钮分支）、
-  /// 白底深字圆角胶囊。文案照官方 `@string/bcs`=「继续播放」（实机核对，
-  /// 不带集号）；无进度时的「立即播放」未逐字取证。
+  /// 官方 56dp 底栏（`hp`）；单主钮宽 70% 屏宽（`g1.c` 单钮分支）、圆角胶囊
+  /// 底色=主题主色白字（实机：抽象三国金钮 / 转业保安青蓝钮，都来自
+  /// `series_color_hex` 推导的 base color）。文案照官方 `@string/bcs`=
+  /// 「继续播放」（实机核对，不带集号）；无进度时的「立即播放」未逐字取证。
   Widget _bottomBar() {
     final label = widget.startIndex > 0 ? '继续播放' : '立即播放';
     return Container(
       key: const ValueKey('series-detail-bottombar'),
-      color: const Color(0xFF141414),
+      color: _themeBase,
       padding: EdgeInsets.fromLTRB(
         16,
         6,
@@ -1234,7 +1314,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             onTap: () => _play(widget.startIndex),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: _themeBase,
                 borderRadius: BorderRadius.circular(22),
               ),
               child: Row(
@@ -1243,7 +1323,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                   const Icon(
                     Icons.play_arrow_rounded,
                     size: 22,
-                    color: Color(0xFF1C1C1C),
+                    color: Colors.white,
                   ),
                   Flexible(
                     child: Text(
@@ -1253,7 +1333,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF1C1C1C),
+                        color: Colors.white,
                       ),
                     ),
                   ),
@@ -1265,4 +1345,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       ),
     );
   }
+
+  /// 主钮/当前集格子用 base 主色本体（官方 `R.f(baseColor)` 的 accent 落点）。
 }

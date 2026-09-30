@@ -101,6 +101,17 @@ void main() {
       expect(SeriesDetail.fromPayload(payload).status, isNull);
     });
 
+    test('reads the series brand color (official series_color_hex)', () {
+      // 官方详情页背景渐变/当前集格子/播放钮的取色源：
+      // VideoDetailVideoData.seriesColorHex ← `series_color_hex`
+      // （BaseSeriesDetailFragment.Zf 的输入）。
+      final payload = _payload();
+      (payload['data'] as Map)['video_data']['series_color_hex'] = '#F5E6C8';
+      expect(SeriesDetail.fromPayload(payload).seriesColorHex, '#F5E6C8');
+      (payload['data'] as Map)['video_data'].remove('series_color_hex');
+      expect(SeriesDetail.fromPayload(payload).seriesColorHex, isEmpty);
+    });
+
     test('original book is null without book_info', () {
       final payload = _payload();
       (payload['data'] as Map)['video_relate_book'] = {

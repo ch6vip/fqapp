@@ -74,9 +74,10 @@ class SeriesDetail {
     this.playCount = 0,
     this.followerCount = 0,
     this.commentCount = 0,
-    this.categories = const [],
-    this.originalBook,
-    this.status,
+  this.categories = const [],
+  this.originalBook,
+  this.status,
+  this.seriesColorHex = '',
   });
 
   static const empty = SeriesDetail();
@@ -108,6 +109,12 @@ class SeriesDetail {
   /// 3=今日更新、4=断更——注意与书库 creation_status 的 0=完结/1=连载
   /// 语义相反）。null = 未知。
   final int? status;
+
+  /// 服务端为每部剧下发的品牌色（官方 `VideoDetailVideoData.seriesColorHex`，
+  /// `@SerializedName("series_color_hex")`）。官方详情页背景渐变与主题
+  /// accent（当前集格子/播放钮）都从这里推导（`BaseSeriesDetailFragment.Zf`），
+  /// 空串时官方回退 `@color/w4`=#404040。
+  final String seriesColorHex;
 
   bool get isEmpty => title.isEmpty && cast.isEmpty;
 
@@ -142,6 +149,7 @@ class SeriesDetail {
       status: video['series_status'] == null
           ? null
           : _int(video['series_status']),
+      seriesColorHex: _string(video['series_color_hex']),
     );
   }
 }

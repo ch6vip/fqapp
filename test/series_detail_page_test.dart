@@ -19,6 +19,7 @@ SeriesDetail _detail({
   int episodeCount = 12,
   String episodeLabel = '全12集',
   SeriesRelateBook? originalBook,
+  String seriesColorHex = '#F5E6C8',
 }) => SeriesDetail(
   seriesId: 'series-1',
   title: '抽象三国第一季',
@@ -36,6 +37,7 @@ SeriesDetail _detail({
   categories: const ['历史', '搞笑'],
   originalBook: originalBook,
   status: status,
+  seriesColorHex: seriesColorHex,
 );
 
 PlayletCommentPage _comments() => const PlayletCommentPage(
@@ -180,7 +182,7 @@ void main() {
     expect(find.text('选集'), findsOneWidget);
   });
 
-  testWidgets('选集格子状态与点击：当前集橙字、已看灰字、点击回传下标', (tester) async {
+  testWidgets('选集格子状态与点击：当前集主题色、已看灰字、点击回传下标', (tester) async {
     final played = <int>[];
     await _pump(
       tester,
@@ -191,14 +193,22 @@ void main() {
       onPlay: (index) => played.add(index),
     );
     await _scrollTo(tester, find.byKey(const ValueKey('series-episode-6')));
-    // 当前集（第 4 格）橙字 #FFFA6725（官方 @color/aok）。
+    // 当前集（第 4 格）主题主色底白字。#F5E6C8 经官方 Zf 双段 HSL 映射：
+    // base = HSL(40°, 0.624, 0.319) ≈ #84621F（手算交叉验证）。
+    final currentTile = tester.widget<Material>(
+      find.descendant(
+        of: find.byKey(const ValueKey('series-episode-3')),
+        matching: find.byType(Material),
+      ),
+    );
+    expect(currentTile.color, const Color(0xFF84621F));
     final current = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
         matching: find.text('4'),
       ),
     );
-    expect(current.style?.color, const Color(0xFFFA6725));
+    expect(current.style?.color, Colors.white);
     expect(current.style?.fontWeight, FontWeight.bold);
     // 已看集（第 1 格）灰字 #66000000（官方 skin_color_gray_40_light）。
     final watched = tester.widget<Text>(
@@ -211,6 +221,56 @@ void main() {
     // 点普通格回传该集下标。
     await tester.tap(find.byKey(const ValueKey('series-episode-6')));
     expect(played, [6]);
+  });
+
+  testWidgets('背景与主题色照官方 Zf/Df：series_color_hex 渐变 + 主色 accent', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      detail: _detail(),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+    );
+    // Scaffold 底色 = base；顶部渐变 = top→base（top = HSL(40°, 0.695,
+    // 0.468) ≈ #CB9324，手算交叉验证）。
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('series-detail-page')),
+    );
+    expect(scaffold.backgroundColor, const Color(0xFF84621F));
+    final gradientBox = tester.widget<DecoratedBox>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is DecoratedBox &&
+            w.decoration is BoxDecoration &&
+            (w.decoration as BoxDecoration).gradient is LinearGradient,
+      ),
+    );
+    final gradient = (gradientBox.decoration as BoxDecoration).gradient!
+        as LinearGradient;
+    expect(gradient.colors, const [Color(0xFFCB9324), Color(0xFF84621F)]);
+    // 底部主钮 = 主色底白字（官方 R.f(baseColor) 的 accent 落点）。
+    final button = tester.widget<DecoratedBox>(
+      find.descendant(
+        of: find.byKey(const ValueKey('series-detail-play-button')),
+        matching: find.byType(DecoratedBox),
+      ),
+    );
+    expect(
+      (button.decoration as BoxDecoration).color,
+      const Color(0xFF84621F),
+    );
+  });
+
+  testWidgets('品牌色缺失/灰色系时回退官方 #404040（w4）', (tester) async {
+    await _pump(
+      tester,
+      detail: _detail(seriesColorHex: ''),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+    );
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('series-detail-page')),
+    );
+    expect(scaffold.backgroundColor, const Color(0xFF404040));
   });
 
   testWidgets('底部播放钮：续播文案照官方「继续播放」，点击回传当前下标', (tester) async {
