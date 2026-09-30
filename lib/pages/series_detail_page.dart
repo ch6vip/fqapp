@@ -33,9 +33,11 @@ import 'player_page.dart' show PlayerPage;
 ///
 /// 背景/主题色（反编译源码复核，`BaseSeriesDetailFragment.Zf`/`Df`/`s0`）：
 /// 服务端 `series_color_hex` 经双段 HSL 映射出顶部色与底部主色，背景 =
-/// 上（到距底 400dp）垂直渐变 + 底部纯主色；当前集格子与播放钮用主色。
-/// 不是封面图，也不是固定素材——同一素材图（img_665）只是 30% 亮度的
-/// 半透明纹理盖在渐变上，本地省略。
+/// 顶部 400dp 的垂直渐变 + 其余纯主色；当前集格子与播放钮用主色。
+/// 映射的分段点 knee 恒为 `t0` 默认 0.625，输出永远落在暗色带——所以
+/// 官方任何剧的背景都压得深、白字可读。不是封面图，也不是固定素材
+/// ——同一素材图（img_665）只是 30% 亮度的半透明纹理盖在渐变上，
+/// 本地省略。
 ///
 /// 与官方的差异（都有据）：
 /// - 官方底部是「收藏 + 继续播放」双钮；收藏要走账号，本仓库按
@@ -236,14 +238,25 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   /// （`@color/w4`）。
   static const _fallbackTheme = Color(0xFF404040);
 
-  /// `s0.b` 的分段线性重映射：x 夹到 [0.25, 1]，x≤knee 时 [0.25,knee] 线性
-  /// 映到 [outLow, outKnee]，否则 [knee,1] 映到 [outKnee,1]（暗端反向拉亮）。
-  static double _remapHsl(double x, double outLow, double knee, double outKnee) {
+  /// `s0.b` 的分段线性重映射：x 夹到 [0.25,1]。分段点 knee 是 `t0` 的
+  /// **默认字段 0.625**（`Zf` 只经 j/h/l 设三个输出锚点，从不调 k/i/g，
+  /// 所以 min=0.25、max=1、knee=0.625 对四组配置都成立）。x≤knee 时
+  /// [0.25,knee] 线性映到 [outLow,outKnee]；否则 [knee,1] **反向**映到
+  /// [upperTarget,outKnee]——v=knee 处取 upperTarget、v=1 处取 outKnee
+  /// （knee 两侧不连续，官方代码如此）。输出恒落在 [outLow,upperTarget]
+  /// 的暗色带里，这就是官方背景永远压得深、白字可读的原因。
+  static double _remapHsl(
+    double x,
+    double outLow,
+    double upperTarget,
+    double outKnee,
+  ) {
+    const knee = 0.625;
     final v = x.clamp(0.25, 1.0);
     if (v <= knee) {
       return outLow + (v - 0.25) / (knee - 0.25) * (outKnee - outLow);
     }
-    return outKnee + (1.0 - v) / (1.0 - knee) * (1.0 - outKnee);
+    return outKnee + (1.0 - v) / (1.0 - knee) * (upperTarget - outKnee);
   }
 
   /// `s0.a`：品牌色 → HSL →（S<0.05 走回退）S/L 分别重映射 → 颜色。
@@ -272,7 +285,8 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     return hsl.withSaturation(s).withLightness(l).toColor();
   }
 
-  /// 渐变底部主色（`Zf` 的 base color：S→[0.55,0.625]@0.7，L→[0.18,0.19]@0.2）。
+  /// 渐变底部主色（`Zf` 的 base color：outLow=0.55、上段起点 0.7、
+  /// outKnee=0.625；L：0.18 / 0.2 / 0.19）。
   Color get _themeBase => _colorFromHex(
     _detail.seriesColorHex,
     0.55,
@@ -283,14 +297,15 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     0.19,
   );
 
-  /// 渐变顶部色（`Zf` 的 top color：S→[0.35,0.375]@0.4，L→[0.3,0.325]@0.4）。
+  /// 渐变顶部色（`Zf` 的 top color：outLow=0.35、上段起点 0.4、
+  /// outKnee=0.375；L：0.3 / 0.35 / 0.325）。
   Color get _themeTop => _colorFromHex(
     _detail.seriesColorHex,
     0.35,
     0.4,
     0.375,
     0.3,
-    0.4,
+    0.35,
     0.325,
   );
 
@@ -452,13 +467,15 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   }
 
   /// 官方背景（`apc.xml` i9u + `Zf`/`Df`）：`series_color_hex` 推导的
-  /// 顶部色→底部主色渐变层（到距底 400dp 为止）+ 底部纯主色。源码里还有
-  /// 一张 CDN 纹理（`img_665_short_video_detail_background.png`，FIT_XY +
-  /// MULTIPLY 30% 白）盖在上面，CDN 前缀是服务端 AB 配置拿不到，本地省略
-  /// ——半透明纹理只带来轻微颗粒感，不影响色调。
+  /// 顶部色→底部主色渐变**只画顶部 400dp**（`Df` 的
+  /// `setLayerInset(1, 0, 0, 0, height-400dp)` 把渐变层底部内缩到 400dp），
+  /// 其余露出底层纯主色。源码里还有一张 CDN 纹理
+  /// （`img_665_short_video_detail_background.png`，FIT_XY + MULTIPLY 30% 白）
+  /// 盖在上面，CDN 前缀是服务端 AB 配置拿不到，本地省略——半透明纹理只
+  /// 带来轻微颗粒感，不影响色调。
   Widget _backdrop() => LayoutBuilder(
     builder: (context, constraints) {
-      final gradientHeight = constraints.maxHeight - 400.0;
+      final gradientHeight = constraints.maxHeight.clamp(0.0, 400.0).toDouble();
       return Column(
         children: [
           if (gradientHeight > 0)

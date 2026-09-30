@@ -194,14 +194,14 @@ void main() {
     );
     await _scrollTo(tester, find.byKey(const ValueKey('series-episode-6')));
     // 当前集（第 4 格）主题主色底白字。#F5E6C8 经官方 Zf 双段 HSL 映射：
-    // base = HSL(40°, 0.624, 0.319) ≈ #84621F（手算交叉验证）。
+    // base = HSL(40°, 0.667, 0.193) ≈ #533D0F（s0.b：knee 恒 0.625）。
     final currentTile = tester.widget<Material>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
         matching: find.byType(Material),
       ),
     );
-    expect(currentTile.color, const Color(0xFF84621F));
+    expect(currentTile.color, const Color(0xFF533D0F));
     final current = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
@@ -231,12 +231,12 @@ void main() {
       detail: _detail(),
       episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
     );
-    // Scaffold 底色 = base；顶部渐变 = top→base（top = HSL(40°, 0.695,
-    // 0.468) ≈ #CB9324，手算交叉验证）。
+    // Scaffold 底色 = base；顶部 400dp 渐变 = top→base（Df 渐变层只占
+    // 顶部 400dp，其余露纯主色；top = HSL(40°, 0.396, 0.334) ≈ #776033）。
     final scaffold = tester.widget<Scaffold>(
       find.byKey(const ValueKey('series-detail-page')),
     );
-    expect(scaffold.backgroundColor, const Color(0xFF84621F));
+    expect(scaffold.backgroundColor, const Color(0xFF533D0F));
     final gradientBox = tester.widget<DecoratedBox>(
       find.byWidgetPredicate(
         (w) =>
@@ -247,7 +247,7 @@ void main() {
     );
     final gradient = (gradientBox.decoration as BoxDecoration).gradient!
         as LinearGradient;
-    expect(gradient.colors, const [Color(0xFFCB9324), Color(0xFF84621F)]);
+    expect(gradient.colors, const [Color(0xFF776033), Color(0xFF533D0F)]);
     // 底部主钮 = 主色底白字（官方 R.f(baseColor) 的 accent 落点）。
     final button = tester.widget<DecoratedBox>(
       find.descendant(
@@ -257,7 +257,7 @@ void main() {
     );
     expect(
       (button.decoration as BoxDecoration).color,
-      const Color(0xFF84621F),
+      const Color(0xFF533D0F),
     );
   });
 
@@ -271,6 +271,36 @@ void main() {
       find.byKey(const ValueKey('series-detail-page')),
     );
     expect(scaffold.backgroundColor, const Color(0xFF404040));
+  });
+
+  testWidgets('暗色品牌色不发散成浅背景（真机回归：#302010 深棕、白字可读）', (
+    tester,
+  ) async {
+    // apiprobe 实抓 video_detail 样本 series_color_hex=#302010（HSL 30°,
+    // 0.20, 0.125）。首版移植把 s0.b 上段起点误当分段点、上段终点误当 1.0，
+    // 暗色输入 L 被映射到 0.949 → 近白背景配白字不可读。官方 s0.b 输出
+    // 恒在暗色带（base L∈[0.18,0.2]）。
+    await _pump(
+      tester,
+      detail: _detail(seriesColorHex: '#302010'),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+    );
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('series-detail-page')),
+    );
+    expect(scaffold.backgroundColor, const Color(0xFF492E12));
+    // 渐变顶部同样是暗色（muted 棕），不再是高亮色。
+    final gradientBox = tester.widget<DecoratedBox>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is DecoratedBox &&
+            w.decoration is BoxDecoration &&
+            (w.decoration as BoxDecoration).gradient is LinearGradient,
+      ),
+    );
+    final gradient = (gradientBox.decoration as BoxDecoration).gradient!
+        as LinearGradient;
+    expect(gradient.colors.first, const Color(0xFF694D30));
   });
 
   testWidgets('底部播放钮：续播文案照官方「继续播放」，点击回传当前下标', (tester) async {
