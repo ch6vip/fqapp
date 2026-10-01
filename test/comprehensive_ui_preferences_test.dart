@@ -42,66 +42,6 @@ void main() {
     await directory.delete(recursive: true);
   });
 
-  for (final invalid in <Object>['60', true, 0, 1441]) {
-    testWidgets('U02 statistics remain available with invalid goal $invalid', (
-      tester,
-    ) async {
-      SharedPreferences.setMockInitialValues({
-        'stats_daily_goal_minutes': invalid,
-      });
-      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-      await tester.pumpWidget(
-        const MaterialApp(home: Scaffold(body: StatsPage())),
-      );
-      // Bound the wait so an unhandled preference error cannot turn this
-      // regression into an opaque pumpAndSettle timeout on the stuck spinner.
-      for (var frame = 0; frame < 5; frame++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
-      expect(tester.takeException(), isNull);
-      expect(find.text('阅读热力图'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-      await tester.scrollUntilVisible(
-        find.byTooltip('编辑目标'),
-        300,
-        scrollable: find
-            .descendant(
-              of: find.byType(StatsPage),
-              matching: find.byType(Scrollable),
-            )
-            .first,
-      );
-      expect(find.textContaining('/ 30 分钟'), findsOneWidget);
-      expect(
-        LibraryStore.instance.historySnapshot().single['id'],
-        'preserved-book',
-      );
-    });
-  }
-
-  testWidgets('U02 invalid saved goal can be replaced from settings', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({'stats_daily_goal_minutes': true});
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-    await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
-    await tester.tap(find.text('阅读'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('每日阅读目标'));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    final input = tester.widget<TextField>(find.byType(TextField));
-    expect(input.controller!.text, '30');
-    await tester.tap(find.text('60 分钟'));
-    await tester.pumpAndSettle();
-    expect(
-      (await SharedPreferences.getInstance()).getInt(
-        'stats_daily_goal_minutes',
-      ),
-      60,
-    );
-  });
-
   testWidgets('U02 invalid shelf layout retains history and default layout', (
     tester,
   ) async {
@@ -158,48 +98,6 @@ void main() {
       LibraryStore.instance.historySnapshot().single['id'],
       'preserved-book',
     );
-  });
-
-  testWidgets('U02 statistics reports a rejected goal write and stays usable', (
-    tester,
-  ) async {
-    _failPreferenceWrites();
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-    await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: StatsPage())),
-    );
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.byTooltip('编辑目标'),
-      300,
-      scrollable: find
-          .descendant(
-            of: find.byType(StatsPage),
-            matching: find.byType(Scrollable),
-          )
-          .first,
-    );
-    await tester.tap(find.byTooltip('编辑目标'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('60 分钟'));
-    await tester.pumpAndSettle();
-    expect(find.text('目标已更新，但未能保存'), findsOneWidget);
-    expect(find.textContaining('/ 60 分钟'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('U02 settings reports a throwing goal write', (tester) async {
-    _failPreferenceWrites(throws: true);
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-    await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
-    await tester.tap(find.text('阅读'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('每日阅读目标'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('60 分钟'));
-    await tester.pumpAndSettle();
-    expect(find.text('目标保存失败，请重试'), findsOneWidget);
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('U02 rejected layout write retains the selected usable layout', (

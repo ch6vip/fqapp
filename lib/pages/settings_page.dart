@@ -8,7 +8,6 @@ import '../services/app_theme.dart';
 import '../services/backend_service.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
-import '../widgets/reading_goal_dialog.dart';
 import 'about_page.dart';
 import 'cached_books_page.dart';
 import 'cached_dramas_page.dart';
@@ -29,12 +28,6 @@ class SettingsPage extends StatelessWidget {
         title: '外观',
         subtitle: '深色模式',
         items: [_themeModeItem()],
-      ),
-      SettingsCategory(
-        icon: Icons.menu_book_outlined,
-        title: '阅读',
-        subtitle: '每日阅读目标',
-        items: [_goalItem()],
       ),
       SettingsCategory(
         icon: Icons.movie_outlined,
@@ -243,42 +236,6 @@ class SettingsPage extends StatelessWidget {
       unawaited(DramaMutePreferences.instance.set(!current));
     },
   );
-
-  // ── 阅读 ──────────────────────────────────────────────────────────────
-
-  SettingsItem _goalItem() => SettingsItem(
-    icon: Icons.track_changes_outlined,
-    title: '每日阅读目标',
-    subtitle: '设置每日阅读时长目标',
-    onTap: (context, setState) => _editGoal(context),
-  );
-
-  Future<void> _editGoal(BuildContext context) async {
-    var current = 30;
-    try {
-      final sp = await SharedPreferences.getInstance();
-      final saved = sp.get('stats_daily_goal_minutes');
-      if (saved is int && saved >= 1 && saved <= 1440) current = saved;
-    } catch (_) {
-      // Keep the editor available so an invalid optional preference can heal.
-      // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
-    }
-    if (!context.mounted) return;
-    final value = await showReadingGoalDialog(context, current);
-    if (value == null) return;
-    try {
-      final sp = await SharedPreferences.getInstance();
-      if (!await sp.setInt('stats_daily_goal_minutes', value)) {
-        throw StateError('Reading goal was not saved');
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('目标保存失败，请重试')));
-      }
-    }
-  }
 
   // ── 数据 ──────────────────────────────────────────────────────────────
 

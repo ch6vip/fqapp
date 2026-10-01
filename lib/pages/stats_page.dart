@@ -1,19 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
 import '../services/library_store.dart';
 import '../services/poster_cache.dart';
 import '../services/media_history_store.dart';
-import '../widgets/reading_goal_dialog.dart';
 import 'detail_page.dart';
 
 /// Reading statistics page modeled after the legado ReadRecordFragment:
 /// overview cards, a 16-week heatmap, recent books, daily records, recent
-/// covers, a reading rank and a daily goal card.
+/// covers and a reading rank.
 ///
 /// New sessions use measured reading/playback time. Old history entries that
 /// predate tracking retain a small fallback estimate.
@@ -24,14 +22,12 @@ class StatsPage extends StatefulWidget {
   State<StatsPage> createState() => _StatsPageState();
 }
 
-const _goalKey = 'stats_daily_goal_minutes';
 const double _flatBookMinutes = 10;
 
 class _StatsPageState extends State<StatsPage> {
   DateTime _selected = DateTime.now();
   List<Map<String, dynamic>> _history = [];
   Map<String, Map<String, double>> _readTimeMap = {};
-  int _goalMinutes = 30;
   bool _loading = true;
   // Derived aggregates, computed once per load so build() (which may be
   // called several times per frame for different cards) doesn't rebuild them.
@@ -42,7 +38,6 @@ class _StatsPageState extends State<StatsPage> {
   Timer? _reloadTimer;
   bool _visible = false;
   bool _storeDirty = true;
-  bool _preferencesLoaded = false;
 
   Map<String, double> _computeDayMinutes(
     List<Map<String, dynamic>> history,
@@ -125,7 +120,7 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   void _reloadFromStore() {
-    if (!mounted || !_visible || !_preferencesLoaded) return;
+    if (!mounted || !_visible) return;
     _reloadTimer?.cancel();
     _reloadTimer = null;
     _storeDirty = false;
@@ -142,22 +137,10 @@ class _StatsPageState extends State<StatsPage> {
     });
   }
 
+  /// Reload entry point shared by pull-to-refresh and the visibility catch-up.
   Future<void> _load() async {
-    var goal = 30;
-    try {
-      final sp = await SharedPreferences.getInstance();
-      final saved = sp.get(_goalKey);
-      if (saved is int && saved >= 1 && saved <= 1440) goal = saved;
-    } catch (_) {
-      // The optional goal must not hide readable history and statistics.
-      // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
-    }
-    if (!mounted) return;
-    _goalMinutes = goal;
-    _preferencesLoaded = true;
     _reloadFromStore();
   }
-
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -166,24 +149,6 @@ class _StatsPageState extends State<StatsPage> {
       lastDate: DateTime.now(),
     );
     if (picked != null && mounted) setState(() => _selected = picked);
-  }
-
-  Future<void> _editGoal() async {
-    final value = await showReadingGoalDialog(context, _goalMinutes);
-    if (value == null || !mounted) return;
-    setState(() => _goalMinutes = value);
-    try {
-      final sp = await SharedPreferences.getInstance();
-      if (!await sp.setInt(_goalKey, value)) {
-        throw StateError('Reading goal was not saved');
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('目标已更新，但未能保存')));
-      }
-    }
   }
 
   void _showRank() {
@@ -334,14 +299,6 @@ class _StatsPageState extends State<StatsPage> {
           _RecentCoversCard(history: _history, onTap: _openHistory),
           const SizedBox(height: 12),
           _RankCard(items: _rankItems.take(5).toList(), onMore: _showRank),
-          const SizedBox(height: 12),
-          _GoalCard(
-            today: _todayMinutes(),
-            total: _totalMinutes,
-            readBookCount: _rankItems.length,
-            goalMinutes: _goalMinutes,
-            onEdit: _editGoal,
-          ),
         ],
       ),
     );
@@ -1042,74 +999,6 @@ class _RankCard extends StatelessWidget {
               icon: const Icon(Icons.arrow_forward, size: 16),
               label: const Text('查看全部'),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------- goal card ----------
-
-class _GoalCard extends StatelessWidget {
-  final double today;
-  final double total;
-  final int readBookCount;
-  final int goalMinutes;
-  final VoidCallback onEdit;
-
-  const _GoalCard({
-    required this.today,
-    required this.total,
-    required this.readBookCount,
-    required this.goalMinutes,
-    required this.onEdit,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final goalMinutesValue = goalMinutes.toDouble();
-    final percent = goalMinutes <= 0
-        ? 0
-        : ((today / goalMinutesValue) * 100).round().clamp(0, 100);
-    return _Card(
-      title: '阅读目标',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '今日 ${today > 0 ? _formatDuring(today) : '--'} · 总计 ${_formatDuring(total)} · 读过 $readBookCount 本',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.edit, size: 18),
-                onPressed: onEdit,
-                visualDensity: VisualDensity.compact,
-                tooltip: '编辑目标',
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: percent / 100,
-              minHeight: 8,
-              backgroundColor: scheme.surfaceContainerHighest,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '今日 ${today > 0 ? _formatDuring(today) : '--'} / $goalMinutes 分钟 · $percent%',
-            style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ],
       ),

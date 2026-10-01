@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/stats_page.dart';
 import 'package:fqapp/services/library_store.dart';
@@ -61,38 +60,6 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
-
-  testWidgets('a goal edited in settings is refreshed after returning', (
-    tester,
-  ) async {
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-    await tester.pumpWidget(const MaterialApp(home: MinePage()));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('设置'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('阅读'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('每日阅读目标'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('60 分钟'));
-    await tester.pumpAndSettle();
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.byTooltip('编辑目标'),
-      300,
-      scrollable: find
-          .descendant(
-            of: find.byType(StatsPage),
-            matching: find.byType(Scrollable),
-          )
-          .first,
-    );
-    expect(find.textContaining('/ 60 分钟'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
 
   for (final media in const {'audio': '听书', 'manga': '漫画'}.entries) {
     testWidgets(
