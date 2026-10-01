@@ -191,10 +191,7 @@ class BookDetail {
       bookId: _string(data['book_id']),
       title: _string(data['book_name']),
       author: BookAuthor.fromRaw(data['author_info']).name.isEmpty
-          ? BookAuthor(
-              name: _string(data['author']),
-              id: _string(data['author_id']),
-            )
+          ? _fallbackAuthor(data)
           : BookAuthor.fromRaw(data['author_info']),
       abstract: _string(data['abstract']),
       cover: _string(
@@ -217,6 +214,22 @@ class BookDetail {
       rankTitle: _string(data['rank_title']),
       rank: _rankList(data['book_rank_info']),
       source: _string(data['source']),
+    );
+  }
+
+  /// Without `author_info` the top-level `author_id` is the only identity
+  /// hint, but it is namespaced: `2_` novel authors resolve on
+  /// `/reading/user/basic_info/get/v` while `1_` manga/manju authors do not —
+  /// the service answers CALL_SERVICE_FAIL for them, and the bare numeric
+  /// part resolves to a placeholder non-author user. Both leave the author
+  /// home a dead end, so manga/manju keeps the display name only.
+  // Note: 上游对未知裸数字伪造占位用户、对 1_ 报 CALL_SERVICE_FAIL —
+  // 见 .agents/notes/implemented/bug-fix/2026-10-01-manga-author-id-namespace.md
+  static BookAuthor _fallbackAuthor(Map<String, dynamic> data) {
+    final id = _string(data['author_id']);
+    return BookAuthor(
+      name: _string(data['author']),
+      id: id.startsWith('1_') ? '' : id,
     );
   }
 }
