@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
 import 'package:hive/hive.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'support/fakes.dart';
@@ -798,6 +800,66 @@ void main() {
       find.byKey(const ValueKey('series-episode-240')).hitTestable(),
       findsOneWidget,
     );
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('背景实际像素铺满宽度，返回栏与吸顶导航没有异色横条', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final captureKey = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: captureKey,
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(padding: const EdgeInsets.only(top: 32)),
+            child: child!,
+          ),
+          home: SeriesDetailPage(
+            seriesId: 'series-1',
+            historyStore: MemoryReaderStore(),
+            initialDetail: _detail(seriesColorHex: '#302010'),
+            episodes: [for (var i = 0; i < 90; i++) _chapter(i)],
+            commentLoader: (_) async => _comments(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    Future<void> checkPixels() async {
+      final boundary =
+          captureKey.currentContext!.findRenderObject()!
+              as RenderRepaintBoundary;
+      final pixels = await tester.runAsync(() async {
+        final image = await boundary.toImage(pixelRatio: 1);
+        try {
+          return await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        } finally {
+          image.dispose();
+        }
+      });
+      expect(pixels, isNotNull);
+      // 右边缘没有文字/封面：同时覆盖状态栏、返回栏上下边界、tab 和渐变尾部。
+      for (final y in [20, 31, 32, 75, 76, 80, 100, 115, 200, 390, 410]) {
+        final t = ((y + 0.5) / 400).clamp(0.0, 1.0);
+        const top = [0x69, 0x4d, 0x30];
+        const base = [0x49, 0x2e, 0x12];
+        for (var channel = 0; channel < 3; channel++) {
+          final actual = pixels!.getUint8((y * 360 + 358) * 4 + channel);
+          final expected = top[channel] + (base[channel] - top[channel]) * t;
+          expect(actual, closeTo(expected, 2), reason: 'y=$y channel=$channel');
+        }
+      }
+    }
+
+    await checkPixels();
+    final scroll = tester.widget<CustomScrollView>(
+      find.byKey(const ValueKey('series-detail-content')),
+    );
+    scroll.controller!.jumpTo(350);
+    await tester.pumpAndSettle();
+    await checkPixels();
     expect(tester.takeException(), isNull);
   });
 }

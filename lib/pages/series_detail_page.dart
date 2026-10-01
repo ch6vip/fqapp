@@ -604,7 +604,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
                               height: _tabsHeight,
                               activeIndex: _tab,
                               pinned: _tabsPinned,
-                              background: _themeTop,
+                              background: _pinnedTabsBackground(),
                               onTap: _selectTab,
                             ),
                           ),
@@ -672,6 +672,9 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     builder: (context, constraints) {
       final gradientHeight = constraints.maxHeight.clamp(0.0, 400.0).toDouble();
       return Column(
+        // 没有 child 的 DecoratedBox 在松约束下宽度为零，颜色参数正确
+        // 也不会画出背景。必须让顶部渐变与下方纯色都铺满页面宽度。
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (gradientHeight > 0)
             SizedBox(
@@ -692,14 +695,37 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     },
   );
 
-  /// 官方 44dp 顶栏（`c3` + VideoCommonTitleBar）：返回键常驻，剧名滚过
-  /// 头部后在返回键右侧浮现（实机：`‹ 抽象三国第一季`，左对齐非居中），
-  /// 右侧 ⋮ 更多钮（实机）。背景用渐变顶色 —— 背景渐变不随内容滚动，
-  /// 顶栏处露出的一直是渐变顶端，同色即无缝；官方用截位背景图同理。
-  Widget _topBar() => Container(
+  /// 吸顶导航覆盖滚动内容，但背景仍取所在屏幕高度的渐变片段，
+  /// 不能整段重涂顶部色，否则吸顶后又会出现横条。
+  BoxDecoration _pinnedTabsBackground() {
+    final extent = MediaQuery.sizeOf(context).height.clamp(0.0, 400.0);
+    final top = MediaQuery.paddingOf(context).top + 44;
+    if (extent <= top) return BoxDecoration(color: _themeBase);
+    final end = ((extent - top) / _tabsHeight).clamp(0.0, 1.0);
+    final bottom = Color.lerp(
+      _themeTop,
+      _themeBase,
+      ((top + _tabsHeight) / extent).clamp(0.0, 1.0),
+    )!;
+    return BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        stops: [0, end, 1],
+        colors: [
+          Color.lerp(_themeTop, _themeBase, top / extent)!,
+          bottom,
+          bottom,
+        ],
+      ),
+    );
+  }
+
+  /// 返回栏透出页面统一背景；其位置已经低于状态栏，不能用渐变
+  /// 起点色填满整个 44dp。见 .agents/notes/implemented/bug-fix/2026-10-01-series-detail-background-band.md
+  Widget _topBar() => SizedBox(
     key: const ValueKey('series-detail-topbar'),
     height: 44,
-    color: _themeTop,
     child: Row(
       children: [
         IconButton(
@@ -1782,7 +1808,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
 }
 
 /// 官方 `cm` TabLayout 的吸顶实现：40dp 钉住头，滚过头部前透明融入背景
-/// 渐变，吸顶后垫 `background`（顶色）避免内容从字下穿过。
+/// 渐变，吸顶后垫相同位置的渐变片段，避免内容从字下穿过。
 class _PinnedTabsDelegate extends SliverPersistentHeaderDelegate {
   const _PinnedTabsDelegate({
     required this.names,
@@ -1797,7 +1823,7 @@ class _PinnedTabsDelegate extends SliverPersistentHeaderDelegate {
   final double height;
   final int activeIndex;
   final bool pinned;
-  final Color background;
+  final BoxDecoration background;
   final ValueChanged<int> onTap;
 
   @override
@@ -1815,7 +1841,7 @@ class _PinnedTabsDelegate extends SliverPersistentHeaderDelegate {
     return Container(
       key: const ValueKey('series-detail-tabs'),
       height: height,
-      color: pinned ? background : Colors.transparent,
+      decoration: pinned ? background : null,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
