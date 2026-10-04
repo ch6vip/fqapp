@@ -20,6 +20,7 @@ import '../models/playlet_comment.dart';
 import '../models/rank.dart';
 import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
+import 'app_log.dart';
 import 'backend_service.dart';
 import 'backend_transport.dart';
 import 'chapter_text_formatter.dart';
@@ -153,7 +154,11 @@ class ApiClient {
     // pending write), so a late result can never be published.
     final request = Zone.current[_requestZoneKey];
     final effectiveTimeout = timeout ?? _timeout;
-    return _gate.run(
+    // 日志只记方法与路由模板（数值/长十六进制段打码），不记 query、参数与请求体
+    // —— 隐私纪律同 PlayerLoadSample：never URLs, keys or API bodies。
+    final route = '$method ${_logRoute(url)}';
+    final watch = Stopwatch()..start();
+    final future = _gate.run(
       '$method $url ${effectiveTimeout.inMilliseconds}',
       request: request is BackendRequest ? request : null,
       share: method == 'GET' && body == null,
@@ -174,6 +179,39 @@ class ApiClient {
         );
       },
     );
+    // 只观察，不改变返回语义：错误照常传播给调用方。
+    future.then(
+      (response) {
+        watch.stop();
+        AppLog.d(
+          'api',
+          '$route ${response.statusCode} ${watch.elapsedMilliseconds}ms',
+        );
+      },
+      onError: (Object error) {
+        watch.stop();
+        AppLog.w('api', '$route 失败 ${watch.elapsedMilliseconds}ms: $error');
+      },
+    );
+    return future;
+  }
+
+  static final RegExp _hexSegment = RegExp(r'^[0-9a-fA-F]+$');
+
+  /// 从请求 URL 提取可安全记录的路由模板：丢弃 query/fragment，把纯数字段与
+  /// 长十六进制段替换为 `{id}`，最多保留前 5 段。
+  static String _logRoute(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return '(invalid-url)';
+    final masked = uri.pathSegments
+        .where((s) => s.isNotEmpty)
+        .map((s) {
+          final numeric = int.tryParse(s) != null;
+          final hexish = s.length >= 8 && _hexSegment.hasMatch(s);
+          return numeric || hexish ? '{id}' : s;
+        })
+        .take(5);
+    return '/${masked.join('/')}';
   }
 
   String _url(String path, Map<String, String> query) =>
@@ -1264,12 +1302,8 @@ class ApiClient {
       });
     } catch (error) {
       // 第二段是可选增强：失败就退回第一段。但静默吞掉异常会让「为什么没生效」
-      // 变成谜案，所以测试里把它打出来（release 由 assert 去掉）。
-      assert(() {
-        // ignore: avoid_print
-        print('[series-feed] failed: $error');
-        return true;
-      }());
+      // 变成谜案，所以写进应用日志（设置 → 服务 → 日志 可见），不再只靠断言。
+      AppLog.w('series-feed', '第二段拉取失败，已回退第一段: $error');
       return null;
     }
   }

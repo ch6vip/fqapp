@@ -190,6 +190,15 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   Duration? _sleepRemaining;
   bool _inShelf = false;
   bool _switchingVersion = false;
+  final Map<String, AudioSource> _audioSourceCache = {};
+
+  void _prefetchNextAudioChapter() {
+    if (widget.sourceLoader != null || !_autoAdvance || _index + 1 >= _chapters.length) return;
+    final nextId = _chapters[_index + 1].itemId;
+    final cacheKey = '$nextId|$_toneId';
+    if (_audioSourceCache.containsKey(cacheKey)) return;
+    unawaited(_loadSourceWithRetry(nextId).catchError((Object _) => AudioSource(itemId: nextId, url: '')));
+  }
 
   /// Resolves the listening-page decorations. See [AudioExtras].
   Future<AudioExtras> _loadExtras() {
@@ -573,9 +582,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         toneId: _toneId,
       ).timeout(const Duration(seconds: 30));
     }
+    final cacheKey = '$itemId|$_toneId';
+    final cached = _audioSourceCache[cacheKey];
+    if (cached != null) return cached;
     final toneId = _toneId;
+    AudioSource result;
     try {
-      return await retryTransient(
+      result = await retryTransient(
         () => ApiClient.instance
             .audioSource(itemId, bookId: _bookId, toneId: toneId)
             .timeout(const Duration(seconds: 30)),
@@ -589,12 +602,17 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       final fallback = _firstSelectableTone();
       if (fallback == null) rethrow;
       final tone = fallback;
-      return retryTransient(
+      result = await retryTransient(
         () => ApiClient.instance
             .audioSource(itemId, bookId: _bookId, toneId: tone)
             .timeout(const Duration(seconds: 30)),
       );
     }
+    _audioSourceCache[cacheKey] = result;
+    while (_audioSourceCache.length > 5) {
+      _audioSourceCache.remove(_audioSourceCache.keys.first);
+    }
+    return result;
   }
 
   /// First non-default voice the page knows, for books without a default one.
@@ -763,6 +781,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         player.playing &&
         !player.buffering) {
       _listenTime.start();
+      _prefetchNextAudioChapter();
     } else {
       _listenTime.stop();
     }

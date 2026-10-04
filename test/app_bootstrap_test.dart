@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/main.dart' as app;
+import 'package:fqapp/services/app_log.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -128,8 +129,10 @@ void main() {
     var attempts = 0;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(channel, (_) async {
-      attempts++;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      // 只统计引导用的文档目录（Hive.initFlutter）；应用日志落盘会另探一次
+      // 支持目录（getApplicationSupportDirectory），与本用例的「重试一次」无关。
+      if (call.method == 'getApplicationDocumentsDirectory') attempts++;
       throw PlatformException(
         code: 'unavailable',
         message: 'private-storage-path',
@@ -138,17 +141,24 @@ void main() {
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     app.main();
-    await tester.pump();
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-    expect(find.text('无法读取本地数据'), findsOneWidget);
-    expect(find.textContaining('private-storage-path'), findsNothing);
-    expect(attempts, 1);
-    await tester.tap(find.text('重试'));
-    await tester.pump();
-    await tester.pump();
-    expect(attempts, 2);
-    expect(find.text('无法读取本地数据'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    // main() 接管了 debugPrint 与 FlutterError.onError，把应用日志收进缓冲。
+    // flutter_test 会在测试体结束时断言这两个 foundation 调试变量未被改动，
+    // 所以必须在**测试体内**还原（addTearDown 跑在不变量检查之后，太晚）。
+    try {
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.text('无法读取本地数据'), findsOneWidget);
+      expect(find.textContaining('private-storage-path'), findsNothing);
+      expect(attempts, 1);
+      await tester.tap(find.text('重试'));
+      await tester.pump();
+      await tester.pump();
+      expect(attempts, 2);
+      expect(find.text('无法读取本地数据'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await AppLog.instance.resetForTest();
+    }
   });
 }

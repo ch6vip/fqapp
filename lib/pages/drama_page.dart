@@ -28,6 +28,7 @@ import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_hot_comment_bar.dart';
 import '../widgets/player/playlet_more_panel.dart';
 import '../widgets/player/playlet_more_panel_light.dart';
+import '../widgets/player/playlet_quick_catalog_sheet.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'detail_page.dart';
 import 'home_provider.dart';
@@ -204,6 +205,7 @@ class DramaPage extends ConsumerStatefulWidget {
     this.hotCommentsLoader,
     this.seriesDetailLoader,
     this.seriesCommentLoader,
+    this.bottomInset,
   });
 
   /// Test seams. The official feed plays the on-screen card inline and still
@@ -233,6 +235,9 @@ class DramaPage extends ConsumerStatefulWidget {
   final Future<PlayletCommentPage> Function(String seriesId)?
   seriesCommentLoader;
 
+  /// 底部避让间距（主界面悬浮液态玻璃底栏），null 时按 context 动态计算。
+  final double? bottomInset;
+
   @override
   ConsumerState<DramaPage> createState() => _DramaPageState();
 }
@@ -242,6 +247,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
   static const _searchRowHeight = 38.0;
   static const _stripHeight = 38.0;
   static const _pullRefreshTrigger = 64.0;
+
+  double _effectiveBottomInset(BuildContext context) {
+    if (widget.bottomInset != null) return widget.bottomInset!;
+    // Scaffold(extendBody: true) 已将底栏高度自动合入 MediaQuery.padding.bottom，
+    // 直接使用即可，避免二次叠加导致短剧 feed 控件悬空过高。
+    return MediaQuery.paddingOf(context).bottom;
+  }
 
   final PageController _pages = PageController();
   int _channel = 0;
@@ -549,6 +561,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // playing (or starting) is never kicked off again.
     if (_inline.activeId.value == item.id) return;
     unawaited(_inline.activate(item));
+    final items = _visibleItems(ref.read(dramaProvider));
+    if (widget.directoryLoader == null && _screenIndex + 1 < items.length) {
+      unawaited(_inline.prefetchNextDrama(items[_screenIndex + 1]));
+    }
   }
 
   void _selectChannel(int index) {
@@ -905,7 +921,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
               Positioned(
                 left: 16,
                 right: 16,
-                bottom: 44,
+                bottom: _effectiveBottomInset(context) + 16,
                 child: _SwipeUpHint(visible: _guideVisible),
               ),
           ],
@@ -940,6 +956,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
+    final bottomInset = _effectiveBottomInset(context);
     return NotificationListener<ScrollNotification>(
       onNotification: _onGridScroll,
       child: GridView.builder(
@@ -951,7 +968,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
               _stripHeight +
               12,
           12,
-          24,
+          bottomInset + 20,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,
@@ -1077,6 +1094,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
           if (onScreen) unawaited(_loadFeedHotComments(item));
           return _DramaFeedCard(
             item: item,
+            bottomInset: _effectiveBottomInset(context),
             opening: _openingId == item.id,
             playback: onScreen ? _inline : null,
             video: onScreen
@@ -1091,6 +1109,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 : null,
             // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
             onFullscreen: () => _openPlayer(item),
+            onQuickCatalog: () => _openQuickCatalog(item),
             // 标题行「剧名 >」= 官方进剧集详情页的入口（ql3/v0.a1）。
             onOpenSeriesDetail: () => _openSeriesDetail(item),
             onTogglePlay: _togglePlay,
@@ -1253,6 +1272,26 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
   }
 
+  void _openQuickCatalog(MediaItem item) {
+    if (_modalOpen || _openingId != null) return;
+    PlayletQuickCatalogSheet.show(
+      context,
+      item: item,
+      directoryLoader: widget.directoryLoader,
+      historyStore: widget.historyStore,
+      onEpisodeSelected: (index, episodes) {
+        unawaited(
+          _openPlayer(
+            item,
+            startEpisodeIndex: index,
+            loadedEpisodes: episodes,
+          ),
+        );
+      },
+      onFullscreen: () => unawaited(_openPlayer(item)),
+    );
+  }
+
   void _openSearch() {
     unawaited(
       _pushOverFeed(
@@ -1360,14 +1399,6 @@ class _TopBar extends StatelessWidget {
   }
 
   Widget _searchField(BuildContext context, {required bool light}) {
-    // 官方搜索框（`SearchWordDisplayView` inflate `c5e.xml`）：高 36dp
-    // （`@dimen/zl`）、圆角 8dp（`ViewOutlineProvider.setRoundRect(…, 8f)` +
-    // `setClipToOutline`）、图标 12dp 距左 16dp、文字距图标 8dp。配色取官方
-    // **暗色皮肤**变体（用户设备官方即暗色）：底
-    // `skin_color_search_bar_bg_v2_dark`=#1C1C1C、提示 14sp
-    // `skin_color_search_bar_text_v2_dark`=#66FFFFFF（服务端 cue word 态更亮，
-    // `skin_color_search_word_dark`=#99FFFFFF）、图标 `…_optimize_dark`。
-    // 浅色页（漫剧）换浅肤：底 #0F000000、深色字与图标。
     return Semantics(
       button: true,
       label: '搜索短剧',
@@ -1378,26 +1409,23 @@ class _TopBar extends StatelessWidget {
         child: Container(
           height: 36,
           decoration: BoxDecoration(
-            color: light ? const Color(0x0F000000) : const Color(0xFF1C1C1C),
-            borderRadius: BorderRadius.circular(8),
+            color: light ? const Color(0x0F000000) : const Color(0x33000000),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: light ? const Color(0x14000000) : const Color(0x2EFFFFFF),
+              width: 0.5,
+            ),
           ),
-          padding: const EdgeInsets.only(left: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           alignment: Alignment.centerLeft,
           child: Row(
             children: [
-              SizedBox(
-                width: 12,
-                height: 12,
-                child: light
-                    ? const Icon(
-                        LucideIcons.search,
-                        size: 12,
-                        color: Color(0x99000000),
-                      )
-                    : Image.asset(
-                        'assets/images/drama/search.webp',
-                        fit: BoxFit.contain,
-                      ),
+              Icon(
+                LucideIcons.search,
+                size: 14,
+                color: light
+                    ? const Color(0x99000000)
+                    : const Color(0x99FFFFFF),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -1406,10 +1434,10 @@ class _TopBar extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 13,
                     color: light
                         ? const Color(0x99000000)
-                        : const Color(0x66FFFFFF),
+                        : const Color(0x80FFFFFF),
                   ),
                 ),
               ),
@@ -1518,12 +1546,14 @@ class _DramaFeedCard extends StatelessWidget {
   final Widget? errorOverlay;
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
+  final VoidCallback? onQuickCatalog;
   final VoidCallback onTogglePlay;
   final VoidCallback onOpenMorePanel;
   final VoidCallback onOpenSeriesDetail;
   final List<PlayletComment> hotComments;
   final ValueChanged<PlayletComment> onHotCommentTap;
   final bool hotCommentActive;
+  final double bottomInset;
 
   const _DramaFeedCard({
     required this.item,
@@ -1532,12 +1562,14 @@ class _DramaFeedCard extends StatelessWidget {
     this.errorOverlay,
     this.playback,
     this.onFullscreen,
+    this.onQuickCatalog,
     required this.onTogglePlay,
     required this.onOpenMorePanel,
     required this.onOpenSeriesDetail,
     this.hotComments = const [],
     required this.onHotCommentTap,
     this.hotCommentActive = true,
+    this.bottomInset = 0.0,
   });
 
   /// Whether the viewer may drive this card: only the on-screen page owns the
@@ -1557,9 +1589,6 @@ class _DramaFeedCard extends StatelessWidget {
         // = 12dp。它的兄弟变体 cj9/cj_/cja/cjb 都没写圆角属性，所以 12dp 只属于这张卡。
         // 只包视频面本身：官方的信息层是它的**兄弟**（`o.java` 把 H3 = `@id/h_b` 加在根
         // RelativeLayout 上），同样不被裁。
-        // 官方同处还有 `layout_marginBottom="@dimen/a5r"` = 92dp，那是给它**自己的**底部
-        // 导航让位；本页的 `NavigationBar` 挂在 Scaffold body 之外、已经占掉那一段，
-        // 再留一次会凭空多出 92dp 空白，故不重复。
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child:
@@ -1570,15 +1599,15 @@ class _DramaFeedCard extends StatelessWidget {
                 alignment: Alignment.topCenter,
               ),
         ),
-        // 官方 `cjk.xml`：底部 **280dp** 高的渐变遮罩，`@drawable/yp` 是
+        // 官方 `cjk.xml`：底部渐变遮罩，`@drawable/yp` 是
         // `@color/oc`(#01000000) → `@color/ak`(#80000000)、angle 270。
-        // 铺满整卡会把封面上半也压暗，所以只盖底部 280dp。
-        const Positioned(
+        // 铺满整卡会把封面上半也压暗，所以只盖底部并根据 bottomInset 自适应抬高。
+        Positioned(
           left: 0,
           right: 0,
           bottom: 0,
-          height: 280,
-          child: DecoratedBox(
+          height: 280 + bottomInset,
+          child: const DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -1602,7 +1631,7 @@ class _DramaFeedCard extends StatelessWidget {
           top: 70,
           left: 0,
           right: 0,
-          bottom: 180,
+          bottom: bottomInset + 160,
           child: _CardGestures(
             key: ValueKey('drama_card_${item.kind}_${item.id}'),
             enabled: _interactive,
@@ -1629,13 +1658,21 @@ class _DramaFeedCard extends StatelessWidget {
         ),
         // Above the card's tap target, so the retry button wins its own taps.
         ?errorOverlay,
+        // 居中播放/暂停微动效反馈
+        if (playback != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: _PlayPauseFeedback(playback: playback!),
+            ),
+          ),
         // 官方进度条（`cjt.xml`）：整条高 16dp、轨道 1.0dip、滑块 1.5dip，
         // 已播 `@color/agn`=#1affffff、底槽 `@color/b8`=#4dffffff，左右 padding 16dp。
+        // 自适应悬浮在底部导航栏之上，避免被底栏遮挡。
         if (playback != null)
           Positioned(
             left: 0,
             right: 0,
-            bottom: 0,
+            bottom: bottomInset,
             child: _SeekBar(playback: playback!),
           ),
         // 官方「取消静音」药丸（feed 变体 `mq3.c` + `bvf.xml`，108×36dp 展开），
@@ -1644,7 +1681,7 @@ class _DramaFeedCard extends StatelessWidget {
         if (playback != null)
           Positioned(
             left: 12,
-            bottom: 132,
+            bottom: bottomInset + 120,
             child: _MuteHint(playback: playback!),
           ),
         // 官方倍速提示（`cjx.xml`）：高 83dp、16sp bold 白字
@@ -1653,7 +1690,7 @@ class _DramaFeedCard extends StatelessWidget {
           Positioned(
             left: 0,
             right: 0,
-            bottom: 180,
+            bottom: bottomInset + 160,
             child: _RateHint(playback: playback!),
           ),
         // 官方底部信息层（`cj3.xml` 整体）：最上是居中的「观看全集」药丸行
@@ -1663,12 +1700,13 @@ class _DramaFeedCard extends StatelessWidget {
         Positioned(
           left: 12,
           right: 12,
-          bottom: 20,
+          bottom: bottomInset + 16,
           child: _InfoPanel(
             item: item,
             playback: playback,
             onOpenSeriesDetail: onOpenSeriesDetail,
             onFullscreen: onFullscreen,
+            onQuickCatalog: onQuickCatalog,
             hotComments: hotComments,
             onHotCommentTap: onHotCommentTap,
             hotCommentActive: hotCommentActive,
@@ -1702,6 +1740,64 @@ class _DramaFeedCard extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// 居中播放/暂停瞬态微动效组件：当视频暂停时在画面中央呈现优雅的磨砂圆盘，播放时平滑淡出。
+class _PlayPauseFeedback extends StatelessWidget {
+  final InlineVideoPlayback playback;
+
+  const _PlayPauseFeedback({required this.playback});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([playback.playing, playback.firstFrame]),
+      builder: (context, _) {
+        final isPaused = !playback.playing.value && playback.firstFrame.value;
+        return Center(
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            opacity: isPaused ? 1.0 : 0.0,
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutBack,
+              scale: isPaused ? 1.0 : 0.7,
+              child: Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: const Color(0x59000000),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0x33FFFFFF),
+                    width: 1,
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const Center(
+                  child: Padding(
+                    padding: EdgeInsets.only(left: 3),
+                    child: Icon(
+                      LucideIcons.play,
+                      size: 28,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1768,9 +1864,14 @@ class _CardGestures extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           // 没有双击手势了，单击立即派发（不再等双击窗口）。
           onTap: onTap,
-          onLongPressStart: (details) => inBand(details.localPosition.dx)
-              ? onPanelLongPress()
-              : onBoostLongPressStart(),
+          onLongPressStart: (details) {
+            if (inBand(details.localPosition.dx)) {
+              onPanelLongPress();
+            } else {
+              HapticFeedback.lightImpact();
+              onBoostLongPressStart();
+            }
+          },
           // 带外快进的收尾由 endBoost 的 _boosting 门挡住：中带开面板的
           // 那支从未 startBoost，松手不能动速率。
           onLongPressEnd: (_) => onBoostLongPressEnd(),
@@ -1860,37 +1961,34 @@ class _MuteHintState extends State<_MuteHint> {
               width: _expanded ? 108 : 36,
               height: 36,
               decoration: BoxDecoration(
-                color: const Color(0x4D000000),
+                color: const Color(0x66000000),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: const Color(0x33FFFFFF), width: 0.5),
               ),
-              padding: EdgeInsets.only(left: _expanded ? 16 : 8),
+              padding: EdgeInsets.only(left: _expanded ? 14 : 9),
               alignment: Alignment.centerLeft,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: Image.asset(
-                      'assets/images/drama/mute_off.webp',
-                      fit: BoxFit.contain,
-                    ),
+                  const Icon(
+                    LucideIcons.volume_x,
+                    size: 16,
+                    color: Colors.white,
                   ),
+                  if (_expanded) const SizedBox(width: 6),
                   if (_expanded)
-                    // 108dp 内不另留图标与文案的间隙：14sp×4 字 + 16/12 边距
-                    // 已占满（官方 bvf.xml 的排布）。
-                    Text(
+                    const Text(
                       '取消静音',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
+                      style: TextStyle(
+                        fontSize: 13,
                         color: Colors.white,
+                        fontWeight: FontWeight.w500,
                         height: 1.1,
                       ),
                     ),
-                  if (_expanded) const SizedBox(width: 12),
+                  if (_expanded) const SizedBox(width: 10),
                 ],
               ),
             ),
@@ -1917,37 +2015,41 @@ class _RateHint extends StatelessWidget {
     builder: (context, _) {
       if (!playback.boosting.value) return const SizedBox.shrink();
       return Center(
-        child: SizedBox(
-          height: 83,
-          child: DecoratedBox(
-            key: const Key('drama_rate_hint'),
-            decoration: const BoxDecoration(color: Color(0xFF000000)),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 32,
-                    height: 32,
-                    child: Image.asset(
-                      'assets/images/drama/fullscreen.webp',
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  const Text(
-                    '2倍速快进中',
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
+        child: Container(
+          key: const Key('drama_rate_hint'),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xD9000000),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0x33FFFFFF), width: 0.5),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black45,
+                blurRadius: 10,
+                offset: Offset(0, 2),
               ),
-            ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(
+                LucideIcons.fast_forward,
+                size: 18,
+                color: Colors.white,
+              ),
+              SizedBox(width: 8),
+              Text(
+                '2倍速快进中',
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -1981,9 +2083,11 @@ class _SeekBar extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: SizedBox(
-          height: 16,
+          height: 24,
           child: _SeekTrack(
             progress: progress,
+            currentPosition: playback.position.value,
+            totalDuration: total,
             onSeek: (fraction) => unawaited(
               playback.seek(
                 Duration(
@@ -1998,56 +2102,173 @@ class _SeekBar extends StatelessWidget {
   );
 }
 
-class _SeekTrack extends StatelessWidget {
+class _SeekTrack extends StatefulWidget {
   final double progress;
+  final Duration currentPosition;
+  final Duration totalDuration;
   final ValueChanged<double> onSeek;
 
-  const _SeekTrack({required this.progress, required this.onSeek});
+  const _SeekTrack({
+    required this.progress,
+    required this.currentPosition,
+    required this.totalDuration,
+    required this.onSeek,
+  });
+
+  @override
+  State<_SeekTrack> createState() => _SeekTrackState();
+}
+
+class _SeekTrackState extends State<_SeekTrack> {
+  bool _isDragging = false;
+  double _dragProgress = 0.0;
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (d.inHours > 0) {
+      return '${d.inHours}:$m:$s';
+    }
+    return '$m:$s';
+  }
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final width = constraints.maxWidth;
-      void seekTo(double dx) =>
-          onSeek(width <= 0 ? 0 : (dx / width).clamp(0.0, 1.0));
+      void seekTo(double dx) {
+        final fraction = width <= 0 ? 0.0 : (dx / width).clamp(0.0, 1.0);
+        setState(() {
+          _isDragging = true;
+          _dragProgress = fraction;
+        });
+        widget.onSeek(fraction);
+      }
+
+      final effectiveProgress = _isDragging ? _dragProgress : widget.progress;
+      final previewMillis =
+          (widget.totalDuration.inMilliseconds * effectiveProgress).round();
+      final previewDuration = Duration(milliseconds: previewMillis);
+
       return GestureDetector(
         key: const Key('drama_seek_bar'),
         behavior: HitTestBehavior.opaque,
-        // Horizontal only: the vertical axis stays with the PageView, so the
-        // bar cannot block a page swipe.
         onHorizontalDragStart: (details) => seekTo(details.localPosition.dx),
         onHorizontalDragUpdate: (details) => seekTo(details.localPosition.dx),
+        onHorizontalDragEnd: (_) {
+          if (mounted) setState(() => _isDragging = false);
+        },
+        onHorizontalDragCancel: () {
+          if (mounted) setState(() => _isDragging = false);
+        },
         onTapDown: (details) => seekTo(details.localPosition.dx),
-        child: Center(
-          child: SizedBox(
-            height: 16,
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                // `cjt.xml`: `app:pj`=@color/agn=#1affffff 是**底槽**（未播），
-                // `app:awc`=@color/b8=#4dffffff 是**已播**段。对照 `cw7.xml`
-                // 的 pj=#4dffffff / awc=#ccffffff 可知 awc 才是进度色。
-                Container(height: 1, color: const Color(0x1AFFFFFF)),
-                FractionallySizedBox(
-                  widthFactor: progress,
-                  child: Container(height: 1, color: const Color(0x4DFFFFFF)),
-                ),
-                Align(
-                  alignment: Alignment(progress * 2 - 1, 0),
-                  child: Container(
-                    // Official thumb `app:ah6`=1.5dip sits in a 72×72 drag
-                    // layer (`cjt.xml:8`). Visual size is the 1.5dp disc;
-                    // the 16dp strip is the hit target.
-                    width: 1.5,
-                    height: 1.5,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
+        child: SizedBox(
+          height: 24,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.centerLeft,
+            children: [
+              // 拖拽时浮现时间气泡提示
+              if (_isDragging)
+                Positioned(
+                  bottom: 18,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xE6000000),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white24,
+                          width: 0.5,
+                        ),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black45,
+                            blurRadius: 8,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        '${_formatDuration(previewDuration)} / ${_formatDuration(widget.totalDuration)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ],
-            ),
+
+              // 底部未播槽
+              Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  height: _isDragging ? 4.5 : 2.0,
+                  decoration: BoxDecoration(
+                    color: const Color(0x33FFFFFF),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+
+              // 已播段
+              Center(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: effectiveProgress,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      height: _isDragging ? 4.5 : 2.0,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(2),
+                        boxShadow: _isDragging
+                            ? const [
+                                BoxShadow(
+                                  color: Color(0x66FFFFFF),
+                                  blurRadius: 4,
+                                ),
+                              ]
+                            : null,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // 滑块 Thumb
+              Align(
+                alignment: Alignment(effectiveProgress * 2 - 1, 0),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: _isDragging ? 12 : 3,
+                  height: _isDragging ? 12 : 3,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: _isDragging
+                        ? const [
+                            BoxShadow(
+                              color: Colors.black45,
+                              blurRadius: 4,
+                              offset: Offset(0, 1),
+                            ),
+                          ]
+                        : null,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -2085,6 +2306,7 @@ class _InfoPanel extends StatefulWidget {
   final MediaItem item;
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
+  final VoidCallback? onQuickCatalog;
 
   /// 标题行「剧名 >」点击 → 剧集详情页。
   final VoidCallback onOpenSeriesDetail;
@@ -2096,6 +2318,7 @@ class _InfoPanel extends StatefulWidget {
     required this.item,
     required this.playback,
     required this.onFullscreen,
+    this.onQuickCatalog,
     required this.onOpenSeriesDetail,
     this.hotComments = const [],
     required this.onHotCommentTap,
@@ -2122,8 +2345,12 @@ class _InfoPanelState extends State<_InfoPanel> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _EpisodePill(item: item, onTap: widget.onFullscreen!),
+                if (widget.onQuickCatalog != null) ...[
+                  const SizedBox(width: 8),
+                  _QuickCatalogButton(onTap: widget.onQuickCatalog!),
+                ],
                 if (widget.playback != null) ...[
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   _FullscreenRoundButton(
                     playback: widget.playback!,
                     onTap: widget.onFullscreen!,
@@ -2156,13 +2383,10 @@ class _InfoPanelState extends State<_InfoPanel> {
                 ),
               ),
               const SizedBox(width: 4),
-              SizedBox(
-                width: 8,
-                height: 16,
-                child: Image.asset(
-                  'assets/images/drama/info_arrow.webp',
-                  fit: BoxFit.contain,
-                ),
+              const Icon(
+                LucideIcons.chevron_right,
+                size: 18,
+                color: Colors.white70,
               ),
             ],
           ),
@@ -2175,21 +2399,29 @@ class _InfoPanelState extends State<_InfoPanel> {
                 Container(
                   margin: const EdgeInsets.only(right: 8),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
+                    horizontal: 7,
+                    vertical: 2.5,
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0x33FFFFFF),
-                    borderRadius: BorderRadius.circular(2),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: const Color(0x26FFFFFF),
+                      width: 0.5,
+                    ),
                   ),
                   child: Text(
                     category,
-                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
         ],
         // 信息槽（官方 `cj3.xml`：`InfoPanelHotCommentView`(`drs`) 与
         // `ShortSeriesExtendTextView`(`m6`) 同一槽位约束——热评在场时
@@ -2239,7 +2471,7 @@ class _InfoPanelState extends State<_InfoPanel> {
           const SizedBox(height: 8),
           Row(
             children: const [
-              Icon(Icons.info_outline, size: 13, color: Color(0x99FFFFFF)),
+              Icon(LucideIcons.info, size: 13, color: Color(0x99FFFFFF)),
               SizedBox(width: 4),
               Flexible(
                 child: Text(
@@ -2275,20 +2507,83 @@ class _EpisodePill extends StatelessWidget {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        height: 30,
-        padding: const EdgeInsets.symmetric(horizontal: 17),
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: const Color(0x1AFFFFFF),
+          color: const Color(0x2E000000),
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0x38FFFFFF), width: 0.5),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1F000000),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
         ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(LucideIcons.play, size: 12, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 快速选集入口按钮
+class _QuickCatalogButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _QuickCatalogButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: const Color(0x2E000000),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0x38FFFFFF), width: 0.5),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1F000000),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(LucideIcons.layout_grid, size: 12, color: Colors.white),
+            SizedBox(width: 4),
+            Text(
+              '选集',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2318,16 +2613,25 @@ class _FullscreenRoundButton extends StatelessWidget {
         onTap: onTap,
         behavior: HitTestBehavior.opaque,
         child: Container(
-          width: 30,
-          height: 30,
-          padding: const EdgeInsets.all(5),
-          decoration: const BoxDecoration(
-            color: Color(0x1AFFFFFF),
+          width: 32,
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: const Color(0x2E000000),
             shape: BoxShape.circle,
+            border: Border.all(color: const Color(0x38FFFFFF), width: 0.5),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1F000000),
+                blurRadius: 8,
+                offset: Offset(0, 2),
+              ),
+            ],
           ),
-          child: Image.asset(
-            'assets/images/drama/fullscreen.webp',
-            fit: BoxFit.contain,
+          child: const Icon(
+            LucideIcons.maximize_2,
+            size: 14,
+            color: Colors.white,
           ),
         ),
       );
@@ -2741,10 +3045,18 @@ class _HistoryCard extends StatelessWidget {
       onLongPress: onLongPress,
       behavior: HitTestBehavior.opaque,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: editing ? const Color(0xFFFAFAFA) : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x0A000000),
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2760,14 +3072,24 @@ class _HistoryCard extends StatelessWidget {
                         alignment: Alignment.topCenter,
                       ),
                     ),
-                    const Center(
-                      child: Icon(
-                        Icons.play_arrow_rounded,
-                        size: 24,
-                        color: Colors.white,
-                        shadows: [
-                          Shadow(color: Color(0x80000000), blurRadius: 2),
-                        ],
+                    Center(
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: const BoxDecoration(
+                          color: Color(0x66000000),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Center(
+                          child: Padding(
+                            padding: EdgeInsets.only(left: 2),
+                            child: Icon(
+                              LucideIcons.play,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                     if (selected) const ColoredBox(color: Color(0x33000000)),
@@ -2909,30 +3231,52 @@ class _BrowseCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) => StoryCover(
-                      item: item,
-                      cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
-                      alignment: Alignment.topCenter,
-                    ),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0A000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
                   ),
                 ],
               ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) => StoryCover(
+                        item: item,
+                        cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
+                        alignment: Alignment.topCenter,
+                      ),
+                    ),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0x0F000000),
+                          width: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 7),
           Text(
             item.title,
             maxLines: titleMaxLines,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 13,
-              height: 1.2,
+              fontWeight: FontWeight.w600,
+              height: 1.25,
               color: Color(0xFF1B1B1B),
             ),
           ),
@@ -2977,18 +3321,17 @@ class _HistoryEmpty extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 官方是插画资源（纸箱），本地没有同款资产，用同色系圆形占位。
         Container(
-          width: 96,
-          height: 96,
+          width: 88,
+          height: 88,
           decoration: const BoxDecoration(
-            color: Color(0xFFFFE9C7),
+            color: Color(0xFFFFF3E0),
             shape: BoxShape.circle,
           ),
           child: const Icon(
-            Icons.inventory_2_outlined,
-            size: 40,
-            color: Color(0xFFD9A94A),
+            LucideIcons.clapperboard,
+            size: 38,
+            color: Color(0xFFFA6725),
           ),
         ),
         const SizedBox(height: 16),
@@ -3159,7 +3502,12 @@ class _LocalListState extends State<_LocalList> {
               : GridView.builder(
                   key: Key('drama_${widget.channel.label}_grid'),
                   // 官方 staggered 网格间距（`j0`）：左右 12dp、行/列间距 8dp。
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                  padding: EdgeInsets.fromLTRB(
+                    12,
+                    8,
+                    12,
+                    MediaQuery.paddingOf(context).bottom + 72.0 + 20,
+                  ),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     crossAxisSpacing: 8,

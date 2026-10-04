@@ -62,46 +62,69 @@ class DetailHero extends StatelessWidget {
       ],
     );
 
-    return Stack(
-      children: [
-        // Tinted masthead wash. Kept to its own layer so scrolling repaints
-        // only this gradient.
-        Positioned.fill(
-          child: ExcludeSemantics(
-            child: RepaintBoundary(
-              child: AnimatedBuilder(
-                animation: scroll,
-                builder: (context, _) => CustomPaint(
-                  painter: _MastheadWash(
-                    palette: palette,
-                    shift: scroll.hasClients ? scroll.offset : 0,
+    return ClipRect(
+      child: Stack(
+        children: [
+          // Tinted masthead wash. Kept to its own layer so scrolling repaints
+          // only this gradient.
+          Positioned.fill(
+            child: ExcludeSemantics(
+              child: RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: scroll,
+                  builder: (context, _) => CustomPaint(
+                    painter: _MastheadWash(
+                      palette: palette,
+                      shift: scroll.hasClients ? scroll.offset : 0,
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 6, 20, 22),
-          child: stacked
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(child: cover),
-                    const SizedBox(height: 18),
-                    info,
-                  ],
-                )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    cover,
-                    const SizedBox(width: 16),
-                    Expanded(child: info),
-                  ],
+          // Smooth bottom blend gradient fading seamlessly to canvas
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 56,
+            child: ExcludeSemantics(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      palette.canvas.withValues(alpha: 0),
+                      palette.canvas,
+                    ],
+                  ),
                 ),
-        ),
-      ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 6, 20, 22),
+            child: stacked
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(child: cover),
+                      const SizedBox(height: 18),
+                      info,
+                    ],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      cover,
+                      const SizedBox(width: 18),
+                      Expanded(child: info),
+                    ],
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -119,33 +142,40 @@ class _CoverTile extends StatelessWidget {
     final scaler = MediaQuery.textScalerOf(context);
     // The cover keeps its 3:4 ratio; it only grows a little with text scale so
     // the text column is never starved of width.
-    final width = 96.0 + (scaler.scale(16) - 16).clamp(0.0, 10.0) * 1.2;
+    final width = 104.0 + (scaler.scale(16) - 16).clamp(0.0, 10.0) * 1.2;
     return SizedBox(
       width: width,
       child: HomePressable(
         key: const Key('detail_cover_button'),
         semanticLabel: '查看《${item.title}》封面',
         onTap: () => showDetailCover(context, item),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         child: ExcludeSemantics(
           child: AspectRatio(
             aspectRatio: 3 / 4,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(
-                      alpha: palette.dark ? 0.40 : 0.16,
+                      alpha: palette.dark ? 0.46 : 0.16,
                     ),
-                    blurRadius: 18,
-                    spreadRadius: -5,
-                    offset: const Offset(2, 10),
+                    blurRadius: 20,
+                    spreadRadius: -4,
+                    offset: const Offset(2, 9),
+                  ),
+                  BoxShadow(
+                    color: HomePalette.accent.withValues(
+                      alpha: palette.dark ? 0.10 : 0.05,
+                    ),
+                    blurRadius: 14,
+                    offset: const Offset(0, 3),
                   ),
                 ],
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -154,16 +184,16 @@ class _CoverTile extends StatelessWidget {
                       left: 0,
                       top: 0,
                       bottom: 0,
-                      width: 13,
+                      width: 14,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [
-                              Colors.black.withValues(alpha: 0.26),
-                              Colors.white.withValues(alpha: 0.16),
+                              Colors.black.withValues(alpha: 0.28),
+                              Colors.white.withValues(alpha: 0.18),
                               Colors.transparent,
                             ],
-                            stops: const [0, 0.3, 1],
+                            stops: const [0, 0.32, 1],
                           ),
                         ),
                       ),
@@ -171,9 +201,12 @@ class _CoverTile extends StatelessWidget {
                     Positioned.fill(
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.20),
+                            color: Colors.white.withValues(
+                              alpha: palette.dark ? 0.16 : 0.28,
+                            ),
+                            width: 0.8,
                           ),
                         ),
                       ),
@@ -197,19 +230,34 @@ class _OriginBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
       decoration: BoxDecoration(
-        color: HomePalette.accent.withValues(alpha: palette.dark ? 0.16 : 0.09),
-        borderRadius: BorderRadius.circular(5),
-      ),
-      child: Text(
-        '番茄原创',
-        style: TextStyle(
-          color: palette.accentText,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          height: 1.35,
+        color: HomePalette.accent.withValues(alpha: palette.dark ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: HomePalette.accent.withValues(alpha: palette.dark ? 0.32 : 0.22),
+          width: 0.6,
         ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            LucideIcons.sparkles,
+            size: 11,
+            color: palette.accentText,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            '番茄原创',
+            style: TextStyle(
+              color: palette.accentText,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          ),
+        ],
       ),
     );
   }

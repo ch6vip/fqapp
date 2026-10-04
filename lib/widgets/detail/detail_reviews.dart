@@ -24,6 +24,7 @@ class DetailReviews extends StatelessWidget {
   final BookCommentPage page;
   final BookDetail? detail;
   final VoidCallback? onLoadMore;
+  final VoidCallback? onOpenAll;
   final bool loadingMore;
 
   /// The book whose reviews these are; replies are fetched per review.
@@ -38,6 +39,7 @@ class DetailReviews extends StatelessWidget {
     required this.page,
     this.detail,
     this.onLoadMore,
+    this.onOpenAll,
     this.loadingMore = false,
     this.bookId = '',
     this.replyLoader,
@@ -48,6 +50,12 @@ class DetailReviews extends StatelessWidget {
     final palette = HomePalette.of(context);
     if (page.isEmpty && page.totalCount == 0) return const SizedBox.shrink();
     final score = detail?.scoreValue;
+    final totalCount = page.totalCount > 0 ? page.totalCount : page.comments.length;
+    final displayedComments =
+        onOpenAll != null ? page.comments.take(3).toList() : page.comments;
+    final hasMoreAffordance =
+        onOpenAll != null || (page.hasMore && onLoadMore != null);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -64,10 +72,10 @@ class DetailReviews extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            if (page.hasMore && onLoadMore != null)
+            if (hasMoreAffordance)
               TextButton(
                 key: const Key('detail_reviews_more'),
-                onPressed: loadingMore ? null : onLoadMore,
+                onPressed: onOpenAll ?? (loadingMore ? null : onLoadMore),
                 style: TextButton.styleFrom(
                   foregroundColor: palette.muted,
                   minimumSize: const Size(48, 44),
@@ -93,12 +101,43 @@ class DetailReviews extends StatelessWidget {
         _ScoreCard(score: score, label: page.scoreLabel),
         if (page.comments.isNotEmpty) ...[
           const SizedBox(height: 4),
-          for (final comment in page.comments)
-            _CommentTile(
+          for (final comment in displayedComments)
+            DetailCommentTile(
               key: ValueKey('detail_review_${comment.id}'),
               comment: comment,
               replyLoader: replyLoader,
             ),
+          if (onOpenAll != null && totalCount > displayedComments.length) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: onOpenAll,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: palette.ink,
+                  side: BorderSide(color: palette.line),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '查看全部 $totalCount 条书评',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(LucideIcons.chevron_right, size: 14),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ],
     );
@@ -152,17 +191,17 @@ class _ScoreCard extends StatelessWidget {
   }
 }
 
-class _CommentTile extends StatefulWidget {
+class DetailCommentTile extends StatefulWidget {
   final BookComment comment;
   final ReviewReplyLoader? replyLoader;
 
-  const _CommentTile({super.key, required this.comment, this.replyLoader});
+  const DetailCommentTile({super.key, required this.comment, this.replyLoader});
 
   @override
-  State<_CommentTile> createState() => _CommentTileState();
+  State<DetailCommentTile> createState() => _DetailCommentTileState();
 }
 
-class _CommentTileState extends State<_CommentTile> {
+class _DetailCommentTileState extends State<DetailCommentTile> {
   CommentReplyPage? _replies;
   bool _loading = false;
   bool _failed = false;

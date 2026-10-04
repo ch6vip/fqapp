@@ -78,24 +78,32 @@ class DetailAuthorRow extends StatelessWidget {
       ],
     );
 
-    final row = Row(
-      children: [
-        avatar,
-        const SizedBox(width: 11),
-        Expanded(child: identity),
-        if (onOpenAuthor != null) ...[
-          const SizedBox(width: 10),
-          _AuthorLinkChip(),
+    final card = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: palette.line, width: 0.6),
+      ),
+      child: Row(
+        children: [
+          avatar,
+          const SizedBox(width: 12),
+          Expanded(child: identity),
+          if (onOpenAuthor != null) ...[
+            const SizedBox(width: 10),
+            _AuthorLinkChip(),
+          ],
         ],
-      ],
+      ),
     );
-    if (onOpenAuthor == null) return row;
+    if (onOpenAuthor == null) return card;
     return HomePressable(
       key: const Key('detail_author_row'),
       semanticLabel: '查看 ${author.name} 的主页',
       onTap: onOpenAuthor!,
-      borderRadius: BorderRadius.circular(12),
-      child: row,
+      borderRadius: BorderRadius.circular(16),
+      child: card,
     );
   }
 }
@@ -142,10 +150,14 @@ class _AuthorLinkChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
+        color: HomePalette.accent.withValues(alpha: palette.dark ? 0.16 : 0.08),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: palette.accentText.withValues(alpha: 0.5)),
+        border: Border.all(
+          color: HomePalette.accent.withValues(alpha: palette.dark ? 0.35 : 0.22),
+          width: 0.6,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -203,17 +215,24 @@ class DetailStatsRow extends StatelessWidget {
     final children = <Widget>[];
     for (var index = 0; index < visible.length; index++) {
       if (index > 0) {
-        children.add(Container(width: 0.5, height: 34, color: palette.line));
+        children.add(
+          Container(
+            width: 0.6,
+            height: 36,
+            color: palette.line,
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+          ),
+        );
       }
       children.add(Expanded(child: _StatCell(stat: visible[index])));
     }
     return Container(
       key: const Key('detail_stats_row'),
-      padding: const EdgeInsets.symmetric(vertical: 14),
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
       decoration: BoxDecoration(
-        border: Border.symmetric(
-          horizontal: BorderSide(color: palette.line, width: 0.5),
-        ),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: palette.line, width: 0.6),
       ),
       child: Row(children: children),
     );
@@ -329,16 +348,18 @@ class DetailTagChips extends StatelessWidget {
       children: [
         for (final tag in tags)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6.5),
             decoration: BoxDecoration(
-              color: palette.soft,
-              borderRadius: BorderRadius.circular(7),
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: palette.line, width: 0.6),
             ),
             child: Text(
               tag,
               style: TextStyle(
                 color: palette.muted,
                 fontSize: 12,
+                fontWeight: FontWeight.w500,
                 height: 1.35,
               ),
             ),
@@ -366,11 +387,25 @@ class DetailDirectoryRow extends StatelessWidget {
       key: const Key('detail_directory_button'),
       semanticLabel: '查看目录',
       onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: palette.line, width: 0.6),
+        ),
         child: Row(
           children: [
+            Container(
+              width: 3.5,
+              height: 14,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: HomePalette.accent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
             Text(
               '查看目录',
               style: TextStyle(
@@ -387,11 +422,15 @@ class DetailDirectoryRow extends StatelessWidget {
                   trailing,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: palette.muted, fontSize: 12),
+                  style: TextStyle(
+                    color: palette.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             const SizedBox(width: 4),
-            Icon(LucideIcons.chevron_right, size: 17, color: palette.muted),
+            Icon(LucideIcons.chevron_right, size: 16, color: palette.muted),
           ],
         ),
       ),

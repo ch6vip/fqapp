@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 /// What the reader can do with a long-pressed paragraph.
 enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
@@ -180,21 +181,21 @@ class ReaderParagraphMenu extends StatelessWidget {
               if (paragraphScoped)
                 _Item(
                   key: const ValueKey('reader-action-listen'),
-                  icon: Icons.headphones_rounded,
+                  icon: LucideIcons.headphones,
                   label: '从本段听',
                   onTap: () => onAction(ReaderParagraphAction.listen),
                 ),
               _Item(
                 key: const ValueKey('reader-action-copy'),
-                icon: Icons.copy_rounded,
+                icon: LucideIcons.copy,
                 label: '复制',
                 onTap: () => onAction(ReaderParagraphAction.copy),
               ),
               _Item(
                 key: const ValueKey('reader-action-underline'),
                 icon: underlined
-                    ? Icons.format_color_reset_rounded
-                    : Icons.draw_rounded,
+                    ? LucideIcons.eraser
+                    : LucideIcons.highlighter,
                 label: underlined
                     ? (paragraphScoped ? '取消划线' : '删除划线')
                     : '划线',

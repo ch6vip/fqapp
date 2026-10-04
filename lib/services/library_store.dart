@@ -123,6 +123,7 @@ class LibraryStore implements ReaderStore {
 
   /// Hive-backed notifications for retained tabs. Visible pages update after
   /// writes; hidden pages defer their snapshots until the next visit.
+  bool get isInitialized => Hive.isBoxOpen(_histBoxName);
   ValueListenable<Box<dynamic>> get historyListenable => _histBox.listenable();
   ValueListenable<Box<dynamic>> get readTimeListenable =>
       _readTimeBox.listenable();

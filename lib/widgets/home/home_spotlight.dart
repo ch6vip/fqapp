@@ -62,8 +62,8 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
     if (widget.items.isEmpty) return const SizedBox.shrink();
     final palette = HomePalette.of(context);
     final reducedMotion = MediaQuery.disableAnimationsOf(context);
-    final scale = MediaQuery.textScalerOf(context).scale(28) / 28;
-    final height = 244.0 + (scale - 1).clamp(0.0, 2.0) * 95;
+    final scale = MediaQuery.textScalerOf(context).scale(24) / 24;
+    final height = 228.0 + (scale - 1).clamp(0.0, 2.0) * 85;
     final current = (_active + 1).toString().padLeft(2, '0');
     final total = widget.items.length.toString().padLeft(2, '0');
 
@@ -71,35 +71,56 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      const TextSpan(text: '此刻，'),
-                      const TextSpan(
-                        text: '入迷',
-                        style: TextStyle(color: HomePalette.accent),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 4,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: HomePalette.accent,
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      TextSpan(
-                        text: '。',
-                        style: TextStyle(color: palette.ink),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '今日焦点',
+                        textScaler: MediaQuery.textScalerOf(
+                          context,
+                        ).clamp(maxScaleFactor: 1.35),
+                        style: TextStyle(
+                          fontSize: 21,
+                          height: 1.1,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          color: palette.ink,
+                        ),
+                      ),
+                    ),
+                    if (scale < 1.5) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: HomePalette.accent.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'HOT',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: HomePalette.accent,
+                          ),
+                        ),
                       ),
                     ],
-                  ),
-                  textScaler: MediaQuery.textScalerOf(
-                    context,
-                  ).clamp(maxScaleFactor: 1.35),
-                  style: TextStyle(
-                    fontSize: 30,
-                    height: 1.1,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -1.2,
-                    color: palette.ink,
-                  ),
+                  ],
                 ),
               ),
               if (scale < 1.5)
@@ -107,7 +128,7 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
                   padding: const EdgeInsets.only(bottom: 2),
                   child: Text(
                     '总有一个故事，正合你意',
-                    style: TextStyle(fontSize: 10, color: palette.muted),
+                    style: TextStyle(fontSize: 11, color: palette.muted),
                   ),
                 ),
             ],
@@ -145,7 +166,7 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
                         : _active.toDouble();
                     final distance = (page - index).clamp(-1.0, 1.0);
                     return Transform.scale(
-                      scale: reducedMotion ? 1 : 1 - distance.abs() * 0.045,
+                      scale: reducedMotion ? 1 : 1 - distance.abs() * 0.035,
                       alignment: Alignment.centerLeft,
                       child: child,
                     );
@@ -185,13 +206,13 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
                                 ? Duration.zero
                                 : const Duration(milliseconds: 220),
                             margin: const EdgeInsets.only(right: 4),
-                            width: i == _active ? 18 : 4,
+                            width: i == _active ? 16 : 4,
                             height: 4,
                             decoration: BoxDecoration(
                               color: i == _active
                                   ? HomePalette.accent
                                   : palette.line,
-                              borderRadius: BorderRadius.circular(3),
+                              borderRadius: BorderRadius.circular(2),
                             ),
                           ),
                       ],
@@ -226,17 +247,17 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
                   onPressed: _next,
                   icon: Icon(
                     LucideIcons.arrow_right,
-                    size: 17,
+                    size: 16,
                     color: palette.ink,
                   ),
                   constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 44,
+                    width: 38,
+                    height: 38,
                   ),
                   padding: EdgeInsets.zero,
                 )
               else
-                const SizedBox(height: 44),
+                const SizedBox(height: 38),
             ],
           ),
         ),
@@ -258,7 +279,6 @@ class _SpotlightCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scaler = MediaQuery.textScalerOf(context);
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final action = switch (item.kind) {
       'video' => '开始追剧',
@@ -269,10 +289,10 @@ class _SpotlightCard extends StatelessWidget {
     };
     return HomePressable(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(20),
       child: RepaintBoundary(
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(20),
           child: LayoutBuilder(
             builder: (context, constraints) => Stack(
               fit: StackFit.expand,
@@ -287,35 +307,29 @@ class _SpotlightCard extends StatelessWidget {
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      stops: [0, 0.27, 0.65, 1],
+                      stops: [0, 0.35, 0.7, 1],
                       colors: [
+                        Color(0x250C1513),
                         Color(0x350C1513),
-                        Color(0x180C1513),
-                        Color(0xBA0C1513),
-                        Color(0xF50C1513),
+                        Color(0xB50C1513),
+                        Color(0xF60C1513),
                       ],
                     ),
                   ),
                 ),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0x50000000), Color(0x00000000)],
-                    ),
-                  ),
-                ),
                 Positioned(
-                  left: 18,
-                  top: 18,
+                  left: 16,
+                  top: 16,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 9,
-                      vertical: 6,
+                      vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.25),
+                      color: Colors.black.withValues(alpha: 0.32),
                       border: Border.all(
                         color: Colors.white.withValues(alpha: 0.25),
+                        width: 0.6,
                       ),
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -324,21 +338,22 @@ class _SpotlightCard extends StatelessWidget {
                       children: [
                         Icon(
                           homeKindIcon(item.kind),
-                          size: 13,
+                          size: 12,
                           color: Colors.white,
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 5),
                         Text(
                           homeKindLabel(item.kind),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 11,
+                            fontWeight: FontWeight.w600,
                             height: 1.1,
                           ),
                         ),
-                        const SizedBox(width: 7),
+                        const SizedBox(width: 6),
                         Container(width: 1, height: 9, color: Colors.white38),
-                        const SizedBox(width: 7),
+                        const SizedBox(width: 6),
                         const Text(
                           '精选',
                           style: TextStyle(
@@ -351,28 +366,8 @@ class _SpotlightCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (scaler.scale(14) < 21)
-                  Positioned(
-                    right: 14,
-                    top: 4,
-                    child: ExcludeSemantics(
-                      child: Text(
-                        (index + 1).toString().padLeft(2, '0'),
-                        style: TextStyle(
-                          fontSize: 78,
-                          height: 1.1,
-                          fontWeight: FontWeight.w900,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                          foreground: Paint()
-                            ..style = PaintingStyle.stroke
-                            ..strokeWidth = 0.8
-                            ..color = Colors.white.withValues(alpha: 0.42),
-                        ),
-                      ),
-                    ),
-                  ),
                 Padding(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(18),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -383,17 +378,17 @@ class _SpotlightCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 28,
-                          height: 1.14,
+                          fontSize: 24,
+                          height: 1.2,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: -0.6,
+                          letterSpacing: -0.4,
                           shadows: [
-                            Shadow(color: Colors.black26, blurRadius: 12),
+                            Shadow(color: Colors.black45, blurRadius: 10),
                           ],
                         ),
                       ),
                       if (item.author.isNotEmpty || item.ep.isNotEmpty) ...[
-                        const SizedBox(height: 9),
+                        const SizedBox(height: 7),
                         Text(
                           [
                             if (item.author.isNotEmpty) item.author,
@@ -402,23 +397,30 @@ class _SpotlightCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.76),
+                            color: Colors.white.withValues(alpha: 0.82),
                             fontSize: 11,
-                            height: 1.3,
+                            height: 1.2,
                           ),
                         ),
                       ],
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       Row(
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 9,
+                              horizontal: 13,
+                              vertical: 8,
                             ),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(10),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.2),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -429,14 +431,14 @@ class _SpotlightCard extends StatelessWidget {
                                     fontSize: 11,
                                     height: 1.1,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFF252923),
+                                    color: Color(0xFF1E201D),
                                   ),
                                 ),
-                                const SizedBox(width: 9),
+                                const SizedBox(width: 6),
                                 const Icon(
                                   LucideIcons.arrow_up_right,
-                                  size: 15,
-                                  color: Color(0xFF252923),
+                                  size: 14,
+                                  color: Color(0xFF1E201D),
                                 ),
                               ],
                             ),

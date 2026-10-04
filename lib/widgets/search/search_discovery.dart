@@ -27,21 +27,30 @@ class SearchSuggestionList extends StatelessWidget {
       child: ListView.separated(
         key: const Key('search_suggestions'),
         shrinkWrap: true,
-        padding: EdgeInsets.zero,
+        padding: const EdgeInsets.symmetric(vertical: 4),
         itemCount: suggestions.length,
         separatorBuilder: (context, _) =>
-            Divider(height: 1, color: palette.line, indent: 44),
+            Divider(height: 1, color: palette.line, indent: 52),
         itemBuilder: (context, index) {
           final suggestion = suggestions[index];
           return InkWell(
             key: ValueKey('search_suggestion_${suggestion.text}'),
             onTap: () => onSelect(suggestion.text),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 children: [
-                  Icon(LucideIcons.search, size: 15, color: palette.muted),
-                  const SizedBox(width: 13),
+                  Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: palette.soft,
+                      shape: BoxShape.circle,
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(LucideIcons.search, size: 13, color: palette.muted),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: _SuggestionText(
                       suggestion: suggestion,
@@ -131,54 +140,83 @@ class HotSearchBoard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     if (hot.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-          child: Row(
-            children: [
-              Icon(LucideIcons.flame, size: 16, color: HomePalette.accent),
-              const SizedBox(width: 7),
-              Text(
-                '热搜',
-                style: TextStyle(
-                  color: palette.ink,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: palette.line,
+            width: 0.6,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: palette.ink.withValues(alpha: palette.dark ? 0.12 : 0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Wrap(
-            key: const Key('search_hot_words'),
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (var i = 0; i < hot.words.length; i++)
-                _HotChip(
-                  word: hot.words[i],
-                  // The first three are the board's head.
-                  hot: i < 3,
-                  onTap: () => onSelect(hot.words[i]),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: HomePalette.accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(LucideIcons.flame, size: 15, color: HomePalette.accent),
                 ),
-            ],
-          ),
+                const SizedBox(width: 8),
+                Text(
+                  '热搜榜',
+                  style: TextStyle(
+                    color: palette.ink,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              key: const Key('search_hot_words'),
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < hot.words.length; i++)
+                  _HotChip(
+                    word: hot.words[i],
+                    rank: i + 1,
+                    hot: i < 3,
+                    onTap: () => onSelect(hot.words[i]),
+                  ),
+              ],
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
 
 class _HotChip extends StatelessWidget {
   final String word;
+  final int rank;
   final bool hot;
   final VoidCallback onTap;
 
-  const _HotChip({required this.word, required this.hot, required this.onTap});
+  const _HotChip({
+    required this.word,
+    required this.rank,
+    required this.hot,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -189,21 +227,53 @@ class _HotChip extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
           color: hot
-              ? HomePalette.accent.withValues(alpha: palette.dark ? 0.16 : 0.09)
+              ? HomePalette.accent.withValues(alpha: palette.dark ? 0.16 : 0.08)
               : palette.soft,
           borderRadius: BorderRadius.circular(999),
-        ),
-        child: Text(
-          word,
-          style: TextStyle(
-            color: hot ? palette.accentText : palette.ink,
-            fontSize: 12.5,
-            fontWeight: hot ? FontWeight.w600 : FontWeight.w400,
-            height: 1.3,
+          border: Border.all(
+            color: hot
+                ? HomePalette.accent.withValues(alpha: 0.28)
+                : palette.line,
+            width: 0.5,
           ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (hot) ...[
+              Container(
+                width: 15,
+                height: 15,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: HomePalette.accent,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '$rank',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    height: 1,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 5),
+            ],
+            Text(
+              word,
+              style: TextStyle(
+                color: hot ? palette.accentText : palette.ink,
+                fontSize: 12.5,
+                fontWeight: hot ? FontWeight.w600 : FontWeight.w400,
+                height: 1.3,
+              ),
+            ),
+          ],
         ),
       ),
     );

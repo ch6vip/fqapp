@@ -7,12 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
 import 'pages/home_page.dart';
 import 'pages/cached_books_page.dart';
 import 'pages/drama_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
+import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
@@ -33,6 +35,10 @@ import 'widgets/home/home_design.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
+  // runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
+  AppLog.instance.install();
+  unawaited(AppLog.instance.startPersistence());
   // 短剧分享的「系统分享」走 Android 的 Intent.ACTION_SEND
   //（官方同一条路径）。桥不可用时 PlayletShare 自动降级为复制链接，
   // 不会把失败说成成功。
@@ -44,7 +50,13 @@ void main() {
     ).invokeMethod<bool>('shareText', {'title': title, 'text': text});
     return launched ?? false;
   };
-  runApp(const ProviderScope(child: FqApp()));
+  // Rust 核心日志的读取入口：日志页「Rust」视图读 runtime_dir/rust.log。
+  // 核心只在 Android 落盘（桌面/测试构建不装 logger），读不到时页面给空态。
+  RustLogSource.reader = BackendService.instance.readRustLog;
+  runZonedGuarded(
+    () => runApp(const ProviderScope(child: FqApp())),
+    (error, stack) => AppLog.e('zone', '未捕获异步异常', error: error, stack: stack),
+  );
 }
 
 Future<void> _initializeLocalData() async {
@@ -135,19 +147,7 @@ class FqApp extends StatelessWidget {
     );
   }
 
-  ThemeData _theme(Brightness brightness) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: appSeedColor,
-      brightness: brightness,
-    );
-    return ThemeData(
-      colorScheme: scheme,
-      useMaterial3: true,
-      scaffoldBackgroundColor: brightness == Brightness.dark
-          ? const Color(0xFF121212)
-          : const Color(0xFFF5F5F7),
-    );
-  }
+  ThemeData _theme(Brightness brightness) => AppTheme.createTheme(brightness);
 }
 
 /// Opens local data before any page can access LibraryStore's boxes. Failed
@@ -319,8 +319,13 @@ class _RootShellState extends State<RootShell> {
         ),
       );
     }
+    final palette = HomePalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isDramaTab = _index == 1;
+    final glassDark = isDark || isDramaTab;
 
     return Scaffold(
+      extendBody: true,
       // 状态栏图标亮度挂在壳层、按选中 tab 切换：短剧页是黑底视频流（官方
       // SeriesMallFragment 的透明顶栏直接压在 feed 上），深色图标在黑底上
       // 整条状态栏都看不见，必须浅色；其余三页浅色底用深色。样式放壳层而不是
@@ -329,7 +334,7 @@ class _RootShellState extends State<RootShell> {
       body: AnnotatedRegion<SystemUiOverlayStyle>(
         value: _index == 1
             ? SystemUiOverlayStyle.light
-            : SystemUiOverlayStyle.dark,
+            : (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark),
         child: LazyIndexedStack(
           index: _index,
           children: [
@@ -341,69 +346,124 @@ class _RootShellState extends State<RootShell> {
           ],
         ),
       ),
-      bottomNavigationBar: NavigationBarTheme(
-        data: NavigationBarThemeData(
-          height: 72,
-          elevation: 0,
-          backgroundColor: HomePalette.of(context).canvas,
-          surfaceTintColor: Colors.transparent,
-          indicatorColor: HomePalette.accent.withValues(alpha: 0.10),
-          iconTheme: WidgetStateProperty.resolveWith(
-            (states) => IconThemeData(
-              size: 22,
-              color: states.contains(WidgetState.selected)
-                  ? HomePalette.accent
-                  : HomePalette.of(context).muted,
+      bottomNavigationBar: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: RepaintBoundary(
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(
+                      alpha: glassDark ? 0.38 : 0.08,
+                    ),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
+                  ),
+                  BoxShadow(
+                    color: HomePalette.accent.withValues(
+                      alpha: glassDark ? 0.06 : 0.03,
+                    ),
+                    blurRadius: 14,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: glassDark
+                          ? const Color(0xFF161619).withValues(alpha: 0.72)
+                          : Colors.white.withValues(alpha: 0.82),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(
+                        color: glassDark
+                            ? Colors.white.withValues(alpha: 0.16)
+                            : Colors.white.withValues(alpha: 0.75),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: NavigationBarTheme(
+                      data: NavigationBarThemeData(
+                        height: 64,
+                        elevation: 0,
+                        backgroundColor: Colors.transparent,
+                        surfaceTintColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        indicatorColor: HomePalette.accent.withValues(
+                          alpha: glassDark ? 0.20 : 0.12,
+                        ),
+                        indicatorShape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        iconTheme: WidgetStateProperty.resolveWith(
+                          (states) => IconThemeData(
+                            size: 22,
+                            color: states.contains(WidgetState.selected)
+                                ? HomePalette.accent
+                                : (glassDark
+                                    ? Colors.white.withValues(alpha: 0.65)
+                                    : palette.muted),
+                          ),
+                        ),
+                        labelTextStyle: WidgetStateProperty.resolveWith(
+                          (states) => TextStyle(
+                            fontSize: 11,
+                            fontWeight: states.contains(WidgetState.selected)
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: states.contains(WidgetState.selected)
+                                ? (glassDark
+                                    ? HomePalette.accent
+                                    : palette.accentText)
+                                : (glassDark
+                                    ? Colors.white.withValues(alpha: 0.65)
+                                    : palette.muted),
+                          ),
+                        ),
+                      ),
+                      child: NavigationBar(
+                        selectedIndex: _index,
+                        onDestinationSelected: (i) {
+                          if (i != _index) setState(() => _index = i);
+                        },
+                        backgroundColor: Colors.transparent,
+                        elevation: 0,
+                        destinations: const [
+                          NavigationDestination(
+                            icon: Icon(LucideIcons.house),
+                            selectedIcon: Icon(LucideIcons.house),
+                            label: '首页',
+                          ),
+                          NavigationDestination(
+                            icon: Icon(LucideIcons.clapperboard),
+                            selectedIcon: Icon(LucideIcons.clapperboard),
+                            label: '短剧',
+                          ),
+                          NavigationDestination(
+                            icon: Icon(LucideIcons.library_big),
+                            selectedIcon: Icon(LucideIcons.library_big),
+                            label: '书架',
+                          ),
+                          NavigationDestination(
+                            icon: Icon(LucideIcons.circle_user_round),
+                            selectedIcon: Icon(LucideIcons.circle_user_round),
+                            label: '我的',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-          labelTextStyle: WidgetStateProperty.resolveWith(
-            (states) => TextStyle(
-              fontSize: 11,
-              fontWeight: states.contains(WidgetState.selected)
-                  ? FontWeight.w700
-                  : FontWeight.w500,
-              color: states.contains(WidgetState.selected)
-                  ? HomePalette.of(context).accentText
-                  : HomePalette.of(context).muted,
-            ),
-          ),
-        ),
-        child: DecoratedBox(
-          position: DecorationPosition.foreground,
-          decoration: BoxDecoration(
-            border: Border(
-              top: BorderSide(color: HomePalette.of(context).line, width: 0.5),
-            ),
-          ),
-          child: NavigationBar(
-            selectedIndex: _index,
-            onDestinationSelected: (i) {
-              if (i != _index) setState(() => _index = i);
-            },
-            // Note: 短剧是独立的底部目的地，拥有自己的 feed 实例 —— 为何不复用
-            // homeProvider 见 .agents/notes/implemented/feature/2026-09-20-bottom-short-drama-tab.md
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(LucideIcons.house),
-                selectedIcon: Icon(LucideIcons.house),
-                label: '首页',
-              ),
-              NavigationDestination(
-                icon: Icon(LucideIcons.clapperboard),
-                selectedIcon: Icon(LucideIcons.clapperboard),
-                label: '短剧',
-              ),
-              NavigationDestination(
-                icon: Icon(LucideIcons.library_big),
-                selectedIcon: Icon(LucideIcons.library_big),
-                label: '书架',
-              ),
-              NavigationDestination(
-                icon: Icon(LucideIcons.circle_user_round),
-                selectedIcon: Icon(LucideIcons.circle_user_round),
-                label: '我的',
-              ),
-            ],
           ),
         ),
       ),

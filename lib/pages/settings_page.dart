@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/api_client.dart';
@@ -8,9 +9,11 @@ import '../services/app_theme.dart';
 import '../services/backend_service.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
+import '../widgets/home/home_design.dart';
 import 'about_page.dart';
 import 'cached_books_page.dart';
 import 'cached_dramas_page.dart';
+import 'log_viewer_page.dart';
 import 'settings_category_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
@@ -20,28 +23,27 @@ class SettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final outline = theme.colorScheme.outline;
+    final palette = HomePalette.of(context);
     final categories = <SettingsCategory>[
       SettingsCategory(
-        icon: Icons.palette_outlined,
+        icon: LucideIcons.palette,
         title: '外观',
         subtitle: '深色模式',
         items: [_themeModeItem()],
       ),
       SettingsCategory(
-        icon: Icons.movie_outlined,
+        icon: LucideIcons.film,
         title: '短剧',
         subtitle: '播放',
         items: [_muteWhenColdStartItem()],
       ),
       SettingsCategory(
-        icon: Icons.storage_outlined,
+        icon: LucideIcons.database,
         title: '数据',
         subtitle: '章节缓存、离线缓存、阅读与播放历史',
         items: [
           SettingsItem(
-            icon: Icons.download_for_offline_outlined,
+            icon: LucideIcons.book_marked,
             title: '章节缓存',
             subtitle: '离线续读、查看占用和清理缓存',
             onTap: (context, setState) => Navigator.push(
@@ -50,7 +52,7 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
           SettingsItem(
-            icon: Icons.movie_filter_outlined,
+            icon: LucideIcons.clapperboard,
             title: '剧集离线缓存',
             subtitle: '短剧下载、离线播放和清理缓存',
             onTap: (context, setState) => Navigator.push(
@@ -62,13 +64,13 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
       SettingsCategory(
-        icon: Icons.memory,
+        icon: LucideIcons.cpu,
         title: '服务',
         subtitle: '本地后端状态',
-        items: [_backendItem(), _statusItem()],
+        items: [_backendItem(), _statusItem(), _logItem()],
       ),
       SettingsCategory(
-        icon: Icons.info_outline,
+        icon: LucideIcons.info,
         title: '关于',
         subtitle: '版本与应用信息',
         pageBuilder: (_) => const AboutPage(),
@@ -76,42 +78,89 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
 
+    const categoryColors = [
+      Color(0xFFEF5038), // 外观
+      Color(0xFFF59E0B), // 短剧
+      Color(0xFF3B82F6), // 数据
+      Color(0xFF10B981), // 服务
+      Color(0xFF8B5CF6), // 关于
+    ];
+
     return Scaffold(
-      appBar: AppBar(title: const Text('设置'), centerTitle: true),
+      backgroundColor: palette.canvas,
+      appBar: AppBar(
+        title: const Text('设置'),
+        centerTitle: true,
+        backgroundColor: palette.canvas,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+      ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
-          Card(
-            margin: const EdgeInsets.symmetric(horizontal: 12),
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerLow,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+          Material(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(20),
             clipBehavior: Clip.antiAlias,
-            child: Column(
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: palette.line,
+                  width: 0.6,
+                ),
+              ),
+              child: Column(
               children: [
                 for (var i = 0; i < categories.length; i++) ...[
-                  if (i > 0) Divider(height: 1, indent: 56),
+                  if (i > 0)
+                    Divider(
+                      height: 1,
+                      indent: 68,
+                      color: palette.line,
+                    ),
                   ListTile(
-                    leading: Icon(
-                      categories[i].icon,
-                      color: theme.colorScheme.primary,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
+                    leading: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: (i < categoryColors.length
+                                ? categoryColors[i]
+                                : HomePalette.accent)
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        categories[i].icon,
+                        size: 20,
+                        color: i < categoryColors.length
+                            ? categoryColors[i]
+                            : HomePalette.accent,
+                      ),
                     ),
                     title: Text(
                       categories[i].title,
-                      style: theme.textTheme.titleMedium,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                        color: palette.ink,
+                      ),
                     ),
                     subtitle: Text(
                       categories[i].subtitle,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: outline,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: palette.muted,
                       ),
                     ),
                     trailing: Icon(
-                      Icons.chevron_right,
-                      size: 20,
-                      color: outline,
+                      LucideIcons.chevron_right,
+                      size: 18,
+                      color: palette.muted,
                     ),
                     onTap: () {
                       final cat = categories[i];
@@ -133,15 +182,16 @@ class SettingsPage extends StatelessWidget {
               ],
             ),
           ),
-        ],
-      ),
-    );
+        ),
+      ],
+    ),
+  );
   }
 
   // ── 外观 ──────────────────────────────────────────────────────────────
 
   SettingsItem _themeModeItem() => SettingsItem(
-    icon: Icons.brightness_6_outlined,
+    icon: LucideIcons.sun_moon,
     title: '深色模式',
     trailingBuilder: (context) => ValueListenableBuilder<ThemeMode>(
       valueListenable: themeModeNotifier,
@@ -152,7 +202,8 @@ class SettingsPage extends StatelessWidget {
             _modeLabel(mode),
             style: TextStyle(color: Theme.of(context).colorScheme.outline),
           ),
-          const Icon(Icons.chevron_right, size: 20),
+          const SizedBox(width: 4),
+          const Icon(LucideIcons.chevron_right, size: 18),
         ],
       ),
     ),
@@ -220,7 +271,7 @@ class SettingsPage extends StatelessWidget {
   /// 官方设置项「开启应用时默认静音」（`GlobalMuteConfig` 标题，持久层
   /// `open_mute_when_cold_start`，默认 false＝有声起播）。
   SettingsItem _muteWhenColdStartItem() => SettingsItem(
-    icon: Icons.volume_off_outlined,
+    icon: LucideIcons.volume_x,
     title: '开启应用时默认静音',
     subtitle: '进入短剧时静音播放，可在播放页取消',
     // Switch 走 ValueListenableBuilder，翻转后无需依赖页面的 setState。
@@ -240,7 +291,7 @@ class SettingsPage extends StatelessWidget {
   // ── 数据 ──────────────────────────────────────────────────────────────
 
   SettingsItem _clearHistItem() => SettingsItem(
-    icon: Icons.history,
+    icon: LucideIcons.trash,
     title: '清空历史',
     subtitle: '删除全部阅读/播放历史与累计时长',
     onTap: (context, setState) => _confirmClear(
@@ -294,13 +345,23 @@ class SettingsPage extends StatelessWidget {
   // ── 服务 ──────────────────────────────────────────────────────────────
 
   SettingsItem _backendItem() => SettingsItem(
-    icon: Icons.memory,
+    icon: LucideIcons.cpu,
     title: '本地后端',
     subtitle: BackendService.instance.baseUrl,
   );
 
+  SettingsItem _logItem() => SettingsItem(
+    icon: LucideIcons.terminal,
+    title: '日志',
+    subtitle: '查看应用运行日志',
+    onTap: (context, setState) => Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const LogViewerPage()),
+    ),
+  );
+
   SettingsItem _statusItem() => SettingsItem(
-    icon: Icons.check_circle_outline,
+    icon: LucideIcons.circle_check,
     title: '服务状态',
     rowBuilder: (context) => const _ServiceStatusRow(),
   );
@@ -339,7 +400,7 @@ class _ServiceStatusRowState extends State<_ServiceStatusRow> {
     final healthy = _status == '运行中';
     return ListTile(
       leading: Icon(
-        healthy ? Icons.check_circle_outline : Icons.error_outline,
+        healthy ? LucideIcons.circle_check : LucideIcons.circle_alert,
         color: healthy ? Colors.green : Colors.red,
       ),
       title: Text('服务状态', style: theme.textTheme.titleMedium),
@@ -350,7 +411,7 @@ class _ServiceStatusRowState extends State<_ServiceStatusRow> {
         ),
       ),
       trailing: IconButton(
-        icon: const Icon(Icons.refresh),
+        icon: const Icon(LucideIcons.rotate_ccw, size: 18),
         onPressed: _refresh,
       ),
     );

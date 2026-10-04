@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'app_log.dart';
+
 /// Contains timings and local episode numbers, never URLs, keys or API bodies.
 class PlayerLoadSample {
   final int attempt;
@@ -60,6 +62,14 @@ class PlayerLoadDiagnostics {
   }) => PlayerLoadTrace._(this, attempt, episode, trigger, appActive);
 
   static void _log(PlayerLoadSample sample) {
+    // 结构化一条进应用日志（设置 → 服务 → 日志 可读、可导出）；运转台仍走
+    // debugPrint 保留 adb logcat 观感。日志页因此会同时看到紧凑行与完整 JSON。
+    AppLog.d(
+      'player-load',
+      'episode=${sample.episode} trigger=${sample.trigger} '
+      'outcome=${sample.outcome} source=${sample.source} '
+      'total=${sample.totalMs}ms firstFrame=${sample.firstFrameMs ?? '-'}ms',
+    );
     if (!kReleaseMode) {
       debugPrint('[PlayerLoad] ${jsonEncode(sample.toJson())}');
     }

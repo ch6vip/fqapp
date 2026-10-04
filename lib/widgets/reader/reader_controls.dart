@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_preferences.dart';
 import 'reader_theme.dart';
@@ -74,55 +75,69 @@ class _ReaderControlsState extends State<ReaderControls> {
       data: preset.theme(Theme.of(context)),
       child: Material(
         color: preset.panelColor,
-        elevation: 12,
-        shadowColor: Colors.black26,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.62,
+        elevation: 16,
+        shadowColor: Colors.black38,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border(
+              top: BorderSide(
+                color: preset.isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.06),
+                width: 0.8,
+              ),
+            ),
           ),
-          child: SingleChildScrollView(
-            child: SafeArea(
-              top: false,
-              minimum: const EdgeInsets.fromLTRB(8, 8, 8, 6),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_settingsOpen) ...[
-                    _chapterSeek(preset),
-                    if (widget.deviceAvailable) _brightness(preset, level),
-                    _extraActions(preset),
-                    const SizedBox(height: 4),
-                  ],
-                  Row(
-                    children: [
-                      _Action(
-                        icon: Icons.menu_book_outlined,
-                        label: '目录',
-                        onTap: widget.onDirectory,
-                      ),
-                      _Action(
-                        icon: preset.isDark
-                            ? Icons.light_mode_outlined
-                            : Icons.dark_mode_outlined,
-                        label: preset.isDark ? '日间' : '夜间',
-                        onTap: widget.onNight,
-                      ),
-                      _Action(
-                        icon: Icons.headphones_outlined,
-                        label: '听书',
-                        onTap: widget.onListen,
-                      ),
-                      _Action(
-                        key: const ValueKey('reader-settings'),
-                        icon: Icons.settings_outlined,
-                        label: '设置',
-                        selected: _settingsOpen,
-                        onTap: () =>
-                            setState(() => _settingsOpen = !_settingsOpen),
-                      ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.62,
+            ),
+            child: SingleChildScrollView(
+              child: SafeArea(
+                top: false,
+                minimum: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_settingsOpen) ...[
+                      _chapterSeek(preset),
+                      if (widget.deviceAvailable) _brightness(preset, level),
+                      _extraActions(preset),
+                      const SizedBox(height: 6),
                     ],
-                  ),
-                ],
+                    Row(
+                      children: [
+                        _Action(
+                          icon: LucideIcons.book_open,
+                          label: '目录',
+                          onTap: widget.onDirectory,
+                        ),
+                        _Action(
+                          icon: preset.isDark
+                              ? LucideIcons.sun
+                              : LucideIcons.moon,
+                          label: preset.isDark ? '日间' : '夜间',
+                          onTap: widget.onNight,
+                        ),
+                        _Action(
+                          icon: LucideIcons.headphones,
+                          label: '听书',
+                          onTap: widget.onListen,
+                        ),
+                        _Action(
+                          key: const ValueKey('reader-settings'),
+                          icon: LucideIcons.sliders_horizontal,
+                          label: '设置',
+                          selected: _settingsOpen,
+                          onTap: () =>
+                              setState(() => _settingsOpen = !_settingsOpen),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -160,7 +175,7 @@ class _ReaderControlsState extends State<ReaderControls> {
               IconButton(
                 tooltip: '上一章',
                 onPressed: widget.onPrevious,
-                icon: const Icon(Icons.skip_previous_rounded, size: 22),
+                icon: const Icon(LucideIcons.skip_back, size: 20),
               ),
               Expanded(
                 child: Slider(
@@ -179,7 +194,7 @@ class _ReaderControlsState extends State<ReaderControls> {
               IconButton(
                 tooltip: '下一章',
                 onPressed: widget.onNext,
-                icon: const Icon(Icons.skip_next_rounded, size: 22),
+                icon: const Icon(LucideIcons.skip_forward, size: 20),
               ),
             ],
           ),
@@ -196,7 +211,7 @@ class _ReaderControlsState extends State<ReaderControls> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Icon(
-              Icons.brightness_6_outlined,
+              LucideIcons.sun_medium,
               size: 20,
               color: preset.mutedTextColor,
             ),
@@ -253,8 +268,8 @@ class _ReaderControlsState extends State<ReaderControls> {
                   onPressed: widget.onAutoTurn,
                   icon: Icon(
                     widget.autoTurnActive
-                        ? Icons.pause_circle_outline_rounded
-                        : Icons.play_circle_outline_rounded,
+                        ? LucideIcons.circle_pause
+                        : LucideIcons.circle_play,
                     size: 18,
                   ),
                   label: Text(
@@ -268,12 +283,12 @@ class _ReaderControlsState extends State<ReaderControls> {
           Row(
             children: [
               _Action(
-                icon: Icons.download_for_offline_outlined,
+                icon: LucideIcons.download,
                 label: '缓存',
                 onTap: widget.onCache,
               ),
               _Action(
-                icon: Icons.text_fields_rounded,
+                icon: LucideIcons.type,
                 label: '排版',
                 onTap: widget.onAppearance,
               ),

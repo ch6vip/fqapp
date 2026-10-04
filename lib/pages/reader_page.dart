@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
@@ -1964,7 +1965,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             IconButton(
               tooltip: '返回书籍',
               onPressed: () => Navigator.of(context).pop(),
-              icon: Icon(Icons.arrow_back_rounded, color: preset.textColor),
+              icon: Icon(LucideIcons.arrow_left, color: preset.textColor),
             ),
             Expanded(
               child: Column(
@@ -1996,7 +1997,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               tooltip: '收起阅读菜单',
               onPressed: _toggleControls,
               icon: Icon(
-                Icons.keyboard_arrow_up_rounded,
+                LucideIcons.chevron_up,
                 color: preset.textColor,
               ),
             ),
@@ -2414,7 +2415,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                     ),
-                    icon: const Icon(Icons.chevron_left, size: 18),
+                    icon: const Icon(LucideIcons.chevron_left, size: 18),
                     label: const Text(
                       '上一章',
                       maxLines: 1,
@@ -2436,7 +2437,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                     onPressed: () => unawaited(
                       _showIdeas(focusParaIndex: _chapterEndParagraph()),
                     ),
-                    icon: const Icon(Icons.forum_outlined, size: 18),
+                    icon: const Icon(LucideIcons.message_square, size: 18),
                     label: Text(
                       '本章评论 ${_ideas.total}',
                       maxLines: 1,
@@ -2450,7 +2451,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                     ),
-                    icon: const Icon(Icons.chevron_right, size: 18),
+                    icon: const Icon(LucideIcons.chevron_right, size: 18),
                     label: const Text(
                       '下一章',
                       maxLines: 1,
@@ -2637,7 +2638,7 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
                 tooltip: _reversed ? '切换为正序' : '切换为倒序',
                 onPressed: _toggleOrder,
                 icon: Icon(
-                  _reversed ? Icons.arrow_upward : Icons.arrow_downward,
+                  _reversed ? LucideIcons.arrow_up : LucideIcons.arrow_down,
                 ),
               ),
             ],
@@ -2651,7 +2652,7 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
             onChanged: _onSearchChanged,
             decoration: InputDecoration(
               hintText: '搜索章节名或序号',
-              prefixIcon: const Icon(Icons.search),
+              prefixIcon: const Icon(LucideIcons.search),
               suffixIcon: _query.isEmpty
                   ? null
                   : IconButton(
@@ -2661,7 +2662,7 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
                         _searchController.clear();
                         setState(() => _query = '');
                       },
-                      icon: const Icon(Icons.close),
+                      icon: const Icon(LucideIcons.x),
                     ),
               filled: true,
               border: OutlineInputBorder(
@@ -2717,12 +2718,12 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
                               const Tooltip(
                                 message: '已缓存',
                                 child: Icon(
-                                  Icons.offline_pin_outlined,
+                                  LucideIcons.circle_check,
                                   size: 18,
                                 ),
                               ),
                             if (current)
-                              Icon(Icons.my_location, color: scheme.primary),
+                              Icon(LucideIcons.locate_fixed, color: scheme.primary),
                           ],
                         ),
                       ),

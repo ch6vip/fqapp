@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
@@ -101,7 +102,18 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
       data: preset.theme(Theme.of(context)),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        color: preset.sheetColor,
+        decoration: BoxDecoration(
+          color: preset.sheetColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+          border: Border(
+            top: BorderSide(
+              color: preset.isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.06),
+              width: 0.8,
+            ),
+          ),
+        ),
         constraints: BoxConstraints(
           maxHeight: MediaQuery.sizeOf(context).height * 0.82,
         ),
@@ -118,7 +130,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
               children: [
                 Container(
                   margin: const EdgeInsets.only(top: 10, bottom: 4),
-                  width: 32,
+                  width: 36,
                   height: 4,
                   decoration: BoxDecoration(
                     color: preset.mutedTextColor.withValues(alpha: 0.25),
@@ -142,7 +154,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                       IconButton(
                         tooltip: '关闭排版设置',
                         onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close_rounded),
+                        icon: const Icon(LucideIcons.x, size: 20),
                       ),
                     ],
                   ),
@@ -818,7 +830,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
               onPressed: value > min
                   ? () => _update(update((value - step).clamp(min, max)))
                   : null,
-              icon: const Icon(Icons.remove_rounded, size: 17),
+              icon: const Icon(LucideIcons.minus, size: 16),
             ),
             Expanded(
               child: Slider(
@@ -843,7 +855,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
               onPressed: value < max
                   ? () => _update(update((value + step).clamp(min, max)))
                   : null,
-              icon: const Icon(Icons.add_rounded, size: 17),
+              icon: const Icon(LucideIcons.plus, size: 16),
             ),
           ],
         ),

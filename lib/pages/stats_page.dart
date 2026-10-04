@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
@@ -16,7 +17,8 @@ import 'detail_page.dart';
 /// New sessions use measured reading/playback time. Old history entries that
 /// predate tracking retain a small fallback estimate.
 class StatsPage extends StatefulWidget {
-  const StatsPage({super.key});
+  final Widget? header;
+  const StatsPage({super.key, this.header});
 
   @override
   State<StatsPage> createState() => _StatsPageState();
@@ -267,8 +269,12 @@ class _StatsPageState extends State<StatsPage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
         children: [
+          if (widget.header != null) ...[
+            widget.header!,
+            const SizedBox(height: 16),
+          ],
           _dateHeader(),
           const SizedBox(height: 18),
           _OverviewCard(
@@ -455,25 +461,48 @@ class _Card extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant, width: 0.6),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (title != null) ...[
-            Text(
-              title!,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                Container(
+                  width: 3.5,
+                  height: 15,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Text(
+                  title!,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
             if (subtitle != null) ...[
               const SizedBox(height: 4),
-              Text(
-                subtitle!,
-                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              Padding(
+                padding: const EdgeInsets.only(left: 11.5),
+                child: Text(
+                  subtitle!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
               ),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
           ],
           child,
         ],
@@ -505,41 +534,52 @@ class _OverviewCard extends StatelessWidget {
       ('总计', _formatDuring(total)),
       ('活跃天数', '$activeDays 天'),
     ];
+    final scheme = Theme.of(context).colorScheme;
     final scaler = MediaQuery.textScalerOf(context);
     return _Card(
       child: GridView(
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          mainAxisExtent: scaler.scale(20) * 1.2 + scaler.scale(12) * 1.2 + 18,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          mainAxisExtent: scaler.scale(20) * 1.2 + scaler.scale(12) * 1.2 + 24,
         ),
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         children: [
           for (final (label, value) in stats)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    height: 1.2,
-                    fontWeight: FontWeight.bold,
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 19,
+                      height: 1.2,
+                      fontWeight: FontWeight.bold,
+                      color: scheme.onSurface,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.2,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  const SizedBox(height: 2),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.2,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
         ],
       ),
@@ -779,7 +819,7 @@ class _RecentBooksCard extends StatelessWidget {
         width: w,
         height: h,
         color: scheme.surfaceContainerHighest,
-        child: Icon(Icons.book, color: scheme.onSurfaceVariant, size: 20),
+        child: Icon(LucideIcons.book_open, color: scheme.onSurfaceVariant, size: 20),
       );
     }
     return ClipRRect(
@@ -796,7 +836,7 @@ class _RecentBooksCard extends StatelessWidget {
           width: w,
           height: h,
           color: scheme.surfaceContainerHighest,
-          child: Icon(Icons.book, color: scheme.onSurfaceVariant, size: 20),
+          child: Icon(LucideIcons.book_open, color: scheme.onSurfaceVariant, size: 20),
         ),
       ),
     );
@@ -899,7 +939,7 @@ class _RecentCoversCard extends StatelessWidget {
                               height: 110,
                               color: scheme.surfaceContainerHighest,
                               child: Icon(
-                                Icons.book,
+                                LucideIcons.book_open,
                                 color: scheme.onSurfaceVariant,
                               ),
                             )
@@ -916,7 +956,7 @@ class _RecentCoversCard extends StatelessWidget {
                                 height: 110,
                                 color: scheme.surfaceContainerHighest,
                                 child: Icon(
-                                  Icons.book,
+                                  LucideIcons.book_open,
                                   color: scheme.onSurfaceVariant,
                                 ),
                               ),
@@ -996,7 +1036,7 @@ class _RankCard extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed: items.isEmpty ? null : onMore,
-              icon: const Icon(Icons.arrow_forward, size: 16),
+              icon: const Icon(LucideIcons.arrow_right, size: 16),
               label: const Text('查看全部'),
             ),
           ),

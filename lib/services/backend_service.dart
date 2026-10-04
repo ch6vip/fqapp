@@ -78,6 +78,22 @@ class BackendService {
     return backend;
   }
 
+  /// Rust 核心日志文件（`core_log` 的落盘副本）。与传给核心的 `runtimeDir` 是
+  /// 同一个目录；文件名对应 `rust/src/core_log.rs` 的 `LOG_FILE_NAME`。
+  Future<File> rustLogFile() async =>
+      File('${(await _backendDir()).path}/rust.log');
+
+  /// Rust 核心日志全文；文件不存在或读不到时返回 null（日志页据此给空态）。
+  Future<String?> readRustLog() async {
+    try {
+      final file = await rustLogFile();
+      if (!await file.exists()) return null;
+      return await file.readAsString();
+    } catch (_) {
+      return null;
+    }
+}
+
   /// Copies an asset bundle entry to [dest] if missing or stale.
   Future<void> _copyAsset(String assetPath, File dest) async {
     final data = await _assets.load(assetPath);

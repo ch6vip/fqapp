@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/home/home_design.dart';
+
 /// PiliPlus-style settings category entry (shown on the settings home page).
 class SettingsCategory {
   final IconData icon;
@@ -63,27 +65,44 @@ class SettingsCategoryPage extends StatefulWidget {
 class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final palette = HomePalette.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title), centerTitle: true),
+      backgroundColor: palette.canvas,
+      appBar: AppBar(
+        title: Text(widget.title),
+        centerTitle: true,
+        backgroundColor: palette.canvas,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+      ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
-          Card(
-            margin: const EdgeInsets.symmetric(horizontal: 12),
-            elevation: 0,
-            color: theme.colorScheme.surfaceContainerLow,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+          Material(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(20),
             clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                for (var i = 0; i < widget.items.length; i++) ...[
-                  if (i > 0) const Divider(height: 1, indent: 56),
-                  _buildRow(widget.items[i]),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: palette.line,
+                  width: 0.6,
+                ),
+              ),
+              child: Column(
+                children: [
+                  for (var i = 0; i < widget.items.length; i++) ...[
+                    if (i > 0)
+                      Divider(
+                        height: 1,
+                        indent: 68,
+                        color: palette.line,
+                      ),
+                    _buildRow(widget.items[i]),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],
@@ -94,17 +113,34 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
   Widget _buildRow(SettingsItem item) {
     final rowBuilder = item.rowBuilder;
     if (rowBuilder != null) return rowBuilder(context);
-    final theme = Theme.of(context);
+    final palette = HomePalette.of(context);
     return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       onTap: item.onTap == null ? null : () => item.onTap!(context, setState),
-      leading: Icon(item.icon, color: theme.colorScheme.primary),
-      title: Text(item.title, style: theme.textTheme.titleMedium),
+      leading: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: HomePalette.accent.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(item.icon, size: 20, color: HomePalette.accent),
+      ),
+      title: Text(
+        item.title,
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 15,
+          color: palette.ink,
+        ),
+      ),
       subtitle: item.subtitle == null
           ? null
           : Text(
               item.subtitle!,
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: theme.colorScheme.outline,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: palette.muted,
               ),
             ),
       trailing: item.trailingBuilder?.call(context) ?? item.trailing,

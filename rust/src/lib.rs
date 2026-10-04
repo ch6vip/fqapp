@@ -19,6 +19,7 @@
 
 pub mod api;
 pub mod config;
+pub mod core_log;
 pub mod crypto;
 pub mod device;
 pub mod dispatch;

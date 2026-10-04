@@ -73,7 +73,7 @@ class MediaCard extends StatelessWidget {
     final cacheHeight = (196 * pixelRatio).round();
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -82,18 +82,42 @@ class MediaCard extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: item.cover.isNotEmpty
-                      ? CachedNetworkImage(
-                          cacheManager: PosterCache.instance,
-                          imageUrl: item.cover,
-                          fit: BoxFit.cover,
-                          memCacheWidth: cacheWidth,
-                          memCacheHeight: cacheHeight,
-                          placeholder: (context, url) =>
-                              ColoredBox(color: scheme.surfaceContainerHighest),
-                          errorWidget: (context, url, error) => Container(
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: scheme.outlineVariant.withValues(alpha: 0.6),
+                      width: 0.6,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(9.5),
+                    child: item.cover.isNotEmpty
+                        ? CachedNetworkImage(
+                            cacheManager: PosterCache.instance,
+                            imageUrl: item.cover,
+                            fit: BoxFit.cover,
+                            memCacheWidth: cacheWidth,
+                            memCacheHeight: cacheHeight,
+                            placeholder: (context, url) =>
+                                ColoredBox(color: scheme.surfaceContainerHighest),
+                            errorWidget: (context, url, error) => Container(
+                              color: scheme.surfaceContainerHighest,
+                              child: Icon(
+                                LucideIcons.book_open,
+                                size: 40,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          )
+                        : Container(
                             color: scheme.surfaceContainerHighest,
                             child: Icon(
                               LucideIcons.book_open,
@@ -101,15 +125,7 @@ class MediaCard extends StatelessWidget {
                               color: scheme.onSurfaceVariant,
                             ),
                           ),
-                        )
-                      : Container(
-                          color: scheme.surfaceContainerHighest,
-                          child: Icon(
-                            LucideIcons.book_open,
-                            size: 40,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
+                  ),
                 ),
                 Positioned(
                   top: 6,
@@ -117,15 +133,27 @@ class MediaCard extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 6,
-                      vertical: 2,
+                      vertical: 2.5,
                     ),
                     decoration: BoxDecoration(
-                      color: kindColors[item.kind] ?? Colors.grey,
-                      borderRadius: BorderRadius.circular(4),
+                      color: (kindColors[item.kind] ?? Colors.grey)
+                          .withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.15),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
                     ),
                     child: Text(
                       kindLabels[item.kind] ?? item.kind,
-                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
@@ -162,7 +190,7 @@ class MediaCard extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 13,
                 height: 1.2,
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),

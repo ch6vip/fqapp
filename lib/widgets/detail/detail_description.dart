@@ -37,14 +37,27 @@ class _DetailDescriptionState extends State<DetailDescription> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '书籍简介',
-          style: TextStyle(
-            color: palette.ink,
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.2,
-          ),
+        Row(
+          children: [
+            Container(
+              width: 3.5,
+              height: 14,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: HomePalette.accent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Text(
+              '书籍简介',
+              style: TextStyle(
+                color: palette.ink,
+                fontSize: 16.5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         if (widget.text.isEmpty)

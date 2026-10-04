@@ -185,71 +185,89 @@ class HomeMediaCard extends StatelessWidget {
             AspectRatio(
               aspectRatio: 5 / 7,
               child: RepaintBoundary(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      StoryCover(
-                        item: item,
-                        cacheWidth: (width * pixelRatio).ceil(),
-                      ),
-                      Positioned(
-                        left: 7,
-                        top: 7,
-                        right: 7,
-                        child: Row(
-                          children: [
-                            CoverTagChip(label: homeKindLabel(item.kind)),
-                            // Only coloured tags are badges; see MediaTag.hasColors.
-                            if (item.tag case final MediaTag tag
-                                when tag.hasColors) ...[
-                              const SizedBox(width: 4),
-                              // Flexible so a long upstream label ellipsizes
-                              // instead of overflowing the cover.
-                              Flexible(
-                                child: CoverTagChip(
-                                  key: const Key('home_card_tag'),
-                                  label: tag.text,
-                                  colors: tag.colorsFor(dark: palette.dark),
-                                ),
-                              ),
-                            ],
-                          ],
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: palette.line.withValues(alpha: 0.55),
+                      width: 0.6,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: palette.dark ? 0.28 : 0.05,
                         ),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
                       ),
-                      if (item.ep.isNotEmpty)
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(11.4),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        StoryCover(
+                          item: item,
+                          cacheWidth: (width * pixelRatio).ceil(),
+                        ),
                         Positioned(
                           left: 7,
+                          top: 7,
                           right: 7,
-                          bottom: 7,
-                          child: Align(
-                            alignment: Alignment.bottomRight,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF1C1B1A,
-                                ).withValues(alpha: 0.68),
-                                borderRadius: BorderRadius.circular(5),
-                              ),
-                              child: Text(
-                                item.ep,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 9,
-                                  height: 1.2,
+                          child: Row(
+                            children: [
+                              CoverTagChip(label: homeKindLabel(item.kind)),
+                              // Only coloured tags are badges; see MediaTag.hasColors.
+                              if (item.tag case final MediaTag tag
+                                  when tag.hasColors) ...[
+                                const SizedBox(width: 4),
+                                // Flexible so a long upstream label ellipsizes
+                                // instead of overflowing the cover.
+                                Flexible(
+                                  child: CoverTagChip(
+                                    key: const Key('home_card_tag'),
+                                    label: tag.text,
+                                    colors: tag.colorsFor(dark: palette.dark),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        if (item.ep.isNotEmpty)
+                          Positioned(
+                            left: 7,
+                            right: 7,
+                            bottom: 7,
+                            child: Align(
+                              alignment: Alignment.bottomRight,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(
+                                    0xFF1C1B1A,
+                                  ).withValues(alpha: 0.72),
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                                child: Text(
+                                  item.ep,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    height: 1.2,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -264,7 +282,7 @@ class HomeMediaCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 14,
                   height: 1.35,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                   color: palette.ink,
                 ),
               ),
@@ -300,7 +318,7 @@ class HomeSectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -308,35 +326,36 @@ class HomeSectionHeader extends StatelessWidget {
             children: [
               Container(
                 width: 4,
-                height: 19,
+                height: 18,
                 decoration: BoxDecoration(
                   color: HomePalette.accent,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(width: 9),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   title,
                   style: TextStyle(
-                    fontSize: 22,
+                    fontSize: 20,
                     height: 1.2,
                     fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
                     color: palette.ink,
                   ),
                 ),
               ),
               Icon(
-                LucideIcons.arrow_down_right,
-                size: 21,
+                LucideIcons.compass,
+                size: 19,
                 color: palette.muted,
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             subtitle,
-            style: TextStyle(fontSize: 12, height: 1.4, color: palette.muted),
+            style: TextStyle(fontSize: 12, height: 1.3, color: palette.muted),
           ),
         ],
       ),

@@ -71,6 +71,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   double _lastPosition = 0;
   bool _restoring = true;
   bool _loading = true;
+  bool _pagedMode = false;
   bool _progressReady = false;
   bool _appActive = true;
   bool _sessionActive = false;
@@ -412,6 +413,11 @@ class _ComicReaderPageState extends State<ComicReaderPage>
             ? null
             : [
                 IconButton(
+                  tooltip: _pagedMode ? '切换为条漫模式' : '切换为翻页模式',
+                  onPressed: _loading ? null : () => setState(() => _pagedMode = !_pagedMode),
+                  icon: Icon(_pagedMode ? Icons.view_day : Icons.auto_stories),
+                ),
+                IconButton(
                   tooltip: '刷新章节',
                   onPressed: _loading ? null : _reloadChapter,
                   icon: const Icon(Icons.refresh),
@@ -487,6 +493,28 @@ class _ComicReaderPageState extends State<ComicReaderPage>
                   );
                   final layout = _layoutFor(width);
                   final generation = _loadGeneration;
+                  if (_pagedMode) {
+                    return PageView.builder(
+                      key: const ValueKey('comic-reader-paged-view'),
+                      itemCount: _images.length,
+                      onPageChanged: (page) => setState(() => _visiblePage = page),
+                      itemBuilder: (context, index) => Center(
+                        child: SizedBox(
+                          width: width,
+                          child: _ComicImageTile(
+                            key: ValueKey('comic-image-$generation-$index'),
+                            image: _images[index],
+                            pageNumber: index + 1,
+                            providerFactory: widget.imageProviderFactory,
+                            onReady: (w, h) =>
+                                _updateImageSize(generation, index, w, h),
+                            onFailure: () => _imageFailed(generation, index),
+                            onTap: () => _showImage(index),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
                   return ListView.builder(
                     key: const ValueKey('comic-reader-pages'),
                     controller: _scroll,

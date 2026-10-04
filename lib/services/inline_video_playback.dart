@@ -446,6 +446,25 @@ class InlineVideoPlayback {
     }
   }
 
+  /// Prefetches the directory and initial episode stream for [nextSeries] in the background.
+  Future<void> prefetchNextDrama(MediaItem nextSeries) async {
+    if (_disposed) return;
+    final generation = _generation;
+    final contentId = nextSeries.seriesId ?? nextSeries.id;
+    final tab = nextSeries.kind == 'manju' ? '漫剧' : '短剧';
+    try {
+      final episodes = await _episodesFor(contentId, tab, nextSeries);
+      if (_disposed || generation != _generation || episodes.isEmpty) return;
+      await _sources.prefetch(
+        episodes.first,
+        stillWanted: () => !_disposed && generation == _generation,
+      );
+    } catch (_) {
+      // Speculative prefetch errors are silent.
+    }
+  }
+
+
   /// Drop the player subscriptions without touching the player itself. Used
   /// when a player is parked: it must stop feeding this session's notifiers,
   /// but stay alive for the pool.

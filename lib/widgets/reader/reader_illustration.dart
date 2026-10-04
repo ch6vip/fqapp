@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/chapter_text_formatter.dart';
 
@@ -79,7 +80,7 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
             leading: IconButton(
               tooltip: '关闭插图',
               onPressed: () => navigator.pop(),
-              icon: const Icon(Icons.close),
+              icon: const Icon(LucideIcons.x),
             ),
           ),
           body: SafeArea(
@@ -134,13 +135,13 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(failed ? Icons.broken_image_outlined : Icons.image_outlined),
+              Icon(failed ? LucideIcons.image_off : LucideIcons.image),
               const SizedBox(height: 8),
               Text(failed ? '插图加载失败' : '正在加载插图'),
               if (failed)
                 TextButton.icon(
                   onPressed: _retrying ? null : _retry,
-                  icon: const Icon(Icons.refresh),
+                  icon: const Icon(LucideIcons.rotate_ccw, size: 16),
                   label: Text(_retrying ? '正在重试' : '重试插图'),
                 ),
             ],

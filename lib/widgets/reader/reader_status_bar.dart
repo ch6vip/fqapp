@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
@@ -68,9 +69,9 @@ class ReaderStatusBar extends StatelessWidget {
                       const SizedBox(width: 5),
                       Icon(
                         status.charging
-                            ? Icons.battery_charging_full_rounded
-                            : Icons.battery_std_rounded,
-                        size: 12,
+                            ? LucideIcons.battery_charging
+                            : LucideIcons.battery_medium,
+                        size: 13,
                         color: preset.mutedTextColor,
                       ),
                       Text(

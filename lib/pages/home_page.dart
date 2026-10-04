@@ -9,6 +9,7 @@ import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 import '../widgets/home/home_hero.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
 import 'detail_page.dart';
@@ -171,7 +172,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 delegate: HomeTabBarDelegate(
                                   selectedIndex: state.tabIndex,
                                   onSelect: notifier.selectTab,
-                                  extent: 60 + (textScale - 1).clamp(0, 2) * 24,
+                                  extent: 54 + (textScale - 1).clamp(0, 2) * 20,
                                   dark: palette.dark,
                                 ),
                               ),
@@ -232,6 +233,12 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
         ),
       ),
+      if (state.tabIndex == 0)
+        SliverToBoxAdapter(
+          child: HomeResumeCard(
+            onOpen: _openItem,
+          ),
+        ),
       if (rest.isNotEmpty) ...[
         SliverToBoxAdapter(
           child: HomeSectionHeader(
@@ -263,6 +270,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         const SliverToBoxAdapter(child: HomeEndOfFeed(message: '好故事，未完待续'))
       else
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      const SliverToBoxAdapter(child: SizedBox(height: 84)),
     ];
   }
 

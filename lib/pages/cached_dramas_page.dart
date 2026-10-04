@@ -174,24 +174,108 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
               ),
             )
           : _dramas.isEmpty && tasks.isEmpty
-          ? const Center(
+          ? Center(
               child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  '暂无离线缓存\n播放页「更多 → 离线缓存」选择想下载的集；'
-                  '下载的内容不会被自动清理。',
-                  textAlign: TextAlign.center,
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.movie_filter_outlined,
+                        size: 32,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      '暂无离线缓存',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '播放页「更多 → 离线缓存」选择想下载的集；'
+                      '下载的内容不会被自动清理。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             )
           : ListView(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    '$episodeCount 集 · ${formatCacheBytes(bytes)}\n'
-                    '下载的内容加密保存在应用私有目录，可离线播放。',
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                      width: 0.6,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.movie_outlined,
+                          color: Theme.of(context).colorScheme.primary,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '已缓存 ${_dramas.length} 部 · 共 $episodeCount 集',
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              '占用空间：${formatCacheBytes(bytes)} · 加密离线播放',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 for (final task in tasks)
@@ -203,10 +287,13 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
                         ),
                   ))
                     Card(
+                      margin: const EdgeInsets.only(bottom: 8),
                       child: ListTile(
                         key: ValueKey('download-task-${task.itemId}'),
                         leading: const Icon(Icons.downloading),
-                        title: Text(task.title.isEmpty ? task.itemId : task.title),
+                        title: Text(
+                          task.title.isEmpty ? task.itemId : task.title,
+                        ),
                         subtitle: task.progress != null
                             ? LinearProgressIndicator(value: task.progress)
                             : null,
@@ -215,6 +302,7 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
                     ),
                 for (final item in _dramas)
                   Card(
+                    margin: const EdgeInsets.only(bottom: 8),
                     key: ValueKey('drama-card-${item.drama.id}'),
                     child: ExpansionTile(
                       leading: const Icon(Icons.movie_outlined),

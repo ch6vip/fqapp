@@ -22,10 +22,11 @@ class DetailIdRow extends StatelessWidget {
     if (id.isEmpty) return const SizedBox.shrink();
     return Container(
       key: const Key('detail_id_row'),
-      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
       decoration: BoxDecoration(
-        color: palette.soft,
-        borderRadius: BorderRadius.circular(10),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.line, width: 0.6),
       ),
       child: Row(
         children: [

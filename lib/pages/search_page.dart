@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
 import '../models/media_id.dart';
@@ -426,56 +427,121 @@ class _SearchPageState extends State<SearchPage> {
   Widget build(BuildContext context) {
     final feed = _feeds[_tabIndex];
 
+    final palette = HomePalette.of(context);
+
     return Scaffold(
+      backgroundColor: palette.canvas,
       appBar: AppBar(
-        title: TextField(
-          controller: _ctrl,
-          autofocus: false,
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            hintText: '搜索名称或作品 ID',
-            border: InputBorder.none,
-            suffixIconConstraints: const BoxConstraints(minWidth: 48),
-            suffixIcon: ValueListenableBuilder<TextEditingValue>(
-              valueListenable: _ctrl,
-              builder: (context, value, _) => Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (value.text.isNotEmpty)
+        titleSpacing: 0,
+        backgroundColor: palette.canvas,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: Container(
+          height: 42,
+          margin: const EdgeInsets.only(right: 16),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(21),
+            border: Border.all(
+              color: palette.line,
+              width: 0.6,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: palette.ink.withValues(alpha: palette.dark ? 0.12 : 0.03),
+                blurRadius: 6,
+                offset: const Offset(0, 1.5),
+              ),
+            ],
+          ),
+          child: TextField(
+            controller: _ctrl,
+            autofocus: false,
+            textInputAction: TextInputAction.search,
+            style: TextStyle(
+              fontSize: 14.5,
+              color: palette.ink,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: '搜索名称或作品 ID',
+              hintStyle: TextStyle(
+                fontSize: 14,
+                color: palette.muted,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 10,
+              ),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              suffixIconConstraints: const BoxConstraints(minWidth: 48),
+              suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _ctrl,
+                builder: (context, value, _) => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (value.text.isNotEmpty)
+                      IconButton(
+                        tooltip: '清空',
+                        icon: Icon(LucideIcons.x, size: 17, color: palette.muted),
+                        onPressed: _clearSearchInput,
+                      ),
                     IconButton(
-                      tooltip: '清空',
-                      icon: const Icon(Icons.close),
-                      onPressed: _clearSearchInput,
+                      tooltip: '搜索',
+                      icon: Icon(LucideIcons.search, size: 18, color: HomePalette.accent),
+                      onPressed: () => _search(_ctrl.text),
                     ),
-                  IconButton(
-                    tooltip: '搜索',
-                    icon: const Icon(Icons.search),
-                    onPressed: () => _search(_ctrl.text),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
+            onChanged: _onQueryChanged,
+            onSubmitted: _search,
           ),
-          onChanged: _onQueryChanged,
-          onSubmitted: _search,
         ),
       ),
       body: Column(
         children: [
           if (_query.isNotEmpty)
             SizedBox(
-              height: 44,
+              height: 46,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 children: List.generate(_categories.length, (i) {
                   final category = _categories[i];
+                  final isSelected = i == _tabIndex;
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: ChoiceChip(
                       label: Text(category.title),
-                      selected: i == _tabIndex,
+                      selected: isSelected,
                       onSelected: (_) => _selectTab(i),
+                      showCheckmark: false,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      side: BorderSide(
+                        color: isSelected
+                            ? HomePalette.accent.withValues(alpha: 0.45)
+                            : palette.line,
+                        width: 0.5,
+                      ),
+                      backgroundColor: palette.surface,
+                      selectedColor:
+                          HomePalette.accent.withValues(alpha: palette.dark ? 0.2 : 0.12),
+                      labelStyle: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                        color: isSelected
+                            ? palette.accentText
+                            : palette.ink,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     ),
                   );
                 }),
@@ -565,7 +631,7 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Widget _historyView(BuildContext context) {
-    final theme = Theme.of(context);
+    final palette = HomePalette.of(context);
     final filter = normalizeSearchQuery(_ctrl.text).toLowerCase();
     final visible = filter.isEmpty
         ? _history
@@ -573,36 +639,64 @@ class _SearchPageState extends State<SearchPage> {
               .where((item) => item.toLowerCase().contains(filter))
               .toList(growable: false);
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(16),
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: palette.line,
+              width: 0.6,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: palette.ink.withValues(alpha: palette.dark ? 0.12 : 0.03),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: palette.soft,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(LucideIcons.clock, size: 15, color: palette.muted),
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       '搜索历史',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: palette.ink,
                       ),
                     ),
                   ),
                   if (_history.isNotEmpty)
                     TextButton.icon(
                       onPressed: _confirmClearHistory,
-                      icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                      label: const Text('清空'),
+                      icon: Icon(LucideIcons.trash, size: 15, color: palette.muted),
+                      label: Text(
+                        '清空',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: palette.muted,
+                        ),
+                      ),
                     ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 12),
               if (_historyLoading)
                 const Center(
                   child: Padding(
@@ -622,10 +716,23 @@ class _SearchPageState extends State<SearchPage> {
                     for (final query in visible)
                       InputChip(
                         label: Text(query),
-                        avatar: const Icon(Icons.history, size: 17),
+                        avatar: Icon(LucideIcons.clock, size: 14, color: palette.muted),
                         onPressed: () => _search(query),
                         onDeleted: () => _removeHistory(query),
                         deleteButtonTooltipMessage: '删除 $query',
+                        deleteIcon: Icon(LucideIcons.x, size: 14, color: palette.muted),
+                        backgroundColor: palette.soft,
+                        side: BorderSide(
+                          color: palette.line,
+                          width: 0.5,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        labelStyle: TextStyle(
+                          fontSize: 12.5,
+                          color: palette.ink,
+                        ),
                       ),
                   ],
                 ),
@@ -690,7 +797,7 @@ class _SearchPageState extends State<SearchPage> {
         child: Center(
           child: TextButton.icon(
             onPressed: _loadMore,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(LucideIcons.rotate_ccw, size: 16),
             label: const Text('加载失败，点击重试'),
           ),
         ),

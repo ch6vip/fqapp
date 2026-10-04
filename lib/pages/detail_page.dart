@@ -27,6 +27,7 @@ import '../widgets/detail/detail_hero.dart';
 import '../widgets/detail/detail_id_row.dart';
 import '../widgets/detail/detail_read_bar.dart';
 import '../widgets/detail/detail_reviews.dart';
+import '../widgets/detail/detail_reviews_sheet.dart';
 import '../widgets/detail/detail_sections.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
@@ -661,6 +662,7 @@ class _DetailPageState extends State<DetailPage> {
             bookId: _contentId,
             replyLoader: _replyLoader(_contentId),
             onLoadMore: _comments.hasMore ? _loadMoreComments : null,
+            onOpenAll: _openAllReviews,
             loadingMore: _commentsLoadingMore,
           ),
         ],
@@ -805,6 +807,17 @@ class _DetailPageState extends State<DetailPage> {
       currentIndex: _resumeIndex,
     );
     if (mounted && chapter != null) _openChapter(chapter);
+  }
+
+  void _openAllReviews() {
+    showDetailReviewsSheet(
+      context,
+      bookId: _contentId,
+      title: _bookDetail?.title ?? widget.item.title,
+      initialComments: _comments,
+      replyLoader: _replyLoader(_contentId),
+      loader: _commentsLoader(),
+    );
   }
 
   /// Opens the listening page for the same work, starting where the saved

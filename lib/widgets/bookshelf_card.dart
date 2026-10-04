@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/poster_cache.dart';
 import '../models/media_item.dart';
@@ -284,7 +285,7 @@ class _FallbackCover extends StatelessWidget {
           color: background,
           child: Center(
             child: Icon(
-              Icons.auto_stories_outlined,
+              LucideIcons.book_open,
               size: narrow ? 18 : 24,
               color: scheme.onSurfaceVariant.withValues(alpha: 0.72),
             ),

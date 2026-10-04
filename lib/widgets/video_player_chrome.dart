@@ -880,6 +880,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       return;
     }
     _hideTimer?.cancel();
+    HapticFeedback.lightImpact();
     setState(() => _boosting = true);
     unawaited(_control((player) => player.setRate(2)));
   }

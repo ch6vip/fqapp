@@ -4,6 +4,7 @@
 // .agents/notes/implemented/feature/2026-09-20-official-bookshelf.md
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/media_item.dart';
@@ -464,15 +465,20 @@ class _LibraryPageState extends State<LibraryPage> {
           _IconAction(
             key: const Key('library-search-button'),
             tooltip: '搜索',
-            icon: Icons.search,
+            icon: LucideIcons.search,
             color: palette.ink,
             onTap: _openSearch,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           PopupMenuButton<_MenuAction>(
             key: const Key('library-more-button'),
             tooltip: '更多',
             color: palette.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: palette.line, width: 0.6),
+            ),
+            elevation: 4,
             onSelected: _handleMenu,
             itemBuilder: (context) => [
               for (final action in _MenuAction.values)
@@ -488,6 +494,10 @@ class _LibraryPageState extends State<LibraryPage> {
                   child: Text(
                     action.label,
                     style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: action.layout == _layout
+                          ? FontWeight.w400
+                          : FontWeight.w500,
                       color: action.layout == _layout
                           ? palette.muted
                           : action == _MenuAction.clearHistory
@@ -498,8 +508,8 @@ class _LibraryPageState extends State<LibraryPage> {
                 ),
             ],
             child: Padding(
-              padding: const EdgeInsets.only(right: 20, left: 8, bottom: 5),
-              child: Icon(Icons.more_horiz, size: 24, color: palette.ink),
+              padding: const EdgeInsets.only(right: 16, left: 6, bottom: 2),
+              child: Icon(LucideIcons.ellipsis, size: 22, color: palette.ink),
             ),
           ),
         ],
@@ -510,30 +520,46 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 书架 tab 页头（cql.xml）：左侧今日已读，右侧 筛选 / 编辑。
   Widget _shelfHeader(HomePalette palette) {
     return Padding(
-      padding: const EdgeInsets.only(top: 3, bottom: 6, left: 20, right: 12),
+      padding: const EdgeInsets.only(top: 4, bottom: 8, left: 16, right: 16),
       child: Row(
         children: [
-          Icon(Icons.schedule, size: 20, color: palette.ink),
-          const SizedBox(width: 1),
-          Text(
-            '今日已读$_todayMinutes分钟',
-            style: TextStyle(
-              fontSize: 12,
-              // 官方行高 30dp。
-              height: 30 / 12,
-              color: palette.ink,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: palette.soft,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: palette.line, width: 0.5),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(LucideIcons.clock, size: 13, color: palette.muted),
+                const SizedBox(width: 5),
+                Text(
+                  '今日已读$_todayMinutes分钟',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: palette.ink,
+                  ),
+                ),
+              ],
             ),
           ),
           const Spacer(),
           _HeaderButton(
             key: const Key('shelf-filter-button'),
             label: '筛选',
+            icon: LucideIcons.sliders_horizontal,
+            active: _filterOpen || _kindFilter != null,
             palette: palette,
             onTap: () => setState(() => _filterOpen = !_filterOpen),
           ),
+          const SizedBox(width: 8),
           _HeaderButton(
             key: const Key('shelf-edit-button'),
             label: '编辑',
+            icon: LucideIcons.list_checks,
             palette: palette,
             onTap: _enterEdit,
           ),
@@ -545,13 +571,14 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 浏览历史 tab 只有编辑入口（官方该 tab 的数据只支持整表清空）。
   Widget _historyHeader(HomePalette palette) {
     return Padding(
-      padding: const EdgeInsets.only(top: 3, bottom: 6, right: 12),
+      padding: const EdgeInsets.only(top: 4, bottom: 8, right: 16),
       child: Row(
         children: [
           const Spacer(),
           _HeaderButton(
             key: const Key('history-edit-button'),
             label: '编辑',
+            icon: LucideIcons.list_checks,
             palette: palette,
             onTap: _enterEdit,
           ),
@@ -568,7 +595,7 @@ class _LibraryPageState extends State<LibraryPage> {
       for (final kind in bookshelfFilterKinds) (bookshelfKindLabel(kind), kind),
     ];
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -578,9 +605,20 @@ class _LibraryPageState extends State<LibraryPage> {
               key: Key('shelf-filter-${kind ?? 'all'}'),
               label: Text(label),
               selected: _kindFilter == kind,
+              selectedColor: HomePalette.accent.withValues(alpha: 0.15),
+              backgroundColor: palette.soft,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(
+                  color: _kindFilter == kind ? HomePalette.accent : palette.line,
+                  width: _kindFilter == kind ? 1.0 : 0.5,
+                ),
+              ),
+              showCheckmark: false,
               labelStyle: TextStyle(
-                fontSize: 13,
-                color: _kindFilter == kind ? palette.ink : palette.muted,
+                fontSize: 12.5,
+                fontWeight: _kindFilter == kind ? FontWeight.w600 : FontWeight.w400,
+                color: _kindFilter == kind ? palette.accentText : palette.ink,
               ),
               onSelected: (_) => setState(() => _kindFilter = kind),
             ),
@@ -591,8 +629,13 @@ class _LibraryPageState extends State<LibraryPage> {
 
   /// 编辑态顶部操作栏（by1.xml）：全选 / 已选择 N 本 / 完成。
   Widget _editBar(HomePalette palette) {
-    return SizedBox(
+    return Container(
       height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: palette.canvas,
+        border: Border(bottom: BorderSide(color: palette.line, width: 0.5)),
+      ),
       child: Row(
         children: [
           TextButton(
@@ -602,14 +645,14 @@ class _LibraryPageState extends State<LibraryPage> {
               foregroundColor: palette.ink,
               padding: const EdgeInsets.symmetric(horizontal: 12),
             ),
-            child: const Text('全选', style: TextStyle(fontSize: 16)),
+            child: const Text('全选', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
           ),
           Expanded(
             child: Center(
               child: Text(
                 '已选择 ${_selected.length} 本',
                 style: TextStyle(
-                  fontSize: 19,
+                  fontSize: 17,
                   fontWeight: FontWeight.w700,
                   color: palette.ink,
                 ),
@@ -620,10 +663,10 @@ class _LibraryPageState extends State<LibraryPage> {
             key: const Key('shelf-edit-done'),
             onPressed: _exitEdit,
             style: TextButton.styleFrom(
-              foregroundColor: palette.ink,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              foregroundColor: HomePalette.accent,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
             ),
-            child: const Text('完成', style: TextStyle(fontSize: 16)),
+            child: const Text('完成', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -637,30 +680,42 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 支撑的只有「移出书架」（书架 tab）与「删除」（浏览历史 tab）。
   Widget _editBottomBar(HomePalette palette) {
     final removing = _tab == 0;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.dark ? palette.surface : const Color(0xFFFAFAFA),
-        border: Border(top: BorderSide(color: palette.line, width: 0.5)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            _BottomAction(
-              key: Key(removing ? 'shelf-remove-action' : 'history-delete-action'),
-              icon: removing
-                  ? Icons.bookmark_remove_outlined
-                  : Icons.delete_outline,
-              label: removing ? '移出书架' : '删除',
-              color: removing ? palette.ink : _deleteRed,
-              onTap: _selected.isEmpty
-                  ? null
-                  : removing
-                  ? _removeFromShelf
-                  : _deleteHistory,
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.surface,
+          border: Border(top: BorderSide(color: palette.line, width: 0.6)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: palette.dark ? 0.28 : 0.05),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
             ),
-            const Spacer(),
           ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(
+              children: [
+                _BottomAction(
+                  key: Key(removing ? 'shelf-remove-action' : 'history-delete-action'),
+                  icon: removing
+                      ? LucideIcons.bookmark_x
+                      : LucideIcons.trash,
+                  label: removing ? '移出书架' : '删除',
+                  color: removing ? palette.ink : _deleteRed,
+                  onTap: _selected.isEmpty
+                      ? null
+                      : removing
+                      ? _removeFromShelf
+                      : _deleteHistory,
+                ),
+                const Spacer(),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -688,7 +743,7 @@ class _LibraryPageState extends State<LibraryPage> {
           bookshelfGridSidePadding,
           4,
           bookshelfGridSidePadding,
-          24,
+          88,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: bookshelfGridColumns,
@@ -725,7 +780,7 @@ class _LibraryPageState extends State<LibraryPage> {
           bookshelfDoubleSidePadding,
           4,
           bookshelfDoubleSidePadding,
-          24,
+          88,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
@@ -758,7 +813,7 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget _list(List<_ShelfEntry> entries) {
     return ListView.separated(
       key: const Key('shelf-list-view'),
-      padding: const EdgeInsets.only(top: 4, bottom: 24),
+      padding: const EdgeInsets.only(top: 4, bottom: 88),
       itemCount: entries.length,
       separatorBuilder: (context, index) => Divider(
         height: 0.5,
@@ -907,22 +962,46 @@ class _EmptyShelf extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.menu_book_outlined,
-            size: 56,
-            color: palette.muted.withValues(alpha: 0.55),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: palette.soft,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              LucideIcons.book_open,
+              size: 48,
+              color: palette.muted.withValues(alpha: 0.65),
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
           Text(
             '书架暂无书籍',
-            style: TextStyle(fontSize: 16, color: palette.muted),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: palette.ink,
+            ),
           ),
-          const SizedBox(height: 14),
-          OutlinedButton(
+          const SizedBox(height: 6),
+          Text(
+            '去书城发现海量故事，随时随地畅读',
+            style: TextStyle(fontSize: 13, color: palette.muted),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
             key: const Key('shelf-browse-button'),
             onPressed: onBrowse,
-            style: OutlinedButton.styleFrom(foregroundColor: HomePalette.accent),
-            child: const Text('去书城找书'),
+            icon: const Icon(LucideIcons.compass, size: 16),
+            label: const Text('去书城找书'),
+            style: FilledButton.styleFrom(
+              backgroundColor: HomePalette.accent,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+            ),
           ),
         ],
       ),
@@ -940,7 +1019,28 @@ class _EmptyHint extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Center(
-      child: Text(text, style: TextStyle(fontSize: 15, color: palette.muted)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: palette.soft,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              LucideIcons.search_x,
+              size: 36,
+              color: palette.muted.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            text,
+            style: TextStyle(fontSize: 14, color: palette.muted),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -965,29 +1065,34 @@ class _TabButton extends StatelessWidget {
       selected: selected,
       child: InkWell(
         onTap: onTap,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: selected ? 20 : 16,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                color: selected ? palette.ink : palette.muted,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: selected ? 20 : 16,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  letterSpacing: -0.3,
+                  color: selected ? palette.ink : palette.muted,
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            // 指示条 34dp；未选中时占位保持行高一致。
-            Container(
-              width: 34,
-              height: 3,
-              decoration: BoxDecoration(
-                color: selected ? palette.ink : Colors.transparent,
-                borderRadius: BorderRadius.circular(2),
+              const SizedBox(height: 5),
+              // 指示条 34dp；未选中时占位保持行高一致。
+              Container(
+                width: 34,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: selected ? HomePalette.accent : Colors.transparent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1012,27 +1117,32 @@ class _IconAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 5),
-          child: Icon(icon, size: 24, color: color),
+      child: IconButton(
+        onPressed: onTap,
+        style: IconButton.styleFrom(
+          foregroundColor: color,
+          padding: const EdgeInsets.all(8),
+          minimumSize: const Size(38, 38),
         ),
+        icon: Icon(icon, size: 21),
       ),
     );
   }
 }
 
-/// 页头文本按钮：官方 14sp、padding 8dp。
+/// 页头文本按钮：支持图标与微药丸高质感样式。
 class _HeaderButton extends StatelessWidget {
   final String label;
+  final IconData? icon;
+  final bool active;
   final HomePalette palette;
   final VoidCallback onTap;
 
   const _HeaderButton({
     super.key,
     required this.label,
+    this.icon,
+    this.active = false,
     required this.palette,
     required this.onTap,
   });
@@ -1042,17 +1152,46 @@ class _HeaderButton extends StatelessWidget {
     return TextButton(
       onPressed: onTap,
       style: TextButton.styleFrom(
-        foregroundColor: palette.ink,
-        padding: const EdgeInsets.all(8),
+        foregroundColor: active ? HomePalette.accent : palette.ink,
+        backgroundColor: active
+            ? HomePalette.accent.withValues(alpha: 0.12)
+            : palette.soft,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: active ? HomePalette.accent : palette.line,
+            width: 0.6,
+          ),
+        ),
       ),
-      child: Text(label, style: const TextStyle(fontSize: 14)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(
+              icon,
+              size: 13,
+              color: active ? HomePalette.accent : palette.muted,
+            ),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-/// 编辑态底栏条目：28dp 图标 + 10sp 文案。
+/// 编辑态底栏条目：现代化操作胶囊按钮。
 class _BottomAction extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1069,22 +1208,25 @@ class _BottomAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final muted = color.withValues(alpha: 0.4);
+    final enabled = onTap != null;
+    final fg = enabled ? color : color.withValues(alpha: 0.35);
     return InkWell(
       onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 28, color: onTap == null ? muted : color),
-            const SizedBox(height: 2),
+            Icon(icon, size: 24, color: fg),
+            const SizedBox(height: 3),
             Text(
               label,
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
                 height: 1.2,
-                color: onTap == null ? muted : color,
+                color: fg,
               ),
             ),
           ],

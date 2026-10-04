@@ -58,19 +58,34 @@ class DetailReadBar extends StatelessWidget {
           progress: download == null ? null : _fraction(download!),
         ),
     ];
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.canvas,
-        border: Border(top: BorderSide(color: palette.line)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Center(
-          heightFactor: 1,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.surface,
+          border: Border(
+            top: BorderSide(
+              color: palette.line,
+              width: 0.6,
+            ),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(
+                alpha: palette.dark ? 0.28 : 0.04,
+              ),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Center(
+            heightFactor: 1,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 840),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -206,8 +221,9 @@ class DetailReadBar extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class _SecondaryAction extends StatelessWidget {
