@@ -235,6 +235,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    NativePlayer.setRemoteCommandHandler(
+      onAction: _handleRemoteAction,
+      onBecomingNoisy: _handleBecomingNoisy,
+    );
     _history = AudioHistory(widget.historyStore ?? LibraryStore.instance);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _appActive = lifecycle == null || lifecycle == AppLifecycleState.resumed;
@@ -407,9 +411,56 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     });
   }
 
+  void _syncForeground() {
+    if (!mounted || _index < 0 || _index >= _chapters.length) return;
+    final isPlaying =
+        (_player?.playing ?? false) && _wantPlay && !_completed && !_loading;
+    unawaited(
+      NativePlayer.startListenForeground(
+        title: _title,
+        episode: _chapters[_index].title,
+        playing: isPlaying,
+        hasPrev: _index > 0,
+        hasNext: _index < _chapters.length - 1,
+      ),
+    );
+  }
+
+  void _handleRemoteAction(String action) {
+    if (!mounted) return;
+    switch (action) {
+      case 'playPause':
+        unawaited(_togglePlayback());
+      case 'prev':
+        if (_index > 0) unawaited(_openChapter(_index - 1));
+      case 'next':
+        if (_index < _chapters.length - 1) unawaited(_openChapter(_index + 1));
+      case 'stop':
+        final player = _player;
+        if (player != null && player.isCreated) {
+          setState(() => _wantPlay = false);
+          _listenTime.stop();
+          unawaited(_pause(player, _generation));
+        }
+    }
+  }
+
+  void _handleBecomingNoisy() {
+    if (!mounted) return;
+    final player = _player;
+    if (player != null && player.isCreated && _wantPlay) {
+      setState(() => _wantPlay = false);
+      _listenTime.stop();
+      unawaited(_pause(player, _generation));
+      _syncForeground();
+    }
+  }
+
   @override
   void dispose() {
     ListeningSession.instance.clear();
+    NativePlayer.clearRemoteCommandHandler();
+    unawaited(NativePlayer.stopListenForeground());
     WidgetsBinding.instance.removeObserver(this);
     ++_generation;
     ++_seekGeneration;
@@ -430,14 +481,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appActive = state == AppLifecycleState.resumed;
     if (!_appActive) {
-      _wantPlay = false;
-      _listenTime.stop();
-      // Capture first, so a platform pause failure cannot lose the position.
+      // 切换到后台或锁屏时立即持久化当前进度，防止后续被系统杀后台导致进度丢失。
+      // 后台保持播放（由 ListenKeepAliveService 前台服务保活）。
       unawaited(_persistProgress());
-      final player = _player;
-      if (player != null && player.isCreated) {
-        unawaited(_pause(player, _generation));
-      }
     }
     _syncListenClock();
     if (mounted) setState(() {});
@@ -468,7 +514,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       _duration = Duration.zero;
       _seekPreview.value = null;
       _subtitles = SubtitleTrack.empty;
-      _wantPlay = autoplay && _appActive;
+      _wantPlay = autoplay;
     });
     _publishReadAlong();
     _publishMoreState();
@@ -550,8 +596,9 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       // Subtitles are decoration: they arrive whenever the book has generated
       // speech text and are ignored otherwise.
       unawaited(_refreshSubtitles(generation, itemId, source.toneId));
-      if (_wantPlay && _appActive) await _play(player, generation);
+      if (_wantPlay) await _play(player, generation);
       if (!_current(generation, player)) return;
+      _syncForeground();
       _saveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         if (player.playing) unawaited(_persistProgress());
       });
@@ -727,12 +774,12 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         if (playing &&
             !_hasPlayed &&
             _activeIndex == _index &&
-            _appActive &&
             _wantPlay) {
           _hasPlayed = true;
           unawaited(_persistProgress());
         }
         _syncListenClock();
+        _syncForeground();
         _publishListeningSession(playing: playing && _wantPlay);
         setState(() {});
       }),
@@ -748,7 +795,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
             _completed) {
           return;
         }
-        final shouldAdvance = _wantPlay && _appActive && _autoAdvance;
+        final shouldAdvance = _wantPlay && _autoAdvance;
         setState(() {
           _completed = true;
           _wantPlay = false;
@@ -756,6 +803,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         });
         _publishReadAlong();
         _listenTime.stop();
+        _syncForeground();
         unawaited(_persistProgress());
         if (shouldAdvance && _index + 1 < _chapters.length) {
           unawaited(_openChapter(_index + 1));
@@ -772,8 +820,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   void _syncListenClock() {
     final player = _player;
-    if (_appActive &&
-        _wantPlay &&
+    if (_wantPlay &&
         !_completed &&
         !_loading &&
         _error == null &&
@@ -853,6 +900,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   void _fail(Object error, int generation) {
     if (!_current(generation)) return;
     ListeningSession.instance.clear();
+    unawaited(NativePlayer.stopListenForeground());
     ++_generation;
     _saveTimer?.cancel();
     _listenTime.stop();
@@ -870,13 +918,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
   }
 
   Future<void> _play(NativePlayer player, int generation) async {
-    if (!_current(generation, player) || !_appActive || !_wantPlay) return;
+    if (!_current(generation, player) || !_wantPlay) return;
     await player.play();
     if (!_current(generation, player)) return;
-    // A play acknowledgement can arrive after the app was backgrounded.
-    if (!_appActive || !_wantPlay) await player.pause();
+    if (!_wantPlay) await player.pause();
     if (!_current(generation, player)) return;
     _syncListenClock();
+    _syncForeground();
     setState(() {});
   }
 
@@ -884,7 +932,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     _publishListeningSession(playing: false);
     try {
       await player.pause();
-      if (_current(generation, player)) await _persistProgress();
+      if (_current(generation, player)) {
+        await _persistProgress();
+        _syncForeground();
+      }
     } catch (error) {
       _fail(error, generation);
     }
@@ -892,12 +943,13 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   Future<void> _togglePlayback() async {
     final player = _player;
-    if (!_ready || player == null || !_appActive) return;
+    if (!_ready || player == null) return;
     final generation = _generation;
     if (_wantPlay) {
       setState(() => _wantPlay = false);
       _listenTime.stop();
       await _pause(player, generation);
+      _syncForeground();
       return;
     }
     // A replay seek must remain cancellable by backgrounding or pausing.
@@ -913,7 +965,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
         _publishReadAlong();
       }
       await _play(player, generation);
-      if (_current(generation, player)) await _persistProgress();
+      if (_current(generation, player)) {
+        await _persistProgress();
+        _syncForeground();
+      }
     } catch (error) {
       _fail(error, generation);
     }

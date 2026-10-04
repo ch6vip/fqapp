@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
@@ -63,6 +62,10 @@ class _ListenModePageState extends State<ListenModePage> {
   @override
   void initState() {
     super.initState();
+    NativePlayer.setRemoteCommandHandler(
+      onAction: _handleRemoteAction,
+      onBecomingNoisy: _handleBecomingNoisy,
+    );
     unawaited(_load(_index, autoplay: true));
     PlayerPreferences.loadPlaybackRate().then((rate) {
       if (!mounted) return;
@@ -72,9 +75,33 @@ class _ListenModePageState extends State<ListenModePage> {
     });
   }
 
+  void _handleRemoteAction(String action) {
+    if (!mounted) return;
+    switch (action) {
+      case 'playPause':
+        unawaited(_togglePlay());
+      case 'prev':
+        if (_index > 0) unawaited(_step(-1));
+      case 'next':
+        if (_index < widget.episodes.length - 1) unawaited(_step(1));
+      case 'stop':
+        unawaited(_player?.pause());
+        unawaited(_stopForeground());
+        if (mounted) setState(() {});
+    }
+  }
+
+  void _handleBecomingNoisy() {
+    if (!mounted) return;
+    unawaited(_player?.pause());
+    unawaited(_stopForeground());
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     _popped = true;
+    NativePlayer.clearRemoteCommandHandler();
     _completedSub?.cancel();
     _positionSub?.cancel();
     unawaited(_stopForeground());
@@ -146,7 +173,7 @@ class _ListenModePageState extends State<ListenModePage> {
     if (player == null) return;
     if (player.playWhenReady) {
       await player.pause();
-      await _stopForeground();
+      await _startForeground();
     } else {
       await player.play();
       await _startForeground();
@@ -160,24 +187,15 @@ class _ListenModePageState extends State<ListenModePage> {
     await _load(target, autoplay: true);
   }
 
-  Future<void> _startForeground() => _foreground('startListenForeground');
+  Future<void> _startForeground() => NativePlayer.startListenForeground(
+        title: widget.seriesTitle,
+        episode: _episodeTitle(_index),
+        playing: _player?.playWhenReady ?? true,
+        hasPrev: _index > 0,
+        hasNext: _index < widget.episodes.length - 1,
+      );
 
-  Future<void> _stopForeground() => _foreground('stopListenForeground');
-
-  /// 前台服务保活：只抬高进程优先级防 MIUI 冻结，不拥有播放器。
-  /// 通道缺失（测试/旧宿主）静默忽略。
-  Future<void> _foreground(String method) async {
-    try {
-      await const MethodChannel('fqapp/native_player').invokeMethod(method, {
-        'title': widget.seriesTitle,
-        'episode': _episodeTitle(_index),
-      });
-    } on PlatformException catch (_) {
-      // 旧宿主没有这两个方法：后台续听退化为「尽力而为」。
-    } on MissingPluginException catch (_) {
-      // 测试环境没有宿主。
-    }
-  }
+  Future<void> _stopForeground() => NativePlayer.stopListenForeground();
 
   void _seekTo(double value) {
     final player = _player;

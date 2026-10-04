@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 听视频（listen mode）前台服务的通知文案（官方听书模式语义）。 -->
-    <string name="listen_channel_name">听视频播放</string>
-    <string name="listen_notification_title">正在听视频</string>
-    <string name="listen_notification_text">音频播放中，退出页面仍会继续</string>
+    <!-- 听书与听视频（listen mode）前台服务的通知文案。 -->
+    <string name="listen_channel_name">音频后台播放</string>
+    <string name="listen_notification_title">正在听书</string>
+    <string name="listen_notification_text">音频播放中，锁屏或退出应用仍会继续</string>
+    <string name="listen_prev">上一章</string>
+    <string name="listen_play">播放</string>
+    <string name="listen_pause">暂停</string>
+    <string name="listen_next">下一章</string>
 </resources>

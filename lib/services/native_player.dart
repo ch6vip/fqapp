@@ -40,6 +40,23 @@ class NativePlayer {
   static const _methodTimeout = Duration(seconds: 10);
   static const _createTimeout = Duration(seconds: 25);
 
+  static void Function(String action)? _onRemoteAction;
+  static VoidCallback? _onBecomingNoisy;
+
+  static void setRemoteCommandHandler({
+    void Function(String action)? onAction,
+    VoidCallback? onBecomingNoisy,
+  }) {
+    _onRemoteAction = onAction;
+    _onBecomingNoisy = onBecomingNoisy;
+    _channel.setMethodCallHandler(_handleMethodCall);
+  }
+
+  static void clearRemoteCommandHandler() {
+    _onRemoteAction = null;
+    _onBecomingNoisy = null;
+  }
+
   static StreamSubscription<dynamic>? _globalEventSub;
   static final Map<int, NativePlayer> _instances = {};
   static final Map<int, List<dynamic>> _pendingEvents = {};
@@ -47,6 +64,7 @@ class NativePlayer {
   static final Map<int, Timer> _retiredExpiry = {};
 
   static void _ensureGlobalListener() {
+    _channel.setMethodCallHandler(_handleMethodCall);
     if (_globalEventSub != null) return;
     late final StreamSubscription<dynamic> subscription;
     subscription = _events.receiveBroadcastStream().listen(
@@ -73,6 +91,24 @@ class NativePlayer {
       cancelOnError: true,
     );
     _globalEventSub = subscription;
+  }
+
+  static Future<dynamic> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onNotificationAction':
+        final raw = call.arguments;
+        final action = raw is Map
+            ? raw['action'] as String?
+            : raw is String
+            ? raw
+            : null;
+        if (action != null) {
+          _onRemoteAction?.call(action);
+        }
+      case 'onAudioBecomingNoisy':
+        _onBecomingNoisy?.call();
+    }
+    return null;
   }
 
   static void _dispatchEvent(dynamic event) {
@@ -296,6 +332,34 @@ class NativePlayer {
     await _channel
         .invokeMethod<void>('setKeepScreenOn', {'on': on})
         .timeout(_methodTimeout);
+  }
+
+  static Future<void> startListenForeground({
+    required String title,
+    required String episode,
+    bool playing = true,
+    bool hasPrev = true,
+    bool hasNext = true,
+  }) async {
+    try {
+      await _channel.invokeMethod<void>('startListenForeground', {
+        'title': title,
+        'episode': episode,
+        'playing': playing,
+        'hasPrev': hasPrev,
+        'hasNext': hasNext,
+      });
+    } catch (_) {
+      // Best effort when channel/platform is unavailable or testing.
+    }
+  }
+
+  static Future<void> stopListenForeground() async {
+    try {
+      await _channel.invokeMethod<void>('stopListenForeground');
+    } catch (_) {
+      // Best effort when channel/platform is unavailable or testing.
+    }
   }
 
   Future<void> dispose() => _disposeFuture ??= _dispose();

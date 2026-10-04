@@ -1,12 +1,16 @@
 package com.fqapp.fqapp
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.WindowManager
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -36,16 +40,33 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Native ExoPlayer host for DRM (CENC) short dramas. Decrypted plaintext is
- * served to ExoPlayer through a [CryptoDataSource] backed by the C crypto
- * core; events (position/playing/firstFrame/...) are pushed to Flutter over
- * an EventChannel.
+ * Native ExoPlayer host for DRM (CENC) short dramas and audiobook audio playback.
+ * Decrypted plaintext is served to ExoPlayer through a [CryptoDataSource] backed
+ * by the C crypto core; events are pushed to Flutter over an EventChannel.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerPlugin internal constructor(
     private val cryptoStream: CryptoStream = JniCryptoStream,
     private val playerFactory: (Context) -> ExoPlayer = { ExoPlayer.Builder(it).build() }
 ) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
+
+    companion object {
+        private const val TAG = "NativePlayerPlugin"
+        @Volatile private var instance: NativePlayerPlugin? = null
+
+        fun dispatchNotificationAction(action: String) {
+            instance?.let { plugin ->
+                plugin.handler.post {
+                    if (plugin.attachedToEngine) {
+                        plugin.methodChannel.invokeMethod(
+                            "onNotificationAction",
+                            mapOf("action" to action)
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     private lateinit var methodChannel: MethodChannel
     private lateinit var eventChannel: EventChannel
@@ -60,6 +81,26 @@ class NativePlayerPlugin internal constructor(
     private val handler = Handler(Looper.getMainLooper())
 
     private var eventSink: EventChannel.EventSink? = null
+    private var noisyReceiverRegistered = false
+
+    private val becomingNoisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (AudioManager.ACTION_AUDIO_BECOMING_NOISY == intent?.action) {
+                players.values.forEach { playerInstance ->
+                    try {
+                        playerInstance.player.pause()
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "pause on becoming noisy failed", t)
+                    }
+                }
+                handler.post {
+                    if (attachedToEngine) {
+                        methodChannel.invokeMethod("onAudioBecomingNoisy", null)
+                    }
+                }
+            }
+        }
+    }
 
     private data class PlayerInstance(
         val id: Int,
@@ -70,6 +111,7 @@ class NativePlayerPlugin internal constructor(
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         attachedToEngine = true
+        instance = this
         flutterBinding = binding
         textureRegistry = binding.textureRegistry
         methodChannel = MethodChannel(binding.binaryMessenger, "fqapp/native_player")
@@ -96,19 +138,44 @@ class NativePlayerPlugin internal constructor(
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         attachedToEngine = false
+        if (instance === this) instance = null
         activity = null
+        unregisterNoisyReceiver(binding.applicationContext)
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         players.keys.toList().forEach { id ->
             try {
                 disposePlayer(id)
             } catch (error: Throwable) {
-                android.util.Log.w("NativePlayerPlugin", "dispose failed for player $id", error)
+                Log.w(TAG, "dispose failed for player $id", error)
             }
         }
         handler.removeCallbacksAndMessages(null)
         pendingPlayerIds.clear()
         eventSink = null
+    }
+
+    private fun registerNoisyReceiver(context: Context) {
+        if (!noisyReceiverRegistered) {
+            try {
+                val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+                context.registerReceiver(becomingNoisyReceiver, filter)
+                noisyReceiverRegistered = true
+            } catch (t: Throwable) {
+                Log.w(TAG, "register noisy receiver failed", t)
+            }
+        }
+    }
+
+    private fun unregisterNoisyReceiver(context: Context) {
+        if (noisyReceiverRegistered) {
+            try {
+                context.unregisterReceiver(becomingNoisyReceiver)
+            } catch (t: Throwable) {
+                Log.w(TAG, "unregister noisy receiver failed", t)
+            }
+            noisyReceiverRegistered = false
+        }
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -162,11 +229,13 @@ class NativePlayerPlugin internal constructor(
                 result.success(null)
             }
             "startListenForeground" -> {
-                // 听视频（listen mode）前台保活：服务只抬进程优先级，不碰播放器。
                 val context = activity ?: flutterBinding.applicationContext
                 val intent = Intent(context, ListenKeepAliveService::class.java).apply {
                     putExtra(ListenKeepAliveService.EXTRA_TITLE, call.argument<String>("title"))
                     putExtra(ListenKeepAliveService.EXTRA_EPISODE, call.argument<String>("episode"))
+                    putExtra(ListenKeepAliveService.EXTRA_PLAYING, call.argument<Boolean>("playing") ?: true)
+                    putExtra(ListenKeepAliveService.EXTRA_HAS_PREV, call.argument<Boolean>("hasPrev") ?: true)
+                    putExtra(ListenKeepAliveService.EXTRA_HAS_NEXT, call.argument<Boolean>("hasNext") ?: true)
                 }
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -174,16 +243,21 @@ class NativePlayerPlugin internal constructor(
                     } else {
                         context.startService(intent)
                     }
+                    registerNoisyReceiver(context)
                     result.success(null)
                 } catch (error: Throwable) {
-                    // 通知权限被禁或后台启动受限：听视频退化为尽力而为，不报错。
-                    android.util.Log.w("NativePlayerPlugin", "listen foreground start failed", error)
+                    Log.w(TAG, "listen foreground start failed", error)
                     result.success(null)
                 }
             }
             "stopListenForeground" -> {
                 val context = activity ?: flutterBinding.applicationContext
-                context.stopService(Intent(context, ListenKeepAliveService::class.java))
+                try {
+                    context.stopService(Intent(context, ListenKeepAliveService::class.java))
+                    unregisterNoisyReceiver(context)
+                } catch (error: Throwable) {
+                    Log.w(TAG, "listen foreground stop failed", error)
+                }
                 result.success(null)
             }
             else -> result.notImplemented()

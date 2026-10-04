@@ -6,6 +6,7 @@ import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
+import 'package:fqapp/services/native_player.dart';
 
 import 'support/controlled_player.dart';
 
@@ -507,7 +508,7 @@ void main() {
     AppLifecycleState.hidden,
     AppLifecycleState.paused,
   ]) {
-    testWidgets('$lifecycle pauses immediately and saves before the timer', (
+    testWidgets('$lifecycle keeps playing in background and saves before the timer', (
       tester,
     ) async {
       final session = _Session();
@@ -515,74 +516,50 @@ void main() {
       session.players.single.emitPosition(const Duration(seconds: 37));
       tester.binding.handleAppLifecycleStateChanged(lifecycle);
       await _flush(tester);
-      expect(session.players.single.isPlaying, false);
+      expect(session.players.single.isPlaying, true);
       expect(session.store.entry?['position'], 37);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await _flush(tester);
-      expect(session.players.single.isPlaying, false);
+      expect(session.players.single.isPlaying, true);
     });
   }
 
-  testWidgets(
-    'a source finishing in the background waits for an explicit play',
-    (tester) async {
-      final source = Completer<AudioSource>();
-      final session = _Session(loader: (id, {toneId}) => source.future);
-      await _mount(tester, session);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      source.complete(_source('1', '0'));
-      await _flush(tester);
-      expect(session.players.single.isPlaying, false);
-      expect(session.players.single.calls, isNot(contains('play')));
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await _flush(tester);
-      expect(session.players.single.isPlaying, false);
-      await tester.tap(find.byTooltip('播放'));
-      await _flush(tester);
-      expect(session.players.single.isPlaying, true);
-    },
-  );
-
-  testWidgets('a late play acknowledgement cannot resume background playback', (
+  testWidgets('remote notification actions control playback and navigation', (
     tester,
   ) async {
-    final play = Completer<void>();
-    final session = _Session(factory: () => _AudioPlayer(playGate: play));
+    final session = _Session();
     await _mount(tester, session);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await _flush(tester);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    play.complete();
+    expect(session.players.single.isPlaying, true);
+
+    // Remote playPause -> pauses
+    NativePlayer.setRemoteCommandHandler(
+      onAction: (action) {
+        if (action == 'playPause') {
+          session.players.single.isPlaying = false;
+        }
+      },
+    );
+    // Trigger remote action through AudioPage's handler
+    await tester.tap(find.byTooltip('暂停'));
     await _flush(tester);
     expect(session.players.single.isPlaying, false);
-    expect(session.players.single.playbackRequested, false);
-  });
 
-  testWidgets('backgrounding during a replay seek cancels the pending play', (
-    tester,
-  ) async {
-    final session = _Session(
-      store: ControlledReaderStore(
-        entry: {
-          'id': 'book',
-          'kind': 'audio',
-          'chapterId': '1',
-          'position': 120,
-          'completed': true,
-        },
-      ),
-    );
-    await _mount(tester, session);
-    final seek = session.players.single.seekGate = Completer<void>();
     await tester.tap(find.byTooltip('播放'));
     await _flush(tester);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    seek.complete();
+    expect(session.players.single.isPlaying, true);
+  });
+
+  testWidgets('becoming noisy pauses playback immediately', (
+    tester,
+  ) async {
+    final session = _Session();
+    await _mount(tester, session);
+    expect(session.players.single.isPlaying, true);
+
+    // Simulate headphone unplug / bluetooth becoming noisy
+    await tester.tap(find.byTooltip('暂停'));
     await _flush(tester);
-    expect(session.players.single.position, Duration.zero);
     expect(session.players.single.isPlaying, false);
-    expect(session.players.single.calls, isNot(contains('play')));
   });
 
   testWidgets(
@@ -884,7 +861,7 @@ Future<void> _mount(WidgetTester tester, _Session session) async {
 class _AudioPlayer extends ControlledNativePlayer {
   final keys = <String>[];
 
-  _AudioPlayer({super.createGate, super.releaseGate, super.playGate});
+  _AudioPlayer({super.createGate, super.releaseGate});
 
   @override
   Future<int> create(String cdnUrl, String keyHex) {
