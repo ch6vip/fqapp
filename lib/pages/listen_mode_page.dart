@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/audio_preferences.dart';
 import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
@@ -16,9 +17,8 @@ import '../services/player_preferences.dart';
 /// .agents/notes/implemented/feature/2026-09-29-listen-mode-and-font-scale.md）：
 /// 官方是独立 Activity + 服务端听书数据链路；本页复用现有取流缓存，自建
 /// [NativePlayer] 实例只听不看。后台续听靠 `ListenKeepAliveService` 前台
-/// 服务保活（MIUI 会冻结无前台组件的后台进程）；本页**不注册**生命周期
-/// 暂停——后台照常出声是本页的存在意义。退出时回传最终进度，宿主把它
-/// 写回视频播放页。
+/// 服务保活（MIUI 会冻结无前台组件的后台进程）；在后台听书开关开启时
+/// 后台照常出声。退出时回传最终进度，宿主把它写回视频播放页。
 class ListenModePage extends StatefulWidget {
   const ListenModePage({
     super.key,
@@ -45,7 +45,8 @@ class ListenModePage extends StatefulWidget {
   State<ListenModePage> createState() => _ListenModePageState();
 }
 
-class _ListenModePageState extends State<ListenModePage> {
+class _ListenModePageState extends State<ListenModePage>
+    with WidgetsBindingObserver {
   NativePlayer? _player;
   StreamSubscription<bool>? _completedSub;
   StreamSubscription<Duration>? _positionSub;
@@ -62,6 +63,8 @@ class _ListenModePageState extends State<ListenModePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(AudioPreferences.instance.load());
     NativePlayer.setRemoteCommandHandler(
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
@@ -99,8 +102,19 @@ class _ListenModePageState extends State<ListenModePage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed &&
+        !AudioPreferences.instance.backgroundPlayback.value) {
+      unawaited(_player?.pause());
+      unawaited(_stopForeground());
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
   void dispose() {
     _popped = true;
+    WidgetsBinding.instance.removeObserver(this);
     NativePlayer.clearRemoteCommandHandler();
     _completedSub?.cancel();
     _positionSub?.cancel();
@@ -187,13 +201,18 @@ class _ListenModePageState extends State<ListenModePage> {
     await _load(target, autoplay: true);
   }
 
-  Future<void> _startForeground() => NativePlayer.startListenForeground(
-        title: widget.seriesTitle,
-        episode: _episodeTitle(_index),
-        playing: _player?.playWhenReady ?? true,
-        hasPrev: _index > 0,
-        hasNext: _index < widget.episodes.length - 1,
-      );
+  Future<void> _startForeground() {
+    if (!AudioPreferences.instance.backgroundPlayback.value) {
+      return _stopForeground();
+    }
+    return NativePlayer.startListenForeground(
+      title: widget.seriesTitle,
+      episode: _episodeTitle(_index),
+      playing: _player?.playWhenReady ?? true,
+      hasPrev: _index > 0,
+      hasNext: _index < widget.episodes.length - 1,
+    );
+  }
 
   Future<void> _stopForeground() => NativePlayer.stopListenForeground();
 

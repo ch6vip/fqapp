@@ -10,6 +10,7 @@ import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/audio_history.dart';
+import '../services/audio_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
@@ -239,6 +240,7 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
     );
+    unawaited(AudioPreferences.instance.load());
     _history = AudioHistory(widget.historyStore ?? LibraryStore.instance);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _appActive = lifecycle == null || lifecycle == AppLifecycleState.resumed;
@@ -413,6 +415,10 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   void _syncForeground() {
     if (!mounted || _index < 0 || _index >= _chapters.length) return;
+    if (!AudioPreferences.instance.backgroundPlayback.value) {
+      unawaited(NativePlayer.stopListenForeground());
+      return;
+    }
     final isPlaying =
         (_player?.playing ?? false) && _wantPlay && !_completed && !_loading;
     unawaited(
@@ -482,8 +488,17 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
     _appActive = state == AppLifecycleState.resumed;
     if (!_appActive) {
       // 切换到后台或锁屏时立即持久化当前进度，防止后续被系统杀后台导致进度丢失。
-      // 后台保持播放（由 ListenKeepAliveService 前台服务保活）。
       unawaited(_persistProgress());
+      // 若后台听书开关关闭，切后台自动暂停播放并移除前台通知。
+      if (!AudioPreferences.instance.backgroundPlayback.value) {
+        final player = _player;
+        if (player != null && player.isCreated && _wantPlay) {
+          setState(() => _wantPlay = false);
+          _listenTime.stop();
+          unawaited(_pause(player, _generation));
+          unawaited(NativePlayer.stopListenForeground());
+        }
+      }
     }
     _syncListenClock();
     if (mounted) setState(() {});
@@ -1827,6 +1842,26 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
                         _publishMoreState();
                         unawaited(_persistProgress());
                       },
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: AudioPreferences.instance.backgroundPlayback,
+                builder: (context, bgEnabled, _) => SwitchListTile.adaptive(
+                  key: const ValueKey('audio-background-playback'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('后台听书与保活'),
+                  subtitle: const Text('切到后台或锁屏时继续播放'),
+                  value: bgEnabled,
+                  onChanged: (enabled) {
+                    unawaited(
+                      AudioPreferences.instance.setBackgroundPlayback(enabled),
+                    );
+                    if (!enabled) {
+                      unawaited(NativePlayer.stopListenForeground());
+                    } else {
+                      _syncForeground();
+                    }
+                  },
+                ),
               ),
               const SizedBox(height: 8),
             ],

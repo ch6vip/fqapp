@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
+import '../services/audio_preferences.dart';
 import '../services/backend_service.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
@@ -30,6 +31,12 @@ class SettingsPage extends StatelessWidget {
         title: '外观',
         subtitle: '深色模式',
         items: [_themeModeItem()],
+      ),
+      SettingsCategory(
+        icon: LucideIcons.headphones,
+        title: '听书',
+        subtitle: '后台播放与通知栏控制',
+        items: [_backgroundAudioItem()],
       ),
       SettingsCategory(
         icon: LucideIcons.film,
@@ -80,10 +87,11 @@ class SettingsPage extends StatelessWidget {
 
     const categoryColors = [
       Color(0xFFEF5038), // 外观
+      Color(0xFF8B5CF6), // 听书
       Color(0xFFF59E0B), // 短剧
       Color(0xFF3B82F6), // 数据
       Color(0xFF10B981), // 服务
-      Color(0xFF8B5CF6), // 关于
+      Color(0xFF6366F1), // 关于
     ];
 
     return Scaffold(
@@ -265,6 +273,25 @@ class SettingsPage extends StatelessWidget {
       }
     }
   }
+
+  // ── 听书 ──────────────────────────────────────────────────────────────
+
+  SettingsItem _backgroundAudioItem() => SettingsItem(
+    icon: LucideIcons.radio,
+    title: '后台听书与保活',
+    subtitle: '切到后台或锁屏时继续播放，并在通知栏常驻控制卡片',
+    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: AudioPreferences.instance.backgroundPlayback,
+      builder: (context, value, _) => Switch(
+        value: value,
+        onChanged: (v) => unawaited(AudioPreferences.instance.setBackgroundPlayback(v)),
+      ),
+    ),
+    onTap: (context, setState) {
+      final current = AudioPreferences.instance.backgroundPlayback.value;
+      unawaited(AudioPreferences.instance.setBackgroundPlayback(!current));
+    },
+  );
 
   // ── 短剧 ──────────────────────────────────────────────────────────────
 

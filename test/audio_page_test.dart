@@ -6,11 +6,18 @@ import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
+import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/native_player.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/controlled_player.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    AudioPreferences.instance.resetForTest();
+  });
+
   testWidgets(
     'plays a plain URL and exposes pause, seek, and 15 second controls',
     (tester) async {
@@ -521,6 +528,20 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await _flush(tester);
       expect(session.players.single.isPlaying, true);
+    });
+
+    testWidgets('$lifecycle pauses when background playback is disabled', (
+      tester,
+    ) async {
+      await AudioPreferences.instance.setBackgroundPlayback(false);
+      addTearDown(() => AudioPreferences.instance.resetForTest());
+      final session = _Session();
+      await _mount(tester, session);
+      session.players.single.emitPosition(const Duration(seconds: 37));
+      tester.binding.handleAppLifecycleStateChanged(lifecycle);
+      await _flush(tester);
+      expect(session.players.single.isPlaying, false);
+      expect(session.store.entry?['position'], 37);
     });
   }
 

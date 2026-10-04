@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/listen_mode_page.dart';
+import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/player_preferences.dart';
 
@@ -25,6 +26,7 @@ final _source = EpisodeSource('u720', 'kMain', [
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({'player_playback_rate': 1.0});
+    AudioPreferences.instance.resetForTest();
   });
 
   testWidgets('进入听书页：用当前画质档取流建播放器并自动开播', (tester) async {
