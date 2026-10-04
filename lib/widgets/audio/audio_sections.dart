@@ -13,13 +13,11 @@ import '../home/home_design.dart';
 class AudioTopBar extends StatelessWidget {
   final VoidCallback onCollapse;
   final VoidCallback onMore;
-  final VoidCallback? onInspire;
 
   const AudioTopBar({
     super.key,
     required this.onCollapse,
     required this.onMore,
-    this.onInspire,
   });
 
   @override
@@ -54,38 +52,14 @@ class AudioTopBar extends StatelessWidget {
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (onInspire != null)
-                  HomePressable(
-                    key: const Key('audio_inspire'),
-                    semanticLabel: '听书激励',
-                    onTap: onInspire!,
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      alignment: Alignment.center,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFF0862B),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        LucideIcons.sparkles,
-                        size: 15,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                const SizedBox(width: 4),
-                IconButton(
-                  tooltip: '更多',
-                  onPressed: onMore,
-                  style: IconButton.styleFrom(foregroundColor: palette.ink),
-                  icon: const Icon(LucideIcons.ellipsis_vertical, size: 20),
-                ),
-              ],
+            child: Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: IconButton(
+                tooltip: '更多',
+                onPressed: onMore,
+                style: IconButton.styleFrom(foregroundColor: palette.ink),
+                icon: const Icon(LucideIcons.ellipsis_vertical, size: 20),
+              ),
             ),
           ),
         ],

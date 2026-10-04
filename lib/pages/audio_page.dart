@@ -1203,7 +1203,6 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
             AudioTopBar(
               onCollapse: () => Navigator.maybePop(context),
               onMore: _showMore,
-              onInspire: _showMore,
             ),
             Expanded(
               child: SingleChildScrollView(
