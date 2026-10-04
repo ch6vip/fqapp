@@ -1798,76 +1798,301 @@ class _AudioPageState extends State<AudioPage> with WidgetsBindingObserver {
 
   Future<void> _showMore() async {
     _publishMoreState();
+    final palette = HomePalette.of(context);
     await showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
-      builder: (context) => ValueListenableBuilder<_MoreSnapshot>(
-        valueListenable: _moreState,
-        builder: (context, snapshot, _) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(LucideIcons.alarm_clock),
-                title: const Text('定时关闭'),
-                subtitle: Text(
-                  snapshot.sleepMinutes == null
-                      ? '未开启'
-                      : '剩余 ${snapshot.sleepMinutes} 分钟',
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  unawaited(_showSleepTimer());
-                },
-              ),
-              ListTile(
-                leading: const Icon(LucideIcons.list),
-                title: const Text('目录'),
-                subtitle: Text('共 ${_chapters.length} 章'),
-                onTap: () {
-                  Navigator.pop(context);
-                  unawaited(_showCatalog());
-                },
-              ),
-              SwitchListTile.adaptive(
-                key: const ValueKey('audio-auto-next'),
-                contentPadding: EdgeInsets.zero,
-                title: const Text('自动下一章'),
-                value: snapshot.autoAdvance,
-                onChanged: snapshot.loading
-                    ? null
-                    : (enabled) {
-                        if (!mounted || _loading) return;
-                        setState(() => _autoAdvance = enabled);
-                        _publishMoreState();
-                        unawaited(_persistProgress());
-                      },
-              ),
-              ValueListenableBuilder<bool>(
-                valueListenable: AudioPreferences.instance.backgroundPlayback,
-                builder: (context, bgEnabled, _) => SwitchListTile.adaptive(
-                  key: const ValueKey('audio-background-playback'),
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('后台听书与保活'),
-                  subtitle: const Text('切到后台或锁屏时继续播放'),
-                  value: bgEnabled,
-                  onChanged: (enabled) {
-                    unawaited(
-                      AudioPreferences.instance.setBackgroundPlayback(enabled),
-                    );
-                    if (!enabled) {
-                      unawaited(NativePlayer.stopListenForeground());
-                    } else {
-                      _syncForeground();
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
+      backgroundColor: palette.canvas,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
+      showDragHandle: false,
+      builder: (context) {
+        final palette = HomePalette.of(context);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: palette.line,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Text(
+                      '播放设置',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: palette.ink,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: '关闭',
+                      icon: Icon(LucideIcons.x, size: 20, color: palette.muted),
+                      onPressed: () => Navigator.pop(context),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Material(
+                  color: palette.surface,
+                  borderRadius: BorderRadius.circular(18),
+                  clipBehavior: Clip.antiAlias,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: palette.line.withValues(alpha: 0.6),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: ValueListenableBuilder<_MoreSnapshot>(
+                      valueListenable: _moreState,
+                      builder: (context, snapshot, _) => Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 2,
+                            ),
+                            leading: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF3B82F6).withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                LucideIcons.alarm_clock,
+                                size: 20,
+                                color: Color(0xFF3B82F6),
+                              ),
+                            ),
+                            title: Text(
+                              '定时关闭',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                                color: palette.ink,
+                              ),
+                            ),
+                            subtitle: Text(
+                              snapshot.sleepMinutes == null
+                                  ? '未开启'
+                                  : '剩余 ${snapshot.sleepMinutes} 分钟',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: snapshot.sleepMinutes == null
+                                    ? palette.muted
+                                    : const Color(0xFF3B82F6),
+                              ),
+                            ),
+                            trailing: Icon(
+                              LucideIcons.chevron_right,
+                              size: 18,
+                              color: palette.muted,
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              unawaited(_showSleepTimer());
+                            },
+                          ),
+                          Divider(
+                            height: 1,
+                            indent: 68,
+                            color: palette.line.withValues(alpha: 0.5),
+                          ),
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 2,
+                            ),
+                            leading: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF10B981).withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                LucideIcons.list,
+                                size: 20,
+                                color: Color(0xFF10B981),
+                              ),
+                            ),
+                            title: Text(
+                              '书籍目录',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                                color: palette.ink,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '共 ${_chapters.length} 章',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: palette.muted,
+                              ),
+                            ),
+                            trailing: Icon(
+                              LucideIcons.chevron_right,
+                              size: 18,
+                              color: palette.muted,
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              unawaited(_showCatalog());
+                            },
+                          ),
+                          Divider(
+                            height: 1,
+                            indent: 68,
+                            color: palette.line.withValues(alpha: 0.5),
+                          ),
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 2,
+                            ),
+                            leading: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                LucideIcons.skip_forward,
+                                size: 20,
+                                color: Color(0xFFF59E0B),
+                              ),
+                            ),
+                            title: Text(
+                              '自动下一章',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                                color: palette.ink,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '当前章节播完后自动连播',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: palette.muted,
+                              ),
+                            ),
+                            trailing: Switch(
+                              key: const ValueKey('audio-auto-next'),
+                              value: snapshot.autoAdvance,
+                              onChanged: snapshot.loading
+                                  ? null
+                                  : (enabled) {
+                                      if (!mounted || _loading) return;
+                                      setState(() => _autoAdvance = enabled);
+                                      _publishMoreState();
+                                      unawaited(_persistProgress());
+                                    },
+                            ),
+                            onTap: snapshot.loading
+                                ? null
+                                : () {
+                                    if (!mounted || _loading) return;
+                                    setState(() => _autoAdvance = !snapshot.autoAdvance);
+                                    _publishMoreState();
+                                    unawaited(_persistProgress());
+                                  },
+                          ),
+                          Divider(
+                            height: 1,
+                            indent: 68,
+                            color: palette.line.withValues(alpha: 0.5),
+                          ),
+                          ValueListenableBuilder<bool>(
+                            valueListenable: AudioPreferences.instance.backgroundPlayback,
+                            builder: (context, bgEnabled, _) => ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 2,
+                              ),
+                              leading: Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF8B5CF6).withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  LucideIcons.headphones,
+                                  size: 20,
+                                  color: Color(0xFF8B5CF6),
+                                ),
+                              ),
+                              title: Text(
+                                '后台听书与保活',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                  color: palette.ink,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '切到后台或锁屏时继续播放并常驻控制卡片',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: palette.muted,
+                                ),
+                              ),
+                              trailing: Switch(
+                                key: const ValueKey('audio-background-playback'),
+                                value: bgEnabled,
+                                onChanged: (enabled) {
+                                  unawaited(
+                                    AudioPreferences.instance.setBackgroundPlayback(enabled),
+                                  );
+                                  if (!enabled) {
+                                    unawaited(NativePlayer.stopListenForeground());
+                                  } else {
+                                    _syncForeground();
+                                  }
+                                },
+                              ),
+                              onTap: () {
+                                final next = !bgEnabled;
+                                unawaited(
+                                  AudioPreferences.instance.setBackgroundPlayback(next),
+                                );
+                                if (!next) {
+                                  unawaited(NativePlayer.stopListenForeground());
+                                } else {
+                                  _syncForeground();
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
