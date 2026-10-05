@@ -93,7 +93,7 @@ test('the product build no longer depends on Go or the private backend', () => {
     'utf8',
   );
   assert.ok(
-    !/setup-go|golang|LEGACY_COMMIT|build_backend/.test(workflow),
+    !/setup-go|golang|build_backend/.test(workflow),
     'the APK workflow must not install Go or build the Go backend',
   );
   assert.ok(

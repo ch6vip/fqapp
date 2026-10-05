@@ -1,4 +1,4 @@
-// fqapi_core - the Rust native core that replaces the Go `` backend.
+// fqapi_core - the Rust native core for the fqapp Android client.
 //
 // NOTE: flutter_rust_bridge must be able to find its generated module
 // declaration in this file; it is declared explicitly below so code generation
