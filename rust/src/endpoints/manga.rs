@@ -1,4 +1,4 @@
-//! The manga endpoint. Port of /internal/endpoints/manga.go.
+//! The manga endpoint.
 //!
 //! Fetches a manga chapter through the same full/batch API as the content
 //! endpoint, and when the decrypted body carries picInfos + encrypt_key,
@@ -3043,8 +3043,8 @@ mod manga_image_fixture {
     //! Offline contract for image decryption, format detection and file naming.
     //!
     //! The expected values come from `rust/testdata/manga_image_fixture.json`,
-    //! produced by `cmd/mangafix` in the pinned reference implementation (AES-256-GCM in the
-    //! upstream wire layout plus a Go round-trip and a tamper check).
+    //! produced by the offline fixture generator (AES-256-GCM in the
+    //! upstream wire layout plus a round-trip and a tamper check).
 
     use super::*;
     use base64::Engine as _;

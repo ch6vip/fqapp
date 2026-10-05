@@ -1,5 +1,4 @@
 //! Pure crypto helpers for device registration.
-//! Port of `/internal/device/crypto.go`.
 
 use base64::Engine as _;
 use rand::Rng;

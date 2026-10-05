@@ -1,4 +1,4 @@
-//! `content` endpoint. Port of `/internal/endpoints/content.go`.
+//! `content` endpoint.
 
 use futures::future::BoxFuture;
 use serde_json::{Map, Value};

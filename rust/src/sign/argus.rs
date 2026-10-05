@@ -1,5 +1,4 @@
 //! x-argus: ordered protobuf bean -> PKCS7 -> Simon -> framing -> AES-CBC.
-//! Port of `/internal/sign/argus.go`.
 
 use std::sync::OnceLock;
 

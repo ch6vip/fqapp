@@ -7,10 +7,10 @@ use common::{pool_json, MockReply, MockUpstream, TempDir};
 use fqapi_core::device::DevicePool;
 
 /// From rust/testdata/device_vectors.json: a registerkey response payload that
-/// the pinned reference implementation decrypts to `SECRETKEY_16byte`.
-const GO_REGISTERKEY_INPUT_B64: &str =
+/// decrypts to `SECRETKEY_16byte` under the reference implementation.
+const REGISTERKEY_INPUT_B64: &str =
     "ABEiM0RVZneImaq7zN3u//NnA1PPLklvy0VWJ2Qnd45A/zarUCjsToTdr+Zm34ab";
-const GO_REGISTERKEY_HEX: &str = "5345435245544B45595F313662797465";
+const REGISTERKEY_HEX: &str = "5345435245544B45595F313662797465";
 
 #[tokio::test]
 async fn loads_the_go_compatible_pool_json() {
@@ -94,7 +94,7 @@ async fn refill_registers_a_device_and_decrypts_its_secret_key() {
             "install_id_str": "7276663560427471000",
         })),
         "/reading/crypt/registerkey" => MockReply::json(serde_json::json!({
-            "data": { "key": GO_REGISTERKEY_INPUT_B64 },
+            "data": { "key": REGISTERKEY_INPUT_B64 },
         })),
         _ => MockReply::status(200),
     })
@@ -105,8 +105,8 @@ async fn refill_registers_a_device_and_decrypts_its_secret_key() {
         .await
         .expect("pool");
 
-    // The registration flow intentionally waits 2s after app_alert_check, as in
-    // the reference implementation; this is the one test that pays that cost.
+    // The registration flow intentionally waits 2s after app_alert_check;
+    // this is the one test that pays that cost.
     pool.refill(1).await.expect("refill");
     assert_eq!(pool.count().await, 1);
 
@@ -115,8 +115,8 @@ async fn refill_registers_a_device_and_decrypts_its_secret_key() {
         .await
         .expect("new device");
     assert_eq!(
-        device.secret_key, GO_REGISTERKEY_HEX,
-        "the registerkey response must decrypt to the Go-vector secret key"
+        device.secret_key, REGISTERKEY_HEX,
+        "the registerkey response must decrypt to the reference secret key"
     );
     assert_eq!(device.install_id, "7276663560427471000");
     assert_eq!(device.status, "active");

@@ -1,5 +1,4 @@
 //! Simon block cipher (128-bit key, 64-bit block, 72 rounds) used by x-argus.
-//! Port of `/internal/sign/simon.go`.
 
 const SIMON_Z: u64 = 0x3DC9_4C3A_046D_678B;
 

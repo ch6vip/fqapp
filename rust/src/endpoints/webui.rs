@@ -1,5 +1,4 @@
 //! The `/api/*` Web bridge shared by the built-in Web UI.
-//! Port of `/internal/endpoints/webui.go`.
 
 use serde_json::{json, Map, Value};
 

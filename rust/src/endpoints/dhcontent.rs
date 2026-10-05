@@ -1,6 +1,5 @@
 //! DH-encrypted novel reader content, shared by the `content` (api_type=novel)
-//! and `toutiao` endpoints. Port of the `fetchNovelReaderContent` helpers in
-//! `/internal/endpoints/base.go`.
+//! and `toutiao` endpoints.
 
 use serde_json::Value;
 

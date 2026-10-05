@@ -1,5 +1,4 @@
-//! Toutiao/Full DH key-exchange decryption. Port of
-//! `/internal/upstream/dh.go`.
+//! Toutiao/Full DH key-exchange decryption.
 
 use base64::Engine as _;
 use num_bigint::{BigUint, RandBigInt};

@@ -1,5 +1,4 @@
 //! Signed upstream requests with device-pool rotation.
-//! Port of `/internal/upstream/client.go`.
 
 use std::sync::Arc;
 use std::time::Duration;

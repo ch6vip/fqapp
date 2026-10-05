@@ -8,7 +8,7 @@ import '../models/media_item.dart';
 /// The official client keeps likes on the account: `SeriesDiggView` posts to the
 /// digg endpoint and answers with 「点赞成功，可在「我的-我的点赞」查看」
 /// (`@string/bzl`) or 「已赞，可在[我的-赞过的短剧]中查看」 (`@string/bzk`).
-///  has no per-series digg endpoint and this app has no login, so the like
+/// The backend has no per-series digg endpoint and this app has no login, so the like
 /// is a Hive box next to the shelf — the same degradation 追剧 already made.
 /// Only the *state* (liked / not liked) is stored; there is no count to show,
 /// because the backend exposes none (`SeriesDetail` carries `series_play_cnt`

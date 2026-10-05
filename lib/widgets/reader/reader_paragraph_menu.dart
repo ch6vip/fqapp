@@ -21,7 +21,7 @@ enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
 /// The official paragraph bar offers 从本句听 / 写段评 / 一键生图 / 分享, and its
 /// selection toolbar (a sibling surface, `com/dragon/read/ui/paragraph/i.java`)
 /// offers 复制 / 划线 / 查询 / 写笔记 / 错字反馈. The account- and capability-gated
-/// items need endpoints  does not have, so this bar shows only the
+/// items need endpoints the backend does not have, so this bar shows only the
 /// actions it can actually perform: a whole-paragraph selection (long press)
 /// gets 从本段听 / 复制 / 划线, a dragged character range gets 复制 / 划线 — with
 /// the official geometry, colours and label placement throughout.

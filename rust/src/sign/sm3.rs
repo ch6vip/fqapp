@@ -1,4 +1,4 @@
-//! SM3, port of `/internal/sign/sm3.go`.
+//! SM3 hash.
 
 const SM3_IV: [u32; 8] = [
     0x7380_166f,

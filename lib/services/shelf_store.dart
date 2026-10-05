@@ -15,7 +15,7 @@ class ShelfRecord {
 ///
 /// The official client keeps this on the account: the shelf's 书架 tab lists
 /// the favourites that sync across devices, and short dramas reach it through
-/// 追剧.  has no favourites endpoint and this app has no login, so the
+/// 追剧. The backend has no favourites endpoint and this app has no login, so the
 /// shelf is a Hive box next to the reading history instead. Records carry the
 /// same fields the history does, so one set of cards renders both.
 ///

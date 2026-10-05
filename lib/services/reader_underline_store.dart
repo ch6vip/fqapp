@@ -171,7 +171,7 @@ class ReaderRangeUnderline {
 }
 
 /// Local 划线 storage.
-/// The official client keeps these server-side per account;  has no such
+/// The official client keeps these server-side per account; the backend has no such
 /// endpoint, so this stays on the device. Identity is (book, chapter,
 /// paragraph), and a paragraph's id wins over its ordinal because titles and
 /// pictures can shift the ordinal between parses.

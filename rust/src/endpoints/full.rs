@@ -1,5 +1,4 @@
 //! `full` endpoint: CM DH handshake + per-item AES-256 decrypt.
-//! Port of `/internal/endpoints/full.go`.
 
 use futures::future::BoxFuture;
 use serde_json::{json, Map, Value};

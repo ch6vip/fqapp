@@ -42,7 +42,7 @@ typedef struct {
 typedef struct sp_stream sp_stream;
 
 /* Streams are serialized by the caller, except cancel, which is thread safe.
- * The key is the 16-byte CENC AES key already resolved by . */
+ * The key is the 16-byte CENC AES key already resolved by the Rust core. */
 sp_stream *sp_stream_open(const sp_io *io, const uint8_t key[16], sp_error *error);
 ptrdiff_t sp_stream_read(sp_stream *stream, uint8_t *buffer, size_t length, sp_error *error);
 int64_t sp_stream_seek(sp_stream *stream, int64_t position, sp_error *error);

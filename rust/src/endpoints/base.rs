@@ -1,5 +1,4 @@
 //! Upstream request construction shared by all endpoints.
-//! Port of `/internal/endpoints/base.go`.
 
 use std::sync::Arc;
 

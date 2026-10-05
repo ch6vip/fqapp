@@ -1,5 +1,4 @@
 //! `toutiao` endpoint: DH-encrypted toutiao chapter content.
-//! Port of `/internal/endpoints/toutiao.go`.
 
 use futures::future::BoxFuture;
 use serde_json::Value;

@@ -1,8 +1,6 @@
 //! `homepage_recommend` and `series_feed` endpoints.
-//! Port of `/internal/endpoints/homepage_recommend.go` and
-//! `series_feed.go`. The private `reading724Params` builder below is copied
-//! from `content_util.go` (it is not exposed by the Rust `content_util`
-//! module).
+//! The private `reading724Params` builder below duplicates logic that the
+//! Rust `content_util` module does not expose.
 
 use futures::future::BoxFuture;
 use serde_json::Value;

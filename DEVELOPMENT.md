@@ -87,9 +87,8 @@ fqapp/
 > `libshortplay_crypto.so` 由本仓库 `native/` 中的 C 源码在 Android 构建时自动生成。
 > Android 构建前需先运行 Rust 构建脚本生成 ARM64 核心库。
 >
-> 体积参考：Rust ARM64 `libfqapi_core.so` 为 6,125,392 字节（约 5.84 MiB），此前记录的 旧方案
-> 库为 15.32 MiB（隔离编译实验中移除 goja 的实验版为 7.589 MiB）。这是本地 release 构建产物的
-> 实测大小，不是安装包体积，也不是性能结论；两者功能范围不同，不能直接当作收益证明。
+> 体积参考：Rust ARM64 `libfqapi_core.so` 为 6,125,392 字节（约 5.84 MiB）。这是本地 release
+> 构建产物的实测大小，不是安装包体积，也不是性能结论。
 
 ---
 
@@ -133,9 +132,8 @@ Linux / macOS：
 `-Profile debug` 选择 debug 配置。NDK 可由 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`
 指定，或放在 Android SDK 的 `ndk/` 下；脚本优先使用 `ndk/28.2.13676358`。
 
-历史对照资料与两个补丁保存在独立的**离线 oracle**（私有检出，不入库）；对照源码位于
-独立的私有检出中，用于重新生成 `rust/testdata/` 的黄金向量。正常构建与 CI
-都不再检出或编译 对照源码，也不再需要 外部工具链。
+`rust/testdata/` 的黄金向量由维护者的离线对照环境生成后随仓库分发；
+正常构建与 CI 不依赖任何私有检出，也不需要额外的外部工具链。
 
 > ⚠️ `assets/config/` 只包含 `config.json`、`filter.json`、`device_pool.example.json`
 > 三个确定的配置文件。真实设备池 `device_pool.json` 里带 `secret_key`，**不随仓库或 APK 分发**；
@@ -182,8 +180,7 @@ Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVE
 每次构建运行 Rust、Web 与诊断脚本测试、Flutter 静态分析与完整单元/组件测试，
 并验证 Android JVM 测试和最终 APK。
 
-产品构建不再安装 Go，也不再检出私有 `` 仓库；历史提交信息与两个
-补丁只作为**离线 oracle**（私有检出，不入库），用于离线重放并重新生成 `rust/testdata/` 的黄金向量，
+产品构建不依赖任何私有检出或额外工具链；`rust/testdata/` 的黄金向量随仓库分发，
 不进入产品构建。
 本仓库已配置以下 Actions secrets，复制工作流到其它仓库时需要配置对应内容：
 
@@ -196,8 +193,6 @@ Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVE
 
 （`ANDROID_DEBUG_KEYSTORE_BASE64` 已不再被工作流使用：release 不再用调试密钥签名，
 JVM 单测也不需要签名。可以保留，也可以删除。）
-
-（`LEGACY_READONLY_SSH_KEY` 已随私有 `` 检出一并退休，产品构建不再需要它。）
 
 云端 APK 使用**正式 release 签名**，并开启 R8 混淆与资源裁剪。CI 先把 keystore 还原到
 临时目录并核对证书指纹，再在 APK 生成后由 `scripts/verify_android_apk.py` 比对
@@ -288,14 +283,13 @@ await rust.init(
 | 执行方式 | 结果 |
 |---|---|
 | Flutter `Process.start`（untrusted_app 域） | ❌ `Permission denied` |
-| `adb shell run-as <pkg> ./`（shell 域） | ✅ 可执行 |
+| `adb shell run-as <pkg> ./<binary>`（shell 域） | ✅ 可执行 |
 
 **Android 的 `untrusted_app` SELinux 域禁止执行 `app_data_file` 下的二进制**，
-这条实测结论今天仍然成立，也是本项目始终不发布独立后端可执行文件的原因。
-它曾解释 旧后端当年为何改用 `-buildmode=c-shared` 生成 `liblegacy.so` 并由 Kotlin/JNI 加载
-（`Process.start` 会 `Permission denied`，JNI 失败则显示启动错误与重试入口）。
-Rust 核心延续「共享库 + 进程内加载」的形态，但不再需要 Kotlin 桥：`libfqapi_core.so`
-随 APK 打包，Flutter 通过 flutter_rust_bridge 的 FFI 调用，不再有 `BackendNative.kt`。
+这条实测结论今天仍然成立，也是本项目始终不发布独立后端可执行文件的原因
+（`Process.start` 会 `Permission denied`）。
+因此核心始终采用「共享库 + 进程内加载」的形态：`libfqapi_core.so`
+随 APK 打包，Flutter 通过 flutter_rust_bridge 的 FFI 调用。
 
 安装 NDK（例如 `sdkmanager "ndk;28.2.13676358"`）后运行 Rust 构建脚本：
 
@@ -344,7 +338,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 **响应信封**：客户端接受 `code=200`（Web 桥接）或 `code=0`（上游兼容接口）的成功响应；
 其他显式状态码或 `success=false` 视为错误。
 
-**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持由 Rust 核心 `rust/src/endpoints/base.rs` 的解密实现提供，改动后运行 `scripts/build_rust_backend.ps1` 重建 `libfqapi_core.so`；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。核心没有解密成功标记时，客户端回退文字。该行为源自已并入 `` 历史的修复，现由 reference implementation 的离线黄金向量保证一致。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。
+**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持由 Rust 核心 `rust/src/endpoints/base.rs` 的解密实现提供，改动后运行 `scripts/build_rust_backend.ps1` 重建 `libfqapi_core.so`；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。核心没有解密成功标记时，客户端回退文字。该行为由 `rust/testdata/` 的离线黄金向量夹具保证一致。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。
 
 **搜索分类与分页**：搜索页使用 `/api/v1/search` 请求所选分类，在拆分漫剧之前先选取对应的上游 tab，
 再按条目实际 `kind` 筛选。综合保留全部作品；短剧、漫剧、漫画、听书分别只展示 `video`、`manju`、`manga`、`audio`。
@@ -361,7 +355,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 
 ### `MediaItem`（归一化条目）
 
-`MediaItem.fromRaw()` 兼容番茄 API 的各种字段形状（参考 早期前端 `norm()`）：
+`MediaItem.fromRaw()` 兼容番茄 API 的各种字段形状：
 
 | 字段 | 来源优先级 |
 |---|---|
@@ -535,7 +529,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 
 ### 1. 原生库与真机验证
 
-- Rust 核心随 APK 打包并在进程内加载。先运行 `scripts/build_rust_backend.ps1`（或 `bash scripts/build_rust_backend.sh`）生成 `libfqapi_core.so`；历史对照资料与补丁只作离线 oracle（私有检出，不入库），不参与构建。
+- Rust 核心随 APK 打包并在进程内加载。先运行 `scripts/build_rust_backend.ps1`（或 `bash scripts/build_rust_backend.sh`）生成 `libfqapi_core.so`；黄金向量夹具随 `rust/testdata/` 分发，不参与构建。
 - 加密播放使用 `native/` 中的 C 源码，Gradle/CMake 自动生成 `libshortplay_crypto.so`。
 - 生成 Rust 核心后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。Android 的纯 JVM 测试不会加载这两份库。
 

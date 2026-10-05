@@ -3,8 +3,8 @@
 //! written under the runtime src dir -> served URL/HTML -> real loopback fetch.
 //!
 //! The chapter body and the encrypted images are produced here with the same
-//! primitives the pinned reference implementation uses (`upstream.Encrypt` shape:
-//! base64(iv[16] ‖ AES-128-CBC(pkcs7(json))); image: iv[12] ‖ ct ‖ tag[16]).
+//! upstream wire shapes
+//! (base64(iv[16] ‖ AES-128-CBC(pkcs7(json))); image: iv[12] ‖ ct ‖ tag[16]).
 //! Nothing touches the network, a device or the real device pool.
 
 mod common;

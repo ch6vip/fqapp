@@ -1,8 +1,7 @@
-//! Route-table contract, ported from the reference implementation
-//! `internal/endpoints/router_test.go`.
+//! Route-table contract.
 //!
-//! The expected endpoint names and injected params are copied from the Go test
-//! table, so this is an independent fixture rather than a Rust restatement.
+//! The expected endpoint names and injected params come from an independent
+//! fixture rather than a restatement of this crate's router implementation.
 
 use fqapi_core::endpoints::router::match_rest_path;
 use fqapi_core::endpoints::Params;

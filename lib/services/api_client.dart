@@ -41,7 +41,7 @@ class HomepagePage {
   });
 }
 
-/// API client talking to the local  backend.
+/// API client talking to the local Rust core.
 ///
 /// Uses the same `/api/*` bridge the web UI uses, so responses are already
 /// normalized for the frontend (search tabs, chapterListWithVolume, etc.).

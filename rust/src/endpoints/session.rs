@@ -1,5 +1,4 @@
 //! Recommendation session -> device pinning.
-//! Port of `/internal/endpoints/device_session.go`.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

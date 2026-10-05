@@ -1,8 +1,5 @@
 //! Audio endpoints: book detail, chapter playinfo, audio play, and the
 //! speech-text timeline.
-//!
-//! Port of /internal/endpoints/audio_book_detail.go,
-//! audio_chapter_info.go, audio_play.go and audio_timeline.go.
 
 use futures::future::BoxFuture;
 use serde_json::{json, Map, Value};
@@ -392,8 +389,7 @@ pub fn register(s: &mut Server) {
 
 #[cfg(test)]
 mod key_vectors {
-    //! key_hex vectors copied from the reference implementation tests
-    //! (internal/endpoints/audio_play_key_test.go, playinfo_key_test.go).
+    //! key_hex golden vectors from the reference test suite.
 
     use super::*;
     use serde_json::json;

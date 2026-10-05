@@ -112,7 +112,7 @@ class ChapterParagraph extends ChapterBlock {
   /// carries the text, so 从本段听 needs no extra request. Null for the many
   /// books without audio.
   ///
-  /// Note: 段落时间轴就在正文标记里，官方与  都没有独立接口 — 见
+  /// Note: 段落时间轴就在正文标记里，官方与本地核心都没有独立接口 — 见
   /// .agents/notes/implemented/feature/2026-09-19-listen-from-paragraph.md
   final int? startMs;
 

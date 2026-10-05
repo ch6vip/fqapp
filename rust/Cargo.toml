@@ -3,7 +3,7 @@ name = "fqapi_core"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Rust native core for fqapp (replaces the Go  backend)"
+description = "Rust native core for fqapp"
 
 [lib]
 name = "fqapi_core"

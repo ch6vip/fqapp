@@ -1,5 +1,4 @@
 //! a_bogus signature used by the fanqienovel.com web API.
-//! Port of `/internal/sign/abogus.go`.
 
 use rand::Rng;
 

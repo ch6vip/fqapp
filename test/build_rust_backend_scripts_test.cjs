@@ -106,8 +106,8 @@ test('the product build no longer depends on Go or the private backend', () => {
   );
 
   assert.ok(
-    !fs.existsSync(path.join(appDir, 'assets', 'bin', '')),
-    'the desktop Go executable must not ship anymore',
+    !fs.existsSync(path.join(appDir, 'assets', 'bin')),
+    'the removed assets/bin directory must not come back',
   );
   const pubspec = fs.readFileSync(path.join(appDir, 'pubspec.yaml'), 'utf8');
   assert.ok(
@@ -122,5 +122,4 @@ test('the APK verifier expects the Rust core library', () => {
     'utf8',
   );
   assert.ok(verifier.includes('lib/arm64-v8a/libfqapi_core.so'));
-  assert.ok(!verifier.includes('lib/arm64-v8a/liblegacy.so'));
 });

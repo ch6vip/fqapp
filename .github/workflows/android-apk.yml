@@ -42,8 +42,8 @@ env:
   RUST_TARGET: 'aarch64-linux-android'
   # Certificate the release APK must carry. The built APK is compared against
   # this, so a package signed with the wrong key -- or not signed at all --
-  # fails here instead of being published. The matching keystore is a
-  # repository secret; see docs/release-signing.md.
+  # fails here instead of being published. The matching keystore is stored
+  # as a repository secret.
   RELEASE_SIGNER_SHA256: 'e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550'
   FQAPP_USE_MAVEN_MIRRORS: 'false'
   GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m" -Dorg.gradle.workers.max=2 -Dorg.gradle.daemon=false'
@@ -66,10 +66,9 @@ jobs:
           path: app
           persist-credentials: false
 
-      # The Go backend was replaced by the Rust core in rust/. There is no
-      # private backend checkout and no Go installation in the product build.
-      # docs/migration/legacy-oracle/ retains the offline golden-vector provenance
-      # and patches; it is never an input to this workflow.
+      # The product build has no private backend checkout and no extra
+      # toolchain. The golden vectors in rust/testdata/ are checked in and
+      # are never an input to this workflow.
 
       - name: Install the pinned Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -191,7 +190,6 @@ jobs:
             exit 1
           fi
 
-      # Note: docs/release-signing.md
       - name: Restore the release signing identity
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}

@@ -1,5 +1,4 @@
 //! CM handshake (3072-bit MODP, RFC 3526 group 15) used by the full API.
-//! Port of `/internal/upstream/cm.go`.
 
 use base64::Engine as _;
 use num_bigint::BigUint;

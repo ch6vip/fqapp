@@ -1,7 +1,5 @@
 //! Video endpoints: the multi-quality video resolver plus the short-drama
 //! series detail and episode-list endpoints.
-//!
-//! Port of /internal/endpoints/video.go, video_detail.go and pseries.go.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -1621,10 +1619,8 @@ pub fn register(s: &mut Server) {
 
 #[cfg(test)]
 mod spade_vectors {
-    //! Key and URL vectors copied from the reference implementation tests
-    //! (internal/endpoints/video_test.go, video_stream_test.go,
-    //! audio_play_key_test.go). They are expectations produced by the reference
-    //! implementation, not by this crate.
+    //! Key and URL golden vectors. They are expectations produced by an
+    //! independent reference implementation, not by this crate.
 
     use super::*;
     use serde_json::json;
@@ -1821,11 +1817,12 @@ mod spade_vectors {
 mod cenc_sample_fixture {
     //! Offline contract for CENC sample decryption (video.rs).
     //!
-    //! The MP4 comes from `cmd/cencfix` in the pinned reference implementation: a minimal
+    //! The MP4 comes from the offline fixture generator: a minimal
     //! `moov/trak/mdia/minf/stbl` with `stsd(encv)`, `stsz`, `stsc`, `stco`,
-    //! `senc` and `tenc`, plus an encrypted `mdat`. Go encrypted
-    //! it with its own AES-CTR and stored the plaintext samples, so this test
-    //! compares the decryption against data the Rust side never produced.
+    //! `senc` and `tenc`, plus an encrypted `mdat`. It was encrypted by an
+    //! independent AES-CTR implementation and stored the plaintext samples, so
+    //! this test compares the decryption against data the Rust side never
+    //! produced.
 
     use super::*;
 

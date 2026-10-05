@@ -1,8 +1,8 @@
 //! Upstream request signing.
 //!
-//! Port of `/internal/sign`. Every primitive is a byte-exact port; the
-//! golden vectors in `rust/testdata/vectors.json` were produced by the Go
-//! implementation.
+//! Every primitive is byte-exact against the golden vectors in
+//! `rust/testdata/vectors.json`, which were produced by an independent
+//! reference implementation rather than this crate.
 
 pub mod abogus;
 pub mod argus;

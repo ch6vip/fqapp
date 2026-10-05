@@ -1,7 +1,6 @@
 //! Encode-only protobuf writer used by x-argus.
-//! Port of `/internal/sign/protobuf.go`.
 //!
-//! `writeVarint` masks to 32 bits first, exactly like the Go original.
+//! `writeVarint` masks to 32 bits first, matching the upstream byte layout.
 
 #[derive(Debug, Clone, Copy)]
 struct ProtoField {

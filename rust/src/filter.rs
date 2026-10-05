@@ -1,8 +1,7 @@
 //! Response filter configuration.
 //!
-//! The legacy design compiles a goja JavaScript runtime per route. Every route in
-//! the shipped `filter.json` is `enabled:false`, and the migration contract
-//! says a JS engine must not be pulled in for the first release. This module
+//! The shipped `filter.json` currently has every route `enabled:false`, and the
+//! contract says a JS engine must not be pulled in for the first release. This module
 //! therefore reads the configuration faithfully, applies nothing when every
 //! route is disabled, and fails loudly (with the script names) when a route is
 //! enabled - silently ignoring an enabled filter would change responses.

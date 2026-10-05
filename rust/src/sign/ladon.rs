@@ -1,5 +1,4 @@
 //! x-ladon: a custom 34-round ARX block cipher over u64.
-//! Port of `/internal/sign/ladon.go`.
 
 use base64::Engine as _;
 use md5::{Digest, Md5};

@@ -1,13 +1,12 @@
 //! x-gorgon 8404 scheme. Legacy/dead for the current upstream but still
-//! requested while a device registers. Port of `/internal/sign/gorgon.go`.
+//! requested while a device registers.
 
 use md5::{Digest, Md5};
 use rand::Rng;
 
-// The `(x | x)` / `(x & x)` pair below is a literal port of the reference implementation
-// implementation (/internal/sign/gorgon.go). It is dead arithmetic that the
-// upstream scheme carries, and changing it would change the emitted bytes, so
-// the lint is silenced deliberately rather than "fixed".
+// The `(x | x)` / `(x & x)` pair below is intentionally kept: it is dead
+// arithmetic that the upstream scheme carries, and changing it would change
+// the emitted bytes, so the lint is silenced deliberately rather than "fixed".
 #[allow(clippy::eq_op)]
 pub fn generate_x_gorgon(param: &str) -> String {
     let ts = crate::timeutil::now_secs();

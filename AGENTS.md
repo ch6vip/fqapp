@@ -7,7 +7,7 @@
 
 番茄内容聚合 Android 客户端：Flutter UI + 进程内 Rust 原生核心 `fqapi_core`
 （flutter_rust_bridge 直调，另开 `127.0.0.1:8080` loopback 服务 Web UI 与漫画图）。
-无独立后端进程，结构精简，不需要 root。
+无独立后端进程，不需要 root。
 
 目录职责与代码阅读入口见 [`docs/project-structure.md`](docs/project-structure.md)，
 文档分类与历史报告见 [`docs/README.md`](docs/README.md)。

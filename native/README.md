@@ -2,7 +2,7 @@
 
 本目录是项目自行实现的 CENC MP4 流式解密库，替代之前只有二进制的外部依赖。
 Android 仍加载 `libshortplay_crypto.so`，保留 `com.example.shortplay.CryptoNative` 的 JNI 接口；
-`` 继续提供 CDN URL 和 16 字节内容密钥，ExoPlayer 按文件偏移读取解密后的 MP4。
+`fqapi_core` 继续提供 CDN URL 和 16 字节内容密钥，ExoPlayer 按文件偏移读取解密后的 MP4。
 
 ## 实现与范围
 

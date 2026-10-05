@@ -2,7 +2,7 @@
 //!
 //! One `Server` owns the route table; the FFI bridge, the loopback HTTP
 //! adapter and the built-in Web UI all dispatch through it. Endpoint names and
-//! path matching mirror `/internal/endpoints/router.go`.
+//! path matching are identical across all three dispatch paths.
 
 pub mod audio;
 pub mod author;

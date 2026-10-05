@@ -1,5 +1,4 @@
 //! Network side of device registration.
-//! Port of `/internal/device/register.go`.
 
 use md5::{Digest, Md5};
 use serde_json::{json, Value};

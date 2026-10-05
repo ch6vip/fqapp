@@ -1,5 +1,4 @@
-//! Persistent device pool. Port of `/internal/device/pool.go` plus the
-//! registration flow in `register.go`.
+//! Persistent device pool plus the registration flow (`register` submodule).
 //!
 //! Differences from the Go original (recorded in the migration contract):
 //! registration is never performed while the pool lock is held, and saves are

@@ -1,5 +1,4 @@
 //! HTML cleanup shared by the content / full / manga / toutiao endpoints.
-//! Port of `/internal/endpoints/content_util.go`.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
