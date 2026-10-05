@@ -135,6 +135,9 @@ jobs:
       # misformatted. So instead we enumerate the tracked hand-written sources
       # and check each on its own, which keeps the gate real while leaving the
       # generated bindings to the reproducibility check further down.
+      - name: Resolve Dart package dependencies
+        run: flutter pub get --enforce-lockfile
+
       - name: Rust formatting
         run: |
           mapfile -t sources < <(
@@ -267,9 +270,10 @@ jobs:
           } >> "$GITHUB_ENV"
           printf 'Verified release signing certificate: %s\n' "$actual_signer"
 
+      # Dependencies were resolved once, before the Rust gates; every step from
+      # there on runs with --no-pub against that resolved package config.
       - name: Check Flutter application
         run: |
-          flutter pub get --enforce-lockfile
           flutter analyze --no-pub
           flutter test --no-pub --concurrency=2
 
