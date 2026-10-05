@@ -155,14 +155,14 @@ void main() {
     await tester.pumpAndSettle();
     final toggle = find.byKey(const ValueKey('audio-auto-next'));
     await tester.ensureVisible(toggle);
-    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    expect(tester.widget<Switch>(toggle).value, isTrue);
     await tester.tap(toggle);
     await _flush(tester);
-    expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+    expect(tester.widget<Switch>(toggle).value, isFalse);
     expect(session.store.entry?['autoAdvance'], isFalse);
     await tester.tap(toggle);
     await _flush(tester);
-    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    expect(tester.widget<Switch>(toggle).value, isTrue);
     expect(session.store.entry?['autoAdvance'], isTrue);
   });
 
@@ -179,7 +179,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
       final toggle = find.byKey(const ValueKey('audio-auto-next'));
-      expect(tester.widget<SwitchListTile>(toggle).onChanged, isNull);
+      expect(tester.widget<Switch>(toggle).onChanged, isNull);
       source.complete(
         const AudioSource(
           itemId: 'c1',
@@ -188,7 +188,7 @@ void main() {
         ),
       );
       await _flush(tester);
-      expect(tester.widget<SwitchListTile>(toggle).onChanged, isNotNull);
+      expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
       await tester.tap(toggle);
       await _flush(tester);
       expect(session.store.entry?['autoAdvance'], isFalse);
