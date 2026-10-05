@@ -33,13 +33,17 @@ bash scripts/run_rust_host_tests.sh
 
 Windows 构建开关为 `-SkipCodegen`、`-HostLib`、`-Profile debug`；Shell 版对应 `--skip-codegen`、`--host-lib`、`--profile debug`。宿主测试的 `-SkipBuild` / `--skip-build` 只在宿主库已经更新时使用。
 
-FRB 绑定发生变化时，还需再次生成并比较内容哈希，确认可复现。生成的文件位置见 [目录说明](../docs/project-structure.md)。
+FRB 绑定发生变化时，还需再次生成并比较内容哈希，确认可复现。生成的文件位置见本地 `docs/project-structure.md`（不入库）。
 
 ## 常规验证
 
+Rust 格式检查逐个文件执行，刻意排除 codegen 产物 `frb_generated.rs`：rustfmt 会沿
+`mod` 声明进入该文件，而生成代码过不了 rustfmt，`cargo fmt --all -- --check` 因此在
+干净树上也会失败。CI 用的是同一套做法。
+
 ```powershell
-cargo fmt --manifest-path rust/Cargo.toml --check
-cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+git ls-files -- 'rust/**/*.rs' 'rust/*.rs' | grep -v 'frb_generated\.rs$' | ForEach-Object { rustfmt --check --edition 2021 --config skip_children=true $_ }
+cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --locked
 flutter analyze --no-pub
 flutter test --no-pub --concurrency=2
@@ -58,6 +62,9 @@ node scripts/verify_audio_cenc.cjs build/diagnostics/play-response.json
 python scripts/generate_app_icons.py
 ```
 
-APK 校验须传入 `--apk`、`--build-tools`、`--report-dir` 以及预期签名指纹，完整示例见 [发布签名](../docs/release-signing.md)。`--help` 只显示参数，不算通过 APK 验证。
+APK 校验须传入 `--apk`、`--build-tools`、`--report-dir` 以及预期签名指纹，完整示例见本地
+`docs/release-signing.md`（不入库）。只在没有正式签名材料的场景（fork、本地检视构建）才加
+`--allow-unsigned`，此时报告里 `signature.signed` 为 `false`，其余检查照常执行。
+`--help` 只显示参数，不算通过 APK 验证。
 
 `verify_audio_cenc.cjs` 的 AAC 样本头匹配是诊断线索，不等于解码器播放成功。图标生成细节见 [品牌资源说明](../assets/branding/README.md)。诊断输出放在 `build/`；经用户验收的发布资料按版本存入 `release-archives/`。

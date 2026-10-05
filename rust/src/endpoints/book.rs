@@ -153,7 +153,7 @@ const DIRECTORY_READING_QUERY_SUFFIX: &str = "&book_info_md5=&need_version=true&
 const DIRECTORY_NOVEL_PATH: &str = "/api/novel/book/directory/list/v1/";
 const DIRECTORY_NOVEL_BOOK_ID_PREFIX: &str =
     "&channel=tt_huawei2019_yz&version_code=708&device_platform=android&parent_enterfrom=&book_id=";
-const DIRECTORY_NOVEL_QUERY_SUFFIX: &str = "&aid=13&device_type=25053RT47C&os_version=15&openudid=5ee878397ab439b3&manifest_version_code=708&update_version_code=70899";
+const DIRECTORY_NOVEL_QUERY_SUFFIX: &str = "&aid=13&device_type=25053RT47C&os_version=15&openudid={openudid}&manifest_version_code=708&update_version_code=70899";
 
 /// Go's `randomNumericID`: n random decimal digits.
 fn random_numeric_id(n: usize) -> String {
@@ -296,7 +296,9 @@ fn related<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Valu
         let mut p = reading724_params();
         p.set("book_id", book_id);
         p.set("source", "5");
-        p.set("cdid", "bc6a7790-a107-46d4-8464-6ae4c148cb31");
+        // Resolved per device by the request layer like the other placeholders
+        // above; a literal here would pin every install to one identifier.
+        p.set("cdid", "{cdid}");
 
         Upstream::new(ctx.up.clone())
             .json(&UpstreamRequestSpec {

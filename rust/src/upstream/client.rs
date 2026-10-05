@@ -236,9 +236,82 @@ impl UpstreamClient {
 }
 
 pub fn substitute_device(raw_url: &str, dev: &Device) -> String {
+    // Pools written before `openudid` was tracked have an empty value, so fall
+    // back to this device's own id rather than emitting an empty query
+    // parameter, which upstream would read as a malformed request.
+    let openudid = if dev.openudid.is_empty() {
+        &dev.device_id
+    } else {
+        &dev.openudid
+    };
     raw_url
         .replace("{device_id}", &dev.device_id)
         .replace("{install_id}", &dev.install_id)
         .replace("{secret_key}", &dev.secret_key)
         .replace("{cdid}", &dev.cdid)
+        .replace("{openudid}", openudid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::substitute_device;
+    use crate::device::Device;
+
+    fn device(openudid: &str) -> Device {
+        Device {
+            device_id: "0123456789abcdef".to_string(),
+            install_id: "9876543210".to_string(),
+            secret_key: "abcd".to_string(),
+            platform: "android".to_string(),
+            status: "active".to_string(),
+            created_time: "2026-01-01 00:00:00".to_string(),
+            last_used: "2026-01-01 00:00:00".to_string(),
+            use_count: 0,
+            cdid: "cdid-from-pool".to_string(),
+            openudid: openudid.to_string(),
+        }
+    }
+
+    // Every device scoped identifier has to come from the pool entry the
+    // request layer picked. A literal left in a URL template would pin every
+    // install of the app to the same value, so these tests pin the
+    // substitution behaviour rather than any particular identifier format.
+    #[test]
+    fn substitutes_every_device_scoped_placeholder() {
+        let url = substitute_device(
+            "https://example.invalid/?iid={install_id}&device_id={device_id}\
+&cdid={cdid}&openudid={openudid}&secret_key={secret_key}",
+            &device("openudid-from-pool"),
+        );
+        assert_eq!(
+            url,
+            "https://example.invalid/?iid=9876543210&device_id=0123456789abcdef\
+&cdid=cdid-from-pool&openudid=openudid-from-pool&secret_key=abcd"
+        );
+        assert!(
+            !url.contains('{'),
+            "no placeholder may survive substitution"
+        );
+    }
+
+    #[test]
+    fn a_pool_entry_without_openudid_falls_back_to_its_own_device_id() {
+        // Pools written before `openudid` was recorded deserialize with an
+        // empty value. Substituting that empty string would send upstream a
+        // malformed empty parameter, so the device's own id stands in.
+        let url = substitute_device("https://example.invalid/?openudid={openudid}", &device(""));
+        assert_eq!(url, "https://example.invalid/?openudid=0123456789abcdef");
+    }
+
+    #[test]
+    fn a_pool_entry_without_openudid_does_not_leak_another_devices_identifier() {
+        let legacy_url =
+            substitute_device("https://example.invalid/?openudid={openudid}", &device(""));
+        let fresh_url = substitute_device(
+            "https://example.invalid/?openudid={openudid}",
+            &device("openudid-from-pool"),
+        );
+        assert_ne!(legacy_url, fresh_url);
+        assert!(!legacy_url.contains("openudid-from-pool"));
+    }
 }

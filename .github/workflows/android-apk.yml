@@ -19,6 +19,7 @@ on:
       - 'scripts/run_rust_host_tests.sh'
       - 'scripts/run_rust_host_tests.ps1'
       - 'scripts/check_native_alignment.cjs'
+      - 'scripts/generate_app_icons.py'
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
       - '.github/workflows/android-apk.yml'
@@ -125,8 +126,39 @@ jobs:
           test/verify_audio_cenc_test.cjs
           test/build_rust_backend_scripts_test.cjs
 
+      # rustfmt follows `mod` declarations, so a plain `cargo fmt --all` also
+      # checks rust/src/frb_generated.rs -- codegen output that no human edits.
+      # That file does not round-trip through rustfmt, so `--all` fails on a
+      # clean tree and blocks every build, including a contributor's first one.
+      # `--config skip_children` on the crate root is NOT a fix: it stops at the
+      # root file and silently passes even when a hand-written module is
+      # misformatted. So instead we enumerate the tracked hand-written sources
+      # and check each on its own, which keeps the gate real while leaving the
+      # generated bindings to the reproducibility check further down.
       - name: Rust formatting
-        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        run: |
+          mapfile -t sources < <(
+            git ls-files -- 'rust/**/*.rs' 'rust/*.rs' | grep -v 'frb_generated\.rs$'
+          )
+          if [ "${#sources[@]}" -eq 0 ]; then
+            echo 'No hand-written Rust sources found; refusing to pass an empty gate.' >&2
+            exit 1
+          fi
+          printf 'Checking %d hand-written Rust sources (generated bindings excluded).\n' \
+            "${#sources[@]}"
+          failed=0
+          for source in "${sources[@]}"; do
+            # One file per invocation, with child traversal off: a bare
+            # `rustfmt lib.rs` follows `mod frb_generated;` and would re-check the
+            # bindings, while `skip_children` on the crate root would skip every
+            # other module too. Per-file, each hand-written source is checked
+            # exactly once and each child is covered by its own loop iteration.
+            if ! rustfmt --check --edition 2021 --config skip_children=true "$source"; then
+              printf 'Misformatted: %s\n' "$source" >&2
+              failed=1
+            fi
+          done
+          exit "$failed"
 
       - name: Rust lints
         run: cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings
@@ -190,26 +222,41 @@ jobs:
             exit 1
           fi
 
+      # A contributor or fork has no access to the release keystore secrets, and
+      # a hard failure here would make the workflow README recommends unusable
+      # for exactly the audience most likely to run it. So the gate degrades:
+      # with the secrets present the release identity is restored and pinned,
+      # without them the build continues and produces an UNSIGNED package. The
+      # pin is still enforced whenever a signature exists, so a package can
+      # never quietly ship under the public debug key.
       - name: Restore the release signing identity
+        id: signing
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
+          missing=()
           for name in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-            if [[ -z "${!name}" ]]; then
-              echo "Missing Actions secret RELEASE_$name." >&2
-              exit 1
-            fi
+            [[ -n "${!name}" ]] || missing+=("$name")
           done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::warning::No release signing secrets (%s); building an UNSIGNED package. It installs for inspection only and cannot be upgraded onto a signed build.\n' \
+              "$(IFS=,; printf '%s' "${missing[*]}")"
+            printf 'has_release_signing=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           umask 077
           signing_path="$RUNNER_TEMP/fqapp-release.jks"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$signing_path"
           actual_signer="$(keytool -exportcert -keystore "$signing_path" \
             -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" | sha256sum | cut -d ' ' -f 1)"
           if [[ "$actual_signer" != "$RELEASE_SIGNER_SHA256" ]]; then
+            # Wrong-key is a real defect, not a missing capability: fail loudly
+            # rather than shipping a package the maintainer cannot upgrade.
             echo 'The signing secret does not contain the expected release certificate.' >&2
+            echo "::error::Expected $RELEASE_SIGNER_SHA256 but the secret holds $actual_signer" >&2
             exit 1
           fi
           {
@@ -234,11 +281,22 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest --no-daemon --max-workers=2
 
       - name: Verify APK contents, signing, and 16 KiB alignment
+        env:
+          HAS_RELEASE_SIGNING: ${{ steps.signing.outputs.has_release_signing }}
         run: |
+          # The fingerprint is only asserted when a release signature was
+          # actually applied. Without the secrets the package is unsigned, so
+          # pinning a certificate there could never pass; every other check
+          # (16 KiB alignment, packaged native libraries) still runs.
+          if [ "$HAS_RELEASE_SIGNING" = "true" ]; then
+            signer_args=(--expected-signer-sha256 "$RELEASE_SIGNER_SHA256")
+          else
+            signer_args=(--allow-unsigned)
+          fi
           python3 scripts/verify_android_apk.py \
             --apk build/app/outputs/flutter-apk/app-release.apk \
             --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
-            --expected-signer-sha256 "$RELEASE_SIGNER_SHA256" \
+            "${signer_args[@]}" \
             --report-dir build/ci-artifacts/verification
           cp build/app/outputs/flutter-apk/app-release.apk build/ci-artifacts/app-release.apk
           {
@@ -246,7 +304,11 @@ jobs:
             printf 'Rust core: fqapi_core (flutter_rust_bridge %s)\n' "$FRB_VERSION"
             printf 'Rust core library SHA-256: '
             sha256sum android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so
-            printf 'Release signer SHA-256: %s\n' "$RELEASE_SIGNER_SHA256"
+            if [ "$HAS_RELEASE_SIGNING" = "true" ]; then
+              printf 'Release signer SHA-256: %s\n' "$RELEASE_SIGNER_SHA256"
+            else
+              printf 'Release signer: none (UNSIGNED build -- inspection only)\n'
+            fi
             printf 'NDK: %s\nCMake: %s\nAndroid Build Tools: %s\n' "$NDK_VERSION" "$CMAKE_VERSION" "$BUILD_TOOLS_VERSION"
             flutter --version
             cargo --version

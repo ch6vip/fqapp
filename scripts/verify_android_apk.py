@@ -200,7 +200,8 @@ def executable(name: str, directory: Path | None = None) -> str:
     raise VerificationError(f"Required executable was not found: {name}")
 
 
-def run_logged(command: list[str], report_dir: Path, log_name: str) -> str:
+def run_logged(command: list[str], report_dir: Path, log_name: str,
+               allowed_returncodes: tuple[int, ...] = ()) -> str:
     print(f"Checking {log_name.removesuffix('.log')}...", flush=True)
     try:
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -216,7 +217,13 @@ def run_logged(command: list[str], report_dir: Path, log_name: str) -> str:
         write_text(report_dir, log_name, str(error) + "\n")
         raise VerificationError(f"Cannot run verification command; see {log_name}") from error
     write_text(report_dir, log_name, result.stdout)
+    # A tolerated exit code is recorded in the log rather than hidden, so the
+    # report still shows what the tool actually said about the package.
     if result.returncode != 0:
+        if result.returncode in allowed_returncodes:
+            write_text(report_dir, log_name,
+                       result.stdout + f"\nAllowed exit code {result.returncode}.\n")
+            return ""
         raise VerificationError(f"Verification command exited with {result.returncode}; see {log_name}")
     return result.stdout
 
@@ -294,16 +301,32 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
     run_logged([zipalign, "-c", "-P", "16", "-v", "4", str(apk)],
                report_dir, "zipalign.log")
     report["checks"]["zip_16kb_alignment"] = "passed"
-    signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
-                            "--print-certs", str(apk)], report_dir, "apksigner.log")
-    signer_digests = certificate_digests(signature)
-    report["signature"] = {"certificate_sha256": signer_digests}
-    report["checks"]["signature"] = "passed"
+    # A build made without the release keystore is unsigned, and apksigner
+    # exits non-zero on such a package. That is an expected outcome rather than
+    # a defect when the caller asks for an unsigned-tolerant verification, so
+    # the signature block is reported as absent instead of aborting the run.
+    if args.allow_unsigned:
+        signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
+                                "--print-certs", str(apk)], report_dir, "apksigner.log",
+                               allowed_returncodes=(1,))
+        signer_digests = [] if not signature else certificate_digests(signature)
+    else:
+        signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
+                                "--print-certs", str(apk)], report_dir, "apksigner.log")
+        signer_digests = certificate_digests(signature)
+    report["signature"] = {
+        "certificate_sha256": signer_digests,
+        "signed": bool(signer_digests),
+    }
+    report["checks"]["signature"] = "passed" if signer_digests else "unsigned"
     if args.expected_signer_sha256 is not None:
         report["signature"]["expected_certificate_sha256"] = args.expected_signer_sha256
         if signer_digests != [args.expected_signer_sha256]:
             raise VerificationError("APK is not signed exclusively by the expected certificate")
         report["checks"]["expected_signer"] = "passed"
+    elif not signer_digests:
+        print("APK carries no signature; verified as an unsigned inspection build.",
+              flush=True)
     badging = run_logged([aapt, "dump", "badging", str(apk)], report_dir, "aapt-badging.log")
     report["application"] = application_metadata(badging)
     report["checks"]["application_metadata"] = "passed"
@@ -321,7 +344,15 @@ def main() -> int:
     parser.add_argument("--report-dir", required=True, help="Directory for verification logs, JSON, and extracted libraries")
     parser.add_argument("--expected-signer-sha256", type=sha256_argument,
                         help="Require the APK's sole signing certificate to have this SHA-256 digest")
+    parser.add_argument("--allow-unsigned", action="store_true",
+                        help=("Accept a package with no signature and report it as unsigned. "
+                              "Every other check still runs. Use only where the release keystore "
+                              "is unavailable, such as a fork or a local inspection build; an "
+                              "unsigned package cannot be installed over a signed one."))
     args = parser.parse_args()
+    if args.allow_unsigned and args.expected_signer_sha256 is not None:
+        parser.error("--allow-unsigned contradicts --expected-signer-sha256: "
+                     "a pinned certificate requires a signature")
     report_dir = Path(args.report_dir).expanduser().resolve()
     # An arbitrary input name could otherwise collide with a log/report name.
     # Keeping the original APK outside the output tree makes that impossible.

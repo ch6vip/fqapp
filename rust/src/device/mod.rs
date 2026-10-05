@@ -114,6 +114,13 @@ pub struct Device {
     pub use_count: i64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cdid: String,
+    /// Per-installation OpenUDID, generated at registration. It is a device
+    /// scoped identifier, so it must come from this device's own registration
+    /// rather than a value baked into the source. `serde(default)` keeps pools
+    /// written before this field existed loadable; `device_id` stands in until
+    /// the device is registered again.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub openudid: String,
 }
 
 /// The on-disk JSON shape (mirrors device_pool.json).
@@ -448,6 +455,7 @@ mod persistence_tests {
                 last_used: format!("2026-01-01 00:00:0{i}"),
                 use_count: i as i64,
                 cdid: format!("cdid-{i}"),
+                openudid: format!("{i:016}"),
             })
             .collect();
         serde_json::to_string(&PoolFile {

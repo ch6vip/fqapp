@@ -225,6 +225,7 @@ impl Registrar {
             last_used: now,
             use_count: 0,
             cdid: di.cdid,
+            openudid: di.openudid,
         })
     }
 
