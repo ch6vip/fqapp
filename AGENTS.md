@@ -31,7 +31,9 @@
 非平凡改动（技术选型、架构、非直觉缺陷复盘、裁撤决策）在收尾时写笔记到
 `.agents/notes/implemented/<architecture|bug-fix|feature|simplification>/YYYY-MM-DD-<slug>.md`：
 为什么做、放弃了什么方案、踩了什么坑、怎么验证的。失败路径与被否方案和成功路径同等重要。
-注意 `.agents/` 在 gitignore 中（本地知识，不随仓库分发）；用户可见的验证与结论写 `docs/`。
+注意 `.agents/` 与 `docs/` 均在 gitignore 中（本地知识，不随仓库分发、不上传 GitHub）；
+用户可见的验证与结论写 `docs/`（仅本地留存，其中的逆向研究记录尤其不得外发）。
+本文件与 README 中的 `docs/` 链接只在本地检出可解析，GitHub 上是死链，属预期。
 
 ## 验收用语纪律
 

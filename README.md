@@ -2,9 +2,9 @@
 
 一个运行在 **Android 手机本地** 的番茄内容聚合客户端：内置 Rust 原生核心 `fqapi_core`，Flutter 原生 UI 提供小说阅读、短剧与漫剧播放、前台听书、漫画阅读、搜索、历史和小说离线缓存。
 
-[下载 v1.0.17 测试安装包（ARM64）](https://github.com/ch6vip/fqapp/releases/tag/v1.0.17)
+[构建与维护脚本](scripts/README.md)
 
-[文档导航](docs/README.md) · [目录与代码入口](docs/project-structure.md) · [构建与维护脚本](scripts/README.md)
+> ⚠️ **免责声明**：本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自番茄公开接口，版权归字节跳动及原权利方所有。本项目与番茄/字节跳动无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。
 
 > **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:8080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问番茄上游。
 
@@ -23,6 +23,7 @@
 - [页面说明](#页面说明)
 - [已知问题与调试](#已知问题与调试)
 - [开发计划](#开发计划)
+- [许可与免责声明](#许可与免责声明)
 
 ---
 
@@ -99,20 +100,10 @@ fqapp/
 ├── assets/                          # 配置示例、Web UI、插件、图片和动画
 ├── test/                            # Flutter 测试及 Node 主机回归
 ├── scripts/                         # 构建、验证和资源生成；见 scripts/README.md
-├── docs/
-│   ├── README.md                    # 文档导航与当前维护入口
-│   ├── project-structure.md         # 目录职责、代码入口和生成物边界
-│   ├── migration/                   # Rust 迁移与 Go 离线对照资料
-│   ├── validation/                  # 功能与版本验证报告
-│   ├── reviews/                     # 代码审查及配套证据
-│   ├── design/                      # 实施计划与批次交接
-│   └── research/                    # 客户端对照与来源调查
 ├── .github/workflows/               # Android APK 与原生库 CI
 ├── flutter_rust_bridge.yaml         # FRB 代码生成配置
 └── pubspec.yaml                     # Flutter 版本、依赖与资源声明
 ```
-
-目录职责、关键代码阅读顺序及本地缓存/发布归档的放置规则见 [目录说明](docs/project-structure.md)。
 
 > **仓库不含原生二进制**：`libfqapi_core.so` 和 `libshortplay_crypto.so` 均被 Git 忽略。
 > 前者可由 `rust/` 中的 Rust 源码经 `scripts/build_rust_backend.*` 重建；
@@ -165,8 +156,8 @@ Linux / macOS：
 `-Profile debug` 选择 debug 配置。NDK 可由 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`
 指定，或放在 Android SDK 的 `ndk/` 下；脚本优先使用 `ndk/28.2.13676358`。
 
-`docs/migration/legacy-oracle/` 保存历史对照资料与两个补丁，只作**离线 oracle**；对照源码位于
-独立的私有检出中，用于重新生成 `rust/testdata/` 的黄金向量（见[离线对照说明](docs/migration/legacy-oracle/README.md)）。正常构建与 CI
+历史对照资料与两个补丁保存在独立的**离线 oracle**（私有检出，不入库）；对照源码位于
+独立的私有检出中，用于重新生成 `rust/testdata/` 的黄金向量。正常构建与 CI
 都不再检出或编译 对照源码，也不再需要 外部工具链。
 
 > ⚠️ `assets/config/` 只包含 `config.json`、`filter.json`、`device_pool.example.json`
@@ -185,8 +176,6 @@ JNI 接口与 ExoPlayer。Gradle 通过 CMake 自动编译 `libshortplay_crypto.
 Rust 核心库由 `scripts/build_rust_backend.*` 生成；C 库由下一步 APK 构建自动生成。
 
 实现范围、支持的 MP4 格式、主机回归和设备验证边界见 [C 库说明](native/README.md)。
-本轮测试结果、APK 校验值和 16 KB 设备验证状态见 [C 库验证记录](docs/validation/native-c-validation-20260908.md)。
-旧库来源调查保存在 [历史来源记录](docs/research/native-crypto-provenance-20260908.md)。
 
 ### 3. 构建 APK
 
@@ -216,9 +205,9 @@ Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVE
 每次构建运行 Rust、Web 与诊断脚本测试、Flutter 静态分析与完整单元/组件测试，
 并验证 Android JVM 测试和最终 APK。
 
-产品构建不再安装 Go，也不再检出私有 `` 仓库；`docs/migration/legacy-oracle/` 中的历史提交信息与两个
-补丁只作为**离线 oracle**，用于离线重放并重新生成 `rust/testdata/` 的黄金向量，
-不进入产品构建。历史源码固定版本与补丁摘要见[后端准备说明](docs/migration/legacy-oracle/README.md)。
+产品构建不再安装 Go，也不再检出私有 `` 仓库；历史提交信息与两个
+补丁只作为**离线 oracle**（私有检出，不入库），用于离线重放并重新生成 `rust/testdata/` 的黄金向量，
+不进入产品构建。
 本仓库已配置以下 Actions secrets，复制工作流到其它仓库时需要配置对应内容：
 
 | Secret | 用途 |
@@ -236,8 +225,6 @@ JVM 单测也不需要签名。可以保留，也可以删除。）
 云端 APK 使用**正式 release 签名**，并开启 R8 混淆与资源裁剪。CI 先把 keystore 还原到
 临时目录并核对证书指纹，再在 APK 生成后由 `scripts/verify_android_apk.py` 比对
 `RELEASE_SIGNER_SHA256`；证书不符或根本没有签名都会直接失败，不会把错误签名的包发出去。
-完整设计、密钥存放位置、JNI keep 规则的理由以及换 R8 后必做的真机清单，见
-[正式签名与 R8 混淆](docs/release-signing.md)。
 
 > ⚠️ 正式密钥取代了早先的测试密钥，两者**不能互相覆盖安装**。已发布的
 > `v1.0.0-debug.20260906`、`v1.0.17` 都是旧签名的包，升级到正式签名版本需要**先卸载**
@@ -378,7 +365,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 **响应信封**：客户端接受 `code=200`（Web 桥接）或 `code=0`（上游兼容接口）的成功响应；
 其他显式状态码或 `success=false` 视为错误。
 
-**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持由 Rust 核心 `rust/src/endpoints/base.rs` 的解密实现提供，改动后运行 `scripts/build_rust_backend.ps1` 重建 `libfqapi_core.so`；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。核心没有解密成功标记时，客户端回退文字。该行为源自已并入 `` 历史的修复，现由 reference implementation 的离线黄金向量保证一致（见[后端准备说明](docs/migration/legacy-oracle/README.md)）。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。接口样本见 [小说插图修复记录](docs/validation/reader-illustrations-validation-20260910.md)，缓存与 CI 验证见[审查修复记录](docs/validation/review-fixes-validation-20260910.md)。
+**小说插图**：`ApiClient.chapterContent` 优先读取 v1 图文接口，失败时回退原纯文字正文。完整插图支持由 Rust 核心 `rust/src/endpoints/base.rs` 的解密实现提供，改动后运行 `scripts/build_rust_backend.ps1` 重建 `libfqapi_core.so`；上游的 `c=1` 是加密标志，密文来自 JSON `data.content`。核心没有解密成功标记时，客户端回退文字。该行为源自已并入 `` 历史的修复，现由 reference implementation 的离线黄金向量保证一致。批量缓存保留已有插图并同步阅读器内存，纯文字回退会明确提示插图未更新。
 
 **搜索分类与分页**：搜索页使用 `/api/v1/search` 请求所选分类，在拆分漫剧之前先选取对应的上游 tab，
 再按条目实际 `kind` 筛选。综合保留全部作品；短剧、漫剧、漫画、听书分别只展示 `video`、`manju`、`manga`、`audio`。
@@ -388,7 +375,6 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 **漫剧与漫画参数不同**：首页的漫剧为 `24`、看剧为 `8`、漫画为 `9`；搜索的视频为 `11`、漫画为 `8`、听书为 `2`。
 当前漫剧搜索复用视频 tab，漫剧详情和目录继续使用桥接参数 `tab=短剧`，目录对应 `/api/v1/manga/videos/{series_id}`。
 漫剧首页未提供下一页游标时直接转搜索，不能把 `bottom_unlimited=true` 当作可递增的推荐游标。
-接口样本、分类规则与验证边界见 [漫剧接入验证](docs/validation/manju-validation-20260910.md)。
 
 ---
 
@@ -446,9 +432,6 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 - 保存最近 20 条搜索，支持点击重搜、单条删除和全部清空
 - 输入时显示联想词（250ms 防抖，保留上游的 `<em>` 高亮），点选即搜索；清空输入或执行搜索后自动收起
 - 空查询时显示热搜词，点击即搜索
-
-分类请求与分页修复的回归结果见 [搜索分类修复验证](docs/validation/search-categories-validation-20260910.md)。
-作品 ID 的接口样本与验证结果见 [ID 搜索验证](docs/validation/id-search-validation-20260910.md)。
 
 ### 作者主页（`author_page.dart`）
 - 从详情页作者行进入（整行可点，尾部「主页 >」）
@@ -515,8 +498,6 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 - 章节缓存保存图片地址和尺寸；插图文件首次显示时联网加载并自动缓存。过期签名在打开章节或恢复前台时刷新，离线时保留已有图文
 - 自动缓存上限为 500 章或 80 MB，超出后清理较久未读的章节；「下载」的章节在这个预算之外，会一直保留到你手动删除
 
-插图与交付状态见 [小说插图修复记录](docs/validation/reader-illustrations-validation-20260910.md)，分页基础见 [阅读分页验证记录](docs/validation/reader-pagination-validation-20260910.md)，菜单与设备设置见 [阅读界面验证记录](docs/validation/reader-interface-validation-20260910.md)，正文分段规则见 [小说正文换行与排版记录](docs/validation/reader-paragraphs-validation.md)。
-
 ### 播放器（`player_page.dart`）
 - 短剧与漫剧共享播放器；漫剧保留独立历史类型，并兼容以前按短剧保存的系列和播放位置
 - 原生 Media3 播放器播放后端返回的流地址（客户端自动补全 URL）
@@ -556,7 +537,6 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 > 章节而不是正在收听的书；该面板展示的是整本书评，所以按实际内容标注为「书评」。
 > 章评与段评已由后端提供：`/api/v1/chapters/{id}/reviews` 走 item-ideas 服务，
 > 返回按段号索引的数量与评论 ID；正文需要再用评论列表端点按段落懒加载。
-> 章评端点与错误语义见 [Rust 功能契约](docs/migration/rust-migration-contracts.md)。
 
 ### 漫画（`comic_reader_page.dart`）
 - 按接口顺序竖向阅读图片，支持章节目录和上下章
@@ -575,10 +555,9 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 
 ### 1. 原生库与真机验证
 
-- Rust 核心随 APK 打包并在进程内加载。先运行 `scripts/build_rust_backend.ps1`（或 `bash scripts/build_rust_backend.sh`）生成 `libfqapi_core.so`；`docs/migration/legacy-oracle/` 的历史提交信息与补丁只作离线 oracle，不参与构建。
+- Rust 核心随 APK 打包并在进程内加载。先运行 `scripts/build_rust_backend.ps1`（或 `bash scripts/build_rust_backend.sh`）生成 `libfqapi_core.so`；历史对照资料与补丁只作离线 oracle（私有检出，不入库），不参与构建。
 - 加密播放使用 `native/` 中的 C 源码，Gradle/CMake 自动生成 `libshortplay_crypto.so`。
 - 生成 Rust 核心后构建 arm64 APK，再用设备验证 `/health`、搜索、阅读和加密视频播放。Android 的纯 JVM 测试不会加载这两份库。
-- 本轮审查的修复范围、自动化验证与剩余限制见 [全项目代码审查记录](docs/reviews/project-code-review-20260908.md)。
 
 ### 2. 调试技巧
 
@@ -640,11 +619,15 @@ adb logcat -s flutter
 - [x] 听书前台播放、目录、倍速和进度恢复
 - [x] 小说章节下载/离线缓存
 - [x] 发现类入口：搜索联想词与热搜、作者主页、排行榜、书评回复、章节试读预览
-- [x] Release 签名配置与 R8 混淆（见 [正式签名与 R8 混淆](docs/release-signing.md)）
+- [x] Release 签名配置与 R8 混淆
 - [ ] 整本 TXT 导出
 
 ---
 
-## 许可
+## 许可与免责声明
 
-请遵守上游项目许可与相关法律法规，仅限个人学习研究使用。
+本项目代码以 [GPL-3.0](LICENSE) 协议开源，Copyright (C) 2026 ch6vip。
+
+
+
+本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自番茄公开接口，版权归字节跳动及原权利方所有。本项目与番茄/字节跳动无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。请遵守相关法律法规，仅限个人学习研究使用。
