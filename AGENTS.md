@@ -40,7 +40,7 @@
 ## 5. 运行与部署（Android APK 交付与安装，锚点 A7/A8）
 - APK 构建：先跑 `scripts/build_rust_backend.ps1` 生成 ARM64 Rust 核心，再执行 `flutter build apk --release --target-platform android-arm64 --no-pub`。
 - 版本号递增：用户可见功能变更必须递增 `pubspec.yaml` 的 version 与 versionCode。
-- 归档纪律：验收满意后归档（APK + SHA256SUMS + 验证报告）到 `release-archives/<tag>/`。
+- 归档纪律：验收后**立即**归档（APK + SHA256SUMS + 验证报告）到 `release-archives/<tag>/`，不许攒批；该目录已入 `.gitignore`、只落本地磁盘。断档实例：`v1.0.82` 之后到 `v1.0.86` 都没有归档包，那几版已无法回滚。
 - 签名与安装：签名要求见本地 `docs/release-signing.md`；覆盖安装使用 `adb install -r <apk>`。详情见本地 `docs/运维/构建与发布.md`。
 
 ## 6. 清单与经验机制（锚点 A2/A3）
