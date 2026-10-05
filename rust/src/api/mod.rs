@@ -612,7 +612,12 @@ mod tests {
 
     #[tokio::test]
     async fn request_without_a_core_fails_closed() {
-        // No init() in this test binary: the core is absent.
+        // This asserts on the absence of a core, which is process wide state
+        // that the init-based tests in this module set and tear down. Without
+        // the same guard they use, one of those can be mid-run in parallel and
+        // the request succeeds instead of failing closed.
+        let _guard = CORE_TEST_LOCK.lock().await;
+        let _ = shutdown().await;
         let err = request(
             "no-core".to_string(),
             "GET".to_string(),
