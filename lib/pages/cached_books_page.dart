@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../models/media_item.dart';
+import '../services/api_client.dart';
+import '../services/book_txt_export.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
 import '../services/reader_history.dart';
@@ -9,7 +12,20 @@ class CachedBooksPage extends StatefulWidget {
   final ChapterCacheStore? cacheStore;
   final ReaderStore? readerStore;
 
-  const CachedBooksPage({super.key, this.cacheStore, this.readerStore});
+  /// 导出时重取的目录与正文加载器、以及落点；都缺省走实时实现，
+  /// 注入后测试可完全离线（与详情页的 loader 注入同一套路）。
+  final Future<List<Chapter>> Function(String bookId)? exportDirectoryLoader;
+  final Future<String> Function(Chapter chapter)? exportChapterLoader;
+  final TxtSink? exportSink;
+
+  const CachedBooksPage({
+    super.key,
+    this.cacheStore,
+    this.readerStore,
+    this.exportDirectoryLoader,
+    this.exportChapterLoader,
+    this.exportSink,
+  });
 
   @override
   State<CachedBooksPage> createState() => _CachedBooksPageState();
@@ -23,6 +39,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   bool _openingBook = false;
   String? _error;
   int _generation = 0;
+  BookTxtExport? _export;
+  String? _exportBookId;
 
   @override
   void initState() {
@@ -34,6 +52,10 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   @override
   void dispose() {
     _store.changes.removeListener(_reload);
+    // 离开页面就不该再有后台导出：没有界面报告结果的成功等于骗人。
+    _export?.removeListener(_onExportChanged);
+    _export?.dispose();
+    _export = null;
     super.dispose();
   }
 
@@ -141,6 +163,135 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     } finally {
       _openingBook = false;
     }
+  }
+
+  Future<List<Chapter>> _loadExportDirectory(String bookId) async {
+    final volumes = await ApiClient.instance.directoryChapters(bookId);
+    return [for (final volume in volumes) ...volume];
+  }
+
+  /// Starts the whole-book export of one cached book. Only one runs at a time,
+  /// and a second tap on any row cancels it instead of starting a second file.
+  void _startExport(CachedBook book) {
+    if (_export != null) return;
+    final export = BookTxtExport(
+      directoryLoader: widget.exportDirectoryLoader ?? _loadExportDirectory,
+      // 取文只经 ApiClient：CRIT-005 要求业务请求都过它的 _get 漏斗。
+      chapterLoader:
+          widget.exportChapterLoader ??
+          (chapter) => ApiClient.instance.contentText(chapter.itemId),
+      sink: widget.exportSink ?? const PlatformTxtSink(),
+    );
+    export.addListener(_onExportChanged);
+    _export = export;
+    _exportBookId = book.id;
+    setState(() {});
+    export.start(bookId: book.id, title: book.title);
+  }
+
+  void _cancelExport() => _export?.cancel();
+
+  void _onExportChanged() {
+    final export = _export;
+    if (export == null) return;
+    final state = export.value;
+    if (!state.running) {
+      export.removeListener(_onExportChanged);
+      _export = null;
+      _exportBookId = null;
+      // 不能在自己的 notifyListeners 调用栈里 dispose：那一刻通知列表正在被遍历。
+      final message = state.message;
+      Future<void>.microtask(export.dispose);
+      if (message != null) _snack(message);
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
+    );
+  }
+
+  /// One cached book row: tap opens the reader, the trailing actions export and
+  /// clear. A running export turns its own button into progress and cancel.
+  Widget _bookTile(CachedBookSummary item) {
+    final bookId = item.book.id;
+    final running = _exportBookId == bookId ? _export?.value : null;
+    final progress = running != null && running.running ? running : null;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        leading: Container(
+          width: 38,
+          height: 48,
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: const Icon(Icons.menu_book_outlined, size: 20),
+        ),
+        title: Text(
+          item.book.title,
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${item.stats.chapterCount}/${item.book.chapters.length} 章'
+              ' · ${formatCacheBytes(item.stats.byteCount)}',
+            ),
+            if (progress != null)
+              Text(
+                progress.total == 0
+                    ? '导出中…'
+                    : '导出 ${progress.completed}/${progress.total} 章',
+                key: Key('cached_book_export_progress_$bookId'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+          ],
+        ),
+        onTap: () => _open(item.book),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (progress != null)
+              IconButton(
+                key: Key('cached_book_export_$bookId'),
+                tooltip: '取消导出',
+                onPressed: _cancelExport,
+                icon: SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(
+                    value: progress.total == 0 ? null : progress.fraction,
+                    strokeWidth: 2,
+                  ),
+                ),
+              )
+            else
+              IconButton(
+                key: Key('cached_book_export_$bookId'),
+                tooltip: '导出 TXT 到系统「下载」',
+                onPressed: _export == null
+                    ? () => _startExport(item.book)
+                    : null,
+                icon: const Icon(Icons.file_download_outlined),
+              ),
+            IconButton(
+              tooltip: '删除《${item.book.title}》缓存',
+              onPressed: () => _clear(item.book),
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -274,47 +425,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
                     ],
                   ),
                 ),
-                for (final item in _books)
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 4,
-                      ),
-                      leading: Container(
-                        width: 38,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Icon(
-                          Icons.menu_book_outlined,
-                          size: 20,
-                        ),
-                      ),
-                      title: Text(
-                        item.book.title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
-                      ),
-                      subtitle: Text(
-                        '${item.stats.chapterCount}/${item.book.chapters.length} 章'
-                        ' · ${formatCacheBytes(item.stats.byteCount)}',
-                      ),
-                      onTap: () => _open(item.book),
-                      trailing: IconButton(
-                        tooltip: '删除《${item.book.title}》缓存',
-                        onPressed: () => _clear(item.book),
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ),
-                  ),
+                for (final item in _books) _bookTile(item),
               ],
             ),
     );
