@@ -33,7 +33,7 @@ impl TempDir {
     pub fn new(tag: &str) -> Self {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let path =
-            std::env::temp_dir().join(format!("-core-test-{tag}-{}-{n}", std::process::id()));
+            std::env::temp_dir().join(format!("fqapi-core-test-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create temp dir");
         TempDir { path }

@@ -636,7 +636,7 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let path = std::env::temp_dir().join(format!(
-            "-core-init-{tag}-{}-{nanos}",
+            "fqapi-core-init-{tag}-{}-{nanos}",
             std::process::id()
         ));
         std::fs::create_dir_all(path.join("config")).expect("config dir");
