@@ -268,6 +268,10 @@ jobs:
             printf 'RELEASE_KEY_ALIAS=%s\n' "$KEY_ALIAS"
             printf 'RELEASE_KEY_PASSWORD=%s\n' "$KEY_PASSWORD"
           } >> "$GITHUB_ENV"
+          # Both branches must publish this. Leaving the success path unset makes
+          # the reporting step read an empty value and describe a signed package
+          # as an unsigned one, which is worse than either answer being wrong.
+          printf 'has_release_signing=true\n' >> "$GITHUB_OUTPUT"
           printf 'Verified release signing certificate: %s\n' "$actual_signer"
 
       # Dependencies were resolved once, before the Rust gates; every step from
@@ -288,15 +292,22 @@ jobs:
         env:
           HAS_RELEASE_SIGNING: ${{ steps.signing.outputs.has_release_signing }}
         run: |
+          # Treat an unset value as a hard error rather than as "unsigned": an
+          # empty value means the output was never published, and silently
+          # reading that as "no signature" would quietly relax the gate on a
+          # release build.
+          case "$HAS_RELEASE_SIGNING" in
+            true)  signer_args=(--expected-signer-sha256 "$RELEASE_SIGNER_SHA256") ;;
+            false) signer_args=(--allow-unsigned) ;;
+            *)
+              echo "::error::The signing step did not report has_release_signing (got '$HAS_RELEASE_SIGNING')" >&2
+              exit 1
+              ;;
+          esac
           # The fingerprint is only asserted when a release signature was
           # actually applied. Without the secrets the package is unsigned, so
           # pinning a certificate there could never pass; every other check
           # (16 KiB alignment, packaged native libraries) still runs.
-          if [ "$HAS_RELEASE_SIGNING" = "true" ]; then
-            signer_args=(--expected-signer-sha256 "$RELEASE_SIGNER_SHA256")
-          else
-            signer_args=(--allow-unsigned)
-          fi
           python3 scripts/verify_android_apk.py \
             --apk build/app/outputs/flutter-apk/app-release.apk \
             --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
