@@ -35,6 +35,7 @@ void main() {
     int index = 0,
     int bytes = 1024,
     bool withFile = true,
+    int? cachedAt,
   }) {
     final path =
         '${videoDir.path}${Platform.pathSeparator}$itemId.mp4';
@@ -51,7 +52,7 @@ void main() {
       variantName: '1080P',
       bytes: bytes,
       filePath: path,
-      cachedAt: DateTime.now().millisecondsSinceEpoch,
+      cachedAt: cachedAt ?? DateTime.now().millisecondsSinceEpoch,
     );
   }
 
@@ -95,14 +96,23 @@ void main() {
         ],
       ),
     );
-    await store.saveEpisode(episode(itemId: 'ep1', index: 1));
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    await store.saveEpisode(episode(itemId: 'ep2', index: 0));
-    await store.saveEpisode(episode(itemId: 'ep9', seriesId: 'series2'));
+    // 显式给每集一个 cachedAt：剧的排序取各集 cachedAt 的最大值，若两个剧
+    // 落在同一毫秒，`List.sort` 的比较返回 0 且不保证稳定——用真实时钟会
+    // 变成偶发失败（CI 上实测到过 series1/series2 顺序反转）。这里直接钉死
+    // 时间戳，让断言只依赖实现逻辑，不依赖计时精度。
+    await store.saveEpisode(
+      episode(itemId: 'ep1', index: 1, cachedAt: 1000),
+    );
+    await store.saveEpisode(
+      episode(itemId: 'ep2', index: 0, cachedAt: 2000),
+    );
+    await store.saveEpisode(
+      episode(itemId: 'ep9', seriesId: 'series2', cachedAt: 3000),
+    );
 
     final dramas = await store.dramas();
     expect(dramas, hasLength(2));
-    // series2 的最后缓存时间更新（ep9 后写入），排前面。
+    // series2 的最后缓存时间更晚（3000 > 2000），排前面。
     expect(dramas.first.drama.id, 'series2');
     final series1 = dramas.lastWhere((item) => item.drama.id == 'series1');
     expect(series1.drama.title, '测试剧');
