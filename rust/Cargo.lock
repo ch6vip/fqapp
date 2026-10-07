@@ -487,6 +487,7 @@ dependencies = [
  "flutter_rust_bridge",
  "futures",
  "hex",
+ "http-body-util",
  "log",
  "md-5",
  "num-bigint",

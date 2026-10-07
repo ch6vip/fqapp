@@ -43,6 +43,7 @@ class DramaDownloadTask {
     int? total,
     String? error,
     bool clearError = false,
+    bool clearTotal = false,
   }) => DramaDownloadTask(
     seriesId: seriesId,
     itemId: itemId,
@@ -50,7 +51,7 @@ class DramaDownloadTask {
     index: index,
     status: status ?? this.status,
     received: received ?? this.received,
-    total: total ?? this.total,
+    total: clearTotal ? null : (total ?? this.total),
     error: clearError ? null : (error ?? this.error),
   );
 }
@@ -63,6 +64,10 @@ class DramaDownloadTask {
 /// 续传（同集同名，Range 从已有字节继续）。落盘的是**原始加密字节**，
 /// keyHex 只在完成记录里登记，磁盘上永远没有明文。
 class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
+  static final RegExp _safeItemId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
+  static bool _isSafeItemId(String itemId) => _safeItemId.hasMatch(itemId);
+
   DramaDownloader({
     DramaDownloadStore? store,
     Future<EpisodeSource> Function(Chapter episode)? resolve,
@@ -104,6 +109,15 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     required List<Chapter> episodes,
   }) async {
     if (episodes.isEmpty) return;
+    for (final episode in episodes) {
+      if (!_isSafeItemId(episode.itemId)) {
+        throw ArgumentError.value(
+          episode.itemId,
+          'episode.itemId',
+          'must contain only ASCII letters, digits, _ or - (max 128 chars)',
+        );
+      }
+    }
     await _store.ensureCatalogue(drama);
     var changed = false;
     for (final (index, episode) in episodes.indexed) {
@@ -200,6 +214,9 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
 
   /// 放弃一个未完成任务并清掉半成品。已完成集的删除走 store（管理页）。
   Future<void> discard(String itemId) async {
+    if (!_isSafeItemId(itemId)) {
+      throw ArgumentError.value(itemId, 'itemId', 'unsafe episode id');
+    }
     final task = _tasks.remove(itemId);
     task?.abort('discarded');
     _active.remove(itemId);
@@ -307,6 +324,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     RandomAccessFile? sink;
     try {
       final itemId = task.snapshot.itemId;
+      if (!_isSafeItemId(itemId)) return '无效的剧集 ID';
       final dir = await _store.directory();
       final finalPath = '${dir.path}${Platform.pathSeparator}$itemId.mp4';
       final partFile = File('$finalPath.part');
@@ -332,23 +350,41 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       if (response.statusCode == 403 || response.statusCode == 410) {
         return 'stale-url';
       }
+      var expectedTotal = -1;
       if (response.statusCode == 206) {
-        // 续传成立。
+        final range = _parseContentRange(
+          response.headers.value(HttpHeaders.contentRangeHeader),
+        );
+        if (range == null || range.start != received) {
+          return '续传响应范围无效';
+        }
+        final responseBytes = range.end - range.start + 1;
+        if (response.contentLength >= 0 &&
+            response.contentLength != responseBytes) {
+          return '续传响应长度无效';
+        }
+        if (range.total == null || range.total! <= range.end) {
+          return '服务器未提供有效的文件总长度';
+        }
+        expectedTotal = range.total!;
       } else if (response.statusCode == 200) {
         if (received > 0) {
           // 服务器忽略了 Range：已续的字节不可信，从头再来。
           received = 0;
           await partFile.delete();
         }
+        if (response.contentLength >= 0) {
+          expectedTotal = response.contentLength;
+        }
       } else {
         return '下载失败（HTTP ${response.statusCode}）';
       }
 
-      final contentLength = response.contentLength;
       sink = await partFile.open(mode: FileMode.append);
       task.snapshot = task.snapshot.copyWith(
         received: received,
-        total: contentLength >= 0 ? received + contentLength : null,
+        total: expectedTotal >= 0 ? expectedTotal : null,
+        clearTotal: expectedTotal < 0,
       );
       _publish();
 
@@ -371,8 +407,8 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       client.close(force: true);
       client = null;
 
-      final total = task.snapshot.total;
-      if (total != null && received != total) return '下载不完整';
+      if (expectedTotal < 0) return '无法确认下载完整性（服务器未提供总长度）';
+      if (received != expectedTotal) return '下载不完整';
       try {
         await partFile.rename(finalPath);
       } on FileSystemException {
@@ -424,6 +460,21 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     );
   }
 
+  static _ContentRange? _parseContentRange(String? value) {
+    if (value == null) return null;
+    final match = RegExp(
+      r'^\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*$',
+      caseSensitive: false,
+    ).firstMatch(value);
+    if (match == null) return null;
+    final start = int.tryParse(match.group(1)!);
+    final end = int.tryParse(match.group(2)!);
+    final totalText = match.group(3)!;
+    final total = totalText == '*' ? null : int.tryParse(totalText);
+    if (start == null || end == null || end < start) return null;
+    return _ContentRange(start, end, total);
+  }
+
   /// 默认取流：绕过播放页的 2 分钟缓存直接走 `/api/content`，下载器
   /// 的生命周期独立于任何页面。这是 CDN 直链请求，不走 `_get` 漏斗
   /// （该漏斗只收番茄后端 API；视频字节本就由原生层直连 CDN）。
@@ -435,6 +486,14 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     );
     return EpisodeSource.fromResponse(response);
   }
+}
+
+class _ContentRange {
+  const _ContentRange(this.start, this.end, this.total);
+
+  final int start;
+  final int end;
+  final int? total;
 }
 
 class _MutableTask {

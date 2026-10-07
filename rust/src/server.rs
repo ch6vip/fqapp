@@ -18,8 +18,8 @@
 
 use std::sync::Arc;
 
-use axum::body::{Body, Bytes};
-use axum::extract::{DefaultBodyLimit, FromRequest, State};
+use axum::body::Body;
+use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Router;
@@ -30,7 +30,8 @@ use tokio_util::io::ReaderStream;
 use crate::dispatch::{dispatch, Request, ResponseBody};
 use crate::endpoints::Server;
 
-/// Largest request body the adapter buffers. Real callers send short JSON.
+/// Largest request body accepted by the adapter. Routes currently read their
+/// arguments from the URL; accepted bodies are streamed and discarded.
 pub const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 
 pub struct LoopbackHandle {
@@ -64,12 +65,7 @@ pub async fn serve(server: Arc<Server>, port: u16) -> Result<LoopbackHandle, Str
         port: local.port(),
         token: token.clone(),
     };
-    // axum's default body limit is 2 MiB; the Bytes extractor below honours
-    // this layer instead.
-    let app = Router::new()
-        .fallback(handler)
-        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY))
-        .with_state(state);
+    let app = Router::new().fallback(handler).with_state(state);
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -129,7 +125,7 @@ fn refuse(status: StatusCode, message: &str) -> Response {
 }
 
 async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> Response {
-    // Refuse before touching the body so a foreign page cannot make us buffer.
+    // Refuse before touching the body so a foreign page cannot make us read it.
     if let Some(reason) = refusal(req.headers(), state.port) {
         return refuse(StatusCode::FORBIDDEN, reason);
     }
@@ -193,18 +189,23 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
             )
         })
         .collect();
-    // An unannounced (chunked) oversize body lands here as a 413 rejection;
-    // it used to be swallowed and the request dispatched with an empty body.
-    let body = match Bytes::from_request(req, &()).await {
-        Ok(body) => body,
-        Err(rejection) => return refuse(rejection.status(), "failed to read request body"),
-    };
+    // The dispatcher and every current endpoint ignore request bodies. Drain
+    // them in bounded frames to preserve the size limit without retaining a
+    // whole payload or copying it into Request::body.
+    if let Err(status) = discard_request_body(req.into_body()).await {
+        let message = if status == StatusCode::PAYLOAD_TOO_LARGE {
+            "request body too large"
+        } else {
+            "failed to read request body"
+        };
+        return refuse(status, message);
+    }
     let server = state.server;
     let request = Request {
         method,
         path: request_path,
         query: uri.query().unwrap_or("").to_string(),
-        body: body.to_vec(),
+        body: Vec::new(),
         headers,
     };
     let resp = dispatch(&server, &request).await;
@@ -246,6 +247,22 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
     }
 }
 
+async fn discard_request_body(mut body: Body) -> Result<(), StatusCode> {
+    use http_body_util::BodyExt;
+
+    let mut consumed = 0usize;
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|_| StatusCode::BAD_REQUEST)?;
+        if let Ok(data) = frame.into_data() {
+            consumed = consumed.saturating_add(data.len());
+            if consumed > MAX_REQUEST_BODY {
+                return Err(StatusCode::PAYLOAD_TOO_LARGE);
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn stream_file(path: &std::path::Path, offset: u64, length: u64) -> Result<Body, String> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let mut file = tokio::fs::File::open(path)
@@ -261,4 +278,25 @@ async fn stream_file(path: &std::path::Path, offset: u64, length: u64) -> Result
         limited,
         64 * 1024,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Bytes;
+    use futures::stream;
+    use std::convert::Infallible;
+
+    #[tokio::test]
+    async fn chunked_body_over_limit_is_rejected_without_buffering_the_whole_body() {
+        let chunk = Bytes::from(vec![0; 1024 * 1024]);
+        let chunks =
+            (0..=MAX_REQUEST_BODY / chunk.len()).map(move |_| Ok::<_, Infallible>(chunk.clone()));
+        let body = Body::from_stream(stream::iter(chunks));
+
+        assert_eq!(
+            discard_request_body(body).await,
+            Err(StatusCode::PAYLOAD_TOO_LARGE)
+        );
+    }
 }

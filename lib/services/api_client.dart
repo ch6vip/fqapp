@@ -200,7 +200,12 @@ class ApiClient {
       },
       onError: (Object error) {
         watch.stop();
-        AppLog.w('api', '$route 失败 ${watch.elapsedMilliseconds}ms: $error');
+        // Transport exceptions often include a complete URL, including query
+        // parameters. Keep the failure observable without logging that detail.
+        AppLog.w(
+          'api',
+          '$route 失败 ${watch.elapsedMilliseconds}ms (${error.runtimeType})',
+        );
       },
     );
     return future;

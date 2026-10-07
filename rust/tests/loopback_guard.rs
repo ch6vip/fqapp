@@ -197,8 +197,8 @@ async fn oversized_bodies_are_refused_and_moderate_ones_accepted() {
     assert_eq!(status, 413, "{text}");
     assert!(upstream.requests().is_empty());
 
-    // Above axum's 2 MiB default but inside our limit: must be accepted, which
-    // proves the DefaultBodyLimit layer reaches the fallback handler.
+    // Above axum's default body limit but inside our cap: accepted and drained
+    // by the adapter without buffering/copying the body into a Vec.
     let client = reqwest::Client::new();
     let response = client
         .post(lb.url(COMMENT_ADD))

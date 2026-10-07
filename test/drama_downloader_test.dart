@@ -54,7 +54,7 @@ class _FakeCdn {
         request.response.statusCode = 206;
         request.response.headers.set(
           'content-range',
-          'bytes=$start-${content.length - 1}/${content.length}',
+          'bytes $start-${content.length - 1}/${content.length}',
         );
       } else {
         request.response.statusCode = 200;

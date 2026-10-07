@@ -266,8 +266,8 @@ pub(crate) async fn core_generation() -> u64 {
 
 /// The single entry point for every backend call from Flutter.
 ///
-/// `timeout_ms <= 0` means "no deadline". A cancelled or timed-out call drops
-/// the dispatch future, which cancels the awaiting upstream request.
+/// `timeout_ms <= 0` means "no deadline". Cancellation and timeout cover both
+/// dispatch and response materialization (including asynchronous file reads).
 pub async fn request(
     request_id: String,
     method: String,
@@ -317,7 +317,18 @@ pub async fn request(
     } else {
         None
     };
-    let outcome = race_dispatch(&token, deadline, crate::dispatch::dispatch(&server, &req)).await;
+    let outcome = race_dispatch(&token, deadline, async {
+        let response = crate::dispatch::dispatch(&server, &req).await;
+        let status = response.status;
+        let content_type = response.content_type.clone();
+        let body = response.into_bytes().await?;
+        Ok::<BridgeResponse, String>(BridgeResponse {
+            status,
+            content_type,
+            body,
+        })
+    })
+    .await;
 
     if !request_id.is_empty() {
         release_inflight(&request_id, generation);
@@ -326,16 +337,7 @@ pub async fn request(
     match outcome {
         RaceOutcome::Cancelled => Ok(cancelled_response()),
         RaceOutcome::TimedOut => Ok(timeout_response()),
-        RaceOutcome::Done(resp) => {
-            let status = resp.status;
-            let content_type = resp.content_type.clone();
-            let body = resp.into_bytes().await?;
-            Ok(BridgeResponse {
-                status,
-                content_type,
-                body,
-            })
-        }
+        RaceOutcome::Done(response) => response,
     }
 }
 
@@ -419,8 +421,8 @@ fn timeout_response() -> BridgeResponse {
 
 /// Result of racing one dispatch against its cancellation token and deadline.
 #[derive(Debug)]
-pub(crate) enum RaceOutcome {
-    Done(Response),
+pub(crate) enum RaceOutcome<T = Response> {
+    Done(T),
     Cancelled,
     TimedOut,
 }
@@ -434,9 +436,9 @@ pub(crate) async fn race_dispatch<F>(
     token: &CancellationToken,
     deadline: Option<Duration>,
     work: F,
-) -> RaceOutcome
+) -> RaceOutcome<F::Output>
 where
-    F: Future<Output = Response>,
+    F: Future,
 {
     tokio::pin!(work);
     match deadline {
@@ -459,6 +461,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     fn dummy_response() -> Response {
         Response::text(200, "text/plain", b"ok".to_vec())
@@ -502,6 +505,28 @@ mod tests {
             RaceOutcome::Done(resp) => assert_eq!(resp.status, 200),
             other => panic!("unexpected outcome: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn race_covers_response_materialization_after_dispatch_finishes() {
+        let token = CancellationToken::new();
+        let handle = token.clone();
+        let dispatch_finished = Arc::new(AtomicBool::new(false));
+        let finished = Arc::clone(&dispatch_finished);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.cancel();
+        });
+        let outcome = race_dispatch(&token, None, async move {
+            let response = dummy_response();
+            finished.store(true, Ordering::SeqCst);
+            // Represents Response::into_bytes() waiting on an asynchronous file read.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<Response, String>(response)
+        })
+        .await;
+        assert!(dispatch_finished.load(Ordering::SeqCst));
+        assert!(matches!(outcome, RaceOutcome::Cancelled));
     }
 
     #[tokio::test]

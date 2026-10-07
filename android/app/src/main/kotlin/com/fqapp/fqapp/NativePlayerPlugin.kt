@@ -1,10 +1,12 @@
 package com.fqapp.fqapp
 
+import android.Manifest
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -12,6 +14,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.WindowManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -33,6 +37,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.PluginRegistry
 import io.flutter.view.TextureRegistry
 import java.io.EOFException
 import java.io.IOException
@@ -48,10 +53,12 @@ import java.util.concurrent.atomic.AtomicInteger
 class NativePlayerPlugin internal constructor(
     private val cryptoStream: CryptoStream = JniCryptoStream,
     private val playerFactory: (Context) -> ExoPlayer = { ExoPlayer.Builder(it).build() }
-) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
+) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
+    PluginRegistry.RequestPermissionsResultListener {
 
     companion object {
         private const val TAG = "NativePlayerPlugin"
+        private const val POST_NOTIFICATIONS_REQUEST = 7412
         @Volatile private var instance: NativePlayerPlugin? = null
 
         fun dispatchNotificationAction(action: String) {
@@ -75,6 +82,8 @@ class NativePlayerPlugin internal constructor(
     @Volatile private var attachedToEngine = false
 
     private var activity: Activity? = null
+    private var activityBinding: ActivityPluginBinding? = null
+    private var notificationPermissionRequested = false
     private val players = ConcurrentHashMap<Int, PlayerInstance>()
     private val pendingPlayerIds = ConcurrentHashMap.newKeySet<Int>()
     private val nextId = AtomicInteger(1)
@@ -129,18 +138,64 @@ class NativePlayerPlugin internal constructor(
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
+        activityBinding = binding
+        binding.addRequestPermissionsResultListener(this)
     }
-    override fun onDetachedFromActivityForConfigChanges() { activity = null }
+    override fun onDetachedFromActivityForConfigChanges() {
+        activityBinding?.removeRequestPermissionsResultListener(this)
+        activityBinding = null
+        activity = null
+    }
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
+        activityBinding = binding
+        binding.addRequestPermissionsResultListener(this)
     }
-    override fun onDetachedFromActivity() { activity = null }
+    override fun onDetachedFromActivity() {
+        activityBinding?.removeRequestPermissionsResultListener(this)
+        activityBinding = null
+        activity = null
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ): Boolean = requestCode == POST_NOTIFICATIONS_REQUEST
+
+    private fun requestNotificationPermissionIfNeeded() {
+        val currentActivity = activity ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            currentActivity.applicationInfo.targetSdkVersion < Build.VERSION_CODES.TIRAMISU
+        ) return
+        if (ContextCompat.checkSelfPermission(
+                currentActivity,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED || notificationPermissionRequested
+        ) return
+        notificationPermissionRequested = true
+        try {
+            ActivityCompat.requestPermissions(
+                currentActivity,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                POST_NOTIFICATIONS_REQUEST
+            )
+        } catch (error: Throwable) {
+            notificationPermissionRequested = false
+            Log.w(TAG, "notification permission request failed", error)
+        }
+    }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         attachedToEngine = false
         if (instance === this) instance = null
+        activityBinding?.removeRequestPermissionsResultListener(this)
+        activityBinding = null
         activity = null
         unregisterNoisyReceiver(binding.applicationContext)
+        binding.applicationContext.stopService(
+            Intent(binding.applicationContext, ListenKeepAliveService::class.java)
+        )
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         players.keys.toList().forEach { id ->
@@ -230,6 +285,7 @@ class NativePlayerPlugin internal constructor(
             }
             "startListenForeground" -> {
                 val context = activity ?: flutterBinding.applicationContext
+                requestNotificationPermissionIfNeeded()
                 val intent = Intent(context, ListenKeepAliveService::class.java).apply {
                     putExtra(ListenKeepAliveService.EXTRA_TITLE, call.argument<String>("title"))
                     putExtra(ListenKeepAliveService.EXTRA_EPISODE, call.argument<String>("episode"))

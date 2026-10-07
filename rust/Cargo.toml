@@ -36,6 +36,7 @@ url = "2"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 tower = "0.5"
 tower-http = { version = "0.6", default-features = false, features = ["fs", "set-header"] }
+http-body-util = "0.1"
 futures = "0.3"
 log = "0.4"
 

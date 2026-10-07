@@ -34,6 +34,22 @@ class ListenKeepAliveService : Service() {
         createNotificationChannel()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            stopForeground(true)
+        }
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(NOTIFICATION_ID)
+        super.onDestroy()
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

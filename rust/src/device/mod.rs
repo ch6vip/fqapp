@@ -146,6 +146,8 @@ pub struct DevicePool {
     registrar: Registrar,
     /// Serializes network registration without holding the pool lock.
     register_lock: Mutex<()>,
+    /// Serializes pool-size maintenance while network registration is in flight.
+    maintenance_lock: Mutex<()>,
     /// Serializes the final file commit against retirement.
     commit: Arc<CommitGate>,
 }
@@ -174,6 +176,7 @@ impl DevicePool {
                 devices = pf.android;
             }
         }
+        devices.truncate(MAX_POOL_SIZE);
         Ok(Arc::new(DevicePool {
             file,
             state: Arc::new(Mutex::new(PoolState {
@@ -186,6 +189,7 @@ impl DevicePool {
                 None => Registrar::new()?,
             },
             register_lock: Mutex::new(()),
+            maintenance_lock: Mutex::new(()),
             commit: Arc::new(CommitGate::new()),
         }))
     }
@@ -211,20 +215,48 @@ impl DevicePool {
         };
 
         if dev.secret_key.is_empty() {
-            {
-                let mut s = self.state.lock().await;
-                s.devices.retain(|d| d.device_id != dev.device_id);
+            let _maintenance = self.maintenance_lock.lock().await;
+            let current = {
+                self.state
+                    .lock()
+                    .await
+                    .devices
+                    .iter()
+                    .find(|d| d.device_id == dev.device_id)
+                    .cloned()
+            };
+            match current {
+                Some(current) if !current.secret_key.is_empty() => dev = current,
+                Some(current) => {
+                    self.state
+                        .lock()
+                        .await
+                        .devices
+                        .retain(|d| d.device_id != current.device_id);
+                    let new_dev = match self.register_one().await {
+                        Ok(device) => device,
+                        Err(error) => {
+                            self.state.lock().await.devices.push(current);
+                            return Err(format!("re-register empty-key device: {error}"));
+                        }
+                    };
+                    self.state.lock().await.devices.push(new_dev.clone());
+                    self.save()
+                        .await
+                        .map_err(|error| format!("persist re-registered device: {error}"))?;
+                    dev = new_dev;
+                }
+                None => {
+                    let mut s = self.state.lock().await;
+                    s.devices.sort_by(|a, b| a.last_used.cmp(&b.last_used));
+                    dev = s
+                        .devices
+                        .iter()
+                        .find(|device| !device.secret_key.is_empty())
+                        .cloned()
+                        .ok_or_else(|| "device pool has no usable device".to_string())?;
+                }
             }
-            let new_dev = self
-                .register_one()
-                .await
-                .map_err(|e| format!("re-register empty-key device: {e}"))?;
-            {
-                let mut s = self.state.lock().await;
-                s.devices.push(new_dev.clone());
-            }
-            let _ = self.save().await;
-            dev = new_dev;
         }
 
         {
@@ -264,18 +296,48 @@ impl DevicePool {
 
     /// Registers a fresh device and swaps it in for a failed one.
     pub async fn replace_failed(&self, device_id: &str) -> Result<Device, String> {
+        let _maintenance = self.maintenance_lock.lock().await;
         const MAX_ATTEMPTS: usize = 5;
         for attempt in 1..=MAX_ATTEMPTS {
             match self.register_one().await {
                 Ok(nd) if !nd.secret_key.is_empty() => {
-                    {
+                    let previous = {
                         let mut s = self.state.lock().await;
                         match s.devices.iter().position(|d| d.device_id == device_id) {
-                            Some(idx) => s.devices[idx] = nd.clone(),
-                            None => s.devices.push(nd.clone()),
+                            Some(idx) => {
+                                let previous = s.devices[idx].clone();
+                                s.devices[idx] = nd.clone();
+                                Some(previous)
+                            }
+                            None if s.devices.len() < MAX_POOL_SIZE => {
+                                s.devices.push(nd.clone());
+                                None
+                            }
+                            None => {
+                                return Err(format!(
+                                    "replace device {device_id}: pool is at capacity"
+                                ));
+                            }
                         }
+                    };
+                    if let Err(error) = self.save().await {
+                        let mut s = self.state.lock().await;
+                        match previous {
+                            Some(old) => {
+                                if let Some(current) = s
+                                    .devices
+                                    .iter_mut()
+                                    .find(|device| device.device_id == nd.device_id)
+                                {
+                                    *current = old;
+                                }
+                            }
+                            None => s.devices.retain(|device| device.device_id != nd.device_id),
+                        }
+                        return Err(format!(
+                            "replace device {device_id}: failed to persist replacement: {error}"
+                        ));
                     }
-                    let _ = self.save().await;
                     return Ok(nd);
                 }
                 _ => {
@@ -318,8 +380,13 @@ impl DevicePool {
 
     /// Manually adds `count` devices to the pool.
     pub async fn refill(&self, count: usize) -> Result<(), String> {
+        let _maintenance = self.maintenance_lock.lock().await;
+        let room = {
+            let s = self.state.lock().await;
+            MAX_POOL_SIZE.saturating_sub(s.devices.len()).min(count)
+        };
         let mut last_err = None;
-        for _ in 0..count {
+        for _ in 0..room {
             match self.register_one().await {
                 Ok(dev) => {
                     let mut s = self.state.lock().await;
@@ -329,7 +396,7 @@ impl DevicePool {
             }
         }
         if !self.state.lock().await.devices.is_empty() {
-            let _ = self.save().await;
+            self.save().await?;
         }
         match last_err {
             Some(e) => Err(e),
@@ -338,9 +405,12 @@ impl DevicePool {
     }
 
     async fn check_and_refill(&self) -> Result<(), String> {
+        let _maintenance = self.maintenance_lock.lock().await;
         let need = {
             let s = self.state.lock().await;
-            MIN_POOL_SIZE.saturating_sub(s.devices.len())
+            MIN_POOL_SIZE
+                .saturating_sub(s.devices.len())
+                .min(MAX_POOL_SIZE.saturating_sub(s.devices.len()))
         };
         if need == 0 {
             return Ok(());
@@ -360,7 +430,7 @@ impl DevicePool {
             !s.devices.is_empty()
         };
         if has_any {
-            let _ = self.save().await;
+            self.save().await?;
             return Ok(());
         }
         match last_err {
@@ -619,6 +689,31 @@ mod persistence_tests {
                 content.contains("android"),
                 "the file stays valid: {content}"
             );
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    #[test]
+    fn loading_and_manual_refill_never_exceed_pool_capacity() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let dir = temp_dir("pool-capacity");
+            let path = dir.join("device_pool.json");
+            tokio::fs::write(&path, pool_json(MAX_POOL_SIZE + 3))
+                .await
+                .expect("seed oversized pool");
+            let pool = DevicePool::new(&path).await.expect("pool");
+            assert_eq!(pool.count().await, MAX_POOL_SIZE);
+
+            pool.refill(4).await.expect("refill at capacity is a no-op");
+            assert_eq!(pool.count().await, MAX_POOL_SIZE);
+            let persisted = tokio::fs::read_to_string(&path).await.expect("saved pool");
+            let persisted: PoolFile = serde_json::from_str(&persisted).expect("valid pool");
+            assert_eq!(persisted.android.len(), MAX_POOL_SIZE);
             let _ = std::fs::remove_dir_all(&dir);
         });
     }
