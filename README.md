@@ -113,6 +113,12 @@ fqapp 是一个运行在 **Android 手机本地** 的番茄内容聚合客户端
 
 本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自番茄公开接口，版权归字节跳动及原权利方所有。本项目与番茄/字节跳动无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。请遵守相关法律法规，仅限个人学习研究使用。
 
+## 致谢（Acknowledgments）
+
+Thanks to the [LINUX DO](https://linux.do/) community for its support and feedback.
+
+感谢 [LINUX DO](https://linux.do/) 社区的支持与反馈。
+
 ---
 
 ## 开发者
