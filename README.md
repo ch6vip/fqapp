@@ -27,9 +27,13 @@ fqapp 是一个运行在 **Android 手机本地** 的番茄内容聚合客户端
 
 ### 获取安装包
 
-安装包有两种获取方式：
+**推荐：[GitHub Releases](https://github.com/ch6vip/fqapp/releases/latest)** —— 下载最新发布版的
+`fqapp-<版本>-arm64.apk`，同一发布页附 `SHA256SUMS` 与 `verify-report.json`（签名、16 KiB 对齐等
+8 项校验的原始报告），可自行核对。
 
-1. **GitHub Actions 云端构建（推荐）**：打开仓库的 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，点击 **Run workflow** 运行一次构建；成功后在本次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`，解压得到 `app-release.apk`（附带 SHA-256、签名与 16 KiB 对齐校验报告；产物保留 14 天）。
+其他方式：
+
+1. **GitHub Actions 云端构建**：打开仓库的 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，点击 **Run workflow** 运行一次构建；成功后在本次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`，解压得到 `app-release.apk`（同样附带校验报告；**产物仅保留 14 天**，需要长期留存请用 Releases）。
 2. **本地构建**：需要 Flutter / Rust / Android NDK 工具链，步骤见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 > **在 fork 中构建**：正式签名的密钥只对上游仓库可用，fork 出来的构建拿不到它。此时工作流
@@ -38,11 +42,11 @@ fqapp 是一个运行在 **Android 手机本地** 的番茄内容聚合客户端
 
 ### 安装与首次启动
 
-1. 安装 APK（直接点击安装，或 `adb install app-release.apk`）。
+1. 安装 APK（直接点击安装，或 `adb install fqapp-<版本>-arm64.apk`）。
 2. 首次启动时 App 自动完成初始化：部署运行资源 → 启动本地核心并注册设备 → 健康检查通过后进入主界面。首次请保持联网。
 3. 之后即可随时离线打开 App，阅读已缓存的内容。
 
-> ⚠️ **签名与升级**：正式签名与调试签名的包**不能互相覆盖安装**。Actions 构建的 release 包使用正式签名；从旧签名版本（v1.0.17 及更早）升级需要**先卸载**再安装，卸载会同时清除阅读历史与缓存。同签名版本可直接覆盖升级。
+> ⚠️ **签名与升级**：正式签名与调试签名的包**不能互相覆盖安装**。Releases 与 Actions 产出的 release 包使用正式签名；从旧签名版本（v1.0.17 及更早）升级需要**先卸载**再安装，卸载会同时清除阅读历史与缓存。同签名版本可直接覆盖升级。
 
 ## 快速上手
 
