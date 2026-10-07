@@ -44,13 +44,12 @@ abstract class TxtSink {
 /// Android 10 (API 29) and newer insert into `MediaStore.Downloads`, which
 /// needs no storage permission; older devices fall back to the app's external
 /// directory and report `public: false` so the caller does not claim the file
-/// is in Downloads. See `.agents/notes/implemented/feature/`.
+/// is in Downloads. See
+/// `.agents/notes/implemented/feature/2026-10-05-book-txt-export.md`.
 class PlatformTxtSink implements TxtSink {
-  const PlatformTxtSink() : _channel = _channelName;
+  const PlatformTxtSink();
 
-  static const _channelName = MethodChannel('fqapp/downloads');
-
-  final MethodChannel _channel;
+  static const _channel = MethodChannel('fqapp/downloads');
 
   @override
   Future<ExportTarget> saveText({

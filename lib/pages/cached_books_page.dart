@@ -218,8 +218,9 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   /// clear. A running export turns its own button into progress and cancel.
   Widget _bookTile(CachedBookSummary item) {
     final bookId = item.book.id;
-    final running = _exportBookId == bookId ? _export?.value : null;
-    final progress = running != null && running.running ? running : null;
+    // _onExportChanged clears _exportBookId as soon as the export stops, so a
+    // row can only see a state here while that export is still running.
+    final progress = _exportBookId == bookId ? _export?.value : null;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(

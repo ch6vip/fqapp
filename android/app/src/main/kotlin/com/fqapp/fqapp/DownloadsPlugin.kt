@@ -109,7 +109,6 @@ class DownloadsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             return mapOf(
                 "path" to "${downloads.absolutePath}/$stored",
                 "public" to true,
-                "uri" to uri.toString(),
             )
         }
 
