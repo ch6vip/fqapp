@@ -39,6 +39,7 @@
 
 ## 5. 运行与部署（Android APK 交付与安装，锚点 A7/A8）
 - APK 构建：先跑 `scripts/build_rust_backend.ps1` 生成 ARM64 Rust 核心，再执行 `flutter build apk --release --target-platform android-arm64 --no-pub`。
+- **`.so` 重建判据（CRIT-011）**：上面那条"先跑 build_rust_backend"**不是无条件的第一步**，而取决于改动面。Gradle 只在打包期检查 `jniLibs/arm64-v8a/libfqapi_core.so` **是否存在**，不会重编，而该目录已入 `.gitignore`——所以打版前必须跑 `git log --oneline <上一版归档点>..HEAD -- rust/`：**输出非空就必须重建 `.so`**，否则产出的 APK 会静默缺失最近的 Rust 修复（门禁全绿也拦不住，实例：`v1.0.88` 补发时的 `3187bfb`）。重建后立即用 `node scripts/check_native_alignment.cjs …/libfqapi_core.so` 确认 `0x4000` 对齐。构造/Rust 侧的脚本陷阱见本地 `docs/规范/踩坑判据.md` 的 CRIT-011 / CRIT-012。
 - 版本号递增：用户可见功能变更必须递增 `pubspec.yaml` 的 version 与 versionCode。
 - 归档纪律：验收后**立即**归档（APK + SHA256SUMS + 验证报告）到 `release-archives/<tag>/`，不许攒批；该目录已入 `.gitignore`、只落本地磁盘。断档实例：`v1.0.82` 之后到 `v1.0.86` 都没有归档包，那几版已无法回滚。
 - 签名与安装：签名要求见本地 `docs/release-signing.md`；覆盖安装使用 `adb install -r <apk>`。详情见本地 `docs/运维/构建与发布.md`。
