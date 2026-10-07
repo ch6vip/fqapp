@@ -13,9 +13,8 @@
 //! let a foreign page read responses) and, when it carries an `Origin`, come
 //! from this listener too (defeats cross-site form POSTs to the device-bound
 //! write routes, which read their arguments from the query string and so need
-//! no CORS preflight). Other local apps can still send well-formed requests;
-//! that needs a per-launch token and is tracked separately. See
-//! .agents/notes/implemented/bug-fix/2026-09-30-loopback-host-origin-guard.md.
+//! no CORS preflight). A fresh capability protects every route from other
+//! local apps. See .agents/notes/implemented/bug-fix/2026-10-07-loopback-session.md.
 
 use std::sync::Arc;
 
@@ -24,6 +23,7 @@ use axum::extract::{DefaultBodyLimit, FromRequest, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Router;
+use rand::RngCore;
 use serde_json::json;
 use tokio_util::io::ReaderStream;
 
@@ -35,6 +35,7 @@ pub const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 
 pub struct LoopbackHandle {
     pub port: u16,
+    pub token: String,
     pub task: tokio::task::JoinHandle<()>,
 }
 
@@ -43,6 +44,7 @@ struct AppState {
     server: Arc<Server>,
     /// The bound port, not the requested one: `serve(_, 0)` picks it at bind.
     port: u16,
+    token: String,
 }
 
 pub async fn serve(server: Arc<Server>, port: u16) -> Result<LoopbackHandle, String> {
@@ -52,9 +54,15 @@ pub async fn serve(server: Arc<Server>, port: u16) -> Result<LoopbackHandle, Str
     let local = listener
         .local_addr()
         .map_err(|e| format!("local addr: {e}"))?;
+    let mut entropy = [0u8; 32];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut entropy)
+        .map_err(|_| "session entropy unavailable")?;
+    let token = hex::encode(entropy);
     let state = AppState {
         server,
         port: local.port(),
+        token: token.clone(),
     };
     // axum's default body limit is 2 MiB; the Bytes extractor below honours
     // this layer instead.
@@ -67,6 +75,7 @@ pub async fn serve(server: Arc<Server>, port: u16) -> Result<LoopbackHandle, Str
     });
     Ok(LoopbackHandle {
         port: local.port(),
+        token,
         task,
     })
 }
@@ -124,6 +133,45 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
     if let Some(reason) = refusal(req.headers(), state.port) {
         return refuse(StatusCode::FORBIDDEN, reason);
     }
+    let prefix = format!("/_session/{}", state.token);
+    let path = req.uri().path();
+    let scoped = path
+        .strip_prefix(&prefix)
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'));
+    let bearer = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok());
+    let cookie_name = format!("fq_session_{}", state.port);
+    let cookie_ok = req
+        .headers()
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|h| h.to_str().ok())
+        .flat_map(|h| h.split(';'))
+        .filter_map(|part| part.trim().split_once('='))
+        .any(|(name, value)| name == cookie_name && value == state.token);
+    if scoped.is_none() && bearer != Some(format!("Bearer {}", state.token).as_str()) && !cookie_ok
+    {
+        return refuse(StatusCode::UNAUTHORIZED, "session required");
+    }
+    let request_path = scoped.unwrap_or(path).to_string();
+    let session_cookie = format!(
+        "{cookie_name}={}; Path=/; HttpOnly; SameSite=Strict",
+        state.token
+    );
+    // Clean the entry URL before HTML resolves root-relative links or loads
+    // remote media. The capability is never embedded in Web UI source.
+    if scoped.is_some() && (request_path.is_empty() || request_path == "/") {
+        return Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header(header::LOCATION, "/")
+            .header(header::SET_COOKIE, session_cookie)
+            .header(header::REFERRER_POLICY, "no-referrer")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::empty())
+            .unwrap();
+    }
     let declared = req
         .headers()
         .get(header::CONTENT_LENGTH)
@@ -154,7 +202,7 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
     let server = state.server;
     let request = Request {
         method,
-        path: uri.path().to_string(),
+        path: request_path,
         query: uri.query().unwrap_or("").to_string(),
         body: body.to_vec(),
         headers,
@@ -162,11 +210,15 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
     let resp = dispatch(&server, &request).await;
 
     let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let mut builder = Response::builder().status(status).header(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(&resp.content_type)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
-    );
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::REFERRER_POLICY, "no-referrer")
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_str(&resp.content_type)
+                .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+        );
     for (name, value) in &resp.headers {
         if let (Ok(n), Ok(v)) = (
             header::HeaderName::from_bytes(name.as_bytes()),

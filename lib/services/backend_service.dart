@@ -59,6 +59,13 @@ class BackendService {
   String get baseUrl =>
       _transport.baseUrl.isNotEmpty ? _transport.baseUrl : fallbackBaseUrl;
 
+  /// Entry URL of the built-in Web UI, capability included.
+  ///
+  /// The loopback adapter only answers a request carrying the per-launch
+  /// capability, and this is the URL that hands it to a browser as a session
+  /// cookie before redirecting to `/`.
+  String get webUiEntryUrl => backendResourceBase(baseUrl, _transport.capability);
+
   /// Whether the Rust FFI transport is in use (as opposed to the HTTP adapter).
   bool get usesRustTransport => _transport is RustBackendTransport;
 

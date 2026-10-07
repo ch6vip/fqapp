@@ -43,6 +43,7 @@ struct Core {
     generation: u64,
     server: Arc<Server>,
     port: u16,
+    token: String,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -168,8 +169,8 @@ pub(crate) async fn init_core(
     // configured 8080 explicitly. The loopback adapter is always part of the
     // core because resource URLs (`/src/...`) depend on it.
     let _ = cfg.port;
-    let (actual_port, task) = match crate::server::serve(server.clone(), port).await {
-        Ok(handle) => (handle.port, Some(handle.task)),
+    let (actual_port, token, task) = match crate::server::serve(server.clone(), port).await {
+        Ok(handle) => (handle.port, handle.token, Some(handle.task)),
         Err(e) => return Err(e),
     };
 
@@ -182,6 +183,7 @@ pub(crate) async fn init_core(
         generation,
         server,
         port: actual_port,
+        token,
         task,
     }));
     Ok("running".to_string())
@@ -233,6 +235,20 @@ pub async fn base_url() -> String {
     match guard.as_ref() {
         Some(core) if core.port != 0 => format!("http://127.0.0.1:{}", core.port),
         _ => String::new(),
+    }
+}
+/// Per-launch capability of the loopback adapter.
+///
+/// Every request the adapter accepts must carry it: as a `/_session/<cap>`
+/// path prefix, an `Authorization: Bearer` header, or the session cookie the
+/// entry URL sets. `base_url()` deliberately stays capability-free - the same
+/// value is the FFI path root, and FFI calls never cross the socket. URLs
+/// handed to HTTP clients instead (`/src/...`) must carry the prefix.
+pub async fn session_capability() -> String {
+    let guard = CORE.read().await;
+    match guard.as_ref() {
+        Some(core) => core.token.clone(),
+        None => String::new(),
     }
 }
 
@@ -603,7 +619,7 @@ mod tests {
         .await
         .expect("the new core serves requests");
         assert_eq!(fresh.status, 200);
-        assert!(health_ok(&base_url().await).await);
+        assert!(health_ok(&base_url().await, &session_capability().await).await);
 
         mock_task.abort();
         shutdown().await.expect("shutdown");
@@ -670,12 +686,19 @@ mod tests {
         )
     }
 
-    async fn health_ok(base: &str) -> bool {
+    /// Proves that the core at `base` really answers on its published port. The
+    /// capability is part of the probe: `base_url()` alone is refused with 401,
+    /// so a stale pair (released port or restarted core) must fail this.
+    async fn health_ok(base: &str, capability: &str) -> bool {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(3))
             .build()
             .expect("client");
-        match client.get(format!("{base}/health")).send().await {
+        match client
+            .get(format!("{base}/_session/{capability}/health"))
+            .send()
+            .await
+        {
             Ok(resp) => resp.status().as_u16() == 200,
             Err(_) => false,
         }
@@ -704,16 +727,22 @@ mod tests {
         assert!(core_generation().await > 0);
         assert_eq!(status().await, "running");
         let base = base_url().await;
+        let capability = session_capability().await;
         assert!(base.starts_with("http://127.0.0.1:"), "base url {base:?}");
         assert!(
-            health_ok(&base).await,
+            health_ok(&base, &capability).await,
             "the published core must serve /health"
         );
 
         shutdown().await.expect("shutdown");
         assert_eq!(core_generation().await, 0);
         assert_eq!(status().await, "starting");
-        assert!(!health_ok(&base).await, "shutdown must release the port");
+        // The port is released *and* the capability is retired, so the stale
+        // pair cannot answer even if another listener took the port.
+        assert!(
+            !health_ok(&base, &capability).await,
+            "shutdown must release the port"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -729,6 +758,7 @@ mod tests {
             .expect("first init");
         let first_generation = core_generation().await;
         let first_base = base_url().await;
+        let first_capability = session_capability().await;
 
         shutdown().await.expect("shutdown");
         assert_eq!(core_generation().await, 0);
@@ -742,14 +772,16 @@ mod tests {
             second_generation > first_generation,
             "a restarted core must have a newer generation ({second_generation} vs {first_generation})"
         );
-        assert!(health_ok(&base_url().await).await);
+        assert!(health_ok(&base_url().await, &session_capability().await).await);
 
         // A stale cleanup for the previous core must not disturb the new one.
         assert!(!cancel("stale-request-from-previous-core".to_string()));
         assert_eq!(status().await, "running");
-        assert!(health_ok(&base_url().await).await);
+        assert!(health_ok(&base_url().await, &session_capability().await).await);
 
-        let _ = first_base;
+        // The previous launch's capability must be dead: the new core has its
+        // own, so a stale URL cannot answer even if the port is reused.
+        assert!(!health_ok(&first_base, &first_capability).await);
         shutdown().await.expect("shutdown");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -776,7 +808,7 @@ mod tests {
         // or a fully stopped one - never a half-bound listener.
         if core_generation().await > 0 {
             assert_eq!(status().await, "running");
-            assert!(health_ok(&base_url().await).await);
+            assert!(health_ok(&base_url().await, &session_capability().await).await);
         } else {
             assert_eq!(status().await, "starting");
             assert!(base_url().await.is_empty());

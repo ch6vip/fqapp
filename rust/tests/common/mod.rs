@@ -160,12 +160,53 @@ pub fn pool_json(count: usize) -> String {
     serde_json::json!({ "android": devices, "last_update": "2026-01-01 00:00:00" }).to_string()
 }
 
+/// A running loopback adapter plus the per-launch capability it was started
+/// with. The token is random per launch and cannot be recovered from the port,
+/// so every test that wants a positive answer has to keep it: the adapter
+/// answers 401 to anything that carries no capability.
+pub struct Loopback {
+    pub port: u16,
+    pub token: String,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
+impl Loopback {
+    /// The listener's own origin, for `Host`/`Origin` values.
+    pub fn origin(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// Capability-carrying request target, the form hand-written requests use.
+    pub fn scoped_path(&self, path: &str) -> String {
+        format!("/_session/{}{}", self.token, path)
+    }
+
+    /// A URL carrying the real capability: what a real caller uses.
+    pub fn url(&self, path: &str) -> String {
+        format!("{}{}", self.origin(), self.scoped_path(path))
+    }
+
+    /// A URL carrying an arbitrary capability, for the gate's own tests.
+    pub fn url_with(&self, capability: &str, path: &str) -> String {
+        format!("{}/_session/{capability}{path}", self.origin())
+    }
+
+    /// A URL with no capability at all: only the refusal cases want this.
+    pub fn bare_url(&self, path: &str) -> String {
+        format!("{}{path}", self.origin())
+    }
+}
+
 /// Starts the real loopback adapter on an ephemeral port.
-pub async fn start_loopback(server: Arc<Server>) -> (u16, tokio::task::JoinHandle<()>) {
+pub async fn start_loopback(server: Arc<Server>) -> Loopback {
     let handle = fqapi_core::server::serve(server, 0)
         .await
         .expect("loopback adapter");
-    (handle.port, handle.task)
+    Loopback {
+        port: handle.port,
+        token: handle.token,
+        task: handle.task,
+    }
 }
 
 // --- Mock upstream ---------------------------------------------------------

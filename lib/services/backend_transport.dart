@@ -77,6 +77,17 @@ class BackendRequest {
   }
 }
 
+/// [baseUrl] with [capability] woven into the path, ending in `/`.
+///
+/// Resource URLs must use this: backend-relative paths are root-relative
+/// (`/src/...`) and `Uri.resolve` would otherwise replace the whole base path,
+/// dropping the capability. `resolveBackendResource` re-anchors them.
+///
+/// A free function rather than an interface member, so that every
+/// `implements BackendTransport` (test doubles included) stays untouched.
+String backendResourceBase(String baseUrl, String capability) =>
+    capability.isEmpty ? '$baseUrl/' : '$baseUrl/_session/$capability/';
+
 /// A backend call surface. Two implementations share the same Rust core:
 /// [RustBackendTransport] calls it over flutter_rust_bridge, and
 /// [HttpBackendTransport] talks to the loopback HTTP adapter (tests, desktop,
@@ -84,6 +95,12 @@ class BackendRequest {
 abstract class BackendTransport {
   /// Base URL used to resolve backend-relative resources such as `/src/...`.
   String get baseUrl;
+
+  /// Per-launch capability the loopback adapter requires; empty when unknown.
+  ///
+  /// Only callers that cross the socket must present it - FFI calls stay in
+  /// process and are never gated.
+  String get capability => '';
 
   Future<BackendResponse> send(
     String method,
@@ -123,6 +140,7 @@ class RustBackendTransport implements BackendTransport {
   static Future<void>? _runtimeReady;
 
   String _baseUrl;
+  String _capability = '';
   bool _coreRunning = false;
 
   /// Loads the bridge runtime once per process.
@@ -138,6 +156,9 @@ class RustBackendTransport implements BackendTransport {
 
   @override
   String get baseUrl => _baseUrl;
+
+  @override
+  String get capability => _capability;
 
   /// Process-wide monotonic id source.
   ///
@@ -169,6 +190,8 @@ class RustBackendTransport implements BackendTransport {
       mockUpstreamOrigin: mockUpstreamOrigin,
     );
     _baseUrl = await rust.baseUrl();
+    _capability = await rust.sessionCapability();
+    _httpFallback.capability = _capability;
     _coreRunning = result == 'running';
     return result;
   }
@@ -261,13 +284,23 @@ class RustBackendTransport implements BackendTransport {
 
 /// HTTP transport for the loopback adapter, Dart tests and the Web build.
 class HttpBackendTransport implements BackendTransport {
-  HttpBackendTransport({http.Client? client, required this.baseUrl})
-    : _client = client ?? http.Client();
+  HttpBackendTransport({
+    http.Client? client,
+    required this.baseUrl,
+    this.capability = '',
+  }) : _client = client ?? http.Client();
 
   final http.Client _client;
 
   @override
   final String baseUrl;
+
+  /// Loopback capability presented as a bearer token; empty when the caller
+  /// talks to a server that does not ask for one.
+  ///
+  /// Mutable because the FFI transport only learns it once the core is up.
+  @override
+  String capability;
 
   @override
   Future<BackendResponse> send(
@@ -295,6 +328,11 @@ class HttpBackendTransport implements BackendTransport {
       abortTrigger: abort.future,
     );
     if (body != null) httpRequest.bodyBytes = body;
+    if (capability.isNotEmpty) {
+      // This is the only HTTP path that never sees the cookie the entry URL
+      // sets, so it has to present the capability as a bearer token.
+      httpRequest.headers['authorization'] = 'Bearer $capability';
+    }
     try {
       // The deadline must cover reading the body too: a server that sends
       // headers and then stalls would otherwise hold the connection forever.

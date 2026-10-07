@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
@@ -375,7 +376,37 @@ class SettingsPage extends StatelessWidget {
     icon: LucideIcons.cpu,
     title: '本地后端',
     subtitle: BackendService.instance.baseUrl,
+    // The adapter only answers a request that carries the per-launch
+    // capability, and the entry URL is what hands it to a browser as a session
+    // cookie. Opening the bare base URL would just land on a 401.
+    onTap: (context, setState) => _openWebUi(context),
   );
+
+  /// Opens the built-in Web UI in a browser.
+  ///
+  /// The transport's `resourceBase` carries the loopback capability in its
+  /// path; the adapter answers that entry with a redirect to `/` plus the
+  /// session cookie, so the capability never lingers in the address bar.
+  Future<void> _openWebUi(BuildContext context) async {
+    final entry = BackendService.instance.webUiEntryUrl;
+    if (entry.isEmpty) return;
+    var launched = false;
+    try {
+      // Android package visibility may hide a browser from canLaunchUrl even
+      // though it can handle the actual ACTION_VIEW intent.
+      launched = await launchUrl(
+        Uri.parse(entry),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // Report launch failures through the same visible fallback.
+    }
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('无法打开 Web UI')));
+    }
+  }
 
   SettingsItem _logItem() => SettingsItem(
     icon: LucideIcons.terminal,

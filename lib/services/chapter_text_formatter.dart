@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' show parseFragment;
 
+import '../models/backend_resource_url.dart';
+
 const _paragraphTags = {
   'address',
   'article',
@@ -490,7 +492,7 @@ String? _chapterImageUrl(String? value, {String? baseUrl}) {
     final resolved = uri.hasScheme
         ? uri
         : baseUrl != null
-        ? Uri.parse(baseUrl).resolveUri(uri)
+        ? Uri.parse(resolveBackendResource(baseUrl, raw))
         : null;
     if (resolved == null ||
         (resolved.scheme != 'https' && resolved.scheme != 'http') ||

@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{build_server, pool_json, start_loopback, TempDir};
+use common::{build_server, pool_json, start_loopback, Loopback, TempDir};
 use fqapi_core::dispatch::{dispatch, Request, ResponseBody};
 
 const MARKER: &str = "OFFLINE_TEST_MARKER_OUTSIDE_SRC";
@@ -223,13 +223,14 @@ async fn file_bodies_are_ranges_not_whole_files() {
 
 // --- Real loopback adapter -------------------------------------------------
 
+/// Fetches a path over the real socket, carrying the launch capability.
 async fn http_get(
-    port: u16,
+    lb: &Loopback,
     path: &str,
     range: Option<&str>,
 ) -> (u16, Vec<(String, String)>, Vec<u8>) {
     let client = reqwest::Client::builder().build().expect("client");
-    let mut builder = client.get(format!("http://127.0.0.1:{port}{path}"));
+    let mut builder = client.get(lb.url(path));
     if let Some(r) = range {
         builder = builder.header("range", r);
     }
@@ -252,13 +253,13 @@ async fn http_get(
 #[tokio::test]
 async fn loopback_adapter_serves_plain_and_ranged_requests() {
     let (_dir, server) = fixture().await;
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
 
-    let (status, _, body) = http_get(port, "/src/ok.txt", None).await;
+    let (status, _, body) = http_get(&lb, "/src/ok.txt", None).await;
     assert_eq!(status, 200);
     assert_eq!(body, b"0123456789");
 
-    let (status, headers, body) = http_get(port, "/src/ok.txt", Some("bytes=2-5")).await;
+    let (status, headers, body) = http_get(&lb, "/src/ok.txt", Some("bytes=2-5")).await;
     assert_eq!(status, 206);
     assert_eq!(body, b"2345");
     let header = |name: &str| {
@@ -272,24 +273,24 @@ async fn loopback_adapter_serves_plain_and_ranged_requests() {
     assert_eq!(header("content-range"), "bytes 2-5/10");
     assert_eq!(header("accept-ranges"), "bytes");
 
-    task.abort();
+    lb.task.abort();
 }
 
 #[tokio::test]
 async fn loopback_adapter_refuses_traversal_over_a_real_socket() {
     let (_dir, server) = fixture().await;
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
 
     for path in [
         "/src/../outside.txt",
         "/src/%2e%2e/outside.txt",
         "/src/..%2Foutside.txt",
     ] {
-        let (status, _, body) = http_get(port, path, None).await;
+        let (status, _, body) = http_get(&lb, path, None).await;
         assert_eq!(status, 404, "path {path:?}");
         assert!(!String::from_utf8_lossy(&body).contains(MARKER));
     }
-    task.abort();
+    lb.task.abort();
 }
 
 #[tokio::test]
@@ -301,9 +302,9 @@ async fn loopback_adapter_streams_a_large_file_in_bounded_chunks() {
     let mut tail = big.clone();
     tail[..1].copy_from_slice(b"z");
     std::fs::write(dir.join("src/big.bin"), &tail).expect("write big file");
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
 
-    let (status, headers, body) = http_get(port, "/src/big.bin", None).await;
+    let (status, headers, body) = http_get(&lb, "/src/big.bin", None).await;
     assert_eq!(status, 200);
     assert_eq!(body.len(), tail.len());
     assert_eq!(
@@ -315,7 +316,7 @@ async fn loopback_adapter_streams_a_large_file_in_bounded_chunks() {
     );
 
     let (status, headers, body) =
-        http_get(port, "/src/big.bin", Some("bytes=4194300-4194303")).await;
+        http_get(&lb, "/src/big.bin", Some("bytes=4194300-4194303")).await;
     assert_eq!(status, 206);
     assert_eq!(body.len(), 4);
     assert_eq!(
@@ -325,7 +326,7 @@ async fn loopback_adapter_streams_a_large_file_in_bounded_chunks() {
             .map(|(_, v)| v.as_str()),
         Some("bytes 4194300-4194303/4194304")
     );
-    task.abort();
+    lb.task.abort();
 }
 
 // --- F1-R / F2-R regressions -----------------------------------------------
@@ -463,13 +464,13 @@ async fn declared_length_always_matches_the_body() {
 #[tokio::test]
 async fn loopback_adapter_refuses_a_symlinked_index_and_serves_empty_files() {
     let (_dir, server) = boundary_fixture().await;
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
 
-    let (status, _, body) = http_get(port, "/src/linked/", None).await;
+    let (status, _, body) = http_get(&lb, "/src/linked/", None).await;
     assert_eq!(status, 404);
     assert!(!String::from_utf8_lossy(&body).contains(MARKER));
 
-    let (status, headers, body) = http_get(port, "/src/empty.mp4", Some("bytes=0-")).await;
+    let (status, headers, body) = http_get(&lb, "/src/empty.mp4", Some("bytes=0-")).await;
     assert_eq!(status, 200);
     assert!(body.is_empty(), "an empty file must send no bytes");
     assert_eq!(
@@ -480,9 +481,9 @@ async fn loopback_adapter_refuses_a_symlinked_index_and_serves_empty_files() {
         Some("0")
     );
 
-    let (status, _, body) = http_get(port, "/src/sub/", None).await;
+    let (status, _, body) = http_get(&lb, "/src/sub/", None).await;
     assert_eq!(status, 200);
     assert_eq!(body, b"<html>sub</html>");
 
-    task.abort();
+    lb.task.abort();
 }

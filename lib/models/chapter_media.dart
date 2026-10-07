@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:html/parser.dart' show parseFragment;
 
+import 'backend_resource_url.dart';
+
 /// An available voice ID; ordinary book detail's CSV has no display names.
 class AudioVoice {
   const AudioVoice({required this.id, required this.label});
@@ -358,7 +360,7 @@ String? _mediaUrl(dynamic value, String baseUrl) {
     final parsed = Uri.parse(raw);
     final resolved = parsed.hasScheme
         ? parsed
-        : Uri.parse(baseUrl).resolveUri(parsed);
+        : Uri.parse(resolveBackendResource(baseUrl, raw));
     if ((resolved.scheme != 'http' && resolved.scheme != 'https') ||
         resolved.host.isEmpty) {
       return null;

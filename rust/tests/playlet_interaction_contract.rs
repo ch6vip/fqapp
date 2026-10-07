@@ -76,16 +76,14 @@ async fn write_routes_reject_get_before_any_upstream_request() {
     assert!(upstream.requests().is_empty());
 
     // Exercise the actual loopback adapter as well as direct dispatch.
-    let (port, task) = start_loopback(server).await;
-    let response = reqwest::get(format!(
-        "http://127.0.0.1:{port}/api/v1/series/123/comments/add?text=x"
-    ))
-    .await
-    .expect("loopback GET");
+    let lb = start_loopback(server).await;
+    let response = reqwest::get(lb.url("/api/v1/series/123/comments/add?text=x"))
+        .await
+        .expect("loopback GET");
     assert_eq!(response.status().as_u16(), 405);
     assert_eq!(response.headers()["allow"], "POST");
     assert!(upstream.requests().is_empty());
-    task.abort();
+    lb.task.abort();
     upstream.shutdown();
 }
 

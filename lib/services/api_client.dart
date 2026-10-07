@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/audio_extra.dart';
 import '../models/author_profile.dart';
+import '../models/backend_resource_url.dart';
 import '../models/book_comment.dart';
 import '../models/book_detail.dart';
 import '../models/chapter_ideas.dart';
@@ -111,6 +112,15 @@ class ApiClient {
   /// read from the transport so a backend restart cannot leave a stale port.
   String get _base => _transport.baseUrl;
 
+  /// Base URL for resources an HTTP client will fetch.
+  ///
+  /// Unlike [_base] it carries the loopback capability in its path and ends in
+  /// `/`, which is what lets [resolveBackendResource] re-anchor a root-relative
+  /// `/src/...` under it. JSON API paths keep using [_base]: they travel over
+  /// FFI, which never crosses the socket and so needs no capability.
+  String get _resourceBase =>
+      backendResourceBase(_transport.baseUrl, _transport.capability);
+
   /// Converts a backend-relative resource (`/src/foo.mp4`) into a URL the
   /// Flutter networking plugins can consume. JSON API paths stay untouched.
   String absoluteUrl(String value) {
@@ -124,7 +134,7 @@ class ApiClient {
       }
       return raw;
     }
-    return Uri.parse(_base).resolve(raw).toString();
+    return resolveBackendResource(_resourceBase, raw);
   }
 
   /// Decodes and envelope-checks a response body on a background isolate so
@@ -388,7 +398,7 @@ class ApiClient {
     );
     final statusCode = response.statusCode;
     final bodyBytes = response.bodyBytes;
-    final baseUrl = _base;
+    final baseUrl = _resourceBase;
     return Isolate.run(() {
       final payload = _decodeEnvelope(statusCode, bodyBytes);
       try {
@@ -1065,7 +1075,7 @@ class ApiClient {
     );
     final statusCode = response.statusCode;
     final bodyBytes = response.bodyBytes;
-    final baseUrl = _base;
+    final baseUrl = _resourceBase;
     return Isolate.run(() {
       try {
         return parseComicImages(
@@ -1104,7 +1114,7 @@ class ApiClient {
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      final baseUrl = _base;
+      final baseUrl = _resourceBase;
       return await Isolate.run(() {
         final payload = _decodeEnvelope(status, bytes);
         final data = payload['data'];

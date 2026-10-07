@@ -57,16 +57,20 @@ async fn raw(port: u16, request: &str) -> (u16, String) {
 async fn own_hosts_are_served() {
     let dir = TempDir::new("guard-own-host");
     let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
+    // The capability rides in the path so this stays a pure Host-guard test:
+    // The capability rides in the path so this stays a pure Host-guard test:
+    // on a bare target the session gate answers 401 instead of the dispatcher.
+    let target = lb.scoped_path("/health");
 
     for host in [
-        format!("127.0.0.1:{port}"),
-        format!("localhost:{port}"),
-        format!("LocalHost:{port}"),
+        format!("127.0.0.1:{}", lb.port),
+        format!("localhost:{}", lb.port),
+        format!("LocalHost:{}", lb.port),
     ] {
         let (status, text) = raw(
-            port,
-            &format!("GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
+            lb.port,
+            &format!("GET {target} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
         )
         .await;
         assert_eq!(status, 200, "host {host}");
@@ -76,36 +80,38 @@ async fn own_hosts_are_served() {
     // Same-origin browser request (Web UI) and a real client both pass.
     let client = reqwest::Client::new();
     let response = client
-        .get(format!("http://127.0.0.1:{port}/health"))
-        .header("origin", format!("http://127.0.0.1:{port}"))
+        .get(lb.url("/health"))
+        .header("origin", lb.origin())
         .send()
         .await
         .expect("same-origin request");
     assert_eq!(response.status().as_u16(), 200);
-    task.abort();
+    lb.task.abort();
 }
 
 #[tokio::test]
 async fn foreign_or_missing_hosts_are_refused_without_a_body() {
     let dir = TempDir::new("guard-foreign-host");
     let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
 
-    let other_port = port.wrapping_add(1);
+    // The target stays capability-free on purpose: a foreign Host must still
+    // answer 403, which pins the Host guard ahead of the session gate.
+    let other_port = lb.port.wrapping_add(1);
     for host in [
         // DNS rebinding: a foreign name resolved to 127.0.0.1.
-        format!("evil.example:{port}"),
+        format!("evil.example:{}", lb.port),
         "evil.example".to_string(),
         // Right host, wrong port, and portless forms.
         format!("127.0.0.1:{other_port}"),
         "127.0.0.1".to_string(),
         "localhost".to_string(),
         // Look-alikes that a prefix/suffix match would accept.
-        format!("127.0.0.1.evil.example:{port}"),
-        format!("localhost.evil.example:{port}"),
+        format!("127.0.0.1.evil.example:{}", lb.port),
+        format!("localhost.evil.example:{}", lb.port),
     ] {
         let (status, text) = raw(
-            port,
+            lb.port,
             &format!("GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
         )
         .await;
@@ -115,29 +121,32 @@ async fn foreign_or_missing_hosts_are_refused_without_a_body() {
     }
 
     // HTTP/1.0 lets a client omit Host entirely.
-    let (status, text) = raw(port, "GET /health HTTP/1.0\r\n\r\n").await;
+    let (status, text) = raw(lb.port, "GET /health HTTP/1.0\r\n\r\n").await;
     assert_eq!(status, 403, "{text}");
     assert!(!text.contains("devices"), "{text}");
-    task.abort();
+    lb.task.abort();
 }
 
 #[tokio::test]
 async fn cross_origin_writes_never_reach_upstream() {
     let (_dir, upstream, server) = comment_server("guard-foreign-origin").await;
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
     let client = reqwest::Client::new();
+    // Capability-free on purpose: a foreign Origin must still answer 403, so
+    // this pins the Origin guard ahead of the session gate.
+    let bare = lb.bare_url(COMMENT_ADD);
 
     for origin in [
         "https://evil.example".to_string(),
         "null".to_string(),
-        format!("http://evil.example:{port}"),
+        format!("http://evil.example:{}", lb.port),
         // Scheme and port are part of the origin.
-        format!("https://127.0.0.1:{port}"),
-        format!("http://127.0.0.1:{}", port.wrapping_add(1)),
+        format!("https://127.0.0.1:{}", lb.port),
+        format!("http://127.0.0.1:{}", lb.port.wrapping_add(1)),
     ] {
         // The shape of a cross-site HTML form POST: no preflight is sent.
         let response = client
-            .post(format!("http://127.0.0.1:{port}{COMMENT_ADD}"))
+            .post(&bare)
             .header("origin", &origin)
             .header("content-type", "application/x-www-form-urlencoded")
             .body("")
@@ -152,8 +161,9 @@ async fn cross_origin_writes_never_reach_upstream() {
 
     // Positive control: the same write from this listener's own origin, and
     // from a native client that sends no Origin, both go through.
-    for origin in [Some(format!("http://localhost:{port}")), None] {
-        let mut builder = client.post(format!("http://127.0.0.1:{port}{COMMENT_ADD}"));
+    let scoped = lb.url(COMMENT_ADD);
+    for origin in [Some(format!("http://localhost:{}", lb.port)), None] {
+        let mut builder = client.post(&scoped);
         if let Some(origin) = &origin {
             builder = builder.header("origin", origin);
         }
@@ -161,22 +171,25 @@ async fn cross_origin_writes_never_reach_upstream() {
         assert_eq!(response.status().as_u16(), 200, "origin {origin:?}");
     }
     assert_eq!(upstream.requests().len(), 2);
-    task.abort();
+    lb.task.abort();
     upstream.shutdown();
 }
 
 #[tokio::test]
 async fn oversized_bodies_are_refused_and_moderate_ones_accepted() {
     let (_dir, upstream, server) = comment_server("guard-body-limit").await;
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
 
     // Announced oversize: refused from the header, before any body is read.
+    // The 413 check sits behind the session gate, so the target must be scoped.
     let limit = fqapi_core::server::MAX_REQUEST_BODY;
     let (status, text) = raw(
-        port,
+        lb.port,
         &format!(
-            "POST {COMMENT_ADD} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+            "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\
              Content-Length: {}\r\nConnection: close\r\n\r\n",
+            lb.scoped_path(COMMENT_ADD),
+            lb.port,
             limit + 1
         ),
     )
@@ -188,14 +201,14 @@ async fn oversized_bodies_are_refused_and_moderate_ones_accepted() {
     // proves the DefaultBodyLimit layer reaches the fallback handler.
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("http://127.0.0.1:{port}{COMMENT_ADD}"))
+        .post(lb.url(COMMENT_ADD))
         .body(vec![b' '; 3 * 1024 * 1024])
         .send()
         .await
         .expect("3 MiB POST");
     assert_eq!(response.status().as_u16(), 200);
     assert_eq!(upstream.requests().len(), 1);
-    task.abort();
+    lb.task.abort();
     upstream.shutdown();
 }
 
@@ -225,11 +238,13 @@ async fn anti_crawler_redirect_carries_a_location_header() {
         .any(|(k, v)| k.eq_ignore_ascii_case("location") && v == "https://www.example.com/"));
 
     // Over the socket the client sees a real redirect, not a body.
-    let (port, task) = start_loopback(server).await;
+    let lb = start_loopback(server).await;
     let (status, text) = raw(
-        port,
+        lb.port,
         &format!(
-            "GET /no/such/route HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            "GET {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+            lb.scoped_path("/no/such/route"),
+            lb.port
         ),
     )
     .await;
@@ -239,5 +254,180 @@ async fn anti_crawler_redirect_carries_a_location_header() {
             .contains("location: https://www.example.com/"),
         "{text}"
     );
-    task.abort();
+    lb.task.abort();
+}
+
+// --- Per-launch capability gate -------------------------------------------
+
+#[tokio::test]
+async fn a_request_without_a_capability_is_refused_with_the_session_error() {
+    let dir = TempDir::new("gate-no-capability");
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_loopback(server).await;
+
+    let response = reqwest::get(lb.bare_url("/health"))
+        .await
+        .expect("bare GET");
+    assert_eq!(response.status().as_u16(), 401);
+    let body: serde_json::Value = response.json().await.expect("json refusal");
+    assert_eq!(body["error"], "session required");
+    assert_eq!(body["success"], false);
+    assert!(
+        !body.to_string().contains("devices"),
+        "the refusal must not leak the health body: {body}"
+    );
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn a_wrong_capability_is_refused() {
+    let dir = TempDir::new("gate-wrong-capability");
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_loopback(server).await;
+    let client = reqwest::Client::new();
+
+    // A prefix of the real token, the real token plus a character, and a token
+    // of the right length: the comparison must be exact, never a prefix match.
+    let truncated = &lb.token[..lb.token.len() / 2];
+    let extended = format!("{}0", lb.token);
+    let unrelated = "0".repeat(lb.token.len());
+    for capability in [truncated, extended.as_str(), unrelated.as_str()] {
+        let response = client
+            .get(lb.url_with(capability, "/health"))
+            .send()
+            .await
+            .expect("scoped GET");
+        assert_eq!(response.status().as_u16(), 401, "capability {capability:?}");
+        let body: serde_json::Value = response.json().await.expect("json refusal");
+        assert_eq!(
+            body["error"], "session required",
+            "capability {capability:?}"
+        );
+    }
+
+    // The bearer form goes through the same exact comparison.
+    let response = client
+        .get(lb.bare_url("/health"))
+        .header("authorization", format!("Bearer {truncated}"))
+        .send()
+        .await
+        .expect("bearer GET");
+    assert_eq!(response.status().as_u16(), 401);
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn a_bearer_header_is_accepted_on_a_bare_path() {
+    let dir = TempDir::new("gate-bearer");
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_loopback(server).await;
+
+    let response = reqwest::Client::new()
+        .get(lb.bare_url("/health"))
+        .header("authorization", format!("Bearer {}", lb.token))
+        .send()
+        .await
+        .expect("bearer GET");
+    assert_eq!(response.status().as_u16(), 200);
+    let text = response.text().await.expect("health body");
+    assert!(text.contains("\"devices\":3"), "{text}");
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn the_session_cookie_is_accepted_on_a_bare_path() {
+    let dir = TempDir::new("gate-cookie");
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_loopback(server).await;
+    let client = reqwest::Client::new();
+
+    // The session cookie must be found among the page's other cookies.
+    let response = client
+        .get(lb.bare_url("/health"))
+        .header(
+            "cookie",
+            format!("pref=dark; fq_session_{}={}; more=1", lb.port, lb.token),
+        )
+        .send()
+        .await
+        .expect("cookie GET");
+    assert_eq!(response.status().as_u16(), 200);
+
+    // The cookie name embeds the bound port and the value is exact, so neither
+    // another listener's cookie nor a wrong value passes.
+    for cookie in [
+        format!("fq_session_{}={}", lb.port, "0".repeat(lb.token.len())),
+        format!("fq_session_{}={}", lb.port.wrapping_add(1), lb.token),
+    ] {
+        let response = client
+            .get(lb.bare_url("/health"))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .expect("cookie GET");
+        assert_eq!(response.status().as_u16(), 401, "cookie {cookie:?}");
+    }
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn the_entry_url_redirects_to_root_and_sets_the_session_cookie() {
+    let dir = TempDir::new("gate-entry-url");
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_loopback(server).await;
+    // Redirects must not be followed: the 303 itself is the subject.
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("client");
+
+    for entry in [lb.url(""), lb.url("/")] {
+        let response = client.get(&entry).send().await.expect("entry GET");
+        assert_eq!(response.status().as_u16(), 303, "entry {entry}");
+        assert_eq!(response.headers()["location"], "/", "entry {entry}");
+        assert_eq!(
+            response.headers()["set-cookie"],
+            format!(
+                "fq_session_{}={}; Path=/; HttpOnly; SameSite=Strict",
+                lb.port, lb.token
+            ),
+            "entry {entry}"
+        );
+    }
+
+    // A scoped route is not an entry: it reaches the dispatcher instead.
+    let response = client
+        .get(lb.url("/health"))
+        .send()
+        .await
+        .expect("scoped GET");
+    assert_eq!(response.status().as_u16(), 200);
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn a_near_miss_session_prefix_is_not_treated_as_scoped() {
+    let dir = TempDir::new("gate-prefix-near-miss");
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_loopback(server).await;
+    let client = reqwest::Client::new();
+
+    // Only end-of-path or a following '/' closes the capability. A longer
+    // segment, a relative hop and an encoded separator must all stay unscoped
+    // rather than having the prefix stripped and the rest served.
+    for path in [
+        format!("/_session/{}abc/health", lb.token),
+        format!("/_session/{}../health", lb.token),
+        format!("/_session/{}%2fhealth", lb.token),
+    ] {
+        let response = client
+            .get(lb.bare_url(&path))
+            .send()
+            .await
+            .expect("near-miss GET");
+        assert_eq!(response.status().as_u16(), 401, "path {path}");
+        let body: serde_json::Value = response.json().await.expect("json refusal");
+        assert_eq!(body["error"], "session required", "path {path}");
+    }
+    lb.task.abort();
 }

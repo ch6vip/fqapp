@@ -48,6 +48,16 @@ Future<String> status() => RustLib.instance.api.crateApiStatus();
 /// Base URL of the loopback adapter, for resource URLs (`absoluteUrl`).
 Future<String> baseUrl() => RustLib.instance.api.crateApiBaseUrl();
 
+/// Per-launch capability of the loopback adapter.
+///
+/// Every request the adapter accepts must carry it: as a `/_session/<cap>`
+/// path prefix, an `Authorization: Bearer` header, or the session cookie the
+/// entry URL sets. `base_url()` deliberately stays capability-free - the same
+/// value is the FFI path root, and FFI calls never cross the socket. URLs
+/// handed to HTTP clients instead (`/src/...`) must carry the prefix.
+Future<String> sessionCapability() =>
+    RustLib.instance.api.crateApiSessionCapability();
+
 /// The single entry point for every backend call from Flutter.
 ///
 /// `timeout_ms <= 0` means "no deadline". A cancelled or timed-out call drops

@@ -11,7 +11,7 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{build_server, pool_json, start_loopback, MockReply, MockUpstream, TempDir};
+use common::{build_server, pool_json, start_loopback, Loopback, MockReply, MockUpstream, TempDir};
 use fqapi_core::dispatch::{dispatch, Request};
 use fqapi_core::endpoints::Server;
 
@@ -53,11 +53,11 @@ fn request(path: &str, query: &str) -> Request {
     }
 }
 
-/// Fetches a path from the real loopback adapter.
-async fn http_get(port: u16, path: &str) -> (u16, Vec<(String, String)>, Vec<u8>) {
+/// Fetches a path from the real loopback adapter, carrying its capability.
+async fn http_get(lb: &Loopback, path: &str) -> (u16, Vec<(String, String)>, Vec<u8>) {
     let client = reqwest::Client::builder().build().expect("client");
     let resp = client
-        .get(format!("http://127.0.0.1:{port}{path}"))
+        .get(lb.url(path))
         .send()
         .await
         .expect("loopback request");
@@ -172,14 +172,14 @@ async fn manga_chapter_is_downloaded_decrypted_written_and_served() {
     );
 
     // The served URL really answers over the loopback adapter.
-    let (port, task) = start_loopback(server).await;
-    let (s, _headers, fetched) = http_get(port, served).await;
+    let lb = start_loopback(server).await;
+    let (s, _headers, fetched) = http_get(&lb, served).await;
     assert_eq!(s, 200);
     assert_eq!(
         fetched, plain,
         "the served image must match the decrypted payload"
     );
-    task.abort();
+    lb.task.abort();
 }
 
 #[tokio::test]

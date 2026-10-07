@@ -22,6 +22,9 @@ class _RecordingTransport implements BackendTransport {
   String get baseUrl => 'http://localhost:9000';
 
   @override
+  String get capability => '';
+
+  @override
   Future<BackendResponse> send(
     String method,
     Uri url, {
