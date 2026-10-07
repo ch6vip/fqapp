@@ -123,3 +123,44 @@ test('the APK verifier expects the Rust core library', () => {
   );
   assert.ok(verifier.includes('lib/arm64-v8a/libfqapi_core.so'));
 });
+
+test('the Rust build script survives cargo writing progress to stderr', () => {
+  // CRIT-012: $ErrorActionPreference = 'Stop' turns cargo's stderr progress into
+  // a NativeCommandError that aborts the script before the copy step, so a
+  // successful compile looks like a failed build. Native calls must go through
+  // the wrapper that downgrades the preference and judges on $LASTEXITCODE.
+  const source = readScript('build_rust_backend.ps1');
+  assert.ok(
+    source.includes('function Invoke-NativeCommand'),
+    'the script must define a native-command wrapper',
+  );
+  assert.ok(
+    /function Invoke-NativeCommand[\s\S]*?\$ErrorActionPreference = 'Continue'[\s\S]*?\$LASTEXITCODE/.test(
+      source,
+    ),
+    'the wrapper must downgrade the preference and check the exit code',
+  );
+  assert.ok(
+    source.includes("Invoke-NativeCommand -Exe 'flutter_rust_bridge_codegen'"),
+    'the codegen call must go through the wrapper',
+  );
+  assert.ok(
+    !/^\s*cargo build /m.test(source),
+    'no bare cargo invocation may remain: it would abort on stderr progress',
+  );
+});
+
+test('a stale Android Rust core can be detected before packaging', () => {
+  // CRIT-011: Gradle only checks that the core exists, so the freshness guard is
+  // the only thing standing between a backfill release and a silently stale APK.
+  const guard = fs.readFileSync(
+    path.join(scriptsDir, 'check_so_freshness.cjs'),
+    'utf8',
+  );
+  assert.ok(guard.includes("'rust/'"), 'the guard must scope git log to rust/');
+  assert.ok(guard.includes('--since'), 'the guard must take the archive ref');
+  assert.ok(
+    guard.includes('module.exports'),
+    'the guard must export its decision step for tests',
+  );
+});

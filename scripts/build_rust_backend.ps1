@@ -37,6 +37,29 @@ if (-not (Test-Path -LiteralPath $Manifest)) {
     exit 1
 }
 
+# Native commands (cargo, codegen) write progress to stderr, and PowerShell
+# turns any stderr line into a NativeCommandError. With
+# $ErrorActionPreference = 'Stop' that aborts the script *before* the copy step,
+# so a successful compile looks like a failed build (see CRIT-012). Downgrading
+# the preference for the duration of the native call keeps stderr on screen as
+# ordinary output while leaving the real verdict to $LASTEXITCODE.
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$FailureMessage
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Exe @Arguments
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($LASTEXITCODE -ne 0) { throw "$FailureMessage (exit code $LASTEXITCODE)" }
+}
+
 # FRB 2.13.0 is the pinned codegen version; the crate pins the matching runtime.
 $FrbVersion = '2.13.0'
 
@@ -48,8 +71,9 @@ if (-not $SkipCodegen) {
     Write-Host '==> generating flutter_rust_bridge bindings...'
     Push-Location -LiteralPath $AppDir
     try {
-        flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
-        if ($LASTEXITCODE -ne 0) { throw 'flutter_rust_bridge_codegen generate failed' }
+        Invoke-NativeCommand -Exe 'flutter_rust_bridge_codegen' `
+            -Arguments @('generate', '--config-file', 'flutter_rust_bridge.yaml') `
+            -FailureMessage 'flutter_rust_bridge_codegen generate failed'
     }
     finally { Pop-Location }
 }
@@ -111,8 +135,9 @@ if ($Profile -eq 'release') { $ProfileArgs = @('--release') }
 Write-Host "==> cargo build --target $Target ($Profile)..."
 Push-Location -LiteralPath $AppDir
 try {
-    cargo build --manifest-path $Manifest --target $Target @ProfileArgs
-    if ($LASTEXITCODE -ne 0) { throw 'rust cross build failed' }
+    Invoke-NativeCommand -Exe 'cargo' `
+        -Arguments (@('build', '--manifest-path', $Manifest, '--target', $Target) + $ProfileArgs) `
+        -FailureMessage 'rust cross build failed'
 }
 finally { Pop-Location }
 
@@ -132,8 +157,9 @@ if ($HostLib) {
     Write-Host '==> building host cdylib...'
     Push-Location -LiteralPath $AppDir
     try {
-        cargo build --manifest-path $Manifest @ProfileArgs
-        if ($LASTEXITCODE -ne 0) { throw 'host rust build failed' }
+        Invoke-NativeCommand -Exe 'cargo' `
+            -Arguments (@('build', '--manifest-path', $Manifest) + $ProfileArgs) `
+            -FailureMessage 'host rust build failed'
     }
     finally { Pop-Location }
     Write-Host "==> host library: rust\target\$ProfileDir\"
