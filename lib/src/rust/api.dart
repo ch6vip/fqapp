@@ -60,8 +60,8 @@ Future<String> sessionCapability() =>
 
 /// The single entry point for every backend call from Flutter.
 ///
-/// `timeout_ms <= 0` means "no deadline". A cancelled or timed-out call drops
-/// the dispatch future, which cancels the awaiting upstream request.
+/// `timeout_ms <= 0` means "no deadline". Cancellation and timeout cover both
+/// dispatch and response materialization (including asynchronous file reads).
 Future<BridgeResponse> request({
   required String requestId,
   required String method,
