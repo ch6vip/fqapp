@@ -72,6 +72,7 @@ object HttpBridge {
     // One id space for both bridges: the native side treats stream ids as
     // opaque jlongs, but they must never collide across the two maps.
     private val streamIds = AtomicLong(1L)
+    private val playbackHttpStatus = ConcurrentHashMap<String, Int>()
 
     private val bridge = HttpRangeClient(okhttp3.OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -83,9 +84,17 @@ object HttpBridge {
         // proxy and breaks playback when that proxy is unreachable.
         .proxy(Proxy.NO_PROXY)
         .build(),
-        nextId = streamIds)
+        nextId = streamIds,
+        onHttpStatus = { url, status -> playbackHttpStatus[url] = status })
 
     private val fileBridge = OfflineFileBridge(streamIds)
+
+    /** Ephemeral diagnostic metadata only; callers clear it when the player is released. */
+    fun lastHttpStatus(url: String): Int? = playbackHttpStatus[url]
+
+    fun clearHttpStatus(url: String) {
+        playbackHttpStatus.remove(url)
+    }
 
     @JvmStatic
     fun httpRange(url: String, start: Long, end: Long): ByteArray? =
@@ -182,7 +191,7 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
                 if (read != length) null else buf
             }
         } catch (t: Throwable) {
-            android.util.Log.e("sp_crypto", "file httpRange threw: ${t.message}")
+            android.util.Log.e("sp_crypto", "file httpRange threw: ${t.javaClass.simpleName}")
             null
         }
     }
@@ -206,7 +215,7 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
             val raf = try {
                 java.io.RandomAccessFile(s.file, "r").apply { seek(s.start) }
             } catch (t: Throwable) {
-                android.util.Log.e("sp_crypto", "file streamConnect threw: ${t.message}")
+                android.util.Log.e("sp_crypto", "file streamConnect threw: ${t.javaClass.simpleName}")
                 return false
             }
             s.raf = raf
@@ -241,7 +250,7 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
                 }
             } catch (t: Throwable) {
                 streamClose(id)
-                android.util.Log.e("sp_crypto", "file streamRead threw id=$id: ${t.message}")
+                android.util.Log.e("sp_crypto", "file streamRead threw id=$id: ${t.javaClass.simpleName}")
                 -1
             }
         }
@@ -266,6 +275,7 @@ internal class HttpRangeClient(
     private val logError: (String) -> Unit = { Log.e("sp_crypto", it) },
     // Shared with OfflineFileBridge so both maps never hand out the same id.
     private val nextId: AtomicLong = AtomicLong(1L),
+    private val onHttpStatus: (String, Int) -> Unit = { _, _ -> },
 ) {
     private data class ResponseRange(val length: Long, val total: Long?)
     private val contentRange = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", RegexOption.IGNORE_CASE)
@@ -312,6 +322,7 @@ internal class HttpRangeClient(
                 .header("Accept-Encoding", "identity")
                 .build()
             client.newCall(req).execute().use { resp ->
+                onHttpStatus(url, resp.code)
                 val range = responseRange(resp, 0, 0)
                 val total = range?.total
                 if (resp.code != 206 || range == null || range.length != 1L || total == null || total <= 0L) {
@@ -324,7 +335,7 @@ internal class HttpRangeClient(
                 total
             }
         } catch (t: Throwable) {
-            logError("httpSize threw: ${t.javaClass.simpleName}: ${t.message}")
+            logError("httpSize threw: ${t.javaClass.simpleName}")
             -1L
         }
     }
@@ -342,6 +353,7 @@ internal class HttpRangeClient(
                 .header("Accept-Encoding", "identity")
                 .build()
             client.newCall(req).execute().use { resp ->
+                onHttpStatus(url, resp.code)
                 val range = responseRange(resp, start, end)
                 if (range == null) {
                     logError("httpRange invalid HTTP ${resp.code} response for [$start-$end]")
@@ -353,7 +365,7 @@ internal class HttpRangeClient(
                 resp.body!!.source().readByteArray(length)
             }
         } catch (t: Throwable) {
-            logError("httpRange threw for [$start-$end]: ${t.javaClass.simpleName}: ${t.message}")
+            logError("httpRange threw for [$start-$end]: ${t.javaClass.simpleName}")
             null
         }
     }
@@ -363,6 +375,7 @@ internal class HttpRangeClient(
     // chunk, so the native producer can hand each arriving TCP segment to the
     // player immediately.
     private class Stream(
+        val url: String,
         val call: okhttp3.Call,
         val start: Long,
         val expectedSize: Long,
@@ -391,10 +404,10 @@ internal class HttpRangeClient(
             val call = streamClient.newCall(req)
             val id = nextId.getAndIncrement()
             if (id <= 0L) return 0L
-            streams[id] = Stream(call, start, expectedSize)
+            streams[id] = Stream(url, call, start, expectedSize)
             id
         } catch (t: Throwable) {
-            logError("streamPrepare threw @$start: ${t.javaClass.simpleName}: ${t.message}")
+            logError("streamPrepare threw @$start: ${t.javaClass.simpleName}")
             0L
         }
     }
@@ -413,6 +426,7 @@ internal class HttpRangeClient(
         return try {
             val response = s.call.execute()
             resp = response
+            onHttpStatus(s.url, response.code)
             val range = responseRange(response, s.start, null)
             if (range == null || (s.expectedSize >= 0 && range.total != s.expectedSize)) {
                 logError("streamConnect invalid HTTP ${response.code} response @${s.start}")
@@ -428,7 +442,7 @@ internal class HttpRangeClient(
             }
             retained
         } catch (t: Throwable) {
-            logError("streamConnect threw @${s.start}: ${t.javaClass.simpleName}: ${t.message}")
+            logError("streamConnect threw @${s.start}: ${t.javaClass.simpleName}")
             false
         } finally {
             if (!retained) {
@@ -480,7 +494,7 @@ internal class HttpRangeClient(
                 }
             } catch (t: Throwable) {
                 streamClose(id)
-                logError("streamRead threw id=$id: ${t.javaClass.simpleName}: ${t.message}")
+                logError("streamRead threw id=$id: ${t.javaClass.simpleName}")
                 -1
             }
         }

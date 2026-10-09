@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/player_page.dart';
+import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/player_load_diagnostics.dart';
 import 'package:fqapp/widgets/player/player_cover.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
@@ -72,6 +74,35 @@ void main() {
       expect(session.samples, hasLength(1));
     },
   );
+
+  testWidgets('native failure logs phase and codes without exception text', (
+    tester,
+  ) async {
+    const secretMessage =
+        'https://cdn.invalid/video?token=private&key=do-not-log';
+    final session = _Session(
+      factory: () => ControlledNativePlayer(hasFirstFrame: false),
+    );
+    await _mount(tester, session);
+    session.players.single.errors.add(
+      const NativePlaybackException(
+        secretMessage,
+        errorCode: 2004,
+        httpStatusCode: 403,
+      ),
+    );
+    await _flush(tester);
+
+    final sample = session.samples.single;
+    expect(sample.outcome, 'error');
+    expect(sample.failureStage, 'firstFrame');
+    expect(sample.errorCode, 2004);
+    expect(sample.httpStatusCode, 403);
+    final json = jsonEncode(sample.toJson());
+    expect(json, isNot(contains('cdn.invalid')));
+    expect(json, isNot(contains('private')));
+    expect(json, isNot(contains('do-not-log')));
+  });
 
   testWidgets(
     'a frame arriving during resume initialization waits behind the cover',

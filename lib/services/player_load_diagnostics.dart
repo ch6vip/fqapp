@@ -4,7 +4,46 @@ import 'package:flutter/foundation.dart';
 
 import 'app_log.dart';
 
-/// Contains timings and local episode numbers, never URLs, keys or API bodies.
+const _allowedStages = <String>{
+  'address',
+  'releaseWait',
+  'history',
+  'pagingBeforeCreate',
+  'create',
+  'initialize',
+  'pagingBeforePlay',
+  'autoplayWait',
+  'firstFrame',
+  'other',
+};
+const _allowedTriggers = <String>{'initial', 'switch', 'retry'};
+const _allowedOutcomes = <String>{
+  'firstFrame',
+  'error',
+  'disposed',
+  'superseded',
+};
+const _allowedSources = <String>{
+  'network',
+  'cacheHit',
+  'pending',
+  'prefetchHit',
+  'prefetchPending',
+  'offline',
+};
+
+String _safeLabel(String value, Set<String> allowed) =>
+    allowed.contains(value) ? value : 'other';
+
+int? _safeErrorCode(int? value) =>
+    value != null && value >= 1 && value <= 9999 ? value : null;
+
+int? _safeHttpStatus(int? value) =>
+    value != null && value >= 100 && value <= 599 ? value : null;
+
+/// Contains only allow-listed labels, timings, episode index and numeric error
+/// metadata. Raw exceptions, URLs, keys, tokens and response bodies are never
+/// copied into this sample or its serialized log representation.
 class PlayerLoadSample {
   final int attempt;
   final int episode;
@@ -16,19 +55,37 @@ class PlayerLoadSample {
   final int backgroundMs;
   final int? firstFrameMs;
   final int? playToFirstFrameMs;
+  final String? failureStage;
+  final int? errorCode;
+  final int? httpStatusCode;
 
   PlayerLoadSample({
     required this.attempt,
     required this.episode,
-    required this.trigger,
-    required this.outcome,
-    required this.source,
+    required String trigger,
+    required String outcome,
+    required String source,
     required Map<String, int> stagesMs,
     required this.totalMs,
     required this.backgroundMs,
     required this.firstFrameMs,
     required this.playToFirstFrameMs,
-  }) : stagesMs = Map.unmodifiable(stagesMs);
+    required String? failureStage,
+    required int? errorCode,
+    required int? httpStatusCode,
+  }) : trigger = _safeLabel(trigger, _allowedTriggers),
+       outcome = _safeLabel(outcome, _allowedOutcomes),
+       source = _safeLabel(source, _allowedSources),
+       stagesMs = Map.unmodifiable({
+         for (final entry in stagesMs.entries)
+           if (_allowedStages.contains(entry.key) && entry.value >= 0)
+             entry.key: entry.value,
+       }),
+       failureStage = failureStage == null
+           ? null
+           : _safeLabel(failureStage, _allowedStages),
+       errorCode = _safeErrorCode(errorCode),
+       httpStatusCode = _safeHttpStatus(httpStatusCode);
 
   Map<String, Object?> toJson() => {
     'attempt': attempt,
@@ -41,6 +98,9 @@ class PlayerLoadSample {
     'backgroundMs': backgroundMs,
     'firstFrameMs': firstFrameMs,
     'playToFirstFrameMs': playToFirstFrameMs,
+    'failureStage': failureStage,
+    'errorCode': errorCode,
+    'httpStatusCode': httpStatusCode,
   };
 }
 
@@ -62,17 +122,11 @@ class PlayerLoadDiagnostics {
   }) => PlayerLoadTrace._(this, attempt, episode, trigger, appActive);
 
   static void _log(PlayerLoadSample sample) {
-    // 结构化一条进应用日志（设置 → 服务 → 日志 可读、可导出）；运转台仍走
-    // debugPrint 保留 adb logcat 观感。日志页因此会同时看到紧凑行与完整 JSON。
-    AppLog.d(
-      'player-load',
-      'episode=${sample.episode} trigger=${sample.trigger} '
-      'outcome=${sample.outcome} source=${sample.source} '
-      'total=${sample.totalMs}ms firstFrame=${sample.firstFrameMs ?? '-'}ms',
-    );
-    if (!kReleaseMode) {
-      debugPrint('[PlayerLoad] ${jsonEncode(sample.toJson())}');
-    }
+    // Release logs include every phase and numeric error field. This JSON is
+    // assembled only from allow-listed labels and primitive diagnostic values.
+    final json = jsonEncode(sample.toJson());
+    AppLog.d('player-load', json);
+    if (!kReleaseMode) debugPrint('[PlayerLoad] $json');
   }
 }
 
@@ -90,6 +144,9 @@ class PlayerLoadTrace {
   Duration? _firstFrame;
   Duration? _backgroundStarted;
   Duration _background = Duration.zero;
+  String? _failureStage;
+  int? _errorCode;
+  int? _httpStatusCode;
   bool _finished = false;
 
   PlayerLoadTrace._(
@@ -109,7 +166,7 @@ class PlayerLoadTrace {
     final elapsed = _elapsed;
     _stages[_stage] = (elapsed - _stageStarted).inMilliseconds;
     _stageStarted = elapsed;
-    _stage = name;
+    _stage = _allowedStages.contains(name) ? name : 'other';
   }
 
   void playRequested() {
@@ -134,6 +191,16 @@ class PlayerLoadTrace {
     }
   }
 
+  /// Ends an unsuccessful attempt with a safe phase label and numeric codes.
+  /// Error strings are intentionally not accepted by this API.
+  void fail({int? errorCode, int? httpStatusCode}) {
+    if (_finished) return;
+    _failureStage = _stage;
+    _errorCode = errorCode;
+    _httpStatusCode = httpStatusCode;
+    finish('error');
+  }
+
   void finish(String outcome) {
     if (_finished) return;
     final elapsed = _elapsed;
@@ -155,6 +222,9 @@ class PlayerLoadTrace {
       playToFirstFrameMs: frame != null && play != null && frame >= play
           ? (frame - play).inMilliseconds
           : null,
+      failureStage: _failureStage,
+      errorCode: _errorCode,
+      httpStatusCode: _httpStatusCode,
     );
     // Diagnostics must never turn a successful load into a playback error.
     try {

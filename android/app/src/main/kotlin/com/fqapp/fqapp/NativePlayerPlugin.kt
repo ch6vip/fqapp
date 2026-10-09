@@ -99,7 +99,7 @@ class NativePlayerPlugin internal constructor(
                     try {
                         playerInstance.player.pause()
                     } catch (t: Throwable) {
-                        Log.w(TAG, "pause on becoming noisy failed", t)
+                        Log.w(TAG, "pause on becoming noisy failed: ${t.javaClass.simpleName}")
                     }
                 }
                 handler.post {
@@ -115,6 +115,7 @@ class NativePlayerPlugin internal constructor(
         val id: Int,
         val player: ExoPlayer,
         val videoOutput: NativeVideoOutput,
+        val diagnosticUrl: String? = null,
         var positionUpdater: Runnable? = null
     )
 
@@ -202,7 +203,7 @@ class NativePlayerPlugin internal constructor(
             try {
                 disposePlayer(id)
             } catch (error: Throwable) {
-                Log.w(TAG, "dispose failed for player $id", error)
+                Log.w(TAG, "dispose failed for player $id: ${error.javaClass.simpleName}")
             }
         }
         handler.removeCallbacksAndMessages(null)
@@ -339,14 +340,16 @@ class NativePlayerPlugin internal constructor(
                 handler.post {
                     createPlayerWithCrypto(playerId, cdnUrl, keyHex)
                 }
-            } catch (error: Throwable) {
-                failCreation(playerId, error.message ?: error.javaClass.simpleName)
+            } catch (_: Throwable) {
+                failCreation(playerId)
             }
         }
     }
 
-    private fun failCreation(playerId: Int, message: String) {
-        if (pendingPlayerIds.remove(playerId)) sendEvent(playerId, "error", message)
+    private fun failCreation(playerId: Int) {
+        if (pendingPlayerIds.remove(playerId)) {
+            sendEvent(playerId, "error", mapOf("message" to "Player creation failed"))
+        }
     }
 
     private fun createPlayerWithUri(playerId: Int, uri: String) {
@@ -356,7 +359,8 @@ class NativePlayerPlugin internal constructor(
     }
 
     private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String) {
-        createPlayer(playerId) { player ->
+        cryptoStream.clearHttpStatus(cdnUrl)
+        createPlayer(playerId, cdnUrl) { player ->
             val dataSourceFactory = DataSource.Factory {
                 CryptoDataSource(cdnUrl, keyHex, cryptoStream)
             }
@@ -366,7 +370,11 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    private fun createPlayer(playerId: Int, configure: (ExoPlayer) -> Unit) {
+    private fun createPlayer(
+        playerId: Int,
+        diagnosticUrl: String? = null,
+        configure: (ExoPlayer) -> Unit
+    ) {
         if (!attachedToEngine || !pendingPlayerIds.remove(playerId)) return
         var producer: TextureRegistry.SurfaceProducer? = null
         var player: ExoPlayer? = null
@@ -380,38 +388,48 @@ class NativePlayerPlugin internal constructor(
             producer = textureRegistry.createSurfaceProducer()
             player = playerFactory(flutterBinding.applicationContext)
             output = NativeVideoOutput(player, producer)
-            players[playerId] = PlayerInstance(playerId, player, output)
+            players[playerId] = PlayerInstance(playerId, player, output, diagnosticUrl)
             output.attach()
-            setupPlayerListener(playerId, player)
+            setupPlayerListener(playerId, player, diagnosticUrl)
             configure(player)
             player.prepare()
             sendEvent(playerId, "created", output.textureId)
-        } catch (error: Throwable) {
+        } catch (_: Throwable) {
             players.remove(playerId)
             if (output != null) {
                 try {
                     output.release()
                 } catch (releaseError: Throwable) {
-                    android.util.Log.w("NativePlayerPlugin", "output cleanup failed", releaseError)
+                    android.util.Log.w(
+                        TAG,
+                        "output cleanup failed: ${releaseError.javaClass.simpleName}"
+                    )
                 }
             } else {
                 try {
                     player?.release()
                 } catch (releaseError: Throwable) {
-                    android.util.Log.w("NativePlayerPlugin", "player cleanup failed", releaseError)
+                    android.util.Log.w(
+                        TAG,
+                        "player cleanup failed: ${releaseError.javaClass.simpleName}"
+                    )
                 } finally {
                     try {
                         producer?.release()
                     } catch (releaseError: Throwable) {
-                        android.util.Log.w("NativePlayerPlugin", "producer cleanup failed", releaseError)
+                        android.util.Log.w(
+                            TAG,
+                            "producer cleanup failed: ${releaseError.javaClass.simpleName}"
+                        )
                     }
                 }
             }
-            sendEvent(playerId, "error", error.message ?: error.javaClass.simpleName)
+            diagnosticUrl?.let(cryptoStream::clearHttpStatus)
+            sendEvent(playerId, "error", mapOf("message" to "Player creation failed"))
         }
     }
 
-    private fun setupPlayerListener(playerId: Int, player: ExoPlayer) {
+    private fun setupPlayerListener(playerId: Int, player: ExoPlayer, diagnosticUrl: String?) {
         var firstFrameSent = false
 
         player.addListener(object : Player.Listener {
@@ -486,9 +504,10 @@ class NativePlayerPlugin internal constructor(
                     playerId,
                     "error",
                     mapOf(
-                        "message" to (error.message ?: "ExoPlayer error"),
+                        "message" to "Playback failed",
                         "errorCode" to error.errorCode,
-                        "httpStatusCode" to httpError?.responseCode
+                        "httpStatusCode" to (httpError?.responseCode
+                            ?: diagnosticUrl?.let(cryptoStream::lastHttpStatus))
                     )
                 )
             }
@@ -528,11 +547,15 @@ class NativePlayerPlugin internal constructor(
         pendingPlayerIds.remove(id)
         val instance = players.remove(id) ?: return
         instance.positionUpdater?.let(handler::removeCallbacks)
+        instance.diagnosticUrl?.let(cryptoStream::clearHttpStatus)
         // A throwing release must not abort the remaining teardown steps.
         try {
             instance.videoOutput.release()
         } catch (error: Throwable) {
-            android.util.Log.w("NativePlayerPlugin", "release failed for player $id", error)
+            android.util.Log.w(
+                TAG,
+                "release failed for player $id: ${error.javaClass.simpleName}"
+            )
         }
     }
 
@@ -643,6 +666,8 @@ internal interface CryptoStream {
     fun seek(handle: Long, position: Long): Long
     fun read(handle: Long, buffer: ByteArray, length: Int): Int
     fun close(handle: Long)
+    fun lastHttpStatus(url: String): Int? = null
+    fun clearHttpStatus(url: String) {}
 }
 
 private object JniCryptoStream : CryptoStream {
@@ -653,4 +678,6 @@ private object JniCryptoStream : CryptoStream {
     override fun read(handle: Long, buffer: ByteArray, length: Int) =
         CryptoNative.nativePlayerStreamRead(handle, buffer, length)
     override fun close(handle: Long) = CryptoNative.nativePlayerStreamClose(handle)
+    override fun lastHttpStatus(url: String) = com.example.shortplay.HttpBridge.lastHttpStatus(url)
+    override fun clearHttpStatus(url: String) = com.example.shortplay.HttpBridge.clearHttpStatus(url)
 }

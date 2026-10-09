@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/player_load_diagnostics.dart';
 
@@ -90,5 +92,57 @@ void main() {
       report: (_) => throw StateError('logger'),
     ).begin(attempt: 1, episode: 1, trigger: 'initial', appActive: true);
     expect(() => trace.finish('firstFrame'), returnsNormally);
+  });
+
+  test(
+    'failed attempt records phase and numeric codes without raw secrets',
+    () {
+      var now = Duration.zero;
+      final samples = <PlayerLoadSample>[];
+      final trace = PlayerLoadDiagnostics(
+        now: () => now,
+        report: samples.add,
+      ).begin(attempt: 7, episode: 2, trigger: 'initial', appActive: true);
+      now = const Duration(milliseconds: 125);
+      trace.stage('create');
+      now = const Duration(milliseconds: 350);
+      trace.fail(errorCode: 2004, httpStatusCode: 403);
+
+      final sample = samples.single;
+      expect(sample.outcome, 'error');
+      expect(sample.failureStage, 'create');
+      expect(sample.stagesMs, {'address': 125, 'create': 225});
+      expect(sample.errorCode, 2004);
+      expect(sample.httpStatusCode, 403);
+      final json = jsonEncode(sample.toJson());
+      expect(json, contains('"httpStatusCode":403'));
+      expect(json, isNot(contains('url')));
+      expect(json, isNot(contains('token')));
+    },
+  );
+
+  test('unexpected labels cannot inject URL, key or credential text', () {
+    var now = Duration.zero;
+    final samples = <PlayerLoadSample>[];
+    final trace = PlayerLoadDiagnostics(now: () => now, report: samples.add)
+        .begin(
+          attempt: 1,
+          episode: 1,
+          trigger: 'https://cdn.invalid/video?token=private',
+          appActive: true,
+        );
+    trace.source = 'https://cdn.invalid/video?token=private';
+    trace.stage('key=secret');
+    now = const Duration(milliseconds: 20);
+    trace.fail(errorCode: 2004, httpStatusCode: 403);
+
+    final sample = samples.single;
+    final json = jsonEncode(sample.toJson());
+    expect(sample.trigger, 'other');
+    expect(sample.source, 'other');
+    expect(sample.failureStage, 'other');
+    expect(json, isNot(contains('cdn.invalid')));
+    expect(json, isNot(contains('private')));
+    expect(json, isNot(contains('secret')));
   });
 }

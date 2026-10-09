@@ -993,7 +993,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _fail(Object error, int generation) {
     if (!_current(generation)) return;
-    _loadTrace?.finish('error');
+    final errorCode = error is NativePlaybackException ? error.errorCode : null;
+    final httpStatusCode = switch (error) {
+      NativePlaybackException() => error.httpStatusCode,
+      ApiException() => error.statusCode,
+      _ => null,
+    };
+    _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
     _sources.invalidate(widget.eps[_index].itemId);
     _prefetchTimer?.cancel();
     _prefetchTimer = null;
