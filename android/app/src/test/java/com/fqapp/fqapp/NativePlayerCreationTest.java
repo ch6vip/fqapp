@@ -198,7 +198,8 @@ public class NativePlayerCreationTest {
             f.create(KEY);
             f.drain();
             assertEquals(List.of("error"), f.eventTypes());
-            assertEquals("Player creation failed", f.events.get(0).get("value"));
+            assertEquals("Player creation failed",
+                    ((Map<?, ?>) f.events.get(0).get("value")).get("message"));
             verifyNoInteractions(f.player, f.textures);
             verify(f.stream, never()).open(anyString(), anyString());
         }
