@@ -198,7 +198,7 @@ public class NativePlayerCreationTest {
             f.create(KEY);
             f.drain();
             assertEquals(List.of("error"), f.eventTypes());
-            assertEquals("crypto library unavailable", f.events.get(0).get("value"));
+            assertEquals("Player creation failed", f.events.get(0).get("value"));
             verifyNoInteractions(f.player, f.textures);
             verify(f.stream, never()).open(anyString(), anyString());
         }
