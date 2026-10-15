@@ -862,7 +862,14 @@ Future<void> _showImage(WidgetTester tester, {int index = 0}) async {
 
 Future<void> _openMenu(WidgetTester tester) async {
   if (find.byTooltip('收起阅读菜单').hitTestable().evaluate().isNotEmpty) return;
-  await tester.tap(find.text(_bookTitle).hitTestable().first);
+  // The book title lives in the menu header, so it is not visible while
+  // the menu is closed. Tap the middle third of the reading surface
+  // instead: the surface toggles the controls there (the outer thirds
+  // turn pages). Tap the upper content area to stay clear of the
+  // chapter-end buttons at the bottom.
+  final surface = find.byKey(const ValueKey('reader-page-surface'));
+  final center = tester.getCenter(surface);
+  await tester.tapAt(Offset(center.dx, center.dy * 0.5));
   await tester.pumpAndSettle();
 }
 
