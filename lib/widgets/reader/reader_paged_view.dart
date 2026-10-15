@@ -146,16 +146,34 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     }
   }
 
-  double get _viewportWidth => _controller.position.viewportDimension > 0
-      ? _controller.position.viewportDimension
-      : 1;
+  /// The controller can be briefly attached to two PageViews during a
+  /// chapter-cross rebuild (the old pager unmounts while the new one
+  /// mounts). [ScrollController.position] and [PageController.page] assert
+  /// a single client, so every read below goes through [positions].
+  ScrollPosition? get _attachedPosition {
+    for (final position in _controller.positions) {
+      if (position.haveDimensions) return position;
+    }
+    return _controller.positions.firstOrNull;
+  }
+
+  double? get _attachedPage {
+    final position = _attachedPosition;
+    if (position == null || !position.haveDimensions) return null;
+    return position.pixels / position.viewportDimension;
+  }
+
+  double get _viewportWidth {
+    final width = _attachedPosition?.viewportDimension ?? 0;
+    return width > 0 ? width : 1;
+  }
 
   bool get _hasEndPage => !widget.hasNextChapter && widget.endPage != null;
   int get _itemCount => widget.layout.pages.length + (_hasEndPage ? 1 : 0);
 
   bool get isAtEndPage =>
       _controller.hasClients &&
-      (_controller.page ?? _controller.initialPage.toDouble()) >=
+      (_attachedPage ?? _controller.initialPage.toDouble()) >=
           widget.layout.pages.length - .01;
 
   PageController _newController() =>
@@ -201,7 +219,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
 
   Future<void> turnPage(int direction) async {
     if (_turning || _boundaryPending || !_controller.hasClients) return;
-    final current = _controller.page ?? _controller.initialPage.toDouble();
+    final current = _attachedPage ?? _controller.initialPage.toDouble();
     // A tap during an unfinished drag must not enqueue another page turn.
     if ((current - current.round()).abs() > .01) return;
     final target = current.round() + direction;
@@ -234,7 +252,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     final pages = widget.layout.pages.length;
     if (pages == 0) return;
     final target = (progress * pages).floor().clamp(0, pages - 1);
-    final current = _controller.page ?? _controller.initialPage.toDouble();
+    final current = _attachedPage ?? _controller.initialPage.toDouble();
     if ((current - target).abs() < 1) return;
     _controller.jumpToPage(target);
   }
@@ -270,7 +288,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       _overscroll = 0;
       _edgeNotified = false;
       _dragStartItem = _controller.hasClients
-          ? _controller.page?.round()
+          ? _attachedPage?.round()
           : null;
       widget.onDragStart();
     }
@@ -359,14 +377,11 @@ class ReaderPagedViewState extends State<ReaderPagedView>
               animation: _controller,
               builder: (context, child) {
                 var shift = 0.0;
-                if (_controller.hasClients &&
-                    _controller.position.haveDimensions) {
-                  final current = _controller.page;
-                  if (current != null) {
-                    final delta = current - page;
-                    if (delta > 0 && delta < 1) {
-                      shift = delta * _viewportWidth;
-                    }
+                final current = _attachedPage;
+                if (current != null) {
+                  final delta = current - page;
+                  if (delta > 0 && delta < 1) {
+                    shift = delta * _viewportWidth;
                   }
                 }
                 return Transform.translate(
@@ -403,7 +418,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       builder: (context, _) {
         final t = Curves.easeOutCubic.transform(_chapterTurnAnimation.value);
         final width =
-            _controller.hasClients && _controller.position.hasContentDimensions
+            (_attachedPosition?.hasContentDimensions ?? false)
             ? _viewportWidth
             : MediaQuery.sizeOf(context).width;
         final outgoingShift = cover ? 0.0 : (forward ? -width * t : width * t);
