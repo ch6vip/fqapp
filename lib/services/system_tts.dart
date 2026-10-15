@@ -455,7 +455,12 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     NativePlayer.clearRemoteCommandHandler();
     ListeningSession.instance.clear();
     notifyListeners();
-    await _subscription?.cancel();
+    // Do not await the EventChannel cancel: awaiting a platform-stream
+    // subscription cancel stalls every later await in this zone (widget
+    // tests hang in shutdown below), so fire it and forget it. Late events
+    // are already ignored because `closed` is set above.
+    unawaited(_subscription?.cancel());
+    _subscription = null;
     try {
       await SystemTts.shutdown();
     } catch (_) {}
