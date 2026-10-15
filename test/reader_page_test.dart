@@ -348,6 +348,14 @@ void main() {
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(360, 900));
         addTearDown(() => tester.binding.setSurfaceSize(null));
+        // The detailed info row shows the chapter title a second time
+        // (the first is the content title block). It is compact by
+        // default, so opt into detailed here to keep both assertions.
+        // Keep the file setUp's scroll page mode as well.
+        SharedPreferences.setMockInitialValues({
+          'reader_page_mode': 'scroll',
+          'reader_info_mode': 'detailed',
+        });
         const first = '“尉迟，南宫，欧阳，上官，司马，东方……”';
         const second = '黎问音站在学校门口的优秀学生公告栏那，碎碎念着这些学生的姓氏，就明白了。';
         final cache = MemoryChapterCache();

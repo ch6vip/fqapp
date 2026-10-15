@@ -569,7 +569,7 @@ void main() {
       find.byKey(const ValueKey('drama_inline_cover_video_16-0')),
       findsOneWidget,
     );
-    expect(find.text('网络异常，请稍后再试'), findsOneWidget);
+    expect(find.text('内容加载失败'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('drama_inline_retry_video_16-0')),
       findsOneWidget,

@@ -166,7 +166,7 @@ void main() {
               (query, {required int tabType, required int offset}) async => [
                 SearchTab(
                   title: '综合',
-                  items: [_item('new', '新关键词结果', 'book')],
+                  items: [_item('new', '新关键词结果', 'manga')],
                   hasMore: false,
                 ),
               ],
