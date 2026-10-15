@@ -252,9 +252,17 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
         session != null &&
         !session._closed &&
         !_views.any((v) => v._routeCurrent && identical(v._session, session));
-    return Column(
-      children: [
-        Expanded(child: widget.child),
+    // The mini bars below are siblings of the Navigator, not descendants,
+    // so they have no Overlay ancestor for their IconButton tooltips
+    // (the Navigator owns its own Overlay internally). Wrap the column
+    // in an Overlay so the tooltips resolve to this outer Overlay, while
+    // route content still resolves to the Navigator's inner Overlay.
+    return Overlay(
+      initialEntries: [
+        OverlayEntry(
+          builder: (_) => Column(
+            children: [
+              Expanded(child: widget.child),
         if (tts != null && !tts.closed)
           SystemTtsMiniBar(
             session: tts,
@@ -333,6 +341,9 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
             ),
           ),
       ],
-    );
+      ),
+    ),
+  ],
+);
   }
 }
