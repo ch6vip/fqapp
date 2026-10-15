@@ -46,6 +46,8 @@ void main() {
       WidgetTester tester, {
       required List<int> boundaries,
       required List<int> taps,
+      bool hasNextChapter = true,
+      VoidCallback? onBookEnd,
     }) async {
       await tester.binding.setSurfaceSize(const Size(400, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -58,12 +60,13 @@ void main() {
               layout: _plainLayout(),
               pageIndex: 0,
               hasPreviousChapter: false,
-              hasNextChapter: true,
+              hasNextChapter: hasNextChapter,
               onPageChanged: (_) {},
               onBoundary: (direction) async => boundaries.add(direction),
               onDragStart: () {},
               turnStyle: ReaderPageTurnStyle.none,
               backgroundColor: Colors.white,
+              onBookEnd: onBookEnd,
               endPage: Center(
                 child: ElevatedButton(
                   key: const ValueKey('b10-end-comments'),
@@ -79,12 +82,37 @@ void main() {
       return key.currentState!;
     }
 
-    testWidgets('tapping an end page action cancels the deferred advance', (
+    testWidgets(
+      'turning past the last page with a next chapter requests the boundary directly',
+      (tester) async {
+        final boundaries = <int>[];
+        final taps = <int>[];
+        final state = await pumpPaged(tester, boundaries: boundaries, taps: taps);
+        state.turnPage(1);
+        await tester.pump();
+        await tester.pump();
+        // The end page is only a stop for the final chapter; with a next
+        // chapter the turn crosses the boundary directly.
+        expect(find.byKey(const ValueKey('b10-end-comments')), findsNothing);
+        expect(boundaries, equals([1]));
+        expect(taps, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets("the final chapter's end page is a stable stop", (
       tester,
     ) async {
       final boundaries = <int>[];
       final taps = <int>[];
-      final state = await pumpPaged(tester, boundaries: boundaries, taps: taps);
+      var bookEnded = 0;
+      final state = await pumpPaged(
+        tester,
+        boundaries: boundaries,
+        taps: taps,
+        hasNextChapter: false,
+        onBookEnd: () => bookEnded++,
+      );
       state.turnPage(1);
       await tester.pump();
       await tester.pump();
@@ -94,19 +122,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(taps, hasLength(1));
       expect(boundaries, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('landing without interaction still advances', (tester) async {
-      final boundaries = <int>[];
-      final state = await pumpPaged(tester, boundaries: boundaries, taps: []);
-      state.turnPage(1);
-      await tester.pump();
-      await tester.pump();
-      expect(find.byKey(const ValueKey('b10-end-comments')), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 700));
-      await tester.pumpAndSettle();
-      expect(boundaries, equals([1]));
+      expect(bookEnded, 1);
       expect(tester.takeException(), isNull);
     });
   });
