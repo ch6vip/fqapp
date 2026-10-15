@@ -287,4 +287,85 @@ void main() {
       expect(page.entries.single.position, 1);
     });
   });
+
+  group('Drama boards', () {
+    test('marks the drama tabs in the catalogue', () {
+      final catalog = RankCatalog.fromHomepagePayload(_homepage());
+      final drama = catalog.tabs.where((t) => t.isDrama).map((t) => t.name);
+      expect(drama, ['漫剧榜', '短剧榜']);
+      expect(catalog.tabs.first.isDrama, isFalse);
+    });
+
+    test('reads drama entries out of video-shaped cells', () {
+      final page = RankCatalog.parsePage({
+        'code': 0,
+        'data': {
+          'cell_view': {
+            'cell_data': [
+              {
+                'series_id': 7599595550698114000,
+                'series_id_str': '7599595550698114073',
+                'title': '黄毛穿书，学霸也是霸',
+                'thumb_url': 'https://example.test/drama.jpg',
+                'genre': 203,
+              },
+              {
+                'series_id': 7680187265020070000,
+                'series_id_str': '7680187265020070937',
+                'title': '动态漫示例',
+                'thumb_url': 'https://example.test/manju.jpg',
+                'genre': 205,
+              },
+            ],
+          },
+        },
+      });
+      expect(page.entries, hasLength(2));
+      final video = page.entries[0];
+      expect(video.kind, 'video');
+      expect(video.seriesId, '7599595550698114073');
+      expect(video.id, '7599595550698114073');
+      expect(video.title, '黄毛穿书，学霸也是霸');
+      expect(video.cover, 'https://example.test/drama.jpg');
+      final manju = page.entries[1];
+      expect(manju.kind, 'manju');
+      expect(manju.seriesId, '7680187265020070937');
+    });
+
+    test('drops a video cell without a series identity', () {
+      final page = RankCatalog.parsePage({
+        'code': 0,
+        'data': {
+          'cell_view': {
+            'cell_data': [
+              {'video_id': '123', 'title': '无系列'},
+            ],
+          },
+        },
+      });
+      expect(page.entries, isEmpty);
+    });
+
+    test('drama entries round-trip through json', () {
+      final entry = RankCatalog.parsePage({
+        'code': 0,
+        'data': {
+          'cell_view': {
+            'cell_data': [
+              {
+                'series_id': 1,
+                'series_id_str': '42',
+                'title': '短剧',
+                'genre': 203,
+              },
+            ],
+          },
+        },
+      }).entries.single;
+      final restored = RankEntry.fromJson(entry.toJson());
+      expect(restored.kind, 'video');
+      expect(restored.seriesId, '42');
+      expect(restored.title, '短剧');
+    });
+  });
 }
