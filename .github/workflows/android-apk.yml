@@ -276,10 +276,14 @@ jobs:
 
       # Dependencies were resolved once, before the Rust gates; every step from
       # there on runs with --no-pub against that resolved package config.
+      # --reporter compact prints progress ticks instead of one line per
+      # passing test: passing tests whose names contain "failed"/"error"
+      # (error-handling coverage) no longer look like failures in the log,
+      # while failing tests still print their full exception and stack trace.
       - name: Check Flutter application
         run: |
           flutter analyze --no-pub
-          flutter test --no-pub --concurrency=2
+          flutter test --no-pub --concurrency=2 --reporter compact
 
       - name: Compile ARM64 release APK
         run: flutter build apk --release --target-platform android-arm64 --no-pub
