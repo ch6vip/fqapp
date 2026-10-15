@@ -170,6 +170,10 @@
 
 [![Afdian](https://img.shields.io/badge/Afdian-Sponsor-946ce6?style=social&logo=afdian)](https://afdian.com/a/ch6vip)
 
+微信赞助：
+
+<img src=".github/wechat.png" width="260" alt="微信赞助">
+
 应用内的同一入口在「设置 → 关于 → 支持作者」。
 
 ## 🙏 致谢
