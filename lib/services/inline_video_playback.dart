@@ -888,6 +888,9 @@ class InlineVideoPlayback {
         if (size.width <= 0 || size.height <= 0) return;
         videoSize.value = size;
       }),
+      player.textureIdStream.listen((id) {
+        if (_current(generation, player)) textureId.value = id;
+      }),
       // The card's progress bar reads these two (`cjt.xml`).
       player.positionStream.listen((value) {
         if (_current(generation, player)) position.value = value;

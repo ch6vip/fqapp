@@ -461,6 +461,9 @@ class NativePlayerPlugin internal constructor(
                 initializationDurationMs: Long
             ) {
                 sendEvent(playerId, "decoderInitialized", mapOf("name" to decoderName))
+                if (isSoftwareDecoder(decoderName)) {
+                    maybeSwapToSurfaceTexture(playerId)
+                }
             }
         })
 
@@ -602,6 +605,22 @@ class NativePlayerPlugin internal constructor(
         handler.post(updater)
     }
 
+    private fun maybeSwapToSurfaceTexture(playerId: Int) {
+        val instance = players[playerId] ?: return
+        handler.post {
+            if (!attachedToEngine || players[playerId] !== instance) return@post
+            try {
+                val newTextureId =
+                    instance.videoOutput.swapToSurfaceTexture(textureRegistry)
+                if (newTextureId != null) {
+                    sendEvent(playerId, "textureChanged", newTextureId)
+                }
+            } catch (error: Throwable) {
+                Log.w(TAG, "surface texture swap failed for player $playerId", error)
+            }
+        }
+    }
+
     private fun sendEvent(playerId: Int, type: String, value: Any) {
         handler.post {
             if (attachedToEngine) {
@@ -726,6 +745,15 @@ class NativePlayerPlugin internal constructor(
         }
     }
 }
+
+/**
+ * AOSP software decoders (OMX.google.* / c2.android.*) report stride-padded
+ * buffers whose padding Flutter's ImageReader texture path draws as a green
+ * bar (issue #2). Hardware decoders keep their vendor prefixes
+ * (OMX.qcom.* / OMX.Exynos.* / OMX.MTK.* / c2.qti.* / OMX.hisi.* …).
+ */
+internal fun isSoftwareDecoder(decoderName: String): Boolean =
+    decoderName.startsWith("OMX.google.") || decoderName.startsWith("c2.android.")
 
 /** Injectable JNI boundary for creation and DataSource range/error checks on the JVM. */
 internal interface CryptoStream {

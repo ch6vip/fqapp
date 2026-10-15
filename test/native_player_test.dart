@@ -355,6 +355,44 @@ void main() {
       },
     );
   }
+  nativeTest(
+    'textureChanged updates the texture id for soft-decoder fallback',
+    (tester, player) async {
+      final creation = player.create('https://example.invalid/swap.mp4', '');
+      await tester.pump();
+      await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+      await tester.pump();
+      expect(await creation, 9);
+      expect(player.textureId, 9);
+      final seen = <int>[];
+      final sub = player.textureIdStream.listen(seen.add);
+      await _sendEvent({'playerId': 71, 'type': 'textureChanged', 'value': 12});
+      await tester.pump();
+      expect(player.textureId, 12);
+      expect(seen, [12]);
+      // No awaited cancel: awaiting a lone broadcast cancel() stalls in the
+      // test's fake-async zone. dispose() closes the controller, which drops
+      // the subscription; production cancels via the shared Future.wait path.
+      unawaited(sub.cancel());
+    },
+  );
+
+  nativeTest(
+    'textureChanged arriving before the create reply wins over created',
+    (tester, player) async {
+      createGate = Completer<Map<String, dynamic>>();
+      final creation = player
+          .create('https://example.invalid/early-swap.mp4', '')
+          .then<Object>((value) => value, onError: (Object error) => error);
+      await tester.pump();
+      await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+      await _sendEvent({'playerId': 71, 'type': 'textureChanged', 'value': 12});
+      createGate!.complete({'playerId': 71});
+      await tester.pump();
+      expect(await creation, 12);
+      expect(player.textureId, 12);
+    },
+  );
 }
 
 Future<void> _createPlayer(WidgetTester tester, NativePlayer player) async {

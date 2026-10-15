@@ -232,6 +232,7 @@ class NativePlayer {
   final _bufferingCtrl = StreamController<bool>.broadcast();
   final _firstFrameCtrl = StreamController<bool>.broadcast();
   final _videoSizeCtrl = StreamController<Size>.broadcast();
+  final _textureIdCtrl = StreamController<int>.broadcast();
   final _errorCtrl = StreamController<Object>.broadcast();
 
   Stream<Duration> get positionStream => _positionCtrl.stream;
@@ -243,6 +244,11 @@ class NativePlayer {
   Stream<bool> get firstFrameStream => _firstFrameCtrl.stream;
   Stream<Size> get videoSizeStream => _videoSizeCtrl.stream;
   Stream<Object> get errorStream => _errorCtrl.stream;
+
+  /// Fires when native swaps the output surface (software-decoder fallback
+  /// moves from SurfaceProducer to SurfaceTexture in #2) and the Texture
+  /// widget must rebuild with the new id. The old id stops producing frames.
+  Stream<int> get textureIdStream => _textureIdCtrl.stream;
 
   final _createdCompleter = Completer<int>();
 
@@ -293,9 +299,17 @@ class NativePlayer {
         }
       }
 
-      _textureId = await _createdCompleter.future.timeout(_createTimeout);
+      await _createdCompleter.future.timeout(_createTimeout);
       if (_disposed) {
         throw StateError('NativePlayer was disposed during creation');
+      }
+      // _textureId is maintained by the event handler, not by the completer's
+      // value: a textureChanged that arrived with the pending replay (native
+      // posts created → decoderInitialized → textureChanged in order) already
+      // superseded the created id, and assigning the completer's stale value
+      // here would resurrect the dead texture.
+      if (_textureId == null) {
+        throw StateError('Native player returned no texture id');
       }
       return _textureId!;
     } catch (_) {
@@ -429,6 +443,7 @@ class NativePlayer {
       _bufferingCtrl.close(),
       _firstFrameCtrl.close(),
       _videoSizeCtrl.close(),
+      _textureIdCtrl.close(),
       _errorCtrl.close(),
     ]);
   }
@@ -469,8 +484,17 @@ class NativePlayer {
     switch (type) {
       case 'created':
         final value = event['value'];
-        if (value is num && !_createdCompleter.isCompleted) {
-          _createdCompleter.complete(value.toInt());
+        if (value is num) {
+          _textureId = value.toInt();
+          if (!_createdCompleter.isCompleted) {
+            _createdCompleter.complete(value.toInt());
+          }
+        }
+      case 'textureChanged':
+        final value = event['value'];
+        if (value is num) {
+          _textureId = value.toInt();
+          if (!_textureIdCtrl.isClosed) _textureIdCtrl.add(_textureId!);
         }
       case 'error':
         final error = NativePlaybackException.fromEvent(event['value']);

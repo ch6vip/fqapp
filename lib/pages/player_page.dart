@@ -1211,6 +1211,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       player.videoSizeStream.listen((_) {
         if (_current(generation, player)) setState(() {});
       }),
+      player.textureIdStream.listen((_) {
+        if (_current(generation, player)) setState(() {});
+      }),
       player.firstFrameStream.listen((_) {
         if (!_current(generation, player)) return;
         _onFirstFrame(player, generation);
