@@ -316,39 +316,73 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  /// Pause the player while a route pushed from this page is on top, and
+  /// resume on return if the page still shows the same episode with the
+  /// same player.
+  ///
+  /// In-app pushes do not change AppLifecycleState, so without this the
+  /// video keeps playing behind DetailPage / ReaderPage / AudioPage
+  /// (#39). Callers that drive their own load from the pushed route
+  /// (detail's onPlayEpisode / onOpenRelatedSeries) update [_index] /
+  /// [_switchingSeries] / [_player] synchronously on pop, so the guards
+  /// below see their effect before resuming and the resume never fights
+  /// their load. A pause failure must not block the navigation.
+  Future<void> _pauseWhileRouteOnTop(Future<void> Function() push) async {
+    final player = _player;
+    final wasPlaying = _playing;
+    final indexBefore = _index;
+    if (player != null && wasPlaying) {
+      try {
+        await player.pause();
+      } catch (_) {
+        // Best-effort: the route still opens; a failed pause only means
+        // the video may keep playing behind it.
+      }
+    }
+    if (!mounted) return;
+    await push();
+    if (!mounted || !wasPlaying) return;
+    if (!identical(_player, player)) return;
+    if (_index != indexBefore || _switchingSeries) return;
+    await player?.play();
+  }
+
   /// 标题行「剧名 >」→ 剧集详情页（官方 `ql3/v0.a1()` 默认分支：
   /// `openShortSeriesDetailActivity`，页面名 `series_detail`）。
   ///
-  /// 官方进详情时播放器**继续活着**（返回即续看），这里同样不销毁；
+  /// 详情页在上时暂停播放，返回后按原状态续看；从详情再往深走（关联
+  /// 原著 → 阅读/听书）时视频也不会在下面一直播（#39）。
   /// 详情页点「继续播放/选集」只是关掉详情并切集，不叠第二个播放器。
   void _openSeriesDetail() {
     if (!widget.shortSeries || widget.bookId.isEmpty) return;
     unawaited(
       _withPlayerOverlay(
-        () => Navigator.push(
-          context,
-          MaterialPageRoute<void>(
-            builder: (_) => SeriesDetailPage(
-              seriesId: widget.bookId,
-              kind: widget.kind,
-              title: _seriesTitle,
-              cover: _seriesCover,
-              episodes: widget.eps,
-              startIndex: _index,
-              watchedIds: _watchedIds,
-              initialDetail: _seriesDetail,
-              historyStore: widget.historyStore,
-              hasPlaybackProgress: (_player?.position.inMilliseconds ?? 0) > 0,
-              seriesLoader: widget.seriesLoader,
-              onOpenRelatedSeries: (entry) {
-                Navigator.of(context).pop();
-                unawaited(_switchRelatedSeries(entry));
-              },
-              onPlayEpisode: (index) {
-                // 详情页就在本播放器之上，pop 一次即回到播放页。
-                Navigator.of(context).pop();
-                if (index != _index) _selectEpisode(index);
-              },
+        () => _pauseWhileRouteOnTop(
+          () => Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => SeriesDetailPage(
+                seriesId: widget.bookId,
+                kind: widget.kind,
+                title: _seriesTitle,
+                cover: _seriesCover,
+                episodes: widget.eps,
+                startIndex: _index,
+                watchedIds: _watchedIds,
+                initialDetail: _seriesDetail,
+                historyStore: widget.historyStore,
+                hasPlaybackProgress: (_player?.position.inMilliseconds ?? 0) > 0,
+                seriesLoader: widget.seriesLoader,
+                onOpenRelatedSeries: (entry) {
+                  Navigator.of(context).pop();
+                  unawaited(_switchRelatedSeries(entry));
+                },
+                onPlayEpisode: (index) {
+                  // 详情页就在本播放器之上，pop 一次即回到播放页。
+                  Navigator.of(context).pop();
+                  if (index != _index) _selectEpisode(index);
+                },
+              ),
             ),
           ),
         ),
@@ -643,19 +677,26 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// 原著书卡点击 → 原著详情页（audio 页同一条 MediaItem 跳转链路）。
+  ///
+  /// 进详情前暂停，返回后按原状态续看；否则视频会在书详情乃至从详情
+  /// 再进的阅读/听书下面一直播（#39）。
   void _openOriginalBook() {
     final book = _originalBook;
     if (book == null) return;
-    openBookDetail(
-      context,
-      MediaItem(
-        id: book.id,
-        title: book.title,
-        cover: book.cover,
-        author: '',
-        badge: book.label,
-        ep: '',
-        kind: 'book',
+    unawaited(
+      _pauseWhileRouteOnTop(
+        () => openBookDetail(
+          context,
+          MediaItem(
+            id: book.id,
+            title: book.title,
+            cover: book.cover,
+            author: '',
+            badge: book.label,
+            ep: '',
+            kind: 'book',
+          ),
+        ),
       ),
     );
   }
