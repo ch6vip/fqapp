@@ -2,7 +2,7 @@
 
 面向构建、修改和调试本项目的开发者。用户使用说明见 [README.md](README.md)。
 
-> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:8080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问番茄上游。
+> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:8080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
 
 ---
 
@@ -48,7 +48,7 @@
                      │             │
       loopback HTTP  │             │ HTTPS (reqwest)
       127.0.0.1:8080 │             ▼
-                     ▼      番茄上游 API (fanqie)
+                     ▼      上游 API
           内置 Web UI / /src/* 漫画图
 ```
 
@@ -355,7 +355,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 
 ### `MediaItem`（归一化条目）
 
-`MediaItem.fromRaw()` 兼容番茄 API 的各种字段形状：
+`MediaItem.fromRaw()` 兼容上游 API 的各种字段形状：
 
 | 字段 | 来源优先级 |
 |---|---|
@@ -422,7 +422,7 @@ App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `
 - 榜单目录与真实 `rank_id` 取自首页榜单卡片的 `rank_with_category_data` 与 `cell_id_str`；`rank_id` 不可用占位值（占位时静默返回 0 本）
 
 ### 详情（`detail_page.dart`）
-- 左上封面（3:4）+ 右侧标题、`分类 · 完结状态 · 字数`、「番茄原创」徽章，标题始终完整换行不截断
+- 左上封面（3:4）+ 右侧标题、`分类 · 完结状态 · 字数`、「原创」徽章，标题始终完整换行不截断
 - 作者行：头像、笔名、等级徽章（上游 `user_title_infos` 的「作家Lv.5」）与关注按钮
 - 数据三栏：榜单、正在阅读人数、评分（含五星），按可用字段自适应列数
 - 作品 ID 行：显示当前加载所用的 ID（短剧／漫剧为系列 ID），可选中并一键复制；

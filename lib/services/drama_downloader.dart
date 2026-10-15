@@ -477,7 +477,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
 
   /// 默认取流：绕过播放页的 2 分钟缓存直接走 `/api/content`，下载器
   /// 的生命周期独立于任何页面。这是 CDN 直链请求，不走 `_get` 漏斗
-  /// （该漏斗只收番茄后端 API；视频字节本就由原生层直连 CDN）。
+  /// （该漏斗只收后端 API；视频字节本就由原生层直连 CDN）。
   static Future<EpisodeSource> _defaultResolve(Chapter episode) async {
     final response = await ApiClient.instance.content(
       episode.itemId,

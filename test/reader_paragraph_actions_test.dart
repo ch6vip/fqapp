@@ -574,7 +574,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The listening page is pushed on top of the reader for this chapter.
-    await tester.tap(find.text('番茄听书'));
+    await tester.tap(find.text('听书'));
     await tester.pumpAndSettle();
     expect(find.byType(AudioPage), findsOneWidget);
     final audio = tester.widget<AudioPage>(find.byType(AudioPage));
@@ -604,7 +604,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('番茄听书'));
+    await tester.tap(find.text('听书'));
     await tester.pumpAndSettle();
     final audio = tester.widget<AudioPage>(find.byType(AudioPage));
     expect(audio.startPosition, Duration.zero);
@@ -653,7 +653,7 @@ void main() {
 
       // Asking to listen from a paragraph pays for the timeline exactly once,
       // and the resulting position comes from the freshly parsed chapter.
-      await tester.tap(find.text('番茄听书'));
+      await tester.tap(find.text('听书'));
       await tester.pumpAndSettle();
       expect(requests.where((id) => id == 'c1'), hasLength(1));
       final audio = tester.widget<AudioPage>(find.byType(AudioPage));

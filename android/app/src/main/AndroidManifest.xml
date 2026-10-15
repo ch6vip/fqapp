@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 访问本地后端 127.0.0.1 与上游番茄 API -->
+    <!-- 访问本地后端 127.0.0.1 与上游 API -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- 听视频（listen mode）：前台服务保活 + 13+ 通知（通知被拒只影响可见性，服务照常跑） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
@@ -8,7 +8,7 @@
     <!-- Device identity and reading data stay on-device; see
          .agents/notes/implemented/bug-fix/2026-09-18-home-geometry-and-backup.md -->
     <application
-        android:label="番茄小铺"
+        android:label="fqapp"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"

@@ -67,7 +67,7 @@ class AboutPage extends StatelessWidget {
           Column(
             children: [
               Text(
-                '番茄小铺',
+                'fqapp',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
@@ -76,7 +76,7 @@ class AboutPage extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                '番茄小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端',
+                '小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: outline, fontSize: 13),
               ),

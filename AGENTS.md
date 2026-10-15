@@ -10,7 +10,7 @@
 
 ## 1. 项目与技术基线
 
-- fqapp 是番茄内容聚合 Android 客户端，提供小说阅读、听书、短剧、漫剧和漫画。Flutter UI 通过 flutter_rust_bridge 调用进程内 Rust 核心 `fqapi_core`；`127.0.0.1:8080` loopback 服务承载 Web UI 与漫画图。无需 root，不部署独立后端进程。
+- fqapp 是内容聚合 Android 客户端，提供小说阅读、听书、短剧、漫剧和漫画。Flutter UI 通过 flutter_rust_bridge 调用进程内 Rust 核心 `fqapi_core`；`127.0.0.1:8080` loopback 服务承载 Web UI 与漫画图。无需 root，不部署独立后端进程。
 - 不提供登录或上游账号写操作；已裁撤的追剧、点赞、分享等入口不作为待办恢复。已有本机书架与详情页收藏按现有产品范围保留；没有真实能力时不放占位控件。
 - 基线：Flutter **3.44.6 stable**、Dart **^3.12.2**、Rust stable；FRB 的 Rust crate、Dart 包和 codegen **统一固定 2.13.0**。
 - Android：SDK 36、NDK **28.2.13676358**、JDK 17、Gradle **9.1.0**；仅构建 `arm64-v8a`。原生 C CENC 库由 CMake 生成 `libshortplay_crypto.so`，原生库须满足 **16 KiB** 对齐。

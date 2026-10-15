@@ -1833,7 +1833,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               children: [
                 ListTile(
                   leading: const Icon(Icons.headphones),
-                  title: const Text('番茄听书'),
+                  title: const Text('听书'),
                   subtitle: const Text('使用作品自带音频与音色'),
                   onTap: () => Navigator.pop(context, false),
                 ),

@@ -18,7 +18,7 @@ PAPER = (255, 254, 240)
 DENSITIES = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
 
 # Android masks the central 72dp of a 108dp adaptive layer. Keep the drawing
-# at 60dp so circular launchers retain the bookmark and the tomato outline.
+# at 60dp so circular launchers retain the bookmark and the book/play symbol.
 ADAPTIVE_SIZE = 108
 ARTWORK_SIZE = 60
 VISIBLE_SIZE = 72
