@@ -157,6 +157,13 @@ Future<void> _flush(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   await tester.pump();
+  // Route pop transitions advance per frame, not per elapsed time: a
+  // single long pump does not finish them. Pump several more frames so
+  // the popped page disposes and the scope rebuilds its mini bar.
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+  await tester.pump();
 }
 
 class _Harness {
