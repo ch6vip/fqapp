@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 abstract interface class SearchHistoryRepository {
@@ -18,9 +20,25 @@ class SearchHistoryStore implements SearchHistoryRepository {
   static const _key = 'search_history_v1';
   static const maxEntries = 20;
   Future<void> _writes = Future<void>.value();
+  Zone _writesZone = Zone.current;
+
+  /// Drops a write chain left over from a different zone.
+  ///
+  /// A [Future] created in one widget-test zone never completes in another
+  /// (each testWidgets test runs in its own FakeAsync zone), so awaiting a
+  /// chain from an earlier test would hang [load] forever. In the app the
+  /// zone never changes, so this is a no-op there and the chain keeps
+  /// serializing concurrent writes.
+  void _dropStaleWriteChain() {
+    if (!identical(Zone.current, _writesZone)) {
+      _writes = Future<void>.value();
+      _writesZone = Zone.current;
+    }
+  }
 
   @override
   Future<List<String>> load() async {
+    _dropStaleWriteChain();
     await _writes;
     return _read();
   }
@@ -57,6 +75,7 @@ class SearchHistoryStore implements SearchHistoryRepository {
   });
 
   Future<T> _serialize<T>(Future<T> Function() action) {
+    _dropStaleWriteChain();
     final operation = _writes.then((_) => action());
     _writes = operation.then<void>((_) {}, onError: (Object _) {});
     return operation;
