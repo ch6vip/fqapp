@@ -384,18 +384,20 @@ class NativePlayer {
     double speed = 1,
   }) async {
     try {
-      await _channel
-          .invokeMethod<void>('startListenForeground', {
-            'title': title,
-            'episode': episode,
-            'playing': playing,
-            'hasPrev': hasPrev,
-            'hasNext': hasNext,
-            'positionMs': positionMs,
-            'durationMs': durationMs,
-            'speed': speed,
-          })
-          .timeout(_methodTimeout);
+      // No .timeout() here on purpose: the call is best-effort and the
+      // plugin replies synchronously, while Future.timeout() leaves a
+      // pending 10s timer that breaks widget tests under FakeAsync when
+      // the fire-and-forget call is still in flight at test end.
+      await _channel.invokeMethod<void>('startListenForeground', {
+        'title': title,
+        'episode': episode,
+        'playing': playing,
+        'hasPrev': hasPrev,
+        'hasNext': hasNext,
+        'positionMs': positionMs,
+        'durationMs': durationMs,
+        'speed': speed,
+      });
     } catch (_) {
       // Best effort when channel/platform is unavailable or testing.
     }
@@ -403,9 +405,8 @@ class NativePlayer {
 
   static Future<void> stopListenForeground() async {
     try {
-      await _channel
-          .invokeMethod<void>('stopListenForeground')
-          .timeout(_methodTimeout);
+      // Same as startListenForeground: no .timeout(), see above.
+      await _channel.invokeMethod<void>('stopListenForeground');
     } catch (_) {
       // Best effort when channel/platform is unavailable or testing.
     }
