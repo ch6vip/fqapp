@@ -12,16 +12,29 @@ internal object RendererCompatibility {
     private val platformId = Regex("^mt6895(?:[a-z].*)?$")
     private val productName = Regex("^(?:mediatek)?dimensity8100(?:max|ultra)?$")
 
+    /**
+     * Pure device-match predicate, extracted from [configure] so the
+     * matching rule is unit-testable without Android statics (Build.*).
+     * Matching is on the normalized id: lowercased, non-alphanumerics
+     * stripped, so "Dimensity 8100", "dimensity8100" and "MediaTek
+     * Dimensity 8100 Ultra" all hit the same rule.
+     */
+    internal fun isAffectedDevice(hardware: String, board: String, socModel: String): Boolean =
+        listOf(hardware, board, socModel).any { value ->
+            val normalized = normalizeDeviceId(value)
+            platformId.matches(normalized) || productName.matches(normalized)
+        }
+
+    internal fun normalizeDeviceId(value: String): String =
+        value.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }
+
     fun configure(args: FlutterShellArgs) {
         val socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Build.SOC_MODEL
         } else {
             ""
         }
-        val affected = listOf(Build.HARDWARE, Build.BOARD, socModel).any { value ->
-            val normalized = value.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }
-            platformId.matches(normalized) || productName.matches(normalized)
-        }
+        val affected = isAffectedDevice(Build.HARDWARE, Build.BOARD, socModel)
         if (!affected) return
 
         // FlutterShellArgs is a HashSet, so retaining contradictory values would
