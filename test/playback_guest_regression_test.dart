@@ -128,9 +128,8 @@ void main() {
     await player.dispose();
   });
 
-  // 官方短剧双击从不切换播放（jq3/x$q.onDoubleTap:2155-2188）；中带
-  // （y ∈ 44dp..屏高-240dp）双击隐藏横屏控制条（x.X6()->o.x7()->f()）。
-  testWidgets('landscape double tap in the mid band hides the bar, not playback', (
+  // 短剧横屏双击：中间三分之一切播放（实测反馈：双击中间应暂停）。
+  testWidgets('landscape double tap in the center third toggles playback', (
     tester,
   ) async {
     final player = FakeNativePlayer()..isPlaying = true;
@@ -143,13 +142,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 80));
     await tester.tapAt(point);
     await tester.pump(const Duration(milliseconds: 400));
-    expect(player.calls.where((call) => call == 'pause'), isEmpty);
-    expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
+    expect(player.calls.where((call) => call == 'pause'), hasLength(1));
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });
 
-  testWidgets('landscape double tap outside the mid band keeps the bar', (
+  // 短剧横屏双击：左/右三分之一 ±10s，不切播放。
+  testWidgets('landscape double tap on the side thirds seeks by 10s', (
     tester,
   ) async {
     final player = FakeNativePlayer()..isPlaying = true;
@@ -158,13 +157,36 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
     await tester.pump();
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
-    final point = Offset(surface.center.dx, surface.top + 20);
-    await tester.tapAt(point);
+    final left = Offset(surface.left + surface.width / 6, surface.center.dy);
+    await tester.tapAt(left);
     await tester.pump(const Duration(milliseconds: 80));
-    await tester.tapAt(point);
+    await tester.tapAt(left);
     await tester.pump(const Duration(milliseconds: 400));
     expect(player.calls.where((call) => call == 'pause'), isEmpty);
-    expect(find.byKey(const ValueKey('landscape-play')), findsOneWidget);
+    expect(player.calls, contains('seek:10'));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('landscape double tap on the right third seeks forward 10s', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(MaterialApp(home: _chrome(player)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
+    final right = Offset(
+      surface.right - surface.width / 6,
+      surface.center.dy,
+    );
+    await tester.tapAt(right);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(right);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(player.calls.where((call) => call == 'pause'), isEmpty);
+    expect(player.calls, contains('seek:30'));
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });

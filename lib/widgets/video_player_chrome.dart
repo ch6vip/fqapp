@@ -1641,21 +1641,21 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   } else if (!widget.shortSeries) {
                     _togglePlayback();
                   } else {
-                    // 官方短剧双击从不切换播放（jq3/x$q.onDoubleTap
-                    // :2155-2188）：中带（y ∈ 44dp..屏高-240dp）触发
-                    // x.X6()->o.x7()->fullscreen/c 的横屏控制条隐藏。
+                    // 短剧横屏双击：中间三分之一切播放，左/右三分之一 ±10s。
+                    // 官方 jq3/x$q.onDoubleTap 只在中带隐藏控制条、从不切
+                    // 播放；实测反馈要求双击能暂停/快进快退，这里按通用
+                    // 播放器手势处理（竖屏分支保持原样：吞单击窗口）。
                     _guardDoubleTap();
                     final position = _doubleTapDownPosition;
-                    final height = window.height;
-                    if (landscape &&
-                        !_clearScreen &&
-                        _visible &&
-                        position != null &&
-                        height > 0 &&
-                        position.dy > 44 &&
-                        position.dy < height - 240) {
-                      _hideTimer?.cancel();
-                      setState(() => _visible = false);
+                    final width = window.width;
+                    if (_clearScreen || position == null || width <= 0) return;
+                    final third = width / 3;
+                    if (position.dx < third) {
+                      if (widget.duration > Duration.zero) _seekBy(-10);
+                    } else if (position.dx > width - third) {
+                      if (widget.duration > Duration.zero) _seekBy(10);
+                    } else {
+                      _togglePlayback();
                     }
                   }
                 },
