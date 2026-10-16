@@ -11,7 +11,7 @@ use fqapi_core::endpoints::dhcontent::set_dh_content_in_place;
 use fqapi_core::endpoints::{router, session, Params, INTERNAL_DEVICE_PIN_KEY};
 use fqapi_core::sign::Manager;
 use fqapi_core::upstream::{UpstreamClient, UpstreamRequest};
-use num_bigint::BigUint;
+use zeroize::Zeroizing;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -346,7 +346,7 @@ fn dh_content_decrypts_a_go_generated_fixture() {
     let cipher = f["cipher_b64"].as_str().expect("cipher_b64");
 
     let state = fqapi_core::upstream::dh::DHState {
-        a: BigUint::from(1u32),
+        a: Zeroizing::new(vec![1]),
     };
 
     let raw = serde_json::to_vec(&json!({
@@ -376,7 +376,7 @@ fn dh_content_failure_modes_fail_closed() {
     let f = &fixture["dh_content"];
     let key = f["key_b64"].as_str().unwrap();
     let state = fqapi_core::upstream::dh::DHState {
-        a: BigUint::from(1u32),
+        a: Zeroizing::new(vec![1]),
     };
 
     // Encrypted response without a usable key or ciphertext.

@@ -16,7 +16,7 @@ const ALNUM_CHARS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO
 /// key/iv = SHA512(SHA512(random32) + fixedString)[0:16], [16:32].
 /// Output = magic + random32 + AES-128-CBC(PKCS7(SHA512(data) + data)).
 pub fn tt_encrypt(data: &[u8], random_bytes32: Option<[u8; 32]>) -> Result<Vec<u8>, String> {
-    let random_bytes32 = match random_bytes32 {
+    let mut random_bytes32 = match random_bytes32 {
         Some(b) => b,
         None => rand::thread_rng().gen::<[u8; 32]>(),
     };
@@ -24,24 +24,33 @@ pub fn tt_encrypt(data: &[u8], random_bytes32: Option<[u8; 32]>) -> Result<Vec<u
         .decode(TT_FIXED_STRING_B64)
         .map_err(|e| e.to_string())?;
 
-    let inner = Sha512::digest(random_bytes32);
+    let mut inner = Sha512::digest(random_bytes32);
     let mut hasher = Sha512::new();
-    hasher.update(inner);
+    hasher.update(inner.as_slice());
+    crate::crypto::wipe(&mut inner);
     hasher.update(&fixed);
-    let hv = hasher.finalize();
-    let aes_key = &hv[0..16];
-    let aes_iv = &hv[16..32];
+    let mut hv = hasher.finalize();
+    let aes_key = hv[0..16].to_vec();
+    let aes_iv = hv[16..32].to_vec();
 
     let data_hash = Sha512::digest(data);
     let mut hashed_data = data_hash.to_vec();
     hashed_data.extend_from_slice(data);
 
     let padded = crate::crypto::pkcs7_pad(&hashed_data, 16);
-    let enc = crate::crypto::aes_cbc_encrypt(&padded, aes_key, aes_iv);
+    let mut aes_key = aes_key;
+    let mut aes_iv = aes_iv;
+    let enc = crate::crypto::aes_cbc_encrypt(&padded, &aes_key, &aes_iv);
+    // Key material is copied out of the hasher output so the hasher buffer
+    // itself can be wiped; the copies are wiped right after use.
+    crate::crypto::wipe(&mut hv);
+    crate::crypto::wipe(&mut aes_key);
+    crate::crypto::wipe(&mut aes_iv);
 
     let mut out = TT_MAGIC.to_vec();
     out.extend_from_slice(&random_bytes32);
     out.extend_from_slice(&enc);
+    crate::crypto::wipe(&mut random_bytes32);
     Ok(out)
 }
 
@@ -55,7 +64,7 @@ pub fn decrypt_register_key(encrypted_key_b64: &str) -> Result<Vec<u8>, String> 
     if data.len() < 16 {
         return Err(format!("registerkey data too short: {}", data.len()));
     }
-    let key = hex::decode(REGISTER_KEY_MASTER_HEX).expect("master key");
+    let mut key = hex::decode(REGISTER_KEY_MASTER_HEX).expect("master key");
     let iv = &data[..16];
     let ct = &data[16..];
     // An empty ciphertext is block-aligned but would yield an empty key that
@@ -67,12 +76,13 @@ pub fn decrypt_register_key(encrypted_key_b64: &str) -> Result<Vec<u8>, String> 
         return Err("registerkey ciphertext not block-aligned".to_string());
     }
     let pt = crate::crypto::aes_cbc_decrypt(ct, &key, iv);
+    crate::crypto::wipe(&mut key);
     Ok(crate::crypto::pkcs7_unpad_strict(&pt, 16)?.to_vec())
 }
 
 /// `base64(iv + AES-128-CBC-PKCS7(hex2bin(reverseHex(deviceId))))`.
 pub fn encrypt_register_key_request(device_id: &str, iv: Option<&[u8]>) -> Result<String, String> {
-    let key = base64::engine::general_purpose::STANDARD
+    let mut key = base64::engine::general_purpose::STANDARD
         .decode(REGISTER_KEY_REQ_KEY_B64)
         .map_err(|e| e.to_string())?;
     if key.len() != 16 {
@@ -89,6 +99,7 @@ pub fn encrypt_register_key_request(device_id: &str, iv: Option<&[u8]>) -> Resul
     let raw = hex::decode(&hex_data).map_err(|e| e.to_string())?;
     let padded = crate::crypto::pkcs7_pad(&raw, 16);
     let enc = crate::crypto::aes_cbc_encrypt(&padded, &key, &iv);
+    crate::crypto::wipe(&mut key);
     let mut blob = iv;
     blob.extend_from_slice(&enc);
     Ok(base64::engine::general_purpose::STANDARD.encode(blob))
@@ -149,6 +160,20 @@ pub fn uuid_v4() -> String {
     format!("{a:04x}{b:04x}-{c:04x}-{d:04x}-{e:04x}-{f:04x}{g:04x}{h:04x}")
 }
 
+pub fn rand_mac() -> String {
+    const HEX_U: &[u8] = b"0123456789ABCDEF";
+    let mut rng = rand::thread_rng();
+    let mut out = String::new();
+    for i in 0..6 {
+        if i > 0 {
+            out.push(':');
+        }
+        out.push(HEX_U[rng.gen_range(0..16usize)] as char);
+        out.push(HEX_U[rng.gen_range(0..16usize)] as char);
+    }
+    out
+}
+
 #[cfg(test)]
 mod reverse_hex_tests {
     use super::*;
@@ -197,18 +222,4 @@ mod reverse_hex_tests {
             reverse_hex("0").expect("zero id"),
         );
     }
-}
-
-pub fn rand_mac() -> String {
-    const HEX_U: &[u8] = b"0123456789ABCDEF";
-    let mut rng = rand::thread_rng();
-    let mut out = String::new();
-    for i in 0..6 {
-        if i > 0 {
-            out.push(':');
-        }
-        out.push(HEX_U[rng.gen_range(0..16usize)] as char);
-        out.push(HEX_U[rng.gen_range(0..16usize)] as char);
-    }
-    out
 }
