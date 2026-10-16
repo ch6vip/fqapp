@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +11,7 @@ import 'package:fqapp/widgets/player/playlet_comment_panel.dart';
 import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
+import 'support/controlled_player.dart';
 import 'support/fakes.dart';
 
 void main() {
@@ -361,6 +364,50 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(player.calls, contains('seek:10'));
     expect(seeked, [const Duration(seconds: 10)]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  // P2-21：显式设 currentPosition/totalDuration；接 onSeeked 断言连续
+  // 双击累积目标。native seek 被 gate 卡住时第二次双击必须基于
+  // _pendingSeek 累积（40→30），而不是已确认位置（50）重算。
+  testWidgets('consecutive side double taps accumulate via onSeeked', (
+    tester,
+  ) async {
+    final seekGate = Completer<void>();
+    final player = ControlledNativePlayer(seekGate: seekGate)..isPlaying = true;
+    await player.create('https://example.invalid/1.mp4', '');
+    final seeked = <Duration>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _chrome(
+          player,
+          duration: const Duration(seconds: 120),
+          initialPosition: const Duration(seconds: 50),
+          onSeeked: seeked.add,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
+    final left = Offset(surface.left + surface.width / 6, surface.center.dy);
+    await tester.tapAt(left);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(left);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tapAt(left);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(left);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(seeked, [const Duration(seconds: 40), const Duration(seconds: 30)]);
+    seekGate.complete();
+    await tester.pump();
+    expect(
+      player.calls.where((call) => call.startsWith('seek:')),
+      containsAll(['seek:40000ms', 'seek:30000ms']),
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
   });
