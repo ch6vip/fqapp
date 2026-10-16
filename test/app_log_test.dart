@@ -185,6 +185,43 @@ void main() {
     expect(joined, isNot(contains('session_id')));
   });
 
+  test('捕获层脱敏：capability 路径、Bearer、敏感 query 与键值被替换', () {
+    AppLog.instance.install();
+    AppLog.i(
+      'net',
+      'GET http://127.0.0.1:9/_session/abc123def/src/p.jpg?token=secret1&foo=bar',
+    );
+    AppLog.e('net', 'failed', error: 'Authorization: Bearer mytoken99');
+    AppLog.i(
+      'auth',
+      '{"key_hex": "aabbccddeeff00112233445566778899", "name": "x"}',
+    );
+    AppLog.i('misc', 'plain text stays readable, duration 123ms');
+    final messages = AppLog.instance.entries.map((e) => e.message).join('\n');
+    expect(messages, contains('/_session/<redacted>'));
+    expect(messages, isNot(contains('abc123def')));
+    expect(messages, isNot(contains('secret1')));
+    expect(messages, contains('foo=bar'));
+    expect(messages, contains('Bearer <redacted>'));
+    expect(messages, isNot(contains('mytoken99')));
+    expect(messages, isNot(contains('aabbccddeeff00112233445566778899')));
+    expect(messages, contains('"key_hex": "<redacted>"'));
+    expect(messages, contains('"name": "x"'));
+    expect(messages, contains('plain text stays readable'));
+  });
+
+  test('捕获层脱敏：Cookie 整行与敏感 query 键，普通参数保留', () {
+    AppLog.instance.install();
+    AppLog.i('net', 'Cookie: sessionid=abc123; other=def456');
+    AppLog.i('net', 'GET /api/x?session_id=sess99&page=2');
+    final messages = AppLog.instance.entries.map((e) => e.message).join('\n');
+    expect(messages, isNot(contains('abc123')));
+    expect(messages, isNot(contains('def456')));
+    expect(messages, isNot(contains('sess99')));
+    expect(messages, contains('page=2'));
+    expect(messages, contains('Cookie: <redacted>'));
+  });
+
   test('开启落盘后由定时器 flush：不显式调用也能读到', () async {
     final dir = await Directory.systemTemp.createTemp('fqapp-log-timer-');
     cleanupDir(dir);
