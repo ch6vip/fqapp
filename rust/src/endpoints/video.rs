@@ -1417,6 +1417,13 @@ fn rewrite_encrypted_sample_entries(data: &mut [u8], boxes: &HashMap<[u8; 4], Ve
     }
 }
 
+/// Upper bound for the number of samples a single `stsz` box may declare.
+/// A real track stays far below this (a 10-hour 60 fps video is ~2.2M
+/// samples). Without a cap, the fixed-size branch below allocates one
+/// `usize` per declared sample from just 8 header bytes, so a corrupt or
+/// hostile box with a huge `sample_count` can OOM the process.
+const MAX_STSZ_SAMPLES: usize = 10_000_000;
+
 fn parse_stsz(data: &[u8], b: Mp4Box) -> Vec<usize> {
     let mut p = b.off + 12;
     if p + 8 > data.len() {
@@ -1427,6 +1434,17 @@ fn parse_stsz(data: &[u8], b: Mp4Box) -> Vec<usize> {
     p += 8;
     let mut out = Vec::new();
     if sample_size != 0 {
+        // Fixed-size branch: the box carries no per-sample entries, so
+        // `sample_count` alone must be checked against the file. The
+        // declared samples must fit inside the file (they live in its
+        // `mdat`), and the count itself is capped.
+        if sample_count > MAX_STSZ_SAMPLES {
+            return Vec::new();
+        }
+        match sample_count.checked_mul(sample_size) {
+            Some(total) if total <= data.len() => {}
+            _ => return Vec::new(),
+        }
         for _ in 0..sample_count {
             out.push(sample_size);
         }
@@ -2039,6 +2057,51 @@ mod cenc_sample_fixture {
         let twice = std::fs::read(&path).expect("read twice");
         assert_eq!(once, twice, "the second pass must be a no-op");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P0-1: the fixed-size `stsz` branch used to allocate one `usize` per
+    /// declared sample with no bound, so a box claiming billions of samples
+    /// could OOM the process from 8 header bytes. It must reject counts
+    /// whose samples cannot fit in the file, while still accepting sane
+    /// fixed-size boxes.
+    #[test]
+    fn stsz_fixed_size_branch_rejects_absurd_sample_count() {
+        fn stsz_box(sample_size: u32, sample_count: u32, file_len: usize) -> (Vec<u8>, Mp4Box) {
+            let mut data = vec![0u8; file_len.max(20)];
+            data[12..16].copy_from_slice(&sample_size.to_be_bytes());
+            data[16..20].copy_from_slice(&sample_count.to_be_bytes());
+            (
+                data,
+                Mp4Box {
+                    off: 0,
+                    size: 20,
+                    header: 8,
+                    typ: *b"stsz",
+                },
+            )
+        }
+
+        // Absurd count: would previously allocate ~32 GiB of `usize`s.
+        let (data, b) = stsz_box(1024, u32::MAX, 20);
+        assert!(
+            parse_stsz(&data, b).is_empty(),
+            "sample_count whose samples cannot fit in the file must be rejected"
+        );
+        // Count above the absolute cap, even with 1-byte samples.
+        let (data, b) = stsz_box(1, MAX_STSZ_SAMPLES as u32 + 1, 20);
+        assert!(
+            parse_stsz(&data, b).is_empty(),
+            "sample_count above MAX_STSZ_SAMPLES must be rejected"
+        );
+        // Product overflow: 2 * u32::MAX samples of u32::MAX bytes.
+        let (data, b) = stsz_box(u32::MAX, 2, 20);
+        assert!(
+            parse_stsz(&data, b).is_empty(),
+            "overflowing sample_count * sample_size must be rejected"
+        );
+        // Sane fixed-size box still parses.
+        let (data, b) = stsz_box(100, 3, 320);
+        assert_eq!(parse_stsz(&data, b), vec![100, 100, 100]);
     }
 
     #[test]
