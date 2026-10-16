@@ -13,6 +13,11 @@ Usage:
   .\scripts\build_rust_backend.ps1 -HostLib
   .\scripts\build_rust_backend.ps1 -Profile debug
 
+Unknown parameters are a hard error (PowerShell rejects them before the
+script body runs). -Profile only accepts release|debug (ValidateSet). The NDK
+must be exactly the pinned revision below; any other revision is a hard error,
+never a silent fallback to the newest installed NDK.
+
 Comments are kept in ASCII on purpose so the file parses cleanly on
 Windows PowerShell 5.1 without a UTF-8 BOM.
 #>
@@ -20,10 +25,15 @@ Windows PowerShell 5.1 without a UTF-8 BOM.
 param(
     [switch]$SkipCodegen,
     [switch]$HostLib,
-    [string]$Profile = 'release'
+    [ValidateSet('release', 'debug')][string]$Profile = 'release'
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The NDK revision the project pins. Resolve-NdkRoot below only ever returns
+# this revision or $null; the post-resolution check rejects an env override
+# pointing anywhere else.
+$PinnedNdkVersion = '28.2.13676358'
 
 $AppDir = Split-Path -Parent $PSScriptRoot
 $Manifest = Join-Path $AppDir 'rust\Cargo.toml'
@@ -92,18 +102,23 @@ function Resolve-NdkRoot {
         }
     }
     if (-not $sdkRoot) { return $null }
-    # Prefer the NDK revision the project already uses.
-    $preferred = Join-Path $sdkRoot 'ndk\28.2.13676358'
+    # Only the pinned revision is acceptable: falling back to the newest
+    # installed NDK would silently change the toolchain the release was
+    # built with.
+    $preferred = Join-Path $sdkRoot "ndk\$PinnedNdkVersion"
     if (Test-Path -LiteralPath $preferred) { return $preferred }
-    $latest = Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'ndk') -Directory -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | Select-Object -First 1
-    if ($latest) { return $latest.FullName }
     return $null
 }
 
 $NdkRoot = Resolve-NdkRoot
 if (-not $NdkRoot -or -not (Test-Path -LiteralPath $NdkRoot)) {
-    Write-Error 'Android NDK not found. Set ANDROID_NDK_HOME or install an NDK under the Android SDK.'
+    Write-Error "Android NDK $PinnedNdkVersion not found. Set ANDROID_NDK_HOME to that revision or install NDK $PinnedNdkVersion under the Android SDK."
+    exit 1
+}
+# An env override pointing at a different revision is a hard error, never a
+# silent substitution.
+if ((Split-Path -Leaf $NdkRoot.TrimEnd('\')) -ne $PinnedNdkVersion) {
+    Write-Error "Resolved NDK is not the pinned revision $PinnedNdkVersion (resolved to $NdkRoot). Install the pinned revision and point at it."
     exit 1
 }
 Write-Host "==> NDK: $NdkRoot"
