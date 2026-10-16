@@ -10,7 +10,7 @@
 
 ## 1. 项目与技术基线
 
-- fqapp 是内容聚合 Android 客户端，提供小说阅读、听书、短剧、漫剧和漫画。Flutter UI 通过 flutter_rust_bridge 调用进程内 Rust 核心 `fqapi_core`；`127.0.0.1:8080` loopback 服务承载 Web UI 与漫画图。无需 root，不部署独立后端进程。
+- fqapp 是内容聚合 Android 客户端，提供小说阅读、听书、短剧、漫剧和漫画。Flutter UI 通过 flutter_rust_bridge 调用进程内 Rust 核心 `fqapi_core`；`127.0.0.1:28080` loopback 服务承载 Web UI 与漫画图。无需 root，不部署独立后端进程。
 - 提供只读的番茄账号导入（网页登录后读取书架/历史/进度，不回写账号）；除此之外不提供登录或上游账号写操作。已裁撤的追剧、点赞、分享等入口不作为待办恢复。已有本机书架与详情页收藏按现有产品范围保留；没有真实能力时不放占位控件。
 - 基线：Flutter **3.44.6 stable**、Dart **^3.12.2**、Rust stable；FRB 的 Rust crate、Dart 包和 codegen **统一固定 2.13.0**。
 - Android：SDK 36、NDK **28.2.13676358**、JDK 17、Gradle **9.1.0**；仅构建 `arm64-v8a`。原生 C CENC 库由 CMake 生成 `libshortplay_crypto.so`，原生库须满足 **16 KiB** 对齐。
@@ -53,7 +53,7 @@
 
 - Rust 格式检查使用 `rustfmt --check --edition 2021 --config skip_children=true <文件>`。覆盖检查时枚举 Git 跟踪的全部手写 `.rs`，并包含本轮新增文件；排除 `frb_generated.rs`。禁止使用 `cargo fmt --all -- --check`，也不能只查 `rust/src/lib.rs` 冒充全部检查。
 - 需要 Clippy 时使用 `cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings`。协议实现变更必须覆盖受影响的黄金夹具，未执行部分如实列出。
-- 门禁串行的原因：loopback `8080` 端口、Cargo target、Gradle 与 FRB 宿主动态库存在独占资源。Windows 符号链接权限导致的已知失败须核实原因后单列，不能记为通过或一概忽略。
+- 门禁串行的原因：loopback `28080` 端口、Cargo target、Gradle 与 FRB 宿主动态库存在独占资源。Windows 符号链接权限导致的已知失败须核实原因后单列，不能记为通过或一概忽略。
 - 不为低风险可逆修改添加只复述实现的测试。未执行、跳过、环境失败、代码失败分别记录；定向测试通过不等于全量回归通过。
 
 ## 4. 代码边界与不变量

@@ -2,7 +2,7 @@
 
 面向构建、修改和调试本项目的开发者。用户使用说明见 [README.md](README.md)。
 
-> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:8080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
+> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:28080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
 
 ---
 
@@ -57,7 +57,7 @@ Android WebView 由用户本人完成官方手机号登录和人机验证。Cook
               └──────┬─────────────┬──────┘
                      │             │
       loopback HTTP  │             │ HTTPS (reqwest)
-      127.0.0.1:8080 │             ▼
+      127.0.0.1:28080 │             ▼
                      ▼      上游 API
           内置 Web UI / /src/* 漫画图
 ```
@@ -279,7 +279,7 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 ```dart
 // 默认：flutter_rust_bridge 直调 Rust 核心（进程内，无独立进程）
 await rust.init(
-  configPath: ..., poolPath: ..., filterPath: ..., runtimeDir: ..., port: 8080,
+  configPath: ..., poolPath: ..., filterPath: ..., runtimeDir: ..., port: 28080,
 );
 // Web / 测试：同一分发器另开 loopback HTTP 适配器，供浏览器入口与 /src/* 资源
 ```
@@ -554,7 +554,7 @@ adb shell run-as com.fqapp.fqapp cat files/backend/backend.log
 adb shell run-as com.fqapp.fqapp ls -la files/backend/
 
 # 端口转发测试（后端起来后）
-adb forward tcp:18080 tcp:8080
+adb forward tcp:18080 tcp:28080
 curl http://127.0.0.1:18080/health
 
 # Flutter 日志

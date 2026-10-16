@@ -176,7 +176,7 @@ pub(crate) async fn init_core(
 
     // `port == 0` binds an ephemeral loopback port (host tests and any caller
     // that does not care which port is used); the Flutter transport passes the
-    // configured 8080 explicitly. The loopback adapter is always part of the
+    // configured 28080 explicitly. The loopback adapter is always part of the
     // core because resource URLs (`/src/...`) depend on it.
     let _ = cfg.port;
     let (actual_port, token, task) = match crate::server::serve(server.clone(), port).await {

@@ -122,7 +122,7 @@ abstract class BackendTransport {
 /// flutter_rust_bridge transport. The Rust core owns the HTTP client, the
 /// device pool and the signing keys; Dart only passes method/path/query/body.
 class RustBackendTransport implements BackendTransport {
-  RustBackendTransport({this.port = 8080, this.mockUpstreamOrigin = ''})
+  RustBackendTransport({this.port = 28080, this.mockUpstreamOrigin = ''})
     : _baseUrl = 'http://127.0.0.1:$port',
       // Created eagerly so it captures the ambient `http.Client` of the Zone
       // that built this transport. That is what keeps `ApiClient` injectable:

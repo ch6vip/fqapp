@@ -15,7 +15,7 @@ void main() {
     expect(find.text('本地后端'), findsOneWidget);
     expect(find.text('运行中'), findsOneWidget);
     expect(find.text('服务地址'), findsOneWidget);
-    expect(find.textContaining('127.0.0.1'), findsOneWidget);
+    expect(find.textContaining('127.0.0.1:28080'), findsOneWidget);
     expect(find.text('日志'), findsOneWidget);
   });
 
