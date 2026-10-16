@@ -145,7 +145,11 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cargo/bin/flutter_rust_bridge_codegen
-          key: frb-codegen-${{ env.FRB_VERSION }}-${{ runner.os }}
+          # The lockfile pins the codegen binary's exact transitive
+          # dependency tree: without its hash a stale cached binary would
+          # survive a lockfile change that should have rebuilt it.
+          # (Checkout path is app/, so the hash path is repo-root-relative.)
+          key: frb-codegen-${{ env.FRB_VERSION }}-${{ runner.os }}-${{ hashFiles('app/rust/Cargo.lock') }}
 
       - name: Install flutter_rust_bridge_codegen
         if: steps.frb-cache.outputs.cache-hit != 'true'
