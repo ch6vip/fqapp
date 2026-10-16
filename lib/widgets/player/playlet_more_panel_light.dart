@@ -417,6 +417,16 @@ class _DanmakuSwitchRowState extends State<_DanmakuSwitchRow> {
   late bool _enabled = widget.enabled;
 
   @override
+  void didUpdateWidget(_DanmakuSwitchRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 面板打开期间父级已翻转 danmakuEnabled 且 sheet 子树原地重建时，
+    // 旧 State 仍持旧值会导致之后每次点击与父级持续反向；跟随父级同步。
+    if (oldWidget.enabled != widget.enabled) {
+      _enabled = widget.enabled;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) => Semantics(
         key: const ValueKey('player-more-light-danmaku-row'),
         label: '弹幕',
