@@ -5,6 +5,7 @@
 //! version-guarded so an in-flight registration cannot overwrite newer state.
 
 pub mod crypto;
+pub mod pool_crypto;
 pub mod register;
 
 use std::path::{Path, PathBuf};
@@ -165,6 +166,23 @@ impl DevicePool {
         Self::build(file, Some(origin.into())).await
     }
 
+    /// Renames `file` to `<file>.corrupt-<unix-seconds>` and logs `reason`.
+    /// Best effort: a failed rename leaves the file for the next save to
+    /// overwrite.
+    async fn backup_corrupt_file(file: &Path, reason: &str) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = PathBuf::from(format!("{}.corrupt-{stamp}", file.display()));
+        match tokio::fs::rename(file, &backup).await {
+            Ok(()) => log::warn!("device pool {reason}, backed up to {}", backup.display()),
+            Err(rename_err) => {
+                log::warn!("device pool {reason}, backup failed: {rename_err}")
+            }
+        }
+    }
+
     async fn build(
         file: impl AsRef<Path>,
         mock_origin: Option<String>,
@@ -172,33 +190,53 @@ impl DevicePool {
         let file = file.as_ref().to_path_buf();
         let mut devices = Vec::new();
         if let Ok(data) = tokio::fs::read(&file).await {
-            match serde_json::from_slice::<PoolFile>(&data) {
-                Ok(pf) => {
-                    devices = pf.android;
+            if pool_crypto::pool_file_is_encrypted(&data) {
+                // P1-2: encrypted pool file. Decrypt with the provisioned
+                // key; an undecryptable file (wrong key, tampering) is
+                // backed up per P2-14 and the pool starts empty. With no
+                // key provisioned yet (Dart provisions at startup), leave
+                // the file untouched and start empty — the pool refills
+                // by re-registering and the next save overwrites it.
+                match pool_crypto::decrypt_pool_file(&data) {
+                    Ok(plain) => match serde_json::from_slice::<PoolFile>(&plain) {
+                        Ok(pf) => {
+                            devices = pf.android;
+                        }
+                        Err(e) => {
+                            Self::backup_corrupt_file(&file, &format!("decrypted pool JSON invalid: {e}")).await;
+                        }
+                    },
+                    Err(e) => {
+                        if pool_crypto::pool_key().is_some() {
+                            Self::backup_corrupt_file(&file, &format!("pool file undecryptable: {e}")).await;
+                        } else {
+                            log::warn!(
+                                "device pool file is encrypted but no pool key provisioned; starting empty"
+                            );
+                        }
+                    }
                 }
-                Err(e) => {
-                    // P2-14: a corrupt pool file (torn write, truncation,
-                    // garbage) must never be silently discarded. Back it
-                    // up next to the original with a timestamp, log the
-                    // parse failure, and start empty; the pool refills by
-                    // re-registering. If the rename itself fails, the
-                    // corrupt file stays and the next save overwrites it.
-                    let stamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let backup = PathBuf::from(format!(
-                        "{}.corrupt-{stamp}",
-                        file.display()
-                    ));
-                    match tokio::fs::rename(&file, &backup).await {
-                        Ok(()) => log::warn!(
-                            "device pool corrupt ({e}), backed up to {}",
-                            backup.display()
-                        ),
-                        Err(rename_err) => log::warn!(
-                            "device pool corrupt ({e}), backup failed: {rename_err}"
-                        ),
+            } else {
+                // Legacy plaintext JSON (or garbage). A plaintext file
+                // loads normally and is encrypted on the next save once a
+                // key is provisioned (migration on save).
+                match serde_json::from_slice::<PoolFile>(&data) {
+                    Ok(pf) => {
+                        devices = pf.android;
+                    }
+                    Err(e) => {
+                        // P2-14: a corrupt pool file (torn write,
+                        // truncation, garbage) must never be silently
+                        // discarded. Back it up next to the original with
+                        // a timestamp, log the parse failure, and start
+                        // empty; the pool refills by re-registering. If
+                        // the rename itself fails, the corrupt file stays
+                        // and the next save overwrites it.
+                        Self::backup_corrupt_file(
+                            &file,
+                            &format!("pool file unparseable: {e}"),
+                        )
+                        .await;
                     }
                 }
             }
@@ -493,10 +531,23 @@ impl DevicePool {
                 android: s.devices.clone(),
                 last_update: now,
             };
-            (
-                s.version,
-                serde_json::to_vec_pretty(&pf).map_err(|e| e.to_string())?,
-            )
+            let json = serde_json::to_vec_pretty(&pf).map_err(|e| e.to_string())?;
+            // P1-2: encrypt the pool file when a key is provisioned; this
+            // is also what migrates a legacy plaintext file to encrypted
+            // on the first save after provisioning. With no key, keep
+            // the old plaintext behavior and warn once per process.
+            let data = if pool_crypto::pool_key().is_some() {
+                pool_crypto::encrypt_pool_file(&json)?
+            } else {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    log::warn!(
+                        "saving device pool unencrypted: no pool key provisioned"
+                    );
+                });
+                json
+            };
+            (s.version, data)
         };
 
         let gate = Arc::clone(&self.commit);

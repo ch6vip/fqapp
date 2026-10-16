@@ -64,6 +64,16 @@ static PRE_CANCELLED: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::ne
 const PRE_CANCELLED_LIMIT: usize = 256;
 
 /// Backend core version.
+/// Provisions the key used to encrypt the device-pool file at rest
+/// (P1-2). Dart calls this at startup, before `init`, with a 32-byte key
+/// from the secure-storage key infrastructure (separate key material from
+/// the Hive box key). The pool migrates a legacy plaintext file to
+/// encrypted on the next save; without a provisioned key the pool keeps
+/// the old plaintext behavior and logs a warning.
+pub fn set_device_pool_key(key: Vec<u8>) -> Result<(), String> {
+    crate::device::pool_crypto::provision_pool_key(key)
+}
+
 pub fn version() -> String {
     format!("fqapi_core {}", env!("CARGO_PKG_VERSION"))
 }
