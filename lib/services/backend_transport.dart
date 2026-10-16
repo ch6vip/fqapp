@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../src/rust/api.dart' as rust;
 import '../src/rust/frb_generated.dart';
+import 'secure_key_provider.dart';
 
 /// One backend response.
 ///
@@ -181,6 +182,18 @@ class RustBackendTransport implements BackendTransport {
     required String runtimeDir,
   }) async {
     await ensureRuntime();
+    // P1-2: provision the device-pool encryption key before init, so the
+    // Rust core reads an encrypted pool file on its first load. A null
+    // key (secure storage unavailable) keeps the old plaintext behavior;
+    // a provisioning failure never blocks startup.
+    final poolKey = await SecureKeyProvider().devicePoolKey();
+    if (poolKey != null) {
+      try {
+        await rust.setDevicePoolKey(key: poolKey);
+      } catch (_) {
+        // Keep starting: the pool falls back to plaintext + a warning.
+      }
+    }
     final result = await rust.init(
       configPath: configPath,
       poolPath: poolPath,

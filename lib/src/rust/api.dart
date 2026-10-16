@@ -11,6 +11,15 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`, `fmt`
 
 /// Backend core version.
+/// Provisions the key used to encrypt the device-pool file at rest
+/// (P1-2). Dart calls this at startup, before `init`, with a 32-byte key
+/// from the secure-storage key infrastructure (separate key material from
+/// the Hive box key). The pool migrates a legacy plaintext file to
+/// encrypted on the next save; without a provisioned key the pool keeps
+/// the old plaintext behavior and logs a warning.
+Future<void> setDevicePoolKey({required List<int> key}) =>
+    RustLib.instance.api.crateApiSetDevicePoolKey(key: key);
+
 Future<String> version() => RustLib.instance.api.crateApiVersion();
 
 /// Idempotent initialization. A second call while running returns `"running"`.
