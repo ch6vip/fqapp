@@ -34,6 +34,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.example.shortplay.CryptoNative
+import com.example.shortplay.HttpBridge
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -131,6 +132,9 @@ class NativePlayerPlugin internal constructor(
         attachedToEngine = true
         instance = this
         flutterBinding = binding
+        // The offline-file bridge only serves file:// URLs inside the app's
+        // download/cache trees; configure it before any playback can occur.
+        HttpBridge.configure(binding.applicationContext)
         textureRegistry = binding.textureRegistry
         methodChannel = MethodChannel(binding.binaryMessenger, "fqapp/native_player")
         methodChannel.setMethodCallHandler(this)
