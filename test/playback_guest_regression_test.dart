@@ -412,6 +412,43 @@ void main() {
     await player.dispose();
   });
 
+  // P2-22：清屏态双击（侧边与中间）既不 pause 也不 seek。
+  testWidgets('double taps in clear screen issue no pause or seek', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(MaterialApp(home: _chrome(player)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+    await tester.pump();
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('清屏播放'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    // 清屏已进：横屏底条随 showChrome 一起隐藏。
+    expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
+    final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
+    final left = Offset(surface.left + surface.width / 6, surface.center.dy);
+    await tester.tapAt(left);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(left);
+    await tester.pump(const Duration(milliseconds: 400));
+    final center = tester.getCenter(
+      find.byKey(const ValueKey('video-surface')),
+    );
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(player.calls.where((call) => call == 'pause'), isEmpty);
+    expect(player.calls.where((call) => call == 'play'), isEmpty);
+    expect(player.calls.where((call) => call.startsWith('seek:')), isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
   // P1-11 + P2-1：控制条已自动隐藏时侧边双击仍 seek，并把控制条亮起。
   testWidgets('side double tap while controls are hidden seeks and reveals', (
     tester,
