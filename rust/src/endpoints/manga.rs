@@ -92,6 +92,28 @@ async fn get_content(ctx: &Ctx, item_id: &str, q: &Params) -> ApiResult<String> 
 
     let resp = parse_content_meta(&raw)?;
     if resp.data.content.is_empty() {
+        // Diagnostic: the upstream envelope carries no content (e.g. an
+        // upstream error payload for this device). Log code/message plus the
+        // data keys only — never the body — so a fresh-device/upstream
+        // rejection is visible in backend.log instead of surfacing as a
+        // bare "missing content".
+        let envelope: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
+        let code = envelope
+            .get("code")
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        let message = envelope
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let data_keys = envelope
+            .get("data")
+            .and_then(|v| v.as_object())
+            .map(|o| o.keys().cloned().collect::<Vec<_>>().join(","))
+            .unwrap_or_default();
+        log::warn!(
+            "manga get_content: upstream returned no content (item_id={item_id} code={code} message={message} data_keys=[{data_keys}])"
+        );
         return Err(ApiError::Internal("API响应中缺少content字段".to_string()));
     }
     let plain = crate::crypto::decrypt_upstream(&resp.data.content, &dev.secret_key)
@@ -3026,7 +3048,12 @@ fn handle<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value
             Err(err) => {
                 return match fallback_from_book_detail(ctx, &item_id, params, show_html).await {
                     Ok(result) => Ok(result),
-                    Err(_) => Err(err),
+                    Err(fallback_err) => {
+                        // The fallback failure used to be swallowed; log it so
+                        // the exported core log shows which leg actually failed.
+                        log::warn!("manga fallback failed for item_id={item_id}: {fallback_err}");
+                        Err(err)
+                    }
                 };
             }
         };
