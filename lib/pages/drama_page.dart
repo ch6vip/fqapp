@@ -308,6 +308,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// 再开弹层，`_modalOpen` 计账在弹层方法内部）。
   bool _pendingFeedFontScale = false;
 
+  /// 面板「弹幕设置」行级联打开的设置面板（官方 `jm3.e`：先关面板
+  /// 再开设置面板，与字号行同款级联，避免 `_modalOpen` 计账互相覆盖）。
+  bool _pendingFeedDanmakuSettings = false;
+
   /// feed 弹幕（官方信息流同样渲染弹幕，面板有开关行）：时间轴、取数
   /// 调度器与全局配置都复用播放页的那一套（CRIT-009 的时间字段约定在
   /// 模型层已固化）。vid -> seriesId 随每次切集登记，取数时按 vid 取，
@@ -815,6 +819,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   setState(() => _feedClearScreen = !_feedClearScreen),
               danmakuEnabled: _feedDanmakuEnabled,
               onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
+              // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
+              onOpenDanmakuSettings: () =>
+                  _pendingFeedDanmakuSettings = true,
               // 官方 `jm3.t0`：行尾当前档 + 点击级联打开字号弹层。
               fontScaleLabel: ShortSeriesFontScale.label,
               onOpenFontSettings: () => _pendingFeedFontScale = true,
@@ -837,6 +844,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
             onDefaultMuteChanged: (_) => unawaited(_inline.toggleMute()),
             danmakuEnabled: _feedDanmakuEnabled,
             onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
+            // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
+            onOpenDanmakuSettings: () =>
+                _pendingFeedDanmakuSettings = true,
             clearScreen: _feedClearScreen,
             onToggleClearScreen: () =>
                 setState(() => _feedClearScreen = !_feedClearScreen),
@@ -856,12 +866,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _feedPanelOpen = false;
       if (mounted) setState(() {});
     }
-    // 「字体大小」行是唯一级联行（官方 jm3.t0.m：面板收起后再开弹层，
-    // 避免 _modalOpen 计账互相覆盖）；听视频/离线缓存行走面板行回调直推。
+    // 「字体大小」「弹幕设置」行是级联行（官方 jm3.t0.m / jm3.e：面板收起
+    // 后再开弹层，避免 _modalOpen 计账互相覆盖）；听视频/离线缓存行走
+    // 面板行回调直推。
     if (!mounted) return;
     if (_pendingFeedFontScale) {
       _pendingFeedFontScale = false;
       unawaited(_showFeedFontScaleSheet());
+    }
+    // 「弹幕设置」行同款级联（官方 jm3.e）：面板收起后再开设置面板。
+    if (_pendingFeedDanmakuSettings) {
+      _pendingFeedDanmakuSettings = false;
+      unawaited(_showFeedDanmakuSettings());
     }
   }
 
@@ -880,6 +896,61 @@ class _DramaPageState extends ConsumerState<DramaPage>
     setState(() => _modalOpen = true);
     try {
       await showPlayletFontScaleSheet(context);
+    } finally {
+      _modalOpen = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// 弹幕设置面板（官方 `ay1/v.java`，与播放页共用同一张
+  /// [PlayletDanmakuSettingsPanel]）：滑杆变化实时回调并落盘（官方
+  /// UpdateDanmakuConfigEvent），feed 与播放页读同一份 `danmaku_config`。
+  /// 横屏用 372dp 右对齐的面板形态（与播放页同款）。
+  Future<void> _showFeedDanmakuSettings() async {
+    if (_modalOpen || _openingId != null) return;
+    setState(() => _modalOpen = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        useSafeArea: true,
+        backgroundColor: landscape ? Colors.transparent : const Color(0xFF1C1C1C),
+        shape: landscape
+            ? null
+            : RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+        builder: (sheetContext) {
+          final panel = PlayletDanmakuSettingsPanel(
+            settings: _feedDanmakuSettings,
+            landscape: landscape,
+            onChanged: (settings) {
+              setState(() => _feedDanmakuSettings = settings);
+              unawaited(DanmakuSettings.save(settings));
+            },
+            onReset: () => messenger.showSnackBar(
+              const SnackBar(content: Text('设置成功')),
+            ),
+          );
+          if (!landscape) return panel;
+          return Container(
+            alignment: Alignment.bottomRight,
+            padding: const EdgeInsets.only(right: 8, bottom: 8),
+            child: SizedBox(
+              width: 372,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1C1C1C),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: panel,
+              ),
+            ),
+          );
+        },
+      );
     } finally {
       _modalOpen = false;
       if (mounted) setState(() {});

@@ -35,6 +35,7 @@ class PlayletMorePanelLight extends StatelessWidget {
     this.onToggleClearScreen,
     this.danmakuEnabled = false,
     this.onToggleDanmaku,
+    this.onOpenDanmakuSettings,
     this.fontScaleLabel,
     this.onOpenFontSettings,
     this.onOpenListenMode,
@@ -53,6 +54,10 @@ class PlayletMorePanelLight extends StatelessWidget {
 
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
+
+  /// 「弹幕设置」入口（官方 `jm3.e`，label `a2v`，在弹幕开关之后）。
+  /// null 时整行不出现（深色分支同门）。
+  final VoidCallback? onOpenDanmakuSettings;
 
   /// 官方 `jm3.t0`：行尾展示当前字号档（`jk3/b.f()`）。null 时不显示档位。
   final String? fontScaleLabel;
@@ -181,6 +186,17 @@ class PlayletMorePanelLight extends StatelessWidget {
                       ),
                     if (onToggleDanmaku != null)
                       _danmakuRow(context, _foreground(context)),
+                    if (onOpenDanmakuSettings != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-danmaku-settings',
+                        icon: 'more_danmaku_settings',
+                        label: '弹幕设置',
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenDanmakuSettings!();
+                        },
+                      ),
                     if (onOpenFontSettings != null)
                       _actionRow(
                         context,
