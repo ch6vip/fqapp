@@ -78,9 +78,12 @@ pub fn encrypt_register_key_request(device_id: &str, iv: Option<&[u8]>) -> Resul
     if key.len() != 16 {
         return Err(format!("registerkey req key len {}", key.len()));
     }
+    // Full-entropy 16-byte IV (all 256 byte values), not the old
+    // alphanumeric subset (~6 bits/byte). Wire format is unchanged:
+    // base64(iv || ciphertext), and the IV still rides in the blob.
     let iv = match iv {
         Some(v) => v.to_vec(),
-        None => random_alnum(16),
+        None => rand::thread_rng().gen::<[u8; 16]>().to_vec(),
     };
     let hex_data = reverse_hex(device_id)?;
     let raw = hex::decode(&hex_data).map_err(|e| e.to_string())?;
@@ -155,6 +158,30 @@ mod reverse_hex_tests {
         // 12345 = 0x3039 -> padded to "00…003039", byte pairs reversed.
         let out = reverse_hex("12345").expect("numeric id");
         assert_eq!(out, "39300000000000000000000000000000");
+    }
+
+    #[test]
+    fn register_iv_is_full_entropy_not_alphanumeric() {
+        use base64::Engine as _;
+        // Over 64 encryptions the 16-byte IVs must show bytes outside the
+        // old alphanumeric subset; P(all alnum) is ~ (62/256)^1024.
+        let mut saw_non_alnum = false;
+        let mut last = String::new();
+        for _ in 0..64 {
+            let blob = encrypt_register_key_request("123456789", None)
+                .expect("encrypt");
+            assert_ne!(blob, last, "IV must be random per call");
+            let raw = base64::engine::general_purpose::STANDARD
+                .decode(&blob)
+                .expect("base64 blob");
+            last = blob;
+            assert!(raw.len() > 16);
+            let iv = &raw[..16];
+            if iv.iter().any(|b| !b.is_ascii_alphanumeric()) {
+                saw_non_alnum = true;
+            }
+        }
+        assert!(saw_non_alnum, "IV bytes never left the alnum subset");
     }
 
     #[test]
