@@ -1,16 +1,22 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/media_item.dart';
+import 'encrypted_hive.dart';
 import 'episode_source_cache.dart';
+import 'secure_key_provider.dart';
 
 /// 一集的离线缓存记录。文件是**原始 CENC 加密字节**（与官方加密落盘同
 /// 姿态），keyHex 是该集确定性派生的内容密钥——回放时把 `file://` 路径
 /// 和 key 一起交给原生播放器，解密仍发生在 C 核心流层，磁盘上永远没有
 /// 明文。
+///
+/// P1-4：keyHex 不进集记录本身。它只存在同一个**加密**箱里的独立条目
+/// `key:<itemId>` 下（见 [HiveDramaDownloadStore]），集记录里永远不带
+/// keyHex；播放时由 store 把两者拼回 [CachedEpisode]。
 @immutable
 class CachedEpisode {
   const CachedEpisode({
@@ -42,12 +48,13 @@ class CachedEpisode {
   final String filePath;
   final int cachedAt;
 
+  /// Episode record as persisted. Deliberately key-less (P1-4): the content
+  /// key travels separately under `key:<itemId>` in the same encrypted box.
   Map<String, dynamic> toMap() => {
     'seriesId': seriesId,
     'itemId': itemId,
     'title': title,
     'index': index,
-    'keyHex': keyHex,
     'height': height,
     'variantName': variantName,
     'bytes': bytes,
@@ -55,17 +62,17 @@ class CachedEpisode {
     'cachedAt': cachedAt,
   };
 
-  static CachedEpisode? fromMap(dynamic raw) {
+  /// Reassembles an episode from its record plus the separately stored key.
+  /// [keyHex] is '' for plain (non-CENC) streams.
+  static CachedEpisode? fromMap(dynamic raw, {String keyHex = ''}) {
     if (raw is! Map) return null;
     final seriesId = raw['seriesId'];
     final itemId = raw['itemId'];
-    final keyHex = raw['keyHex'];
     final filePath = raw['filePath'];
     if (seriesId is! String ||
         seriesId.isEmpty ||
         itemId is! String ||
         itemId.isEmpty ||
-        keyHex is! String ||
         filePath is! String ||
         filePath.isEmpty) {
       return null;
@@ -190,6 +197,7 @@ abstract interface class DramaDownloadStore {
 class HiveDramaDownloadStore implements DramaDownloadStore {
   HiveDramaDownloadStore({
     HiveInterface? hive,
+    this._keys,
     Future<Directory> Function()? directoryResolver,
   }) : _hive = hive ?? Hive,
        _dirResolver = directoryResolver;
@@ -197,11 +205,23 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   static final HiveDramaDownloadStore instance = HiveDramaDownloadStore();
   static const _boxName = 'drama_download_v1';
 
+  /// Key entry for one episode: `key:<itemId>` -> keyHex, in the same
+  /// encrypted box as the episode record. P1-4 keeps the content key out
+  /// of the episode record itself.
+  static String _keyKey(String itemId) => 'key:$itemId';
+
+  /// One-time marker: embedded-key migration (below) has run on this box.
+  static const _keySplitMarker = '__key_split_v1';
+
+  /// Encryption-key source. Production uses the shared secure-storage
+  /// provider; tests inject an in-memory one. The box holds content keys,
+  /// so it opens with `requireEncryption`: no key, no plaintext fallback.
+  final SecureKeyProvider? _keys;
 
   /// box 是否已打开。播放器的离线命中读路径用它做前置门：Hive 未初始化
   /// 时触碰 openBox 会产生无法被 try/catch 完全拦住的异步错误（openBox
   /// 内部 completer 的孪生错误），生产环境由 main 的 [warmUp] 打开。
-  bool get isReady => _hive.isBoxOpen(_boxName);
+  bool get isReady => EncryptedHive.isBoxOpen(_hive, _boxName);
 
   /// 启动时打开 box；失败不拖启动（离线命中退化为每次都走在线）。
   Future<void> warmUp() async {
@@ -225,13 +245,64 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     // Hive.close()（全量关箱，测试 tearDown 的常态）之后 openBox 仍会把
     // 注册表里的已关闭实例交回来——按「已开直接取、未开才开」收口，
     // 不做「拿到关闭箱就重试」的递归（那会无限循环）。
-    if (_hive.isBoxOpen(_boxName)) return _hive.box(_boxName);
-    final opening = _opening ??= _hive.openBox<dynamic>(_boxName);
+    if (EncryptedHive.isBoxOpen(_hive, _boxName)) {
+      final box = EncryptedHive.box<dynamic>(_hive, _boxName);
+      await _migrateEmbeddedKeys(box);
+      return box;
+    }
+    final opening = _opening ??= _openBox();
     try {
       return await opening;
     } finally {
       if (identical(_opening, opening)) _opening = null;
     }
+  }
+
+  Future<Box<dynamic>> _openBox() async {
+    final box = await EncryptedHive.openBox<dynamic>(
+      _hive,
+      _boxName,
+      keys: _keys,
+      requireEncryption: true,
+    );
+    await _migrateEmbeddedKeys(box);
+    return box;
+  }
+
+  /// One-time migration for records written before P1-4, which embedded
+  /// keyHex in the episode record: move each embedded key into its
+  /// `key:<itemId>` entry, then rewrite the record without it. The key
+  /// entry is written before the record is stripped, so a crash between
+  /// the two just re-runs this migration idempotently. Orphaned key
+  /// entries (record gone) are dropped. Afterwards the marker is set, so
+  /// later opens pay for one [Box.containsKey] check only.
+  Future<void> _migrateEmbeddedKeys(Box<dynamic> box) async {
+    if (box.containsKey(_keySplitMarker)) return;
+    final episodeKeys = <dynamic>[
+      for (final key in box.keys)
+        if (key is String && key.startsWith('episode:')) key,
+    ];
+    final liveItems = <String>{};
+    for (final key in episodeKeys) {
+      final raw = box.get(key);
+      if (raw is! Map) continue;
+      final itemId = raw['itemId'];
+      if (itemId is! String || itemId.isEmpty) continue;
+      liveItems.add(itemId);
+      final embedded = raw['keyHex'];
+      if (embedded is! String || embedded.isEmpty) continue;
+      await box.put(_keyKey(itemId), embedded);
+      final stripped = Map<String, dynamic>.from(raw)..remove('keyHex');
+      await box.put(key, stripped);
+    }
+    for (final key in box.keys.toList()) {
+      if (key is String &&
+          key.startsWith('key:') &&
+          !liveItems.contains(key.substring(4))) {
+        await box.delete(key);
+      }
+    }
+    await box.put(_keySplitMarker, true);
   }
 
   Future<T> _serialize<T>(Future<T> Function(Box<dynamic>) action) {
@@ -257,13 +328,15 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
 
   String _episodeKey(String itemId) => 'episode:$itemId';
 
+  /// Episode-record shape. P1-4: the record carries no keyHex (it lives
+  /// under `key:<itemId>`), so shape alone must not require it — a plain
+  /// (non-CENC) stream legitimately has an empty key.
   bool _isEpisode(dynamic value) =>
       value is Map &&
       value['seriesId'] is String &&
       (value['seriesId'] as String).isNotEmpty &&
       value['itemId'] is String &&
       (value['itemId'] as String).isNotEmpty &&
-      value['keyHex'] is String &&
       value['filePath'] is String &&
       (value['filePath'] as String).isNotEmpty;
 
@@ -279,6 +352,10 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   @override
   Future<void> saveEpisode(CachedEpisode episode) => _serialize((box) async {
     if (episode.seriesId.isEmpty || episode.itemId.isEmpty) return;
+    // Key entry first: a crash between the two writes leaves an orphaned
+    // key entry (cleaned by the next migration pass), never a key-less
+    // record that claims to be playable.
+    await box.put(_keyKey(episode.itemId), episode.keyHex);
     await box.put(_episodeKey(episode.itemId), episode.toMap());
     changes.value++;
   });
@@ -291,7 +368,12 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   @override
   Future<CachedEpisode?> episode(String itemId) => _serialize((box) async {
     final raw = box.get(_episodeKey(itemId));
-    return _isEpisode(raw) ? CachedEpisode.fromMap(raw) : null;
+    if (!_isEpisode(raw)) return null;
+    final keyHex = box.get(_keyKey(itemId));
+    return CachedEpisode.fromMap(
+      raw,
+      keyHex: keyHex is String ? keyHex : '',
+    );
   });
 
   @override
@@ -304,7 +386,11 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     final bySeries = <String, List<CachedEpisode>>{};
     for (final value in box.values) {
       if (!_isEpisode(value)) continue;
-      final episode = CachedEpisode.fromMap(value);
+      final keyHex = box.get(_keyKey(value['itemId'] as String));
+      final episode = CachedEpisode.fromMap(
+        value,
+        keyHex: keyHex is String ? keyHex : '',
+      );
       if (episode == null) continue;
       (bySeries[episode.seriesId] ??= []).add(episode);
     }
@@ -365,7 +451,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
         // 非法路径：记录照样删，文件留给系统清理。
       }
     }
-    await box.delete(_episodeKey(itemId));
+    await box.deleteAll([_episodeKey(itemId), _keyKey(itemId)]);
     changes.value++;
   });
 
@@ -375,8 +461,10 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     final doomed = <String>[
       'series:$seriesId',
       for (final value in box.values)
-        if (_isEpisode(value) && value['seriesId'] == seriesId)
+        if (_isEpisode(value) && value['seriesId'] == seriesId) ...[
           _episodeKey(value['itemId'] as String),
+          _keyKey(value['itemId'] as String),
+        ],
     ];
     for (final value in box.values) {
       if (!_isEpisode(value) || value['seriesId'] != seriesId) continue;
