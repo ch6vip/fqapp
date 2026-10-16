@@ -155,7 +155,7 @@ class MinePage extends StatelessWidget {
           children: [
             _buildShortcutTile(
               context: context,
-              icon: LucideIcons.book_marked,
+              icon: LucideIcons.bookmark,
               iconColor: const Color(0xFF3B82F6),
               label: '章节缓存',
               palette: palette,

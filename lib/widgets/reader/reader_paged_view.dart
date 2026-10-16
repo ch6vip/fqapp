@@ -60,6 +60,11 @@ class ReaderPagedView extends StatefulWidget {
 
   /// Page-turn animation; see [ReaderPageTurnStyle].
   final ReaderPageTurnStyle turnStyle;
+
+  /// 滑动直翻：开启后 PageView 不跟随手指（无翻页过渡预览/动画），改为检测
+  /// 水平滑动越过阈值时直接翻页（见 [_wrapSwipe]）。仅分页模式有意义。
+  final bool instantSwipe;
+
   final Color backgroundColor;
 
   /// Optional stop after the final chapter only. Between chapters, turning
@@ -84,6 +89,7 @@ class ReaderPagedView extends StatefulWidget {
     required this.onBoundary,
     required this.onDragStart,
     required this.turnStyle,
+    this.instantSwipe = false,
     required this.backgroundColor,
     this.endPage,
     this.onBookEnd,
@@ -110,6 +116,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   bool _edgeNotified = false;
   double _overscroll = 0;
   int? _dragStartItem;
+  double _swipeStartDx = 0;
+  double _swipeLastDx = 0;
 
   /// Drives the chapter-boundary slide. Short and not interruptible: the host
   /// commits the chapter switch when it finishes.
@@ -308,6 +316,31 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     return false;
   }
 
+  /// 滑动直翻：把页面内容包一层水平拖拽识别。越过阈值（屏宽 20%）时直接
+  /// 翻页，不显示 PageView 的滑动预览/动画。它位于页面内容（PageView 子节点）
+  /// 之上，比 PageView 自身的拖拽识别器更深，从而在手势竞技场中获胜。
+  Widget _wrapSwipe(Widget child) {
+    if (!widget.instantSwipe) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (details) {
+        _swipeStartDx = details.globalPosition.dx;
+        _swipeLastDx = details.globalPosition.dx;
+      },
+      onHorizontalDragUpdate: (details) {
+        _swipeLastDx = details.globalPosition.dx;
+      },
+      onHorizontalDragEnd: (_) {
+        final delta = _swipeLastDx - _swipeStartDx;
+        final threshold = MediaQuery.sizeOf(context).width * 0.2;
+        if (delta.abs() > threshold) {
+          unawaited(turnPage(delta < 0 ? 1 : -1));
+        }
+      },
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final turn = widget.chapterTurn;
@@ -333,7 +366,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       child: PageView.builder(
         key: ObjectKey(_controller),
         controller: _controller,
-        physics: _boundaryPending
+        physics: (_boundaryPending || widget.instantSwipe)
             ? const NeverScrollableScrollPhysics()
             : const ClampingScrollPhysics(
                 parent: AlwaysScrollableScrollPhysics(),
@@ -392,7 +425,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
               child: ColoredBox(color: widget.backgroundColor, child: content),
             );
           }
-          return content;
+          return _wrapSwipe(content);
         },
       ),
     ),
