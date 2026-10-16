@@ -227,15 +227,8 @@ mod body_cap_tests {
     fn over_limit_body_is_rejected() {
         let url = serve_once(vec![b'x'; 1024 * 1024]);
         let transport = HttpTransport::new(5).expect("transport");
-        let err = run(transport.request_with_limit(
-            "GET",
-            &url,
-            &[],
-            None,
-            None,
-            Some(1024),
-        ))
-        .expect_err("1 MiB body must exceed a 1 KiB cap");
+        let err = run(transport.request_with_limit("GET", &url, &[], None, None, Some(1024)))
+            .expect_err("1 MiB body must exceed a 1 KiB cap");
         assert!(matches!(err, TransportError::Network(_)));
     }
 
@@ -243,15 +236,8 @@ mod body_cap_tests {
     fn under_limit_body_passes_through() {
         let url = serve_once(b"{\"ok\":true}".to_vec());
         let transport = HttpTransport::new(5).expect("transport");
-        let resp = run(transport.request_with_limit(
-            "GET",
-            &url,
-            &[],
-            None,
-            None,
-            Some(1024),
-        ))
-        .expect("small body passes");
+        let resp = run(transport.request_with_limit("GET", &url, &[], None, None, Some(1024)))
+            .expect("small body passes");
         assert_eq!(resp.status, 200);
         assert_eq!(resp.body, b"{\"ok\":true}");
     }
