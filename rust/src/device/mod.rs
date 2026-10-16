@@ -203,12 +203,20 @@ impl DevicePool {
                             devices = pf.android;
                         }
                         Err(e) => {
-                            Self::backup_corrupt_file(&file, &format!("decrypted pool JSON invalid: {e}")).await;
+                            Self::backup_corrupt_file(
+                                &file,
+                                &format!("decrypted pool JSON invalid: {e}"),
+                            )
+                            .await;
                         }
                     },
                     Err(e) => {
                         if pool_crypto::pool_key().is_some() {
-                            Self::backup_corrupt_file(&file, &format!("pool file undecryptable: {e}")).await;
+                            Self::backup_corrupt_file(
+                                &file,
+                                &format!("pool file undecryptable: {e}"),
+                            )
+                            .await;
                         } else {
                             log::warn!(
                                 "device pool file is encrypted but no pool key provisioned; starting empty"
@@ -232,11 +240,8 @@ impl DevicePool {
                         // empty; the pool refills by re-registering. If
                         // the rename itself fails, the corrupt file stays
                         // and the next save overwrites it.
-                        Self::backup_corrupt_file(
-                            &file,
-                            &format!("pool file unparseable: {e}"),
-                        )
-                        .await;
+                        Self::backup_corrupt_file(&file, &format!("pool file unparseable: {e}"))
+                            .await;
                     }
                 }
             }
@@ -541,9 +546,7 @@ impl DevicePool {
             } else {
                 static WARNED: std::sync::Once = std::sync::Once::new();
                 WARNED.call_once(|| {
-                    log::warn!(
-                        "saving device pool unencrypted: no pool key provisioned"
-                    );
+                    log::warn!("saving device pool unencrypted: no pool key provisioned");
                 });
                 json
             };

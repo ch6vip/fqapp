@@ -68,7 +68,10 @@ pub fn provision_pool_key(key: Vec<u8>) -> Result<(), String> {
 
 /// A copy of the provisioned key, or `None` when no key is provisioned.
 pub fn pool_key() -> Option<[u8; 32]> {
-    POOL_KEY.read().ok().and_then(|slot| slot.as_ref().map(|k| **k))
+    POOL_KEY
+        .read()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|k| **k))
 }
 
 /// True when `data` is an encrypted pool file (magic prefix).

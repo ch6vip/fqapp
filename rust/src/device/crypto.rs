@@ -193,8 +193,7 @@ mod reverse_hex_tests {
         let mut saw_non_alnum = false;
         let mut last = String::new();
         for _ in 0..64 {
-            let blob = encrypt_register_key_request("123456789", None)
-                .expect("encrypt");
+            let blob = encrypt_register_key_request("123456789", None).expect("encrypt");
             assert_ne!(blob, last, "IV must be random per call");
             let raw = base64::engine::general_purpose::STANDARD
                 .decode(&blob)

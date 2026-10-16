@@ -217,8 +217,7 @@ pub fn decrypt_upstream(encrypted_b64: &str, secret_key_hex: &str) -> Result<Vec
     // An over-limit (or corrupt) gzip payload is an error, never a silent
     // fallback to returning compressed bytes as plaintext.
     if pt.len() >= 2 && pt[0] == 0x1f && pt[1] == 0x8b {
-        return gunzip_capped(&pt, MAX_GUNZIP_BYTES)
-            .map_err(|e| e.to_string());
+        return gunzip_capped(&pt, MAX_GUNZIP_BYTES).map_err(|e| e.to_string());
     }
     Ok(pt)
 }
@@ -289,10 +288,7 @@ mod strict_unpad_tests {
         let mut padded = b"abc".to_vec();
         padded.extend(std::iter::repeat_n(13u8, 13));
         assert_eq!(pkcs7_unpad_strict(&padded, 16).unwrap(), b"abc");
-        assert_eq!(
-            pkcs7_unpad_strict(&pkcs7_pad(b"", 16), 16).unwrap(),
-            b""
-        );
+        assert_eq!(pkcs7_unpad_strict(&pkcs7_pad(b"", 16), 16).unwrap(), b"");
     }
 
     #[test]

@@ -11,9 +11,9 @@ use fqapi_core::endpoints::dhcontent::set_dh_content_in_place;
 use fqapi_core::endpoints::{router, session, Params, INTERNAL_DEVICE_PIN_KEY};
 use fqapi_core::sign::Manager;
 use fqapi_core::upstream::{UpstreamClient, UpstreamRequest};
-use zeroize::Zeroizing;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 async fn server_with(dir: &TempDir, origin: &str) -> Arc<fqapi_core::endpoints::Server> {
     build_server(dir, Some(origin.to_string()), &[], &[], &pool_json(5)).await

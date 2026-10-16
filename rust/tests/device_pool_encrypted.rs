@@ -41,10 +41,7 @@ async fn pool_file_is_encrypted_at_rest_and_migrates_from_plaintext_inner() {
     // A fresh pool instance reads the encrypted file back.
     let pool2 = DevicePool::new(&path).await.expect("pool loads encrypted");
     assert_eq!(pool2.count().await, 2);
-    let device = pool2
-        .get_by_id("0000000000000001")
-        .await
-        .expect("device 1");
+    let device = pool2.get_by_id("0000000000000001").await.expect("device 1");
     assert_eq!(device.secret_key, format!("{:032x}", 1));
 }
 

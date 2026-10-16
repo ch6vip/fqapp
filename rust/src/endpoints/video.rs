@@ -1203,7 +1203,8 @@ async fn download_and_save(
         // would go to the real upstream instead of the mock server and
         // the codec-gate download tests would never see the request.
         let download_url = ctx.up.effective_url(video_url);
-        if let Err(err) = stream_download_to_file(&download_url, UA_WINDOWS_BROWSER, &part_path).await
+        if let Err(err) =
+            stream_download_to_file(&download_url, UA_WINDOWS_BROWSER, &part_path).await
         {
             let _ = std::fs::remove_file(&part_path);
             return Err(err);
@@ -2294,7 +2295,10 @@ mod cenc_sample_fixture {
     /// file in memory) and enforce the per-file cap, both from an
     /// advertised `Content-Length` and from the running byte count.
     /// A local TCP server stands in for the upstream host.
-    async fn serve_once(body: Vec<u8>, advertised: Option<u64>) -> (u16, tokio::task::JoinHandle<()>) {
+    async fn serve_once(
+        body: Vec<u8>,
+        advertised: Option<u64>,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -2351,8 +2355,7 @@ mod cenc_sample_fixture {
     async fn stream_download_rejects_lying_content_length() {
         ensure_test_crypto_provider();
         let body = vec![b'x'; 64];
-        let (port, server) =
-            serve_once(body, Some(MAX_VIDEO_DOWNLOAD_BYTES + 1)).await;
+        let (port, server) = serve_once(body, Some(MAX_VIDEO_DOWNLOAD_BYTES + 1)).await;
         let dir = std::env::temp_dir().join(format!(
             "fqapp-stream-cap-{}-{:?}",
             std::process::id(),
@@ -2365,7 +2368,10 @@ mod cenc_sample_fixture {
             .await
             .expect_err("lying Content-Length must be rejected");
         assert!(err.contains("content-length"), "unexpected error: {err}");
-        assert!(!part.exists(), "no file must be created on precheck failure");
+        assert!(
+            !part.exists(),
+            "no file must be created on precheck failure"
+        );
         let _ = server.await;
         let _ = std::fs::remove_dir_all(&dir);
     }
