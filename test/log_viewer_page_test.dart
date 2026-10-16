@@ -65,11 +65,14 @@ void main() {
     expect(find.text('暂无日志'), findsOneWidget);
   });
 
-  testWidgets('设置页「服务」分类下有日志入口，点击进入日志页', (tester) async {
+  testWidgets('设置页「服务」→ 服务详情 → 日志，点击进入日志页', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('服务'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('服务详情'));
     await tester.pumpAndSettle();
 
     expect(find.text('日志'), findsOneWidget);
