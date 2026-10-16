@@ -22,7 +22,7 @@ class BackendService {
     AssetBundle? assets,
     Future<Directory> Function()? supportDirectory,
     BackendTransport? transport,
-    this.fallbackBaseUrl = 'http://127.0.0.1:8080',
+    this.fallbackBaseUrl = 'http://127.0.0.1:28080',
     this.startupTimeout = const Duration(seconds: 15),
     this.shutdownTimeout = const Duration(seconds: 3),
   }) : _assets = assets ?? rootBundle,
