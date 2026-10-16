@@ -1,4 +1,6 @@
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
+
+import 'encrypted_hive.dart';
 
 /// Whether the 短剧 feed's 「上滑查看更多视频」 guide has been shown.
 ///
@@ -33,7 +35,7 @@ class SwipeGuideStore {
 
   Future<void> init() async {
     if (_openBox != null) return;
-    _box = await Hive.openBox<dynamic>(boxName);
+    _box = await EncryptedHive.openBox<dynamic>(Hive, boxName);
   }
 
   bool get shown => _openBox?.get(_key) == true;

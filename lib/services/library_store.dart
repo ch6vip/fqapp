@@ -1,9 +1,10 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'encrypted_hive.dart';
 import 'reader_underline_store.dart';
 
 abstract interface class ReaderStore {
@@ -124,16 +125,16 @@ class LibraryStore implements ReaderStore {
 
   /// Hive-backed notifications for retained tabs. Visible pages update after
   /// writes; hidden pages defer their snapshots until the next visit.
-  bool get isInitialized => Hive.isBoxOpen(_histBoxName);
+  bool get isInitialized => EncryptedHive.isBoxOpen(Hive, _histBoxName);
   ValueListenable<Box<dynamic>> get historyListenable => _histBox.listenable();
   ValueListenable<Box<dynamic>> get readTimeListenable =>
       _readTimeBox.listenable();
 
   Future<void> init() async {
     _writes = Future<void>.value();
-    _histBox = await Hive.openBox(_histBoxName);
-    _readTimeBox = await Hive.openBox(_readTimeBoxName);
-    _watchedBox = await Hive.openBox(_watchedBoxName);
+    _histBox = await EncryptedHive.openBox(Hive, _histBoxName);
+    _readTimeBox = await EncryptedHive.openBox(Hive, _readTimeBoxName);
+    _watchedBox = await EncryptedHive.openBox(Hive, _watchedBoxName);
     // Hive has a directory now, so optional boxes may be opened too.
     ReaderUnderlineStore.hiveReady = true;
     await _migrateFromSp();

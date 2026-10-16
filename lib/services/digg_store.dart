@@ -1,7 +1,8 @@
 import 'package:flutter/foundation.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
+import 'encrypted_hive.dart';
 
 /// The device-local 点赞 collection of the 短剧 feed.
 ///
@@ -47,7 +48,7 @@ class DiggStore {
 
   Future<void> init() async {
     if (_openBox != null) return;
-    _box = await Hive.openBox<dynamic>(boxName);
+    _box = await EncryptedHive.openBox<dynamic>(Hive, boxName);
     _revision.value++;
   }
 
