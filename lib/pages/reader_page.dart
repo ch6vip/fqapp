@@ -210,7 +210,33 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _listenFollowPausedUntil = DateTime.now().add(const Duration(seconds: 15));
   }
 
+  /// 朗读句高亮：与跟随翻页独立同步，跟随关闭时高亮仍可显示；暂停、
+  /// 切章或未在读本章时清空。
+  (int, int)? _narrationRange;
+
+  void _syncNarrationHighlight() {
+    if (!mounted) return;
+    final layout = _chapterLayout;
+    (int, int)? next;
+    final session = ListeningSession.instance;
+    if (_preferences.narrationHighlight &&
+        layout != null &&
+        session.matches(widget.bookId, _chapter.itemId)) {
+      final ttsRange = session.sentenceRange;
+      if (ttsRange != null) {
+        final translated = narrationLayoutRange(layout, ttsRange);
+        if (translated != null) {
+          next = (translated.start, translated.end);
+        }
+      }
+    }
+    if (next != _narrationRange) {
+      setState(() => _narrationRange = next);
+    }
+  }
+
   void _onListeningTick() {
+    _syncNarrationHighlight();
     if (!mounted ||
         !_routeCurrent ||
         !_appActive ||
@@ -2391,6 +2417,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                         selectionScope: scope,
                         selection: _selection,
                         rangeUnderlines: _rangeUnderlines,
+                        narrationRange: _narrationRange,
                       )
                     : _buildScrollContent(layout, scope),
               ),
@@ -2416,6 +2443,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         washColor: preset.selectionWashColor,
         handleColor: preset.selectionHandleColor,
         underlineColor: preset.selectionUnderlineColor,
+        narrationColor: preset.narrationHighlightColor,
       );
       _marksScopeLayout = layout;
     }
@@ -2718,6 +2746,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 selectionScope: scope,
                 selection: _selection,
                 rangeUnderlines: _rangeUnderlines,
+                narrationRange: _narrationRange,
                 onParagraphLongPress: (block, position) =>
                     unawaited(_onParagraphLongPress(block, position)),
                 onParagraphLongPressMoveUpdate: _onParagraphLongPressMoveUpdate,
