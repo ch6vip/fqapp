@@ -407,7 +407,6 @@ class _HostAssets extends CachingAssetBundle {
         '{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}',
     'assets/config/device_pool.example.json': poolJson,
     'assets/config/filter.json': '{"routes":{}}',
-    'assets/web/index.html': '<html></html>',
   };
 
   @override

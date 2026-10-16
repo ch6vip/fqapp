@@ -5,8 +5,8 @@
 //! Behaviour contract: docs/migration/rust-migration-contracts.md
 //!
 //! Flutter calls [request] for every backend call; the loopback HTTP adapter
-//! (`server.rs`) serves the built-in Web UI and `/src/*` resources from the
-//! same dispatcher. Requests carry an id so they can be cancelled: cancelling
+//! (`server.rs`) serves `/src/*` resources from the same dispatcher.
+//! Requests carry an id so they can be cancelled: cancelling
 //! drops the in-flight dispatch future, which tears down the awaiting reqwest
 //! call, any retry backoff and any not-yet-submitted write. A write that the
 //! filesystem has already accepted is not rolled back - Tokio file I/O is not
@@ -148,7 +148,6 @@ pub(crate) async fn init_core(
     let root = resolve_runtime_dir(&config_path, &runtime_dir);
     let src_dir = root.join("src");
     let _ = std::fs::create_dir_all(&src_dir);
-    let web_dir = root.join("web");
 
     let pool = match mock_origin.as_ref() {
         Some(origin) => DevicePool::with_mock_origin(&pool_path, origin.clone()).await?,
@@ -169,7 +168,6 @@ pub(crate) async fn init_core(
         pool,
         cfg: cfg.clone(),
         src_dir: src_dir.to_string_lossy().into_owned(),
-        web_dir: web_dir.to_string_lossy().into_owned(),
         filters,
     });
     let server = Arc::new(Server::new(ctx));

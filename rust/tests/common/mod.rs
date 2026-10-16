@@ -66,18 +66,16 @@ impl Drop for TempDir {
 /// Builds a real dispatcher `Server` over a fresh runtime directory.
 ///
 /// `mock_origin` redirects every upstream call to a local mock server.
-/// `web` / `src` are relative file contents written under the runtime root.
+/// `src` are relative file contents written under the runtime root.
 pub async fn build_server(
     dir: &TempDir,
     mock_origin: Option<String>,
-    web: &[(&str, &str)],
     src: &[(&str, &str)],
     pool_json: &str,
 ) -> Arc<Server> {
     build_server_with_config(
         dir,
         mock_origin,
-        web,
         src,
         pool_json,
         r#"{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}"#,
@@ -89,23 +87,18 @@ pub async fn build_server(
 pub async fn build_server_with_config(
     dir: &TempDir,
     mock_origin: Option<String>,
-    web: &[(&str, &str)],
     src: &[(&str, &str)],
     pool_json: &str,
     config_json: &str,
 ) -> Arc<Server> {
     let root = dir.path().to_path_buf();
     std::fs::create_dir_all(root.join("src")).expect("src dir");
-    std::fs::create_dir_all(root.join("web")).expect("web dir");
 
     let config_path = dir.write("config/config.json", config_json);
     let pool_path = dir.write("config/device_pool.json", pool_json);
     // A missing filter.json yields a no-op manager, matching the Go behaviour.
     let filter_path = dir.join("config/filter.json");
 
-    for (rel, contents) in web {
-        dir.write(&format!("web/{rel}"), contents);
-    }
     for (rel, contents) in src {
         dir.write(&format!("src/{rel}"), contents);
     }
@@ -135,7 +128,6 @@ pub async fn build_server_with_config(
         pool,
         cfg: Arc::new(cfg),
         src_dir: root.join("src").to_string_lossy().into_owned(),
-        web_dir: root.join("web").to_string_lossy().into_owned(),
         filters,
     })))
 }

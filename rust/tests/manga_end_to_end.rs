@@ -120,7 +120,7 @@ async fn manga_fixture() -> (TempDir, Arc<Server>, MockUpstream, Vec<u8>, String
     IMAGE.with(|i| *i.borrow_mut() = wire);
     CONTENT.with(|c| *c.borrow_mut() = content);
 
-    let server = build_server(&dir, Some(mock.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(mock.origin.clone()), &[], &pool_json(5)).await;
     (dir, server, mock, plain, image_key_hex)
 }
 

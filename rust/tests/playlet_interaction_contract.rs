@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 async fn server_with(dir: &TempDir, origin: &str) -> Arc<fqapi_core::endpoints::Server> {
-    build_server(dir, Some(origin.to_string()), &[], &[], &pool_json(5)).await
+    build_server(dir, Some(origin.to_string()), &[], &pool_json(5)).await
 }
 
 fn api_get(path: &str, query: &str) -> Request {

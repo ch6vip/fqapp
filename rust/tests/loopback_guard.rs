@@ -27,7 +27,7 @@ async fn comment_server(
     })
     .await;
     let dir = TempDir::new(name);
-    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
     (dir, upstream, server)
 }
 
@@ -56,7 +56,7 @@ async fn raw(port: u16, request: &str) -> (u16, String) {
 #[tokio::test]
 async fn own_hosts_are_served() {
     let dir = TempDir::new("guard-own-host");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
     // The capability rides in the path so this stays a pure Host-guard test:
     // The capability rides in the path so this stays a pure Host-guard test:
@@ -77,7 +77,7 @@ async fn own_hosts_are_served() {
         assert!(text.contains("\"devices\":3"), "host {host}: {text}");
     }
 
-    // Same-origin browser request (Web UI) and a real client both pass.
+    // Same-origin browser request and a real client both pass.
     let client = reqwest::Client::new();
     let response = client
         .get(lb.url("/health"))
@@ -92,7 +92,7 @@ async fn own_hosts_are_served() {
 #[tokio::test]
 async fn foreign_or_missing_hosts_are_refused_without_a_body() {
     let dir = TempDir::new("guard-foreign-host");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
 
     // The target stays capability-free on purpose: a foreign Host must still
@@ -219,7 +219,6 @@ async fn anti_crawler_redirect_carries_a_location_header() {
         &dir,
         None,
         &[],
-        &[],
         &pool_json(1),
         r#"{"algorithm_type":"8404","port":0,
             "anti_crawler":{"enabled":true,"redirect_url":"https://www.example.com/"}}"#,
@@ -262,7 +261,7 @@ async fn anti_crawler_redirect_carries_a_location_header() {
 #[tokio::test]
 async fn a_request_without_a_capability_is_refused_with_the_session_error() {
     let dir = TempDir::new("gate-no-capability");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
 
     let response = reqwest::get(lb.bare_url("/health"))
@@ -282,7 +281,7 @@ async fn a_request_without_a_capability_is_refused_with_the_session_error() {
 #[tokio::test]
 async fn a_wrong_capability_is_refused() {
     let dir = TempDir::new("gate-wrong-capability");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
     let client = reqwest::Client::new();
 
@@ -319,7 +318,7 @@ async fn a_wrong_capability_is_refused() {
 #[tokio::test]
 async fn a_bearer_header_is_accepted_on_a_bare_path() {
     let dir = TempDir::new("gate-bearer");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
 
     let response = reqwest::Client::new()
@@ -337,7 +336,7 @@ async fn a_bearer_header_is_accepted_on_a_bare_path() {
 #[tokio::test]
 async fn the_session_cookie_is_accepted_on_a_bare_path() {
     let dir = TempDir::new("gate-cookie");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
     let client = reqwest::Client::new();
 
@@ -373,7 +372,7 @@ async fn the_session_cookie_is_accepted_on_a_bare_path() {
 #[tokio::test]
 async fn the_entry_url_redirects_to_root_and_sets_the_session_cookie() {
     let dir = TempDir::new("gate-entry-url");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
     // Redirects must not be followed: the 303 itself is the subject.
     let client = reqwest::Client::builder()
@@ -408,7 +407,7 @@ async fn the_entry_url_redirects_to_root_and_sets_the_session_cookie() {
 #[tokio::test]
 async fn a_near_miss_session_prefix_is_not_treated_as_scoped() {
     let dir = TempDir::new("gate-prefix-near-miss");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let server = build_server(&dir, None, &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
     let client = reqwest::Client::new();
 

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import '../services/backend_service.dart';
@@ -40,32 +39,6 @@ class _ServiceDetailPageState extends State<ServiceDetailPage> {
     );
   }
 
-  /// Opens the built-in Web UI in a browser.
-  ///
-  /// The transport's `resourceBase` carries the loopback capability in its
-  /// path; the adapter answers that entry with a redirect to `/` plus the
-  /// session cookie, so the capability never lingers in the address bar.
-  Future<void> _openWebUi(BuildContext context) async {
-    final entry = BackendService.instance.webUiEntryUrl;
-    if (entry.isEmpty) return;
-    var launched = false;
-    try {
-      // Android package visibility may hide a browser from canLaunchUrl even
-      // though it can handle the actual ACTION_VIEW intent.
-      launched = await launchUrl(
-        Uri.parse(entry),
-        mode: LaunchMode.externalApplication,
-      );
-    } catch (_) {
-      // Report launch failures through the same visible fallback.
-    }
-    if (!launched && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('无法打开 Web UI')));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
@@ -91,7 +64,7 @@ class _ServiceDetailPageState extends State<ServiceDetailPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
             child: Text(
-              '本地后端为 Web UI 与漫画图提供服务，仅本机可访问，不对外暴露。',
+              '本地后端为漫画图提供服务，仅本机可访问，不对外暴露。',
               style: TextStyle(fontSize: 13, color: palette.muted),
             ),
           ),
@@ -132,9 +105,6 @@ class _ServiceDetailPageState extends State<ServiceDetailPage> {
                     leading: const Icon(LucideIcons.globe),
                     title: const Text('服务地址'),
                     subtitle: Text(BackendService.instance.baseUrl),
-                    trailing: const Icon(LucideIcons.square_arrow_out_up_right,
-                        size: 18),
-                    onTap: () => _openWebUi(context),
                   ),
                   Divider(height: 1, indent: 68, color: palette.line),
                   ListTile(
