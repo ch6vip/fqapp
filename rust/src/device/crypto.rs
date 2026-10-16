@@ -67,7 +67,7 @@ pub fn decrypt_register_key(encrypted_key_b64: &str) -> Result<Vec<u8>, String> 
         return Err("registerkey ciphertext not block-aligned".to_string());
     }
     let pt = crate::crypto::aes_cbc_decrypt(ct, &key, iv);
-    Ok(crate::crypto::pkcs7_unpad(&pt, 16).to_vec())
+    Ok(crate::crypto::pkcs7_unpad_strict(&pt, 16)?.to_vec())
 }
 
 /// `base64(iv + AES-128-CBC-PKCS7(hex2bin(reverseHex(deviceId))))`.
