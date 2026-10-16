@@ -124,7 +124,7 @@ class BackendService {
     return Isolate.run(() => _bytesEqual(existing, bundled));
   }
 
-  /// Deploys the runtime files the Rust core reads (config + Web/静态资源)。
+  /// Deploys the runtime files the Rust core reads (config + filters + plugins).
   Future<void> _deploy() async {
     final dir = await _backendDir();
 
