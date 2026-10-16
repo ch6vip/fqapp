@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../services/reader_preferences.dart';
 import '../../services/reader_underline_store.dart';
 import 'reader_chapter_layout.dart';
+import 'reader_page_curl.dart';
 import 'reader_illustration.dart';
 import 'reader_text_selection.dart';
 
@@ -108,8 +109,23 @@ class ReaderPagedView extends StatefulWidget {
   State<ReaderPagedView> createState() => ReaderPagedViewState();
 }
 
+/// One in-chapter curl turn: the pages the peel travels between. The
+/// progress lives on [_curlAnimation] (animated turns) or is written to it
+/// directly (drag turns), and the overlay reads it through [_curlCurved].
+class _CurlTurn {
+  final int direction;
+  final int fromIndex;
+  final int toIndex;
+
+  const _CurlTurn({
+    required this.direction,
+    required this.fromIndex,
+    required this.toIndex,
+  });
+}
+
 class ReaderPagedViewState extends State<ReaderPagedView>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late PageController _controller = _newController();
   bool _turning = false;
   bool _boundaryPending = false;
@@ -123,6 +139,18 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   /// commits the chapter switch when it finishes.
   late final AnimationController _chapterTurnAnimation;
 
+  /// Drives the 仿真卷页 turn. Point/keys/auto-turn animate it 0 -> 1;
+  /// a drag writes the finger position into it directly and releases with
+  /// animateTo. The curved view is what the overlay paints.
+  late final AnimationController _curlAnimation;
+  late final CurvedAnimation _curlCurved;
+  _CurlTurn? _curlTurn;
+  bool _curlDragging = false;
+  double _curlDragStartDx = 0;
+  double _curlDragLastDx = 0;
+  bool _curlDragLocked = false;
+  int? _curlDragEdge;
+
   bool get _animatesChapterTurn =>
       widget.chapterTurn != null &&
       widget.turnStyle != ReaderPageTurnStyle.none;
@@ -134,6 +162,14 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       vsync: this,
       duration: const Duration(milliseconds: 220),
     )..addStatusListener(_onChapterTurnStatus);
+    _curlAnimation = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _curlCurved = CurvedAnimation(
+      parent: _curlAnimation,
+      curve: Curves.easeOutCubic,
+    )..addStatusListener(_onCurlStatus);
 
     // The chapter load swaps the whole content subtree, so a boundary turn
     // usually arrives as a fresh mount and never reaches didUpdateWidget.
@@ -151,6 +187,26 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   void _onChapterTurnStatus(AnimationStatus status) {
     if (status == AnimationStatus.completed) {
       widget.onChapterTurnCompleted?.call();
+    }
+  }
+
+  /// Ends an animated curl turn. The status listener runs before the
+  /// `forward`/`animateTo` future completes, so by the time [turnPage]
+  /// resumes the pager has already jumped and the overlay is gone.
+  void _onCurlStatus(AnimationStatus status) {
+    final turn = _curlTurn;
+    if (turn == null || _curlDragging) return;
+    if (status == AnimationStatus.completed) {
+      _controller.jumpToPage(turn.toIndex);
+    }
+    if (status == AnimationStatus.completed ||
+        status == AnimationStatus.dismissed) {
+      // Completed: the jump already tells the host to rebuild; dismissed is
+      // a cancelled drag curl settling back to 0, where nothing else
+      // rebuilds, so the overlay is dropped here.
+      _curlTurn = null;
+      _turning = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -199,6 +255,10 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       _turning = false;
       _boundaryPending = false;
       _dragStartItem = null;
+      // A chapter rebuild invalidates the curl overlay's pages.
+      _curlTurn = null;
+      _curlDragging = false;
+      _curlAnimation.reset();
       oldController.dispose();
     }
 
@@ -221,6 +281,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   @override
   void dispose() {
     _chapterTurnAnimation.dispose();
+    _curlAnimation.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -240,6 +301,17 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     try {
       if (widget.turnStyle == ReaderPageTurnStyle.none) {
         controller.jumpToPage(target);
+      } else if (widget.turnStyle == ReaderPageTurnStyle.curl) {
+        // 卷页：PageView 本身不滑动，覆盖层把去页卷到目标页上；动画跑完
+        // 时状态回调完成跳页与清理。
+        setState(() {
+          _curlTurn = _CurlTurn(
+            direction: direction,
+            fromIndex: current.round(),
+            toIndex: target,
+          );
+        });
+        await _curlAnimation.forward(from: 0);
       } else {
         await controller.animateToPage(
           target,
@@ -341,20 +413,141 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     );
   }
 
+  /// 拖拽卷页：把页面内容包一层水平拖拽识别，与 [_wrapSwipe] 同理位于
+  /// PageView 子节点之上。方向锁定后把手指位置写进 [_curlAnimation]，
+  /// 覆盖层跟手卷；松手超过阈值或甩出速度则翻完，否则卷回。
+  Widget _wrapCurl(Widget child) {
+    if (widget.turnStyle != ReaderPageTurnStyle.curl) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (details) {
+        if (_turning || _boundaryPending) return;
+        _curlDragStartDx = details.globalPosition.dx;
+        _curlDragLastDx = details.globalPosition.dx;
+        _curlDragLocked = false;
+        _curlDragEdge = null;
+      },
+      onHorizontalDragUpdate: (details) {
+        if (_boundaryPending) return;
+        // 动画中的点按卷页不接受拖拽转向。
+        if (_curlTurn != null && !_curlDragging) return;
+        final dx = details.globalPosition.dx;
+        _curlDragLastDx = dx;
+        final delta = dx - _curlDragStartDx;
+        if (!_curlDragLocked) {
+          if (delta.abs() < 6) return;
+          final direction = delta < 0 ? 1 : -1;
+          final current =
+              (_attachedPage ?? widget.pageIndex.toDouble()).round();
+          final target = current + direction;
+          _curlDragLocked = true;
+          if (target < 0 || target >= _itemCount) {
+            // 章节边缘：不卷页，松手够远时走章节边界。
+            _curlDragEdge = direction;
+            widget.onDragStart();
+            return;
+          }
+          _curlDragging = true;
+          _turning = true;
+          setState(() {
+            _curlTurn = _CurlTurn(
+              direction: direction,
+              fromIndex: current,
+              toIndex: target,
+            );
+          });
+          widget.onDragStart();
+        }
+        if (_curlTurn == null) return;
+        final width = MediaQuery.sizeOf(context).width;
+        _curlAnimation.value =
+            (delta.abs() / width).clamp(0.0, 1.0);
+      },
+      onHorizontalDragEnd: (details) {
+        final edge = _curlDragEdge;
+        _curlDragEdge = null;
+        if (edge != null) {
+          final delta = _curlDragLastDx - _curlDragStartDx;
+          if (delta.abs() > 32) unawaited(_requestBoundary(edge));
+          return;
+        }
+        final turn = _curlTurn;
+        if (turn == null || !_curlDragging) return;
+        _curlDragging = false;
+        final velocity = details.velocity.pixelsPerSecond.dx;
+        final fling = velocity * turn.direction < -400;
+        final progress = _curlCurved.value;
+        final complete = progress > 0.35 || fling;
+        final remaining = complete ? 1 - progress : progress;
+        final duration = Duration(
+          milliseconds: (remaining * 300).round().clamp(60, 300),
+        );
+        unawaited(
+          _curlAnimation.animateTo(complete ? 1 : 0, duration: duration),
+        );
+      },
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final turn = widget.chapterTurn;
+    Widget pager = _buildPager();
+    // 章节内卷页覆盖层：IgnorePointer，不拦截跟手拖拽；覆盖层内的
+    // AnimatedBuilder 只重建卷页子树，不重建整个 PageView。
+    if (_curlTurn != null) {
+      pager = Stack(
+        fit: StackFit.expand,
+        children: [
+          pager,
+          Positioned.fill(
+            child: IgnorePointer(child: _buildCurlOverlay()),
+          ),
+        ],
+      );
+    }
     if (turn == null || !_animatesChapterTurn) {
-      return _buildPager();
+      return pager;
     }
     return Stack(
       fit: StackFit.expand,
       children: [
-        _buildPager(),
+        pager,
         Positioned.fill(
           child: IgnorePointer(child: _buildChapterTurnOverlay(turn)),
         ),
       ],
+    );
+  }
+
+  /// 章节内卷页的覆盖层：去页卷到目标页上。
+  Widget _buildCurlOverlay() {
+    final turn = _curlTurn;
+    if (turn == null) return const SizedBox.shrink();
+    return AnimatedBuilder(
+      animation: _curlCurved,
+      builder: (context, _) => ReaderPageCurl(
+        outgoing: _pageWidget(turn.fromIndex),
+        incoming: _pageWidget(turn.toIndex),
+        progress: _curlCurved.value,
+        forward: turn.direction >= 0,
+        backgroundColor: widget.backgroundColor,
+      ),
+    );
+  }
+
+  /// 覆盖层里的一页：正文页用无手势的 [ReaderPageContent]，末尾评论页
+  /// 直接用 host 的 endPage。
+  Widget _pageWidget(int index) {
+    final pages = widget.layout.pages;
+    if (index >= pages.length) {
+      return widget.endPage ?? const SizedBox.shrink();
+    }
+    return ReaderPageContent(
+      page: pages[index],
+      spec: widget.layout.spec,
+      imageProviderFactory: widget.imageProviderFactory,
     );
   }
 
@@ -366,11 +559,14 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       child: PageView.builder(
         key: ObjectKey(_controller),
         controller: _controller,
-        physics: (_boundaryPending || widget.instantSwipe)
-            ? const NeverScrollableScrollPhysics()
-            : const ClampingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics(),
-              ),
+        physics:
+            (_boundaryPending ||
+                    widget.instantSwipe ||
+                    widget.turnStyle == ReaderPageTurnStyle.curl)
+                ? const NeverScrollableScrollPhysics()
+                : const ClampingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
         itemCount: _itemCount,
         onPageChanged: (index) {
           if (index >= widget.layout.pages.length) {
@@ -425,7 +621,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
               child: ColoredBox(color: widget.backgroundColor, child: content),
             );
           }
-          return _wrapSwipe(content);
+          return _wrapCurl(_wrapSwipe(content));
         },
       ),
     ),
@@ -442,10 +638,25 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     final pages = layout.pages;
     if (pages.isEmpty) return const SizedBox.shrink();
     final incoming = pages[widget.pageIndex.clamp(0, pages.length - 1)];
+    final forward = turn.direction >= 0;
+    // 卷页：章节边界也卷过去，与章节内翻页一致。
+    if (widget.turnStyle == ReaderPageTurnStyle.curl) {
+      return AnimatedBuilder(
+        animation: _chapterTurnAnimation,
+        builder: (context, _) => ReaderPageCurl(
+          outgoing: _buildTurnPage(turn.page, turn.spec),
+          incoming: _buildTurnPage(incoming, layout.spec),
+          progress: Curves.easeOutCubic.transform(
+            _chapterTurnAnimation.value,
+          ),
+          forward: forward,
+          backgroundColor: widget.backgroundColor,
+        ),
+      );
+    }
     // 覆盖 keeps the outgoing page pinned and slides the new one over it;
     // the slide style moves both.
     final cover = widget.turnStyle == ReaderPageTurnStyle.cover;
-    final forward = turn.direction >= 0;
     return AnimatedBuilder(
       animation: _chapterTurnAnimation,
       builder: (context, _) {
