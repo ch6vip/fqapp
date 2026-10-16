@@ -847,6 +847,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   void _seekBy(int seconds) {
+    // 未就绪时不发 seek：播放器尚未 create，native seek 会丢，
+    // 但 onSeeked/_pendingSeek 先写了就会污染后续的相对 seek。
+    if (!_ready) return;
     final base = _pendingSeek ?? _position.value;
     final milliseconds = (base.inMilliseconds + seconds * 1000).clamp(
       0,
@@ -1651,8 +1654,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     if (_clearScreen || position == null || width <= 0) return;
                     final third = width / 3;
                     if (position.dx < third) {
+                      if (!_ready) return;
                       if (widget.duration > Duration.zero) _seekBy(-10);
                     } else if (position.dx > width - third) {
+                      if (!_ready) return;
                       if (widget.duration > Duration.zero) _seekBy(10);
                     } else {
                       _togglePlayback();
