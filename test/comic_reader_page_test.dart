@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -52,6 +54,73 @@ void main() {
     expect(layout.positionAtOffset(-1), 0);
     expect(ComicPageLayout([]).positionAtOffset(50), 0);
     expect(() => ComicPageLayout([double.infinity]), throwsArgumentError);
+  });
+
+  // P2-2：默认漫画图提供方必须是内存缓存（NetworkImage + fit 的
+  // ResizeImage），绝不能是带磁盘持久化的 CachedNetworkImageProvider，
+  // 否则含 per-launch capability 的 URL 会随缓存落盘。
+  test('default comic provider is memory-only with the old decode bound', () {
+    final provider = defaultComicImageProvider(
+      const ComicImage(
+        url: 'http://127.0.0.1:9/_session/cap-1/src/p.jpg',
+        headers: {'x-test': '1'},
+      ),
+    );
+    expect(provider, isA<ResizeImage>());
+    final resized = provider as ResizeImage;
+    expect(resized.width, 2048);
+    expect(resized.height, 8192);
+    expect(resized.policy, ResizeImagePolicy.fit);
+    expect(resized.imageProvider, isA<NetworkImage>());
+    final network = resized.imageProvider as NetworkImage;
+    expect(network.url, 'http://127.0.0.1:9/_session/cap-1/src/p.jpg');
+    expect(network.headers, {'x-test': '1'});
+    final noHeaders =
+        defaultComicImageProvider(
+              const ComicImage(
+                url: 'http://127.0.0.1:9/_session/cap-1/src/p.jpg',
+              ),
+            )
+            as ResizeImage;
+    expect((noHeaders.imageProvider as NetworkImage).headers, isNull);
+  });
+
+  testWidgets('default provider fetches capability URLs and displays them', (
+    tester,
+  ) async {
+    final requested = <Uri>[];
+    final previous = HttpOverrides.current;
+    HttpOverrides.global = _FakeImageHttpOverrides(requested);
+    addTearDown(() => HttpOverrides.global = previous);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ComicReaderPage(
+          bookId: 'comic-test',
+          title: '漫画',
+          chapters: _chapters,
+          startIndex: 0,
+          readerStore: _ComicStore(),
+          chapterLoader: (chapter) async => [
+            const ComicImage(
+              url: 'http://127.0.0.1:9/_session/cap-launch-1/src/page-1.jpg',
+            ),
+          ],
+        ),
+      ),
+    );
+    // 图片编解码走真实异步：fake-async 的 pumpAndSettle 等不到它
+    // （且占位里的 CircularProgressIndicator 会让 pumpAndSettle 超时），
+    // 必须用 runAsync 放行真实解码。
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    await tester.pump();
+    expect(requested, hasLength(1));
+    expect(requested.single.path, contains('/_session/cap-launch-1/'));
+    expect(find.text('正在加载第 1 页'), findsNothing);
+    expect(find.text('第 1 页加载失败'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('images are lazy and displayed progress has manga page units', (
@@ -573,8 +642,109 @@ class _ComicStore implements ReaderStore {
   Future<Set<String>> watchedEpisodeIds(String id) async => <String>{};
 
   @override
-  Future<void> markEpisodeWatched(String id, Iterable<String> episodeIds) async {}
+  Future<void> markEpisodeWatched(
+    String id,
+    Iterable<String> episodeIds,
+  ) async {}
 
   @override
   Future<void> forgetWatchedEpisodes(String id) async {}
 }
+
+/// Minimal in-memory HTTP stack for the default comic provider test:
+/// answers every image request with a valid 1x1 PNG so `NetworkImage`
+/// can decode without touching the network or any disk cache.
+class _FakeImageHttpOverrides extends HttpOverrides {
+  _FakeImageHttpOverrides(this.requested);
+
+  final List<Uri> requested;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) =>
+      _FakeImageHttpClient(requested);
+}
+
+class _FakeImageHttpClient implements HttpClient {
+  _FakeImageHttpClient(this.requested);
+
+  final List<Uri> requested;
+  bool _autoUncompress = true;
+
+  @override
+  bool get autoUncompress => _autoUncompress;
+
+  @override
+  set autoUncompress(bool value) => _autoUncompress = value;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    requested.add(url);
+    return _FakeImageHttpRequest();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null; // Unused members: null is fine (e.g. compressionState means uncompressed).
+}
+
+class _FakeImageHttpRequest implements HttpClientRequest {
+  final _headers = _FakeImageHttpHeaders();
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  Future<HttpClientResponse> close() async =>
+      _FakeImageHttpResponse(_onePixelPng);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null; // Unused members: null is fine (e.g. compressionState means uncompressed).
+}
+
+class _FakeImageHttpHeaders implements HttpHeaders {
+  final _values = <String, List<String>>{};
+
+  @override
+  void add(String name, Object value, {bool preserveHeaderCase = false}) {
+    _values.putIfAbsent(name, () => []).add(value.toString());
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null; // Unused members: null is fine (e.g. compressionState means uncompressed).
+}
+
+class _FakeImageHttpResponse implements HttpClientResponse {
+  _FakeImageHttpResponse(this._bytes);
+
+  final Uint8List _bytes;
+
+  @override
+  int get statusCode => HttpStatus.ok;
+
+  @override
+  int get contentLength => _bytes.length;
+
+  @override
+  HttpClientResponseCompressionState get compressionState =>
+      HttpClientResponseCompressionState.notCompressed;
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) => Stream<List<int>>.value(_bytes).listen(
+    onData,
+    onError: onError,
+    onDone: onDone,
+    cancelOnError: cancelOnError ?? false,
+  );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null; // Unused members: null is fine (e.g. compressionState means uncompressed).
+}
+
+/// A valid 1x1 transparent PNG.
+final _onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
