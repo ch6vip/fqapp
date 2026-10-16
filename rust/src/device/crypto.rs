@@ -82,7 +82,7 @@ pub fn encrypt_register_key_request(device_id: &str, iv: Option<&[u8]>) -> Resul
         Some(v) => v.to_vec(),
         None => random_alnum(16),
     };
-    let hex_data = reverse_hex(device_id);
+    let hex_data = reverse_hex(device_id)?;
     let raw = hex::decode(&hex_data).map_err(|e| e.to_string())?;
     let padded = crate::crypto::pkcs7_pad(&raw, 16);
     let enc = crate::crypto::aes_cbc_encrypt(&padded, &key, &iv);
@@ -92,8 +92,15 @@ pub fn encrypt_register_key_request(device_id: &str, iv: Option<&[u8]>) -> Resul
 }
 
 /// Left-pads the decimal id's hex to 32 chars, then reverses byte pairs.
-pub fn reverse_hex(device_id: &str) -> String {
-    let n: u64 = device_id.parse().unwrap_or(0);
+///
+/// A non-numeric id is a caller bug / corrupt pool entry, not id `0`:
+/// silently mapping it to `0` would register a device the upstream never
+/// issued and mask the real failure. Returns `Err` so the caller treats it
+/// as a registration failure.
+pub fn reverse_hex(device_id: &str) -> Result<String, String> {
+    let n: u64 = device_id
+        .parse()
+        .map_err(|_| format!("device_id is not numeric: {device_id:?}"))?;
     let h = format!("{n:032x}");
     let bytes = h.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(32);
@@ -103,7 +110,7 @@ pub fn reverse_hex(device_id: &str) -> String {
         out.push(bytes[i - 1]);
         i -= 2;
     }
-    String::from_utf8(out).unwrap_or_default()
+    String::from_utf8(out).map_err(|_| "reverse_hex produced non-UTF8".to_string())
 }
 
 /// n random alphanumeric bytes (matches the iv/openudid generator).
@@ -137,6 +144,32 @@ pub fn uuid_v4() -> String {
     let g: u32 = rng.gen_range(0..0x10000);
     let h: u32 = rng.gen_range(0..0x10000);
     format!("{a:04x}{b:04x}-{c:04x}-{d:04x}-{e:04x}-{f:04x}{g:04x}{h:04x}")
+}
+
+#[cfg(test)]
+mod reverse_hex_tests {
+    use super::*;
+
+    #[test]
+    fn numeric_id_reverses_byte_pairs() {
+        // 12345 = 0x3039 -> padded to "00…003039", byte pairs reversed.
+        let out = reverse_hex("12345").expect("numeric id");
+        assert_eq!(out, "39300000000000000000000000000000");
+    }
+
+    #[test]
+    fn non_numeric_id_is_an_error_not_zero() {
+        assert!(reverse_hex("").is_err());
+        assert!(reverse_hex("abc").is_err());
+        assert!(reverse_hex("12a34").is_err());
+        assert!(reverse_hex("-1").is_err());
+        assert!(reverse_hex("99999999999999999999999999").is_err());
+        // ... and a non-numeric id must not register as device 0.
+        assert_ne!(
+            reverse_hex("abc").unwrap_or_default(),
+            reverse_hex("0").expect("zero id"),
+        );
+    }
 }
 
 pub fn rand_mac() -> String {
