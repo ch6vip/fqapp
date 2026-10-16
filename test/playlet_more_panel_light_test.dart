@@ -68,7 +68,7 @@ void main() {
     await tester.pumpAndSettle();
     final row = find.byKey(const ValueKey('player-more-light-danmaku-row'));
     expect(
-      tester.getSemantics(row).hasFlag(ui.SemanticsFlag.isToggled),
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
       isTrue,
     );
     // 开关行不关闭面板：点完不重开面板，开关必须立刻显示关闭。
@@ -76,14 +76,14 @@ void main() {
     await tester.pump();
     expect(toggles, 1);
     expect(
-      tester.getSemantics(row).hasFlag(ui.SemanticsFlag.isToggled),
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
       isFalse,
     );
     await tester.tap(find.text('弹幕'));
     await tester.pump();
     expect(toggles, 2);
     expect(
-      tester.getSemantics(row).hasFlag(ui.SemanticsFlag.isToggled),
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
       isTrue,
     );
     expect(tester.takeException(), isNull);
