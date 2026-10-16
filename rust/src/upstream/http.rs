@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use crate::crypto::gunzip;
+use crate::crypto::{gunzip_capped, GunzipError, MAX_GUNZIP_BYTES};
 
 #[derive(Debug, Clone)]
 pub struct RawResponse {
@@ -106,8 +106,17 @@ impl HttpTransport {
         });
         let gzip_magic = body.len() >= 2 && body[0] == 0x1f && body[1] == 0x8b;
         if gzip_header || gzip_magic {
-            if let Some(inflated) = gunzip(&body) {
-                body = inflated;
+            match gunzip_capped(&body, MAX_GUNZIP_BYTES) {
+                Ok(inflated) => body = inflated,
+                // A gzip bomb is a hard failure, never a silent pass-through.
+                Err(GunzipError::OverLimit) => {
+                    return Err(TransportError::Network(format!(
+                        "gunzip output exceeds {MAX_GUNZIP_BYTES} bytes"
+                    )));
+                }
+                // Corrupt gzip keeps the old behavior: the compressed bytes
+                // flow downstream, where JSON parsing rejects them.
+                Err(GunzipError::Corrupt(_)) => {}
             }
         }
 
