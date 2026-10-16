@@ -12,7 +12,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { evaluateFreshness, parseArgs } = require('../scripts/check_so_freshness.cjs');
+const { evaluateFreshness, parseArgs, sha256File, checkHash } = require('../scripts/check_so_freshness.cjs');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const HOUR = 60 * 60 * 1000;
 
@@ -93,14 +96,35 @@ test('--since is mandatory and the library path is positional', () => {
     soPath: 'core.so',
     sinceRef: 'v1.0.87',
     allowMissing: false,
+    expectSha256: null,
   });
   assert.deepEqual(parseArgs(['--allow-missing', 'core.so', '--since', 'main']), {
     soPath: 'core.so',
     sinceRef: 'main',
     allowMissing: true,
+    expectSha256: null,
   });
 });
 
 test('unknown options are refused instead of silently ignored', () => {
   assert.throws(() => parseArgs(['core.so', '--since', 'HEAD', '--force']), /unknown option/);
+});
+
+test('--expect-sha256 parses, normalizes, and rejects a malformed digest', () => {
+  const digest = 'AB'.repeat(32);
+  assert.equal(parseArgs(['core.so', '--since', 'HEAD', '--expect-sha256', digest]).expectSha256, digest.toLowerCase());
+  assert.throws(() => parseArgs(['core.so', '--since', 'HEAD', '--expect-sha256', 'xyz']), /64-digit hex/);
+  assert.throws(() => parseArgs(['core.so', '--since', 'HEAD', '--expect-sha256']), /needs a SHA-256/);
+});
+
+test('content-hash comparison accepts a matching hash and rejects a mismatch', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'freshness-hash-'));
+  const file = path.join(dir, 'lib.so');
+  fs.writeFileSync(file, 'fake core bytes');
+  const actual = sha256File(file);
+  assert.equal(checkHash({ actualSha256: actual, expectSha256: actual }).ok, true);
+  assert.equal(checkHash({ actualSha256: actual, expectSha256: '00'.repeat(32) }).ok, false);
+  assert.equal(checkHash({ actualSha256: null, expectSha256: actual }).ok, false);
+  assert.equal(checkHash({ actualSha256: null, expectSha256: null }).ok, true);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
