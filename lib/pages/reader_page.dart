@@ -103,8 +103,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   final ScrollController _scrollController = ScrollController();
   Timer? _saveTimer;
 
-  /// 滚动模式下底部拖过边界的累计量：超过阈值才触发连续阅读进下一章，
-  /// 避免轻微回弹误触（与分页视图的 32px 边界阈值一致）。
+  /// 滚动模式下拖过边界的累计量：超过阈值才触发连续阅读跨章，避免轻微
+  /// 回弹误触（与分页视图的 32px 边界阈值一致）。带符号：拖过底部为正，
+  /// 拖过顶部为负；同一拖拽内反向会抵消累计量。
   double _scrollOverscroll = 0;
 
   /// In-flight chapter fetch. Switching chapters or leaving the reader cancels
@@ -2586,19 +2587,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         }
         if (notification is OverscrollNotification &&
             notification.dragDetails != null &&
-            // Trailing-edge overscroll only: dragging past the bottom.
-            // (Leading-edge overscroll is negative and must not advance.)
-            notification.overscroll > 0 &&
             _preferences.continuousReading &&
             !_changingChapter &&
-            !_loading &&
-            _index < widget.chapters.length - 1) {
-          // 连续阅读：滚动到底后继续往下拉，把下一章接上，不用点章末的
-          // 「下一章」按钮。章末按钮行仍在，点它一样能进下一章/看评论。
-          _scrollOverscroll += notification.overscroll;
-          if (_scrollOverscroll > 32) {
-            _scrollOverscroll = 0;
-            unawaited(_next());
+            !_loading) {
+          // 连续阅读：滚动到底后继续往下拉，把下一章接上；滚到顶后继续
+          // 往下拉，把上一章接上（落在上一章末尾）。章末按钮行仍在，
+          // 点它一样能进上一章/下一章。Overscroll 带符号：底部为正、
+          // 顶部为负；到不了的方向不累计，避免陈旧的累计量在反向时
+          // 提前触发。
+          final overscroll = notification.overscroll;
+          final canAdvance = _index < widget.chapters.length - 1;
+          final canRetreat = _index > 0;
+          if ((overscroll > 0 && canAdvance) ||
+              (overscroll < 0 && canRetreat)) {
+            _scrollOverscroll += overscroll;
+            if (_scrollOverscroll > 32) {
+              _scrollOverscroll = 0;
+              unawaited(_next());
+            } else if (_scrollOverscroll < -32) {
+              _scrollOverscroll = 0;
+              unawaited(_prev(startAtEnd: true));
+            }
           }
         }
         return false;
