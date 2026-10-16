@@ -410,10 +410,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('player-more-light-quality-0')));
     await tester.pumpAndSettle();
     expect(qualitySelections.map((v) => v.url), ['u1080']);
-    expect(
-      find.byKey(const ValueKey('player-more-light-panel')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
     // 倍速药丸走原速率持久化链路（与深色支同一条收尾）。
     await tester.tap(find.byKey(const ValueKey('player-rate-text')));
     await tester.pumpAndSettle();
@@ -421,10 +418,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(player.calls, contains('rate:1.25'));
     expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
-    expect(
-      find.byKey(const ValueKey('player-more-light-panel')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
     // 占位行只剩离线缓存：点击关面板并提示「暂未支持」，不留静默死入口。
     await tester.tap(find.byKey(const ValueKey('player-rate-text')));
     await tester.pumpAndSettle();
@@ -432,10 +426,7 @@ void main() {
       find.byKey(const ValueKey('player-more-light-download-row')),
     );
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('player-more-light-panel')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
     expect(find.text('离线缓存暂未支持'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();
@@ -460,10 +451,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('player-more-light-font-row')));
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('player-more-light-panel')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
     expect(
       find.byKey(const ValueKey('player-font-scale-sheet')),
       findsOneWidget,
@@ -481,10 +469,7 @@ void main() {
     // 点弹层外的 modal barrier 收掉弹层，重开面板看行尾档名。
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('player-font-scale-sheet')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('player-font-scale-sheet')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('player-rate-text')));
     await tester.pumpAndSettle();
     expect(
@@ -641,7 +626,10 @@ void main() {
     );
     // 播放 4s 后控件仍全部在场：没有自动收起。
     await tester.pump(const Duration(seconds: 4));
-    expect(find.byKey(const ValueKey('player-fullscreen-pill')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('player-fullscreen-pill')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('player-follow-button')), findsNothing);
     expect(find.byKey(const ValueKey('player-original-book')), findsOneWidget);
     expect(find.text('原著《从宿舍逃杀开始》'), findsOneWidget);
@@ -948,6 +936,32 @@ void main() {
       await player.dispose();
     },
   );
+
+  // P1-15：inactive（通知栏/控制中心）继续播，hidden 暂停，resumed 恢复。
+  testWidgets('inactive keeps playing, hidden pauses, resume restores', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+    await tester.pumpWidget(_app(player));
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(player.isPlaying, true);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    expect(player.isPlaying, false);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(player.isPlaying, true);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
 
   testWidgets('cancelling an accepted long press restores the saved speed', (
     tester,

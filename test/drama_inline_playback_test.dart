@@ -256,6 +256,26 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // P1-15：feed 内联播放的 inactive（通知栏/控制中心）继续播，hidden
+  // 暂停，resumed 恢复。参考 audio_page_test 的 lifecycle 循环写法。
+  testWidgets('inactive keeps the feed playing, hidden pauses it', (
+    tester,
+  ) async {
+    final session = _Session();
+    await _mount(tester, session);
+    final player = session.players.single;
+    expect(player.isPlaying, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await _flush(tester);
+    expect(player.isPlaying, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    expect(player.isPlaying, isFalse);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(player.isPlaying, isTrue);
+  });
+
   testWidgets('内联矩形按解码尺寸排布，横屏剧不按 9:16', (tester) async {
     final session = _Session(width: 1920, height: 1080);
     await _mount(tester, session);
