@@ -92,6 +92,6 @@ impl CM {
             return Err("content not block-aligned".to_string());
         }
         let pt = crate::crypto::aes_cbc_decrypt(ct, aes_key, iv);
-        Ok(crate::crypto::pkcs7_unpad(&pt, 16).to_vec())
+        Ok(crate::crypto::pkcs7_unpad_strict(&pt, 16)?.to_vec())
     }
 }

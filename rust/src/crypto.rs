@@ -28,6 +28,11 @@ pub fn pkcs7_pad(data: &[u8], block: usize) -> Vec<u8> {
 
 /// Go's `pkcs7Unpad`: only strip when the pad byte is in `(0, max]` and
 /// `<= len`. Anything else is returned unchanged.
+///
+/// Kept for `decrypt_upstream`, which must reproduce the upstream wire
+/// behavior exactly (a loose unpad there is a compatibility requirement,
+/// not a choice). New callers that authenticate their own messages must
+/// use [pkcs7_unpad_strict] instead.
 pub fn pkcs7_unpad(data: &[u8], max: usize) -> &[u8] {
     if data.is_empty() {
         return data;
@@ -37,6 +42,34 @@ pub fn pkcs7_unpad(data: &[u8], max: usize) -> &[u8] {
         return &data[..data.len() - pad];
     }
     data
+}
+
+/// Strict PKCS#7 unpad: the pad length must be in `1..=block`, the input
+/// must be block-aligned, and *every* pad byte must equal the pad length.
+/// Anything else is an error — never a silent pass-through.
+///
+/// A loose unpad lets a wrong key or tampered ciphertext "decrypt" to
+/// attacker-influenced plaintext (garbage + a plausible-looking pad byte
+/// is stripped and the rest is trusted). Use this on the register-key,
+/// CM, and DH paths, where a bad pad means the message is not ours.
+pub fn pkcs7_unpad_strict(data: &[u8], block: usize) -> Result<&[u8], String> {
+    if data.is_empty() {
+        return Err("pkcs7: empty input".to_string());
+    }
+    if !data.len().is_multiple_of(block) {
+        return Err(format!(
+            "pkcs7: input length {} not a multiple of block {block}",
+            data.len()
+        ));
+    }
+    let pad = data[data.len() - 1] as usize;
+    if pad == 0 || pad > block || pad > data.len() {
+        return Err(format!("pkcs7: invalid pad length {pad}"));
+    }
+    if !data[data.len() - pad..].iter().all(|&b| b as usize == pad) {
+        return Err("pkcs7: pad bytes disagree".to_string());
+    }
+    Ok(&data[..data.len() - pad])
 }
 
 /// AES-CBC encrypt. `data` must already be block aligned.
@@ -134,4 +167,42 @@ pub fn decrypt_upstream(encrypted_b64: &str, secret_key_hex: &str) -> Result<Vec
         return Ok(inflated);
     }
     Ok(pt)
+}
+
+#[cfg(test)]
+mod strict_unpad_tests {
+    use super::*;
+
+    #[test]
+    fn valid_padding_strips() {
+        // One full block: "abc" + 13 pad bytes of 0x0d.
+        let mut padded = b"abc".to_vec();
+        padded.extend(std::iter::repeat_n(13u8, 13));
+        assert_eq!(pkcs7_unpad_strict(&padded, 16).unwrap(), b"abc");
+        assert_eq!(
+            pkcs7_unpad_strict(&pkcs7_pad(b"", 16), 16).unwrap(),
+            b""
+        );
+    }
+
+    #[test]
+    fn inconsistent_pad_bytes_are_rejected() {
+        // Last byte says 2, but only one pad byte matches.
+        assert!(pkcs7_unpad_strict(b"abc\x01\x02", 16).is_err());
+    }
+
+    #[test]
+    fn zero_pad_and_oversized_pad_are_rejected() {
+        assert!(pkcs7_unpad_strict(b"abc\x00", 16).is_err());
+        // Pad length 17 > block 16 (input padded to 32 for alignment).
+        let mut bad = b"hello".to_vec();
+        bad.extend(std::iter::repeat_n(17u8, 27));
+        assert!(pkcs7_unpad_strict(&bad, 16).is_err());
+    }
+
+    #[test]
+    fn empty_and_unaligned_inputs_are_rejected() {
+        assert!(pkcs7_unpad_strict(b"", 16).is_err());
+        assert!(pkcs7_unpad_strict(b"abc", 16).is_err());
+    }
 }
