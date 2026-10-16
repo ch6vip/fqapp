@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/backend_image_provider.dart';
 import '../../services/chapter_text_formatter.dart';
 
 typedef ReaderImageProviderFactory =
@@ -28,13 +29,20 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
   int _attempt = 0;
   bool _retrying = false;
 
-  ImageProvider<Object> _createProvider() =>
-      widget.providerFactory?.call(widget.image) ??
-      CachedNetworkImageProvider(
-        widget.image.url,
-        maxWidth: 2048,
-        maxHeight: 4096,
-      );
+  ImageProvider<Object> _createProvider() {
+    final factory = widget.providerFactory;
+    if (factory != null) return factory(widget.image);
+    // Backend resources (/src/...) go through the FFI bridge, never over
+    // HTTP; CDN illustrations keep the disk-backed network provider.
+    if (isBackendResourceUrl(widget.image.url)) {
+      return BackendImageProvider(widget.image.url);
+    }
+    return CachedNetworkImageProvider(
+      widget.image.url,
+      maxWidth: 2048,
+      maxHeight: 4096,
+    );
+  }
 
   @override
   void didUpdateWidget(covariant ReaderIllustration oldWidget) {
@@ -50,7 +58,8 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
     if (_retrying) return;
     setState(() => _retrying = true);
     try {
-      if (widget.providerFactory == null) {
+      if (widget.providerFactory == null &&
+          !isBackendResourceUrl(widget.image.url)) {
         await CachedNetworkImage.evictFromCache(widget.image.url);
       }
       await _provider.evict();

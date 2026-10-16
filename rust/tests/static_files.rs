@@ -1,12 +1,11 @@
 //! F1 (path confinement) and F2 (Range/HEAD/streaming) regression tests.
 //!
-//! Both the in-process dispatcher and the real loopback HTTP adapter are
-//! exercised, because the FFI path materialises the body while the HTTP path
-//! streams it.
+//! Only the in-process dispatcher is exercised: every consumer goes through
+//! FFI, which materialises the body.
 
 mod common;
 
-use common::{build_server, pool_json, start_loopback, Loopback, TempDir};
+use common::{build_server, dispatch_get, pool_json, TempDir};
 use fqapi_core::dispatch::{dispatch, Request, ResponseBody};
 
 const MARKER: &str = "OFFLINE_TEST_MARKER_OUTSIDE_SRC";
@@ -194,90 +193,20 @@ async fn file_bodies_are_ranges_not_whole_files() {
     }
 }
 
-// --- Real loopback adapter -------------------------------------------------
-
-/// Fetches a path over the real socket, carrying the launch capability.
-async fn http_get(
-    lb: &Loopback,
-    path: &str,
-    range: Option<&str>,
-) -> (u16, Vec<(String, String)>, Vec<u8>) {
-    let client = reqwest::Client::builder().build().expect("client");
-    let mut builder = client.get(lb.url(path));
-    if let Some(r) = range {
-        builder = builder.header("range", r);
-    }
-    let resp = builder.send().await.expect("loopback request");
-    let status = resp.status().as_u16();
-    let headers: Vec<(String, String)> = resp
-        .headers()
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.as_str().to_string(),
-                String::from_utf8_lossy(v.as_bytes()).into_owned(),
-            )
-        })
-        .collect();
-    let body = resp.bytes().await.expect("body").to_vec();
-    (status, headers, body)
-}
+// --- Large files through the FFI path ---------------------------------------
 
 #[tokio::test]
-async fn loopback_adapter_serves_plain_and_ranged_requests() {
-    let (_dir, server) = fixture().await;
-    let lb = start_loopback(server).await;
-
-    let (status, _, body) = http_get(&lb, "/src/ok.txt", None).await;
-    assert_eq!(status, 200);
-    assert_eq!(body, b"0123456789");
-
-    let (status, headers, body) = http_get(&lb, "/src/ok.txt", Some("bytes=2-5")).await;
-    assert_eq!(status, 206);
-    assert_eq!(body, b"2345");
-    let header = |name: &str| {
-        headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
-    assert_eq!(header("content-range"), "bytes 2-5/10");
-    assert_eq!(header("accept-ranges"), "bytes");
-
-    lb.task.abort();
-}
-
-#[tokio::test]
-async fn loopback_adapter_refuses_traversal_over_a_real_socket() {
-    let (_dir, server) = fixture().await;
-    let lb = start_loopback(server).await;
-
-    for path in [
-        "/src/../outside.txt",
-        "/src/%2e%2e/outside.txt",
-        "/src/..%2Foutside.txt",
-    ] {
-        let (status, _, body) = http_get(&lb, path, None).await;
-        assert_eq!(status, 404, "path {path:?}");
-        assert!(!String::from_utf8_lossy(&body).contains(MARKER));
-    }
-    lb.task.abort();
-}
-
-#[tokio::test]
-async fn loopback_adapter_streams_a_large_file_in_bounded_chunks() {
+async fn large_file_materialises_with_consistent_headers() {
     let dir = TempDir::new("static-large");
     let server = build_server(&dir, None, &[], &pool_json(5)).await;
-    // 4 MiB is far beyond any single read buffer.
+    // 4 MiB is far beyond any single read buffer, but well under the 64 MiB
+    // FFI body limit, so the in-process path materialises it whole.
     let big = vec![b'x'; 4 * 1024 * 1024];
     let mut tail = big.clone();
     tail[..1].copy_from_slice(b"z");
     std::fs::write(dir.join("src/big.bin"), &tail).expect("write big file");
-    let lb = start_loopback(server).await;
 
-    let (status, headers, body) = http_get(&lb, "/src/big.bin", None).await;
+    let (status, headers, body) = dispatch_get(&server, "/src/big.bin", vec![]).await;
     assert_eq!(status, 200);
     assert_eq!(body.len(), tail.len());
     assert_eq!(
@@ -288,8 +217,12 @@ async fn loopback_adapter_streams_a_large_file_in_bounded_chunks() {
         Some("4194304")
     );
 
-    let (status, headers, body) =
-        http_get(&lb, "/src/big.bin", Some("bytes=4194300-4194303")).await;
+    let (status, headers, body) = dispatch_get(
+        &server,
+        "/src/big.bin",
+        vec![("range".to_string(), "bytes=4194300-4194303".to_string())],
+    )
+    .await;
     assert_eq!(status, 206);
     assert_eq!(body.len(), 4);
     assert_eq!(
@@ -299,7 +232,6 @@ async fn loopback_adapter_streams_a_large_file_in_bounded_chunks() {
             .map(|(_, v)| v.as_str()),
         Some("bytes 4194300-4194303/4194304")
     );
-    lb.task.abort();
 }
 
 // --- F1-R / F2-R regressions -----------------------------------------------
@@ -431,31 +363,4 @@ async fn declared_length_always_matches_the_body() {
         assert_eq!(declared, want_len, "range {range:?} declared length");
         assert_eq!(body.len(), declared, "range {range:?} body length");
     }
-}
-
-#[tokio::test]
-async fn loopback_adapter_refuses_a_symlinked_index_and_serves_empty_files() {
-    let (_dir, server) = boundary_fixture().await;
-    let lb = start_loopback(server).await;
-
-    let (status, _, body) = http_get(&lb, "/src/linked/", None).await;
-    assert_eq!(status, 404);
-    assert!(!String::from_utf8_lossy(&body).contains(MARKER));
-
-    let (status, headers, body) = http_get(&lb, "/src/empty.mp4", Some("bytes=0-")).await;
-    assert_eq!(status, 200);
-    assert!(body.is_empty(), "an empty file must send no bytes");
-    assert_eq!(
-        headers
-            .iter()
-            .find(|(k, _)| k == "content-length")
-            .map(|(_, v)| v.as_str()),
-        Some("0")
-    );
-
-    let (status, _, body) = http_get(&lb, "/src/sub/", None).await;
-    assert_eq!(status, 200);
-    assert_eq!(body, b"<html>sub</html>");
-
-    lb.task.abort();
 }

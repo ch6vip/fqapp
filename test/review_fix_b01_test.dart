@@ -39,11 +39,11 @@ void main() {
     test('keeps http(s), backend-relative and protocol-relative URLs', () {
       expect(
         api.absoluteUrl(' /src/video.mp4 '),
-        'http://localhost:9000/src/video.mp4',
+        '/src/video.mp4',
       );
       expect(
         api.absoluteUrl('//cdn.example/video.mp4'),
-        'http://cdn.example/video.mp4',
+        'https://cdn.example/video.mp4',
       );
       const signed = 'https://cdn.example/video.mp4?sign=a%2Fb+xyz';
       expect(api.absoluteUrl(' $signed '), signed);

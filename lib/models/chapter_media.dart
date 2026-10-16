@@ -62,7 +62,6 @@ const defaultAudioVoices = [AudioVoice(id: '0', label: '默认音色')];
 AudioSource parsePlayinfoSource(
   Map<String, dynamic> payload, {
   required String itemId,
-  required String baseUrl,
   String toneId = '0',
 }) {
   final streams = _checkedMediaObjects(payload).last['data'];
@@ -87,8 +86,8 @@ AudioSource parsePlayinfoSource(
       // metadata must still be usable. A malformed model is not a plain URL.
       final keyHex = _streamContentKey(stream['encrypt_info']);
       final url =
-          _mediaUrl(stream['main_url'], baseUrl) ??
-          _mediaUrl(stream['backup_url'], baseUrl);
+          _mediaUrl(stream['main_url']) ??
+          _mediaUrl(stream['backup_url']);
       if (keyHex == null || url == null) continue;
       return AudioSource(
         itemId: itemId,
@@ -106,7 +105,7 @@ AudioSource parsePlayinfoSource(
         message is String && message.isNotEmpty ? message : '音频资源暂不可用',
       );
     }
-    final selected = _playinfoStream(stream, model, baseUrl);
+    final selected = _playinfoStream(stream, model);
     if (selected == null) continue;
     return AudioSource(
       itemId: itemId,
@@ -136,7 +135,6 @@ Map<String, dynamic>? _playinfoModel(dynamic raw) {
 ({String url, String keyHex})? _playinfoStream(
   Map<dynamic, dynamic> row,
   Map<String, dynamic> model,
-  String baseUrl,
 ) {
   final streams = model['video_list'];
   if (streams is! List) return null;
@@ -146,12 +144,12 @@ Map<String, dynamic>? _playinfoModel(dynamic raw) {
     final keyHex = _streamContentKey(stream['encrypt_info']);
     if (keyHex == null) continue;
     for (final field in ['main_url', 'backup_url']) {
-      final url = _mediaUrl(stream[field], baseUrl);
+      final url = _mediaUrl(stream[field]);
       if (url != null) candidates.add((url: url, keyHex: keyHex));
     }
   }
   for (final field in ['main_url', 'backup_url']) {
-    final preferred = _mediaUrl(row[field], baseUrl);
+    final preferred = _mediaUrl(row[field]);
     if (preferred == null) continue;
     for (final candidate in candidates) {
       if (candidate.url == preferred) return candidate;
@@ -175,7 +173,6 @@ Duration? _playinfoDuration(dynamic seconds) {
 AudioSource parseAudioSource(
   Map<String, dynamic> payload, {
   required String itemId,
-  required String baseUrl,
   String toneId = '0',
 }) {
   final objects = _checkedMediaObjects(payload);
@@ -185,11 +182,10 @@ AudioSource parseAudioSource(
       Map<String, dynamic>.from(playback),
       itemId: itemId,
       toneId: toneId,
-      baseUrl: baseUrl,
     );
   }
   for (final object in objects) {
-    final url = _mediaUrl(object['audio_url'], baseUrl);
+    final url = _mediaUrl(object['audio_url']);
     if (url != null) {
       return AudioSource(itemId: itemId, url: url, toneId: toneId);
     }
@@ -201,7 +197,6 @@ AudioSource _parseAudioPlayback(
   Map<String, dynamic> playback, {
   required String itemId,
   required String toneId,
-  required String baseUrl,
 }) {
   for (final object in _checkedMediaObjects(playback)) {
     final rows = object['video_model_datas'];
@@ -229,8 +224,8 @@ AudioSource _parseAudioPlayback(
         final keyHex = _streamContentKey(stream['encrypt_info']);
         if (keyHex == null) continue;
         final url =
-            _mediaUrl(stream['main_url'], baseUrl) ??
-            _mediaUrl(stream['backup_url'], baseUrl);
+            _mediaUrl(stream['main_url']) ??
+            _mediaUrl(stream['backup_url']);
         if (url == null) continue;
         final seconds = model['video_duration'];
         final microseconds = seconds is num
@@ -278,16 +273,15 @@ List<AudioVoice> parseAudioVoices(Map<String, dynamic> payload) {
 /// responses carry HTML instead; extract its image sources without rendering
 /// markup. Repeated URLs remain separate pages in the original reading order.
 List<ComicImage> parseComicImages(
-  Map<String, dynamic> payload, {
-  required String baseUrl,
-}) {
+  Map<String, dynamic> payload,
+) {
   final objects = _checkedMediaObjects(payload);
   for (final object in objects) {
     final images = object['images'];
     if (images is! List) continue;
     final pages = <ComicImage>[];
     for (final value in images) {
-      final url = _mediaUrl(value, baseUrl);
+      final url = _imageUrl(value);
       if (url != null) pages.add(ComicImage(url: url));
     }
     if (pages.isNotEmpty) return List.unmodifiable(pages);
@@ -298,7 +292,7 @@ List<ComicImage> parseComicImages(
       if (html is! String || !html.toLowerCase().contains('<img')) continue;
       final pages = <ComicImage>[];
       for (final element in parseFragment(html).querySelectorAll('img')) {
-        final url = _mediaUrl(element.attributes['src'], baseUrl);
+        final url = _imageUrl(element.attributes['src']);
         if (url != null) pages.add(ComicImage(url: url));
       }
       if (pages.isNotEmpty) return List.unmodifiable(pages);
@@ -353,20 +347,42 @@ String? _streamContentKey(dynamic encryption) {
   return _contentKeyPattern.hasMatch(key) ? key : null;
 }
 
-String? _mediaUrl(dynamic value, String baseUrl) {
+/// Resolves an audio/video URL: absolute CDN URLs pass through, relative
+/// values are unusable (the native player only speaks http(s)/file URLs, and
+/// there is no HTTP adapter to resolve them against), so they are skipped.
+String? _mediaUrl(dynamic value) {
   if (value is! String || value.trim().isEmpty) return null;
   final raw = value.trim();
   try {
     final parsed = Uri.parse(raw);
-    final resolved = parsed.hasScheme
-        ? parsed
-        : Uri.parse(resolveBackendResource(baseUrl, raw));
-    if ((resolved.scheme != 'http' && resolved.scheme != 'https') ||
-        resolved.host.isEmpty) {
+    if (!parsed.hasScheme) return null;
+    if ((parsed.scheme != 'http' && parsed.scheme != 'https') ||
+        parsed.host.isEmpty) {
       return null;
     }
-    // Avoid rewriting the query of an absolute signed CDN URL.
-    return parsed.hasScheme ? raw : resolved.toString();
+    return raw;
+  } on FormatException {
+    return null;
+  }
+}
+
+/// Resolves an image URL: absolute CDN URLs pass through, backend-relative
+/// paths (`/src/...`) are returned as-is for the FFI image provider.
+String? _imageUrl(dynamic value) {
+  if (value is! String || value.trim().isEmpty) return null;
+  final raw = value.trim();
+  try {
+    final resolved = resolveBackendResource(raw);
+    final uri = Uri.parse(resolved);
+    if (uri.hasScheme) {
+      if ((uri.scheme != 'http' && uri.scheme != 'https') ||
+          uri.host.isEmpty) {
+        return null;
+      }
+      return resolved;
+    }
+    if (!resolved.startsWith('/src/')) return null;
+    return resolved;
   } on FormatException {
     return null;
   }

@@ -4,8 +4,6 @@ import 'package:fqapp/models/chapter_media.dart';
 import 'support/audio_play_fixture.dart';
 
 void main() {
-  const base = 'http://127.0.0.1:8080';
-
   test('playinfo video_model yields the url, derived key and tone', () {
     final source = parsePlayinfoSource(
       {
@@ -29,7 +27,6 @@ void main() {
       },
       itemId: '7181453438667096588',
       toneId: '57',
-      baseUrl: base,
     );
     expect(source.url, 'https://v11-fq-tts.fqnovelvod.com/x');
     expect(source.toneId, '57');
@@ -53,8 +50,7 @@ void main() {
           ],
         },
         itemId: 'x',
-        baseUrl: base,
-      ),
+        ),
       throwsFormatException,
     );
   });
@@ -64,8 +60,7 @@ void main() {
       () => parsePlayinfoSource(
         {'code': 0, 'data': []},
         itemId: 'x',
-        baseUrl: base,
-      ),
+        ),
       throwsFormatException,
     );
   });
@@ -76,8 +71,7 @@ void main() {
       final source = parseAudioSource(
         audioPlayFixture(),
         itemId: 'chapter',
-        baseUrl: base,
-      );
+        );
       expect(source.url, 'https://cdn.example/audio.m4a?sign=a%2fb+xyz');
       expect(source.duration, const Duration(milliseconds: 664741));
       expect(source.toneId, '0');
@@ -94,7 +88,7 @@ void main() {
       },
     ]) {
       expect(
-        () => parseAudioSource(payload, itemId: 'chapter', baseUrl: base),
+        () => parseAudioSource(payload, itemId: 'chapter'),
         throwsA(isA<FormatException>()),
       );
     }
@@ -114,7 +108,6 @@ void main() {
       ),
       itemId: 'chapter',
       toneId: '2',
-      baseUrl: base,
     );
     expect(source.url, 'https://cdn.example/plain.m4a');
     expect(source.toneId, '2');
@@ -123,8 +116,7 @@ void main() {
       () => parseAudioSource(
         audioPlayFixture(streams: [encrypted]),
         itemId: 'chapter',
-        baseUrl: base,
-      ),
+        ),
       throwsA(isA<FormatException>()),
     );
   });
@@ -147,7 +139,6 @@ void main() {
         ],
       ),
       itemId: 'chapter',
-      baseUrl: base,
     );
     expect(source.url, 'https://cdn.example/encrypted.m4a');
     expect(source.keyHex, '61826b7eceb342a9ad4fd9d7556be625');
@@ -187,8 +178,7 @@ void main() {
             ],
           ),
           itemId: 'chapter',
-          baseUrl: base,
-        ),
+            ),
         throwsA(isA<FormatException>()),
         reason: 'encrypt_info $info must not be treated as playable',
       );
@@ -203,7 +193,6 @@ void main() {
         ],
       ),
       itemId: 'chapter',
-      baseUrl: base,
     );
     expect(source.url, 'https://cdn.example/plain.m4a');
     expect(source.keyHex, isEmpty);
@@ -214,8 +203,7 @@ void main() {
       final source = parseAudioSource(
         audioPlayFixture(duration: duration),
         itemId: 'chapter',
-        baseUrl: base,
-      );
+        );
       expect(source.duration, isNull);
     }
   });
@@ -229,8 +217,7 @@ void main() {
           'video_info': {'code': 403, 'message': 'invalid aid'},
         },
         itemId: 'chapter',
-        baseUrl: base,
-      ),
+        ),
       throwsA(
         isA<FormatException>().having(
           (error) => error.message,
@@ -241,24 +228,29 @@ void main() {
     );
   });
 
-  test('audio resolves backend paths and preserves the requested identity', () {
-    final source = parseAudioSource(
-      {
-        'code': 200,
-        'data': {
-          'audio_url': '/src/chapter.mp3?token=a%2Fb+xyz',
-          // No stable duration unit is specified by the backend.
-          'duration': 123,
+  test('audio skips backend-relative paths the player cannot fetch', () {
+    // A relative audio URL has no resolution without the old HTTP adapter,
+    // and the native player only speaks http(s)/file URLs.
+    expect(
+      () => parseAudioSource(
+        {
+          'code': 200,
+          'data': {
+            'audio_url': '/src/chapter.mp3?token=a%2Fb+xyz',
+            'duration': 123,
+          },
         },
-      },
-      itemId: '7491705434915488318',
-      toneId: '99',
-      baseUrl: base,
+        itemId: '7491705434915488318',
+        toneId: '99',
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          '未获取到音频地址',
+        ),
+      ),
     );
-    expect(source.itemId, '7491705434915488318');
-    expect(source.toneId, '99');
-    expect(source.url, '$base/src/chapter.mp3?token=a%2Fb+xyz');
-    expect(source.duration, isNull);
   });
 
   test('audio keeps the original bytes of an absolute signed URL', () {
@@ -272,7 +264,6 @@ void main() {
         },
       },
       itemId: 'chapter',
-      baseUrl: base,
     );
     expect(source.url, signed);
     expect(source.toneId, '0');
@@ -289,7 +280,7 @@ void main() {
       {'audio_url': 'https://'},
     ]) {
       expect(
-        () => parseAudioSource({'data': data}, itemId: 'c', baseUrl: base),
+        () => parseAudioSource({'data': data}, itemId: 'c'),
         throwsA(
           isA<FormatException>().having(
             (error) => error.message,
@@ -348,12 +339,12 @@ void main() {
           'data:image/png;base64,AAAA',
         ],
       },
-    }, baseUrl: base);
+    });
     expect(pages.map((page) => page.url), [
-      '$base/src/page-b.jpg',
+      '/src/page-b.jpg',
       signed,
-      '$base/src/page-b.jpg',
-      'http://cdn.example/page-c.jpg',
+      '/src/page-b.jpg',
+      'https://cdn.example/page-c.jpg',
     ]);
     for (final page in pages) {
       expect(page.width, isNull);
@@ -368,8 +359,8 @@ void main() {
         'images': ['/src/current.jpg'],
         'content': '<img src="/src/old.jpg">',
       },
-    }, baseUrl: base);
-    expect(pages.single.url, '$base/src/current.jpg');
+    });
+    expect(pages.single.url, '/src/current.jpg');
   });
 
   test('comic HTML fallback uses src order and the backend origin', () {
@@ -385,11 +376,13 @@ void main() {
           <img src="/src/a.jpg?token=a%2Fb&amp;page=1">
         ''',
       },
-    }, baseUrl: base);
+    });
+    // Query strings were loopback-adapter auth junk; the FFI fetch uses the
+    // path only.
     expect(pages.map((page) => page.url), [
-      '$base/src/a.jpg?token=a%2Fb&page=1',
-      '$base/src/b.jpg',
-      '$base/src/a.jpg?token=a%2Fb&page=1',
+      '/src/a.jpg',
+      '/src/b.jpg',
+      '/src/a.jpg',
     ]);
   });
 
@@ -400,8 +393,8 @@ void main() {
         'code': 0,
         'data': {'images': '<IMG SRC="/src/legacy.webp">'},
       },
-    }, baseUrl: base);
-    expect(pages.single.url, '$base/src/legacy.webp');
+    });
+    expect(pages.single.url, '/src/legacy.webp');
   });
 
   test('empty or unsupported comic content is an explicit error', () {
@@ -415,7 +408,7 @@ void main() {
       {'images': '<img src="data:image/png;base64,AAAA">'},
     ]) {
       expect(
-        () => parseComicImages({'data': data}, baseUrl: base),
+        () => parseComicImages({'data': data}),
         throwsA(
           isA<FormatException>().having(
             (error) => error.message,
@@ -449,10 +442,10 @@ void main() {
         ),
       );
       expect(
-        () => parseAudioSource(payload, itemId: 'c', baseUrl: base),
+        () => parseAudioSource(payload, itemId: 'c'),
         expected,
       );
-      expect(() => parseComicImages(payload, baseUrl: base), expected);
+      expect(() => parseComicImages(payload), expected);
       expect(() => parseAudioVoices(payload), expected);
     }
   });

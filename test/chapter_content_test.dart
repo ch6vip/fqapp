@@ -99,16 +99,16 @@ void main() {
     expect((restored.blocks.last as ChapterParagraph).paraIndex, isNull);
   });
 
-  test('lazy sources, relative URLs and absent dimensions are supported', () {
+  test('lazy sources and protocol-relative URLs are supported', () {
+    // A protocol-relative URL inherits https. A bare relative path
+    // (`../next.png`) has no base to resolve against without the old HTTP
+    // adapter, so it is dropped instead of producing a broken image.
     final content = parseChapterContent(
       '<img src="data:image/gif;base64,AAAA" data-src="//images.test/real.webp?a=1&amp;b=2" width="NaN" height="0"/>'
       '<img data-original="../next.png" width="400" height="100"/>',
-      baseUrl: 'https://backend.test/chapter/1',
     );
-    expect(content.images.first.url, 'https://images.test/real.webp?a=1&b=2');
-    expect(content.images.first.aspectRatio, isNull);
-    expect(content.images.last.url, 'https://backend.test/next.png');
-    expect(content.images.last.aspectRatio, 4);
+    expect(content.images.single.url, 'https://images.test/real.webp?a=1&b=2');
+    expect(content.images.single.aspectRatio, isNull);
   });
 
   test(

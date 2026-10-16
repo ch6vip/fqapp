@@ -10,10 +10,8 @@ import 'backend_transport.dart';
 /// Manages the local backend core.
 ///
 /// The backend is the Rust native core (`rust/`, packaged as
-/// `libfqapi_core.so`). Flutter calls it over flutter_rust_bridge; the same
-/// Rust core also serves `/src/*` resources over a loopback HTTP adapter,
-/// which is why [baseUrl] still exists for resource resolution in
-/// `ApiClient.absoluteUrl`.
+/// `libfqapi_core.so`). Flutter calls it over flutter_rust_bridge; the core
+/// runs in-process and listens on no socket, so no other app can reach it.
 ///
 /// There is no process to launch and no JNI bridge: `start` deploys the
 /// runtime files and initializes the core in-process.
@@ -22,7 +20,6 @@ class BackendService {
     AssetBundle? assets,
     Future<Directory> Function()? supportDirectory,
     BackendTransport? transport,
-    this.fallbackBaseUrl = 'http://127.0.0.1:28080',
     this.startupTimeout = const Duration(seconds: 15),
     this.shutdownTimeout = const Duration(seconds: 3),
   }) : _assets = assets ?? rootBundle,
@@ -34,9 +31,6 @@ class BackendService {
   final AssetBundle _assets;
   final Future<Directory> Function() _supportDirectory;
   final BackendTransport _transport;
-
-  /// Used for resource URLs only when the core has not reported a port yet.
-  final String fallbackBaseUrl;
 
   final Duration startupTimeout;
   final Duration shutdownTimeout;
@@ -55,11 +49,7 @@ class BackendService {
   /// The transport business calls go through.
   BackendTransport get transport => _transport;
 
-  /// Base URL used to resolve backend-relative resources.
-  String get baseUrl =>
-      _transport.baseUrl.isNotEmpty ? _transport.baseUrl : fallbackBaseUrl;
-
-  /// Whether the Rust FFI transport is in use (as opposed to the HTTP adapter).
+  /// Whether the Rust FFI transport is in use (as opposed to a test transport).
   bool get usesRustTransport => _transport is RustBackendTransport;
 
   /// Whether the backend core is currently running.
@@ -250,11 +240,11 @@ class BackendService {
       try {
         final response = await _transport.send(
           'GET',
-          Uri.parse('$baseUrl/health'),
+          Uri(path: '/health'),
           timeout: attemptTimeout,
         );
         if (response.statusCode == 200) return true;
-        _log('health check: HTTP ${response.statusCode}');
+        _log('health check: status ${response.statusCode}');
       } catch (_) {
         // Not up yet. Bound the complete exchange, including body reading.
       }

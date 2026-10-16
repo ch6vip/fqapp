@@ -376,7 +376,7 @@ class ChapterContent {
 
 /// Parse upstream markup once. Cached text is decoded with fromCacheText so
 /// literal tags and entities inside a novel are never interpreted a second time.
-ChapterContent parseChapterContent(String source, {String? baseUrl}) {
+ChapterContent parseChapterContent(String source) {
   final blocks = <ChapterBlock>[];
   var pending = StringBuffer();
   // Upstream paragraph id currently in scope, from `<p idx="N">`.
@@ -419,7 +419,7 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
         flush();
         String? url;
         for (final key in ['data-src', 'data-original', 'src']) {
-          url = _chapterImageUrl(node.attributes[key], baseUrl: baseUrl);
+          url = _chapterImageUrl(node.attributes[key]);
           if (url != null) break;
         }
         final alt = node.attributes['alt']?.trim() ?? '';
@@ -478,30 +478,30 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
     blocks: blocks,
     legacyText: normalizeChapterText(
       source,
-      baseUrl: baseUrl,
       includeImageAlt: true,
     ),
   );
 }
 
-String? _chapterImageUrl(String? value, {String? baseUrl}) {
+String? _chapterImageUrl(String? value) {
   final raw = value?.trim();
   if (raw == null || raw.isEmpty) return null;
   try {
-    final uri = Uri.parse(raw);
-    final resolved = uri.hasScheme
-        ? uri
-        : baseUrl != null
-        ? Uri.parse(resolveBackendResource(baseUrl, raw))
-        : null;
-    if (resolved == null ||
-        (resolved.scheme != 'https' && resolved.scheme != 'http') ||
-        resolved.host.isEmpty ||
-        resolved.userInfo.isNotEmpty) {
-      return null;
+    final resolved = resolveBackendResource(raw);
+    final uri = Uri.parse(resolved);
+    if (uri.hasScheme) {
+      if ((uri.scheme != 'https' && uri.scheme != 'http') ||
+          uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty) {
+        return null;
+      }
+      // Re-encoding an absolute signed CDN URL can invalidate its signature.
+      return resolved;
     }
-    // Re-encoding an absolute signed CDN URL can invalidate its signature.
-    return uri.hasScheme ? raw : resolved.toString();
+    // Backend-relative images (/src/...) are returned as-is for the FFI
+    // image provider; anything else has no resolution without the adapter.
+    if (!resolved.startsWith('/src/')) return null;
+    return resolved;
   } on FormatException {
     return null;
   }
@@ -554,7 +554,6 @@ String _dropLeadingTitleParagraph(
 
 String normalizeChapterText(
   String source, {
-  String? baseUrl,
   bool includeImageAlt = false,
 }) {
   final output = StringBuffer();
@@ -569,7 +568,7 @@ String normalizeChapterText(
         if (includeImageAlt) {
           String? url;
           for (final key in ['data-src', 'data-original', 'src']) {
-            url = _chapterImageUrl(node.attributes[key], baseUrl: baseUrl);
+            url = _chapterImageUrl(node.attributes[key]);
             if (url != null) break;
           }
           final alt = node.attributes['alt']?.trim() ?? '';

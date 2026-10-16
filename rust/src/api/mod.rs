@@ -4,8 +4,9 @@
 //! .agents/notes/implemented/architecture/2026-09-23-rust-native-core-migration.md
 //! Behaviour contract: docs/migration/rust-migration-contracts.md
 //!
-//! Flutter calls [request] for every backend call; the loopback HTTP adapter
-//! (`server.rs`) serves `/src/*` resources from the same dispatcher.
+//! Flutter calls [request] for every backend call, including `/src/*`
+//! resources (manga/chapter images): there is no HTTP server anymore, so
+//! nothing listens on a socket and no other app can reach the core.
 //! Requests carry an id so they can be cancelled: cancelling
 //! drops the in-flight dispatch future, which tears down the awaiting reqwest
 //! call, any retry backoff and any not-yet-submitted write. A write that the
@@ -42,15 +43,12 @@ pub struct BridgeResponse {
 struct Core {
     generation: u64,
     server: Arc<Server>,
-    port: u16,
-    token: String,
-    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 static CORE: Lazy<RwLock<Option<Arc<Core>>>> = Lazy::new(|| RwLock::new(None));
 /// Serializes the whole initialization and shutdown state machine. Concurrent
 /// `init` callers therefore share one startup and all observe `"running"`
-/// instead of racing for the listening port.
+/// instead of racing.
 static INIT_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// In-flight calls keyed by request id. Each entry remembers the core
@@ -78,7 +76,7 @@ pub fn version() -> String {
     format!("fqapi_core {}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Resolves the runtime root (contains src/, web/, filters/).
+/// Resolves the runtime root (contains src/, filters/).
 fn resolve_runtime_dir(config_path: &str, explicit: &str) -> PathBuf {
     if !explicit.is_empty() {
         return std::fs::canonicalize(explicit).unwrap_or_else(|_| PathBuf::from(explicit));
@@ -105,7 +103,6 @@ pub async fn init(
     pool_path: String,
     filter_path: String,
     runtime_dir: String,
-    port: u16,
     mock_upstream_origin: String,
 ) -> Result<String, String> {
     // The shipping core has no console, and an Android app cannot read its own
@@ -115,14 +112,14 @@ pub async fn init(
     #[cfg(target_os = "android")]
     {
         crate::core_log::install(&resolve_runtime_dir(&config_path, &runtime_dir));
-        log::info!("core init: port={port} config={config_path}");
+        log::info!("core init: config={config_path}");
     }
     let mock = if mock_upstream_origin.trim().is_empty() {
         None
     } else {
         Some(mock_upstream_origin)
     };
-    init_core(config_path, pool_path, filter_path, runtime_dir, port, mock).await
+    init_core(config_path, pool_path, filter_path, runtime_dir, mock).await
 }
 
 /// Initialization with an optional upstream origin override. The public
@@ -133,7 +130,6 @@ pub(crate) async fn init_core(
     pool_path: String,
     filter_path: String,
     runtime_dir: String,
-    port: u16,
     mock_origin: Option<String>,
 ) -> Result<String, String> {
     let _guard = INIT_LOCK.lock().await;
@@ -172,32 +168,16 @@ pub(crate) async fn init_core(
     });
     let server = Arc::new(Server::new(ctx));
 
-    // `port == 0` binds an ephemeral loopback port (host tests and any caller
-    // that does not care which port is used); the Flutter transport passes the
-    // configured 28080 explicitly. The loopback adapter is always part of the
-    // core because resource URLs (`/src/...`) depend on it.
-    let _ = cfg.port;
-    let (actual_port, token, task) = match crate::server::serve(server.clone(), port).await {
-        Ok(handle) => (handle.port, handle.token, Some(handle.task)),
-        Err(e) => return Err(e),
-    };
-
     // The generation is read after the resource is fully built, so a stale
     // shutdown (which takes the same lock and bumps the counter) can never
     // retire this core.
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let mut guard = CORE.write().await;
-    *guard = Some(Arc::new(Core {
-        generation,
-        server,
-        port: actual_port,
-        token,
-        task,
-    }));
+    *guard = Some(Arc::new(Core { generation, server }));
     Ok("running".to_string())
 }
 
-/// Stops the loopback adapter and drops the core.
+/// Drops the core.
 ///
 /// Waits for an in-flight initialization first, so a shutdown issued during
 /// `init` tears down the core that `init` just created rather than leaving it
@@ -207,9 +187,6 @@ pub async fn shutdown() -> Result<(), String> {
     GENERATION.fetch_add(1, Ordering::SeqCst);
     let core = { CORE.write().await.take() };
     if let Some(core) = core {
-        if let Some(task) = &core.task {
-            task.abort();
-        }
         // Ownership hand-off. Awaiting this is what makes the guarantee hold: a
         // commit that already started finishes its rename first, and every later
         // one is refused, so shutdown cannot return while an old write is still
@@ -234,29 +211,6 @@ pub async fn status() -> String {
     match guard.as_ref() {
         Some(_) => "running".to_string(),
         None => "starting".to_string(),
-    }
-}
-
-/// Base URL of the loopback adapter, for resource URLs (`absoluteUrl`).
-pub async fn base_url() -> String {
-    let guard = CORE.read().await;
-    match guard.as_ref() {
-        Some(core) if core.port != 0 => format!("http://127.0.0.1:{}", core.port),
-        _ => String::new(),
-    }
-}
-/// Per-launch capability of the loopback adapter.
-///
-/// Every request the adapter accepts must carry it: as a `/_session/<cap>`
-/// path prefix, an `Authorization: Bearer` header, or the session cookie the
-/// entry URL sets. `base_url()` deliberately stays capability-free - the same
-/// value is the FFI path root, and FFI calls never cross the socket. URLs
-/// handed to HTTP clients instead (`/src/...`) must carry the prefix.
-pub async fn session_capability() -> String {
-    let guard = CORE.read().await;
-    match guard.as_ref() {
-        Some(core) => core.token.clone(),
-        None => String::new(),
     }
 }
 
@@ -605,8 +559,8 @@ mod tests {
         let dir = runtime_dir("span-restart");
         let (origin, mock_task) = slow_mock_upstream(Duration::from_millis(500)).await;
 
-        let (cfg, pool, filter, runtime, port, _) = init_args(&dir);
-        init_core(cfg, pool, filter, runtime, port, Some(origin.clone()))
+        let (cfg, pool, filter, runtime, _) = init_args(&dir);
+        init_core(cfg, pool, filter, runtime, Some(origin.clone()))
             .await
             .expect("first init");
         let first_generation = core_generation().await;
@@ -624,8 +578,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(120)).await;
         shutdown().await.expect("shutdown");
 
-        let (cfg, pool, filter, runtime, port, _) = init_args(&dir);
-        init_core(cfg, pool, filter, runtime, port, Some(origin))
+        let (cfg, pool, filter, runtime, _) = init_args(&dir);
+        init_core(cfg, pool, filter, runtime, Some(origin))
             .await
             .expect("second init");
         let second_generation = core_generation().await;
@@ -652,7 +606,7 @@ mod tests {
         .await
         .expect("the new core serves requests");
         assert_eq!(fresh.status, 200);
-        assert!(health_ok(&base_url().await, &session_capability().await).await);
+        assert!(health_ok().await);
 
         mock_task.abort();
         shutdown().await.expect("shutdown");
@@ -696,13 +650,13 @@ mod tests {
         std::fs::create_dir_all(path.join("config")).expect("config dir");
         std::fs::write(
             path.join("config/config.json"),
-            r#"{"algorithm_type":"8404","port":0}"#,
+            r#"{"algorithm_type":"8404"}"#,
         )
         .expect("config json");
         path
     }
 
-    fn init_args(dir: &std::path::Path) -> (String, String, String, String, u16, Option<String>) {
+    fn init_args(dir: &std::path::Path) -> (String, String, String, String, Option<String>) {
         (
             dir.join("config/config.json")
                 .to_string_lossy()
@@ -714,31 +668,31 @@ mod tests {
                 .to_string_lossy()
                 .into_owned(),
             String::new(),
-            0,
             None,
         )
     }
 
-    /// Proves that the core at `base` really answers on its published port. The
-    /// capability is part of the probe: `base_url()` alone is refused with 401,
-    /// so a stale pair (released port or restarted core) must fail this.
-    async fn health_ok(base: &str, capability: &str) -> bool {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(3))
-            .build()
-            .expect("client");
-        match client
-            .get(format!("{base}/_session/{capability}/health"))
-            .send()
-            .await
+    /// Proves that the live core answers `/health` through the in-process
+    /// bridge - the same path Flutter uses. There is no socket anymore, so
+    /// the probe never leaves the process.
+    async fn health_ok() -> bool {
+        match request(
+            "health-probe".to_string(),
+            "GET".to_string(),
+            "/health".to_string(),
+            String::new(),
+            Vec::new(),
+            0,
+        )
+        .await
         {
-            Ok(resp) => resp.status().as_u16() == 200,
+            Ok(resp) => resp.status == 200,
             Err(_) => false,
         }
     }
 
     /// The review's reproducer: 8 concurrent initializations used to leave 1
-    /// winner and 7 "address already in use" failures.
+    /// winner and 7 failures.
     #[tokio::test]
     async fn concurrent_initialization_all_observe_running() {
         let _guard = CORE_TEST_LOCK.lock().await;
@@ -747,9 +701,9 @@ mod tests {
 
         let mut handles = Vec::new();
         for _ in 0..8 {
-            let (cfg, pool, filter, runtime, port, mock) = init_args(&dir);
+            let (cfg, pool, filter, runtime, mock) = init_args(&dir);
             handles.push(tokio::spawn(async move {
-                init_core(cfg, pool, filter, runtime, port, mock).await
+                init_core(cfg, pool, filter, runtime, mock).await
             }));
         }
         for handle in handles {
@@ -759,45 +713,45 @@ mod tests {
 
         assert!(core_generation().await > 0);
         assert_eq!(status().await, "running");
-        let base = base_url().await;
-        let capability = session_capability().await;
-        assert!(base.starts_with("http://127.0.0.1:"), "base url {base:?}");
-        assert!(
-            health_ok(&base, &capability).await,
-            "the published core must serve /health"
-        );
+        assert!(health_ok().await, "the published core must serve /health");
 
         shutdown().await.expect("shutdown");
         assert_eq!(core_generation().await, 0);
         assert_eq!(status().await, "starting");
-        // The port is released *and* the capability is retired, so the stale
-        // pair cannot answer even if another listener took the port.
+        // No core, no answers: a request after shutdown must fail closed.
         assert!(
-            !health_ok(&base, &capability).await,
-            "shutdown must release the port"
+            request(
+                "after-shutdown".to_string(),
+                "GET".to_string(),
+                "/health".to_string(),
+                String::new(),
+                Vec::new(),
+                0,
+            )
+            .await
+            .is_err(),
+            "shutdown must stop answering"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
-    async fn restart_gets_a_new_generation_and_a_working_port() {
+    async fn restart_gets_a_new_generation_and_a_working_core() {
         let _guard = CORE_TEST_LOCK.lock().await;
         let _ = shutdown().await;
         let dir = runtime_dir("restart");
 
-        let (cfg, pool, filter, runtime, port, mock) = init_args(&dir);
-        init_core(cfg, pool, filter, runtime, port, mock)
+        let (cfg, pool, filter, runtime, mock) = init_args(&dir);
+        init_core(cfg, pool, filter, runtime, mock)
             .await
             .expect("first init");
         let first_generation = core_generation().await;
-        let first_base = base_url().await;
-        let first_capability = session_capability().await;
 
         shutdown().await.expect("shutdown");
         assert_eq!(core_generation().await, 0);
 
-        let (cfg, pool, filter, runtime, port, mock) = init_args(&dir);
-        init_core(cfg, pool, filter, runtime, port, mock)
+        let (cfg, pool, filter, runtime, mock) = init_args(&dir);
+        init_core(cfg, pool, filter, runtime, mock)
             .await
             .expect("second init");
         let second_generation = core_generation().await;
@@ -805,46 +759,46 @@ mod tests {
             second_generation > first_generation,
             "a restarted core must have a newer generation ({second_generation} vs {first_generation})"
         );
-        assert!(health_ok(&base_url().await, &session_capability().await).await);
+        assert!(health_ok().await);
 
         // A stale cleanup for the previous core must not disturb the new one.
         assert!(!cancel("stale-request-from-previous-core".to_string()));
         assert_eq!(status().await, "running");
-        assert!(health_ok(&base_url().await, &session_capability().await).await);
+        assert!(health_ok().await);
 
-        // The previous launch's capability must be dead: the new core has its
-        // own, so a stale URL cannot answer even if the port is reused.
-        assert!(!health_ok(&first_base, &first_capability).await);
+        // After shutdown the old core answers nothing.
         shutdown().await.expect("shutdown");
+        assert_eq!(status().await, "starting");
+        assert!(!health_ok().await);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
-    async fn shutdown_and_init_serialise_without_leaking_a_listener() {
+    async fn shutdown_and_init_serialise_without_leaking_a_core() {
         let _guard = CORE_TEST_LOCK.lock().await;
         let _ = shutdown().await;
         let dir = runtime_dir("serialise");
 
-        let (cfg, pool, filter, runtime, port, mock) = init_args(&dir);
-        init_core(cfg, pool, filter, runtime, port, mock)
+        let (cfg, pool, filter, runtime, mock) = init_args(&dir);
+        init_core(cfg, pool, filter, runtime, mock)
             .await
             .expect("init");
 
         let shutdown_future = shutdown();
-        let (cfg, pool, filter, runtime, port, mock) = init_args(&dir);
-        let init_future = init_core(cfg, pool, filter, runtime, port, mock);
+        let (cfg, pool, filter, runtime, mock) = init_args(&dir);
+        let init_future = init_core(cfg, pool, filter, runtime, mock);
         let (stopped, started) = tokio::join!(shutdown_future, init_future);
         stopped.expect("shutdown");
         started.expect("init");
 
         // Whichever order the lock granted, the result is a fully formed core
-        // or a fully stopped one - never a half-bound listener.
+        // or a fully stopped one - never a half-initialized core.
         if core_generation().await > 0 {
             assert_eq!(status().await, "running");
-            assert!(health_ok(&base_url().await, &session_capability().await).await);
+            assert!(health_ok().await);
         } else {
             assert_eq!(status().await, "starting");
-            assert!(base_url().await.is_empty());
+            assert!(!health_ok().await);
         }
         shutdown().await.expect("shutdown");
         let _ = std::fs::remove_dir_all(&dir);
