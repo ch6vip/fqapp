@@ -2,7 +2,7 @@
 
 面向构建、修改和调试本项目的开发者。用户使用说明见 [README.md](README.md)。
 
-> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:28080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
+> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:28080`），继续服务 `/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
 
 ---
 
@@ -59,12 +59,12 @@ Android WebView 由用户本人完成官方手机号登录和人机验证。Cook
       loopback HTTP  │             │ HTTPS (reqwest)
       127.0.0.1:28080 │             ▼
                      ▼      上游 API
-          内置 Web UI / /src/* 漫画图
+          `/src/*` 漫画图
 ```
 
 ### 数据流
 
-1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、Web 页面及其 CSS/字体、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
+1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
 2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；Web/测试用 loopback HTTP）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
@@ -84,7 +84,7 @@ fqapp/
 ├── rust/                            # fqapi_core 源码、协议夹具和 Rust 测试
 ├── android/                         # Android 工程、原生插件与 JVM 测试
 ├── native/                          # CENC 流式 C 解密库、JNI 与 CMake
-├── assets/                          # 配置示例、Web UI、插件、图片和动画
+├── assets/                          # 配置示例、插件、图片和动画
 ├── test/                            # Flutter 测试及 Node 主机回归
 ├── scripts/                         # 构建、验证和资源生成；见 scripts/README.md
 ├── .github/workflows/               # Android APK 与原生库 CI

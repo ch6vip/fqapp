@@ -1,4 +1,4 @@
-//! The `/api/*` Web bridge shared by the built-in Web UI.
+//! The legacy `/api/*` bridge used by the Flutter app over FFI dispatch.
 
 use serde_json::{json, Map, Value};
 

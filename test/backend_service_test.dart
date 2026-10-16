@@ -154,15 +154,13 @@ void main() {
     // The pool holds real device credentials: a restart must not overwrite it.
     final pool = File('${directory.path}/backend/config/device_pool.json');
     await pool.writeAsString('registered-device');
-    final stylesheet = File(
-      '${directory.path}/backend/web/assets/css/all.min.css',
-    );
-    await stylesheet.writeAsString('old stylesheet');
+    final plugin = File('${directory.path}/backend/plugins/player.html');
+    await plugin.writeAsString('old plugin');
     await backend.stop();
 
     await backend.start();
     expect(await pool.readAsString(), 'registered-device');
-    expect(await stylesheet.readAsString(), '{}');
+    expect(await plugin.readAsString(), '{}');
     await backend.stop();
   });
 
@@ -258,9 +256,6 @@ class _BackendAssets extends CachingAssetBundle {
   final allowLoad = Completer<void>();
   static const runtimeAssets = [
     'assets/filters/book.js',
-    'assets/web/index.html',
-    'assets/web/assets/css/all.min.css',
-    'assets/web/assets/webfonts/fa-solid-900.woff2',
     'assets/plugins/player.html',
   ];
 

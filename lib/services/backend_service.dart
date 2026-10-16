@@ -11,9 +11,9 @@ import 'backend_transport.dart';
 ///
 /// The backend is the Rust native core (`rust/`, packaged as
 /// `libfqapi_core.so`). Flutter calls it over flutter_rust_bridge; the same
-/// Rust core also serves the built-in Web UI and `/src/*` resources over a
-/// loopback HTTP adapter, which is why [baseUrl] still exists for resource
-/// resolution in `ApiClient.absoluteUrl`.
+/// Rust core also serves `/src/*` resources over a loopback HTTP adapter,
+/// which is why [baseUrl] still exists for resource resolution in
+/// `ApiClient.absoluteUrl`.
 ///
 /// There is no process to launch and no JNI bridge: `start` deploys the
 /// runtime files and initializes the core in-process.
@@ -58,13 +58,6 @@ class BackendService {
   /// Base URL used to resolve backend-relative resources.
   String get baseUrl =>
       _transport.baseUrl.isNotEmpty ? _transport.baseUrl : fallbackBaseUrl;
-
-  /// Entry URL of the built-in Web UI, capability included.
-  ///
-  /// The loopback adapter only answers a request carrying the per-launch
-  /// capability, and this is the URL that hands it to a browser as a session
-  /// cookie before redirecting to `/`.
-  String get webUiEntryUrl => backendResourceBase(baseUrl, _transport.capability);
 
   /// Whether the Rust FFI transport is in use (as opposed to the HTTP adapter).
   bool get usesRustTransport => _transport is RustBackendTransport;
@@ -159,7 +152,7 @@ class BackendService {
 
     // Use the bundle manifest so nested CSS/fonts and plugin files are
     // deployed along with the top-level HTML and filters.
-    const runtimeRoots = ['assets/filters/', 'assets/web/', 'assets/plugins/'];
+    const runtimeRoots = ['assets/filters/', 'assets/plugins/'];
     final manifest = await AssetManifest.loadFromAssetBundle(_assets);
     for (final asset in manifest.listAssets()) {
       if (runtimeRoots.any(asset.startsWith)) {

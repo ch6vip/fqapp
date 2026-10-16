@@ -1,8 +1,8 @@
 //! Loopback HTTP adapter.
 //!
-//! Serves the built-in Web UI, `/src/*` decrypted manga images and the
-//! `/api/*` Web bridge to the same dispatcher the FFI bridge uses, so there is
-//! exactly one business implementation.
+//! Serves `/src/*` decrypted manga images and the `/api/*` bridge to the same
+//! dispatcher the FFI bridge uses, so there is exactly one business
+//! implementation.
 //!
 //! Static file bodies are streamed from disk (with Range support) instead of
 //! being read into memory, so serving a large media file costs a bounded
@@ -156,8 +156,8 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
         "{cookie_name}={}; Path=/; HttpOnly; SameSite=Strict",
         state.token
     );
-    // Clean the entry URL before HTML resolves root-relative links or loads
-    // remote media. The capability is never embedded in Web UI source.
+    // Clean the entry URL so the capability never lingers in the address bar
+    // or in served content.
     if scoped.is_some() && (request_path.is_empty() || request_path == "/") {
         return Response::builder()
             .status(StatusCode::SEE_OTHER)

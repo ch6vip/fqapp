@@ -48,7 +48,7 @@ cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnin
 cargo test --manifest-path rust/Cargo.toml --locked
 flutter analyze --no-pub
 flutter test --no-pub --concurrency=2
-node --test test/web_assets_test.cjs test/verify_audio_cenc_test.cjs test/build_rust_backend_scripts_test.cjs
+node --test test/verify_audio_cenc_test.cjs test/build_rust_backend_scripts_test.cjs
 ```
 
 `flutter test` 在宿主动态库存在时会运行 FRB 集成；库缺失时相关测试会明确跳过。`run_rust_host_tests.*` 可先重建宿主库再执行这组测试。C/JNI 主机回归和编译器要求见 [native/README.md](../native/README.md)。Android JVM 测试须在 `android/` 目录中执行：Windows 使用 `.\gradlew.bat :app:testDebugUnitTest`，Linux/macOS 使用 `./gradlew :app:testDebugUnitTest`。

@@ -105,8 +105,6 @@ def main() -> None:
 
     save_webp(source.resize((LOGO_SIZE, LOGO_SIZE), Image.Resampling.LANCZOS),
               ROOT / "assets/images/app_logo.webp", quality=LOGO_QUALITY)
-    save_png(source.resize((64, 64), Image.Resampling.LANCZOS),
-             ROOT / "assets/web/favicon.png")
 
 
 if __name__ == "__main__":
