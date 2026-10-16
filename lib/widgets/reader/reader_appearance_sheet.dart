@@ -6,6 +6,8 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
+import '../../services/reader_tap_zones.dart';
+import 'reader_tap_zone_sheet.dart';
 import 'reader_theme.dart';
 
 /// The reader typesetting bottom sheet, laid out after the official panel
@@ -82,6 +84,33 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
     // reader page or the saved preference would trail the visible one.
     _flushNotify();
     super.dispose();
+  }
+
+  /// 点击区域行摘要：左列 / 中列 / 右列的动作（每列三格相同是常见配置，
+  /// 不同时只展示“已自定义”）。
+  String get _tapZonesSummary {
+    final zones = _value.tapZones;
+    String columnSummary(int column) {
+      final actions = <ReaderTapZoneAction>{
+        zones[column],
+        zones[3 + column],
+        zones[6 + column],
+      };
+      if (actions.length == 1) return actions.single.label;
+      return '已自定义';
+    }
+
+    return '左 ${columnSummary(0)} · 中 ${columnSummary(1)} · 右 ${columnSummary(2)}';
+  }
+
+  Future<void> _editTapZones() async {
+    final zones = await showReaderTapZoneEditor(
+      context: context,
+      initialZones: _value.tapZones,
+    );
+    if (zones != null && mounted) {
+      _update(_value.copyWith(tapZones: zones));
+    }
   }
 
   Future<void> _importFont() async {
@@ -347,13 +376,25 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                             _value.copyWith(instantSwipeTurn: value),
                           ),
                         ),
-                        _toggle(
-                          '单手模式',
-                          subtitle:
-                              '点击屏幕左侧也翻到下一页（左、右两侧均翻下一页）',
-                          value: _value.tapLeftTurnsNext,
-                          onChanged: (value) => _update(
-                            _value.copyWith(tapLeftTurnsNext: value),
+                        _row(
+                          label: '点击区域',
+                          child: Expanded(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    _tapZonesSummary,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton(
+                                  onPressed: _editTapZones,
+                                  child: const Text('设置'),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                         _row(

@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'reader_tap_zones.dart';
+
 enum ReaderThemePreset { light, eyeCare, parchment, dark, eink }
 
 enum ReaderTitleAlignment { start, center }
@@ -46,6 +48,7 @@ class ReaderPreferences {
   static const _einkRefreshIntervalKey = 'reader_eink_refresh_interval';
   static const _instantSwipeTurnKey = 'reader_instant_swipe_turn';
   static const _tapLeftTurnsNextKey = 'reader_tap_left_turns_next';
+  static const _tapZonesKey = 'reader_tap_zones';
 
   final double fontSize;
   final int fontWeight;
@@ -85,9 +88,12 @@ class ReaderPreferences {
   /// 适合墨水屏（翻页动画/残影明显）。仅分页模式生效，开启后翻页方式被强制为“无”。
   final bool instantSwipeTurn;
 
-  /// “点击左侧翻右”：开启后点击屏幕左三分之一也翻到下一页（与右侧一致），
-  /// 失去“点击左侧返回上一页”。适合单手 / 墨水屏操作。
+  /// “点击左侧翻右”：旧单手模式开关，已由点击区域九宫格取代。
+  /// 仅用于首次加载迁移：无九宫格配置且该开关开着时，迁移为单手九宫格。
   final bool tapLeftTurnsNext;
+
+  /// 点击区域九宫格：9 个动作，行优先（上行 0-2，中行 3-5，下行 6-8）。
+  final List<ReaderTapZoneAction> tapZones;
 
   const ReaderPreferences({
     this.fontSize = 18,
@@ -116,6 +122,7 @@ class ReaderPreferences {
     this.einkRefreshInterval = 10,
     this.instantSwipeTurn = false,
     this.tapLeftTurnsNext = false,
+    this.tapZones = defaultReaderTapZones,
   }) : readingInfoMode = showReadingInfo == false
            ? ReaderInfoMode.hidden
            : readingInfoMode;
@@ -147,6 +154,7 @@ class ReaderPreferences {
     int? einkRefreshInterval,
     bool? instantSwipeTurn,
     bool? tapLeftTurnsNext,
+    List<ReaderTapZoneAction>? tapZones,
   }) {
     return ReaderPreferences(
       fontSize: fontSize ?? this.fontSize,
@@ -182,6 +190,7 @@ class ReaderPreferences {
           einkRefreshInterval ?? this.einkRefreshInterval,
       instantSwipeTurn: instantSwipeTurn ?? this.instantSwipeTurn,
       tapLeftTurnsNext: tapLeftTurnsNext ?? this.tapLeftTurnsNext,
+      tapZones: tapZones ?? this.tapZones,
     ).normalized();
   }
 
@@ -222,6 +231,7 @@ class ReaderPreferences {
       einkRefreshInterval: einkRefreshInterval.clamp(0, 100),
       instantSwipeTurn: instantSwipeTurn,
       tapLeftTurnsNext: tapLeftTurnsNext,
+      tapZones: ensureReaderTapZonesHaveMenu(tapZones),
     );
   }
 
@@ -279,6 +289,7 @@ class ReaderPreferences {
           (_number(preferences, _einkRefreshIntervalKey) ?? 10).round(),
       instantSwipeTurn: _boolean(preferences, _instantSwipeTurnKey) ?? false,
       tapLeftTurnsNext: _boolean(preferences, _tapLeftTurnsNextKey) ?? false,
+      tapZones: _tapZones(preferences),
     ).normalized();
   }
 
@@ -329,6 +340,10 @@ class ReaderPreferences {
       ),
       preferences.setBool(_instantSwipeTurnKey, value.instantSwipeTurn),
       preferences.setBool(_tapLeftTurnsNextKey, value.tapLeftTurnsNext),
+      preferences.setStringList(
+        _tapZonesKey,
+        encodeReaderTapZones(value.tapZones),
+      ),
     ]);
   }
 
@@ -340,6 +355,21 @@ class ReaderPreferences {
   static bool? _boolean(SharedPreferences preferences, String key) {
     final value = preferences.get(key);
     return value is bool ? value : null;
+  }
+
+  /// 九宫格加载：无保存值时回落默认；旧单手开关开着且无九宫格时，
+  /// 迁移为单手九宫格（保持旧用户行为不变）。
+  static List<ReaderTapZoneAction> _tapZones(
+    SharedPreferences preferences,
+  ) {
+    final raw = preferences.getStringList(_tapZonesKey);
+    if (raw == null) {
+      if (_boolean(preferences, _tapLeftTurnsNextKey) == true) {
+        return List<ReaderTapZoneAction>.of(oneHandReaderTapZones);
+      }
+      return List<ReaderTapZoneAction>.of(defaultReaderTapZones);
+    }
+    return normalizeReaderTapZones(raw);
   }
 
   static String _string(SharedPreferences preferences, String key) {
