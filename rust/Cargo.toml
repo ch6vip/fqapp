@@ -31,6 +31,7 @@ num-traits = "0.2"
 flate2 = "1"
 percent-encoding = "2"
 once_cell = "1"
+zeroize = { version = "1", features = ["derive"] }
 regex = "1"
 url = "2"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
