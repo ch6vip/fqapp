@@ -309,10 +309,16 @@ class ListenKeepAliveService : Service() {
                 )
                 .build(),
         )
+        // NOTE: ACTION_SEEK_TO is deliberately NOT advertised. The session
+        // previously claimed it without an onSeekTo override, so the system
+        // media card offered a seek bar whose drags went nowhere. Real seek
+        // forwarding needs a Dart-side receiver first: the method channel
+        // only carries a String action and no handler has a 'seek' case, so
+        // a Kotlin-side onSeekTo today would be silently dropped. Re-add
+        // the flag together with onSeekTo + a Dart seek handler, not alone.
         val actions = PlaybackStateCompat.ACTION_PLAY or
             PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or
-            PlaybackStateCompat.ACTION_SEEK_TO or
             PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
             PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
             PlaybackStateCompat.ACTION_STOP
