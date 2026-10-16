@@ -279,13 +279,17 @@ jobs:
               exit 1
             fi
           done
-          # 16 KiB page alignment is required by Android 15+.
+          # 16 KiB page alignment is required by Android 15+. The check runs
+          # through scripts/check_native_alignment.cjs -- the same script the
+          # APK verifier uses on the packaged libraries -- so there is one
+          # definition of "aligned": every LOAD segment p_align >= 16 KiB,
+          # power-of-two, with offset/address congruent mod 16 KiB. The old
+          # inline `readelf | grep LOAD.*0x4000$` only eyeballed one field
+          # and could pass a library misaligned in the other dimensions.
+          # The readelf dump stays as a diagnostics artifact.
           readelf_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           "$readelf_bin" -l "$so" > build/ci-artifacts/rust-core-program-headers.txt
-          if ! grep -Eq 'LOAD.*0x4000$' build/ci-artifacts/rust-core-program-headers.txt; then
-            echo 'Rust core library is not 16 KiB aligned.' >&2
-            exit 1
-          fi
+          node scripts/check_native_alignment.cjs "$so"
 
       # A contributor or fork has no access to the release keystore secrets, and
       # a hard failure here would make the workflow README recommends unusable
