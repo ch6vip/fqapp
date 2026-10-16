@@ -861,6 +861,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _pendingSeek = target;
     // ±10s 的目标在点击时就已确定，直接上报；连续快进按累计目标取数。
     widget.onSeeked?.call(target);
+    // 控制条隐藏时侧边 seek 没有任何视觉反馈：先亮起控制条
+    // （进度条随位置更新），再按原计时收起。
+    if (mounted) setState(() => _visible = true);
     unawaited(
       _control((player) async {
         try {
