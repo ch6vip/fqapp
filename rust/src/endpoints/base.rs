@@ -100,7 +100,10 @@ impl Upstream {
         spec: &UpstreamRequestSpec,
     ) -> ApiResult<(Vec<u8>, Device)> {
         let req = Self::build(spec);
-        self.up.do_with_device(&req).await.map_err(map_client_error)
+        self.up
+            .do_with_device_capped(&req, crate::upstream::http::API_BODY_LIMIT_BYTES)
+            .await
+            .map_err(map_client_error)
     }
 
     pub async fn raw_with_headers(
@@ -108,7 +111,10 @@ impl Upstream {
         spec: &UpstreamRequestSpec,
     ) -> ApiResult<(Vec<u8>, Vec<(String, String)>)> {
         let req = Self::build(spec);
-        self.up.do_request(&req).await.map_err(map_client_error)
+        self.up
+            .do_request_capped(&req, crate::upstream::http::API_BODY_LIMIT_BYTES)
+            .await
+            .map_err(map_client_error)
     }
 
     pub async fn raw(&self, spec: &UpstreamRequestSpec) -> ApiResult<Vec<u8>> {
