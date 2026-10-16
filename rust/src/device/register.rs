@@ -7,7 +7,7 @@ use crate::crypto::gzip;
 use crate::device::crypto::*;
 use crate::device::Device;
 use crate::sign::Manager;
-use crate::upstream::http::HttpTransport;
+use crate::upstream::http::{API_BODY_LIMIT_BYTES, HttpTransport};
 
 const PKG_NAME: &str = "com.dragon.read";
 const SDK_VERSION: &str = "v04.04.05-ov-android";
@@ -300,12 +300,13 @@ impl Registrar {
 
         let resp = self
             .http
-            .request(
+            .request_with_limit(
                 "POST",
                 &self.target(&req_url),
                 &headers,
                 Some(post_data),
                 None,
+                Some(API_BODY_LIMIT_BYTES),
             )
             .await
             .map_err(|e| format!("{e:?}"))?;
@@ -364,7 +365,7 @@ impl Registrar {
 
         let _ = self
             .http
-            .request("GET", &self.target(&req_url), &headers, None, None)
+            .request_with_limit("GET", &self.target(&req_url), &headers, None, None, Some(API_BODY_LIMIT_BYTES))
             .await;
         Ok(())
     }
@@ -406,7 +407,7 @@ impl Registrar {
 
         let _ = self
             .http
-            .request("POST", &self.target(&req_url), &[], Some(body_json), None)
+            .request_with_limit("POST", &self.target(&req_url), &[], Some(body_json), None, Some(API_BODY_LIMIT_BYTES))
             .await;
         Ok(())
     }
@@ -448,12 +449,13 @@ impl Registrar {
 
             let resp = match self
                 .http
-                .request(
+                .request_with_limit(
                     "POST",
                     &self.target(&req_url),
                     &headers,
                     Some(compressed.clone()),
                     None,
+                    Some(API_BODY_LIMIT_BYTES),
                 )
                 .await
             {
