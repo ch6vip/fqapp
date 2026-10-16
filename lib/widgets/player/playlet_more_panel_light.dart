@@ -185,7 +185,12 @@ class PlayletMorePanelLight extends StatelessWidget {
                         },
                       ),
                     if (onToggleDanmaku != null)
-                      _danmakuRow(context, _foreground(context)),
+                      _DanmakuSwitchRow(
+                        enabled: danmakuEnabled,
+                        onToggle: onToggleDanmaku!,
+                        foreground: _foreground(context),
+                        labelStyle: _labelStyle(context),
+                      ),
                     if (onOpenDanmakuSettings != null)
                       _actionRow(
                         context,
@@ -316,33 +321,6 @@ class PlayletMorePanelLight extends StatelessWidget {
     ),
   );
 
-  Widget _danmakuRow(BuildContext context, Color foreground) => Semantics(
-    key: const ValueKey('player-more-light-danmaku-row'),
-    label: '弹幕',
-    toggled: danmakuEnabled,
-    onTap: onToggleDanmaku,
-    excludeSemantics: true,
-    child: InkWell(
-      onTap: onToggleDanmaku,
-      excludeFromSemantics: true,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: SizedBox(
-          height: 48,
-          child: Row(
-            children: [
-              _PanelIconLight(name: 'more_danmaku', color: foreground),
-              const SizedBox(width: 8),
-              Expanded(child: Text('弹幕', style: _labelStyle(context))),
-              const SizedBox(width: 12),
-              _LightSwitch(value: danmakuEnabled),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-
   /// 官方可下钻行：图标 + 文案 + 尾注/箭头，点击随面板关闭（jm3 行语义）。
   Widget _actionRow(
     BuildContext context, {
@@ -409,6 +387,69 @@ class PlayletMorePanelLight extends StatelessWidget {
       trailing: trailing,
       onTap: onTap,
     );
+  }
+}
+
+/// 弹幕开关行：自带本地 state（深色面板同款模式）。
+///
+/// bottom sheet 不跟随父级 setState 重建，开关若只渲染传入的快照，
+/// 点完会停在旧状态、重开面板才刷新；本地 state 让开关动画立刻跟随。
+/// 面板其余行都随面板关闭（清屏/字号/下钻行）或随关闭回传（倍速/
+/// 清晰度），不受此问题影响。
+class _DanmakuSwitchRow extends StatefulWidget {
+  const _DanmakuSwitchRow({
+    required this.enabled,
+    required this.onToggle,
+    required this.foreground,
+    required this.labelStyle,
+  });
+
+  final bool enabled;
+  final VoidCallback onToggle;
+  final Color foreground;
+  final TextStyle labelStyle;
+
+  @override
+  State<_DanmakuSwitchRow> createState() => _DanmakuSwitchRowState();
+}
+
+class _DanmakuSwitchRowState extends State<_DanmakuSwitchRow> {
+  late bool _enabled = widget.enabled;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        key: const ValueKey('player-more-light-danmaku-row'),
+        label: '弹幕',
+        toggled: _enabled,
+        onTap: _toggle,
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: _toggle,
+          excludeFromSemantics: true,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox(
+              height: 48,
+              child: Row(
+                children: [
+                  _PanelIconLight(
+                    name: 'more_danmaku',
+                    color: widget.foreground,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('弹幕', style: widget.labelStyle)),
+                  const SizedBox(width: 12),
+                  _LightSwitch(value: _enabled),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  void _toggle() {
+    setState(() => _enabled = !_enabled);
+    widget.onToggle();
   }
 }
 

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -45,6 +47,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('弹幕设置'), findsNothing);
     expect(find.text('弹幕'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping the danmaku row flips the switch in place', (
+    tester,
+  ) async {
+    var toggles = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PlayletMorePanelLight(
+            rate: 1,
+            danmakuEnabled: true,
+            onToggleDanmaku: () => toggles++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey('player-more-light-danmaku-row'));
+    expect(
+      tester.getSemantics(row).hasFlag(ui.SemanticsFlag.isToggled),
+      isTrue,
+    );
+    // 开关行不关闭面板：点完不重开面板，开关必须立刻显示关闭。
+    await tester.tap(find.text('弹幕'));
+    await tester.pump();
+    expect(toggles, 1);
+    expect(
+      tester.getSemantics(row).hasFlag(ui.SemanticsFlag.isToggled),
+      isFalse,
+    );
+    await tester.tap(find.text('弹幕'));
+    await tester.pump();
+    expect(toggles, 2);
+    expect(
+      tester.getSemantics(row).hasFlag(ui.SemanticsFlag.isToggled),
+      isTrue,
+    );
     expect(tester.takeException(), isNull);
   });
 }
