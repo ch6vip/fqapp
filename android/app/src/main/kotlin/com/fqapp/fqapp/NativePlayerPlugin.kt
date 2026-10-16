@@ -246,43 +246,55 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
+    /**
+     * Required method-call argument. A missing/null argument reports
+     * INVALID_ARGUMENT to Dart instead of crashing the plugin on `!!`.
+     */
+    private fun <T> MethodCall.requiredArgument(name: String, result: MethodChannel.Result): T? {
+        val value = argument<T>(name)
+        if (value == null) {
+            result.error("INVALID_ARGUMENT", "Missing required argument: $name", null)
+        }
+        return value
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "create" -> {
-                val cdnUrl = call.argument<String>("cdnUrl")!!
-                val keyHex = call.argument<String>("keyHex")!!
+                val cdnUrl = call.requiredArgument<String>("cdnUrl", result) ?: return
+                val keyHex = call.requiredArgument<String>("keyHex", result) ?: return
                 handleCreate(cdnUrl, keyHex, result)
             }
             "play" -> {
-                val id = call.argument<Int>("id")!!
+                val id = call.requiredArgument<Int>("id", result) ?: return
                 players[id]?.player?.play()
                 result.success(null)
             }
             "pause" -> {
-                val id = call.argument<Int>("id")!!
+                val id = call.requiredArgument<Int>("id", result) ?: return
                 players[id]?.player?.pause()
                 result.success(null)
             }
             "seek" -> {
-                val id = call.argument<Int>("id")!!
-                val positionMs = call.argument<Number>("positionMs")!!.toLong()
+                val id = call.requiredArgument<Int>("id", result) ?: return
+                val positionMs = call.requiredArgument<Number>("positionMs", result)?.toLong() ?: return
                 players[id]?.player?.seekTo(positionMs)
                 result.success(null)
             }
             "setVolume" -> {
-                val id = call.argument<Int>("id")!!
-                val volume = call.argument<Number>("volume")!!.toFloat()
+                val id = call.requiredArgument<Int>("id", result) ?: return
+                val volume = call.requiredArgument<Number>("volume", result)?.toFloat() ?: return
                 players[id]?.player?.volume = volume
                 result.success(null)
             }
             "setRate" -> {
-                val id = call.argument<Int>("id")!!
-                val rate = call.argument<Number>("rate")!!.toFloat()
+                val id = call.requiredArgument<Int>("id", result) ?: return
+                val rate = call.requiredArgument<Number>("rate", result)?.toFloat() ?: return
                 players[id]?.player?.playbackParameters = PlaybackParameters(rate)
                 result.success(null)
             }
             "dispose" -> {
-                val id = call.argument<Int>("id")!!
+                val id = call.requiredArgument<Int>("id", result) ?: return
                 disposePlayer(id)
                 result.success(null)
             }
