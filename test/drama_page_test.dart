@@ -345,6 +345,58 @@ void main() {
     },
   );
 
+  // P1-15：feed 的 inactive（通知栏/控制中心）继续播，hidden 暂停，
+  // resumed 恢复。参考 audio_page_test 的 lifecycle 循环写法。
+  testWidgets('feed keeps playing through inactive, pauses on hidden', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    const nativeChannel = MethodChannel('fqapp/native_player');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      nativeChannel,
+      (call) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        nativeChannel,
+        null,
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+    final seams = _Seams(failContent: false);
+    await tester.pumpWidget(
+      _scope(
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集')],
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(seams.players.single.isPlaying, true);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await _flush(tester);
+    expect(seams.players.single.isPlaying, true);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    expect(seams.players.single.isPlaying, false);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(seams.players.single.isPlaying, true);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+  });
+
   testWidgets('the feed shows the official chrome and one full-screen card', (
     tester,
   ) async {
