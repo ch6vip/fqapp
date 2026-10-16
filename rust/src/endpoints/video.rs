@@ -3,12 +3,15 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use base64::Engine;
 use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha512};
+use tokio::io::AsyncWriteExt;
 
 use crate::endpoints::base::{
     dragon_read_json_headers, phoenix_player_headers, phoenix_player_url, Upstream, UpstreamMode,
@@ -1053,6 +1056,96 @@ async fn unsigned_get(ctx: &Ctx, url: &str, user_agent: &str) -> Option<Vec<u8>>
     }
 }
 
+/// Hard per-file bound for a single downloaded / cached video. A short-drama
+/// episode is far below this; the cap only stops a lying `Content-Length`
+/// or an endless body from filling the disk or memory.
+const MAX_VIDEO_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Total timeout for one video download, matching the 15 s the shared
+/// upstream transport applies to the old whole-body download.
+const VIDEO_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// A plain reqwest client for streaming video downloads. The shared upstream
+/// transport (`upstream/http.rs`) only exposes a whole-body API, so the
+/// download path keeps its own client; it sends the same unsigned GET with
+/// the same User-Agent as `unsigned_get` (no signing, no device headers).
+/// Built lazily so a missing TLS provider (e.g. in a unit-test embedding,
+/// where the transport never installed one) degrades to the whole-body
+/// fallback instead of failing the download.
+static STREAMING_CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+
+fn streaming_client() -> Option<&'static reqwest::Client> {
+    STREAMING_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(VIDEO_DOWNLOAD_TIMEOUT)
+                .build()
+                .ok()
+        })
+        .as_ref()
+}
+
+/// Streams a video body to `part_path` chunk by chunk, never holding the
+/// whole file in memory. Enforces the per-file cap from `Content-Length`
+/// when present and from the running byte count while streaming. Leaves a
+/// partial file behind on error; the caller deletes it.
+async fn stream_download_to_file(
+    url: &str,
+    user_agent: &str,
+    part_path: &Path,
+) -> Result<u64, String> {
+    stream_download_to_file_with_cap(url, user_agent, part_path, MAX_VIDEO_DOWNLOAD_BYTES).await
+}
+
+async fn stream_download_to_file_with_cap(
+    url: &str,
+    user_agent: &str,
+    part_path: &Path,
+    cap_bytes: u64,
+) -> Result<u64, String> {
+    let client = streaming_client().ok_or_else(|| "streaming client unavailable".to_string())?;
+    let mut resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, user_agent)
+        .send()
+        .await
+        .map_err(|e| format!("download video: {e}"))?;
+    // The whole-body path rejects anything but 200; keep that contract.
+    if resp.status() != reqwest::StatusCode::OK {
+        return Err(format!("download video: HTTP {}", resp.status()));
+    }
+    if let Some(len) = resp.content_length() {
+        if len > cap_bytes {
+            return Err(format!(
+                "download video: content-length {len} exceeds cap {cap_bytes}"
+            ));
+        }
+    }
+    let mut file = tokio::fs::File::create(part_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut total: u64 = 0;
+    loop {
+        match resp.chunk().await {
+            Ok(Some(bytes)) => {
+                total = total
+                    .checked_add(bytes.len() as u64)
+                    .ok_or_else(|| "download video: size overflow".to_string())?;
+                if total > cap_bytes {
+                    return Err(format!(
+                        "download video: streamed {total} bytes exceeds cap {cap_bytes}"
+                    ));
+                }
+                file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+            }
+            Ok(None) => break,
+            Err(e) => return Err(format!("download video: {e}")),
+        }
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    Ok(total)
+}
+
 /// Downloads the MP4, saves it to src/, and returns the served path.
 async fn download_and_save(
     ctx: &Ctx,
@@ -1099,10 +1192,32 @@ async fn download_and_save(
     let part_path = PathBuf::from(format!("{}.part", fp.display()));
     let _ = std::fs::remove_file(&part_path);
 
-    let data = unsigned_get(ctx, video_url, UA_WINDOWS_BROWSER)
-        .await
-        .ok_or_else(|| "download video: request failed".to_string())?;
-    std::fs::write(&part_path, &data).map_err(|e| e.to_string())?;
+    if streaming_client().is_some() {
+        // Streaming download: the body is written chunk by chunk and never
+        // held whole in memory (P1-9). `VIDEO_CACHE_LOCK` above still
+        // serializes downloads; the lock is kept because the cache file,
+        // the decrypt step, and the prune pass below are not safe to run
+        // concurrently for the same video.
+        if let Err(err) = stream_download_to_file(video_url, UA_WINDOWS_BROWSER, &part_path).await
+        {
+            let _ = std::fs::remove_file(&part_path);
+            return Err(err);
+        }
+    } else {
+        // No TLS provider installed in this process (unit-test embedding
+        // without the upstream transport): fall back to the shared
+        // whole-body download instead of failing outright.
+        let data = unsigned_get(ctx, video_url, UA_WINDOWS_BROWSER)
+            .await
+            .ok_or_else(|| "download video: request failed".to_string())?;
+        if data.len() as u64 > MAX_VIDEO_DOWNLOAD_BYTES {
+            return Err(format!(
+                "download video: {} bytes exceeds cap {MAX_VIDEO_DOWNLOAD_BYTES}",
+                data.len()
+            ));
+        }
+        std::fs::write(&part_path, &data).map_err(|e| e.to_string())?;
+    }
 
     if !content_key.is_empty() {
         if let Err(err) = decrypt_cached_video_if_needed(&part_path, content_key) {
@@ -1191,14 +1306,26 @@ fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
 }
 
 fn decrypt_cached_video_if_needed(fp: &Path, content_key: &[u8]) -> Result<(), String> {
-    let data = std::fs::read(fp).map_err(|e| e.to_string())?;
+    // Bound the read: a cached file above the per-file cap is rejected
+    // instead of being slurped into memory.
+    let meta = std::fs::metadata(fp).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_VIDEO_DOWNLOAD_BYTES {
+        return Err(format!(
+            "cached video {} bytes exceeds cap {MAX_VIDEO_DOWNLOAD_BYTES}",
+            meta.len()
+        ));
+    }
+    let mut data = std::fs::read(fp).map_err(|e| e.to_string())?;
     if !mp4_needs_cenc_decrypt(&data) {
         return Ok(());
     }
-    let mut buf = data.clone();
-    decrypt_cenc_mp4(&mut buf, content_key)?;
+    // Decrypt in place on the single buffer: the old code cloned it first,
+    // doubling peak memory for the largest files. Full streaming decrypt
+    // would need the CENC box walk (`decrypt_cenc_mp4`) restructured around
+    // a partial `moov`, so the whole-file decrypt stays, minus the copy.
+    decrypt_cenc_mp4(&mut data, content_key)?;
     let tmp = PathBuf::from(format!("{}.tmp", fp.display()));
-    std::fs::write(&tmp, &buf).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, &data).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, fp).map_err(|e| e.to_string())
 }
 
@@ -2155,6 +2282,110 @@ mod cenc_sample_fixture {
         assert!(new_image.exists(), "kept image must survive");
         assert!(in_flight.exists(), "in-flight .part must never be deleted");
         assert!(unrelated.exists(), "unrelated files must never be deleted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P1-9: the download must stream chunk by chunk (never hold the whole
+    /// file in memory) and enforce the per-file cap, both from an
+    /// advertised `Content-Length` and from the running byte count.
+    /// A local TCP server stands in for the upstream host.
+    async fn serve_once(body: Vec<u8>, advertised: Option<u64>) -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let port = listener.local_addr().expect("test server addr").port();
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let header = match advertised {
+                    Some(len) => format!(
+                        "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {len}\r\n\r\n"
+                    ),
+                    None => "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string(),
+                };
+                let _ = socket.write_all(header.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        (port, handle)
+    }
+
+    fn ensure_test_crypto_provider() {
+        // The streaming client is built with rustls-no-provider, so it
+        // needs the process-wide default provider the upstream transport
+        // normally installs at startup. Mirror `upstream/http.rs`.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    #[tokio::test]
+    async fn stream_download_writes_body_without_whole_file_buffer() {
+        ensure_test_crypto_provider();
+        let body: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let (port, server) = serve_once(body.clone(), Some(body.len() as u64)).await;
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-stream-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let part = dir.join("ep.mp4.part");
+        let url = format!("http://127.0.0.1:{port}/ep.mp4");
+        let total = stream_download_to_file(&url, UA_WINDOWS_BROWSER, &part)
+            .await
+            .expect("stream download");
+        assert_eq!(total, body.len() as u64);
+        assert_eq!(std::fs::read(&part).expect("read part"), body);
+        let _ = server.await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stream_download_rejects_lying_content_length() {
+        ensure_test_crypto_provider();
+        let body = vec![b'x'; 64];
+        let (port, server) =
+            serve_once(body, Some(MAX_VIDEO_DOWNLOAD_BYTES + 1)).await;
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-stream-cap-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let part = dir.join("ep.mp4.part");
+        let url = format!("http://127.0.0.1:{port}/ep.mp4");
+        let err = stream_download_to_file(&url, UA_WINDOWS_BROWSER, &part)
+            .await
+            .expect_err("lying Content-Length must be rejected");
+        assert!(err.contains("content-length"), "unexpected error: {err}");
+        assert!(!part.exists(), "no file must be created on precheck failure");
+        let _ = server.await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stream_download_enforces_cap_from_running_total() {
+        ensure_test_crypto_provider();
+        // No advertised length: the running byte count must stop the
+        // download. A small cap keeps the test fast.
+        let body = vec![b'y'; 100];
+        let (port, server) = serve_once(body, None).await;
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-stream-total-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let part = dir.join("ep.mp4.part");
+        let url = format!("http://127.0.0.1:{port}/ep.mp4");
+        // Exercise the same loop with a small cap via the test-only seam.
+        let err = stream_download_to_file_with_cap(&url, UA_WINDOWS_BROWSER, &part, 10)
+            .await
+            .expect_err("stream past the cap must be rejected");
+        assert!(err.contains("exceeds cap"), "unexpected error: {err}");
+        let _ = server.await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 
