@@ -373,6 +373,7 @@ jobs:
       - name: Write download summary
         env:
           ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          HAS_RELEASE_SIGNING: ${{ steps.signing.outputs.has_release_signing }}
         run: |
           {
             printf '[下载 ARM64 APK 和校验报告](%s)\n\n' "$ARTIFACT_URL"
@@ -380,8 +381,19 @@ jobs:
             printf 'Rust core: `fqapi_core` (flutter_rust_bridge `%s`)\n\n' "$FRB_VERSION"
             printf 'Rust core library SHA-256: `%s`\n\n' \
               "$(sha256sum android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so | cut -d ' ' -f 1)"
-            printf 'Release signer SHA-256: `%s`\n\n' "$RELEASE_SIGNER_SHA256"
-            printf '使用正式 release 签名。已验证 Rust 核心库与 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+            # Only a build that actually restored the release signing identity
+            # may claim the formal release signature. Anything else (missing
+            # secrets, fork PR) is unsigned: say so plainly, print no
+            # formal-signature fingerprint, and warn it cannot upgrade a
+            # signed install.
+            if [ "$HAS_RELEASE_SIGNING" = "true" ]; then
+              printf 'Release signer SHA-256: `%s`\n\n' "$RELEASE_SIGNER_SHA256"
+              printf '使用正式 release 签名。已验证 Rust 核心库与 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+            else
+              printf '未签名（UNSIGNED）构建，仅供检查。\n\n'
+              printf '未使用正式 release 签名，不可覆盖安装到已签名版本；如需安装请先卸载已签名版本。\n\n'
+              printf '已验证 Rust 核心库与 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove temporary signing file
