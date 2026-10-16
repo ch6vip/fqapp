@@ -130,7 +130,7 @@ void main() {
   }
 
   testWidgets(
-    'playback state, buffering, background and readiness stop scrolling',
+    'playback state, buffering, hidden background and readiness stop scrolling; inactive keeps scrolling',
     (tester) async {
       await portrait(tester);
       final player = FakeNativePlayer()..isPlaying = true;
@@ -166,7 +166,12 @@ void main() {
       await mount();
       await expectMoving();
 
+      // inactive（通知栏/控制中心下拉）不暂停：视频继续播，弹幕继续滚。
+      // 只有 hidden（切后台/锁屏）才暂停（P1-15，与 #24 Part 1 一致）。
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      await expectMoving();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
       await tester.pump();
       await expectStopped();
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
