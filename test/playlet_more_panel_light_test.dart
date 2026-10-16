@@ -88,6 +88,79 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('danmaku switch follows externally updated enabled', (
+    tester,
+  ) async {
+    var toggles = 0;
+    // 父级在面板打开期间翻转 danmakuEnabled 并原地重建：开关必须跟随，
+    // 否则之后每次点击都会与父级持续反向。
+    Widget buildPanel({required bool enabled}) => MaterialApp(
+      home: Scaffold(
+        body: PlayletMorePanelLight(
+          rate: 1,
+          danmakuEnabled: enabled,
+          onToggleDanmaku: () => toggles++,
+        ),
+      ),
+    );
+    await tester.pumpWidget(buildPanel(enabled: true));
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey('player-more-light-danmaku-row'));
+    expect(
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
+      isTrue,
+    );
+    await tester.pumpWidget(buildPanel(enabled: false));
+    await tester.pump();
+    expect(
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
+      isFalse,
+    );
+    // 同步后点击应从父级当前值翻转，而不是从旧 State 的旧值翻转。
+    await tester.tap(find.text('弹幕'));
+    await tester.pump();
+    expect(toggles, 1);
+    expect(
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
+      isTrue,
+    );
+    await tester.pumpWidget(buildPanel(enabled: true));
+    await tester.pump();
+    expect(
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('danmaku switch starts off and follows externally updated enabled', (
+    tester,
+  ) async {
+    Widget buildPanel({required bool enabled}) => MaterialApp(
+      home: Scaffold(
+        body: PlayletMorePanelLight(
+          rate: 1,
+          danmakuEnabled: enabled,
+          onToggleDanmaku: () {},
+        ),
+      ),
+    );
+    await tester.pumpWidget(buildPanel(enabled: false));
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey('player-more-light-danmaku-row'));
+    expect(
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
+      isFalse,
+    );
+    await tester.pumpWidget(buildPanel(enabled: true));
+    await tester.pump();
+    expect(
+      tester.getSemantics(row).flagsCollection.isToggled == ui.Tristate.isTrue,
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 void _noop() {}
