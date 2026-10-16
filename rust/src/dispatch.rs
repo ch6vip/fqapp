@@ -1,11 +1,11 @@
-//! The single request dispatcher shared by the FFI bridge and the loopback
-//! HTTP adapter. Port of `router.go` `Server.ServeHTTP`.
+//! The single request dispatcher behind the FFI bridge. Port of `router.go`
+//! `Server.ServeHTTP`.
 //!
 //! Architecture decision and consequences:
 //! .agents/notes/implemented/architecture/2026-09-23-rust-native-core-migration.md
 //!
 //! There is exactly one business implementation: Flutter reaches it over
-//! flutter_rust_bridge, and the loopback HTTP adapter routes through it too.
+//! flutter_rust_bridge, and nothing else listens on a socket.
 
 use std::path::{Path, PathBuf};
 
@@ -20,7 +20,7 @@ pub struct Request {
     pub path: String,
     pub query: String,
     pub body: Vec<u8>,
-    /// Request headers, lower-cased by the adapter. Only the static file path
+    /// Request headers, lower-cased by the caller. Only the static file path
     /// consumes them today (Range/HEAD); business endpoints are unaffected.
     pub headers: Vec<(String, String)>,
 }
@@ -35,7 +35,7 @@ impl Request {
 }
 
 /// Response body: either bytes already in memory, or a byte range of a file
-/// the loopback adapter streams without reading it into memory.
+/// read on demand by [`Response::into_bytes`].
 #[derive(Debug, Clone)]
 pub enum ResponseBody {
     Bytes(Vec<u8>),
@@ -81,7 +81,7 @@ impl Response {
     }
 
     /// Materialises the body into bytes. Used by the FFI transport and by
-    /// tests; the loopback adapter streams `File` bodies instead.
+    /// tests.
     pub async fn into_bytes(self) -> Result<Vec<u8>, String> {
         match self.body {
             ResponseBody::Bytes(b) => Ok(b),
@@ -118,12 +118,11 @@ async fn read_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, St
 }
 
 /// APIs that submit user actions under the device identity (comments add /
-/// digg / reply; the danmaku add route reuses `playlet_comment_add`). The
-/// loopback adapter is callable by other local HTTP clients, so a GET must
-/// never turn into an upstream POST just because the path matched one of
-/// these. New device-bound write routes must be added here and to the
-/// contract test; the list lives apart from router.rs's route table on
-/// purpose — see
+/// digg / reply; the danmaku add route reuses `playlet_comment_add`). A GET
+/// must never turn into an upstream POST just because the path matched one of
+/// these, whatever calls the dispatcher. New device-bound write routes must
+/// be added here and to the contract test; the list lives apart from
+/// router.rs's route table on purpose — see
 /// .agents/notes/implemented/bug-fix/2026-09-28-loopback-write-methods.md.
 const DEVICE_BOUND_WRITE_APIS: &[&str] = &[
     "playlet_comment_add",

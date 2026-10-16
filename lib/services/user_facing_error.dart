@@ -24,8 +24,8 @@ String userFacingError(Object error) {
   }
   if (error is TimeoutException) return '加载超时，请检查网络后重试';
   if (error is SocketException || error is http.ClientException) {
-    // API calls go through the local backend, so a refused loopback
-    // connection says nothing about the device's actual connectivity.
+    // No HTTP backend anymore: a socket error here is a real
+    // network failure (upstream / CDN), not a local-backend hiccup.
     return '网络连接异常，请稍后重试';
   }
   if (error is FormatException) return '内容解析失败，请稍后重试';

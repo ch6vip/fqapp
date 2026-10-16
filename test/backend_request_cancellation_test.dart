@@ -19,12 +19,6 @@ class _RecordingTransport implements BackendTransport {
   Completer<void>? gate;
 
   @override
-  String get baseUrl => 'http://localhost:9000';
-
-  @override
-  String get capability => '';
-
-  @override
   Future<BackendResponse> send(
     String method,
     Uri url, {
@@ -94,8 +88,6 @@ void main() {
     });
 
     test('request ids are unique across transport instances', () {
-      final first = RustBackendTransport();
-      final second = RustBackendTransport();
       final ids = {
         RustBackendTransport.nextRequestId(),
         RustBackendTransport.nextRequestId(),
@@ -104,7 +96,6 @@ void main() {
       expect(ids, hasLength(3));
       // The id source is shared, so a restarted or second transport cannot
       // reissue an id that is still registered in the Rust core.
-      expect(first.port, second.port);
     });
   });
 

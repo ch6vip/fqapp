@@ -202,9 +202,6 @@ class _FakeRustTransport extends RustBackendTransport {
   final allowStop = Completer<void>();
 
   @override
-  String get baseUrl => 'http://127.0.0.1:8080';
-
-  @override
   Future<String> start({
     required String configPath,
     required String poolPath,

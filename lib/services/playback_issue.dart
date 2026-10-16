@@ -47,8 +47,9 @@ enum PlaybackIssue {
       return error.message == '获取播放地址失败' ? unavailable : service;
     }
     if (error is http.ClientException) {
-      // API calls use a local backend. A refused loopback connection says
-      // nothing about whether Wi-Fi or mobile data is connected.
+      // Loopback URIs no longer occur (no HTTP backend); kept as
+      // defense so a stale local address is never reported as a
+      // Wi-Fi/mobile-data outage.
       final host = error.uri?.host;
       if (host == '127.0.0.1' || host == 'localhost' || host == '::1') {
         return service;

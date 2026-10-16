@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/backend_image_provider.dart';
 import '../services/backend_transport.dart';
 import '../services/comic_page_layout.dart';
 import '../services/library_store.dart';
@@ -19,25 +20,28 @@ typedef ComicImageProviderFactory =
 
 /// Default provider for one comic page: memory-only.
 ///
-/// Comic URLs carry the per-launch loopback capability in their path, so
-/// they must never go through a disk-persisted image cache: a cached entry
-/// would keep the capability alive past the launch that issued it.
-/// [NetworkImage] only feeds Flutter's in-memory [ImageCache], and
-/// [ResizeImage] with [ResizeImagePolicy.fit] keeps the old 2048×8192
-/// decode bound as an aspect-preserving max box (the old
-/// `CachedNetworkImageProvider` maxWidth/maxHeight semantics; the
-/// `exact` default would stretch to 2048×8192).
+/// Backend resources (`/src/...`) load through the FFI bridge, which never
+/// touches a disk cache. CDN pages use [NetworkImage], which only feeds
+/// Flutter's in-memory [ImageCache]. [ResizeImage] with
+/// [ResizeImagePolicy.fit] keeps the old 2048×8192 decode bound as an
+/// aspect-preserving max box (the old `CachedNetworkImageProvider`
+/// maxWidth/maxHeight semantics; the `exact` default would stretch to
+/// 2048×8192).
 @visibleForTesting
-ImageProvider<Object> defaultComicImageProvider(ComicImage image) =>
-    ResizeImage(
-      NetworkImage(
-        image.url,
-        headers: image.headers.isEmpty ? null : image.headers,
-      ),
-      width: 2048,
-      height: 8192,
-      policy: ResizeImagePolicy.fit,
-    );
+ImageProvider<Object> defaultComicImageProvider(ComicImage image) {
+  final ImageProvider<Object> inner = isBackendResourceUrl(image.url)
+      ? BackendImageProvider(image.url)
+      : NetworkImage(
+          image.url,
+          headers: image.headers.isEmpty ? null : image.headers,
+        );
+  return ResizeImage(
+    inner,
+    width: 2048,
+    height: 8192,
+    policy: ResizeImagePolicy.fit,
+  );
+}
 
 class ComicReaderPage extends StatefulWidget {
   final String bookId;

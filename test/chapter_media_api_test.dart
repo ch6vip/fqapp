@@ -145,7 +145,7 @@ void main() {
   });
 
   test(
-    'comic API returns ordered absolute URLs from the manga bridge',
+    'comic API returns ordered backend paths and CDN URLs from the manga bridge',
     () async {
       late Uri sent;
       final transport = MockClient((request) async {
@@ -169,9 +169,9 @@ void main() {
         'tab': '漫画',
       });
       expect(images.map((image) => image.url), [
-        '$base/src/b.jpg',
+        '/src/b.jpg',
         'https://cdn.example/a.jpg',
-        '$base/src/b.jpg',
+        '/src/b.jpg',
       ]);
     },
   );
@@ -188,7 +188,7 @@ void main() {
       client: transport,
       baseUrl: base,
     ).comicImages('chapter');
-    expect(pages.single.url, '$base/src/page.webp?x=1&y=2');
+    expect(pages.single.url, '/src/page.webp');
   });
 
   test('typed media APIs surface nested upstream business messages', () async {
@@ -256,7 +256,7 @@ void main() {
       timeout: const Duration(milliseconds: 20),
       comicTimeout: const Duration(milliseconds: 250),
     );
-    expect((await api.comicImages('chapter')).single.url, '$base/src/page.jpg');
+    expect((await api.comicImages('chapter')).single.url, '/src/page.jpg');
   });
 
   for (final stallsBody in [false, true]) {

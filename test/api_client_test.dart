@@ -321,17 +321,14 @@ void main() {
     final api = ApiClient(client: transport, baseUrl: 'http://localhost:9000');
 
     expect(api.absoluteUrl('  '), isEmpty);
-    expect(
-      api.absoluteUrl('/src/video.mp4'),
-      'http://localhost:9000/src/video.mp4',
-    );
-    expect(
-      api.absoluteUrl('src/video.mp4'),
-      'http://localhost:9000/src/video.mp4',
-    );
+    // Backend paths are returned as-is for the FFI image provider; there is
+    // no HTTP adapter to resolve them against anymore.
+    expect(api.absoluteUrl('/src/video.mp4'), '/src/video.mp4');
+    expect(api.absoluteUrl('src/video.mp4'), '/src/video.mp4');
+    // Protocol-relative URLs inherit https, as a browser would.
     expect(
       api.absoluteUrl('//cdn.example/video.mp4'),
-      'http://cdn.example/video.mp4',
+      'https://cdn.example/video.mp4',
     );
     const signed = 'https://cdn.example/video.mp4?sign=a%2Fb+xyz';
     expect(api.absoluteUrl(' $signed '), signed);
@@ -362,7 +359,7 @@ void main() {
           ),
         );
         addTearDown(transport.close);
-        final tabs = await ApiClient(client: transport).searchTabs('中文');
+        final tabs = await ApiClient(client: transport, baseUrl: 'http://localhost:9000').searchTabs('中文');
         expect(tabs.single.items.single.title, '中文书名');
       }
     },
@@ -378,7 +375,7 @@ void main() {
       );
       addTearDown(transport.close);
       await expectLater(
-        ApiClient(client: transport).detail('1'),
+        ApiClient(client: transport, baseUrl: 'http://localhost:9000').detail('1'),
         throwsA(isA<ApiException>().having((e) => e.message, 'message', '失败')),
       );
     }

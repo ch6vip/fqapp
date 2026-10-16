@@ -32,18 +32,16 @@ Future<String> init({
   required String poolPath,
   required String filterPath,
   required String runtimeDir,
-  required int port,
   required String mockUpstreamOrigin,
 }) => RustLib.instance.api.crateApiInit(
   configPath: configPath,
   poolPath: poolPath,
   filterPath: filterPath,
   runtimeDir: runtimeDir,
-  port: port,
   mockUpstreamOrigin: mockUpstreamOrigin,
 );
 
-/// Stops the loopback adapter and drops the core.
+/// Drops the core.
 ///
 /// Waits for an in-flight initialization first, so a shutdown issued during
 /// `init` tears down the core that `init` just created rather than leaving it
@@ -57,19 +55,6 @@ Future<void> shutdown() => RustLib.instance.api.crateApiShutdown();
 /// through `init_android`'s `Result`, so `status()` only ever observes a live
 /// core or none at all.
 Future<String> status() => RustLib.instance.api.crateApiStatus();
-
-/// Base URL of the loopback adapter, for resource URLs (`absoluteUrl`).
-Future<String> baseUrl() => RustLib.instance.api.crateApiBaseUrl();
-
-/// Per-launch capability of the loopback adapter.
-///
-/// Every request the adapter accepts must carry it: as a `/_session/<cap>`
-/// path prefix, an `Authorization: Bearer` header, or the session cookie the
-/// entry URL sets. `base_url()` deliberately stays capability-free - the same
-/// value is the FFI path root, and FFI calls never cross the socket. URLs
-/// handed to HTTP clients instead (`/src/...`) must carry the prefix.
-Future<String> sessionCapability() =>
-    RustLib.instance.api.crateApiSessionCapability();
 
 /// The single entry point for every backend call from Flutter.
 ///

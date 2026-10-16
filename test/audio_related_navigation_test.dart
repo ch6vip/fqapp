@@ -23,31 +23,36 @@ const _related = RelatedWork(kind: 'book', id: 'novel', title: '关联原著');
 
 void main() {
   setUpAll(() async {
-    // Initialize this isolate's shared API with an offline HTTP client. The
+    // Smoke-check directory parsing with an offline HTTP client. The
     // related-work route still builds its real DetailPage and listening entry.
-    final api = http.runWithClient(
-      () => ApiClient.instance,
-      () => MockClient((request) async {
-        final data = request.url.path == '/api/directory'
-            ? {
-                'chapterListWithVolume': [
-                  [
-                    {'itemId': 'novel-1', 'title': '原著第一章'},
-                  ],
+    // (ApiClient.instance goes through the in-process Rust core, which is not
+    // running here, so the mock goes through an explicit HTTP transport.)
+    final transport = MockClient((request) async {
+      final data = request.url.path == '/api/directory'
+          ? {
+              'chapterListWithVolume': [
+                [
+                  {'itemId': 'novel-1', 'title': '原著第一章'},
                 ],
-              }
-            : <String, Object>{};
-        return http.Response(
-          jsonEncode({'code': 0, 'data': data}),
-          200,
-          headers: {'content-type': 'application/json; charset=utf-8'},
-        );
-      }),
-    );
+              ],
+            }
+          : <String, Object>{};
+      return http.Response(
+        jsonEncode({'code': 0, 'data': data}),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    addTearDown(transport.close);
+    final api = ApiClient(client: transport, baseUrl: 'http://localhost:9000');
     expect(
       (await api.directoryChapters('novel')).single.single.itemId,
       'novel-1',
     );
+    // Point the shared client at the mock too: the related-work route builds
+    // a real DetailPage, which reads ApiClient.instance.
+    ApiClient.testInstance = api;
+    addTearDown(() => ApiClient.testInstance = null);
   });
 
   setUp(() {

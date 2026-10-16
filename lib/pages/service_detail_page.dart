@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/api_client.dart';
-import '../services/backend_service.dart';
 import '../widgets/home/home_design.dart';
 import 'log_viewer_page.dart';
 
 /// 服务详情页：把原来分散在「服务」分类下的三项（本地后端、服务状态、日志）
-/// 整合成一页：状态自检、用途说明、服务地址、日志入口。
+/// 整合成一页：状态自检、用途说明、日志入口。本地后端在应用进程内运行，
+/// 不监听任何端口，别的 App 无法访问。
 class ServiceDetailPage extends StatefulWidget {
   const ServiceDetailPage({super.key, this.healthCheck});
 
@@ -64,7 +64,7 @@ class _ServiceDetailPageState extends State<ServiceDetailPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
             child: Text(
-              '本地后端为漫画图提供服务，仅本机可访问，不对外暴露。',
+              '本地后端在应用进程内运行，为漫画图提供服务，不监听任何端口，别的 App 无法访问。',
               style: TextStyle(fontSize: 13, color: palette.muted),
             ),
           ),
@@ -99,12 +99,6 @@ class _ServiceDetailPageState extends State<ServiceDetailPage> {
                       tooltip: '重新检查',
                       onPressed: checking ? null : _refresh,
                     ),
-                  ),
-                  Divider(height: 1, indent: 68, color: palette.line),
-                  ListTile(
-                    leading: const Icon(LucideIcons.globe),
-                    title: const Text('服务地址'),
-                    subtitle: Text(BackendService.instance.baseUrl),
                   ),
                   Divider(height: 1, indent: 68, color: palette.line),
                   ListTile(

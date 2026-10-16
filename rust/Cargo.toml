@@ -34,12 +34,13 @@ once_cell = "1"
 zeroize = { version = "1", features = ["derive"] }
 regex = "1"
 url = "2"
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
-tower = "0.5"
-tower-http = { version = "0.6", default-features = false, features = ["fs", "set-header"] }
-http-body-util = "0.1"
 futures = "0.3"
 log = "0.4"
+
+# Test-only: the mock upstream in tests/common and the mock upstream in
+# api/mod.rs's tests. Nothing in the shipping core serves HTTP anymore.
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 
 # The shipping app runs the core in-process on Android; `adb logcat` is the
 # only observability surface it has. Desktop/test builds keep log macros as

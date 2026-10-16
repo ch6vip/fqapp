@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/audio_extra.dart';
@@ -45,8 +45,8 @@ class HomepagePage {
 
 /// API client talking to the local Rust core.
 ///
-/// Uses the same `/api/*` bridge the web UI uses, so responses are already
-/// normalized for the frontend (search tabs, chapterListWithVolume, etc.).
+/// Uses the `/api/*` bridge, so responses are already normalized for the
+/// frontend (search tabs, chapterListWithVolume, etc.).
 class ApiClient {
   ApiClient({
     http.Client? client,
@@ -59,11 +59,23 @@ class ApiClient {
            (client != null || baseUrl != null
                ? HttpBackendTransport(
                    client: client,
-                   baseUrl: baseUrl ?? BackendService.instance.baseUrl,
+                   baseUrl: baseUrl ?? '',
                  )
                : BackendService.instance.transport);
 
-  static final ApiClient instance = ApiClient();
+  static final ApiClient _defaultInstance = ApiClient();
+
+  /// The shared client pages use. Tests may point it at a mock transport;
+  /// production code never sets this. The old `http.runWithClient` trick
+  /// stopped working when the Rust transport lost its HTTP fallback, so the
+  /// seam is explicit now.
+  static ApiClient get instance => _testInstance ?? _defaultInstance;
+
+  static ApiClient? _testInstance;
+
+  /// Replaces [instance] for a test; pass `null` to restore the default.
+  @visibleForTesting
+  static set testInstance(ApiClient? client) => _testInstance = client;
 
   /// Fixed read-only library resources; credentials stay in the POST body.
   Future<Map<String, dynamic>> fanqieLibraryResource({
@@ -155,9 +167,9 @@ class ApiClient {
     return runZoned(body, zoneValues: {_requestZoneKey: request});
   }
 
-  /// Business calls go through the Rust core by default. Tests and the Web
-  /// build inject an [http.Client]/base URL and get the loopback HTTP adapter,
-  /// which shares the same Rust dispatcher.
+  /// Business calls go through the Rust core by default. Tests inject an
+  /// [http.Client]/base URL and get a plain HTTP transport against a mock
+  /// server.
   final BackendTransport _transport;
 
   /// 视频 tab（短剧 feed）的 cell id，按 tab_type 缓存：官方第二段
@@ -175,21 +187,9 @@ class ApiClient {
   // before its JSON response is ready, so they need a separate finite limit.
   final Duration _comicTimeout;
 
-  /// Base URL used to resolve backend-relative resources (`/src/...`). It is
-  /// read from the transport so a backend restart cannot leave a stale port.
-  String get _base => _transport.baseUrl;
-
-  /// Base URL for resources an HTTP client will fetch.
-  ///
-  /// Unlike [_base] it carries the loopback capability in its path and ends in
-  /// `/`, which is what lets [resolveBackendResource] re-anchor a root-relative
-  /// `/src/...` under it. JSON API paths keep using [_base]: they travel over
-  /// FFI, which never crosses the socket and so needs no capability.
-  String get _resourceBase =>
-      backendResourceBase(_transport.baseUrl, _transport.capability);
-
-  /// Converts a backend-relative resource (`/src/foo.mp4`) into a URL the
-  /// Flutter networking plugins can consume. JSON API paths stay untouched.
+  /// Converts a backend-relative resource (`/src/...`) into the path the
+  /// FFI image provider fetches. Absolute URLs (CDN covers, streams) pass
+  /// through untouched; JSON API paths never go through here.
   String absoluteUrl(String value) {
     final raw = value.trim();
     if (raw.isEmpty) return raw;
@@ -201,7 +201,17 @@ class ApiClient {
       }
       return raw;
     }
-    return resolveBackendResource(_resourceBase, raw);
+    return resolveBackendResource(raw);
+  }
+
+  /// Fetches a backend-managed resource (`/src/...`, manga/chapter images)
+  /// through the in-process bridge. Throws on a non-200 response.
+  Future<Uint8List> fetchBackendResource(String path) async {
+    final response = await _get(path);
+    if (response.statusCode != 200) {
+      throw ApiException('资源加载失败 (${response.statusCode})');
+    }
+    return response.bodyBytes;
   }
 
   /// Decodes and envelope-checks a response body on a background isolate so
@@ -297,7 +307,7 @@ class ApiClient {
   }
 
   String _url(String path, Map<String, String> query) =>
-      Uri.parse(_base).resolve(path).replace(queryParameters: query).toString();
+      Uri(path: path, queryParameters: query).toString();
 
   String _searchUrl(String query, int page) =>
       _url('/api/search', {'source': '番茄', 'query': query, 'page': '$page'});
@@ -470,7 +480,6 @@ class ApiClient {
     );
     final statusCode = response.statusCode;
     final bodyBytes = response.bodyBytes;
-    final baseUrl = _resourceBase;
     return Isolate.run(() {
       final payload = _decodeEnvelope(statusCode, bodyBytes);
       try {
@@ -478,7 +487,6 @@ class ApiClient {
           payload,
           itemId: itemId,
           toneId: selectedTone,
-          baseUrl: baseUrl,
         );
       } on FormatException catch (error) {
         // An upstream business error is final — do not fall through to the
@@ -490,7 +498,6 @@ class ApiClient {
           payload,
           itemId: itemId,
           toneId: selectedTone,
-          baseUrl: baseUrl,
         );
       }
     });
@@ -1153,7 +1160,7 @@ class ApiClient {
     );
   }
 
-  /// Returns comic pages in backend order with absolute HTTP(S) URLs.
+  /// Returns comic pages in backend order.
   Future<List<ComicImage>> comicImages(String itemId) async {
     final response = await _get(
       _contentUrl(itemId, tab: '漫画'),
@@ -1161,12 +1168,10 @@ class ApiClient {
     );
     final statusCode = response.statusCode;
     final bodyBytes = response.bodyBytes;
-    final baseUrl = _resourceBase;
     return Isolate.run(() {
       try {
         return parseComicImages(
           _decodeEnvelope(statusCode, bodyBytes),
-          baseUrl: baseUrl,
         );
       } on FormatException catch (error) {
         throw ApiException(error.message);
@@ -1200,7 +1205,6 @@ class ApiClient {
       );
       final status = response.statusCode;
       final bytes = response.bodyBytes;
-      final baseUrl = _resourceBase;
       return await Isolate.run(() {
         final payload = _decodeEnvelope(status, bytes);
         final data = payload['data'];
@@ -1213,7 +1217,6 @@ class ApiClient {
         }
         final content = parseChapterContent(
           data['content'] as String,
-          baseUrl: baseUrl,
         );
         if (content.isEmpty) throw const ApiException('正文为空');
         return content;
@@ -1465,7 +1468,7 @@ class ApiClient {
   Future<bool> health() async {
     try {
       final r = await _get(
-        '$_base/health',
+        '/health',
         timeout: const Duration(seconds: 3),
       );
       return r.statusCode == 200;

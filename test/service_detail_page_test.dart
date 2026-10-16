@@ -4,7 +4,7 @@ import 'package:fqapp/pages/log_viewer_page.dart';
 import 'package:fqapp/pages/service_detail_page.dart';
 
 void main() {
-  testWidgets('健康检查通过时显示运行中与服务地址', (tester) async {
+  testWidgets('健康检查通过时显示运行中且不暴露服务地址', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: ServiceDetailPage(healthCheck: () async => true),
@@ -14,8 +14,9 @@ void main() {
 
     expect(find.text('本地后端'), findsOneWidget);
     expect(find.text('运行中'), findsOneWidget);
-    expect(find.text('服务地址'), findsOneWidget);
-    expect(find.textContaining('127.0.0.1:28080'), findsOneWidget);
+    // No socket anymore: no address row, and the purpose text says so.
+    expect(find.text('服务地址'), findsNothing);
+    expect(find.textContaining('不监听任何端口'), findsOneWidget);
     expect(find.text('日志'), findsOneWidget);
   });
 

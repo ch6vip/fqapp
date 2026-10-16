@@ -1,8 +1,6 @@
 //! Endpoint registry and request context.
 //!
-//! One `Server` owns the route table; the FFI bridge and the loopback HTTP
-//! adapter both dispatch through it. Endpoint names and path matching are
-//! identical across both dispatch paths.
+//! One `Server` owns the route table; the FFI bridge dispatches through it.
 
 pub mod account_history;
 pub mod account_library;

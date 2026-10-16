@@ -255,7 +255,7 @@ void main() {
     },
   );
 
-  test('source parsing preserves encrypted, relative and legacy payloads', () {
+  test('source parsing preserves encrypted and legacy payloads', () {
     final encrypted = EpisodeSource.fromResponse({
       'data': {
         'video_url': ' https://example.invalid/a.mp4 ',
@@ -264,8 +264,13 @@ void main() {
     });
     expect(encrypted.url, 'https://example.invalid/a.mp4');
     expect(encrypted.keyHex, '1234');
-    final relative = EpisodeSource.fromResponse({'main_url': '/src/a.mp4'});
-    expect(relative.url, ApiClient.instance.absoluteUrl('/src/a.mp4'));
+    // A backend-relative video path has no playable form anymore: the native
+    // player cannot fetch /src/*.mp4 without an HTTP backend, so it is
+    // rejected like any other non-http(s) URL.
+    expect(
+      () => EpisodeSource.fromResponse({'main_url': '/src/a.mp4'}),
+      throwsA(isA<ApiException>()),
+    );
     final legacy = EpisodeSource.fromResponse({
       'data': {
         'video_model':
