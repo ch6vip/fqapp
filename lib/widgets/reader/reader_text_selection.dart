@@ -259,12 +259,14 @@ class ReaderSelectionScope {
   final Color washColor;
   final Color handleColor;
   final Color underlineColor;
+  final Color narrationColor;
 
   ReaderSelectionScope({
     required this.geometry,
     required this.washColor,
     required this.handleColor,
     required this.underlineColor,
+    required this.narrationColor,
   });
 }
 
@@ -284,6 +286,11 @@ class ReaderBlockMarkLayer extends StatefulWidget {
   final ReaderSelectionScope scope;
   final ReaderTextSelection? selection;
   final List<ReaderRangeUnderline> rangeUnderlines;
+
+  /// The sentence being narrated, in chapter display-text coordinates
+  /// (same space as [ReaderTextSelection]); painted as a background wash
+  /// behind the text. Null when nothing is being narrated.
+  final (int, int)? narrationRange;
   final Widget child;
 
   /// Block-space y window; defaults to the whole block.
@@ -298,6 +305,7 @@ class ReaderBlockMarkLayer extends StatefulWidget {
     required this.selection,
     required this.rangeUnderlines,
     required this.child,
+    this.narrationRange,
     this.windowTop = 0,
     this.windowBottom = double.infinity,
   });
@@ -362,6 +370,10 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
     final range = selection == null || !selection.isValid
         ? null
         : blockSelectionRange(widget.block, selection.start, selection.end);
+    final narration = widget.narrationRange;
+    final narrationRange = narration == null
+        ? null
+        : blockSelectionRange(widget.block, narration.$1, narration.$2);
     return Stack(
       children: [
         // First child paints first: the marks sit behind the text.
@@ -374,6 +386,8 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
               rangeUnderlines: widget.rangeUnderlines,
               washColor: widget.scope.washColor,
               underlineColor: widget.scope.underlineColor,
+              narrationRange: narrationRange,
+              narrationColor: widget.scope.narrationColor,
             ),
           ),
         ),
@@ -492,6 +506,8 @@ class ReaderBlockMarkPainter extends CustomPainter {
   final List<ReaderRangeUnderline> rangeUnderlines;
   final Color washColor;
   final Color underlineColor;
+  final (int, int)? narrationRange;
+  final Color narrationColor;
 
   const ReaderBlockMarkPainter({
     required this.block,
@@ -500,6 +516,8 @@ class ReaderBlockMarkPainter extends CustomPainter {
     required this.rangeUnderlines,
     required this.washColor,
     required this.underlineColor,
+    required this.narrationRange,
+    required this.narrationColor,
   });
 
   /// Per-line glyph rects for a block-text range: the vertical span of the
@@ -526,6 +544,18 @@ class ReaderBlockMarkPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Narration first (underneath): a user selection over the narrated
+    // sentence must stay visible on top of it.
+    final narration = narrationRange;
+    if (narration != null) {
+      final narrationPaint = Paint()..color = narrationColor;
+      for (final rect in _lineRects(narration.$1, narration.$2)) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(2)),
+          narrationPaint,
+        );
+      }
+    }
     final wash = Paint()..color = washColor;
     final selection = selectionRange;
     if (selection != null) {
@@ -555,5 +585,7 @@ class ReaderBlockMarkPainter extends CustomPainter {
       old.selectionRange != selectionRange ||
       !listEquals(old.rangeUnderlines, rangeUnderlines) ||
       old.washColor != washColor ||
-      old.underlineColor != underlineColor;
+      old.underlineColor != underlineColor ||
+      old.narrationRange != narrationRange ||
+      old.narrationColor != narrationColor;
 }

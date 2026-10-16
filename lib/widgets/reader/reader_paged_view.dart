@@ -59,6 +59,9 @@ class ReaderPagedView extends StatefulWidget {
   final ReaderTextSelection? selection;
   final List<ReaderRangeUnderline> rangeUnderlines;
 
+  /// The sentence being narrated, in chapter display-text coordinates.
+  final (int, int)? narrationRange;
+
   /// Page-turn animation; see [ReaderPageTurnStyle].
   final ReaderPageTurnStyle turnStyle;
 
@@ -103,6 +106,7 @@ class ReaderPagedView extends StatefulWidget {
     this.selectionScope,
     this.selection,
     this.rangeUnderlines = const [],
+    this.narrationRange,
   });
 
   @override
@@ -596,6 +600,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
             selectionScope: widget.selectionScope,
             selection: widget.selection,
             rangeUnderlines: widget.rangeUnderlines,
+            narrationRange: widget.narrationRange,
           );
           if (widget.turnStyle == ReaderPageTurnStyle.cover) {
             // 覆盖: the outgoing page stays pinned while the incoming one
@@ -707,6 +712,7 @@ class ReaderPageContent extends StatelessWidget {
   final ReaderSelectionScope? selectionScope;
   final ReaderTextSelection? selection;
   final List<ReaderRangeUnderline> rangeUnderlines;
+  final (int, int)? narrationRange;
 
   const ReaderPageContent({
     super.key,
@@ -719,6 +725,7 @@ class ReaderPageContent extends StatelessWidget {
     this.selectionScope,
     this.selection,
     this.rangeUnderlines = const [],
+    this.narrationRange,
   });
 
   @override
@@ -759,6 +766,7 @@ class ReaderPageContent extends StatelessWidget {
                           scope: selectionScope!,
                           selection: selection,
                           rangeUnderlines: rangeUnderlines,
+                          narrationRange: narrationRange,
                           windowTop: fragment.sourceTop,
                           windowBottom: fragment.sourceTop + fragment.height,
                           child: text,

@@ -66,6 +66,12 @@ extension ReaderThemeColors on ReaderThemePreset {
   /// 不是正文色;夜间自带 60% alpha。
   Color get selectionUnderlineColor => selectionHandleColor;
 
+  /// 朗读句高亮底色：与选区强调色区分开的暖黄，墨水屏用淡黑灰以免
+  /// 盖住正文。
+  Color get narrationHighlightColor => isEink
+      ? Colors.black.withValues(alpha: 0.10)
+      : const Color(0xFFFFC107).withValues(alpha: 0.28);
+
   Color get panelColor {
     if (isEink) return Colors.white;
     return Color.alphaBlend(

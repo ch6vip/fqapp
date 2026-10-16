@@ -405,6 +405,11 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       duration: Duration.zero,
       playing: wantPlay && !loading && error == null,
       textProgress: progress,
+      // The piece being spoken is one sentence (see _speak's sentence-sized
+      // split). Before the first piece the range is empty: no highlight.
+      sentenceRange: _pieceEnd > _pieceStart
+          ? (start: _pieceStart, end: _pieceEnd)
+          : null,
     );
     notifyListeners();
     if (notification) {

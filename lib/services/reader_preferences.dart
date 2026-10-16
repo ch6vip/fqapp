@@ -44,6 +44,7 @@ class ReaderPreferences {
   static const _keepScreenOnKey = 'reader_keep_screen_on';
   static const _autoTurnSecondsKey = 'reader_auto_turn_seconds';
   static const _listeningFollowKey = 'reader_listening_follow';
+  static const _narrationHighlightKey = 'reader_narration_highlight';
   static const _continuousReadingKey = 'reader_continuous_reading';
   static const _einkRefreshIntervalKey = 'reader_eink_refresh_interval';
   static const _instantSwipeTurnKey = 'reader_instant_swipe_turn';
@@ -75,6 +76,11 @@ class ReaderPreferences {
   /// While the audio page narrates this chapter, the reader follows the
   /// playback (听书跟随翻页).
   final bool listeningFollow;
+
+  /// While the audio page narrates this chapter, paint a background wash
+  /// behind the sentence being spoken (朗读句高亮, #25). Independent of
+  /// [listeningFollow]: the highlight can show without auto page turns.
+  final bool narrationHighlight;
 
   /// 滚动模式连续阅读：到底继续下拉进入下一章。默认开启。
   /// 普通分页始终直接跨章，不受这个滚动手势开关影响。
@@ -118,6 +124,7 @@ class ReaderPreferences {
     this.keepScreenOn = false,
     this.autoTurnSeconds = 10,
     this.listeningFollow = true,
+    this.narrationHighlight = true,
     this.continuousReading = true,
     this.einkRefreshInterval = 10,
     this.instantSwipeTurn = false,
@@ -150,6 +157,7 @@ class ReaderPreferences {
     bool? keepScreenOn,
     int? autoTurnSeconds,
     bool? listeningFollow,
+    bool? narrationHighlight,
     bool? continuousReading,
     int? einkRefreshInterval,
     bool? instantSwipeTurn,
@@ -185,6 +193,7 @@ class ReaderPreferences {
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       autoTurnSeconds: autoTurnSeconds ?? this.autoTurnSeconds,
       listeningFollow: listeningFollow ?? this.listeningFollow,
+      narrationHighlight: narrationHighlight ?? this.narrationHighlight,
       continuousReading: continuousReading ?? this.continuousReading,
       einkRefreshInterval:
           einkRefreshInterval ?? this.einkRefreshInterval,
@@ -227,6 +236,7 @@ class ReaderPreferences {
           ? autoTurnSeconds.round().clamp(3, 60)
           : 10,
       listeningFollow: listeningFollow,
+      narrationHighlight: narrationHighlight,
       continuousReading: continuousReading,
       einkRefreshInterval: einkRefreshInterval.clamp(0, 100),
       instantSwipeTurn: instantSwipeTurn,
@@ -284,6 +294,8 @@ class ReaderPreferences {
           .round()
           .clamp(3, 60),
       listeningFollow: _boolean(preferences, _listeningFollowKey) ?? true,
+      narrationHighlight:
+          _boolean(preferences, _narrationHighlightKey) ?? true,
       continuousReading: _boolean(preferences, _continuousReadingKey) ?? true,
       einkRefreshInterval:
           (_number(preferences, _einkRefreshIntervalKey) ?? 10).round(),
@@ -333,6 +345,7 @@ class ReaderPreferences {
       preferences.setBool(_keepScreenOnKey, value.keepScreenOn),
       preferences.setInt(_autoTurnSecondsKey, value.autoTurnSeconds),
       preferences.setBool(_listeningFollowKey, value.listeningFollow),
+      preferences.setBool(_narrationHighlightKey, value.narrationHighlight),
       preferences.setBool(_continuousReadingKey, value.continuousReading),
       preferences.setInt(
         _einkRefreshIntervalKey,

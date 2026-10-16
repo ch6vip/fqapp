@@ -509,6 +509,14 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                           ),
                         ),
                         _toggle(
+                          '朗读句高亮',
+                          subtitle: '朗读时给正在读的句子加背景色，与跟随翻页独立',
+                          value: _value.narrationHighlight,
+                          onChanged: (value) => _update(
+                            _value.copyWith(narrationHighlight: value),
+                          ),
+                        ),
+                        _toggle(
                           '音量键翻页',
                           subtitle: '音量下 = 下一页，音量上 = 上一页',
                           value: _value.volumeKeyTurn,

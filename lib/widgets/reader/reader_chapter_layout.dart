@@ -159,6 +159,41 @@ class ReaderContentBlock {
   bool get hasBubble => bubbleCount != null;
 }
 
+/// Translates a TTS sentence range into layout display-text coordinates.
+///
+/// TTS text is the body paragraphs (title stripped, images excluded) joined
+/// by '\n'; the layout blocks are `[title, ...body]` with image blocks
+/// consuming layout space only (placeholder + separator). Walking the
+/// blocks while tracking the TTS cursor aligns the two spaces exactly,
+/// including chapters with illustrations. A range landing on a paragraph
+/// separator clamps to the previous paragraph's end; a range with no
+/// overlap returns null.
+({int start, int end})? narrationLayoutRange(
+  ReaderChapterLayout layout,
+  ({int start, int end}) ttsRange,
+) {
+  var ttsCursor = 0;
+  var layoutStart = -1;
+  var layoutEnd = -1;
+  for (var i = 1; i < layout.blocks.length; i++) {
+    final block = layout.blocks[i];
+    if (block.isImage) continue;
+    final ttsStart = ttsCursor;
+    final ttsEnd = ttsCursor + block.text.length;
+    final from = math.max(ttsRange.start, ttsStart) - ttsStart;
+    final to = math.min(ttsRange.end, ttsEnd) - ttsStart;
+    if (to > from) {
+      final start = block.start + from;
+      final end = block.start + to;
+      if (layoutStart < 0) layoutStart = start;
+      layoutEnd = end;
+    }
+    ttsCursor = ttsEnd + 1; // '\n' separator in TTS text.
+  }
+  if (layoutStart < 0) return null;
+  return (start: layoutStart, end: layoutEnd);
+}
+
 /// A slice retains its original paragraph layout, including justification.
 /// Reflowing a substring here would change line breaks and repeat indentation.
 @immutable
@@ -841,6 +876,9 @@ class ReaderBlockContent extends StatelessWidget {
   final ReaderTextSelection? selection;
   final List<ReaderRangeUnderline> rangeUnderlines;
 
+  /// The sentence being narrated, in chapter display-text coordinates.
+  final (int, int)? narrationRange;
+
   const ReaderBlockContent({
     super.key,
     required this.block,
@@ -852,6 +890,7 @@ class ReaderBlockContent extends StatelessWidget {
     this.selectionScope,
     this.selection,
     this.rangeUnderlines = const [],
+    this.narrationRange,
   });
 
   @override
@@ -875,6 +914,7 @@ class ReaderBlockContent extends StatelessWidget {
         scope: selectionScope!,
         selection: selection,
         rangeUnderlines: rangeUnderlines,
+        narrationRange: narrationRange,
         child: text,
       );
     }
