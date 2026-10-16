@@ -16,6 +16,17 @@ type Dec256 = cbc::Decryptor<Aes256>;
 
 pub const BLOCK: usize = 16;
 
+/// Overwrites a buffer with zeros using volatile writes, so the compiler
+/// cannot elide the wipe as a dead store. For key material that must not
+/// linger in memory after use (see P2-6). Prefer `Zeroize`/`Zeroizing`
+/// for owned buffers; this is for transient stack/array buffers.
+pub(crate) fn wipe(buf: &mut [u8]) {
+    for b in buf.iter_mut() {
+        // SAFETY: write_volatile on a valid &mut reference is always sound.
+        unsafe { std::ptr::write_volatile(b, 0) };
+    }
+}
+
 /// Go's `pkcs7Pad`: pad is always in `1..=block` and equals `block` when the
 /// input is already aligned.
 pub fn pkcs7_pad(data: &[u8], block: usize) -> Vec<u8> {
