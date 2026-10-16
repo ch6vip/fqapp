@@ -8,6 +8,11 @@
 # Usage:
 #   ./scripts/run_rust_host_tests.sh
 #   ./scripts/run_rust_host_tests.sh --skip-build
+#
+# Unknown arguments are a hard error, never silently ignored. With
+# --skip-build the existing host library is trusted only after proving it is
+# not older than the newest rust/ change; a stale library errors out instead
+# of running tests against code that is no longer there.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,11 +20,16 @@ APP_DIR="$(dirname "$SCRIPT_DIR")"
 MANIFEST="$APP_DIR/rust/Cargo.toml"
 
 SKIP_BUILD=0
-for arg in "$@"; do
-  case "$arg" in
+usage() {
+  echo "Usage: $0 [--skip-build]" >&2
+}
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --skip-build) SKIP_BUILD=1 ;;
-    *) ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "错误：未知参数：$1" >&2; usage; exit 2 ;;
   esac
+  shift
 done
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
@@ -35,6 +45,17 @@ LIBRARY="$APP_DIR/rust/target/debug/$LIBRARY_NAME"
 if [ ! -f "$LIBRARY" ]; then
   echo "错误：未找到宿主 Rust 核心 $LIBRARY" >&2
   exit 1
+fi
+
+if [ "$SKIP_BUILD" -eq 1 ]; then
+  # --skip-build trusts the existing host library, so prove it is not older
+  # than the newest rust/ change: a stale library would run the tests
+  # against code that is no longer there. rust/target/ is build output, not
+  # source, so it is excluded from the comparison.
+  if [ -n "$(find "$APP_DIR/rust" -path '*/target' -prune -o -type f -newer "$LIBRARY" -print -quit)" ]; then
+    echo "错误：宿主 Rust 核心 $LIBRARY 比 rust/ 的最新改动旧；去掉 --skip-build 重建，或先运行 cargo build。" >&2
+    exit 1
+  fi
 fi
 
 export FQAPP_RUST_HOST_LIB="$LIBRARY"
