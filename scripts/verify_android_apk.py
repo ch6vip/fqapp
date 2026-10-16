@@ -263,6 +263,14 @@ def sha256_argument(value: str) -> str:
     return digest
 
 
+def version_name_argument(value: str) -> str:
+    version = value.strip()
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+        raise argparse.ArgumentTypeError(
+            "Expected a semver triple such as 1.2.3 (the APK versionName, without a build number)")
+    return version
+
+
 def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
     apk = Path(args.apk).expanduser().resolve(strict=True)
     build_tools = Path(args.build_tools).expanduser().resolve(strict=True)
@@ -330,6 +338,13 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
     badging = run_logged([aapt, "dump", "badging", str(apk)], report_dir, "aapt-badging.log")
     report["application"] = application_metadata(badging)
     report["checks"]["application_metadata"] = "passed"
+    if args.expected_version_name is not None:
+        report["application"]["expected_version_name"] = args.expected_version_name
+        if report["application"]["version_name"] != args.expected_version_name:
+            raise VerificationError(
+                f"APK versionName {report['application']['version_name']!r} does not match "
+                f"the expected version {args.expected_version_name!r}; the tag and pubspec disagree")
+        report["checks"]["expected_version_name"] = "passed"
 
     if apk.stat().st_size != size or sha256_file(apk) != digest:
         raise VerificationError("APK changed during verification; results cannot be trusted")
@@ -344,6 +359,10 @@ def main() -> int:
     parser.add_argument("--report-dir", required=True, help="Directory for verification logs, JSON, and extracted libraries")
     parser.add_argument("--expected-signer-sha256", type=sha256_argument,
                         help="Require the APK's sole signing certificate to have this SHA-256 digest")
+    parser.add_argument("--expected-version-name", type=version_name_argument,
+                        help=("Require the APK versionName to equal this semver triple, e.g. 1.2.3. "
+                              "Tag builds pass the tag name with the leading v stripped; "
+                              "branch and PR builds omit it and skip the assertion."))
     parser.add_argument("--allow-unsigned", action="store_true",
                         help=("Accept a package with no signature and report it as unsigned. "
                               "Every other check still runs. Use only where the release keystore "
