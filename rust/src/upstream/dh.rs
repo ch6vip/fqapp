@@ -106,5 +106,5 @@ pub fn decrypt_dh_content(
         return Err(format!("content not block-aligned: {}", ct.len()));
     }
     let pt = crate::crypto::aes_cbc_decrypt(ct, key, iv);
-    Ok(crate::crypto::pkcs7_unpad(&pt, 16).to_vec())
+    Ok(crate::crypto::pkcs7_unpad_strict(&pt, 16)?.to_vec())
 }
