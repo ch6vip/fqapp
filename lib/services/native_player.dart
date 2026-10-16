@@ -494,6 +494,20 @@ class NativePlayer {
         final value = event['value'];
         if (value is num) {
           _textureId = value.toInt();
+          // The swap moves decoder output to a legacy SurfaceTexture, which
+          // applies the format rotation itself (#36). A videoSize event that
+          // landed before the swap still carries the pre-swap correction
+          // (e.g. 90 for a rotated source); keeping it would rotate the
+          // already-rotated texture a second time, stretching a landscape
+          // picture up to fullscreen. Reset it and re-emit the geometry so
+          // size/rotation subscribers refresh (the feed reads rotation from
+          // its own notifier, not from the player, on rebuild).
+          _videoRotationCorrection = 0;
+          if (!_videoSizeCtrl.isClosed) {
+            _videoSizeCtrl.add(
+              Size(_videoWidth.toDouble(), _videoHeight.toDouble()),
+            );
+          }
           if (!_textureIdCtrl.isClosed) _textureIdCtrl.add(_textureId!);
         }
       case 'error':
