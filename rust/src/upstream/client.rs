@@ -99,7 +99,9 @@ impl UpstreamClient {
     }
 
     /// Applies the mock-origin rewrite, keeping path and query intact.
-    fn effective_url(&self, url: &str) -> String {
+    /// Shared by the request path and the streaming video download, which
+    /// bypasses `do_request` with its own client.
+    pub(crate) fn effective_url(&self, url: &str) -> String {
         let Some(origin) = self.mock_origin.as_deref() else {
             return url.to_string();
         };
