@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/main.dart' as app;
 import 'package:fqapp/services/app_log.dart';
 import 'package:fqapp/services/library_store.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'support/fakes.dart';
 import 'package:flutter/material.dart';

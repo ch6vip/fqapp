@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 
 import 'package:fqapp/main.dart';
 import 'package:fqapp/models/channel_tab.dart';
