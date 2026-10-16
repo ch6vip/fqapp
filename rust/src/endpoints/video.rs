@@ -1198,7 +1198,12 @@ async fn download_and_save(
         // serializes downloads; the lock is kept because the cache file,
         // the decrypt step, and the prune pass below are not safe to run
         // concurrently for the same video.
-        if let Err(err) = stream_download_to_file(video_url, UA_WINDOWS_BROWSER, &part_path).await
+        // The streaming client bypasses `UpstreamClient::do_request`, so
+        // apply the mock-origin rewrite here; without it the download
+        // would go to the real upstream instead of the mock server and
+        // the codec-gate download tests would never see the request.
+        let download_url = ctx.up.effective_url(video_url);
+        if let Err(err) = stream_download_to_file(&download_url, UA_WINDOWS_BROWSER, &part_path).await
         {
             let _ = std::fs::remove_file(&part_path);
             return Err(err);
