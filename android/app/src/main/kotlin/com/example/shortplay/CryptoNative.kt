@@ -2,9 +2,12 @@
 // JNI symbols bound to that package name (Java_com_example_shortplay_...).
 package com.example.shortplay
 
+import android.content.Context
+import android.os.Environment
 import android.util.Log
 import androidx.annotation.Keep
 import java.io.EOFException
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.Proxy
@@ -89,6 +92,17 @@ object HttpBridge {
 
     private val fileBridge = OfflineFileBridge(streamIds)
 
+    /**
+     * Point the local-file bridge at the app's own download/cache trees.
+     * Must be called from the plugin's onAttachedToEngine before any
+     * playback: until then the bridge has no allowed roots and rejects
+     * every file:// URL (fail-closed).
+     */
+    @JvmStatic
+    fun configure(context: Context) {
+        fileBridge.setAllowedRoots(appPrivateFileRoots(context))
+    }
+
     /** Ephemeral diagnostic metadata only; callers clear it when the player is released. */
     fun lastHttpStatus(url: String): Int? = playbackHttpStatus[url]
 
@@ -145,10 +159,22 @@ object HttpBridge {
  * (0 on prepare failure), read returns >0, 0 at EOF, -1 on error, and a
  * prepared stream must hit exactly [expectedSize] total or connect fails —
  * which is what surfaces a truncated/corrupted download to the player.
+ *
+ * A file:// URL is only honored when its canonical path falls inside the
+ * allowed roots (see [resolveOfflineFile]): without that bound, any file://
+ * URL — including `..` traversal or a symlink hop — could make the bridge
+ * read arbitrary app-private files.
  */
 @Keep
 private class OfflineFileBridge(streamIds: AtomicLong) {
     private val nextId = streamIds
+
+    /** Set once by [HttpBridge.configure]; empty until then (fail-closed). */
+    @Volatile private var allowedRoots: List<File> = emptyList()
+
+    fun setAllowedRoots(roots: List<File>) {
+        allowedRoots = roots
+    }
 
     private class OfflineStream(val file: java.io.File, val start: Long, var remaining: Long) {
         var raf: java.io.RandomAccessFile? = null
@@ -158,12 +184,7 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
 
     private val streams = java.util.concurrent.ConcurrentHashMap<Long, OfflineStream>()
 
-    private fun fileOf(url: String): java.io.File? {
-        val path = runCatching { android.net.Uri.parse(url).path }.getOrNull()
-        if (path.isNullOrEmpty()) return null
-        val file = java.io.File(path)
-        return if (file.isFile) file else null
-    }
+    private fun fileOf(url: String): File? = resolveOfflineFile(url, allowedRoots)
 
     fun owns(id: Long): Boolean = streams.containsKey(id)
 
@@ -267,6 +288,94 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
             s.raf = null
         }
     }
+}
+
+/**
+ * Pure containment check: [file] must canonicalize to an allowed root
+ * itself or to a descendant of one. Canonicalization resolves `..` and
+ * symlinks, so neither traversal nor a symlink hop can escape a root.
+ * The separator suffix keeps `/data/app-x` from matching root `/data/app`.
+ */
+internal fun isFileWithinRoots(file: File, roots: List<File>): Boolean {
+    val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return false
+    return roots.any { root ->
+        val canonicalRoot = runCatching { root.canonicalFile }.getOrNull() ?: return@any false
+        canonical == canonicalRoot ||
+            canonical.path.startsWith(canonicalRoot.path + File.separator)
+    }
+}
+
+/** Decode valid %XX sequences as raw bytes; leave malformed `%` literal. */
+internal fun percentDecodePath(raw: String): String {
+    if ('%' !in raw) return raw
+    // Collect raw bytes (literal chars as UTF-8, %XX as the decoded byte)
+    // and decode once at the end, so a multi-byte %XX sequence stays intact.
+    val bytes = mutableListOf<Byte>()
+    var i = 0
+    while (i < raw.length) {
+        val c = raw[i]
+        if (c == '%' && i + 2 < raw.length) {
+            val hi = raw[i + 1].digitToIntOrNull(16)
+            val lo = raw[i + 2].digitToIntOrNull(16)
+            if (hi != null && lo != null) {
+                bytes.add(((hi shl 4) or lo).toByte())
+                i += 3
+                continue
+            }
+        }
+        bytes.addAll(c.toString().toByteArray(Charsets.UTF_8).toList())
+        i++
+    }
+    return bytes.toByteArray().toString(Charsets.UTF_8)
+}
+
+/**
+ * Resolve a `file://` URL to a readable file inside [allowedRoots], or null.
+ * Rejects non-file schemes, non-empty non-localhost hosts, and any path
+ * whose canonical form escapes every root. Deliberately parses the URL by
+ * hand instead of android.net.Uri so the rule stays unit-testable on the
+ * JVM and a raw filesystem path (which may contain URI-special characters
+ * like `#`) is not reinterpreted as a fragment/query.
+ */
+internal fun resolveOfflineFile(url: String, allowedRoots: List<File>): File? {
+    if (!url.startsWith("file://")) return null
+    val rest = url.removePrefix("file://")
+    val slash = rest.indexOf('/')
+    if (slash < 0) return null
+    val host = rest.substring(0, slash)
+    if (host.isNotEmpty() && host != "localhost") return null
+    val rawPath = rest.substring(slash)
+    if (rawPath.isEmpty()) return null
+    val file = File(percentDecodePath(rawPath))
+    if (!isFileWithinRoots(file, allowedRoots)) return null
+    return if (file.isFile) file else null
+}
+
+/**
+ * The directories offline playback may legitimately read from: the app's
+ * private files/cache trees (where the Dart download store puts
+ * `<support>/offline-video/<itemId>.mp4`), the app-specific external
+ * trees, and the public Downloads directory.
+ */
+internal fun appPrivateFileRoots(context: Context): List<File> {
+    val roots = mutableListOf<File>()
+    roots += listOfNotNull(
+        context.filesDir,
+        context.cacheDir,
+        runCatching { context.codeCacheDir }.getOrNull(),
+        runCatching { context.noBackupFilesDir }.getOrNull(),
+        context.externalCacheDir,
+        context.getExternalFilesDir(null),
+        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+    )
+    roots += context.getExternalFilesDirs(null)?.filterNotNull().orEmpty()
+    roots += context.externalCacheDirs?.filterNotNull().orEmpty()
+    roots += listOfNotNull(
+        runCatching {
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        }.getOrNull(),
+    )
+    return roots.distinct()
 }
 
 /** Network implementation kept independent of JNI so its HTTP contract can be tested. */
