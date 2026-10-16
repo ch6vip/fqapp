@@ -355,6 +355,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                                       label: switch (style) {
                                         ReaderPageTurnStyle.cover => '覆盖',
                                         ReaderPageTurnStyle.slide => '平移',
+                                        ReaderPageTurnStyle.curl => '仿真',
                                         ReaderPageTurnStyle.none => '无',
                                       },
                                       selected: _value.pageTurnStyle == style,

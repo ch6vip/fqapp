@@ -17,7 +17,7 @@ enum ReaderInfoMode { hidden, compact, detailed }
 /// the new page slides in normally (平移), slides over a pinned outgoing page
 /// (覆盖), or appears instantly (无). See
 /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
-enum ReaderPageTurnStyle { cover, slide, none }
+enum ReaderPageTurnStyle { cover, slide, curl, none }
 
 @immutable
 class ReaderPreferences {
