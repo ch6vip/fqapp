@@ -28,6 +28,30 @@ on:
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
       - '.github/workflows/android-apk.yml'
+  pull_request:
+    # Fork PRs receive no signing secrets, so the signing step degrades to an
+    # unsigned build instead of failing; the same paths filter keeps
+    # unrelated PRs from running the full build.
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'native/**'
+      - 'rust/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'analysis_options.yaml'
+      - 'test/**'
+      - 'flutter_rust_bridge.yaml'
+      - 'scripts/build_rust_backend.sh'
+      - 'scripts/build_rust_backend.ps1'
+      - 'scripts/run_rust_host_tests.sh'
+      - 'scripts/run_rust_host_tests.ps1'
+      - 'scripts/check_native_alignment.cjs'
+      - 'scripts/generate_app_icons.py'
+      - 'scripts/verify_android_apk.py'
+      - 'scripts/verify_audio_cenc.cjs'
+      - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
 permissions:
