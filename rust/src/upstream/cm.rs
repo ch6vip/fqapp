@@ -80,6 +80,9 @@ impl CM {
             .decode(server_key_b64)
             .map_err(|e| format!("decode server key: {e}"))?;
         let server_key = BigUint::from_bytes_be(&server_key_bytes);
+        // P2-10: never derive a shared secret from an unvalidated peer
+        // value — a degenerate y collapses the secret to a known value.
+        crate::upstream::validate_peer_pubkey(&server_key, cm_prime())?;
         let shared = server_key.modpow(&self.private_key, cm_prime());
 
         let shared_bytes = gmp_to_bytes(&shared);

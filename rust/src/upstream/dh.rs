@@ -81,6 +81,9 @@ pub fn decrypt_dh_content(
         .decode(server_y_b64)
         .map_err(|e| format!("decode server y: {e}"))?;
     let b = BigUint::from_bytes_be(&b_bytes);
+    // P2-10: never derive a shared secret from an unvalidated peer
+    // value — a degenerate y collapses the secret to a known value.
+    crate::upstream::validate_peer_pubkey(&b, dh_prime())?;
     let s = b.modpow(&st.a, dh_prime());
     let s_bytes = if s.is_zero() {
         Vec::new()
