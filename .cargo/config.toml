@@ -1,3 +1,9 @@
+# This file MUST stay at the repository root. Cargo discovers .cargo/config.toml
+# by walking up from the invocation directory (repo root locally, the checkout
+# directory in CI), so the previous rust/.cargo/config.toml location was never
+# an ancestor of any cargo invocation and its 16 KiB rustflags were silently
+# ignored. Do not move it back under rust/.
+#
 # Cross-compilation settings for the Android ARM64 target.
 #
 # The linker is provided by scripts/build_rust_backend.ps1 / .sh (the NDK path

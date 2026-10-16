@@ -28,6 +28,7 @@ on:
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
       - '.github/workflows/android-apk.yml'
+      - '.cargo/config.toml'
   pull_request:
     # Fork PRs receive no signing secrets, so the signing step degrades to an
     # unsigned build instead of failing; the same paths filter keeps
@@ -52,6 +53,7 @@ on:
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
       - '.github/workflows/android-apk.yml'
+      - '.cargo/config.toml'
   workflow_dispatch:
 
 permissions:
