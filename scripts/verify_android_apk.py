@@ -218,12 +218,15 @@ def run_logged(command: list[str], report_dir: Path, log_name: str,
         raise VerificationError(f"Cannot run verification command; see {log_name}") from error
     write_text(report_dir, log_name, result.stdout)
     # A tolerated exit code is recorded in the log rather than hidden, so the
-    # report still shows what the tool actually said about the package.
+    # report still shows what the tool actually said about the package. The
+    # output is returned even for a tolerated code: callers that distinguish
+    # "unsigned" from "tool failed" need the actual output, not an empty
+    # string that erases the difference.
     if result.returncode != 0:
         if result.returncode in allowed_returncodes:
             write_text(report_dir, log_name,
                        result.stdout + f"\nAllowed exit code {result.returncode}.\n")
-            return ""
+            return result.stdout
         raise VerificationError(f"Verification command exited with {result.returncode}; see {log_name}")
     return result.stdout
 
@@ -254,6 +257,17 @@ def certificate_digests(output: str) -> list[str]:
     if not digests or any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in digests):
         raise VerificationError("apksigner did not return a valid signer certificate SHA-256 digest")
     return digests
+
+
+# Phrases apksigner prints for a package with no signature at all. An
+# unsigned-tolerant check must see one of these (and no signer certificate)
+# before reporting "unsigned": apksigner also exits 1 for a broken signature
+# and for tool failures, and none of those may be mistaken for "unsigned".
+UNSIGNED_SIGNATURE_MARKERS = (
+    "number of signers: 0",
+    "not signed",
+    "no signature",
+)
 
 
 def sha256_argument(value: str) -> str:
@@ -313,11 +327,31 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
     # exits non-zero on such a package. That is an expected outcome rather than
     # a defect when the caller asks for an unsigned-tolerant verification, so
     # the signature block is reported as absent instead of aborting the run.
+    # But apksigner also exits non-zero for a broken signature and for tool
+    # failures (empty output, unparseable output), and those must not be
+    # mistaken for "unsigned": the output must positively establish that the
+    # package has no signature.
     if args.allow_unsigned:
         signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
                                 "--print-certs", str(apk)], report_dir, "apksigner.log",
                                allowed_returncodes=(1,))
-        signer_digests = [] if not signature else certificate_digests(signature)
+        if not signature.strip():
+            raise VerificationError(
+                "apksigner produced no output for an unsigned-tolerant check; "
+                "cannot distinguish an unsigned APK from a tool failure (see apksigner.log)")
+        try:
+            signer_digests = certificate_digests(signature)
+        except VerificationError:
+            signer_digests = []
+        lowered = signature.lower()
+        if signer_digests and "does not verify" in lowered:
+            raise VerificationError(
+                "APK carries a signing certificate but apksigner did not verify it; "
+                "the signature is broken, not absent (see apksigner.log)")
+        if not signer_digests and not any(marker in lowered for marker in UNSIGNED_SIGNATURE_MARKERS):
+            raise VerificationError(
+                "apksigner output establishes neither a signature nor an unsigned "
+                "package; refusing to treat it as unsigned (see apksigner.log)")
     else:
         signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
                                 "--print-certs", str(apk)], report_dir, "apksigner.log")
