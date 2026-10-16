@@ -116,12 +116,11 @@ void main() {
     }
   });
 
-  Future<String> startCore({String? origin, int port = 0}) => rust.init(
+  Future<String> startCore({String? origin}) => rust.init(
     configPath: '${root.path}/config/config.json',
     poolPath: '${root.path}/config/device_pool.json',
     filterPath: '${root.path}/config/filter.json',
     runtimeDir: root.path,
-    port: port,
     mockUpstreamOrigin: origin ?? mockOrigin,
   );
 
@@ -130,7 +129,6 @@ void main() {
 
   Future<ApiClient> startApiClient() async {
     final transport = RustBackendTransport(
-      port: 0,
       mockUpstreamOrigin: mockOrigin,
     );
     addTearDown(transport.close);
@@ -151,8 +149,6 @@ void main() {
     final started = await startCore();
     expect(started, 'running');
     expect(await rust.status(), 'running');
-    expect(await rust.baseUrl(), startsWith('http://127.0.0.1:'));
-
     // /health is answered by the Rust core with no upstream involvement.
     final health = await rust.request(
       requestId: 'host-health',
@@ -255,7 +251,6 @@ void main() {
 
   test('shutdown and restart produce a working core again', () async {
     expect(await startCore(), 'running');
-    final firstBase = await rust.baseUrl();
     final beforeRestart = await rust.request(
       requestId: 'before-restart',
       method: 'GET',
@@ -268,10 +263,8 @@ void main() {
 
     await rust.shutdown();
     expect(await rust.status(), 'starting');
-    expect(await rust.baseUrl(), isEmpty);
 
     expect(await startCore(), 'running');
-    expect(await rust.baseUrl(), startsWith('http://127.0.0.1:'));
     final afterRestart = await rust.request(
       requestId: 'after-restart',
       method: 'GET',
@@ -281,7 +274,6 @@ void main() {
       timeoutMs: 0,
     );
     expect(afterRestart.status, 200);
-    expect(firstBase, isNotEmpty);
   }, skip: skipReason);
 
   test('codec rejection cannot become a source through Dart legacy parsing',
@@ -407,7 +399,6 @@ class _HostAssets extends CachingAssetBundle {
         '{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}',
     'assets/config/device_pool.example.json': poolJson,
     'assets/config/filter.json': '{"routes":{}}',
-    'assets/web/index.html': '<html></html>',
   };
 
   @override

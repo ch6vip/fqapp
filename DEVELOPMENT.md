@@ -2,7 +2,7 @@
 
 面向构建、修改和调试本项目的开发者。用户使用说明见 [README.md](README.md)。
 
-> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:8080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
+> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；`/api/*` 桥和 `/src/*` 漫画图全部走进程内 FFI，不监听任何端口、不开 HTTP 服务，别的 App 无法访问本地后端。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
 
 ---
 
@@ -44,18 +44,17 @@
               │    Rust 核心 fqapi_core    │
               │    libfqapi_core.so       │
               │ 签名 · 解密 · 设备池 · 分发器│
-              └──────┬─────────────┬──────┘
-                     │             │
-      loopback HTTP  │             │ HTTPS (reqwest)
-      127.0.0.1:8080 │             ▼
-                     ▼      上游 API
-          内置 Web UI / /src/* 漫画图
+              └───────────────────┬──────┘
+                                  │ HTTPS (reqwest)
+                                  ▼
+                             上游 API
 ```
+（分发器同时服务 `/api/*` 与 `/src/*` 漫画图，全部走进程内 FFI，无 HTTP 监听。）
 
 ### 数据流
 
-1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、Web 页面及其 CSS/字体、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
-2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；Web/测试用 loopback HTTP）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
+1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
+2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；测试可用 `HttpBackendTransport` 接测试服务器）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
 ---
@@ -74,7 +73,7 @@ fqapp/
 ├── rust/                            # fqapi_core 源码、协议夹具和 Rust 测试
 ├── android/                         # Android 工程、原生插件与 JVM 测试
 ├── native/                          # CENC 流式 C 解密库、JNI 与 CMake
-├── assets/                          # 配置示例、Web UI、插件、图片和动画
+├── assets/                          # 配置示例、插件、图片和动画
 ├── test/                            # Flutter 测试及 Node 主机回归
 ├── scripts/                         # 构建、验证和资源生成；见 scripts/README.md
 ├── .github/workflows/               # Android APK 与原生库 CI
@@ -261,17 +260,16 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 
 1. 将 `config.json`、`filter.json`、`device_pool.example.json` 部署到应用私有目录 `files/backend/config/`。
 2. 首次启动时用示例初始化 `device_pool.json`；以后保留后端注册并保存的实际设备池。
-3. 从 Flutter 资源清单枚举并部署全部 `filters/`、`web/`、`plugins/` 文件，包含 CSS 和字体。内容变更时替换旧资源。
+3. 从 Flutter 资源清单枚举并部署全部 `filters/`、`plugins/` 文件。内容变更时替换旧资源。（内置 Web UI 已移除，不再部署 `web/`。）
 4. 运行时资源不含任何可执行后端二进制；Rust 核心以 `libfqapi_core.so` 随 APK 打包，在进程内加载。
 
 ### 启动流程（`BackendService.start`）
 
 ```dart
-// 默认：flutter_rust_bridge 直调 Rust 核心（进程内，无独立进程）
+// flutter_rust_bridge 直调 Rust 核心（进程内，无独立进程，不监听端口）
 await rust.init(
-  configPath: ..., poolPath: ..., filterPath: ..., runtimeDir: ..., port: 8080,
+  configPath: ..., poolPath: ..., filterPath: ..., runtimeDir: ...,
 );
-// Web / 测试：同一分发器另开 loopback HTTP 适配器，供浏览器入口与 /src/* 资源
 ```
 
 - 并发 `start()` 等待同一次完整启动，`stop()` 会等待进行中的部署与启动结束再清理。
@@ -297,8 +295,8 @@ await rust.init(
 .\scripts\build_rust_backend.ps1
 ```
 
-Rust 核心会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；
-loopback HTTP 适配器只绑定 `127.0.0.1`，`/health`、`/api/*`、`/src/*` 与 Web 入口共用同一分发器。
+Rust 核心会使用配置文件推导运行目录，过滤器和 `src/` 均按绝对路径加载；
+`/health`、`/api/*`、`/src/*` 共用同一分发器，只接受进程内 FFI 调用，不开 HTTP 监听。
 加密播放所需的 `libshortplay_crypto.so` 由 APK 构建自动从 `native/` 生成。
 
 ---
@@ -543,9 +541,8 @@ adb shell run-as com.fqapp.fqapp cat files/backend/backend.log
 # 查看部署文件
 adb shell run-as com.fqapp.fqapp ls -la files/backend/
 
-# 端口转发测试（后端起来后）
-adb forward tcp:18080 tcp:8080
-curl http://127.0.0.1:18080/health
+# 健康检查走进程内 FFI，没有可 curl 的端口；看日志与设置 → 服务详情页
+adb shell run-as com.fqapp.fqapp cat files/backend/backend.log
 
 # Flutter 日志
 adb logcat -s flutter

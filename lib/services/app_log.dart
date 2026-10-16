@@ -247,8 +247,8 @@ class AppLog with WidgetsBindingObserver {
   /// the debugPrint passthrough, business logs — funnels through [_emit],
   /// so a stray URL or token in an exception or a debug print cannot land
   /// in the buffer, the log file, or an export. Deliberately narrow so
-  /// the log viewer stays useful: only the per-launch loopback capability
-  /// path, bearer/authorization/cookie credentials, and values of
+  /// the log viewer stays useful: only session-style URL paths,
+  /// bearer/authorization/cookie credentials, and values of
   /// known-secret keys are replaced; routes, ids, timings and ordinary
   /// text pass through untouched.
   ///
@@ -288,7 +288,8 @@ class AppLog with WidgetsBindingObserver {
     return out;
   }
 
-  /// `/_session/<capability>/…` — the per-launch loopback capability.
+  /// `/_session/<secret>/…` — a session-style URL path; kept as
+  /// defense even though no local HTTP backend issues such URLs.
   static final _sessionPathPattern =
       RegExp(r'''/_session/[^/\s?#'"<>]+''');
 

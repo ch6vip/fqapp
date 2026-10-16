@@ -10,10 +10,8 @@ import 'backend_transport.dart';
 /// Manages the local backend core.
 ///
 /// The backend is the Rust native core (`rust/`, packaged as
-/// `libfqapi_core.so`). Flutter calls it over flutter_rust_bridge; the same
-/// Rust core also serves the built-in Web UI and `/src/*` resources over a
-/// loopback HTTP adapter, which is why [baseUrl] still exists for resource
-/// resolution in `ApiClient.absoluteUrl`.
+/// `libfqapi_core.so`). Flutter calls it over flutter_rust_bridge; the core
+/// runs in-process and listens on no socket, so no other app can reach it.
 ///
 /// There is no process to launch and no JNI bridge: `start` deploys the
 /// runtime files and initializes the core in-process.
@@ -22,7 +20,6 @@ class BackendService {
     AssetBundle? assets,
     Future<Directory> Function()? supportDirectory,
     BackendTransport? transport,
-    this.fallbackBaseUrl = 'http://127.0.0.1:8080',
     this.startupTimeout = const Duration(seconds: 15),
     this.shutdownTimeout = const Duration(seconds: 3),
   }) : _assets = assets ?? rootBundle,
@@ -34,9 +31,6 @@ class BackendService {
   final AssetBundle _assets;
   final Future<Directory> Function() _supportDirectory;
   final BackendTransport _transport;
-
-  /// Used for resource URLs only when the core has not reported a port yet.
-  final String fallbackBaseUrl;
 
   final Duration startupTimeout;
   final Duration shutdownTimeout;
@@ -55,18 +49,7 @@ class BackendService {
   /// The transport business calls go through.
   BackendTransport get transport => _transport;
 
-  /// Base URL used to resolve backend-relative resources.
-  String get baseUrl =>
-      _transport.baseUrl.isNotEmpty ? _transport.baseUrl : fallbackBaseUrl;
-
-  /// Entry URL of the built-in Web UI, capability included.
-  ///
-  /// The loopback adapter only answers a request carrying the per-launch
-  /// capability, and this is the URL that hands it to a browser as a session
-  /// cookie before redirecting to `/`.
-  String get webUiEntryUrl => backendResourceBase(baseUrl, _transport.capability);
-
-  /// Whether the Rust FFI transport is in use (as opposed to the HTTP adapter).
+  /// Whether the Rust FFI transport is in use (as opposed to a test transport).
   bool get usesRustTransport => _transport is RustBackendTransport;
 
   /// Whether the backend core is currently running.
@@ -131,7 +114,7 @@ class BackendService {
     return Isolate.run(() => _bytesEqual(existing, bundled));
   }
 
-  /// Deploys the runtime files the Rust core reads (config + Web/静态资源)。
+  /// Deploys the runtime files the Rust core reads (config + filters + plugins).
   Future<void> _deploy() async {
     final dir = await _backendDir();
 
@@ -159,7 +142,7 @@ class BackendService {
 
     // Use the bundle manifest so nested CSS/fonts and plugin files are
     // deployed along with the top-level HTML and filters.
-    const runtimeRoots = ['assets/filters/', 'assets/web/', 'assets/plugins/'];
+    const runtimeRoots = ['assets/filters/', 'assets/plugins/'];
     final manifest = await AssetManifest.loadFromAssetBundle(_assets);
     for (final asset in manifest.listAssets()) {
       if (runtimeRoots.any(asset.startsWith)) {
@@ -257,11 +240,11 @@ class BackendService {
       try {
         final response = await _transport.send(
           'GET',
-          Uri.parse('$baseUrl/health'),
+          Uri(path: '/health'),
           timeout: attemptTimeout,
         );
         if (response.statusCode == 200) return true;
-        _log('health check: HTTP ${response.statusCode}');
+        _log('health check: status ${response.statusCode}');
       } catch (_) {
         // Not up yet. Bound the complete exchange, including body reading.
       }

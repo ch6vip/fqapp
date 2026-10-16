@@ -168,13 +168,33 @@ void main() {
     final source = _source({
       'code': 0,
       'data': [
-        {'main_url': '/audio.mp3?sign=a%2fb+xyz'},
+        {'main_url': '$_base/audio.mp3?sign=a%2Fb+xyz'},
       ],
     });
 
     expect(source.url, '$_base/audio.mp3?sign=a%2Fb+xyz');
     expect(source.keyHex, isEmpty);
     expect(source.duration, isNull);
+  });
+
+  test('a direct plain response with a relative URL is not playable', () {
+    // A root-relative audio URL has no resolution without the old HTTP
+    // adapter, and the native player only speaks http(s)/file URLs.
+    expect(
+      () => _source({
+        'code': 0,
+        'data': [
+          {'main_url': '/audio.mp3?sign=a%2Fb+xyz'},
+        ],
+      }),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          '未获取到音频地址',
+        ),
+      ),
+    );
   });
 
   test('indate is not the duration of a direct plain stream', () {
@@ -283,7 +303,6 @@ AudioSource _source(Map<String, dynamic> payload) => parsePlayinfoSource(
   payload,
   itemId: 'chapter',
   toneId: '57',
-  baseUrl: _base,
 );
 
 Map<String, dynamic> _encrypted(String url, String key) => {

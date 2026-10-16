@@ -30,7 +30,7 @@ use percent_encoding::percent_decode_str;
 use crate::dispatch::{Request, Response, ResponseBody};
 
 /// Upper bound for the in-process (FFI) path, which must return a `Vec<u8>`.
-/// The loopback HTTP adapter streams file bodies instead and is not capped.
+/// Every consumer goes through FFI now, so this caps all served resources.
 pub const FFI_BODY_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// Builds the candidate path from the (single-pass decoded) request suffix.

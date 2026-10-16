@@ -182,9 +182,9 @@ jobs:
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
           flutter config --android-sdk "$ANDROID_HOME" --no-analytics
 
-      - name: Check the Web assets, audio diagnostics, and Rust build scripts
+      - name: Check the audio diagnostics and Rust build scripts
         run: >-
-          node --test test/web_assets_test.cjs
+          node --test
           test/verify_audio_cenc_test.cjs
           test/build_rust_backend_scripts_test.cjs
 

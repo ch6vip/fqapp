@@ -10,13 +10,13 @@
 
 mod common;
 
-use common::{build_server, pool_json, start_loopback, MockReply, MockUpstream, TempDir};
+use common::{build_server, pool_json, MockReply, MockUpstream, TempDir};
 use fqapi_core::dispatch::{dispatch, Request};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 async fn server_with(dir: &TempDir, origin: &str) -> Arc<fqapi_core::endpoints::Server> {
-    build_server(dir, Some(origin.to_string()), &[], &[], &pool_json(5)).await
+    build_server(dir, Some(origin.to_string()), &[], &pool_json(5)).await
 }
 
 fn api_get(path: &str, query: &str) -> Request {
@@ -74,16 +74,6 @@ async fn write_routes_reject_get_before_any_upstream_request() {
             .any(|(name, value)| { name.eq_ignore_ascii_case("allow") && value == "POST" }));
     }
     assert!(upstream.requests().is_empty());
-
-    // Exercise the actual loopback adapter as well as direct dispatch.
-    let lb = start_loopback(server).await;
-    let response = reqwest::get(lb.url("/api/v1/series/123/comments/add?text=x"))
-        .await
-        .expect("loopback GET");
-    assert_eq!(response.status().as_u16(), 405);
-    assert_eq!(response.headers()["allow"], "POST");
-    assert!(upstream.requests().is_empty());
-    lb.task.abort();
     upstream.shutdown();
 }
 

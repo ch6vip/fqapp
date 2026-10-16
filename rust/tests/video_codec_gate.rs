@@ -90,7 +90,7 @@ async fn bytevc2_only_is_terminal_across_response_shapes_and_modes() {
             let upstream = MockUpstream::start(move |_| MockReply::json(payload.clone())).await;
             let dir = TempDir::new("video-codec-reject");
             let server =
-                build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+                build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
             for mode in ["mode=stream", ""] {
                 let (status, body) = request_video(&server, mode).await;
                 assert_rejected(status, &body, &format!("{name}, {mode}"));
@@ -114,8 +114,7 @@ async fn missing_or_invalid_seed_cannot_hide_codec_rejection() {
         }}});
         let upstream = MockUpstream::start(move |_| MockReply::json(payload.clone())).await;
         let dir = TempDir::new("video-codec-seed");
-        let server =
-            build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+        let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
         let (status, body) = request_video(&server, "mode=stream").await;
         assert_rejected(status, &body, "invalid seed");
     }
@@ -133,8 +132,7 @@ async fn mixed_variants_keep_h264_preference_across_response_shapes() {
     for (name, payload) in response_shapes(variants) {
         let upstream = MockUpstream::start(move |_| MockReply::json(payload.clone())).await;
         let dir = TempDir::new("video-codec-mixed");
-        let server =
-            build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+        let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
         let (status, body) = request_video(&server, "mode=stream").await;
         assert_eq!(status, 200, "{name}: {body}");
         assert_eq!(body["video_url"], ALLOWED_URL, "{name}: {body}");
@@ -148,7 +146,7 @@ async fn unrecognized_payload_keeps_legacy_raw_response_compatibility() {
     let expected = payload.clone();
     let upstream = MockUpstream::start(move |_| MockReply::json(payload.clone())).await;
     let dir = TempDir::new("video-codec-legacy");
-    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
     for mode in ["mode=stream", ""] {
         let (status, body) = request_video(&server, mode).await;
         assert_eq!(status, 200);
@@ -181,8 +179,7 @@ async fn fallback_rejection_cannot_return_the_original_model_url() {
         })
         .await;
         let dir = TempDir::new("video-codec-fallback");
-        let server =
-            build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+        let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
         for mode in ["mode=stream", ""] {
             let (status, body) = request_video(&server, mode).await;
             assert_rejected(status, &body, "fallback rejected");
@@ -208,7 +205,7 @@ async fn download_failure_returns_only_the_selected_url_and_its_key() {
     })
     .await;
     let dir = TempDir::new("video-codec-download");
-    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
     let (status, body) = request_video(&server, "").await;
     assert_eq!(status, 200);
     assert_eq!(body["video_url"], ALLOWED_URL);
@@ -235,7 +232,7 @@ async fn successful_download_keeps_the_local_source_contract() {
     })
     .await;
     let dir = TempDir::new("video-codec-local");
-    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
     let (status, body) = request_video(&server, "").await;
     assert_eq!(status, 200);
     assert_eq!(body["video_url"], "/src/episode.mp4");
@@ -281,7 +278,7 @@ async fn stream_variants_merge_the_fallback_list_so_the_top_tier_survives() {
     })
     .await;
     let dir = TempDir::new("video-variant-merge");
-    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
     let (status, body) = request_video(&server, "mode=stream").await;
     assert_eq!(status, 200, "{body}");
     let names: Vec<&str> = body["variants"]
@@ -330,7 +327,7 @@ async fn stream_variants_do_not_merge_bytevc2_tiers() {
     })
     .await;
     let dir = TempDir::new("video-variant-gate");
-    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &pool_json(5)).await;
     let (status, body) = request_video(&server, "mode=stream").await;
     assert_eq!(status, 200, "{body}");
     let names: Vec<&str> = body["variants"]

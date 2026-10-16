@@ -11,7 +11,7 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{build_server, pool_json, start_loopback, Loopback, MockReply, MockUpstream, TempDir};
+use common::{build_server, dispatch_get, pool_json, MockReply, MockUpstream, TempDir};
 use fqapi_core::dispatch::{dispatch, Request};
 use fqapi_core::endpoints::Server;
 
@@ -51,29 +51,6 @@ fn request(path: &str, query: &str) -> Request {
         body: Vec::new(),
         headers: Vec::new(),
     }
-}
-
-/// Fetches a path from the real loopback adapter, carrying its capability.
-async fn http_get(lb: &Loopback, path: &str) -> (u16, Vec<(String, String)>, Vec<u8>) {
-    let client = reqwest::Client::builder().build().expect("client");
-    let resp = client
-        .get(lb.url(path))
-        .send()
-        .await
-        .expect("loopback request");
-    let status = resp.status().as_u16();
-    let headers: Vec<(String, String)> = resp
-        .headers()
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.as_str().to_string(),
-                String::from_utf8_lossy(v.as_bytes()).into_owned(),
-            )
-        })
-        .collect();
-    let body = resp.bytes().await.expect("body").to_vec();
-    (status, headers, body)
 }
 
 async fn body_string(server: &Arc<Server>, req: &Request) -> (u16, String) {
@@ -120,7 +97,7 @@ async fn manga_fixture() -> (TempDir, Arc<Server>, MockUpstream, Vec<u8>, String
     IMAGE.with(|i| *i.borrow_mut() = wire);
     CONTENT.with(|c| *c.borrow_mut() = content);
 
-    let server = build_server(&dir, Some(mock.origin.clone()), &[], &[], &pool_json(5)).await;
+    let server = build_server(&dir, Some(mock.origin.clone()), &[], &pool_json(5)).await;
     (dir, server, mock, plain, image_key_hex)
 }
 
@@ -171,15 +148,14 @@ async fn manga_chapter_is_downloaded_decrypted_written_and_served() {
         "the stored image must be the decrypted payload"
     );
 
-    // The served URL really answers over the loopback adapter.
-    let lb = start_loopback(server).await;
-    let (s, _headers, fetched) = http_get(&lb, served).await;
+    // The served path really answers through the in-process dispatcher -
+    // the same path the FFI image provider takes.
+    let (s, _headers, fetched) = dispatch_get(&server, served, vec![]).await;
     assert_eq!(s, 200);
     assert_eq!(
         fetched, plain,
         "the served image must match the decrypted payload"
     );
-    lb.task.abort();
 }
 
 #[tokio::test]

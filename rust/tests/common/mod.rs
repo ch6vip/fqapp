@@ -1,7 +1,9 @@
 //! Shared host-test scaffolding: temporary runtime directories, a real
-//! dispatcher `Server`, a real loopback adapter, and a scripted mock upstream.
+//! dispatcher `Server`, and a scripted mock upstream.
 //!
 //! Nothing here touches the network, a device, or the real device pool.
+//! There is no HTTP adapter anymore: tests reach the dispatcher in-process,
+//! the same path the FFI bridge takes.
 
 #![allow(dead_code)]
 
@@ -66,21 +68,19 @@ impl Drop for TempDir {
 /// Builds a real dispatcher `Server` over a fresh runtime directory.
 ///
 /// `mock_origin` redirects every upstream call to a local mock server.
-/// `web` / `src` are relative file contents written under the runtime root.
+/// `src` are relative file contents written under the runtime root.
 pub async fn build_server(
     dir: &TempDir,
     mock_origin: Option<String>,
-    web: &[(&str, &str)],
     src: &[(&str, &str)],
     pool_json: &str,
 ) -> Arc<Server> {
     build_server_with_config(
         dir,
         mock_origin,
-        web,
         src,
         pool_json,
-        r#"{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}"#,
+        r#"{"algorithm_type":"8404","anti_crawler":{"enabled":false,"redirect_url":""}}"#,
     )
     .await
 }
@@ -89,23 +89,18 @@ pub async fn build_server(
 pub async fn build_server_with_config(
     dir: &TempDir,
     mock_origin: Option<String>,
-    web: &[(&str, &str)],
     src: &[(&str, &str)],
     pool_json: &str,
     config_json: &str,
 ) -> Arc<Server> {
     let root = dir.path().to_path_buf();
     std::fs::create_dir_all(root.join("src")).expect("src dir");
-    std::fs::create_dir_all(root.join("web")).expect("web dir");
 
     let config_path = dir.write("config/config.json", config_json);
     let pool_path = dir.write("config/device_pool.json", pool_json);
     // A missing filter.json yields a no-op manager, matching the Go behaviour.
     let filter_path = dir.join("config/filter.json");
 
-    for (rel, contents) in web {
-        dir.write(&format!("web/{rel}"), contents);
-    }
     for (rel, contents) in src {
         dir.write(&format!("src/{rel}"), contents);
     }
@@ -135,7 +130,6 @@ pub async fn build_server_with_config(
         pool,
         cfg: Arc::new(cfg),
         src_dir: root.join("src").to_string_lossy().into_owned(),
-        web_dir: root.join("web").to_string_lossy().into_owned(),
         filters,
     })))
 }
@@ -160,53 +154,29 @@ pub fn pool_json(count: usize) -> String {
     serde_json::json!({ "android": devices, "last_update": "2026-01-01 00:00:00" }).to_string()
 }
 
-/// A running loopback adapter plus the per-launch capability it was started
-/// with. The token is random per launch and cannot be recovered from the port,
-/// so every test that wants a positive answer has to keep it: the adapter
-/// answers 401 to anything that carries no capability.
-pub struct Loopback {
-    pub port: u16,
-    pub token: String,
-    pub task: tokio::task::JoinHandle<()>,
-}
-
-impl Loopback {
-    /// The listener's own origin, for `Host`/`Origin` values.
-    pub fn origin(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
-    }
-
-    /// Capability-carrying request target, the form hand-written requests use.
-    pub fn scoped_path(&self, path: &str) -> String {
-        format!("/_session/{}{}", self.token, path)
-    }
-
-    /// A URL carrying the real capability: what a real caller uses.
-    pub fn url(&self, path: &str) -> String {
-        format!("{}{}", self.origin(), self.scoped_path(path))
-    }
-
-    /// A URL carrying an arbitrary capability, for the gate's own tests.
-    pub fn url_with(&self, capability: &str, path: &str) -> String {
-        format!("{}/_session/{capability}{path}", self.origin())
-    }
-
-    /// A URL with no capability at all: only the refusal cases want this.
-    pub fn bare_url(&self, path: &str) -> String {
-        format!("{}{path}", self.origin())
-    }
-}
-
-/// Starts the real loopback adapter on an ephemeral port.
-pub async fn start_loopback(server: Arc<Server>) -> Loopback {
-    let handle = fqapi_core::server::serve(server, 0)
-        .await
-        .expect("loopback adapter");
-    Loopback {
-        port: handle.port,
-        token: handle.token,
-        task: handle.task,
-    }
+/// Fetches a path through the in-process dispatcher - the same path the FFI
+/// bridge takes - and materialises the body, exactly as `api::request` does.
+/// `headers` are lower-cased `name: value` pairs (Range/HEAD for statics).
+pub async fn dispatch_get(
+    server: &Arc<Server>,
+    path: &str,
+    headers: Vec<(String, String)>,
+) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    let response = fqapi_core::dispatch::dispatch(
+        server,
+        &fqapi_core::dispatch::Request {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            body: Vec::new(),
+            headers,
+        },
+    )
+    .await;
+    let status = response.status;
+    let resp_headers = response.headers.clone();
+    let body = response.into_bytes().await.expect("materialise body");
+    (status, resp_headers, body)
 }
 
 // --- Mock upstream ---------------------------------------------------------

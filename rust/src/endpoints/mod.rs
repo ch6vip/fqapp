@@ -1,8 +1,6 @@
 //! Endpoint registry and request context.
 //!
-//! One `Server` owns the route table; the FFI bridge, the loopback HTTP
-//! adapter and the built-in Web UI all dispatch through it. Endpoint names and
-//! path matching are identical across all three dispatch paths.
+//! One `Server` owns the route table; the FFI bridge dispatches through it.
 
 pub mod audio;
 pub mod author;
@@ -117,7 +115,6 @@ pub struct Ctx {
     pub pool: Arc<DevicePool>,
     pub cfg: Arc<Config>,
     pub src_dir: String,
-    pub web_dir: String,
     pub filters: Arc<FilterManager>,
 }
 
