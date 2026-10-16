@@ -214,7 +214,10 @@ class AppLog with WidgetsBindingObserver {
       time: DateTime.now(),
       level: level,
       tag: tag,
-      message: _compose(message, error, stack),
+      // 捕获层脱敏：消息/错误/堆栈在进缓冲与落盘前统一过一遍
+      // [sanitizeLogText]，一行日志里的 URL capability、Bearer、
+      // Cookie 与敏感键值不会落进内存、文件或导出。
+      message: sanitizeLogText(_compose(message, error, stack)),
     );
     _entries.add(entry);
     if (_entries.length > _capacity) _entries.removeAt(0);
@@ -237,6 +240,93 @@ class AppLog with WidgetsBindingObserver {
     if (stack != null) buf.write('\n  ${stack.toString().trimRight()}');
     return buf.toString();
   }
+
+  /// Redacts secrets from one log line before it is buffered or written.
+  ///
+  /// Capture-layer filter: every path into [AppLog] — framework errors,
+  /// the debugPrint passthrough, business logs — funnels through [_emit],
+  /// so a stray URL or token in an exception or a debug print cannot land
+  /// in the buffer, the log file, or an export. Deliberately narrow so
+  /// the log viewer stays useful: only the per-launch loopback capability
+  /// path, bearer/authorization/cookie credentials, and values of
+  /// known-secret keys are replaced; routes, ids, timings and ordinary
+  /// text pass through untouched.
+  ///
+  /// A `Cookie:` header value is redacted to end of line: the whole header
+  /// is credential material (`a=b; c=d`), and splitting it would leak the
+  /// tail. Standalone long hex/base64 blobs are *not* redacted — without
+  /// a sensitive key around them they are indistinguishable from ids.
+  @visibleForTesting
+  static String sanitizeLogText(String input) {
+    var out = input;
+    out = out.replaceAllMapped(
+      _sessionPathPattern,
+      (_) => '/_session/<redacted>',
+    );
+    out = out.replaceAllMapped(_authorizationPattern, (match) {
+      final bearer = match.group(2);
+      return bearer == null
+          ? '${match.group(1)}<redacted>'
+          : '${match.group(1)}Bearer <redacted>';
+    });
+    out = out.replaceAllMapped(
+      _bareBearerPattern,
+      (match) => '${match.group(1)}<redacted>',
+    );
+    out = out.replaceAllMapped(
+      _cookiePattern,
+      (match) => '${match.group(1)}<redacted>',
+    );
+    out = out.replaceAllMapped(
+      _sensitiveQueryPattern,
+      (match) => '${match.group(1)}<redacted>',
+    );
+    out = out.replaceAllMapped(
+      _sensitiveAssignmentPattern,
+      (match) => '${match.group(1)}<redacted>',
+    );
+    return out;
+  }
+
+  /// `/_session/<capability>/…` — the per-launch loopback capability.
+  static final _sessionPathPattern =
+      RegExp(r'''/_session/[^/\s?#'"<>]+''');
+
+  /// `Authorization: [Bearer ]<credential>` (case-insensitive).
+  static final _authorizationPattern = RegExp(
+    r'''([Aa]uthorization\s*[:=]\s*["']?)(Bearer\s+)?[^\s"'\n,;]+''',
+  );
+
+  /// Bare `Bearer <credential>` without an `Authorization:` prefix.
+  static final _bareBearerPattern = RegExp(
+    r'''([Bb]earer\s+)[^\s"'\n,;]+''',
+  );
+
+  /// `Cookie: <whole header value>` — redacted to end of line.
+  static final _cookiePattern = RegExp(r'([Cc]ookie\s*[:=]\s*)[^\n]*');
+
+  /// Keys whose values are secret material (query `?key=value` and
+  /// free-text/JSON `key: value` / `key=value` share this set).
+  static const _sensitiveKeys =
+      'token|access_token|refresh_token|id_token|auth|authorization|'
+      'password|passwd|pwd|secret|client_secret|api_key|apikey|key|'
+      'key_hex|secret_key|access_key|capability|session|session_id|'
+      'sessionid|cookie|sign|signature|credential|credentials|'
+      'private_key|spade_a|device_token';
+
+  static final _sensitiveQueryPattern = RegExp(
+    '([?&](?:$_sensitiveKeys)=)[^&\\s"\'#]*',
+    caseSensitive: false,
+  );
+
+  static final _sensitiveAssignmentPattern = RegExp(
+    '((?:^|[\\s{"\'\\(,\\[])(?:$_sensitiveKeys)\\s*["\']?\\s*[:=]\\s*["\']?)'
+    // 不吃 `Bearer …`：`Authorization: Bearer <token>` 由上面的
+    // Authorization/Bearer 轮次处理，这里再匹配会把 `Bearer` 一词
+    // 当成值、留下裸 token（或把已脱敏的占位符再包一层）。
+    '(?!Bearer\\s)[^"\'\\s,}\\]]+',
+    caseSensitive: false,
+  );
 
   /// 清空当前可查看的日志（历史 + 本次会话）；不删除落盘文件。
   void clear() {
