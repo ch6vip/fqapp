@@ -96,6 +96,19 @@ jobs:
           path: app
           persist-credentials: false
 
+      - name: Validate version tag
+        if: github.ref_type == 'tag'
+        run: |
+          # A version tag must be a plain semver triple (v1.2.3): the APK's
+          # versionName is compared against the tag below, and anything else
+          # (v1.2, v1.2.3-rc.1, a typo) would silently ship a mismatched build.
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version tag must match v<major>.<minor>.<patch> (got '$GITHUB_REF_NAME')" >&2
+            exit 1
+          fi
+          printf 'Building version tag %s (expected versionName %s)\n' \
+            "$GITHUB_REF_NAME" "${GITHUB_REF_NAME#v}"
+
       # The product build has no private backend checkout and no extra
       # toolchain. The golden vectors in rust/testdata/ are checked in and
       # are never an input to this workflow.
@@ -337,6 +350,13 @@ jobs:
               exit 1
               ;;
           esac
+          # Tag builds must carry exactly the version the tag names; branch
+          # and PR builds skip the assertion (no tag to compare against).
+          version_args=()
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            # Tag shape was validated above; strip the leading v.
+            version_args=(--expected-version-name "${GITHUB_REF_NAME#v}")
+          fi
           # The fingerprint is only asserted when a release signature was
           # actually applied. Without the secrets the package is unsigned, so
           # pinning a certificate there could never pass; every other check
@@ -345,6 +365,7 @@ jobs:
             --apk build/app/outputs/flutter-apk/app-release.apk \
             --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
             "${signer_args[@]}" \
+            "${version_args[@]}" \
             --report-dir build/ci-artifacts/verification
           cp build/app/outputs/flutter-apk/app-release.apk build/ci-artifacts/app-release.apk
           {
