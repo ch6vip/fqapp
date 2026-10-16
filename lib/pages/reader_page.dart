@@ -19,6 +19,7 @@ import '../services/eink_refresh.dart';
 import '../services/volume_key.dart';
 import '../services/reader_history.dart';
 import '../services/reader_preferences.dart';
+import '../services/reader_tap_zones.dart';
 import '../services/reader_underline_store.dart';
 import '../services/system_tts.dart';
 import '../widgets/chapter_cache_sheet.dart';
@@ -1777,6 +1778,35 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _syncVolumeKeyEnabled();
   }
 
+  /// 点击区域九宫格分发：按点按位置取九宫格动作执行。
+  void _handleTapZone(Offset position, BoxConstraints constraints) {
+    final action = readerTapZoneActionAt(
+      zones: _preferences.tapZones,
+      dx: position.dx,
+      dy: position.dy,
+      width: constraints.maxWidth,
+      height: constraints.maxHeight,
+    );
+    switch (action) {
+      case ReaderTapZoneAction.none:
+        break;
+      case ReaderTapZoneAction.menu:
+        _toggleControls();
+      case ReaderTapZoneAction.prevPage:
+        _pauseListenFollow();
+        unawaited(_turnPage(-1));
+      case ReaderTapZoneAction.nextPage:
+        _pauseListenFollow();
+        unawaited(_turnPage(1));
+      case ReaderTapZoneAction.prevChapter:
+        unawaited(_prev(startAtEnd: true));
+      case ReaderTapZoneAction.nextChapter:
+        unawaited(_next());
+      case ReaderTapZoneAction.toc:
+        unawaited(_showDirectory());
+    }
+  }
+
   void _previewPreferences(ReaderPreferences preferences) {
     _preferencesDirty = true;
     final fontChanged = preferences.fontPath != _preferences.fontPath;
@@ -2323,15 +2353,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               _stopAutoTurn();
             } else if (_controlsVisible) {
               _toggleControls();
-            } else if (details.localPosition.dx < constraints.maxWidth / 3) {
-              _pauseListenFollow();
-              _turnPage(_preferences.tapLeftTurnsNext ? 1 : -1);
-            } else if (details.localPosition.dx >
-                constraints.maxWidth * 2 / 3) {
-              _pauseListenFollow();
-              _turnPage(1);
             } else {
-              _toggleControls();
+              _handleTapZone(details.localPosition, constraints);
             }
           },
           child: Stack(
