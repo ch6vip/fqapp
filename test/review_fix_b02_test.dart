@@ -1,15 +1,18 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
+import 'package:fqapp/services/secure_key_provider.dart';
 
 void main() {
   late Directory directory;
+  late SecureKeyProvider keys;
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('fqapp-b02-test-');
     Hive.init(directory.path);
+    keys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
   });
   tearDown(() async {
     await Hive.close();
@@ -19,7 +22,7 @@ void main() {
   test(
     'a catalogue evicted mid-batch no longer hides the surviving chapters',
     () async {
-      final store = ChapterCacheStore(maxEntries: 1);
+      final store = ChapterCacheStore(keys: keys, maxEntries: 1);
       await store.saveBook(_book('y'));
       await _write(store, 'y', '1', 'y-one');
       // Writing x historically evicted y/1 and then deleted book:y, so the
@@ -33,12 +36,12 @@ void main() {
         books.where((entry) => entry.book.id == 'y').single.stats.chapterCount,
         1,
       );
-      expect(Hive.box('chapter_cache_v1').containsKey('book:y'), isTrue);
+      expect(Hive.box('chapter_cache_v1_enc').containsKey('book:y'), isTrue);
     },
   );
 
   test('a missing catalogue is rebuilt from the surviving chapters', () async {
-    final store = ChapterCacheStore();
+    final store = ChapterCacheStore(keys: keys, );
     // Reproduces the stored state left behind by the old orphan bug.
     await _write(store, 'orphan', '1', 'orphan text');
     final book = (await store.books()).single.book;
@@ -49,19 +52,19 @@ void main() {
   test(
     'catalogue-only records are bounded even without any chapters',
     () async {
-      final store = ChapterCacheStore(maxEntries: 1);
+      final store = ChapterCacheStore(keys: keys, maxEntries: 1);
       await store.saveBook(_book('a'));
       await store.saveBook(_book('b'));
-      final box = Hive.box('chapter_cache_v1');
+      final box = Hive.box('chapter_cache_v1_enc');
       expect(box.containsKey('book:a'), isFalse);
       expect(box.containsKey('book:b'), isTrue);
     },
   );
 
   test('stale catalogue-only records are aged out', () async {
-    final store = ChapterCacheStore();
+    final store = ChapterCacheStore(keys: keys, );
     await store.books();
-    final box = Hive.box('chapter_cache_v1');
+    final box = Hive.box('chapter_cache_v1_enc');
     await box.put('book:stale', {
       'id': 'stale',
       'title': '旧书',
@@ -77,12 +80,12 @@ void main() {
   });
 
   test('a catalogue-only download still survives other evictions', () async {
-    final store = ChapterCacheStore(maxEntries: 2);
+    final store = ChapterCacheStore(keys: keys, maxEntries: 2);
     await store.saveBook(_book('a'));
     await _write(store, 'x', '1', 'x-one');
     await _write(store, 'x', '2', 'x-two');
     await _write(store, 'x', '3', 'x-three');
-    expect(Hive.box('chapter_cache_v1').containsKey('book:a'), isTrue);
+    expect(Hive.box('chapter_cache_v1_enc').containsKey('book:a'), isTrue);
   });
 }
 

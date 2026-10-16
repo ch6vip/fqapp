@@ -1,14 +1,16 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/drama_download_store.dart';
+import 'package:fqapp/services/secure_key_provider.dart';
 
 void main() {
   late Directory temp;
   late Directory videoDir;
+  late SecureKeyProvider keys;
   late HiveDramaDownloadStore store;
 
   setUp(() async {
@@ -16,7 +18,11 @@ void main() {
     Hive.init(temp.path);
     videoDir = Directory('${temp.path}${Platform.pathSeparator}offline-video')
       ..createSync();
-    store = HiveDramaDownloadStore(directoryResolver: () async => videoDir);
+    keys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
+    store = HiveDramaDownloadStore(
+      keys: keys,
+      directoryResolver: () async => videoDir,
+    );
   });
 
   tearDown(() async {
@@ -78,7 +84,10 @@ void main() {
   });
 
   test('损坏记录按未缓存处理，不给出不可回放的取流结果', () async {
-    final box = await Hive.openBox<dynamic>('drama_download_v1');
+    // Seed the corrupt record into the encrypted box the store actually
+    // reads (open it via the store first so no cipher is needed here).
+    await store.isDownloaded('bad');
+    final box = Hive.box<dynamic>('drama_download_v1_enc');
     await box.put('episode:bad', {'seriesId': 'series1'});
     expect(await store.isDownloaded('bad'), isFalse);
     expect(await store.episode('bad'), isNull);

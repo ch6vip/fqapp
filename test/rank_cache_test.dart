@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/rank.dart';
 import 'package:fqapp/pages/rank_page.dart';
 import 'package:fqapp/services/rank_cache.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 RankCatalog _catalog() => RankCatalog(
   rankId: 'r1',

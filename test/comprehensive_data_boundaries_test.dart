@@ -10,9 +10,10 @@ import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/services/digg_store.dart';
+import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
@@ -63,6 +64,9 @@ void main() {
           await Hive.openBox<dynamic>('watched_episodes');
           // 短剧离线缓存的记录箱随 bootstrap 预热（F08），同样要预开。
           await Hive.openBox<dynamic>('drama_download_v1');
+          // 预热同时跑完 P1-4 的 keyHex 迁移：首次开盒会写迁移 marker，
+          // 写盘 I/O 同样不能落在 widget 测试的 fake-async 路径上。
+          await HiveDramaDownloadStore.instance.warmUp();
           // 官方播放页开关在 bootstrap 里从 config.json 读取；提前读好，
           // 避免 bundle 加载落在 widget 测试的 fake-async 路径上。
           await PlayerStyleConfig.load();
