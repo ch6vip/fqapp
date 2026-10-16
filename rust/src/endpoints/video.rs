@@ -1114,7 +1114,7 @@ async fn download_and_save(
         let _ = std::fs::remove_file(&part_path);
         return Err(err.to_string());
     }
-    prune_video_cache(&src_dir, &fp);
+    prune_src_cache(&src_dir, &fp);
 
     Ok(format!("/src/{filename}"))
 }
@@ -1127,8 +1127,16 @@ struct CacheEntry {
     when: std::time::SystemTime,
 }
 
-/// Removes the oldest completed video files once the cache exceeds the limit.
-fn prune_video_cache(src_dir: &str, keep: &Path) {
+/// Removes the oldest completed cached files once the cache exceeds the
+/// limit. Videos and manga images share `src_dir`, so both count toward the
+/// same budget: manga images are the content-addressed `img_<sha256>.<ext>`
+/// files, and they are evictable like videos (re-downloadable on demand).
+/// In-flight downloads (`.part` / `.tmp`) are never counted or deleted.
+pub(crate) fn prune_src_cache(src_dir: &str, keep: &Path) {
+    prune_src_cache_with_budget(src_dir, keep, MAX_VIDEO_CACHE_BYTES);
+}
+
+fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
     let Ok(entries) = std::fs::read_dir(src_dir) else {
         return;
     };
@@ -1143,7 +1151,12 @@ fn prune_video_cache(src_dir: &str, keep: &Path) {
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
-        if ext != "mp4" && ext != "m4s" && ext != "ts" {
+        let is_video = ext == "mp4" || ext == "m4s" || ext == "ts";
+        // Manga images are written as `img_<sha256>.<jpg|png|gif|webp>`; the
+        // `img_` prefix keeps unrelated files out of the eviction set.
+        let is_manga_image = name.starts_with("img_")
+            && (ext == "jpg" || ext == "png" || ext == "gif" || ext == "webp");
+        if !is_video && !is_manga_image {
             continue;
         }
         let Ok(meta) = entry.metadata() else {
@@ -1160,12 +1173,12 @@ fn prune_video_cache(src_dir: &str, keep: &Path) {
             when,
         });
     }
-    if total <= MAX_VIDEO_CACHE_BYTES {
+    if total <= max_bytes {
         return;
     }
     items.sort_by_key(|a| a.when);
     for item in items {
-        if total <= MAX_VIDEO_CACHE_BYTES {
+        if total <= max_bytes {
             continue;
         }
         if item.path.as_path() == keep {
@@ -2102,6 +2115,47 @@ mod cenc_sample_fixture {
         // Sane fixed-size box still parses.
         let (data, b) = stsz_box(100, 3, 320);
         assert_eq!(parse_stsz(&data, b), vec![100, 100, 100]);
+    }
+
+    /// P1-6: manga images (`img_*`) must count toward the same `src_dir`
+    /// budget as videos and be evicted oldest-first; in-flight and
+    /// unrelated files must never be deleted.
+    #[test]
+    fn src_cache_prune_evicts_oldest_manga_images_too() {
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-prune-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let write_at = |name: &str, size: usize, secs: u64| {
+            let path = dir.join(name);
+            std::fs::write(&path, vec![b'x'; size]).expect("write cache file");
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open cache file")
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .expect("set mtime");
+            path
+        };
+        let old_video = write_at("old.mp4", 60, 50);
+        let old_image = write_at("img_old.png", 60, 100);
+        let new_image = write_at("img_new.png", 60, 200);
+        let in_flight = write_at("img_tmp.png.part", 60, 10);
+        let unrelated = write_at("notes.txt", 60, 10);
+
+        // Total counted = 180 (video + 2 images); budget 100 forces eviction
+        // of the oldest first: old video, then old image. The kept (newest)
+        // image, the in-flight part file, and the unrelated file survive.
+        prune_src_cache_with_budget(&dir.to_string_lossy(), &new_image, 100);
+
+        assert!(!old_video.exists(), "oldest video must be evicted");
+        assert!(!old_image.exists(), "oldest manga image must be evicted");
+        assert!(new_image.exists(), "kept image must survive");
+        assert!(in_flight.exists(), "in-flight .part must never be deleted");
+        assert!(unrelated.exists(), "unrelated files must never be deleted");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
