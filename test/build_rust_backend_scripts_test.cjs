@@ -77,7 +77,7 @@ test('the build scripts target Android ARM64 with the project NDK and 16 KiB pag
   }
 
   const cargoConfig = fs.readFileSync(
-    path.join(appDir, 'rust', '.cargo', 'config.toml'),
+    path.join(appDir, '.cargo', 'config.toml'),
     'utf8',
   );
   assert.match(
