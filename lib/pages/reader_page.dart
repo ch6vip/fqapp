@@ -15,6 +15,8 @@ import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
+import '../services/eink_refresh.dart';
+import '../services/volume_key.dart';
 import '../services/reader_history.dart';
 import '../services/reader_preferences.dart';
 import '../services/reader_underline_store.dart';
@@ -137,30 +139,43 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       ? ReaderThemePreset.eink
       : _preferences.themePreset;
 
-  bool _handleVolumeKey(KeyEvent event) {
+  /// 排版用的偏好：墨水屏模式下把预设换成 eink，正文/标题才是 #000000。
+  ///
+  /// 页面背景早就走 [_effectivePreset]，但 [ReaderLayoutSpec] 的正文、标题
+  /// 颜色和 [ReaderControls] 自己的读色都取自这里传入的 preferences。之前
+  /// 两处直接传 [_preferences]，于是全局墨水屏开启后正文仍用用户保存预设的
+  /// textColor（默认米白 #292724）——实测设备上正文主色 RGB(41,39,36)，
+  /// 墨水屏把它量化成明显发灰的一档。保存的预设不动，关闭墨水屏即恢复。
+  ReaderPreferences get _displayPreferences => einkModeNotifier.value
+      ? _preferences.copyWith(themePreset: ReaderThemePreset.eink)
+      : _preferences;
+
+  /// 原生层（MainActivity.dispatchKeyEvent）拦截到音量键后回调：仅在阅读页
+  /// 当前路由、未显示控制栏、已开启音量键翻页、且为分页模式时翻页。
+  void _onVolumeKey(int direction) {
     if (!mounted ||
-        !_appActive ||
-        ModalRoute.of(context)?.isCurrent != true ||
+        !_routeCurrent ||
+        _controlsVisible ||
         !_preferences.volumeKeyTurn ||
-        _controlsVisible) {
-      return false;
+        !_paged) {
+      return;
     }
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
-    if (_paged) {
-      if (event.logicalKey == LogicalKeyboardKey.audioVolumeDown) {
-        _pauseListenFollow();
-        _stopAutoTurn();
-        unawaited(_turnPage(1));
-        return true;
-      }
-      if (event.logicalKey == LogicalKeyboardKey.audioVolumeUp) {
-        _pauseListenFollow();
-        _stopAutoTurn();
-        unawaited(_turnPage(-1));
-        return true;
-      }
-    }
-    return false;
+    _pauseListenFollow();
+    _stopAutoTurn();
+    unawaited(_turnPage(direction));
+  }
+
+  /// 根据当前状态同步原生是否拦截音量键：仅当阅读页是当前路由、未显示控制栏、
+  /// 已开启音量键翻页、且为分页模式时启用。其余情况放行系统音量。
+  void _syncVolumeKeyEnabled() {
+    unawaited(
+      VolumeKeyService.instance.setEnabled(
+        _routeCurrent &&
+            _preferences.volumeKeyTurn &&
+            !_controlsVisible &&
+            _paged,
+      ),
+    );
   }
 
   void _toggleAutoTurn() {
@@ -252,6 +267,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   bool _appActive = true;
   bool _routeCurrent = false;
   bool _changingChapter = false;
+
+  /// 墨水屏整屏刷新计数器：每翻一页 +1，达到 [_ReaderState._einkRefreshInterval]
+  /// 阈值（来自 [_preferences.einkRefreshInterval]）就调用一次海信 EPD 全刷压残影，
+  /// 然后归零。仅在全局墨水屏模式开启时累加。
+  int _einkPageCounter = 0;
 
   /// Chapter-boundary transition handed to [ReaderPagedView]; see
   /// [ReaderChapterTurn]. Set by [_next] / [_prev] and cleared once the slide
@@ -361,7 +381,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    HardwareKeyboard.instance.addHandler(_handleVolumeKey);
+    VolumeKeyService.instance.setOnVolumeKey(_onVolumeKey);
+    _syncVolumeKeyEnabled();
     ListeningSession.instance.addListener(_onListeningTick);
     WidgetsBinding.instance.addObserver(this);
     _appActive =
@@ -390,6 +411,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (_routeCurrent == current) return;
     _routeCurrent = current;
     _syncSystemBars();
+    _syncVolumeKeyEnabled();
   }
 
   // Note: Route/lifecycle ownership and SDK 36 compatibility; see
@@ -417,6 +439,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _dayTheme = preferences.themePreset;
       }
     });
+    _syncVolumeKeyEnabled();
     await _loadFont(preferences.fontPath);
     if (mounted && _appActive) unawaited(_refreshDevice());
   }
@@ -921,7 +944,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     _chapterRequest?.cancel();
-    HardwareKeyboard.instance.removeHandler(_handleVolumeKey);
+    VolumeKeyService.instance.setOnVolumeKey(null);
+    unawaited(VolumeKeyService.instance.setEnabled(false));
     ListeningSession.instance.removeListener(_onListeningTick);
     _autoTurnTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -963,6 +987,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         }
       }
     }
+    // 前台/后台切换不影响原生层音量键拦截（在 Activity 层，与 Flutter 生命周期
+    // 无关），故此处无需重挂监听；仅同步一次状态即可。
+    _syncVolumeKeyEnabled();
   }
 
   Future<void> _load({
@@ -1403,7 +1430,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final spec = ReaderLayoutSpec(
       viewport: constraints.biggest,
       textScaler: MediaQuery.textScalerOf(context),
-      preferences: _preferences,
+      preferences: _displayPreferences,
       fontFamily:
           _fontFamily ?? Theme.of(context).textTheme.bodyLarge?.fontFamily,
     );
@@ -1531,6 +1558,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     });
     _settleReadTime();
     unawaited(_persistProgress());
+    // 分页模式的实际翻页：累加墨水屏刷新计数（覆盖音量键/自动翻页/点按翻页）。
+    _recordEinkPageTurn();
+  }
+
+  /// 墨水屏整屏刷新：翻够 [_preferences.einkRefreshInterval] 页触发一次海信 EPD
+  /// 全刷压残影。全局墨水屏未开或间隔为 0 时直接跳过，计数不累加。
+  void _recordEinkPageTurn() {
+    if (!einkModeNotifier.value) return;
+    final interval = _preferences.einkRefreshInterval;
+    if (interval <= 0) return;
+    _einkPageCounter++;
+    if (_einkPageCounter >= interval) {
+      _einkPageCounter = 0;
+      unawaited(EinkRefreshService.instance.refreshIfSupported());
+    }
   }
 
   Future<void> _pageBoundary(int direction) async {
@@ -1698,6 +1740,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       await _pagedKey.currentState?.turnPage(direction);
       return;
     }
+    // 滚动模式的离散翻页（音量键/点按边缘/自动翻页）记一次，连续拖拽不计入。
+    _recordEinkPageTurn();
     if (!_scrollController.hasClients) return;
     final position = _scrollController.position;
     const boundaryTolerance = 2.0;
@@ -1730,16 +1774,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
     }
     setState(() => _controlsVisible = !_controlsVisible);
+    _syncVolumeKeyEnabled();
   }
 
   void _previewPreferences(ReaderPreferences preferences) {
     _preferencesDirty = true;
     final fontChanged = preferences.fontPath != _preferences.fontPath;
+    final intervalChanged =
+        preferences.einkRefreshInterval != _preferences.einkRefreshInterval;
     setState(() {
       _preferences = preferences.normalized();
       if (_preferences.themePreset != ReaderThemePreset.dark) {
         _dayTheme = _preferences.themePreset;
       }
+      // 刷新间隔改变时清零计数，避免沿用旧阈值导致久不刷新或立刻刷新。
+      if (intervalChanged) _einkPageCounter = 0;
     });
     if (fontChanged) unawaited(_loadFont(preferences.fontPath));
   }
@@ -2276,7 +2325,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               _toggleControls();
             } else if (details.localPosition.dx < constraints.maxWidth / 3) {
               _pauseListenFollow();
-              _turnPage(-1);
+              _turnPage(_preferences.tapLeftTurnsNext ? 1 : -1);
             } else if (details.localPosition.dx >
                 constraints.maxWidth * 2 / 3) {
               _pauseListenFollow();
@@ -2299,7 +2348,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                         onPageChanged: _onPageChanged,
                         onBoundary: _pageBoundary,
                         onDragStart: _hideControlsOnDrag,
-                        turnStyle: _preferences.pageTurnStyle,
+                        instantSwipe: _preferences.instantSwipeTurn,
+                        turnStyle: _preferences.instantSwipeTurn
+                            ? ReaderPageTurnStyle.none
+                            : _preferences.pageTurnStyle,
                         backgroundColor: preset.backgroundColor,
                         endPage: _index == widget.chapters.length - 1
                             ? _buildChapterEndPage(preset)
@@ -2721,7 +2773,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final previewIndex = seekValue.round().clamp(0, widget.chapters.length - 1);
     return ReaderControls(
       key: const ValueKey('reader-controls'),
-      preferences: _preferences,
+      preferences: _displayPreferences,
       chapterIndex: previewIndex,
       chapterCount: widget.chapters.length,
       chapterTitle: widget.chapters[previewIndex].title,

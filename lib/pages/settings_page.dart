@@ -82,7 +82,7 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
           SettingsItem(
-            icon: LucideIcons.book_marked,
+            icon: LucideIcons.bookmark,
             title: '章节缓存',
             subtitle: '离线续读、查看占用和清理缓存',
             onTap: (context, setState) => Navigator.push(
