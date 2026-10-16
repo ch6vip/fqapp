@@ -172,8 +172,35 @@ impl DevicePool {
         let file = file.as_ref().to_path_buf();
         let mut devices = Vec::new();
         if let Ok(data) = tokio::fs::read(&file).await {
-            if let Ok(pf) = serde_json::from_slice::<PoolFile>(&data) {
-                devices = pf.android;
+            match serde_json::from_slice::<PoolFile>(&data) {
+                Ok(pf) => {
+                    devices = pf.android;
+                }
+                Err(e) => {
+                    // P2-14: a corrupt pool file (torn write, truncation,
+                    // garbage) must never be silently discarded. Back it
+                    // up next to the original with a timestamp, log the
+                    // parse failure, and start empty; the pool refills by
+                    // re-registering. If the rename itself fails, the
+                    // corrupt file stays and the next save overwrites it.
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let backup = PathBuf::from(format!(
+                        "{}.corrupt-{stamp}",
+                        file.display()
+                    ));
+                    match tokio::fs::rename(&file, &backup).await {
+                        Ok(()) => log::warn!(
+                            "device pool corrupt ({e}), backed up to {}",
+                            backup.display()
+                        ),
+                        Err(rename_err) => log::warn!(
+                            "device pool corrupt ({e}), backup failed: {rename_err}"
+                        ),
+                    }
+                }
             }
         }
         devices.truncate(MAX_POOL_SIZE);
@@ -688,6 +715,45 @@ mod persistence_tests {
             assert!(
                 content.contains("android"),
                 "the file stays valid: {content}"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    /// P2-14: a corrupt pool file is backed up, not silently discarded.
+    #[test]
+    fn corrupt_pool_file_is_backed_up_not_silently_discarded() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        runtime.block_on(async {
+            let dir = temp_dir("pool-corrupt");
+            let path = dir.join("device_pool.json");
+            tokio::fs::write(&path, b"{not json, truncated")
+                .await
+                .expect("seed corrupt pool");
+            let pool = DevicePool::new(&path).await.expect("pool");
+            assert_eq!(pool.count().await, 0, "corrupt pool starts empty");
+
+            // The original bytes survive next to the pool file.
+            let mut backups = std::fs::read_dir(&dir)
+                .expect("read dir")
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with("device_pool.json.corrupt-"))
+                .collect::<Vec<_>>();
+            assert_eq!(backups.len(), 1, "exactly one backup: {backups:?}");
+            let backup = dir.join(backups.pop().expect("backup"));
+            assert_eq!(
+                std::fs::read(&backup).expect("backup bytes"),
+                b"{not json, truncated"
+            );
+            assert!(
+                !path.exists(),
+                "the corrupt file is renamed away, not left in place"
             );
             let _ = std::fs::remove_dir_all(&dir);
         });
