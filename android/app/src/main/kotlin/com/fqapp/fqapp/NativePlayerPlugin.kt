@@ -2,6 +2,7 @@ package com.fqapp.fqapp
 
 import android.Manifest
 import android.app.Activity
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -341,7 +342,26 @@ class NativePlayerPlugin internal constructor(
                     result.success(null)
                 } catch (error: Throwable) {
                     Log.w(TAG, "listen foreground start failed", error)
-                    result.success(null)
+                    // A swallowed failure used to report success, leaving
+                    // Dart believing the keep-alive notification was up while
+                    // playback could be frozen by the OEM. Distinguish the
+                    // common failure modes so the caller can tell a
+                    // background-start ban apart from a permission/state error.
+                    // (Dart treats this call as best-effort and catches the
+                    // error; see NativePlayer.startListenForeground.)
+                    val code = when {
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                            error is ForegroundServiceStartNotAllowedException ->
+                            "FOREGROUND_SERVICE_NOT_ALLOWED"
+                        error is SecurityException -> "FOREGROUND_SERVICE_SECURITY"
+                        error is IllegalStateException -> "FOREGROUND_SERVICE_STATE"
+                        else -> "FOREGROUND_SERVICE_FAILED"
+                    }
+                    result.error(
+                        code,
+                        "Failed to start listen foreground service: ${error.javaClass.simpleName}",
+                        null,
+                    )
                 }
             }
             "stopListenForeground" -> {
