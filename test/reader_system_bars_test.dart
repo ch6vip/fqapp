@@ -5,8 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/book_comment.dart';
+import 'package:fqapp/models/chapter_ideas.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'support/fakes.dart';
 
@@ -92,6 +96,87 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
     expect(immersiveRequests(), hasLength(count));
+  });
+
+  testWidgets('paragraph-ideas sheet keeps immersive on (#57)', (tester) async {
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(navigatorKey: navigator, home: const Scaffold()),
+    );
+    navigator.currentState!.push(
+      MaterialPageRoute<void>(builder: (_) => _readerWithIdeas()),
+    );
+    await tester.pumpAndSettle();
+    expect(immersiveRequests(), isNot(contains(false)));
+    expect(immersiveRequests().last, isTrue);
+
+    // Open the ideas sheet via the paragraph bubble.
+    await tester.tap(find.text('42'));
+    await tester.pumpAndSettle();
+    expect(find.text('这段太真实了'), findsOneWidget);
+    // The sheet pushes a route; immersive must NOT be released.
+    expect(immersiveRequests(), isNot(contains(false)));
+    expect(immersiveRequests().last, isTrue);
+
+    // Close the sheet; immersive stays on with no transient release:
+    // the close used to flash the status bar for a frame (#57).
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    expect(find.text('这段太真实了'), findsNothing);
+    expect(immersiveRequests(), isNot(contains(false)));
+    expect(immersiveRequests().last, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('e-ink ideas sheet uses a transparent barrier (#57)', (
+    tester,
+  ) async {
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = false);
+    await tester.pumpWidget(MaterialApp(home: _readerWithIdeas()));
+    await tester.pumpAndSettle();
+
+    // A fully transparent barrierColor makes the bottom-sheet route build
+    // a plain (colorless) ModalBarrier for hit-testing; any visible dim
+    // goes through an AnimatedModalBarrier whose animation ends at the
+    // barrier color.
+    Color? animatedBarrierColor() {
+      final animated = tester.widgetList<AnimatedModalBarrier>(
+        find.byType(AnimatedModalBarrier),
+      );
+      if (animated.isEmpty) return null;
+      return animated.single.color.value;
+    }
+
+    bool hasDismissibleBarrier() {
+      final barriers = tester.widgetList<ModalBarrier>(
+        find.byType(ModalBarrier),
+      );
+      return barriers.any((barrier) => barrier.dismissible);
+    }
+
+    await tester.tap(find.text('42'));
+    await tester.pumpAndSettle();
+    expect(find.text('这段太真实了'), findsOneWidget);
+    // Transparent: no animated dim barrier, but the dismissible
+    // (tap-outside-to-close) barrier is still there.
+    expect(animatedBarrierColor(), isNull);
+    expect(hasDismissibleBarrier(), isTrue);
+
+    // Dismiss via the barrier, then reopen without e-ink: the dimmed
+    // scrim returns.
+    await tester.tapAt(const Offset(200, 100));
+    await tester.pumpAndSettle();
+    expect(find.text('这段太真实了'), findsNothing);
+    einkModeNotifier.value = false;
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('42'));
+    await tester.pumpAndSettle();
+    expect(
+      animatedBarrierColor(),
+      Colors.black.withValues(alpha: 0.4),
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('empty reader does not hide system navigation', (tester) async {
@@ -196,6 +281,43 @@ void main() {
 }
 
 final _surface = find.byKey(const ValueKey('reader-page-surface'));
+
+const _ideasHtml =
+    '<header><div class="tt-title">第一章</div></header><article>'
+    '<p idx="0">第一段话。</p><p></p>'
+    '<p idx="1">第二段话。</p>'
+    '</article>';
+
+ChapterIdeas _ideasWithBubble() => ChapterIdeas.fromPayload(const {
+  'code': 0,
+  'data': {
+    'data': {
+      '0': {
+        'count': 42,
+        'bubble_data': {
+          '0': {'channel': 43, 'count': 0},
+          '1': {'channel': 0, 'count': 42},
+          '3': {'channel': 0, 'count': 42},
+        },
+        'infos': [],
+      },
+    },
+  },
+});
+
+ReaderPage _readerWithIdeas() => ReaderPage(
+  bookId: 'system-bars-ideas',
+  title: '段评测试',
+  chapters: [Chapter(itemId: 'c1', title: '第一章', volumeName: '正文')],
+  startIndex: 0,
+  readerStore: MemoryReaderStore(),
+  chapterCache: MemoryChapterCache(),
+  chapterLoader: (_) async => parseChapterContent(_ideasHtml).toCacheText(),
+  ideasLoader: (_) async => _ideasWithBubble(),
+  commentResolver: (_, paragraph, _) async => const BookCommentPage(
+    comments: [BookComment(id: 'x', text: '这段太真实了')],
+  ),
+);
 
 ReaderPage _reader({bool empty = false}) => ReaderPage(
   bookId: 'system-bars-test',
