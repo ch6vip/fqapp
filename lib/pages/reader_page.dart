@@ -437,6 +437,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final current = ModalRoute.isCurrentOf(context) ?? true;
     if (_routeCurrent == current) return;
     _routeCurrent = current;
+    // The ideas sheet (#57) holds immersive while it is open. Once this
+    // route is current again the sheet is gone, so the hold is released
+    // here — the sheet's own finally runs before this notification lands
+    // (the sheet route is still present until its close animation ends),
+    // and releasing there would briefly show the status bar (one flash).
+    if (current) _ideasSheetOpen = false;
     _syncSystemBars();
     _syncVolumeKeyEnabled();
   }
@@ -1202,10 +1208,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         ),
       );
     } finally {
-      // The sheet is gone: release the immersive hold. Guard mounted: if
-      // the reader was disposed while the sheet was open, dispose already
-      // closed the device session and no stale call may follow it.
-      if (mounted) {
+      // The sheet is gone. Release the immersive hold here only if this
+      // route is already current again; otherwise didChangeDependencies
+      // releases it once the route regains current status (#57). The
+      // sheet route stays present until its close animation ends, so an
+      // unconditional release here would sync "not immersive" before
+      // that notification lands and flash the status bar for a frame.
+      // Guard mounted: if the reader was disposed while the sheet was
+      // open, dispose already closed the device session and no stale
+      // call may follow it.
+      if (mounted && _routeCurrent) {
         _ideasSheetOpen = false;
         _syncSystemBars();
       }
