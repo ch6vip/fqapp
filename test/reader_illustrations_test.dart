@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_device.dart';
@@ -359,6 +360,21 @@ void main() {
     await tester.pumpAndSettle();
     final viewer = find.byKey(const ValueKey('reader-illustration-viewer'));
     expect(viewer, findsOneWidget);
+    final title = find.text('插图');
+    expect(
+      tester.widget<Text>(title).style?.color ??
+          DefaultTextStyle.of(tester.element(title)).style.color,
+      Colors.white,
+    );
+    final closeIcon = find.descendant(
+      of: find.byTooltip('关闭插图'),
+      matching: find.byType(Icon),
+    );
+    final icon = tester.widget<Icon>(closeIcon);
+    expect(
+      icon.color ?? IconTheme.of(tester.element(closeIcon)).color,
+      Colors.white,
+    );
     expect(store.entry!['textOffset'], anchor);
     final center = tester.getCenter(viewer);
     final left = await tester.startGesture(
@@ -826,6 +842,7 @@ Widget _app({
   ChapterTextLoader? loader,
   List<Chapter>? chapters,
 }) => MaterialApp(
+  theme: AppTheme.createTheme(Brightness.light),
   home: ReaderPage(
     bookId: _bookId,
     title: _bookTitle,

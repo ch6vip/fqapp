@@ -76,11 +76,11 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
           appBar: AppBar(
             backgroundColor: Colors.black,
             foregroundColor: Colors.white,
-            title: const Text('插图'),
+            title: const Text('插图', style: TextStyle(color: Colors.white)),
             leading: IconButton(
               tooltip: '关闭插图',
               onPressed: () => navigator.pop(),
-              icon: const Icon(LucideIcons.x),
+              icon: const Icon(LucideIcons.x, color: Colors.white),
             ),
           ),
           body: SafeArea(
