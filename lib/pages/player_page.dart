@@ -956,9 +956,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         final request = _sources.request(episode, refresh: refresh);
         trace.source = request.origin.name;
         var online = await request.future;
-        // 会话内记住的画质选择（官方=引擎当前档）：同一集重新加载时沿用。
-        final chosen = _chosen[episode.itemId];
-        if (chosen != null) online = online.withVariant(chosen);
+        // 会话内记住的画质选择（官方=引擎当前档）：切集时按画质名在新集
+        // 自己的 variants 里找，找到就用，找不到回默认（#60：换下一集
+        // 不应变回默认画质）。只记名、不搬 variant 对象——variant 的
+        // URL 属于它自己的集，搬过来会播错集的流。
+        if (_chosenQualityName != null) {
+          for (final variant in online.variants) {
+            if (variant.name == _chosenQualityName) {
+              online = online.withVariant(variant);
+              break;
+            }
+          }
+        }
         source = online;
       }
       if (!_current(generation)) return;
@@ -1111,11 +1120,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// The source the current player was created from (includes the rendition
-  /// list), and the session-level quality choice per episode id. The official
+  /// list), and the session-level quality choice for this drama. The official
   /// client keeps the resolution on the engine for the session only; no
   /// cross-launch preference exists there, so none is stored here either.
+  /// Only the quality NAME is remembered: a variant object carries its own
+  /// episode's URL, and applying it to another episode would play the wrong
+  /// stream. On every load the name is matched against that episode's own
+  /// variants; no match falls back to the default rendition.
   EpisodeSource? _currentSource;
-  final Map<String, EpisodeVariant> _chosen = {};
+  String? _chosenQualityName;
 
   /// 听书页回传的续看锚点 (集号, 进度)：[_openListenMode] 在自动连播跨集
   /// 时设置，只对匹配集的下一次 [_loadVideo] 生效一次——此时本地历史
@@ -1138,7 +1151,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final resumeMs = resume.inMilliseconds;
     final wasPlaying = _playing;
     final episode = widget.eps[_index];
-    _chosen[episode.itemId] = variant;
+    _chosenQualityName = variant.name;
     _currentSource = source.withVariant(variant);
     final release = _teardownPlayer();
     NativePlayer? candidate;
