@@ -6,6 +6,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../models/book_comment.dart';
 import '../../models/chapter_ideas.dart';
 import '../../services/reader_preferences.dart';
+import '../comment_images.dart';
 import '../home/home_design.dart';
 import 'reader_theme.dart';
 
@@ -413,10 +414,19 @@ class _CommentRow extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  comment.text,
-                  style: TextStyle(color: textColor, fontSize: 16, height: 1.5),
-                ),
+                if (comment.text.isNotEmpty)
+                  Text(
+                    comment.text,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 16,
+                      height: 1.5,
+                    ),
+                  ),
+                if (comment.imageUrls.isNotEmpty) ...[
+                  if (comment.text.isNotEmpty) const SizedBox(height: 8),
+                  CommentImages(imageUrls: comment.imageUrls),
+                ],
                 const SizedBox(height: 10),
                 Row(
                   children: [

@@ -76,6 +76,23 @@ void main() {
     expect(first.createdAt, isNotNull);
   });
 
+  test('keeps image-only reviews from the legacy image_url list', () {
+    final review = BookComment.fromRaw({
+      'comment_id': 'image-review',
+      'text': '',
+      'image_url': ['https://example.test/review.jpg', 'file:///invalid.jpg'],
+    });
+    expect(review, isNotNull);
+    expect(review!.imageUrls, ['https://example.test/review.jpg']);
+    expect(review.isEmpty, isFalse);
+    expect(
+      BookComment.fromRaw({
+        'image_url': ['invalid'],
+      }),
+      isNull,
+    );
+  });
+
   test('maps the 0-10 upstream score onto five stars', () {
     final page = BookCommentPage.fromPayload(payload());
     expect(page.comments[0].stars, 5);
@@ -153,7 +170,10 @@ void main() {
   group('parseParagraphComments', () {
     /// Mirrors a live paragraph-comment response: a flat `data_list` whose
     /// entries nest everything under `comment`, counters included.
-    Map<String, dynamic> paragraphPayload() => {
+    Map<String, dynamic> paragraphPayload({
+      String text = '只为了自己',
+      Object? images,
+    }) => {
       'code': 0,
       'data': {
         'common_list_info': {'cursor': '400', 'has_more': false, 'total': 5},
@@ -163,7 +183,7 @@ void main() {
               'comment_id': '7673571582642570046',
               'common': {
                 'comment_type': 0,
-                'content': {'text': '只为了自己'},
+                'content': {'text': text, 'image_data_list': images},
                 'create_timestamp': 1786646180,
                 'user_info': {
                   'base_info': {
@@ -179,6 +199,72 @@ void main() {
         ],
       },
     };
+
+    test('keeps an image-only paragraph comment', () {
+      final page = parseParagraphComments(
+        paragraphPayload(
+          text: '',
+          images: {
+            'image_data': [
+              {
+                'web_url': 'https://example.test/comment.jpg',
+                'width': 1080,
+                'height': 1512,
+              },
+            ],
+          },
+        ),
+      );
+      expect(page.comments, hasLength(1));
+      expect(page.comments.single.isEmpty, isFalse);
+      expect(page.comments.single.imageUrls, [
+        'https://example.test/comment.jpg',
+      ]);
+    });
+
+    test('keeps valid image URLs in order and ignores malformed entries', () {
+      final page = parseParagraphComments(
+        paragraphPayload(
+          images: {
+            'image_data': [
+              {'web_url': 'https://example.test/first.jpg'},
+              null,
+              'invalid',
+              {},
+              {'web_url': ''},
+              {'web_url': 'file:///private/image.jpg'},
+              {'web_url': 'https:///image.jpg'},
+              {'web_url': 'http://example.test/second.jpg'},
+            ],
+          },
+        ),
+      );
+      expect(page.comments.single.imageUrls, [
+        'https://example.test/first.jpg',
+        'http://example.test/second.jpg',
+      ]);
+    });
+
+    test('drops empty comments with unusable image data', () {
+      for (final images in [
+        null,
+        [],
+        {},
+        {'image_data': {}},
+        {
+          'image_data': [
+            {'web_url': 'data:image/png;base64,abc'},
+          ],
+        },
+      ]) {
+        expect(
+          parseParagraphComments(
+            paragraphPayload(text: ' ', images: images),
+          ).isEmpty,
+          isTrue,
+        );
+      }
+    });
 
     test('reads the body, author and counters', () {
       final page = parseParagraphComments(paragraphPayload());

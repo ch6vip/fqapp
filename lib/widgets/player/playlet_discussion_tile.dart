@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../comment_images.dart';
+
 /// 剧评与回复共用官方的头像、昵称、正文和计数布局；账号写操作不在本页提供。
 class PlayletDiscussionTile extends StatelessWidget {
   const PlayletDiscussionTile({
     super.key,
     required this.text,
+    this.imageUrls = const [],
     required this.userName,
     required this.userAvatar,
     required this.published,
@@ -15,6 +18,7 @@ class PlayletDiscussionTile extends StatelessWidget {
   });
 
   final String text;
+  final List<String> imageUrls;
   final String userName;
   final String userAvatar;
   final String published;
@@ -51,10 +55,18 @@ class PlayletDiscussionTile extends StatelessWidget {
                 style: const TextStyle(fontSize: 13, color: Color(0xFF9499A0)),
               ),
               const SizedBox(height: 4),
-              Text(
-                text,
-                style: const TextStyle(fontSize: 15, color: Color(0xFF1B1B1B)),
-              ),
+              if (text.isNotEmpty)
+                Text(
+                  text,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Color(0xFF1B1B1B),
+                  ),
+                ),
+              if (imageUrls.isNotEmpty) ...[
+                if (text.isNotEmpty) const SizedBox(height: 8),
+                CommentImages(imageUrls: imageUrls),
+              ],
               const SizedBox(height: 6),
               Wrap(
                 spacing: 16,
