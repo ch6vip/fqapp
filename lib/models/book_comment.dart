@@ -8,6 +8,8 @@
 /// (a ready-made `2.6万人点评` label).
 library;
 
+import 'comment_image.dart';
+
 /// One book review.
 class BookComment {
   const BookComment({
@@ -227,19 +229,7 @@ BookComment? _paragraphComment(dynamic comment, dynamic stat) {
   final text = _string(contentMap['text']);
   final imageList = contentMap['image_data_list'];
   final images = imageList is Map ? imageList['image_data'] : null;
-  final imageUrls = <String>[];
-  if (images is List) {
-    for (final image in images) {
-      if (image is! Map) continue;
-      final url = _string(image['web_url']);
-      final uri = Uri.tryParse(url);
-      if (uri != null &&
-          (uri.scheme == 'https' || uri.scheme == 'http') &&
-          uri.host.isNotEmpty) {
-        imageUrls.add(url);
-      }
-    }
-  }
+  final imageUrls = parseCommentImageUrls(images);
   if (text.isEmpty && imageUrls.isEmpty) return null;
   final user = commonMap['user_info'];
   final userMap = user is Map ? user : const {};
@@ -255,7 +245,7 @@ BookComment? _paragraphComment(dynamic comment, dynamic stat) {
   return BookComment(
     id: _string(comment['comment_id']),
     text: text,
-    imageUrls: List.unmodifiable(imageUrls),
+    imageUrls: imageUrls,
     diggCount: _int(statMap['digg_count']),
     replyCount: _int(statMap['reply_count']),
     readSeconds: _int(statMap['read_duration']),
