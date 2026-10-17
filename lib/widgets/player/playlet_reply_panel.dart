@@ -208,6 +208,7 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
             return PlayletDiscussionTile(
               key: ValueKey('playlet-reply-${reply.id}'),
               text: reply.text,
+              imageUrls: reply.imageUrls,
               userName: reply.userName,
               userAvatar: reply.userAvatar,
               published: reply.relativeTime(),
