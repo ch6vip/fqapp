@@ -344,6 +344,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   int _ideasRevision = 0;
   int _layoutIdeasRevision = -1;
 
+  /// Whether the cached layout was measured with bubbles visible. Toggling
+  /// the 段评气泡 switch must re-measure: the bubble placeholders change
+  /// the text layout, so the cached layout is not reusable across a toggle.
+  bool _layoutBubblesVisible = true;
+
   /// Paragraph ids of this chapter carrying a locally saved 划线.
   Set<int> _underlines = const {};
 
@@ -1464,29 +1469,38 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (_chapterLayout?.spec == spec &&
         _layoutMode == _preferences.pageMode &&
         _layoutIdeasRevision == _ideasRevision &&
-        _layoutUnderlineRevision == _underlineRevision) {
+        _layoutUnderlineRevision == _underlineRevision &&
+        _layoutBubblesVisible == _preferences.showParagraphBubbles) {
       return _chapterLayout!;
     }
     // Reuse the measured text layout only when nothing that feeds it changed.
     // Switching page mode keeps the same spec and page-insensitive measurements,
     // so it must not re-measure — but bubbles or 划线 must.
+    // The bubble switch gates the data itself (not just the builder):
+    // the layout reserves placeholder space from bubbleCount, so a null
+    // builder alone would leave an empty gap at the paragraph end.
+    final bubblesVisible = _preferences.showParagraphBubbles;
     final reusable =
         _chapterLayout?.spec == spec &&
         _layoutIdeasRevision == _ideasRevision &&
-        _layoutUnderlineRevision == _underlineRevision;
+        _layoutUnderlineRevision == _underlineRevision &&
+        _layoutBubblesVisible == bubblesVisible;
     final layout = reusable
         ? _chapterLayout!
         : ReaderChapterLayout(
             title: _chapter.title,
             content: _chapterContent,
             spec: spec,
-            paragraphBubbles: _ideas.bubbleCounts,
-            paragraphBubbleVariants: _ideas.bubbleVariants,
+            paragraphBubbles: bubblesVisible ? _ideas.bubbleCounts : const {},
+            paragraphBubbleVariants: bubblesVisible
+                ? _ideas.bubbleVariants
+                : const {},
             underlinedParagraphs: _underlines,
-            bubbleBuilder: _buildParagraphBubble,
+            bubbleBuilder: bubblesVisible ? _buildParagraphBubble : null,
           );
     _layoutIdeasRevision = _ideasRevision;
     _layoutUnderlineRevision = _underlineRevision;
+    _layoutBubblesVisible = bubblesVisible;
     final initialRestore = _needsRestore;
     final restored = initialRestore
         ? layout.restore(
