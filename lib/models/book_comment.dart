@@ -91,12 +91,14 @@ class BookComment {
   static BookComment? fromRaw(dynamic raw) {
     if (raw is! Map) return null;
     final text = _string(raw['text']);
-    if (text.isEmpty) return null;
+    final imageUrls = parseCommentImageUrls(raw['image_url']);
+    if (text.isEmpty && imageUrls.isEmpty) return null;
     final user = raw['user_info'];
     final userMap = user is Map ? user : const {};
     return BookComment(
       id: _string(raw['comment_id']),
       text: text,
+      imageUrls: imageUrls,
       score: _int(raw['score']),
       diggCount: _int(raw['digg_count']),
       replyCount: _int(raw['reply_count']),

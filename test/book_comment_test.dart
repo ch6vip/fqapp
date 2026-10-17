@@ -76,6 +76,23 @@ void main() {
     expect(first.createdAt, isNotNull);
   });
 
+  test('keeps image-only reviews from the legacy image_url list', () {
+    final review = BookComment.fromRaw({
+      'comment_id': 'image-review',
+      'text': '',
+      'image_url': ['https://example.test/review.jpg', 'file:///invalid.jpg'],
+    });
+    expect(review, isNotNull);
+    expect(review!.imageUrls, ['https://example.test/review.jpg']);
+    expect(review.isEmpty, isFalse);
+    expect(
+      BookComment.fromRaw({
+        'image_url': ['invalid'],
+      }),
+      isNull,
+    );
+  });
+
   test('maps the 0-10 upstream score onto five stars', () {
     final page = BookCommentPage.fromPayload(payload());
     expect(page.comments[0].stars, 5);
