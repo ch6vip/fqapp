@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/reader_preferences.dart';
@@ -138,6 +139,14 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   int? _dragStartItem;
   double _swipeStartDx = 0;
   double _swipeLastDx = 0;
+  Drag? _pageDrag;
+  int _pageDragFrom = 0;
+  int? _pageDragDirection;
+
+  bool get _followsFinger =>
+      !widget.instantSwipe &&
+      (widget.turnStyle == ReaderPageTurnStyle.slide ||
+          widget.turnStyle == ReaderPageTurnStyle.cover);
 
   /// Drives the chapter-boundary slide. Short and not interruptible: the host
   /// commits the chapter switch when it finishes.
@@ -254,6 +263,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         oldWidget.hasPreviousChapter != widget.hasPreviousChapter ||
         oldWidget.hasNextChapter != widget.hasNextChapter ||
         (oldWidget.endPage == null) != (widget.endPage == null)) {
+      _cancelPageDrag();
       final oldController = _controller;
       _controller = _newController();
       _turning = false;
@@ -284,6 +294,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
 
   @override
   void dispose() {
+    _cancelPageDrag();
     _chapterTurnAnimation.dispose();
     _curlAnimation.dispose();
     _controller.dispose();
@@ -291,7 +302,12 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   }
 
   Future<void> turnPage(int direction) async {
-    if (_turning || _boundaryPending || !_controller.hasClients) return;
+    if (_turning ||
+        _boundaryPending ||
+        _pageDrag != null ||
+        !_controller.hasClients) {
+      return;
+    }
     final current = _attachedPage ?? _controller.initialPage.toDouble();
     // A tap during an unfinished drag must not enqueue another page turn.
     if ((current - current.round()).abs() > .01) return;
@@ -390,6 +406,75 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       }
     }
     return false;
+  }
+
+  void _cancelPageDrag() {
+    _pageDrag?.cancel();
+    _pageDrag = null;
+  }
+
+  Widget _wrapPageDrag(Widget child) {
+    if (!_followsFinger) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      dragStartBehavior: DragStartBehavior.down,
+      onHorizontalDragStart: (details) {
+        if (_turning || _boundaryPending) return;
+        final position = _attachedPosition;
+        if (position == null || !position.haveDimensions) return;
+        _pageDragFrom = _attachedPage!.round();
+        _pageDragDirection = null;
+        _pageDrag = position.drag(details, () => _pageDrag = null);
+      },
+      onHorizontalDragUpdate: (details) {
+        final drag = _pageDrag;
+        final position = _attachedPosition;
+        if (drag == null || position == null) return;
+        final delta = details.primaryDelta ?? 0;
+        if (delta == 0) return;
+        final direction = _pageDragDirection ??= delta < 0 ? 1 : -1;
+        final target = _pageDragFrom + direction;
+        if (target < 0 || target >= _itemCount) {
+          drag.update(details);
+          return;
+        }
+        // Anchor the seam to the finger in the stationary viewport, including
+        // when the finger reverses direction before release.
+        final width = position.viewportDimension;
+        final pixels =
+            (_pageDragFrom + (direction > 0 ? 1 : 0)) * width -
+            details.localPosition.dx.clamp(0.0, width);
+        final offset = position.pixels - pixels;
+        drag.update(
+          DragUpdateDetails(
+            sourceTimeStamp: details.sourceTimeStamp,
+            delta: Offset(offset, 0),
+            primaryDelta: offset,
+            globalPosition: details.globalPosition,
+            localPosition: details.localPosition,
+          ),
+        );
+      },
+      onHorizontalDragEnd: (details) {
+        final page = _attachedPage;
+        final direction = _pageDragDirection;
+        final velocity = details.primaryVelocity ?? 0;
+        if (page != null && direction != null) {
+          final first = _pageDragFrom + (direction < 0 ? -1 : 0);
+          final last = _pageDragFrom + (direction > 0 ? 1 : 0);
+          // Reaching the edge already completes the turn; inertia must not
+          // advance beyond the two pages held by this gesture.
+          if ((velocity < 0 && page >= last) ||
+              (velocity > 0 && page <= first)) {
+            details = DragEndDetails(primaryVelocity: 0);
+          }
+        }
+        _pageDrag?.end(details);
+        _pageDrag = null;
+      },
+      onHorizontalDragCancel: _cancelPageDrag,
+      child: child,
+    );
   }
 
   /// 滑动直翻：把页面内容包一层水平拖拽识别。越过阈值（屏宽 20%）时直接
@@ -497,7 +582,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   @override
   Widget build(BuildContext context) {
     final turn = widget.chapterTurn;
-    Widget pager = _buildPager();
+    Widget pager = _wrapPageDrag(_buildPager());
     // 章节内卷页覆盖层：IgnorePointer，不拦截跟手拖拽；覆盖层内的
     // AnimatedBuilder 只重建卷页子树，不重建整个 PageView。
     if (_curlTurn != null) {
@@ -565,12 +650,15 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         controller: _controller,
         physics:
             (_boundaryPending ||
-                    widget.instantSwipe ||
-                    widget.turnStyle == ReaderPageTurnStyle.curl)
-                ? const NeverScrollableScrollPhysics()
-                : const ClampingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics(),
-                  ),
+                widget.instantSwipe ||
+                _followsFinger ||
+                widget.turnStyle == ReaderPageTurnStyle.curl)
+            ? const NeverScrollableScrollPhysics(
+                parent: ClampingScrollPhysics(),
+              )
+            : const ClampingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
+              ),
         itemCount: _itemCount,
         onPageChanged: (index) {
           if (index >= widget.layout.pages.length) {
