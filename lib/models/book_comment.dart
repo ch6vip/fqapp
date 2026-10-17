@@ -13,6 +13,7 @@ class BookComment {
   const BookComment({
     this.id = '',
     this.text = '',
+    this.imageUrls = const [],
     this.score = 0,
     this.diggCount = 0,
     this.replyCount = 0,
@@ -25,6 +26,7 @@ class BookComment {
 
   final String id;
   final String text;
+  final List<String> imageUrls;
 
   /// Upstream rating on a 0-10 scale.
   final int score;
@@ -41,7 +43,7 @@ class BookComment {
   /// Upstream scores are 0-10; the五角星 row shows halves of that.
   double get stars => (score.clamp(0, 10)) / 2;
 
-  bool get isEmpty => text.trim().isEmpty;
+  bool get isEmpty => text.trim().isEmpty && imageUrls.isEmpty;
 
   /// Relative publish time (`1天前`), matching the official list.
   String relativeTime({DateTime? now}) {
@@ -223,7 +225,22 @@ BookComment? _paragraphComment(dynamic comment, dynamic stat) {
   final content = commonMap['content'];
   final contentMap = content is Map ? content : const {};
   final text = _string(contentMap['text']);
-  if (text.isEmpty) return null;
+  final imageList = contentMap['image_data_list'];
+  final images = imageList is Map ? imageList['image_data'] : null;
+  final imageUrls = <String>[];
+  if (images is List) {
+    for (final image in images) {
+      if (image is! Map) continue;
+      final url = _string(image['web_url']);
+      final uri = Uri.tryParse(url);
+      if (uri != null &&
+          (uri.scheme == 'https' || uri.scheme == 'http') &&
+          uri.host.isNotEmpty) {
+        imageUrls.add(url);
+      }
+    }
+  }
+  if (text.isEmpty && imageUrls.isEmpty) return null;
   final user = commonMap['user_info'];
   final userMap = user is Map ? user : const {};
   final base = userMap['base_info'];
@@ -238,6 +255,7 @@ BookComment? _paragraphComment(dynamic comment, dynamic stat) {
   return BookComment(
     id: _string(comment['comment_id']),
     text: text,
+    imageUrls: List.unmodifiable(imageUrls),
     diggCount: _int(statMap['digg_count']),
     replyCount: _int(statMap['reply_count']),
     readSeconds: _int(statMap['read_duration']),

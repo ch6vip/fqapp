@@ -5,8 +5,10 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/book_comment.dart';
 import '../../models/chapter_ideas.dart';
+import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_preferences.dart';
 import '../home/home_design.dart';
+import 'reader_illustration.dart';
 import 'reader_theme.dart';
 
 /// Comments for the paragraph whose bubble was tapped.
@@ -413,10 +415,35 @@ class _CommentRow extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  comment.text,
-                  style: TextStyle(color: textColor, fontSize: 16, height: 1.5),
-                ),
+                if (comment.text.isNotEmpty)
+                  Text(
+                    comment.text,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 16,
+                      height: 1.5,
+                    ),
+                  ),
+                if (comment.imageUrls.isNotEmpty) ...[
+                  if (comment.text.isNotEmpty) const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final url in comment.imageUrls)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: SizedBox(
+                            width: comment.imageUrls.length == 1 ? 144 : 96,
+                            height: comment.imageUrls.length == 1 ? 180 : 96,
+                            child: ReaderIllustration(
+                              image: ChapterImage(url: url, alt: '评论配图'),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 10),
                 Row(
                   children: [
