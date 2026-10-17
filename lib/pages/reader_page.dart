@@ -443,10 +443,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   // Note: Route/lifecycle ownership and SDK 36 compatibility; see
   // .agents/notes/implemented/bug-fix/2026-10-12-reader-system-bars.md.
+  // The paragraph-ideas sheet is the reader's own modal (#57): opening it
+  // pushes a route, which would otherwise flip [_routeCurrent] off and
+  // bring the status bar back. While the sheet is open the viewer is still
+  // reading, so immersive stays on; other routes still release it.
+  bool _ideasSheetOpen = false;
+
   void _syncSystemBars() {
     unawaited(
       _device.setImmersive(
-        _appActive && _routeCurrent && widget.chapters.isNotEmpty,
+        _appActive &&
+            (_routeCurrent || _ideasSheetOpen) &&
+            widget.chapters.isNotEmpty,
       ),
     );
   }
@@ -1146,43 +1154,62 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     setState(() => _controlsVisible = false);
     final ideaSnapshot = _ideas;
     final chapter = widget.chapters[_index];
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: false,
-      backgroundColor: _effectivePreset.isDark
-          ? _effectivePreset.panelColor
-          : Colors.white,
-      barrierColor: Colors.black.withValues(alpha: 0.4),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      builder: (context) => FractionallySizedBox(
-        // Match the supplied official screenshot, keeping the paragraph visible
-        // above the comments. Note: 2026-09-11-reader-paragraph-bubble.md.
-        heightFactor: 0.69,
-        child: ReaderIdeasSheet(
-          ideas: ideaSnapshot,
-          preset: _effectivePreset,
-          // Each bubble opens only that paragraph's comments.
-          initialParaIndex: focusParaIndex,
-          loadComments: (paragraph, cursor) async {
-            final resolver = widget.commentResolver;
-            if (resolver != null) {
-              return resolver(chapter.itemId, paragraph, cursor);
-            }
-            return _defaultComments(
-              chapter,
-              paragraph,
-              ideaSnapshot.itemVersion,
-              cursor,
-            );
-          },
+    // Keep immersive on while the sheet is open (#57): the sheet pushes a
+    // route, which would otherwise release the system bars. The flag is
+    // read by [_syncSystemBars] when the route change lands.
+    _ideasSheetOpen = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: false,
+        backgroundColor: _effectivePreset.isDark
+            ? _effectivePreset.panelColor
+            : Colors.white,
+        // E-ink (#57): a dimmed scrim forces a full-screen gray wash and
+        // ghosts on e-ink. Transparent keeps the page readable behind the
+        // sheet; tapping outside still dismisses it.
+        barrierColor: einkModeNotifier.value
+            ? Colors.transparent
+            : Colors.black.withValues(alpha: 0.4),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
         ),
-      ),
-    );
+        clipBehavior: Clip.antiAlias,
+        builder: (context) => FractionallySizedBox(
+          // Match the supplied official screenshot, keeping the paragraph visible
+          // above the comments. Note: 2026-09-11-reader-paragraph-bubble.md.
+          heightFactor: 0.69,
+          child: ReaderIdeasSheet(
+            ideas: ideaSnapshot,
+            preset: _effectivePreset,
+            // Each bubble opens only that paragraph's comments.
+            initialParaIndex: focusParaIndex,
+            loadComments: (paragraph, cursor) async {
+              final resolver = widget.commentResolver;
+              if (resolver != null) {
+                return resolver(chapter.itemId, paragraph, cursor);
+              }
+              return _defaultComments(
+                chapter,
+                paragraph,
+                ideaSnapshot.itemVersion,
+                cursor,
+              );
+            },
+          ),
+        ),
+      );
+    } finally {
+      // The sheet is gone: release the immersive hold. Guard mounted: if
+      // the reader was disposed while the sheet was open, dispose already
+      // closed the device session and no stale call may follow it.
+      if (mounted) {
+        _ideasSheetOpen = false;
+        _syncSystemBars();
+      }
+    }
   }
 
   /// Default idea fetch and comment resolution; see [ReaderPage.ideasLoader].
