@@ -8,10 +8,13 @@
 /// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
 library;
 
+import 'comment_image.dart';
+
 class CommentReply {
   const CommentReply({
     this.id = '',
     this.text = '',
+    this.imageUrls = const [],
     this.userName = '',
     this.userAvatar = '',
     this.diggCount = 0,
@@ -20,12 +23,13 @@ class CommentReply {
 
   final String id;
   final String text;
+  final List<String> imageUrls;
   final String userName;
   final String userAvatar;
   final int diggCount;
   final DateTime? createdAt;
 
-  bool get isEmpty => text.trim().isEmpty;
+  bool get isEmpty => text.trim().isEmpty && imageUrls.isEmpty;
 
   /// Relative publish time, matching the review list.
   String relativeTime({DateTime? now}) {
@@ -46,7 +50,11 @@ class CommentReply {
     if (common is! Map) return null;
     final content = common['content'];
     final text = content is Map ? _string(content['text']) : '';
-    if (text.isEmpty) return null;
+    final imageList = content is Map ? content['image_data_list'] : null;
+    final imageUrls = parseCommentImageUrls(
+      imageList is Map ? imageList['image_data'] : null,
+    );
+    if (text.isEmpty && imageUrls.isEmpty) return null;
     final user = common['user_info'];
     final base = user is Map ? user['base_info'] : null;
     final baseMap = base is Map ? base : const {};
@@ -55,6 +63,7 @@ class CommentReply {
     return CommentReply(
       id: _string(raw['reply_id']),
       text: text,
+      imageUrls: imageUrls,
       userName: _string(baseMap['user_name']),
       userAvatar: _string(baseMap['user_avatar']),
       diggCount: _int(statMap['digg_count']),

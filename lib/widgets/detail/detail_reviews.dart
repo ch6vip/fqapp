@@ -543,14 +543,19 @@ class _ReplyTile extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  reply.text,
-                  style: TextStyle(
-                    color: palette.ink,
-                    fontSize: 12.5,
-                    height: 1.55,
+                if (reply.text.isNotEmpty)
+                  Text(
+                    reply.text,
+                    style: TextStyle(
+                      color: palette.ink,
+                      fontSize: 12.5,
+                      height: 1.55,
+                    ),
                   ),
-                ),
+                if (reply.imageUrls.isNotEmpty) ...[
+                  if (reply.text.isNotEmpty) const SizedBox(height: 8),
+                  CommentImages(imageUrls: reply.imageUrls),
+                ],
               ],
             ),
           ),
