@@ -220,19 +220,61 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a short drag left cancels the curl', (tester) async {
+    // Multi-phase drags drive a raw TestGesture with no pumps between
+    // moves: `timedDrag`'s small steps never deliver a working drag here
+    // (the old short-drag test passed vacuously — the drag never completed,
+    // so the page count stayed empty for the wrong reason).
+    testWidgets('a short drag left completes the curl without retreat', (
+      tester,
+    ) async {
+      // Legado has no distance threshold: a drag that never moves back
+      // completes on release, however short. The old 0.35/fling rule is gone.
       final pages = <int>[];
       final boundaries = <int>[];
       await pumpPaged(tester, pages: pages, boundaries: boundaries);
-      // Slow drag: 40px over 500ms stays below the fling velocity and the
-      // 0.35 progress threshold, so the curl cancels.
-      await tester.timedDrag(
-        find.byType(ReaderPagedView),
-        const Offset(-40, 0),
-        const Duration(milliseconds: 500),
-      );
+      final center = tester.getCenter(find.byType(ReaderPagedView));
+      final gesture = await tester.startGesture(center);
+      await gesture.moveBy(const Offset(-40, 0));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(pages, equals([1]));
+      expect(boundaries, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a drag that retreats cancels the curl', (tester) async {
+      // Legado's isCancel: the last move retreated, so the release restores.
+      final pages = <int>[];
+      final boundaries = <int>[];
+      await pumpPaged(tester, pages: pages, boundaries: boundaries);
+      final center = tester.getCenter(find.byType(ReaderPagedView));
+      final gesture = await tester.startGesture(center);
+      await gesture.moveBy(const Offset(-120, 0));
+      await gesture.moveBy(const Offset(80, 0));
+      await gesture.up();
       await tester.pumpAndSettle();
       expect(pages, isEmpty);
+      expect(boundaries, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a drag that retreats then advances again completes', (
+      tester,
+    ) async {
+      // Legado recomputes isCancel on every move: only the last move's
+      // direction decides, so a retreat followed by a renewed advance
+      // still completes.
+      final pages = <int>[];
+      final boundaries = <int>[];
+      await pumpPaged(tester, pages: pages, boundaries: boundaries);
+      final center = tester.getCenter(find.byType(ReaderPagedView));
+      final gesture = await tester.startGesture(center);
+      await gesture.moveBy(const Offset(-120, 0));
+      await gesture.moveBy(const Offset(40, 0));
+      await gesture.moveBy(const Offset(-60, 0));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(pages, equals([1]));
       expect(boundaries, isEmpty);
       expect(tester.takeException(), isNull);
     });
