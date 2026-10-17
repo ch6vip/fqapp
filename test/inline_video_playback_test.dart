@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/inline_video_playback.dart';
 
 import 'support/controlled_player.dart';
@@ -72,5 +73,69 @@ void main() {
     expect(session.playing.value, isTrue);
     expect(session.hasPlayer, isTrue);
     expect(players[1].disposed, isFalse);
+  });
+
+  test('quality choice carries to the next episode by name (#60)', () async {
+    final players = <ControlledNativePlayer>[];
+    Map<String, dynamic> payload(String itemId) => {
+      'video_url': 'https://example.invalid/$itemId-720.mp4',
+      'variants': [
+        {
+          'name': '1080P',
+          'url': 'https://example.invalid/$itemId-1080.mp4',
+          'key_hex': '',
+          'height': 1080,
+        },
+        {
+          'name': '720P',
+          'url': 'https://example.invalid/$itemId-720.mp4',
+          'key_hex': '',
+          'height': 720,
+        },
+      ],
+    };
+    final session = InlineVideoPlayback(
+      directoryLoader: (id, tab) async => [
+        [
+          Chapter(itemId: '$id-1', title: '第 1 集', volumeName: '剧集'),
+          Chapter(itemId: '$id-2', title: '第 2 集', volumeName: '剧集'),
+        ],
+      ],
+      contentLoader: (itemId, tab) async => payload(itemId),
+      playerFactory: () {
+        final player = ControlledNativePlayer();
+        players.add(player);
+        return player;
+      },
+      historyStore: MemoryReaderStore(),
+    );
+    addTearDown(session.dispose);
+
+    await session.activate(_series('a'));
+    expect(
+      players.single.calls,
+      contains('create:https://example.invalid/a-1-720.mp4'),
+    );
+
+    await session.switchVariant(
+      const EpisodeVariant(
+        name: '1080P',
+        url: 'https://example.invalid/a-1-1080.mp4',
+        keyHex: '',
+        height: 1080,
+      ),
+    );
+    expect(
+      players.last.calls,
+      contains('create:https://example.invalid/a-1-1080.mp4'),
+    );
+
+    // Next episode keeps 1080P by NAME — its own URL, not episode 1's.
+    await session.activate(_series('a'), startEpisodeIndex: 1);
+    expect(
+      players.last.calls,
+      contains('create:https://example.invalid/a-2-1080.mp4'),
+    );
+    expect(session.activeEpisode?.itemId, 'a-2');
   });
 }

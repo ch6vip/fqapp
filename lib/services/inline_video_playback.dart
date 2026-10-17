@@ -371,9 +371,18 @@ class InlineVideoPlayback {
       }
       activeVid.value = episodes[index].itemId;
       var source = await _sources.request(episodes[index]).future;
-      // 会话内记住的画质选择（官方=引擎当前档）：同一集再次激活时沿用。
-      final chosen = _chosen[episodes[index].itemId];
-      if (chosen != null) source = source.withVariant(chosen);
+      // 会话内记住的画质选择（官方=引擎当前档）：按画质名在本集自己
+      // 的 variants 里找，找到就用，找不到回默认。只记名、不搬
+      // variant 对象——variant 的 URL 属于它自己的集。
+      final chosenName = _chosenQualityNames[contentId];
+      if (chosenName != null) {
+        for (final variant in source.variants) {
+          if (variant.name == chosenName) {
+            source = source.withVariant(variant);
+            break;
+          }
+        }
+      }
       _currentSource = source;
       if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
@@ -436,10 +445,13 @@ class InlineVideoPlayback {
   /// list. Null while nothing plays.
   EpisodeSource? _currentSource;
 
-  /// Session-level quality choice per episode id. The official client keeps
-  /// the resolution on the engine instance for the session only; there is no
-  /// cross-launch preference evidence, so none is stored here either.
-  final Map<String, EpisodeVariant> _chosen = {};
+  /// Session-level quality choice per drama (pool key), remembered by
+  /// quality NAME. The official client keeps the resolution on the engine
+  /// instance for the session only; there is no cross-launch preference
+  /// evidence, so none is stored here either. Only the name is kept: a
+  /// variant object carries its own episode's URL, and applying it to
+  /// another episode would play the wrong stream.
+  final Map<String, String> _chosenQualityNames = {};
 
   /// Renditions of the playing episode, best-quality first. Empty while
   /// nothing plays or the upstream offered a single stream (the panel hides
@@ -474,7 +486,7 @@ class InlineVideoPlayback {
     _detachSubscriptions();
     if (identical(_player, player)) _player = null;
     _currentSource = source.withVariant(variant);
-    _chosen[series.id] = variant;
+    _chosenQualityNames[_poolKey(series)] = variant.name;
     // A replacement texture must not inherit the previous rendition's frame,
     // size, or rotation. The layer keeps its cover until the new stream is ready.
     textureId.value = null;
