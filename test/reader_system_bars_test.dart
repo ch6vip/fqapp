@@ -118,10 +118,12 @@ void main() {
     expect(immersiveRequests(), isNot(contains(false)));
     expect(immersiveRequests().last, isTrue);
 
-    // Close the sheet; immersive stays on.
+    // Close the sheet; immersive stays on with no transient release:
+    // the close used to flash the status bar for a frame (#57).
     navigator.currentState!.pop();
     await tester.pumpAndSettle();
     expect(find.text('这段太真实了'), findsNothing);
+    expect(immersiveRequests(), isNot(contains(false)));
     expect(immersiveRequests().last, isTrue);
     expect(tester.takeException(), isNull);
   });
