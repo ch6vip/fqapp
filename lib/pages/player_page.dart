@@ -26,6 +26,7 @@ import '../services/player_history.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
 import '../services/player_style_config.dart';
+import '../services/quality_memory.dart';
 import '../services/swipe_guide_store.dart';
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_danmaku_layer.dart';
@@ -956,9 +957,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         final request = _sources.request(episode, refresh: refresh);
         trace.source = request.origin.name;
         var online = await request.future;
-        // 会话内记住的画质选择（官方=引擎当前档）：同一集重新加载时沿用。
-        final chosen = _chosen[episode.itemId];
-        if (chosen != null) online = online.withVariant(chosen);
+        // 会话内记住的画质选择（官方=引擎当前档）：按画质名在本集自己
+        // 的 variants 里找，找到就用，找不到回默认（#60：换下一集不
+        // 应变回默认画质）。记忆由 [QualityMemory] 在 Feed 与播放页
+        // 之间共享；只记名、不搬 variant 对象——variant 的 URL 属于
+        // 它自己的集，搬过来会播错集的流。
+        final chosenName = QualityMemory.nameFor(widget.bookId);
+        if (chosenName != null) {
+          for (final variant in online.variants) {
+            if (variant.name == chosenName) {
+              online = online.withVariant(variant);
+              break;
+            }
+          }
+        }
         source = online;
       }
       if (!_current(generation)) return;
@@ -1111,11 +1123,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// The source the current player was created from (includes the rendition
-  /// list), and the session-level quality choice per episode id. The official
-  /// client keeps the resolution on the engine for the session only; no
-  /// cross-launch preference exists there, so none is stored here either.
+  /// list). The session-level quality choice lives in [QualityMemory],
+  /// shared with the feed: the official client keeps the resolution on the
+  /// engine for the session only; no cross-launch preference exists there,
+  /// so none is stored here either.
   EpisodeSource? _currentSource;
-  final Map<String, EpisodeVariant> _chosen = {};
 
   /// 听书页回传的续看锚点 (集号, 进度)：[_openListenMode] 在自动连播跨集
   /// 时设置，只对匹配集的下一次 [_loadVideo] 生效一次——此时本地历史
@@ -1138,7 +1150,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final resumeMs = resume.inMilliseconds;
     final wasPlaying = _playing;
     final episode = widget.eps[_index];
-    _chosen[episode.itemId] = variant;
+    QualityMemory.remember(widget.bookId, variant.name);
     _currentSource = source.withVariant(variant);
     final release = _teardownPlayer();
     NativePlayer? candidate;
