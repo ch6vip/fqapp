@@ -533,6 +533,14 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                           ),
                         ),
                         _toggle(
+                          '段评气泡',
+                          subtitle: '段落末尾显示评论数气泡；关闭后仍可从段落菜单和章节末尾打开段评',
+                          value: _value.showParagraphBubbles,
+                          onChanged: (value) => _update(
+                            _value.copyWith(showParagraphBubbles: value),
+                          ),
+                        ),
+                        _toggle(
                           '阅读时保持屏幕常亮',
                           value: _value.keepScreenOn,
                           onChanged: (value) =>

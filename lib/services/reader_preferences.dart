@@ -50,6 +50,7 @@ class ReaderPreferences {
   static const _instantSwipeTurnKey = 'reader_instant_swipe_turn';
   static const _tapLeftTurnsNextKey = 'reader_tap_left_turns_next';
   static const _tapZonesKey = 'reader_tap_zones';
+  static const _showParagraphBubblesKey = 'reader_show_paragraph_bubbles';
 
   final double fontSize;
   final int fontWeight;
@@ -101,6 +102,10 @@ class ReaderPreferences {
   /// 点击区域九宫格：9 个动作，行优先（上行 0-2，中行 3-5，下行 6-8）。
   final List<ReaderTapZoneAction> tapZones;
 
+  /// 段评气泡：段落末尾的评论数气泡，点按打开段评。默认开启。
+  /// 关闭只关气泡渲染，段评本身仍从段落菜单和章节末尾打开。
+  final bool showParagraphBubbles;
+
   const ReaderPreferences({
     this.fontSize = 18,
     this.fontWeight = 400,
@@ -130,6 +135,7 @@ class ReaderPreferences {
     this.instantSwipeTurn = false,
     this.tapLeftTurnsNext = false,
     this.tapZones = defaultReaderTapZones,
+    this.showParagraphBubbles = true,
   }) : readingInfoMode = showReadingInfo == false
            ? ReaderInfoMode.hidden
            : readingInfoMode;
@@ -163,6 +169,7 @@ class ReaderPreferences {
     bool? instantSwipeTurn,
     bool? tapLeftTurnsNext,
     List<ReaderTapZoneAction>? tapZones,
+    bool? showParagraphBubbles,
   }) {
     return ReaderPreferences(
       fontSize: fontSize ?? this.fontSize,
@@ -200,6 +207,8 @@ class ReaderPreferences {
       instantSwipeTurn: instantSwipeTurn ?? this.instantSwipeTurn,
       tapLeftTurnsNext: tapLeftTurnsNext ?? this.tapLeftTurnsNext,
       tapZones: tapZones ?? this.tapZones,
+      showParagraphBubbles:
+          showParagraphBubbles ?? this.showParagraphBubbles,
     ).normalized();
   }
 
@@ -242,6 +251,7 @@ class ReaderPreferences {
       instantSwipeTurn: instantSwipeTurn,
       tapLeftTurnsNext: tapLeftTurnsNext,
       tapZones: ensureReaderTapZonesHaveMenu(tapZones),
+      showParagraphBubbles: showParagraphBubbles,
     );
   }
 
@@ -302,6 +312,8 @@ class ReaderPreferences {
       instantSwipeTurn: _boolean(preferences, _instantSwipeTurnKey) ?? false,
       tapLeftTurnsNext: _boolean(preferences, _tapLeftTurnsNextKey) ?? false,
       tapZones: _tapZones(preferences),
+      showParagraphBubbles:
+          _boolean(preferences, _showParagraphBubblesKey) ?? true,
     ).normalized();
   }
 
@@ -356,6 +368,10 @@ class ReaderPreferences {
       preferences.setStringList(
         _tapZonesKey,
         encodeReaderTapZones(value.tapZones),
+      ),
+      preferences.setBool(
+        _showParagraphBubblesKey,
+        value.showParagraphBubbles,
       ),
     ]);
   }
