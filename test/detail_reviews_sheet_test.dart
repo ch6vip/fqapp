@@ -2,9 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/widgets/detail/detail_reviews.dart';
+import 'package:fqapp/widgets/reader/reader_illustration.dart';
 import 'package:fqapp/widgets/detail/detail_reviews_sheet.dart';
 
 void main() {
+  testWidgets(
+    'image-only book reviews display an image without an empty body',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: DetailCommentTile(
+              comment: BookComment(
+                id: 'image-review',
+                imageUrls: ['https://example.test/review.jpg'],
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(ReaderIllustration), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('detail_review_text_image-review')),
+        findsNothing,
+      );
+    },
+  );
+
   testWidgets('DetailReviews limits preview comments to 3 and triggers onOpenAll', (
     tester,
   ) async {

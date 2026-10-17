@@ -23,6 +23,7 @@ import '../widgets/audio/audio_sections.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
 import '../widgets/audio/system_tts_controls.dart';
 import '../widgets/chapter_cache_sheet.dart';
+import '../widgets/comment_images.dart';
 import '../widgets/home/home_design.dart';
 import 'detail_page.dart';
 import 'reader_page.dart';
@@ -1445,14 +1446,20 @@ class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
                               ],
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              comment.text,
-                              style: TextStyle(
-                                color: palette.ink,
-                                fontSize: 13,
-                                height: 1.65,
+                            if (comment.text.isNotEmpty)
+                              Text(
+                                comment.text,
+                                style: TextStyle(
+                                  color: palette.ink,
+                                  fontSize: 13,
+                                  height: 1.65,
+                                ),
                               ),
-                            ),
+                            if (comment.imageUrls.isNotEmpty) ...[
+                              if (comment.text.isNotEmpty)
+                                const SizedBox(height: 8),
+                              CommentImages(imageUrls: comment.imageUrls),
+                            ],
                           ],
                         ),
                       );
