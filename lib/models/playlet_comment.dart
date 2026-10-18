@@ -10,6 +10,7 @@
 library;
 
 import 'book_comment.dart';
+import 'comment_image.dart';
 
 /// 官方 `UgcRelativeType`（`J:UgcRelativeType.java:9-55`）。
 class UgcRelativeType {
@@ -38,6 +39,7 @@ class PlayletComment {
   const PlayletComment({
     this.id = '',
     this.text = '',
+    this.imageUrls = const [],
     this.diggCount = 0,
     this.replyCount = 0,
     this.createdAt,
@@ -52,6 +54,10 @@ class PlayletComment {
 
   final String id;
   final String text;
+
+  /// 配图 URL（与段评/书评同一上游字段 `content.image_data_list.image_data`）。
+  final List<String> imageUrls;
+
   final int diggCount;
   final int replyCount;
   final DateTime? createdAt;
@@ -79,6 +85,7 @@ class PlayletComment {
   PlayletComment withDigg(bool liked) => PlayletComment(
     id: id,
     text: text,
+    imageUrls: imageUrls,
     diggCount: liked
         ? diggCount + (userDigg ? 0 : 1)
         : (diggCount - (userDigg ? 1 : 0)).clamp(0, 1 << 31),
@@ -93,7 +100,7 @@ class PlayletComment {
     userDigg: liked,
   );
 
-  bool get isEmpty => text.trim().isEmpty;
+  bool get isEmpty => text.trim().isEmpty && imageUrls.isEmpty;
 
   /// 官方热评前缀（`InfoPanelHotCommentView.z2()`，InfoPanelHotCommentView.java:324-378）：
   /// roleType 0→「主演说：」(0x7f061961)、1→「演员说：」(0x7f061960)、
@@ -121,7 +128,10 @@ class PlayletComment {
     final content = commonMap['content'];
     final contentMap = content is Map ? content : const {};
     final text = _string(contentMap['text']);
-    if (text.isEmpty) return null;
+    final imageList = contentMap['image_data_list'];
+    final images = imageList is Map ? imageList['image_data'] : null;
+    final imageUrls = parseCommentImageUrls(images);
+    if (text.isEmpty && imageUrls.isEmpty) return null;
     final user = commonMap['user_info'];
     final userMap = user is Map ? user : const {};
     final base = userMap['base_info'];
@@ -140,6 +150,7 @@ class PlayletComment {
     return PlayletComment(
       id: _string(comment['comment_id']),
       text: text,
+      imageUrls: imageUrls,
       diggCount: _int(statMap['digg_count']),
       replyCount: _int(statMap['reply_count']),
       createdAt: _timestamp(commonMap['create_timestamp']),
@@ -159,6 +170,8 @@ class PlayletComment {
   static PlayletComment? fromDanmakuRaw(dynamic entry) {
     final base = fromRaw(entry);
     if (base == null) return null;
+    // 弹幕是纯文字时间轴：纯图片条目不进弹幕流（图片只在评论列表里展示）。
+    if (base.text.isEmpty) return null;
     final comment = (entry as Map)['comment'];
     final commentMap = comment is Map ? comment : const {};
     final expand = commentMap['expand'];
@@ -166,6 +179,7 @@ class PlayletComment {
     return PlayletComment(
       id: base.id,
       text: base.text,
+      imageUrls: base.imageUrls,
       diggCount: base.diggCount,
       replyCount: base.replyCount,
       createdAt: base.createdAt,

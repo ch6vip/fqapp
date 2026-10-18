@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/playlet_comment.dart';
+import 'package:fqapp/widgets/comment_images.dart';
 import 'package:fqapp/widgets/player/playlet_comment_panel.dart';
 
 /// 评论面板的交互用例：官方筛选、分页、空态、失败重试。
@@ -175,5 +176,25 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('playlet-comment-close')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('playlet-comment-c1')), findsNothing);
+  });
+
+  testWidgets('comments with images render the image row', (tester) async {
+    await pumpPanel(
+      tester,
+      loader: ({required sort, required count, required cursor, required tag}) async =>
+          PlayletCommentPage(
+            comments: [
+              PlayletComment(
+                id: 'img-1',
+                text: '',
+                imageUrls: const ['https://example.test/playlet.jpg'],
+                userName: '小明',
+              ),
+            ],
+            totalCount: 1,
+          ),
+    );
+    expect(find.byKey(const ValueKey('playlet-comment-img-1')), findsOneWidget);
+    expect(find.byType(CommentImages), findsOneWidget);
   });
 }

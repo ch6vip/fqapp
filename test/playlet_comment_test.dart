@@ -16,11 +16,16 @@ void main() {
     int roleType = 0,
     int digg = 3,
     int offset = 0,
+    List<Map<String, dynamic>> images = const [],
   }) => {
     'comment': {
       'comment_id': id,
       'common': {
-        'content': {'text': text},
+        'content': {
+          'text': text,
+          if (images.isNotEmpty)
+            'image_data_list': {'image_data': images},
+        },
         'create_timestamp': 1700000000,
         'user_info': {
           'base_info': {'user_name': '小明', 'user_avatar': 'https://a.test/a.png'},
@@ -123,6 +128,69 @@ void main() {
       PlayletCommentPage.fromPayload({'code': 103001, 'data': null}).comments,
       isEmpty,
     );
+  });
+
+  test('keeps image-only playlet comments and parses their image urls', () {
+    final page = PlayletCommentPage.fromPayload({
+      'code': 0,
+      'data': {
+        'common_list_info': {'total': 1},
+        'data_list': [
+          entry(
+            id: 'img-1',
+            text: '   ',
+            images: [
+              {'web_url': 'https://example.test/playlet.jpg'},
+              {'web_url': 'file:///invalid.jpg'},
+              {'web_url': 'not-a-url'},
+            ],
+          ),
+        ],
+      },
+    });
+    expect(page.comments, hasLength(1));
+    expect(page.comments.single.imageUrls, [
+      'https://example.test/playlet.jpg',
+    ]);
+    expect(page.comments.single.isEmpty, isFalse);
+  });
+
+  test('withDigg keeps the image urls', () {
+    const comment = PlayletComment(
+      id: 'c1',
+      text: '好看',
+      imageUrls: ['https://example.test/playlet.jpg'],
+    );
+    expect(
+      comment.withDigg(true).imageUrls,
+      ['https://example.test/playlet.jpg'],
+    );
+  });
+
+  test('image-only entries never enter the danmaku stream', () {
+    final page = PlayletCommentPage.fromDanmakuPayload({
+      'code': 0,
+      'data': {
+        'common_list_info': {'total': 2},
+        'data_list': [
+          entry(
+            id: 'img-only',
+            text: '   ',
+            dataType: UgcRelativeType.seriesVideo,
+            images: [
+              {'web_url': 'https://example.test/playlet.jpg'},
+            ],
+          ),
+          entry(
+            id: 'd1',
+            text: '前方高能',
+            dataType: UgcRelativeType.seriesVideo,
+            offset: 100,
+          ),
+        ],
+      },
+    });
+    expect(page.comments.map((c) => c.id), ['d1']);
   });
 
   test('the empty-state copy follows the official count rule', () {
