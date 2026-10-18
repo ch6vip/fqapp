@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart' show ClampedSimulation;
 
 import '../../services/reader_preferences.dart';
 import '../../services/reader_underline_store.dart';
@@ -127,6 +128,28 @@ class _CurlTurn {
     required this.fromIndex,
     required this.toIndex,
   });
+}
+
+class _ReaderPageScrollPhysics extends PageScrollPhysics {
+  const _ReaderPageScrollPhysics({super.parent});
+
+  @override
+  _ReaderPageScrollPhysics applyTo(ScrollPhysics? ancestor) =>
+      _ReaderPageScrollPhysics(parent: buildParent(ancestor));
+
+  @override
+  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
+    final simulation = super.createBallisticSimulation(position, velocity);
+    if (simulation == null) return null;
+    final width = position.viewportDimension;
+    final page = position.pixels / width;
+    // A fast release can drive the spring past its target and reveal a third page.
+    return ClampedSimulation(
+      simulation,
+      xMin: page.floorToDouble() * width,
+      xMax: page.ceilToDouble() * width,
+    );
+  }
 }
 
 class ReaderPagedViewState extends State<ReaderPagedView>
@@ -648,13 +671,18 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       child: PageView.builder(
         key: ObjectKey(_controller),
         controller: _controller,
+        pageSnapping: !_followsFinger,
         physics:
             (_boundaryPending ||
                 widget.instantSwipe ||
                 _followsFinger ||
                 widget.turnStyle == ReaderPageTurnStyle.curl)
-            ? const NeverScrollableScrollPhysics(
-                parent: ClampingScrollPhysics(),
+            ? NeverScrollableScrollPhysics(
+                parent: _followsFinger
+                    ? const _ReaderPageScrollPhysics(
+                        parent: ClampingScrollPhysics(),
+                      )
+                    : const ClampingScrollPhysics(),
               )
             : const ClampingScrollPhysics(
                 parent: AlwaysScrollableScrollPhysics(),
