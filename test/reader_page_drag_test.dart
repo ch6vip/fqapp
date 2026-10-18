@@ -109,6 +109,33 @@ void main() {
     });
 
     for (final direction in [1, -1]) {
+      testWidgets('$style fast release $direction never reveals a third page', (
+        tester,
+      ) async {
+        await _pumpPager(tester, style);
+        final controller = tester
+            .widget<PageView>(find.byType(PageView))
+            .controller!;
+        final from = direction > 0 ? 1 : 2;
+        controller.jumpToPage(from);
+        await tester.pump();
+        final positions = <double>[];
+        controller.addListener(() => positions.add(controller.page!));
+
+        // Release before reaching the edge so the fling still has velocity.
+        await tester.fling(
+          find.byType(PageView),
+          Offset(-direction * 150, 0),
+          8000,
+        );
+        await tester.pumpAndSettle(const Duration(milliseconds: 8));
+
+        expect(positions, isNotEmpty);
+        expect(positions, everyElement(inInclusiveRange(1.0, 2.0)));
+        expect(controller.page, from + direction);
+        expect(tester.takeException(), isNull);
+      });
+
       testWidgets('$style fast drag $direction turns only one page', (
         tester,
       ) async {
