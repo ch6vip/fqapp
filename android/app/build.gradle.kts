@@ -103,6 +103,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Opt-in local runs may coexist with an installed release whose
+            // signing certificate cannot be replaced by the debug key.
+            val debugSuffix = providers.gradleProperty("fqappDebugApplicationIdSuffix")
+                .orElse(providers.environmentVariable("FQAPP_DEBUG_APPLICATION_ID_SUFFIX"))
+                .orNull
+            if (debugSuffix == ".debug") {
+                applicationIdSuffix = ".debug"
+            }
+        }
         release {
             // The release APK carries its own signing identity. Debug builds
             // keep the debug key so `flutter run` and overwrite-installing a

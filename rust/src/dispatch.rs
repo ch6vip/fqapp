@@ -135,6 +135,15 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
     let path = req.path.as_str();
     let ctx = &server.ctx;
 
+    // Account credentials belong in a bounded POST body, never in route/query
+    // parameters, endpoint error logs, or the anonymous rotating device pool.
+    if path == "/api/v1/account/fanqie/history" {
+        return crate::endpoints::account_history::handle(ctx, req).await;
+    }
+    if path == "/api/v1/account/fanqie/library" {
+        return crate::endpoints::account_library::handle(ctx, req).await;
+    }
+
     // --- Web UI static files and API bridge ---
     if path.starts_with("/api/") && !path.starts_with("/api/v1/") {
         return crate::endpoints::webui::handle(server, path, &Params::parse(&req.query)).await;

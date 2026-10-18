@@ -65,6 +65,72 @@ class ApiClient {
 
   static final ApiClient instance = ApiClient();
 
+  /// Fixed read-only library resources; credentials stay in the POST body.
+  Future<Map<String, dynamic>> fanqieLibraryResource({
+    required String cookie,
+    required String resource,
+    String? deviceId,
+    int offset = 0,
+    int bookType = 0,
+    List<String> bookIds = const [],
+    String? folderId,
+  }) async {
+    final response = await _get(
+      '$_base/api/v1/account/fanqie/library',
+      method: 'POST',
+      body: Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'cookie': cookie,
+            'resource': resource,
+            'device_id': ?deviceId,
+            'offset': offset,
+            'book_type': bookType,
+            'book_ids': bookIds,
+            'folder_id': ?folderId,
+          }),
+        ),
+      ),
+    );
+    return _decodeAsync(response);
+  }
+
+  /// Preserve the detail payload for later interpretation instead of dropping
+  /// fields through the display model. This endpoint needs no account cookie.
+  Future<Map<String, dynamic>> fanqieBookMetadata(String bookId) async =>
+      _decodeAsync(
+        await _get(
+          _url('/api/v1/books/${Uri.encodeComponent(bookId)}/detail', {}),
+        ),
+      );
+
+  /// Read-only upstream operation. POST keeps the temporary login cookie out
+  /// of URLs; the Rust adapter only permits the fixed upstream history GET.
+  Future<Map<String, dynamic>> fanqieHistoryPage({
+    required String cookie,
+    required int offset,
+    required int lastMinReadTimestampMs,
+    required bool firstLoad,
+    String? deviceId,
+  }) async {
+    final response = await _get(
+      '$_base/api/v1/account/fanqie/history',
+      method: 'POST',
+      body: Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'cookie': cookie,
+            'offset': offset,
+            'last_min_read_timestamp_ms': lastMinReadTimestampMs,
+            'is_first_load': firstLoad,
+            'device_id': ?deviceId,
+          }),
+        ),
+      ),
+    );
+    return _decodeAsync(response);
+  }
+
   /// Per-instance gate: coalescing must not reach across test instances, and
   /// a restarted backend service gets a fresh flight table.
   final RequestGate _gate = RequestGate();

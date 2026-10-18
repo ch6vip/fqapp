@@ -329,6 +329,27 @@ class _LibraryPageState extends State<LibraryPage> {
     }
     if (await _openCached(item)) return;
     if (!mounted) return;
+    final saved = item.kind == 'book'
+        ? await ReaderHistory(
+            widget.readerStore ?? LibraryStore.instance,
+          ).load(item.id)
+        : null;
+    if (!mounted) return;
+    if (item.kind == 'book' &&
+        saved?['fanqieImported'] == true &&
+        saved?['chapterId'] != null) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => DetailPage(
+            item: item,
+            readerStore: widget.readerStore,
+            autoOpenReader: true,
+          ),
+        ),
+      );
+      return;
+    }
     await openBookDetail(context, item);
   }
 

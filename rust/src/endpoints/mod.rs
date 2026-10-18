@@ -4,6 +4,8 @@
 //! adapter and the built-in Web UI all dispatch through it. Endpoint names and
 //! path matching are identical across all three dispatch paths.
 
+pub mod account_history;
+pub mod account_library;
 pub mod audio;
 pub mod author;
 pub mod base;

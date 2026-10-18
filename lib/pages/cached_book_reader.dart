@@ -98,6 +98,12 @@ int cachedStartIndex(
   var index = book.chapters.indexWhere(
     (chapter) => chapter.itemId == saved?['chapterId']?.toString(),
   );
+  if (saved?['fanqieImported'] == true &&
+      saved?['chapterId'] != null &&
+      (index < 0 || !cached.contains(book.chapters[index].itemId))) {
+    // A different cached chapter must not silently replace an imported anchor.
+    return -1;
+  }
   if (index < 0) {
     final episode = num.tryParse(saved?['episode']?.toString() ?? '');
     index = (episode != null && episode.isFinite ? episode.toInt() : 0).clamp(

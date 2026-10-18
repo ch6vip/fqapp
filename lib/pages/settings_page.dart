@@ -74,8 +74,8 @@ class SettingsPage extends StatelessWidget {
         items: [
           SettingsItem(
             icon: LucideIcons.database,
-            title: '备份与恢复',
-            subtitle: '导出收藏和进度，迁移到另一台手机',
+            title: '备份与导入',
+            subtitle: '本机备份、恢复与番茄书架导入',
             onTap: (context, setState) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const LibraryBackupPage()),

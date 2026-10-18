@@ -167,6 +167,35 @@ class ShelfStore {
     return missing.length;
   }
 
+  /// Reuses the same shelf keys and card model. Enrich existing cards while
+  /// preserving the user's local shelf ordering and collection membership.
+  Future<int> mergeFanqie(Iterable<ShelfRecord> records) async {
+    final box = _openBox;
+    if (box == null) throw StateError('书架尚未初始化');
+    var changed = 0;
+    try {
+      for (final record in records) {
+        final key = keyOf(record.item);
+        final old = box.get(key);
+        final next = _recordOf(record.item, record.addedAt);
+        if (old is Map) {
+          next['addedAt'] = old['addedAt'];
+          for (final field in ['title', 'cover', 'author', 'badge', 'ep']) {
+            if (next[field] == '' && old[field] is String) {
+              next[field] = old[field];
+            }
+          }
+        }
+        await box.put(key, next);
+        changed++;
+      }
+      await box.flush();
+    } finally {
+      _revision.value++;
+    }
+    return changed;
+  }
+
   static Map<String, dynamic> _recordOf(MediaItem item, DateTime addedAt) => {
     'id': item.id,
     'kind': item.kind,

@@ -383,6 +383,63 @@ class LibraryStore implements ReaderStore {
     };
   }
 
+  /// Import only novels. Older history-only imports receive missing metadata
+  /// and chapter IDs; a newer local reading position always wins.
+  Future<int> mergeFanqie(List<Map<String, dynamic>> records) {
+    final guard = ReadingDataWriteGuard(this);
+    return _serializeResult(() async {
+      if (!guard.canWriteHistory) throw StateError('历史已清理，请重新导入');
+      var changed = 0;
+      for (final incoming in records) {
+        final id = incoming['id'] as String;
+        final previous = _historyRecord(_histBox.get(id), id: id);
+        if (previous != null && previous['kind'] != 'book') continue;
+        final next = <String, dynamic>{...?previous};
+        final hasPosition =
+            previous?['chapterId'] != null ||
+            previous?['episode'] != null ||
+            previous?['positionVersion'] != null;
+        final newerLocal =
+            hasPosition &&
+            ((previous?['time'] as num?) ?? 0) >= (incoming['time'] as int);
+        for (final entry in incoming.entries) {
+          if (const ['title', 'cover', 'author', 'ep'].contains(entry.key)) {
+            if (entry.key == 'ep' && newerLocal) continue;
+            if (entry.value is String && (entry.value as String).isNotEmpty) {
+              next[entry.key] = entry.value;
+            }
+          } else if (!newerLocal ||
+              const [
+                'id',
+                'bookId',
+                'kind',
+                'fanqieImported',
+              ].contains(entry.key)) {
+            next[entry.key] = entry.value;
+          }
+        }
+        if (!newerLocal && incoming['chapterId'] != null) {
+          // Official paragraph offsets have different semantics from local
+          // rendered offsets. Resume at the imported chapter's beginning.
+          for (final field in [
+            'position',
+            'maxScroll',
+            'textOffset',
+            'positionVersion',
+          ]) {
+            next.remove(field);
+          }
+        }
+        final clean = _historyRecord(next, id: id);
+        if (clean == null) continue;
+        await _histBox.put(id, clean);
+        changed++;
+      }
+      await _histBox.flush();
+      return changed;
+    });
+  }
+
   @override
   Future<Map<String, dynamic>?> historyEntry(String id) async {
     final entry = _histBox.get(id);
@@ -406,6 +463,10 @@ class LibraryStore implements ReaderStore {
       await _preserveLegacyMediaInWrite(previous);
     }
 
+    final existing = _histBox.get(id);
+    if (existing is Map && existing['fanqieImported'] == true) {
+      record['fanqieImported'] = true;
+    }
     await _histBox.put(id, record);
 
     // Trim history to 50 entries once it grows past 100 (leaves headroom so
@@ -418,7 +479,9 @@ class LibraryStore implements ReaderStore {
       final oldestKeys = <dynamic>[];
       for (final key in _histBox.keys) {
         final record = _historyRecord(_histBox.get(key), id: key.toString());
-        if (record == null || !retained.contains(_historyIdentity(record))) {
+        if (record == null ||
+            (record['fanqieImported'] != true &&
+                !retained.contains(_historyIdentity(record)))) {
           oldestKeys.add(key);
         }
       }

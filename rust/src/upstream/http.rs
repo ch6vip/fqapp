@@ -168,6 +168,52 @@ impl HttpTransport {
             body,
         })
     }
+
+    /// Account responses are bounded before they flow downstream.
+    /// `request_with_limit` caps the raw (possibly compressed) body; this
+    /// wrapper additionally caps the inflated body at `max_bytes`, so a
+    /// gzipped response cannot expand past the caller's limit.
+    pub async fn request_bounded(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(String, String)],
+        max_bytes: usize,
+    ) -> Result<RawResponse, TransportError> {
+        let response = self
+            .request_with_limit(method, url, headers, None, None, Some(max_bytes))
+            .await?;
+        if response.body.len() > max_bytes {
+            return Err(TransportError::Network(
+                "response exceeds size limit".into(),
+            ));
+        }
+        Ok(response)
+    }
+
+    /// Read-only account RPCs also use JSON POST; bound both directions and
+    /// sign the same body bytes that are transmitted by this method.
+    pub async fn request_body_bounded(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(String, String)],
+        body: Vec<u8>,
+        max_bytes: usize,
+    ) -> Result<RawResponse, TransportError> {
+        if body.len() > 16 * 1024 {
+            return Err(TransportError::Network("request exceeds size limit".into()));
+        }
+        let response = self
+            .request_with_limit(method, url, headers, Some(body), None, Some(max_bytes))
+            .await?;
+        if response.body.len() > max_bytes {
+            return Err(TransportError::Network(
+                "response exceeds size limit".into(),
+            ));
+        }
+        Ok(response)
+    }
 }
 
 /// reqwest is built with `rustls-no-provider` so exactly one TLS backend is

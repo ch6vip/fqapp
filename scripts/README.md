@@ -55,6 +55,18 @@ node --test test/web_assets_test.cjs test/verify_audio_cenc_test.cjs test/build_
 
 ## APK、诊断与资源
 
+### 番茄采集的本机转换
+
+将应用导出的原始 ZIP 解包到独立目录后，可直接使用 Dart 转换为兼容本机备份格式的 JSON：
+
+```powershell
+dart scripts/convert_fanqie_capture.dart <解包目录> <新输出文件.json> [目录响应缓存目录]
+```
+
+转换器与 Android 导入共用小说筛选、去重和章节 ID 匹配代码；输出包含书架和历史。
+可选缓存目录中的 `<bookId>.json` 为现有 `/api/directory` 接口的完整响应。
+没有目录时保留章节 ID，不猜章节序号；不会下载正文或访问账号。输出含个人阅读数据，请勿入库。
+
 ```powershell
 flutter build apk --release --target-platform android-arm64 --no-pub
 python scripts/verify_android_apk.py --help
