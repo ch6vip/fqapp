@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { spawnSync } = require('node:child_process');
 
 const appDir = path.resolve(__dirname, '..');
 const scriptsDir = path.join(appDir, 'scripts');
@@ -122,6 +123,15 @@ test('the APK verifier expects the Rust core library', () => {
     'utf8',
   );
   assert.ok(verifier.includes('lib/arm64-v8a/libfqapi_core.so'));
+});
+
+test('APK unsigned classification accepts Gradle output and rejects damaged signatures', () => {
+  const python = process.platform === 'win32' ? 'python' : 'python3';
+  const result = spawnSync(python, ['-m', 'unittest', 'discover', '-s', 'test',
+    '-p', 'verify_android_apk_test.py', '-v'], {
+    cwd: appDir, encoding: 'utf8', timeout: 30000,
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test('the Rust build script survives cargo writing progress to stderr', () => {

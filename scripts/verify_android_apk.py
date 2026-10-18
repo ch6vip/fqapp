@@ -270,6 +270,23 @@ UNSIGNED_SIGNATURE_MARKERS = (
 )
 
 
+def has_signature_material(apk: Path) -> bool:
+    """Retain broken-signature rejection when apksigner finds no signer."""
+    with zipfile.ZipFile(apk) as archive:
+        if any(name.upper().startswith("META-INF/") and
+               name.upper().endswith((".SF", ".RSA", ".DSA", ".EC"))
+               for name in archive.namelist()):
+            return True
+        central_directory = archive.start_dir
+    # APK v2/v3 signing blocks end immediately before the ZIP central directory.
+    # A block with bad sizes/signatures still counts as material, not absence.
+    if central_directory >= 16:
+        with apk.open("rb") as stream:
+            stream.seek(central_directory - 16)
+            return stream.read(16) == b"APK Sig Block 42"
+    return False
+
+
 def sha256_argument(value: str) -> str:
     digest = value.strip().replace(":", "").lower()
     if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
@@ -348,7 +365,15 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
             raise VerificationError(
                 "APK carries a signing certificate but apksigner did not verify it; "
                 "the signature is broken, not absent (see apksigner.log)")
-        if not signer_digests and not any(marker in lowered for marker in UNSIGNED_SIGNATURE_MARKERS):
+        # Build-tools 36 reports an ordinary Gradle unsigned APK this way,
+        # without printing the other explicit "not signed" markers. Accept
+        # that exact diagnostic only with independent absence of v1/v2/v3 data.
+        missing_manifest_only = [line.strip() for line in signature.splitlines() if line.strip()] == [
+            "DOES NOT VERIFY", "ERROR: Missing META-INF/MANIFEST.MF",
+        ]
+        unsigned_diagnostic = missing_manifest_only or any(
+            marker in lowered for marker in UNSIGNED_SIGNATURE_MARKERS)
+        if not signer_digests and (not unsigned_diagnostic or has_signature_material(apk)):
             raise VerificationError(
                 "apksigner output establishes neither a signature nor an unsigned "
                 "package; refusing to treat it as unsigned (see apksigner.log)")
