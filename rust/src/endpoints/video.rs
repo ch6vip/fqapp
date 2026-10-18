@@ -82,6 +82,25 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 fetch_shortplay_video_model(ctx, &video_id),
                 fetch_phoenix_video_model(ctx, &video_id),
             );
+            // 凤凰那条失败原先被 `.ok()` 静默吃掉，而 1080P 只可能来自它那条
+            // 列表（短剧专用接口自带列表与其 `fallback_api` 都只到 720P）——
+            // 失败即面板少一档且毫无痕迹。**HTTP 成功不等于业务成功**：实测
+            // 2026-10-14 三集全部回火山错误封包
+            // `{BaseResp, Code:110001, Message:未知异常}`（无 `data`），上游只给
+            // 通用码、不给原因，所以这里把外壳与剧集 id 一起留在核心日志里。
+            // Note: 为什么静默会丢一整档、以及日志里刻意不记什么 —
+            // 见 .agents/notes/implemented/bug-fix/2026-10-14-phoenix-reject-silent-quality-loss.md
+            match &phoenix {
+                Ok(body) if phoenix_model_usable(body) => {}
+                Ok(body) => log::warn!(
+                    "video {video_id}: phoenix body unusable (quality tiers lost): {}",
+                    envelope_of_body(body)
+                ),
+                Err(error) => log::warn!(
+                    "video {video_id}: phoenix request failed (quality tiers lost): {}",
+                    error.message()
+                ),
+            }
             (shortplay?, phoenix.ok())
         } else {
             (fetch_phoenix_video_model(ctx, &video_id).await?, None)
@@ -373,6 +392,8 @@ fn variant_display_name(height: i64) -> String {
 /// the client then hides the quality row entirely (official `oi3/k.P()` gate).
 async fn extract_stream_variants(ctx: &Ctx, raw: &[u8], extra: Option<&[u8]>) -> Vec<Value> {
     let mut scored = Vec::new();
+    // 读不动的 body 直接跳过、不报错：`extra`（凤凰）是不是可用由调用点判并告警，
+    // 那里才有剧集 id 可以把日志和一次播放对起来。
     for body in std::iter::once(raw).chain(extra) {
         let Ok(resp) = serde_json::from_slice::<Value>(body) else {
             continue;
@@ -404,9 +425,12 @@ async fn extract_stream_variants(ctx: &Ctx, raw: &[u8], extra: Option<&[u8]>) ->
 async fn fallback_variant_rows(ctx: &Ctx, model: &Map<String, Value>) -> Vec<(i64, Value)> {
     let fallback_url = fallback_api_url(model);
     if fallback_url.is_empty() {
+        // 多数模型本来就没有这一条，不是异常。
         return Vec::new();
     }
     let Some(fallback_data) = fetch_fallback_video_info(ctx, &fallback_url).await else {
+        // 有地址却拉不到，是这一档列表整片消失的另一种静默路径。
+        log::warn!("fallback_api fetch failed (quality tiers lost)");
         return Vec::new();
     };
     let list = fallback_data
@@ -447,6 +471,84 @@ fn merge_variant_rows(scored: Vec<(i64, Value)>) -> Vec<Value> {
     out.into_iter().map(|(_, row)| row).collect()
 }
 
+/// 凤凰那条响应是否可用：`data` 必须是个对象。
+///
+/// HTTP 成功不等于业务成功——上游业务失败时回的是火山错误封包
+/// `{BaseResp, Code, Message}`（无 `data`），状态码仍是 200。看状态码判不出来，
+/// 只能看外壳，所以这里单独判一次由调用点告警。
+fn phoenix_model_usable(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|resp| resp.get("data").map(Value::is_object))
+        .unwrap_or(false)
+}
+
+/// 把一份响应的**外壳**压成一行：顶层键名、`data` 的类型、`code`/`Code`、
+/// `message`/`Message` 与 `BaseResp`。
+///
+/// 只记键名、类型、状态码与上游消息（截断），**不记 `data` 里的值**：值里可能是带签名的
+/// URL 与令牌，而这份日志会被导出给人看。上游拒绝时只给 `110001` 这类通用码，把外壳与
+/// 它给的原话留在日志里，是下一次"某一档无声消失"唯一能查的线索。
+fn body_envelope(resp: &Value) -> String {
+    let keys = resp
+        .as_object()
+        .map(|map| map.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let mut line = format!(
+        "keys={keys:?} data={} code={} message={}",
+        json_type_of(resp.get("data")),
+        envelope_scalar(resp, &["code", "Code"]),
+        envelope_scalar(resp, &["message", "Message"]),
+    );
+    if let Some(base) = resp.get("BaseResp") {
+        line.push_str(&format!(" BaseResp={}", truncated(base, 240)));
+    }
+    line
+}
+
+/// 一份响应字节流的外壳；不是 JSON 就报长度。
+fn envelope_of_body(body: &[u8]) -> String {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(resp) => body_envelope(&resp),
+        Err(_) => format!("not json len={}", body.len()),
+    }
+}
+
+/// 按候选键名取一个标量并渲染成短字符串，都取不到给 `-`。
+fn envelope_scalar(resp: &Value, names: &[&str]) -> String {
+    for name in names {
+        match resp.get(*name) {
+            Some(Value::String(text)) => return text.chars().take(120).collect(),
+            Some(Value::Null) | None => continue,
+            Some(other) => return other.to_string(),
+        }
+    }
+    "-".to_string()
+}
+
+/// 把一段 JSON 压成一行并截断，避免错误包里的长文案把日志撑爆。
+fn truncated(value: &Value, limit: usize) -> String {
+    let text = value.to_string();
+    if text.chars().count() <= limit {
+        text
+    } else {
+        format!("{}…", text.chars().take(limit).collect::<String>())
+    }
+}
+
+/// JSON 值的类型标签，`absent` 表示键根本不在。
+fn json_type_of(value: Option<&Value>) -> &'static str {
+    match value {
+        None => "absent",
+        Some(Value::Null) => "null",
+        Some(Value::Bool(_)) => "bool",
+        Some(Value::Number(_)) => "number",
+        Some(Value::String(_)) => "string",
+        Some(Value::Array(_)) => "array",
+        Some(Value::Object(_)) => "object",
+    }
+}
+
 /// Builds the variant rows from one `video_list` object, keeping the quality
 /// score so callers can merge several upstream lists before ranking them.
 fn variant_rows_scored(
@@ -457,20 +559,27 @@ fn variant_rows_scored(
         return Vec::new();
     };
     let mut rows: Vec<(i64, Value)> = video_list
-        .values()
-        .filter_map(|v| v.as_object())
-        .filter_map(|info| {
-            let score = video_quality_score(info)?;
-            let (url, key) = decrypt_variant_entry(info, key_seed.as_deref())?;
+        .iter()
+        .filter_map(|(slot, value)| {
+            let info = value.as_object()?;
             let w = int64_from_any(info.get("vwidth").unwrap_or(&Value::Null));
             let h = int64_from_any(info.get("vheight").unwrap_or(&Value::Null));
             // 档位语义按**短边**：竖屏剧 1280×720 是 720P 而非 2K
             // （官方 Resolution 枚举同样以短边为准）。
             let short_edge = if w > 0 && h > 0 { w.min(h) } else { w.max(h) };
+            let name = variant_display_name(short_edge);
+            // 编码门丢 bytevc2 是**预期行为**（`CRIT-004`：该编码没有解码器），不打点。
+            let score = video_quality_score(info)?;
+            let Some((url, key)) = decrypt_variant_entry(info, key_seed.as_deref()) else {
+                // 地址解不出来是静默丢**整档**的一类——`4e85437` 修过同款缺陷，且
+                // 实测夹具的 `main_url` 形态一向比线上少，缺陷容易被盖住，所以留告警。
+                log::warn!("variant {slot} dropped, url undecodable ({w}x{h} {name})");
+                return None;
+            };
             Some((
                 score,
                 json!({
-                    "name": variant_display_name(short_edge),
+                    "name": name,
                     "width": w,
                     "height": h,
                     "url": url,

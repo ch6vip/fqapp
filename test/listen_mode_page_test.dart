@@ -101,6 +101,111 @@ void main() {
     expect(created.first.calls, contains('rate:1.25'));
     expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
   });
+
+  testWidgets('取流抛异常时给出提示，而不是静默吞掉', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ListenModePage(
+                    seriesTitle: '测试剧',
+                    coverUrl: 'https://cdn.example/cover.jpg',
+                    episodes: _episodes,
+                    initialIndex: 0,
+                    resolveSource: (episode) async =>
+                        throw StateError('resolve failed'),
+                    playerFactory: FakeNativePlayer.new,
+                  ),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // 取流在 messenger 取值之前完成，异常落到 catch 时 messenger 还是 null：
+    // 不补取一次，用户什么提示都看不到。
+    expect(
+      find.text('本集暂时无法收听'),
+      findsOneWidget,
+      reason: '取流抛异常必须有可见提示',
+    );
+  });
+
+  testWidgets('换集建播放器失败时释放新播放器，且不再驱动已释放的旧播放器', (tester) async {
+    final created = <FakeNativePlayer>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ListenModePage(
+                    seriesTitle: '测试剧',
+                    coverUrl: 'https://cdn.example/cover.jpg',
+                    episodes: _episodes,
+                    initialIndex: 0,
+                    resolveSource: (episode) async => _source,
+                    playerFactory: () {
+                      // 首集给正常播放器，换集时给一个 create 必失败的。
+                      final fake = created.isEmpty
+                          ? FakeNativePlayer()
+                          : _FailingPlayer();
+                      created.add(fake);
+                      return fake;
+                    },
+                  ),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(created, hasLength(1));
+
+    // 连播下一集：新播放器 create 抛错。
+    created.first.completedEvents.add(true);
+    await tester.pumpAndSettle();
+    expect(created, hasLength(2));
+    expect(find.text('本集暂时无法收听'), findsOneWidget);
+    expect(
+      created[1].disposed,
+      isTrue,
+      reason: 'create 失败的新播放器必须被释放，不能泄漏',
+    );
+
+    // 旧播放器已被释放，`_player` 必须不再指向它：点播放不能驱动旧句柄。
+    final oldCalls = List<String>.from(created.first.calls);
+    await tester.tap(find.byKey(const ValueKey('listen-play')));
+    await tester.pumpAndSettle();
+    expect(
+      created.first.calls,
+      oldCalls,
+      reason: '已释放的旧播放器不能再收到播放指令',
+    );
+  });
+}
+
+/// 建播放器必失败的假播放器：用来验证失败路径的资源释放与提示。
+class _FailingPlayer extends FakeNativePlayer {
+  @override
+  Future<int> create(String cdnUrl, String keyHex) async {
+    calls.add('create:$cdnUrl');
+    createdKeys.add(keyHex);
+    throw StateError('create failed');
+  }
 }
 
 /// 听书页是被推入的路由：宿主页按钮 push，pop 的回传值落在 [popped]

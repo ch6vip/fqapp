@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:hive_ce/hive.dart';
 
 import 'secure_key_provider.dart';
@@ -17,6 +19,11 @@ import 'secure_key_provider.dart';
 /// to plaintext. Callers that must never write plaintext pass
 /// [requireEncryption]: when no key can be obtained at all (secure storage
 /// unavailable) they fail closed instead of opening the legacy box.
+///
+/// The plaintext fallback is only for "no key *and* no encrypted box yet".
+/// Finding an encrypted box with no available key also fails closed (see
+/// [openBox]): opening the legacy box there would hide existing records
+/// behind an empty one and write plaintext beside them.
 class EncryptedHive {
   EncryptedHive._();
 
@@ -25,6 +32,26 @@ class EncryptedHive {
 
   static bool isBoxOpen(HiveInterface hive, String name) =>
       hive.isBoxOpen(encryptedBoxName(name)) || hive.isBoxOpen(name);
+
+  /// Whether the encrypted box is already on disk.
+  ///
+  /// Mirrors hive's own layout (`<homePath>/<lowercased name>.hive`, or its
+  /// `.hivec`/`.lock` siblings) but is **synchronous on purpose**: this runs
+  /// while local data is being initialized, and widget tests drive that inside
+  /// a fake-async zone, where a real async file probe never completes
+  /// (CRIT-014 in docs/规范/踩坑判据.md).
+  static bool _encryptedBoxOnDisk(String encName) {
+    if (Hive.isBoxOpen(encName)) return true;
+    // `Hive` is typed as `HiveInterface`, which exposes no path accessor; the
+    // concrete implementation that the global always is carries `homePath`.
+    final home = (Hive as dynamic).homePath as String?;
+    if (home == null || home.isEmpty) return false;
+    final delimiter = Platform.isWindows ? '\\' : '/';
+    final base = '$home$delimiter${encName.toLowerCase()}';
+    return File('$base.hive').existsSync() ||
+        File('$base.hivec').existsSync() ||
+        File('$base.lock').existsSync();
+  }
 
   /// The open box, preferring the encrypted one. Callers must check
   /// [isBoxOpen] first.
@@ -55,8 +82,18 @@ class EncryptedHive {
       if (requireEncryption) {
         throw StateError('加密密钥不可用，拒绝以明文打开 $name');
       }
-      // Degraded path (tests, broken Keystore): plaintext legacy box, so
-      // the app keeps working. Never used when a key is available.
+      // An encrypted box already on disk means an earlier session did have a
+      // key and the data is still there. Degrading to the legacy plaintext box
+      // in that case shows an empty library, hides the real records, and starts
+      // writing in parallel beside them - so fail closed instead. Callers sit
+      // under a retryable bootstrap, so the user can retry once the key is
+      // available and nothing is lost.
+      if (_encryptedBoxOnDisk(encName)) {
+        throw StateError('加密密钥不可用，而 $encName 已存在，拒绝以明文回落');
+      }
+      // Degraded path (tests, a first run before any key existed, a broken
+      // Keystore with no encrypted data yet): plaintext legacy box, so the app
+      // keeps working. Never used when a key is available.
       return hive.openBox<E>(name, compactionStrategy: strategy);
     }
 

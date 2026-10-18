@@ -20,9 +20,15 @@
 //! Backward compatibility: with no key provisioned, the pool keeps the old
 //! plaintext JSON behavior and logs a warning on every save (once per
 //! process). A plaintext file found after a key is provisioned loads
-//! normally and is encrypted on the next save (migration on save). An
-//! encrypted file found with no key (or the wrong key) loads as empty —
-//! the pool refills by re-registering — and is backed up, never silently
+//! normally and is encrypted on the next save (migration on save).
+//!
+//! An encrypted file that cannot be decrypted loads as empty - the pool
+//! refills by re-registering. With a key available but the wrong one (or a
+//! tampered file) it is moved aside to `<file>.corrupt-<unix-seconds>` as it
+//! loads. With no key provisioned it is instead left in place, so a later
+//! session that does have the key can still decrypt it; the destructive case
+//! is the next plaintext save, and that is where the move-aside happens (see
+//! `DevicePool::save`). An encrypted pool is therefore never silently
 //! overwritten with plaintext.
 
 use std::sync::RwLock;

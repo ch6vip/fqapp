@@ -189,10 +189,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     if (task == null) return;
     if (task.snapshot.status == DramaDownloadStatus.paused ||
         task.snapshot.status == DramaDownloadStatus.failed) {
-      task.snapshot = task.snapshot.copyWith(
-        status: DramaDownloadStatus.waiting,
-        clearError: true,
-      );
+      _resumeTask(task);
       _publish();
       unawaited(_pump());
     }
@@ -202,14 +199,27 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     for (final task in _tasks.values) {
       if (task.snapshot.status == DramaDownloadStatus.paused ||
           task.snapshot.status == DramaDownloadStatus.failed) {
-        task.snapshot = task.snapshot.copyWith(
-          status: DramaDownloadStatus.waiting,
-          clearError: true,
-        );
+        _resumeTask(task);
       }
     }
     _publish();
     unawaited(_pump());
+  }
+
+  /// Clears the stop signal and hands the task to a fresh run.
+  ///
+  /// `abortReason` is only ever set (never cleared) by [pause]/[pauseAll]/
+  /// [discard], so without this a task paused while downloading could never be
+  /// resumed: its next run hit `_runOnce`'s abort check and returned at once.
+  /// The generation bump tells the previous run - which may still be winding
+  /// down - to stay out of the way instead of overwriting this state.
+  void _resumeTask(_MutableTask task) {
+    task.generation++;
+    task.abortReason = null;
+    task.snapshot = task.snapshot.copyWith(
+      status: DramaDownloadStatus.waiting,
+      clearError: true,
+    );
   }
 
   /// 放弃一个未完成任务并清掉半成品。已完成集的删除走 store（管理页）。
@@ -269,7 +279,15 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     try {
       while (_active.length < concurrency) {
         final next = _tasks.values
-            .where((task) => task.snapshot.status == DramaDownloadStatus.waiting)
+            .where(
+              (task) =>
+                  task.snapshot.status == DramaDownloadStatus.waiting &&
+                  // A task can be `waiting` while its previous run is still
+                  // winding down (pause() flips the status first, and resume()
+                  // flips it back before _run has returned). Starting a second
+                  // run for it would have two loops writing the same `.part`.
+                  !_active.containsKey(task.snapshot.itemId),
+            )
             .fold<_MutableTask?>(null, (best, task) {
           if (best == null || task.snapshot.index < best.snapshot.index) {
             return task;
@@ -291,6 +309,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
   }
 
   Future<void> _run(_MutableTask task) async {
+    final generation = task.generation;
     var refreshed = false;
     while (true) {
       final reason = await _runOnce(task);
@@ -303,9 +322,22 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       break;
     }
     _active.remove(task.snapshot.itemId);
-    if (task.abortReason == 'paused') {
+    if (task.generation != generation) {
+      // A resume() landed while this loop was winding down: the task belongs to
+      // a new run now, so this one must not write a paused/failed status over it
+      // and must not touch the flag that run may already be relying on. Release
+      // the slot and let `_pump` start that run.
+      _publish();
+      unawaited(_pump());
+      return;
+    }
+    // Consume the flag. It is a signal to *this* run, and leaving it set is
+    // exactly what used to make a later resume() unrecoverable.
+    final abortReason = task.abortReason;
+    task.abortReason = null;
+    if (abortReason == 'paused') {
       task.snapshot = task.snapshot.copyWith(status: DramaDownloadStatus.paused);
-    } else if (task.abortReason == 'discarded') {
+    } else if (abortReason == 'discarded') {
       return;
     } else if (task.snapshot.status != DramaDownloadStatus.completed) {
       task.snapshot = task.snapshot.copyWith(
@@ -503,7 +535,13 @@ class _MutableTask {
 
   /// null=在跑；'paused'/'discarded'=请求退出。_runOnce 在每个数据块
   /// 之间检查它，保证暂停/放弃的响应延迟只有一个数据块。
+  ///
+  /// 由 [_run] 在收尾时消费（置回 null），而不是永久置位。
   String? abortReason;
+
+  /// 每次 resume 递增。运行循环记下进入时的值，收尾时不一致就说明任务已经
+  /// 交给新一轮，本轮不得再写状态（否则会把刚恢复的任务又写回 paused/failed）。
+  int generation = 0;
 
   void abort(String reason) {
     abortReason ??= reason;

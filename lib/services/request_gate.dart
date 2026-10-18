@@ -49,9 +49,12 @@ class RequestGate {
           (value) => value as T,
           onError: (Object error, StackTrace stack) {
             if (error is BackendRequestAborted &&
+                !error.timedOut &&
                 request?.isCancelled != true) {
               // The flight we joined was aborted by its owner's cancellation.
-              // Retry standalone so this caller still gets its answer.
+              // Retry standalone so this caller still gets its answer. A
+              // *timeout* arrives as the same exception type but is not that
+              // event, so it is shared instead of re-sent by every joiner.
               return run<T>(key, send: send, request: request, share: false);
             }
             Error.throwWithStackTrace(error, stack);

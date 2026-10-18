@@ -229,8 +229,12 @@ pub async fn shutdown() -> Result<(), String> {
     Ok(())
 }
 
-/// `"running"`, `"starting"` or `"failed: <message>"` - the same contract as
-/// the Kotlin/JNI bridge this replaces.
+/// `"running"` or `"starting"`.
+///
+/// The three-value `failed: <message>` shape this used to advertise (inherited
+/// from the Kotlin/JNI bridge) was never reachable: a failed start travels back
+/// through `init_android`'s `Result`, so `status()` only ever observes a live
+/// core or none at all.
 pub async fn status() -> String {
     let guard = CORE.read().await;
     match guard.as_ref() {
@@ -309,6 +313,8 @@ pub async fn request(
             token.cancel();
         }
     }
+    // Dart side is released by Drop, so an unwinding panic cannot strand it.
+    let _inflight = InflightRegistration::new(&request_id, generation);
 
     let req = crate::dispatch::Request {
         method: if method.is_empty() {
@@ -388,6 +394,34 @@ pub fn cancel(request_id: String) -> bool {
 ///
 /// After a shutdown/re-init cycle an old request's cleanup must not touch the
 /// registration made by the new core.
+/// Removes its `INFLIGHT` entry when dropped, however the call leaves.
+///
+/// Releasing was an explicit call after the dispatch returned, so a panic
+/// inside a handler (which flutter_rust_bridge catches and turns into an error)
+/// left the registration behind forever - and `cancel()` would then report a
+/// dead entry as live.
+struct InflightRegistration {
+    request_id: String,
+    generation: u64,
+}
+
+impl InflightRegistration {
+    fn new(request_id: &str, generation: u64) -> Self {
+        Self {
+            request_id: request_id.to_string(),
+            generation,
+        }
+    }
+}
+
+impl Drop for InflightRegistration {
+    fn drop(&mut self) {
+        if !self.request_id.is_empty() {
+            release_inflight(&self.request_id, self.generation);
+        }
+    }
+}
+
 fn release_inflight(request_id: &str, generation: u64) {
     if let Ok(mut m) = INFLIGHT.lock() {
         let mine = m

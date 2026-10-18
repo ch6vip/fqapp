@@ -541,6 +541,10 @@ class _AudioPlaybackController extends ChangeNotifier
         () => ApiClient.instance
             .audioSource(itemId, bookId: _bookId, toneId: toneId)
             .timeout(const Duration(seconds: 30)),
+        // A deterministic "this tone does not exist" answer will not change on
+        // retry: let it reach the fallback below immediately.
+        shouldRetry: (error) =>
+            error is! ApiException || !error.message.contains('NO_THIS_TONE'),
       );
     } on ApiException catch (error) {
       if (toneId != '0' ||

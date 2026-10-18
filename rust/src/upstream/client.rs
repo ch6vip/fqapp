@@ -189,6 +189,10 @@ impl UpstreamClient {
             .await
             .map_err(|e| match e {
                 TransportError::Network(m) => ClientError::DeviceFailed(m),
+                // A local size limit is not a device fault: retiring the
+                // device here would rotate identities over a response that was
+                // merely too large.
+                TransportError::TooLarge(m) => ClientError::Other(m),
             })?;
 
         if resp.status != 200 {

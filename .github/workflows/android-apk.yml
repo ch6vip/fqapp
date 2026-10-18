@@ -182,11 +182,12 @@ jobs:
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
           flutter config --android-sdk "$ANDROID_HOME" --no-analytics
 
-      - name: Check the Web assets, audio diagnostics, and Rust build scripts
+      - name: Check the Web assets, audio diagnostics, Rust build scripts, and .so freshness
         run: >-
           node --test test/web_assets_test.cjs
           test/verify_audio_cenc_test.cjs
           test/build_rust_backend_scripts_test.cjs
+          test/check_so_freshness_test.cjs
 
       # rustfmt follows `mod` declarations, so a plain `cargo fmt --all` also
       # checks rust/src/frb_generated.rs -- codegen output that no human edits.
@@ -376,6 +377,21 @@ jobs:
           esac
           # Tag builds must carry exactly the version the tag names; branch
           # and PR builds skip the assertion (no tag to compare against).
+          # Version monotonicity. The two consistency gates (pubspec vs About,
+          # and the tag assertion below) both pass on a *full revert* - f39daa5
+          # followed by c3c858b moved both files back together - so the version
+          # could silently go backwards. Compare against the highest existing
+          # tag instead. Skipped when no tag is available in this checkout.
+          version_name="$(grep -m1 '^version:' pubspec.yaml | sed -E 's/^version:[[:space:]]*([^+]+).*/\1/')"
+          highest_tag="$(git tag --list 'v*' --sort=-v:refname | head -1)"
+          if [ -n "$highest_tag" ] && [ -n "$version_name" ]; then
+            highest_version="${highest_tag#v}"
+            lowest="$(printf '%s\n%s\n' "$version_name" "$highest_version" | sort -V | head -1)"
+            if [ "$lowest" = "$version_name" ] && [ "$version_name" != "$highest_version" ]; then
+              echo "::error::pubspec version $version_name is below the highest tag $highest_tag" >&2
+              exit 1
+            fi
+          fi
           version_args=()
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             # Tag shape was validated above; strip the leading v.

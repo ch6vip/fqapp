@@ -4,7 +4,7 @@
 mod common;
 
 use common::{pool_json, MockReply, MockUpstream, TempDir};
-use fqapi_core::device::DevicePool;
+use fqapi_core::device::{DevicePool, MIN_POOL_SIZE};
 
 /// From rust/testdata/device_vectors.json: a registerkey response payload that
 /// decrypts to `SECRETKEY_16byte` under the reference implementation.
@@ -152,4 +152,107 @@ async fn a_retired_pool_refuses_further_writes() {
         marker,
         "a retired pool must not overwrite the new instance's device state"
     );
+}
+
+/// A pool whose `secret_key`s are all empty - the state a failing `registerKey`
+/// leaves behind, since `register()` still returns `Ok` in that case.
+fn empty_key_pool_json(count: usize) -> String {
+    let devices: Vec<serde_json::Value> = (0..count)
+        .map(|i| {
+            serde_json::json!({
+                "device_id": format!("{i:016}"),
+                "install_id": format!("{}", 9_000_000_000_000_000_000u64 + i as u64),
+                "secret_key": "",
+                "platform": "android",
+                "status": "active",
+                "created_time": "2026-01-01 00:00:00",
+                "last_used": format!("2026-01-01 00:00:{i:02}"),
+                "use_count": i,
+                "cdid": format!("cdid-{i}"),
+            })
+        })
+        .collect();
+    serde_json::json!({ "android": devices, "last_update": "2026-01-01 00:00:00" }).to_string()
+}
+
+/// A mock upstream whose `registerKey` never yields a key, so every
+/// registration comes back with an empty `secret_key`.
+async fn register_key_fails_upstream() -> MockUpstream {
+    MockUpstream::start(|recorded| match recorded.path.as_str() {
+        "/service/2/device_register/" => MockReply::json(serde_json::json!({
+            "device_id_str": "7276663560427471412",
+            "install_id_str": "7276663560427471000",
+        })),
+        "/reading/crypt/registerkey" => MockReply::status(500),
+        _ => MockReply::status(200),
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_registration_without_a_secret_key_does_not_take_a_pool_slot() {
+    let upstream = register_key_fails_upstream().await;
+    let dir = TempDir::new("pool-empty-key-refill");
+    let pool = DevicePool::with_mock_origin(dir.join("device_pool.json"), upstream.origin.clone())
+        .await
+        .expect("pool");
+
+    let err = pool
+        .refill(1)
+        .await
+        .expect_err("the degradation must be reported, not hidden");
+    assert!(err.contains("no secret key"), "unexpected error: {err}");
+    assert_eq!(
+        pool.count().await,
+        0,
+        "a device that cannot decrypt must not occupy a pool slot"
+    );
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn get_never_delivers_a_device_without_a_secret_key() {
+    let upstream = register_key_fails_upstream().await;
+    let dir = TempDir::new("pool-empty-key-get");
+    let path = dir.write("device_pool.json", &empty_key_pool_json(MIN_POOL_SIZE));
+    let pool = DevicePool::with_mock_origin(path, upstream.origin.clone())
+        .await
+        .expect("pool");
+
+    let err = pool
+        .get()
+        .await
+        .expect_err("an unusable device must not be handed to a caller");
+    assert!(err.contains("no secret key"), "unexpected error: {err}");
+    assert_eq!(
+        pool.count().await,
+        MIN_POOL_SIZE,
+        "the failed replacement is put back so the pool is no worse off"
+    );
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn concurrent_gets_on_a_degraded_pool_stay_safe() {
+    // `get()` on a pool whose selected device has no secret key retires that
+    // device and re-registers it, which leaves the pool empty for the duration
+    // of the call. A concurrent `get()` used to index `devices[0]` on that
+    // emptied vec and panic; neither call may return the unusable device
+    // either. Registration is made to fail here so the check stays fast - the
+    // point is the invariant, not a reproduction of one interleaving.
+    let upstream = MockUpstream::start(|_| MockReply::status(500)).await;
+    let dir = TempDir::new("pool-empty-key-race");
+    let path = dir.write("device_pool.json", &empty_key_pool_json(1));
+    let pool = DevicePool::with_mock_origin(path, upstream.origin.clone())
+        .await
+        .expect("pool");
+
+    let (a, b, c, d) = tokio::join!(pool.get(), pool.get(), pool.get(), pool.get());
+    for device in [a, b, c, d].into_iter().flatten() {
+        assert!(
+            !device.secret_key.is_empty(),
+            "get() must never return a device that cannot decrypt"
+        );
+    }
+    upstream.shutdown();
 }

@@ -37,6 +37,11 @@ impl RawResponse {
 pub enum TransportError {
     /// Connection-level failure (Go: `http.Client.Do` error).
     Network(String),
+    /// A *local* size limit was hit (caller cap, gunzip cap). This is not a
+    /// transport failure and must not be read as one: callers rotate a pooled
+    /// device on `Network`, and a response that is simply too big says nothing
+    /// about the device.
+    TooLarge(String),
 }
 
 pub struct HttpTransport {
@@ -131,7 +136,7 @@ impl HttpTransport {
             body.extend_from_slice(&chunk);
             if let Some(limit) = body_limit {
                 if body.len() > limit {
-                    return Err(TransportError::Network(format!(
+                    return Err(TransportError::TooLarge(format!(
                         "response body exceeds {limit} bytes"
                     )));
                 }
@@ -147,7 +152,7 @@ impl HttpTransport {
                 Ok(inflated) => body = inflated,
                 // A gzip bomb is a hard failure, never a silent pass-through.
                 Err(GunzipError::OverLimit) => {
-                    return Err(TransportError::Network(format!(
+                    return Err(TransportError::TooLarge(format!(
                         "gunzip output exceeds {MAX_GUNZIP_BYTES} bytes"
                     )));
                 }
@@ -229,7 +234,9 @@ mod body_cap_tests {
         let transport = HttpTransport::new(5).expect("transport");
         let err = run(transport.request_with_limit("GET", &url, &[], None, None, Some(1024)))
             .expect_err("1 MiB body must exceed a 1 KiB cap");
-        assert!(matches!(err, TransportError::Network(_)));
+        // A local cap is its own class: `Network` would make the caller retire
+        // a pooled device over a response that is merely too large.
+        assert!(matches!(err, TransportError::TooLarge(_)));
     }
 
     #[test]

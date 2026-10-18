@@ -1438,9 +1438,17 @@ Map<String, dynamic> _decodeEnvelope(int statusCode, List<int> bodyBytes) {
   final payload = Map<String, dynamic>.from(decoded);
   // The web bridge uses code=200; REST upstream-compatible endpoints use
   // code=0. Both are successful envelopes.
+  //
+  // The "unavailable" codes are exempted rather than thrown: they mean "this
+  // item has no subtitles / no paragraph comments", which the subtitle and
+  // chapter-idea callers answer with an empty result. Throwing here made their
+  // `isUnavailableCode`/`isUnavailableIdeaCode` guards unreachable dead code -
+  // they only ever saw the exception path.
   if (payload['code'] != null &&
       payload['code'] != 200 &&
-      payload['code'] != 0) {
+      payload['code'] != 0 &&
+      !isUnavailableCode(payload['code']) &&
+      !isUnavailableIdeaCode(payload['code'])) {
     throw ApiException(
       '${payload['message'] ?? '请求失败'}',
       upstreamCode: payload['code'] is int ? payload['code'] as int : null,

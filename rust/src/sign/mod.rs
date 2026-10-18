@@ -26,7 +26,6 @@ pub struct Manager {
     pub license_id: i64,
     pub enable_gorgon: bool,
     pub argus_style: ArgusBeanStyle,
-    pub fixed_argus_rand: i32,
 }
 
 impl Default for Manager {
@@ -42,7 +41,6 @@ impl Manager {
             license_id: 1_611_921_764,
             enable_gorgon: false,
             argus_style: ArgusBeanStyle::ArgusBean551,
-            fixed_argus_rand: 0,
         }
     }
 

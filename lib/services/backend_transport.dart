@@ -27,9 +27,14 @@ class BackendResponse {
 /// write - so a late result is never published. A filesystem write the OS has
 /// already accepted is not rolled back: Tokio file I/O is not a transaction.
 class BackendRequestAborted implements Exception {
-  BackendRequestAborted(this.message);
+  BackendRequestAborted(this.message, {this.timedOut = false});
 
   final String message;
+
+  /// The core hit its deadline instead of the caller cancelling. The two are
+  /// different events: a joiner must not treat a timeout as "the owner
+  /// cancelled" and re-send a request that already ran out of time.
+  final bool timedOut;
 
   @override
   String toString() => message;
@@ -282,7 +287,7 @@ class RustBackendTransport implements BackendTransport {
         throw BackendRequestAborted('请求已取消');
       }
       if (response.status == 504) {
-        throw BackendRequestAborted('请求超时');
+        throw BackendRequestAborted('请求超时', timedOut: true);
       }
       return BackendResponse(
         response.status,

@@ -6,9 +6,9 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `cancelled_response`, `init_core`, `race_dispatch`, `release_inflight`, `resolve_runtime_dir`, `take_pre_cancelled`, `timeout_response`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Core`, `RaceOutcome`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `cancelled_response`, `init_core`, `new`, `race_dispatch`, `release_inflight`, `resolve_runtime_dir`, `take_pre_cancelled`, `timeout_response`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Core`, `InflightRegistration`, `RaceOutcome`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`, `fmt`, `fmt`
 
 /// Backend core version.
 /// Provisions the key used to encrypt the device-pool file at rest
@@ -50,8 +50,12 @@ Future<String> init({
 /// running. Safe to call repeatedly.
 Future<void> shutdown() => RustLib.instance.api.crateApiShutdown();
 
-/// `"running"`, `"starting"` or `"failed: <message>"` - the same contract as
-/// the Kotlin/JNI bridge this replaces.
+/// `"running"` or `"starting"`.
+///
+/// The three-value `failed: <message>` shape this used to advertise (inherited
+/// from the Kotlin/JNI bridge) was never reachable: a failed start travels back
+/// through `init_android`'s `Result`, so `status()` only ever observes a live
+/// core or none at all.
 Future<String> status() => RustLib.instance.api.crateApiStatus();
 
 /// Base URL of the loopback adapter, for resource URLs (`absoluteUrl`).

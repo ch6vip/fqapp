@@ -168,6 +168,23 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('no key with an existing encrypted box fails closed', () async {
+    // An earlier session encrypted this box, so the records are still on disk.
+    final box = await EncryptedHive.openBox<dynamic>(Hive, 'shelf', keys: keys);
+    await box.put('a', {'title': 'Book A'});
+    await box.close();
+
+    // Next launch, secure storage is unavailable. Degrading to the legacy
+    // plaintext box would show an empty shelf, hide the real records and start
+    // writing plaintext beside them, so opening must fail instead.
+    final noKeys = SecureKeyProvider(storage: _ThrowingStorage());
+    await expectLater(
+      EncryptedHive.openBox<dynamic>(Hive, 'shelf', keys: noKeys),
+      throwsStateError,
+    );
+    expect(await Hive.boxExists('shelf_enc'), isTrue, reason: '真数据必须还在');
+  });
 }
 
 class _ThrowingStorage implements SecureKeyStorage {
