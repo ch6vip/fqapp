@@ -413,6 +413,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
   Widget _tile(PlayletComment comment) => PlayletDiscussionTile(
     key: ValueKey('playlet-comment-${comment.id}'),
     text: comment.text,
+    imageUrls: comment.imageUrls,
     userName: comment.userName,
     userAvatar: comment.userAvatar,
     published: comment.relativeTime(),
