@@ -580,6 +580,41 @@ void main() {
   });
 
   group('书架离线直读', () {
+    testWidgets('导入章节的小说开启自动续读，普通书籍仍走原入口', (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('101', title: '已导入的小说'));
+        await LibraryStore.instance.mergeFanqie([
+          {
+            'id': '101',
+            'bookId': '101',
+            'kind': 'book',
+            'time': 100,
+            'chapterId': '202',
+            'episode': 1,
+            'fanqieImported': true,
+          },
+        ]);
+      });
+      await tester.pumpWidget(
+        _app(
+          cache: MemoryChapterCache(),
+          connectivity: () async => (online: false, metered: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('已导入的小说'));
+      await tester.pump();
+      await tester.pump();
+      final detail = tester.widget<DetailPage>(find.byType(DetailPage));
+      expect(detail.autoOpenReader, true);
+      expect(detail.item.id, '101');
+      expect(
+        (await LibraryStore.instance.historyEntry('101'))?['chapterId'],
+        '202',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
     testWidgets('无网且本地有缓存时，点书直接进阅读器而不是详情页', (tester) async {
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('offline-book', title: '离线直读的书'));
