@@ -16,6 +16,12 @@ class ChapterCacheSheet extends StatefulWidget {
   final Future<String> Function(Chapter) loader;
   final void Function(Chapter chapter, String text)? onContentAvailable;
 
+  /// 听书页传入的「离线音频」区块。
+  ///
+  /// 文本缓存与音频缓存是两件事（见 issue #81），所以由调用方组装；阅读器和
+  /// 详情页不传这个参数时，面板保持原来的纯文本缓存形态。
+  final Widget? extraSection;
+
   const ChapterCacheSheet({
     super.key,
     required this.book,
@@ -23,6 +29,7 @@ class ChapterCacheSheet extends StatefulWidget {
     this.includeCurrentChapter = false,
     required this.cache,
     required this.loader,
+    this.extraSection,
     this.onContentAvailable,
   });
 
@@ -190,6 +197,7 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
               '$capacity 章或 80 MB，超出后清理较久未读的。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+            if (widget.extraSection != null) widget.extraSection!,
           ],
         ),
       ),

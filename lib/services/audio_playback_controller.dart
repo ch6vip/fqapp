@@ -451,10 +451,12 @@ class _AudioPlaybackController extends ChangeNotifier
       final source = await _loadSourceWithRetry(itemId);
       if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
+      // 离线命中给的是 `file://<path>`：本地文件桥不经 HTTP，没有 host。
+      final isLocalFile = uri != null && uri.scheme == 'file';
       if (source.itemId != itemId ||
           uri == null ||
-          !const ['https', 'http'].contains(uri.scheme) ||
-          uri.host.isEmpty) {
+          !(isLocalFile || const ['https', 'http'].contains(uri.scheme)) ||
+          (!isLocalFile && uri.host.isEmpty)) {
         throw const FormatException('Invalid audio source');
       }
       await released;
@@ -524,6 +526,10 @@ class _AudioPlaybackController extends ChangeNotifier
   /// A pure-TTS book has no default voice: the playinfo endpoint answers
   /// NO_THIS_TONE for tone 0, so the first selectable voice is retried once.
   Future<AudioSource> _loadSourceWithRetry(String itemId) async {
+    // 已下载的章节直接命中本地文件：离线可播，在线也不重复拉流。本地命中
+    // 排在注入 loader 之前，测试才能覆盖「离线优先」这条真实顺序。
+    final local = await _localSource(itemId, _toneId);
+    if (local != null) return local;
     final loader = request.sourceLoader;
     if (loader != null) {
       return loader(
@@ -566,6 +572,25 @@ class _AudioPlaybackController extends ChangeNotifier
       _audioSourceCache.remove(_audioSourceCache.keys.first);
     }
     return result;
+  }
+
+  /// 离线命中：当前音色下这一章已下载完成时直接用本地文件。
+  ///
+  /// 记录箱没就绪、记录不存在，或文件被外部删掉，都只意味着「这次不能
+  /// 离线」，一律返回 null 让调用方继续走在线取流。
+  Future<AudioSource?> _localSource(String itemId, String toneId) async {
+    final store = request.downloadStore ?? HiveAudioDownloadStore.instance;
+    if (!store.isReady) return null;
+    try {
+      final cached = await store.chapter(itemId, toneId: toneId);
+      if (cached == null) return null;
+      // 用同步探测：这一层会在 widget 测试的 fake-async 区域里跑，真异步
+      // 文件 I/O 在那里永不完成（CRIT-014 同源）。
+      if (!File(cached.filePath).existsSync()) return null;
+      return cached.toSource();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// First non-default voice the page knows, for books without a default one.
