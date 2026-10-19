@@ -41,6 +41,7 @@ class DownloadsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
         context = null
+        io.shutdownNow()
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {

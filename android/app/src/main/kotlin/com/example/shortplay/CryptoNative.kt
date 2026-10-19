@@ -166,7 +166,12 @@ object HttpBridge {
  * read arbitrary app-private files.
  */
 @Keep
-private class OfflineFileBridge(streamIds: AtomicLong) {
+internal class OfflineFileBridge(
+    streamIds: AtomicLong,
+    private val logError: (String) -> Unit = {
+        android.util.Log.e("sp_crypto", it)
+    },
+) {
     private val nextId = streamIds
 
     /** Set once by [HttpBridge.configure]; empty until then (fail-closed). */
@@ -200,7 +205,9 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
         val length = (end - start + 1).toInt()
         return try {
             java.io.RandomAccessFile(file, "r").use { raf ->
-                if (file.length() < end + 1) return null
+                // Compare against the inclusive end directly: end + 1
+                // overflows for a request ending at Long.MAX_VALUE.
+                if (file.length() <= end) return null
                 raf.seek(start)
                 val buf = ByteArray(length)
                 var read = 0
@@ -212,7 +219,7 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
                 if (read != length) null else buf
             }
         } catch (t: Throwable) {
-            android.util.Log.e("sp_crypto", "file httpRange threw: ${t.javaClass.simpleName}")
+            logError("file httpRange threw: ${t.javaClass.simpleName}")
             null
         }
     }
@@ -236,7 +243,8 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
             val raf = try {
                 java.io.RandomAccessFile(s.file, "r").apply { seek(s.start) }
             } catch (t: Throwable) {
-                android.util.Log.e("sp_crypto", "file streamConnect threw: ${t.javaClass.simpleName}")
+                logError("file streamConnect threw: ${t.javaClass.simpleName}")
+                streamClose(id)
                 return false
             }
             s.raf = raf
@@ -271,7 +279,7 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
                 }
             } catch (t: Throwable) {
                 streamClose(id)
-                android.util.Log.e("sp_crypto", "file streamRead threw id=$id: ${t.javaClass.simpleName}")
+                logError("file streamRead threw id=$id: ${t.javaClass.simpleName}")
                 -1
             }
         }
