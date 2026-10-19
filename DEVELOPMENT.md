@@ -596,7 +596,7 @@ adb logcat -s flutter
 选择“解析并预览已保存的数据”，预览后合并到本机书架和历史。
 导入复用现有 Hive 书架和阅读历史；按章节 ID 对照目录，不把上游 `order` 当成目录下标。
 较新的本机位置优先，缺目录时保留章节 ID，点书时重新匹配；段内偏移暂不转换。
-导入记录保留到用户手动删除，备份也保留该标记。本机转换工具见 `scripts/README.md`。
+导入记录保留到用户手动删除（导入历史超过 10000 条时按最旧时间淘汰），备份也保留该标记。本机转换工具见 `scripts/README.md`。
 
 - [x] **Rust 原生核心**：`fqapi_core` → `libfqapi_core.so` → flutter_rust_bridge 进程内调用（替代 Go/Kotlin JNI）
 - [x] 小说搜索、目录、正文、章节/滚动位置续读

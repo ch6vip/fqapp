@@ -451,6 +451,13 @@ class LibraryStore implements ReaderStore {
     return _serialize(() => _addHistoryInWrite(entry));
   }
 
+  /// Bound for imported history. Imported records are kept until the user
+  /// deletes them, but without a cap a 10k-record import would leave the
+  /// history box unbounded. The import service already refuses more than
+  /// 10000 history records, so this cap never deletes a legitimate import;
+  /// it only bounds what can accumulate through restores or direct writes.
+  static const _importedHistoryCap = 10000;
+
   Future<void> _addHistoryInWrite(Map<String, dynamic> entry) async {
     final record = _historyRecord(entry);
     if (record == null) return;
@@ -483,6 +490,28 @@ class LibraryStore implements ReaderStore {
             (record['fanqieImported'] != true &&
                 !retained.contains(_historyIdentity(record)))) {
           oldestKeys.add(key);
+        }
+      }
+      // Imported records are exempt from the 50-entry trim above, so a
+      // bulk import is not wiped by the next local write. They still get
+      // their own bound: past the cap, drop the oldest imported records.
+      if (_histBox.length > _importedHistoryCap) {
+        final imported = <MapEntry<dynamic, Map<String, dynamic>>>[];
+        for (final key in _histBox.keys) {
+          final record = _historyRecord(_histBox.get(key), id: key.toString());
+          if (record != null && record['fanqieImported'] == true) {
+            imported.add(MapEntry(key, record));
+          }
+        }
+        if (imported.length > _importedHistoryCap) {
+          imported.sort(
+            (a, b) => _historyTime(a.value).compareTo(_historyTime(b.value)),
+          );
+          for (final entry
+              in imported.take(imported.length - _importedHistoryCap)) {
+            // Never trim the record this write just inserted.
+            if (entry.key != id) oldestKeys.add(entry.key);
+          }
         }
       }
       await _histBox.deleteAll(oldestKeys);
@@ -775,6 +804,9 @@ class LibraryStore implements ReaderStore {
     record['kind']?.toString() ?? 'book',
     (record['contentId'] ?? record['id']).toString(),
   );
+
+  static num _historyTime(Map<String, dynamic> record) =>
+      (record['time'] as num?) ?? 0;
 
   static String? _legacyMediaKey(Map<String, dynamic> record) {
     final kind = record['kind'];

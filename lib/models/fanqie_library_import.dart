@@ -57,7 +57,14 @@ class FanqieLibraryImport {
             visit(item);
           }
         } else if (value is Map) {
-          if (_novel(value)) _include(value);
+          if (_novel(value)) {
+            // A book record's nested maps/lists are its own fields
+            // (author info, nested recommendations), not more shelf
+            // entries. Recursing into them would import recommendations
+            // and related books as if the user had shelved them.
+            _include(value);
+            return;
+          }
           for (final child in value.values) {
             if (child is Map || child is List) visit(child);
           }

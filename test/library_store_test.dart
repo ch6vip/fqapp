@@ -197,6 +197,28 @@ void main() {
   );
 
   test(
+    'imported history is capped instead of growing unbounded',
+    () async {
+      await store.init();
+      final history = Hive.box('history');
+      await history.putAll({
+        for (var index = 0; index < 10001; index++)
+          'imported-$index': {
+            'id': 'imported-$index',
+            'time': index,
+            'fanqieImported': true,
+          },
+      });
+      await store.addHistory({'id': 'new', 'title': 'Newest', 'time': 20000});
+      // 10000 imported (oldest trimmed) + the record just written.
+      expect(history.length, 10001);
+      expect(await store.historyEntry('imported-0'), isNull);
+      expect(await store.historyEntry('imported-10000'), isNotNull);
+      expect(await store.historyEntry('new'), isNotNull);
+    },
+  );
+
+  test(
     'audio and manga progress remain separate from a novel with the same ID',
     () async {
       await store.init();

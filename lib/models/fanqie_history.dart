@@ -11,13 +11,19 @@ class FanqieHistoryPage {
   final int oldestTimestamp;
   final int sourceCount;
 
+  /// Records dropped because they were malformed (not a map, or missing a
+  /// usable book id / timestamp). They are skipped, never fatal: one dirty
+  /// record must not block the whole page's history import.
+  final int skipped;
+
   const FanqieHistoryPage(
     this.records,
     this.hasMore,
     this.nextOffset,
     this.oldestTimestamp,
-    this.sourceCount,
-  );
+    this.sourceCount, {
+    this.skipped = 0,
+  });
 
   factory FanqieHistoryPage.parse(Map<String, dynamic> envelope) {
     if (envelope['code'] != 0 && envelope['code'] != '0') {
@@ -37,8 +43,13 @@ class FanqieHistoryPage {
     }
     final records = <Map<String, dynamic>>[];
     var oldest = 0;
+    var skipped = 0;
     for (final raw in items) {
-      if (raw is! Map) throw const FormatException('历史记录格式无效');
+      // A single malformed record skips itself; it never aborts the page.
+      if (raw is! Map) {
+        skipped++;
+        continue;
+      }
       final time = _integer(raw['read_timestamp_ms']);
       if (time != null && time > 0 && (oldest == 0 || time < oldest)) {
         oldest = time;
@@ -47,12 +58,15 @@ class FanqieHistoryPage {
       if (_integer(raw['book_type']) != 0) continue;
       final id = _id(raw['book_id_str']) ?? _id(raw['book_id']);
       if (id == null || time == null || time < 0 || time > 8640000000000000) {
-        throw const FormatException('历史作品标识或时间无效');
+        skipped++;
+        continue;
       }
       records.add({
         'id': id,
         'bookId': id,
         'kind': 'book',
+        // Title/cover are display-only: a malformed one blanks the field
+        // instead of dropping a record whose id and time are valid.
         'title': _text(raw['book_name']),
         'cover': _text(raw['thumb_url']),
         'time': time,
@@ -66,6 +80,7 @@ class FanqieHistoryPage {
       offset,
       oldest,
       items.length,
+      skipped: skipped,
     );
   }
 
@@ -86,9 +101,7 @@ class FanqieHistoryPage {
 
   static String _text(dynamic value) {
     if (value == null) return '';
-    if (value is! String || value.length > 8192) {
-      throw const FormatException('历史作品信息无效');
-    }
+    if (value is! String || value.length > 8192) return '';
     return value;
   }
 }
@@ -97,17 +110,20 @@ class FanqieHistoryPreview {
   final LibraryBackup validated;
   final int sourceCount;
   final int duplicateCount;
+  final int skipped;
 
   const FanqieHistoryPreview._(
     this.validated,
     this.sourceCount,
-    this.duplicateCount,
-  );
+    this.duplicateCount, {
+    this.skipped = 0,
+  });
 
   factory FanqieHistoryPreview.fromRecords(
     List<Map<String, dynamic>> records,
-    int sourceCount,
-  ) {
+    int sourceCount, {
+    int skipped = 0,
+  }) {
     final unique = <String, Map<String, dynamic>>{};
     for (final record in records) {
       final id = record['id'] as String;
@@ -125,6 +141,7 @@ class FanqieHistoryPreview {
       ),
       sourceCount,
       records.length - unique.length,
+      skipped: skipped,
     );
   }
 
@@ -145,6 +162,10 @@ class FanqieHistoryPreview {
     if (page.hasMore) {
       throw const FormatException('该响应还有下一页，请先获取完整历史，避免误以为已导入全部');
     }
-    return FanqieHistoryPreview.fromRecords(page.records, page.sourceCount);
+    return FanqieHistoryPreview.fromRecords(
+      page.records,
+      page.sourceCount,
+      skipped: page.skipped,
+    );
   }
 }
