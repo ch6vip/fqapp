@@ -31,17 +31,10 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
   http: ^1.6.0
   path_provider: ^2.1.0
   shared_preferences: ^2.3.0
   url_launcher: ^6.3.0
-  # Retained for the existing tests, which still import package:hive.
-  # Production code uses hive_ce below; drop these once the tests migrate.
-  hive: ^2.2.3
-  hive_flutter: ^1.1.0
   # hive_ce is the maintained Hive fork; all boxes open encrypted via
   # EncryptedHive (P1-3). Keys live in flutter_secure_storage (Keystore).
   hive_ce: ^2.0.0

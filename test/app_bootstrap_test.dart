@@ -122,6 +122,53 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('backend starts before local data init completes', (
+    tester,
+  ) async {
+    final localInit = Completer<void>();
+    var backendStarted = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: app.AppBootstrap(
+          initializer: () => localInit.future,
+          backendStarter: () async {
+            backendStarted = true;
+          },
+          child: const Text('ready'),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(backendStarted, isTrue);
+    expect(find.text('ready'), findsNothing);
+    localInit.complete();
+    await tester.pump();
+    expect(find.text('ready'), findsOneWidget);
+  });
+
+  testWidgets('backend failure does not fail the bootstrap gate', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: app.AppBootstrap(
+          initializer: () async {},
+          backendStarter: () async {
+            throw StateError('backend down');
+          },
+          child: const Text('ready'),
+        ),
+      ),
+    );
+    // No pumpAndSettle: it advances the fake clock past the next test's
+    // AnimationController start and trips its elapsed-time assertion.
+    await tester.pump();
+    await tester.pump();
+    // Backend errors are owned by RootShell's UI, not the bootstrap gate.
+    expect(find.text('ready'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('main renders a retryable screen when the data directory fails', (
     tester,
   ) async {
