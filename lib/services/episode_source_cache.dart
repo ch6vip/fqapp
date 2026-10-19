@@ -69,13 +69,22 @@ class EpisodeSource {
             name: name,
             url: vUrl,
             keyHex: key,
-            height: int.tryParse('${row['height'] ?? ''}') ?? 0,
+            height: _variantHeight(row['height']),
           ),
         );
       }
     }
-    return EpisodeSource(url, (data['key_hex'] ?? '').toString().trim(), variants);
+    return EpisodeSource(
+      url,
+      (data['key_hex'] ?? '').toString().trim(),
+      variants,
+    );
   }
+}
+
+int _variantHeight(dynamic raw) {
+  if (raw is num && raw.isFinite) return raw.toInt();
+  return int.tryParse(raw?.toString().trim() ?? '') ?? 0;
 }
 
 enum EpisodeSourceOrigin {

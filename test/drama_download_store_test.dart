@@ -21,7 +21,7 @@ void main() {
     keys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
     store = HiveDramaDownloadStore(
       keys: keys,
-      directoryResolver: () async => videoDir,
+      directoryResolver: () async => temp,
     );
   });
 
@@ -42,9 +42,10 @@ void main() {
     int bytes = 1024,
     bool withFile = true,
     int? cachedAt,
+    String? pathOverride,
   }) {
     final path =
-        '${videoDir.path}${Platform.pathSeparator}$itemId.mp4';
+        pathOverride ?? '${videoDir.path}${Platform.pathSeparator}$itemId.mp4';
     if (withFile) {
       File(path).writeAsBytesSync(List.filled(bytes, 1));
     }
@@ -93,6 +94,27 @@ void main() {
     expect(await store.episode('bad'), isNull);
   });
 
+  test('数值字段损坏的记录不会让管理页抛异常', () async {
+    await store.isDownloaded('bad');
+    final box = Hive.box<dynamic>('drama_download_v1_enc');
+    await box.put('episode:bad', {
+      'seriesId': 'series1',
+      'itemId': 'bad',
+      'filePath': '${videoDir.path}${Platform.pathSeparator}bad.mp4',
+      'index': double.nan,
+      'height': double.infinity,
+      'bytes': -1,
+      'cachedAt': double.negativeInfinity,
+    });
+
+    final dramas = await store.dramas();
+    expect(dramas, hasLength(1));
+    expect(dramas.single.episodes.single.index, 0);
+    expect(dramas.single.episodes.single.height, 0);
+    expect(dramas.single.episodes.single.bytes, 0);
+    expect(dramas.single.episodes.single.cachedAt, 0);
+  });
+
   test('dramas 按剧聚合、集按 index 排序、剧按最近缓存排序', () async {
     await store.ensureCatalogue(
       CachedDrama(
@@ -109,12 +131,8 @@ void main() {
     // 落在同一毫秒，`List.sort` 的比较返回 0 且不保证稳定——用真实时钟会
     // 变成偶发失败（CI 上实测到过 series1/series2 顺序反转）。这里直接钉死
     // 时间戳，让断言只依赖实现逻辑，不依赖计时精度。
-    await store.saveEpisode(
-      episode(itemId: 'ep1', index: 1, cachedAt: 1000),
-    );
-    await store.saveEpisode(
-      episode(itemId: 'ep2', index: 0, cachedAt: 2000),
-    );
+    await store.saveEpisode(episode(itemId: 'ep1', index: 1, cachedAt: 1000));
+    await store.saveEpisode(episode(itemId: 'ep2', index: 0, cachedAt: 2000));
     await store.saveEpisode(
       episode(itemId: 'ep9', seriesId: 'series2', cachedAt: 3000),
     );
@@ -145,6 +163,39 @@ void main() {
     expect(await store.dramas(), isEmpty);
     expect(await store.isDownloaded('ep1'), isFalse);
     expect(await store.isDownloaded('ep2'), isFalse);
+  });
+
+  test('篡改的文件路径不会删除缓存目录外的文件', () async {
+    final outside = File('${temp.path}${Platform.pathSeparator}outside.mp4')
+      ..writeAsBytesSync(const [1, 2, 3]);
+    await store.saveEpisode(
+      episode(withFile: false, pathOverride: outside.path),
+    );
+
+    await store.removeEpisode('ep1');
+
+    expect(outside.existsSync(), isTrue);
+    expect(await store.isDownloaded('ep1'), isFalse);
+  });
+
+  test('removeDrama 也只删除缓存目录内的文件', () async {
+    final outside = File('${temp.path}${Platform.pathSeparator}outside.mp4')
+      ..writeAsBytesSync(const [1, 2, 3]);
+    final inside = episode(itemId: 'inside');
+    final escaped = episode(
+      itemId: 'escaped',
+      withFile: false,
+      pathOverride: outside.path,
+    );
+    await store.saveEpisode(inside);
+    await store.saveEpisode(escaped);
+
+    await store.removeDrama('series1');
+
+    expect(File(inside.filePath).existsSync(), isFalse);
+    expect(outside.existsSync(), isTrue);
+    expect(await store.isDownloaded('inside'), isFalse);
+    expect(await store.isDownloaded('escaped'), isFalse);
   });
 
   test('目录记录在集全无时不被 dramas 丢弃（下载中状态可见）', () async {

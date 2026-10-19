@@ -81,31 +81,32 @@ class CachedEpisode {
       seriesId: seriesId,
       itemId: itemId,
       title: raw['title']?.toString() ?? '',
-      index: raw['index'] is num ? (raw['index'] as num).toInt() : 0,
+      index: _safeInt(raw['index']),
       keyHex: keyHex,
-      height: raw['height'] is num ? (raw['height'] as num).toInt() : 0,
+      height: _safeInt(raw['height']),
       variantName: raw['variantName']?.toString() ?? '',
-      bytes: raw['bytes'] is num ? (raw['bytes'] as num).toInt() : 0,
+      bytes: _safeInt(raw['bytes']),
       filePath: filePath,
-      cachedAt: raw['cachedAt'] is num ? (raw['cachedAt'] as num).toInt() : 0,
+      cachedAt: _safeInt(raw['cachedAt']),
     );
   }
 
+  static int _safeInt(dynamic value) =>
+      value is num && value.isFinite && value >= 0 && value <= 8640000000000000
+      ? value.toInt()
+      : 0;
+
   /// 离线回放的取流结果：主 url 是 `file://` 标记（原生播放器据此走
   /// 本地文件桥 + 同一把 key 解密），variants 只带下载时选定的那一档。
-  EpisodeSource toSource() => EpisodeSource(
-    'file://$filePath',
-    keyHex,
-    [
-      if (variantName.isNotEmpty)
-        EpisodeVariant(
-          name: variantName,
-          url: 'file://$filePath',
-          keyHex: keyHex,
-          height: height,
-        ),
-    ],
-  );
+  EpisodeSource toSource() => EpisodeSource('file://$filePath', keyHex, [
+    if (variantName.isNotEmpty)
+      EpisodeVariant(
+        name: variantName,
+        url: 'file://$filePath',
+        keyHex: keyHex,
+        height: height,
+      ),
+  ]);
 }
 
 /// 一部剧的目录（剧名/封面/全集列表），下载启动时落库，管理页靠它自举，
@@ -320,7 +321,8 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   Future<Directory> directory() async {
     final existing = _dir;
     if (existing != null) return existing;
-    final root = await (_dirResolver?.call() ?? getApplicationSupportDirectory());
+    final root =
+        await (_dirResolver?.call() ?? getApplicationSupportDirectory());
     final dir = Directory('${root.path}${Platform.pathSeparator}offline-video');
     await dir.create(recursive: true);
     return _dir = dir;
@@ -370,10 +372,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     final raw = box.get(_episodeKey(itemId));
     if (!_isEpisode(raw)) return null;
     final keyHex = box.get(_keyKey(itemId));
-    return CachedEpisode.fromMap(
-      raw,
-      keyHex: keyHex is String ? keyHex : '',
-    );
+    return CachedEpisode.fromMap(raw, keyHex: keyHex is String ? keyHex : '');
   });
 
   @override
@@ -442,14 +441,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     final raw = box.get(_episodeKey(itemId));
     if (_isEpisode(raw)) {
       // 记录指向的文件随记录删除；路径被篡改时宁可留着文件也不删错。
-      final filePath = raw['filePath'] as String;
-      try {
-        await File(filePath).delete();
-      } on FileSystemException catch (_) {
-        // 文件已不存在是删除的常态结果。
-      } on ArgumentError catch (_) {
-        // 非法路径：记录照样删，文件留给系统清理。
-      }
+      await _deleteCachedFile(raw['filePath'] as String);
     }
     await box.deleteAll([_episodeKey(itemId), _keyKey(itemId)]);
     changes.value++;
@@ -468,12 +460,32 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     ];
     for (final value in box.values) {
       if (!_isEpisode(value) || value['seriesId'] != seriesId) continue;
-      try {
-        await File(value['filePath'] as String).delete();
-      } on FileSystemException catch (_) {
-      } on ArgumentError catch (_) {}
+      await _deleteCachedFile(value['filePath'] as String);
     }
     await box.deleteAll(doomed);
     changes.value++;
   });
+
+  /// Deletes only a file that really lives below the store's own directory.
+  ///
+  /// The Hive record is private, but treating its path as trusted would turn a
+  /// corrupted/imported record into an arbitrary-file delete primitive. A
+  /// symlink that resolves outside the directory is likewise left untouched.
+  Future<void> _deleteCachedFile(String rawPath) async {
+    try {
+      final root = await directory();
+      final rootPath = await root.resolveSymbolicLinks();
+      final file = File(rawPath);
+      final canonical = await file.resolveSymbolicLinks();
+      final prefix = rootPath.endsWith(Platform.pathSeparator)
+          ? rootPath
+          : '$rootPath${Platform.pathSeparator}';
+      if (!canonical.startsWith(prefix)) return;
+      await file.delete();
+    } on FileSystemException catch (_) {
+      // Already gone is the normal result; an unreadable path is left alone.
+    } on ArgumentError catch (_) {
+      // A malformed stored path must not abort the metadata removal.
+    }
+  }
 }

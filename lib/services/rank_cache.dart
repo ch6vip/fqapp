@@ -55,8 +55,7 @@ class RankCache {
     final box = _box;
     if (box != null) return box;
     try {
-      return _box =
-          await (_opening ??= EncryptedHive.openBox(_hive, _boxName));
+      return _box = await (_opening ??= EncryptedHive.openBox(_hive, _boxName));
     } on Object {
       _opening = null;
       rethrow;
@@ -80,10 +79,7 @@ class RankCache {
     final catalog = RankCatalog.fromJson(raw);
     return catalog == null
         ? null
-        : RankCatalogSnapshot(
-            catalog: catalog,
-            savedAt: _savedAt(raw),
-          );
+        : RankCatalogSnapshot(catalog: catalog, savedAt: _savedAt(raw));
   });
 
   RankBoardSnapshot? loadBoard({
@@ -135,7 +131,8 @@ class RankCache {
       return null;
     }
     if (raw is! Map) return null;
-    if (DateTime.now().difference(_savedAt(raw)) > staleTtl) {
+    final age = DateTime.now().difference(_savedAt(raw));
+    if (age.isNegative || age > staleTtl) {
       return null;
     }
     try {
@@ -147,7 +144,7 @@ class RankCache {
 
   DateTime _savedAt(Map<dynamic, dynamic> raw) {
     final savedAt = raw['savedAt'];
-    return savedAt is int
+    return savedAt is int && savedAt >= 0 && savedAt <= 8640000000000000
         ? DateTime.fromMillisecondsSinceEpoch(savedAt)
         : DateTime.fromMillisecondsSinceEpoch(0);
   }

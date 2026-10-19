@@ -3,28 +3,39 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'home_design.dart';
 
-/// A compact masthead leaves the first screen to the actual stories.
+/// The home masthead.
+///
+/// The refresh action now lives in pull-to-refresh. Keeping only search and the
+/// rank shortcut in the utility row gives the page one clear action hierarchy
+/// instead of three equally weighted buttons.
 class HomeHero extends StatelessWidget {
   final VoidCallback onSearch;
   final VoidCallback onRanks;
-  final Future<void> Function() onRefresh;
-  final bool refreshing;
+
+  /// Small issue/date label. Kept as editorial texture, not as a second title.
+  final String issue;
 
   const HomeHero({
     super.key,
     required this.onSearch,
     required this.onRanks,
-    required this.onRefresh,
-    this.refreshing = false,
+    this.issue = '今日刊',
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final scale = MediaQuery.textScalerOf(context).scale(14);
+    final scaler = MediaQuery.textScalerOf(context);
+    final largeType = scaler.scale(13) > 18;
+    final displayScaler = scaler.clamp(maxScaleFactor: 1.35);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+      padding: const EdgeInsets.fromLTRB(
+        HomeSpace.gutter,
+        8,
+        HomeSpace.gutter,
+        8,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -32,129 +43,122 @@ class HomeHero extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 36,
-                height: 36,
+                width: 28,
+                height: 28,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFF6954), HomePalette.accent],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(11),
-                  boxShadow: [
-                    BoxShadow(
-                      color: HomePalette.accent.withValues(alpha: 0.28),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
+                  gradient: palette.eink
+                      ? null
+                      : const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFFF6B54), HomePalette.accent],
+                        ),
+                  color: palette.eink ? Colors.black : null,
+                  borderRadius: BorderRadius.circular(9),
                 ),
                 child: const Icon(
                   LucideIcons.book_open,
+                  size: 14,
                   color: Colors.white,
-                  size: 19,
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'fqapp',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.ink,
-                        fontSize: 19,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.6,
-                        height: 1.15,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '好故事，不止一种',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: palette.muted,
-                        letterSpacing: 0.3,
-                      ),
-                    ),
-                  ],
+              const SizedBox(width: 9),
+              Text(
+                'FQ',
+                textScaler: scaler.clamp(maxScaleFactor: 1.2),
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.2,
+                  color: palette.ink,
                 ),
               ),
-              if (scale <= 20)
-                ExcludeSemantics(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: HomePalette.accent.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          LucideIcons.sparkles,
-                          color: HomePalette.accent,
-                          size: 13,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '每日发现',
-                          style: TextStyle(
-                            color: HomePalette.accent,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
+              const SizedBox(width: 7),
+              Container(width: 1, height: 11, color: palette.line),
+              const SizedBox(width: 7),
+              Text(
+                '发现',
+                textScaler: scaler.clamp(maxScaleFactor: 1.2),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.8,
+                  color: palette.muted,
+                ),
+              ),
+              const Spacer(),
+              if (!largeType)
+                Text(
+                  issue,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textScaler: scaler.clamp(maxScaleFactor: 1.2),
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
+                    color: palette.tertiary,
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 20),
+          Text(
+            '今天，读点好的。',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textScaler: displayScaler,
+            style: HomeType.display.copyWith(color: palette.primary),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '小说、短剧、漫画和听书，都在这里。',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textScaler: displayScaler,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.5,
+              letterSpacing: 0.1,
+              color: palette.muted,
+            ),
+          ),
+          const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
                 child: HomePressable(
                   key: const Key('home_search_button'),
                   onTap: onSearch,
-                  semanticLabel: '搜索小说、短剧、漫剧、漫画和听书',
+                  borderRadius: BorderRadius.circular(16),
+                  semanticLabel: '搜索书、剧或作者',
+                  pressedScale: 0.985,
                   child: Container(
-                    height: 44,
+                    constraints: const BoxConstraints(minHeight: 48),
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                     decoration: BoxDecoration(
                       color: palette.soft,
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                        color: palette.line.withValues(alpha: 0.5),
-                        width: 0.6,
-                      ),
+                      borderRadius: BorderRadius.circular(16),
                     ),
                     child: Row(
                       children: [
                         Icon(
                           LucideIcons.search,
-                          size: 17,
+                          size: 18,
                           color: palette.muted,
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            '搜索你想看的故事',
+                            '搜索书、剧或作者',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
+                            textScaler: scaler.clamp(maxScaleFactor: 1.25),
                             style: TextStyle(
                               fontSize: 13,
+                              fontWeight: FontWeight.w400,
                               color: palette.muted,
                             ),
                           ),
@@ -164,59 +168,26 @@ class HomeHero extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Tooltip(
                 message: '排行榜',
-                child: IconButton(
-                  key: const Key('home_ranks_button'),
-                  onPressed: onRanks,
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(44, 44),
-                    fixedSize: const Size(44, 44),
-                    foregroundColor: palette.ink,
-                    backgroundColor: palette.surface,
-                    side: BorderSide(
-                      color: palette.line.withValues(alpha: 0.7),
-                      width: 0.8,
+                child: Material(
+                  color: palette.soft,
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    key: const Key('home_ranks_button'),
+                    onTap: onRanks,
+                    borderRadius: BorderRadius.circular(16),
+                    child: SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Icon(
+                        LucideIcons.trophy,
+                        size: 18,
+                        color: palette.primary,
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: EdgeInsets.zero,
                   ),
-                  icon: const Icon(LucideIcons.trophy, size: 18),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: '刷新推荐',
-                child: IconButton(
-                  key: const Key('home_refresh_button'),
-                  onPressed: refreshing ? null : onRefresh,
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(44, 44),
-                    fixedSize: const Size(44, 44),
-                    foregroundColor: palette.ink,
-                    backgroundColor: palette.surface,
-                    side: BorderSide(
-                      color: palette.line.withValues(alpha: 0.7),
-                      width: 0.8,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                  icon: refreshing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: HomePalette.accent,
-                          ),
-                        )
-                      : const Icon(LucideIcons.refresh_ccw, size: 18),
                 ),
               ),
             ],

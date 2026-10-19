@@ -907,6 +907,64 @@ void main() {
       );
     },
   );
+
+  test(
+    'failed pagination blocks automatic retries until manual retry',
+    () async {
+      var pageCalls = 0;
+      var failPage = true;
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          initialTabIndex: 1,
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                pageCalls++;
+                if (offset == 0) {
+                  return HomepagePage(
+                    items: [_item('a'), _item('b')],
+                    nextOffset: 1,
+                    sessionId: 'session',
+                  );
+                }
+                if (failPage) throw const ApiException('page failed');
+                return HomepagePage(
+                  items: [_item('c')],
+                  nextOffset: null,
+                  sessionId: 'session',
+                );
+              },
+          searchLoader: (query, {int page = 1}) async =>
+              throw const ApiException('search failed'),
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      await notifier.load();
+
+      await notifier.loadMore();
+      expect(pageCalls, 2);
+      expect(container.read(provider).items.map((item) => item.id), ['a', 'b']);
+      expect(container.read(provider).error, isNull);
+      expect(container.read(provider).loadMoreFailed, isTrue);
+      expect(container.read(provider).loadMoreError, isNotNull);
+      expect(container.read(provider).hasMore, isTrue);
+
+      failPage = false;
+      await notifier.loadMore();
+      expect(pageCalls, 2);
+
+      await notifier.loadMore(manual: true);
+      expect(pageCalls, 3);
+      expect(container.read(provider).items.map((item) => item.id), [
+        'a',
+        'b',
+        'c',
+      ]);
+      expect(container.read(provider).loadMoreFailed, isFalse);
+      expect(container.read(provider).loadMoreError, isNull);
+    },
+  );
 }
 
 Future<void> _loadTab(HomeNotifier notifier, int tabIndex) async {

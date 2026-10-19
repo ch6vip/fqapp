@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -5,14 +7,22 @@ import '../../models/media_item.dart';
 import 'home_design.dart';
 import 'home_media_card.dart';
 
-/// A finite, user-controlled carousel: only live recommendations are shown.
+/// The day's featured stories.
+///
+/// Each page is a split editorial card: a quiet portrait cover on the left and
+/// a short, readable story note on the right. The previous full-bleed image
+/// stack carried a type badge, score, title, metadata and a button on top of the
+/// artwork; that has been reduced to one image and one clear reading direction.
 class HomeSpotlight extends StatefulWidget {
   final List<MediaItem> items;
   final ValueChanged<MediaItem> onOpen;
+  final String title;
+
   const HomeSpotlight({
     super.key,
     required this.items,
     required this.onOpen,
+    this.title = '今日焦点',
   });
 
   @override
@@ -20,7 +30,7 @@ class HomeSpotlight extends StatefulWidget {
 }
 
 class _HomeSpotlightState extends State<HomeSpotlight> {
-  final _pages = PageController(viewportFraction: 0.94);
+  final _pages = PageController();
   int _active = 0;
 
   @override
@@ -51,7 +61,7 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
     } else {
       _pages.animateToPage(
         next,
-        duration: const Duration(milliseconds: 380),
+        duration: const Duration(milliseconds: 320),
         curve: Curves.easeOutCubic,
       );
     }
@@ -61,204 +71,64 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
   Widget build(BuildContext context) {
     if (widget.items.isEmpty) return const SizedBox.shrink();
     final palette = HomePalette.of(context);
-    final reducedMotion = MediaQuery.disableAnimationsOf(context);
-    final scale = MediaQuery.textScalerOf(context).scale(24) / 24;
-    final height = 228.0 + (scale - 1).clamp(0.0, 2.0) * 85;
-    final current = (_active + 1).toString().padLeft(2, '0');
-    final total = widget.items.length.toString().padLeft(2, '0');
+    final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final height = 218.0 + (scale - 1).clamp(0.0, 2.0) * 78;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
+          padding: const EdgeInsets.fromLTRB(
+            HomeSpace.gutter,
+            16,
+            HomeSpace.gutter,
+            10,
+          ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
-                child: Row(
-                  children: [
-                    Container(
-                      width: 4,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: HomePalette.accent,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        '今日焦点',
-                        textScaler: MediaQuery.textScalerOf(
-                          context,
-                        ).clamp(maxScaleFactor: 1.35),
-                        style: TextStyle(
-                          fontSize: 21,
-                          height: 1.1,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
-                          color: palette.ink,
-                        ),
-                      ),
-                    ),
-                    if (scale < 1.5) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: HomePalette.accent.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                          'HOT',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: HomePalette.accent,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
+                child: Text(
+                  widget.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textScaler: MediaQuery.textScalerOf(
+                    context,
+                  ).clamp(maxScaleFactor: 1.4),
+                  style: HomeType.section.copyWith(color: palette.primary),
                 ),
               ),
-              if (scale < 1.5)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Text(
-                    '总有一个故事，正合你意',
-                    style: TextStyle(fontSize: 11, color: palette.muted),
-                  ),
+              if (widget.items.length > 1)
+                _PageSwitch(
+                  index: _active,
+                  count: widget.items.length,
+                  palette: palette,
+                  onNext: _next,
                 ),
             ],
           ),
         ),
         SizedBox(
           height: height,
-          child: Padding(
-            padding: const EdgeInsets.only(left: 20),
-            child: PageView.builder(
-              key: const Key('home_spotlight_pages'),
-              controller: _pages,
-              padEnds: false,
-              allowImplicitScrolling: true,
-              physics: const PageScrollPhysics(),
-              itemCount: widget.items.length,
-              onPageChanged: (value) => setState(() => _active = value),
-              itemBuilder: (context, index) {
-                final item = widget.items[index];
-                return AnimatedBuilder(
-                  animation: _pages,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: _SpotlightCard(
-                      item: item,
-                      index: index,
-                      onTap: () => widget.onOpen(item),
-                    ),
-                  ),
-                  builder: (context, child) {
-                    final page =
-                        _pages.hasClients &&
-                            _pages.position.hasContentDimensions
-                        ? _pages.page ?? _active.toDouble()
-                        : _active.toDouble();
-                    final distance = (page - index).clamp(-1.0, 1.0);
-                    return Transform.scale(
-                      scale: reducedMotion ? 1 : 1 - distance.abs() * 0.035,
-                      alignment: Alignment.centerLeft,
-                      child: child,
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 6, 16, 0),
-          child: Row(
-            children: [
-              if (scale < 1.5) ...[
-                const Icon(
-                  LucideIcons.sparkles,
-                  color: HomePalette.accent,
-                  size: 13,
+          child: PageView.builder(
+            key: const Key('home_spotlight_pages'),
+            controller: _pages,
+            padEnds: false,
+            allowImplicitScrolling: true,
+            physics: const PageScrollPhysics(),
+            itemCount: widget.items.length,
+            onPageChanged: (value) => setState(() => _active = value),
+            itemBuilder: (context, index) {
+              final item = widget.items[index];
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: HomeSpace.gutter,
                 ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '为你精选，随心发现',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: palette.muted),
-                  ),
+                child: _SpotlightCard(
+                  item: item,
+                  onTap: () => widget.onOpen(item),
                 ),
-                const SizedBox(width: 12),
-                if (widget.items.length > 1)
-                  ExcludeSemantics(
-                    child: Row(
-                      children: [
-                        for (var i = 0; i < widget.items.length; i++)
-                          AnimatedContainer(
-                            duration: reducedMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 220),
-                            margin: const EdgeInsets.only(right: 4),
-                            width: i == _active ? 16 : 4,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: i == _active
-                                  ? HomePalette.accent
-                                  : palette.line,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(width: 10),
-              ],
-              Flexible(
-                flex: scale >= 1.5 ? 1 : 0,
-                fit: scale >= 1.5 ? FlexFit.tight : FlexFit.loose,
-                child: Semantics(
-                  liveRegion: true,
-                  label: '第 $current 条，共 $total 条推荐',
-                  excludeSemantics: true,
-                  child: Text(
-                    '$current / $total',
-                    key: const Key('home_spotlight_page'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.muted,
-                      fontSize: 11,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-              ),
-              if (widget.items.length > 1)
-                IconButton(
-                  key: const Key('home_spotlight_next'),
-                  tooltip: '下一条推荐',
-                  onPressed: _next,
-                  icon: Icon(
-                    LucideIcons.arrow_right,
-                    size: 16,
-                    color: palette.ink,
-                  ),
-                  constraints: const BoxConstraints.tightFor(
-                    width: 38,
-                    height: 38,
-                  ),
-                  padding: EdgeInsets.zero,
-                )
-              else
-                const SizedBox(height: 38),
-            ],
+              );
+            },
           ),
         ),
       ],
@@ -266,20 +136,66 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
   }
 }
 
-class _SpotlightCard extends StatelessWidget {
-  final MediaItem item;
+/// Compact page counter that doubles as the next-page action.
+class _PageSwitch extends StatelessWidget {
   final int index;
-  final VoidCallback onTap;
+  final int count;
+  final HomePalette palette;
+  final VoidCallback onNext;
 
-  const _SpotlightCard({
-    required this.item,
+  const _PageSwitch({
     required this.index,
-    required this.onTap,
+    required this.count,
+    required this.palette,
+    required this.onNext,
   });
 
   @override
   Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '下一条推荐，第 ${index + 1} 条，共 $count 条',
+      excludeSemantics: true,
+      child: InkWell(
+        key: const Key('home_spotlight_next'),
+        onTap: onNext,
+        borderRadius: BorderRadius.circular(10),
+        splashColor: HomePalette.accent.withValues(alpha: 0.07),
+        highlightColor: Colors.transparent,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${index + 1} / $count',
+                style: HomeType.figure.copyWith(color: palette.tertiary),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                LucideIcons.chevron_right,
+                size: 14,
+                color: palette.tertiary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SpotlightCard extends StatelessWidget {
+  final MediaItem item;
+  final VoidCallback onTap;
+
+  const _SpotlightCard({required this.item, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final palette = HomePalette.of(context);
+    final tint = HomeKindTint.of(item.kind, eink: palette.eink);
     final action = switch (item.kind) {
       'video' => '开始追剧',
       'manju' => '观看漫剧',
@@ -287,161 +203,123 @@ class _SpotlightCard extends StatelessWidget {
       'manga' => '翻开漫画',
       _ => '立即阅读',
     };
-    return HomePressable(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: RepaintBoundary(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: LayoutBuilder(
-            builder: (context, constraints) => Stack(
-              fit: StackFit.expand,
+    final meta = [
+      if (item.score case final score?) score.toStringAsFixed(1),
+      if (item.author.isNotEmpty) item.author,
+      if (item.ep.isNotEmpty) item.ep,
+    ].join('  ·  ');
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final coverHeight = math.max(120.0, constraints.maxHeight - 24);
+        final idealWidth = coverHeight * 5 / 7;
+        final widthCap =
+            constraints.maxWidth * (constraints.maxWidth >= 560 ? 0.28 : 0.40);
+        final coverWidth = math
+            .min(idealWidth, widthCap)
+            .clamp(96.0, 196.0)
+            .toDouble();
+
+        return HomePressable(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          pressedScale: 0.988,
+          semanticLabel: '${item.title}，$action',
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: palette.line.withValues(
+                  alpha: palette.dark ? 0.7 : 0.65,
+                ),
+                width: 0.8,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                StoryCover(
-                  item: item,
-                  cacheWidth: (constraints.maxWidth * pixelRatio).ceil(),
-                  alignment: Alignment.topCenter,
-                ),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      stops: [0, 0.35, 0.7, 1],
-                      colors: [
-                        Color(0x250C1513),
-                        Color(0x350C1513),
-                        Color(0xB50C1513),
-                        Color(0xF60C1513),
-                      ],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 16,
-                  top: 16,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.32),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.25),
-                        width: 0.6,
+                SizedBox(
+                  width: coverWidth,
+                  child: Center(
+                    child: AspectRatio(
+                      aspectRatio: 5 / 7,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: StoryCover(
+                          item: item,
+                          cacheWidth: (coverWidth * pixelRatio).ceil(),
+                          alignment: Alignment.topCenter,
+                        ),
                       ),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          homeKindIcon(item.kind),
-                          size: 12,
-                          color: Colors.white,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          homeKindLabel(item.kind),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            height: 1.1,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(width: 1, height: 9, color: Colors.white38),
-                        const SizedBox(width: 6),
-                        const Text(
-                          '精选',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            height: 1.1,
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.all(18),
+                const SizedBox(width: 16),
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
+                      Text(
+                        homeKindLabel(item.kind),
+                        textScaler: MediaQuery.textScalerOf(
+                          context,
+                        ).clamp(maxScaleFactor: 1.4),
+                        style: HomeType.eyebrow.copyWith(
+                          color: palette.eink ? Colors.black : tint,
+                        ),
+                      ),
+                      const SizedBox(height: 9),
                       Text(
                         item.title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          height: 1.2,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.4,
-                          shadows: [
-                            Shadow(color: Colors.black45, blurRadius: 10),
-                          ],
+                        textScaler: MediaQuery.textScalerOf(
+                          context,
+                        ).clamp(maxScaleFactor: 1.5),
+                        style: TextStyle(
+                          fontSize: 22,
+                          height: 1.18,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.45,
+                          color: palette.ink,
                         ),
                       ),
-                      if (item.author.isNotEmpty || item.ep.isNotEmpty) ...[
-                        const SizedBox(height: 7),
+                      if (meta.isNotEmpty) ...[
+                        const SizedBox(height: 8),
                         Text(
-                          [
-                            if (item.author.isNotEmpty) item.author,
-                            if (item.ep.isNotEmpty) item.ep,
-                          ].join(' · '),
+                          meta,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.82),
-                            fontSize: 11,
-                            height: 1.2,
-                          ),
+                          style: HomeType.meta.copyWith(color: palette.muted),
                         ),
                       ],
-                      const SizedBox(height: 14),
+                      const Spacer(),
                       Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 13,
-                              vertical: 8,
+                          Flexible(
+                            child: Text(
+                              action,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textScaler: MediaQuery.textScalerOf(
+                                context,
+                              ).clamp(maxScaleFactor: 1.4),
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: palette.accentText,
+                              ),
                             ),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(10),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.2),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  action,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    height: 1.1,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF1E201D),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                const Icon(
-                                  LucideIcons.arrow_up_right,
-                                  size: 14,
-                                  color: Color(0xFF1E201D),
-                                ),
-                              ],
-                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Icon(
+                            LucideIcons.arrow_right,
+                            size: 14,
+                            color: palette.accentText,
                           ),
                         ],
                       ),
@@ -451,8 +329,8 @@ class _SpotlightCard extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

@@ -19,17 +19,24 @@ const homeCategories = [
   HomeCategory('听书', LucideIcons.headphones),
 ];
 
+/// Pinned category navigation.
+///
+/// Text and a short accent underline replace the previous row of filled pills.
+/// The result is quieter, easier to scan and much closer to the editorial
+/// rhythm of the rest of the page.
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   final int selectedIndex;
   final ValueChanged<int> onSelect;
   final double extent;
   final bool dark;
+  final bool eink;
 
   HomeTabBarDelegate({
     required this.selectedIndex,
     required this.onSelect,
-    this.extent = 54,
+    this.extent = 52,
     this.dark = false,
+    this.eink = false,
   });
 
   @override
@@ -47,100 +54,97 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     final palette = HomePalette.of(context);
     final duration = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
-        : const Duration(milliseconds: 200);
+        : const Duration(milliseconds: 180);
+    final accent = palette.eink ? Colors.black : HomePalette.accent;
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.canvas,
-        border: Border(
-          bottom: BorderSide(
-            color: palette.line.withValues(alpha: 0.5),
-            width: 0.6,
+    return Container(
+      color: palette.canvas,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: palette.hairline, width: 0.8),
           ),
         ),
-      ),
-      child: Center(
-        child: SizedBox(
-          height: 38,
-          child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            scrollDirection: Axis.horizontal,
-            itemCount: homeCategories.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 6),
-            itemBuilder: (context, index) {
-              final selected = index == selectedIndex;
-              final category = homeCategories[index];
-              return Semantics(
-                selected: selected,
-                button: true,
-                label: category.label,
-                excludeSemantics: true,
-                onTap: () => onSelect(index),
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    key: ValueKey('home_category_$index'),
-                    onTap: () => onSelect(index),
-                    borderRadius: BorderRadius.circular(19),
-                    child: AnimatedContainer(
-                      duration: duration,
-                      curve: Curves.easeOutCubic,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? HomePalette.accent
-                            : palette.soft.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(19),
-                        boxShadow: selected
-                            ? [
-                                BoxShadow(
-                                  color: HomePalette.accent.withValues(alpha: 0.28),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ]
-                            : null,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            category.icon,
-                            size: 14,
-                            color: selected ? Colors.white : palette.muted,
-                          ),
-                          const SizedBox(width: 5),
-                          AnimatedDefaultTextStyle(
-                            duration: duration,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight:
-                                  selected ? FontWeight.w700 : FontWeight.w500,
-                              color: selected ? Colors.white : palette.ink,
-                              letterSpacing: 0.2,
+        child: Center(
+          child: SizedBox(
+            height: extent,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              scrollDirection: Axis.horizontal,
+              itemCount: homeCategories.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 4),
+              itemBuilder: (context, index) {
+                final selected = index == selectedIndex;
+                final category = homeCategories[index];
+                return Semantics(
+                  selected: selected,
+                  button: true,
+                  label: category.label,
+                  excludeSemantics: true,
+                  onTap: () => onSelect(index),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      key: ValueKey('home_category_$index'),
+                      onTap: () => onSelect(index),
+                      borderRadius: BorderRadius.circular(10),
+                      splashColor: accent.withValues(alpha: 0.07),
+                      highlightColor: Colors.transparent,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 11),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            AnimatedDefaultTextStyle(
+                              duration: duration,
+                              curve: Curves.easeOutCubic,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                height: 1.2,
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                letterSpacing: selected ? 0.1 : 0.2,
+                                color: selected ? accent : palette.muted,
+                              ),
+                              child: Text(
+                                category.label,
+                                textScaler: MediaQuery.textScalerOf(
+                                  context,
+                                ).clamp(maxScaleFactor: 1.5),
+                              ),
                             ),
-                            child: Text(category.label),
-                          ),
-                        ],
+                            const SizedBox(height: 6),
+                            AnimatedContainer(
+                              duration: duration,
+                              curve: Curves.easeOutCubic,
+                              width: selected ? 16 : 0,
+                              height: 2.5,
+                              decoration: BoxDecoration(
+                                color: accent,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),
     );
   }
 
-  // Note: pinned header 必须把主题算进 shouldRebuild — 见
-  // .agents/notes/implemented/bug-fix/2026-09-18-home-geometry-and-backup.md
+  /// Brightness and e-ink affect the painted palette even without a tab change.
   @override
   bool shouldRebuild(HomeTabBarDelegate oldDelegate) =>
       selectedIndex != oldDelegate.selectedIndex ||
       extent != oldDelegate.extent ||
       onSelect != oldDelegate.onSelect ||
-      dark != oldDelegate.dark;
+      dark != oldDelegate.dark ||
+      eink != oldDelegate.eink;
 }

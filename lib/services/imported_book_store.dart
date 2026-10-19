@@ -426,14 +426,22 @@ class ImportedBookStore {
       title: title,
       author: raw['author']?.toString() ?? '',
       format: raw['format']?.toString() ?? '',
-      addedAt: DateTime.fromMillisecondsSinceEpoch(
-        addedAt is num ? addedAt.toInt() : 0,
-      ),
+      addedAt: _addedAt(addedAt),
       directory: directory,
       coverFile: coverFile,
       chapters: chapters,
       chapterFiles: files,
     );
+  }
+
+  static DateTime _addedAt(dynamic value) {
+    if (value is num &&
+        value.isFinite &&
+        value >= 0 &&
+        value <= 8640000000000000) {
+      return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+    }
+    return DateTime(1970);
   }
 }
 

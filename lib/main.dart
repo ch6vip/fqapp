@@ -404,7 +404,13 @@ class _RootShellState extends State<RootShell> {
       child: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) {
-          if (i != _index) setState(() => _index = i);
+          if (i == _index) {
+            if (i == 0) {
+              HomePage.scrollToTop();
+            }
+          } else {
+            setState(() => _index = i);
+          }
         },
         backgroundColor: Colors.transparent,
         elevation: 0,

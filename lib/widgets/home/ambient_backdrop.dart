@@ -73,13 +73,14 @@ class _PaperLightPainter extends CustomPainter {
 
   const _PaperLightPainter({required this.dark});
 
-  static final _lightWash = _wash(0.055);
-  static final _darkWash = _wash(0.07);
+  // 极淡的品牌暖光：只让纸面有一点纵深，不制造第二套色板。
+  static final _lightWash = _wash(0.030);
+  static final _darkWash = _wash(0.045);
 
   static RadialGradient _wash(double alpha) => RadialGradient(
     colors: [
-      HomePalette.accent.withValues(alpha: alpha),
-      HomePalette.accent.withValues(alpha: 0),
+      const Color(0xFFEF5038).withValues(alpha: alpha),
+      const Color(0xFFEF5038).withValues(alpha: 0),
     ],
   );
 
@@ -99,5 +100,6 @@ class _PaperLightPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_PaperLightPainter oldDelegate) => dark != oldDelegate.dark;
+  bool shouldRepaint(_PaperLightPainter oldDelegate) =>
+      dark != oldDelegate.dark;
 }

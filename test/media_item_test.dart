@@ -59,6 +59,25 @@ void main() {
     );
   });
 
+  test('non-finite counters fall back instead of crashing parsing', () {
+    final item = MediaItem.fromRaw({
+      'book_id': 'book',
+      'book_name': 'book',
+      'followed_cnt': double.infinity,
+      'ai_usage_type': double.nan,
+    });
+    expect(item.followerCount, 0);
+    expect(item.aiGenerated, isFalse);
+
+    final episode = Episode.fromRaw({
+      'item_id': 'ep1',
+      'index': double.nan,
+      'item_status': double.infinity,
+    }, index: 4);
+    expect(episode.index, 4);
+    expect(episode.disabled, isFalse);
+  });
+
   test('parses list-shaped chapterListWithVolume', () {
     final payload = {
       'code': 200,

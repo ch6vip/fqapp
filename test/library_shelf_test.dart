@@ -95,6 +95,20 @@ void main() {
       expect(records, hasLength(1));
       expect(records.single.item.title, '只有标题');
     });
+
+    test('非法收藏时间回退为 epoch，不抛出时间范围异常', () async {
+      final box = Hive.box<dynamic>(ShelfStore.boxName);
+      await box.put(ShelfStore.keyFor('book', 'bad-time'), {
+        'id': 'bad-time',
+        'kind': 'book',
+        'title': '时间损坏',
+        'addedAt': double.infinity,
+      });
+
+      final records = ShelfStore.instance.records();
+      expect(records, hasLength(1));
+      expect(records.single.addedAt, DateTime(1970));
+    });
   });
 
   group('LibraryPage', () {
@@ -125,6 +139,27 @@ void main() {
       expect(find.text('历史里的书'), findsWidgets);
       expect(find.text('书架里的书'), findsNothing);
       expect(find.text('第4章 · 50%'), findsWidgets);
+    });
+
+    testWidgets('极小进度不显示为 0%', (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('tiny', title: '刚翻开'));
+        await LibraryStore.instance.addHistory({
+          'id': 'tiny',
+          'kind': 'book',
+          'title': '刚翻开',
+          'episode': 0,
+          'progress': 0.002,
+          'time': DateTime.now().millisecondsSinceEpoch,
+        });
+      });
+
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+
+      expect(find.text('0%'), findsNothing);
+      expect(find.text('<1%'), findsWidgets);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('书架按最近阅读排序，没有阅读记录的按加入时间', (tester) async {
@@ -358,6 +393,29 @@ void main() {
             .abs(),
         lessThan(1),
       );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('页头在 3 倍字号下可横向滚动且不溢出', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2280);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      await tester.runAsync(() async {
+        await LibraryStore.instance.accumulateReadTime(
+          'shelf-book',
+          'book',
+          1440 * 60,
+          at: DateTime.now(),
+        );
+      });
+      await tester.pumpWidget(_app(textScale: 3.0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('今日已读1440分钟'), findsOneWidget);
+      expect(find.text('书架'), findsOneWidget);
+      expect(find.text('浏览历史'), findsOneWidget);
+      expect(find.byKey(const Key('library-search-button')), findsOneWidget);
+      expect(find.byKey(const Key('library-more-button')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -683,7 +741,14 @@ Widget _app({
   ChapterCache? cache,
   ReaderStore? readerStore,
   Future<ConnectivityView> Function()? connectivity,
+  double textScale = 1.0,
 }) => MaterialApp(
+  builder: (context, child) => MediaQuery(
+    data: MediaQuery.of(
+      context,
+    ).copyWith(textScaler: TextScaler.linear(textScale)),
+    child: child!,
+  ),
   home: LibraryPage(
     onBrowse: onBrowse,
     cacheStore: cache,

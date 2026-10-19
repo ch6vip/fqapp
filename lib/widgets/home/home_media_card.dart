@@ -4,8 +4,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
-import '../../services/poster_cache.dart';
 import '../../models/media_item.dart';
+import '../../services/poster_cache.dart';
 import '../cover_tag_chip.dart';
 import 'home_design.dart';
 
@@ -25,27 +25,22 @@ IconData homeKindIcon(String kind) => switch (kind) {
   _ => LucideIcons.book_open,
 };
 
-/// Fixed cover proportions, with a measured text allowance for large fonts.
+const double _homeCrossAxisSpacing = 16;
+
+/// Two columns on phones give covers enough presence to be recognizable.
+/// Adding a third column at 320–400dp was the main source of the previous
+/// cramped first screen: every title was squeezed into a thumbnail-sized cell.
 int _homeColumns(BuildContext context, double width) {
-  final scaler = MediaQuery.textScalerOf(context);
-  final largeType = scaler.scale(14) > 21;
-  return largeType && width < 560
-      ? 2
-      : width < 300
-      ? 2
-      : width < 560
-      ? 3
-      : width < 740
-      ? 4
-      : 5;
+  if (width < 560) return 2;
+  if (width < 820) return 3;
+  return 4;
 }
 
-/// The laid-out width of one cover cell. Shared with the cards so the decoded
-/// cover size matches the cell exactly, which lets a card skip a
-/// [LayoutBuilder] of its own.
+/// Laid-out width of one cover cell. [width] is the grid's content width, i.e.
+/// the viewport width minus the page gutter on both sides.
 double homeCardWidth(BuildContext context, double width) {
   final columns = _homeColumns(context, width);
-  return (width - (columns - 1) * 14) / columns;
+  return (width - (columns - 1) * _homeCrossAxisSpacing) / columns;
 }
 
 SliverGridDelegate homeGridDelegate(BuildContext context, double width) {
@@ -53,14 +48,14 @@ SliverGridDelegate homeGridDelegate(BuildContext context, double width) {
   final cardWidth = homeCardWidth(context, width);
   return SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: _homeColumns(context, width),
-    crossAxisSpacing: 14,
-    mainAxisSpacing: 22,
+    crossAxisSpacing: _homeCrossAxisSpacing,
+    mainAxisSpacing: 26,
     mainAxisExtent:
         cardWidth * 1.4 +
-        8 +
-        scaler.scale(14) * 1.35 * 2 +
-        5 +
-        scaler.scale(11) * 1.3 +
+        10 +
+        scaler.scale(15) * HomeType.cardLineHeight * 2 +
+        7 +
+        scaler.scale(12) * HomeType.metaLineHeight +
         2,
   );
 }
@@ -105,7 +100,7 @@ class StoryCover extends StatelessWidget {
   }
 }
 
-/// An original geometric cover is useful even when an upstream image fails.
+/// Original geometric fallback artwork for failed or missing upstream covers.
 class _CoverArtwork extends CustomPainter {
   final String kind;
 
@@ -154,12 +149,16 @@ class _CoverArtwork extends CustomPainter {
   bool shouldRepaint(_CoverArtwork oldDelegate) => oldDelegate.kind != kind;
 }
 
+/// Standard feed card.
+///
+/// Covers are now left almost entirely to the artwork. A single optional
+/// upstream gradient tag and the rating badge are the overlays; type and
+/// author/update information live in one tidy metadata line below the title.
 class HomeMediaCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
 
-  /// Laid-out cell width. The feed already knows it (it sized the grid
-  /// delegate with it), and passing it in avoids a [LayoutBuilder] per card.
+  /// Laid-out cell width supplied by the feed to avoid a LayoutBuilder per card.
   final double? coverWidth;
 
   const HomeMediaCard({
@@ -174,190 +173,185 @@ class HomeMediaCard extends StatelessWidget {
     final palette = HomePalette.of(context);
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final scaler = MediaQuery.textScalerOf(context);
+    final tint = HomeKindTint.of(item.kind, eink: palette.eink);
+    final detail = item.author.isNotEmpty
+        ? item.author
+        : item.ep.isNotEmpty
+        ? item.ep
+        : item.badge;
+
     return _CardWidth(
       width: coverWidth,
       builder: (width) => HomePressable(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
+        semanticLabel:
+            '${item.title}，${homeKindLabel(item.kind)}'
+            '${item.score == null ? '' : '，评分 ${item.score!.toStringAsFixed(1)}'}',
+        pressedScale: 0.98,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AspectRatio(
+              key: const Key('home_card_cover'),
               aspectRatio: 5 / 7,
               child: RepaintBoundary(
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: palette.line.withValues(alpha: 0.55),
-                      width: 0.6,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: palette.dark ? 0.28 : 0.05,
-                        ),
-                        blurRadius: 8,
-                        offset: const Offset(0, 3),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      StoryCover(
+                        item: item,
+                        cacheWidth: (width * pixelRatio).ceil(),
                       ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(11.4),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        StoryCover(
-                          item: item,
-                          cacheWidth: (width * pixelRatio).ceil(),
-                        ),
+                      if (item.tag case final MediaTag tag when tag.hasColors)
                         Positioned(
                           left: 7,
                           top: 7,
                           right: 7,
                           child: Row(
                             children: [
-                              CoverTagChip(label: homeKindLabel(item.kind)),
-                              // Only coloured tags are badges; see MediaTag.hasColors.
-                              if (item.tag case final MediaTag tag
-                                  when tag.hasColors) ...[
-                                const SizedBox(width: 4),
-                                // Flexible so a long upstream label ellipsizes
-                                // instead of overflowing the cover.
-                                Flexible(
-                                  child: CoverTagChip(
-                                    key: const Key('home_card_tag'),
-                                    label: tag.text,
-                                    colors: tag.colorsFor(dark: palette.dark),
-                                  ),
+                              Flexible(
+                                child: CoverTagChip(
+                                  key: const Key('home_card_tag'),
+                                  label: tag.text,
+                                  colors: tag.colorsFor(dark: palette.dark),
                                 ),
-                              ],
+                              ),
                             ],
                           ),
                         ),
-                        if (item.ep.isNotEmpty)
-                          Positioned(
-                            left: 7,
-                            right: 7,
-                            bottom: 7,
-                            child: Align(
-                              alignment: Alignment.bottomRight,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 3,
+                      if (item.score case final score?)
+                        Positioned(
+                          right: 7,
+                          bottom: 7,
+                          child: Container(
+                            key: const Key('home_card_score'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: palette.eink
+                                  ? Colors.white
+                                  : const Color(
+                                      0xFF1C1B1A,
+                                    ).withValues(alpha: 0.76),
+                              borderRadius: BorderRadius.circular(7),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.24),
+                                width: 0.6,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  LucideIcons.star,
+                                  size: 10,
+                                  color: palette.eink
+                                      ? Colors.black
+                                      : const Color(0xFFF4C86A),
                                 ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF1C1B1A,
-                                  ).withValues(alpha: 0.72),
-                                  borderRadius: BorderRadius.circular(5),
-                                ),
-                                child: Text(
-                                  item.ep,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9,
-                                    height: 1.2,
+                                const SizedBox(width: 3),
+                                Text(
+                                  score.toStringAsFixed(1),
+                                  textScaler: TextScaler.noScaling,
+                                  style: HomeType.figure.copyWith(
+                                    fontSize: 10,
+                                    color: palette.eink
+                                        ? Colors.black
+                                        : Colors.white,
                                   ),
                                 ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: palette.line.withValues(
+                                  alpha: palette.dark ? 0.75 : 0.6,
+                                ),
+                                width: 0.7,
                               ),
                             ),
                           ),
-                      ],
-                    ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             SizedBox(
-              height: scaler.scale(14) * 1.35 * 2,
+              height: scaler.scale(15) * HomeType.cardLineHeight * 2,
               child: Text(
                 item.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.35,
-                  fontWeight: FontWeight.w700,
-                  color: palette.ink,
-                ),
+                style: HomeType.card.copyWith(color: palette.primary),
               ),
             ),
-            const SizedBox(height: 5),
-            Text(
-              item.author.isNotEmpty
-                  ? item.author
-                  : item.badge.isNotEmpty
-                  ? item.badge
-                  : homeKindLabel(item.kind),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, height: 1.3, color: palette.muted),
+            const SizedBox(height: 7),
+            SizedBox(
+              height: scaler.scale(12) * HomeType.metaLineHeight,
+              child: MediaQuery.withClampedTextScaling(
+                maxScaleFactor: 1.3,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: palette.eink ? Colors.black : tint,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      homeKindLabel(item.kind),
+                      maxLines: 1,
+                      style: HomeType.meta.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: palette.secondary,
+                      ),
+                    ),
+                    if (detail.isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        '·',
+                        textScaler: TextScaler.noScaling,
+                        style: HomeType.meta.copyWith(
+                          fontSize: 10,
+                          color: palette.tertiary,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: HomeType.meta.copyWith(
+                            color: palette.tertiary,
+                          ),
+                        ),
+                      ),
+                    ] else
+                      const Spacer(),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class HomeSectionHeader extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  const HomeSectionHeader({
-    super.key,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 4,
-                height: 18,
-                decoration: BoxDecoration(
-                  color: HomePalette.accent,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 20,
-                    height: 1.2,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.4,
-                    color: palette.ink,
-                  ),
-                ),
-              ),
-              Icon(
-                LucideIcons.compass,
-                size: 19,
-                color: palette.muted,
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: TextStyle(fontSize: 12, height: 1.3, color: palette.muted),
-          ),
-        ],
       ),
     );
   }

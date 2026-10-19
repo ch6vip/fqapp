@@ -15,6 +15,7 @@ import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/drama_mute_preferences.dart';
+import 'package:fqapp/services/inline_video_playback.dart';
 import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
@@ -67,6 +68,9 @@ class _Session {
 
   /// 内容回包附带的多档流名（官方清晰度行的数据源；空 = 单流，行隐藏）。
   List<String> variantNames = [];
+
+  /// Lets a test hold the second decoder's create call open.
+  Completer<void>? secondCreateGate;
 
   /// The two notifiers the page's providers resolve to; kept as fields so a
   /// test can re-load the feed without a gesture.
@@ -137,6 +141,9 @@ class _Session {
             final player = ControlledNativePlayer(hasFirstFrame: hasFirstFrame)
               ..width = size.width.toInt()
               ..height = size.height.toInt();
+            if (players.length == 1) {
+              player.createGate = secondCreateGate;
+            }
             players.add(player);
             return player;
           },
@@ -254,6 +261,30 @@ void main() {
     );
     expect(find.byType(Texture), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  test('播放器池淘汰时同步释放对应剧集目录状态', () async {
+    DramaMutePreferences.instance.resetForTest();
+    final inline = InlineVideoPlayback(
+      directoryLoader: (id, tab) async => [
+        [Chapter(itemId: '$id-episode', title: '第 1 集', volumeName: '剧集')],
+      ],
+      contentLoader: (itemId, tab) async => {
+        'video_url': 'https://example.invalid/$itemId.mp4',
+      },
+      playerFactory: ControlledNativePlayer.new,
+      historyStore: ControlledReaderStore(),
+    );
+    for (var index = 0; index < 6; index++) {
+      await inline.activate(_item('series-$index'));
+    }
+
+    expect(inline.pool.length, lessThanOrEqualTo(3));
+    expect(
+      inline.parkedPlaybackStateCount,
+      lessThanOrEqualTo(inline.pool.length),
+    );
+    await inline.dispose();
   });
 
   // P1-15：feed 内联播放的 inactive（通知栏/控制中心）继续播，hidden
@@ -848,6 +879,45 @@ void main() {
       find.byKey(const ValueKey('drama_inline_texture_video_16-0')),
     );
     expect(textureRect.width / textureRect.height, closeTo(9 / 16, .001));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('换档创建期间点暂停后，新档不会自行起播', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final createGate = Completer<void>();
+    final session = _Session(hasFirstFrame: true)
+      ..variantNames = ['1080P', '540P']
+      ..secondCreateGate = createGate;
+    await _mount(tester, session);
+    session.players.single.emitDuration(const Duration(minutes: 2));
+    session.players.single.emitPosition(const Duration(seconds: 30));
+    await _flush(tester);
+    expect(session.players.single.playing, isTrue);
+
+    await tester.longPress(find.byKey(const Key('drama_card_gestures')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    await tester.tap(find.byKey(const ValueKey('player-more-light-quality-0')));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('清晰度已成功切换至1080P'), findsOneWidget);
+
+    // Let the panel close and the old decoder dispose, but keep the new
+    // decoder's create pending so the user's tap lands in the switch window.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    expect(session.players, hasLength(2));
+    expect(session.players.last.isCreated, isFalse);
+
+    await tester.tap(find.byKey(const Key('drama_card_gestures')));
+    await _flush(tester);
+    expect(session.players.last.calls, isNot(contains('play')));
+
+    createGate.complete();
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(session.players.last.calls, isNot(contains('play')));
+    expect(session.players.last.playing, isFalse);
     expect(tester.takeException(), isNull);
   });
 

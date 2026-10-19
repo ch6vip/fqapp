@@ -64,11 +64,7 @@ void main() {
     ) async {
       final controller = await pumpFeed(tester);
       // 官方 PagerSnapHelper：无论多快都只翻一页（默认弹簧会飞过多页）。
-      await tester.fling(
-        find.byKey(const ValueKey('page-0')),
-        const Offset(0, -100),
-        8000,
-      );
+      await tester.fling(find.byType(PageView), const Offset(0, -100), 8000);
       await tester.pumpAndSettle();
       expect(controller.page, 1);
     });

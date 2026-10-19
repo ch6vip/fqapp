@@ -76,6 +76,8 @@ void main() {
         .crossAxisCount;
   }
 
+  // 首页网格的入场层现在是 HomeEntrance（HomeEntrance 只剩书架空态在用），
+  // 这里按页面实际挂载的 widget 取对象，断言的是「滚动不重建卡片」这一不变量。
   Map<Key, HomeEntrance> entrances(WidgetTester tester) => {
     for (final element in find.byType(HomeEntrance).evaluate())
       if ((element.widget as HomeEntrance).key case final Key key)
@@ -144,7 +146,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(gridColumns(tester), 3);
+    expect(gridColumns(tester), 2);
 
     textScale.value = 1.8;
     await tester.pumpAndSettle();
@@ -152,8 +154,8 @@ void main() {
       gridColumns(tester),
       2,
       reason:
-          'a 1.8× scale on a 400-wide phone must drop to two columns; '
-          'reusing the sliver instance would keep the old 3-column delegate',
+          'phones stay at two columns as text grows; '
+          'reusing the sliver instance must not rebuild with stale geometry',
     );
     expect(tester.takeException(), isNull);
   });

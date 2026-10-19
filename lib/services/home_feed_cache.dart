@@ -62,8 +62,7 @@ class HomeFeedCache {
     final box = _box;
     if (box != null) return box;
     try {
-      return _box =
-          await (_opening ??= EncryptedHive.openBox(_hive, _boxName));
+      return _box = await (_opening ??= EncryptedHive.openBox(_hive, _boxName));
     } on Object {
       _opening = null;
       rethrow;
@@ -105,9 +104,7 @@ class HomeFeedCache {
     for (final entry in itemsRaw) {
       if (entry is Map) {
         try {
-          final item = MediaItemJson.fromJson(
-            Map<String, dynamic>.from(entry),
-          );
+          final item = MediaItemJson.fromJson(Map<String, dynamic>.from(entry));
           if (item != null) items.add(item);
         } catch (_) {
           // One unreadable card is skipped; the rest still render.
@@ -134,12 +131,23 @@ class HomeFeedCache {
     if (!hiveReady || items.isEmpty) return;
     try {
       final box = await _ensureBox();
+      var start = 0;
+      if (items.length > maxItems && lastVid != null) {
+        final resumeIndex = items.indexWhere((item) => item.id == lastVid);
+        if (resumeIndex >= maxItems) {
+          start = resumeIndex - maxItems + 1;
+        }
+      }
       await box.put('$tabIndex', {
         'v': 1,
         'savedAt': DateTime.now().millisecondsSinceEpoch,
         'hasMore': hasMore,
         if (lastVid != null && lastVid.isNotEmpty) 'lastVid': lastVid,
-        'items': items.take(maxItems).map((item) => item.toJson()).toList(),
+        'items': items
+            .skip(start)
+            .take(maxItems)
+            .map((item) => item.toJson())
+            .toList(),
       });
     } catch (_) {
       // The next successful load overwrites this entry anyway.

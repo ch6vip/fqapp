@@ -405,6 +405,34 @@ void main() {
     // Malformed or half-shaped maps never resurrect a record.
     expect(ReaderRangeUnderline.fromMap(<String, dynamic>{}), isNull);
     expect(ReaderRangeUnderline.fromMap({...record.toMap(), 'end': 2}), isNull);
+    expect(
+      ReaderRangeUnderline.fromMap({
+        ...record.toMap(),
+        'start': double.infinity,
+      }),
+      isNull,
+    );
+    expect(
+      ReaderRangeUnderline.fromMap({...record.toMap(), 'end': double.nan}),
+      isNull,
+    );
+    final paragraph = ReaderUnderline(
+      bookId: bookId,
+      chapterId: chapterId,
+      blockIndex: 0,
+      text: '整段',
+    );
+    expect(
+      ReaderUnderline.fromMap({
+        ...paragraph.toMap(),
+        'blockIndex': double.infinity,
+      }),
+      isNull,
+    );
+    expect(
+      ReaderUnderline.fromMap({...paragraph.toMap(), 'paraIndex': double.nan}),
+      isNull,
+    );
   });
 
   testWidgets('a chapter without paragraph ids still offers the menu', (
@@ -481,7 +509,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('local-only paragraph actions offer 从本段听 via system TTS', (tester) async {
+  testWidgets('local-only paragraph actions offer 从本段听 via system TTS', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_app(_MemoryUnderlines(), localOnly: true));

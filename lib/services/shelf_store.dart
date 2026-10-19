@@ -182,7 +182,10 @@ class ShelfStore {
 
   static DateTime? _addedAt(Map<dynamic, dynamic> raw) {
     final value = raw['addedAt'];
-    return value is num && value > 0
+    return value is num &&
+            value.isFinite &&
+            value > 0 &&
+            value <= 8640000000000000
         ? DateTime.fromMillisecondsSinceEpoch(value.toInt())
         : null;
   }

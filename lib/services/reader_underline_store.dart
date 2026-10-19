@@ -31,10 +31,8 @@ class ReaderUnderline {
   });
 
   /// See [paragraphUnderlineId].
-  int get id => paragraphUnderlineId(
-    paraIndex: paraIndex,
-    blockIndex: blockIndex,
-  );
+  int get id =>
+      paragraphUnderlineId(paraIndex: paraIndex, blockIndex: blockIndex);
 
   String get key => ReaderUnderlineStore.keyFor(
     bookId: bookId,
@@ -58,23 +56,26 @@ class ReaderUnderline {
     final chapterId = raw['chapterId'];
     final text = raw['text'];
     final blockIndex = raw['blockIndex'];
+    final block = _nonNegativeInt(blockIndex);
     if (bookId is! String ||
         bookId.isEmpty ||
         chapterId is! String ||
         chapterId.isEmpty ||
         text is! String ||
         text.trim().isEmpty ||
-        blockIndex is! num) {
+        block == null) {
       return null;
     }
     final paraIndex = raw['paraIndex'];
+    final para = paraIndex == null ? null : _nonNegativeInt(paraIndex);
+    if (paraIndex != null && para == null) return null;
     final createdAt = raw['createdAt'];
     return ReaderUnderline(
       bookId: bookId,
       chapterId: chapterId,
-      blockIndex: blockIndex.toInt(),
+      blockIndex: block,
       text: text,
-      paraIndex: paraIndex is num ? paraIndex.toInt() : null,
+      paraIndex: para,
       createdAt: createdAt is num && createdAt.isFinite ? createdAt.toInt() : 0,
     );
   }
@@ -123,8 +124,7 @@ class ReaderRangeUnderline {
 
   /// True when the selection sits entirely inside this mark, so removing it
   /// cannot cut through an unrelated underline.
-  bool contains(int start, int end) =>
-      this.start <= start && end <= this.end;
+  bool contains(int start, int end) => this.start <= start && end <= this.end;
 
   String get key => ReaderUnderlineStore.rangeKeyFor(
     bookId: bookId,
@@ -147,16 +147,16 @@ class ReaderRangeUnderline {
     final bookId = raw['bookId'];
     final chapterId = raw['chapterId'];
     final text = raw['text'];
-    final start = raw['start'];
-    final end = raw['end'];
+    final start = _nonNegativeInt(raw['start']);
+    final end = _nonNegativeInt(raw['end']);
     if (bookId is! String ||
         bookId.isEmpty ||
         chapterId is! String ||
         chapterId.isEmpty ||
         text is! String ||
         text.trim().isEmpty ||
-        start is! num ||
-        end is! num ||
+        start == null ||
+        end == null ||
         end <= start) {
       return null;
     }
@@ -164,13 +164,18 @@ class ReaderRangeUnderline {
     return ReaderRangeUnderline(
       bookId: bookId,
       chapterId: chapterId,
-      start: start.toInt(),
-      end: end.toInt(),
+      start: start,
+      end: end,
       text: text,
       createdAt: createdAt is num && createdAt.isFinite ? createdAt.toInt() : 0,
     );
   }
 }
+
+int? _nonNegativeInt(dynamic value) =>
+    value is num && value.isFinite && value >= 0 && value <= 2147483647
+    ? value.toInt()
+    : null;
 
 /// Local 划线 storage.
 /// The official client keeps these server-side per account; the backend has no such
@@ -232,8 +237,10 @@ class ReaderUnderlineStore {
     try {
       // Hive throws synchronously when it has no directory yet, so the call
       // itself has to sit inside the guard, not only its await.
-      final pending =
-          _opening ??= EncryptedHive.openBox<dynamic>(_hive, _boxName);
+      final pending = _opening ??= EncryptedHive.openBox<dynamic>(
+        _hive,
+        _boxName,
+      );
       final box = await pending;
       if (box.isOpen) return box;
       _opening = null;
@@ -241,7 +248,10 @@ class ReaderUnderlineStore {
       _opening = null;
       return null;
     }
-    return _box();
+    // Hive can hand back a closed registry instance after a global close.
+    // Retrying in the same call would recurse forever; leave the memoized
+    // open future clear and let a later call try again.
+    return null;
   }
 
   Future<T> _serialize<T>(
@@ -303,9 +313,7 @@ class ReaderUnderlineStore {
     if (box.length <= maxEntries) return;
     final oldest = box.keys.toList()
       ..sort(
-        (a, b) => _createdAtOf(
-          box.get(a),
-        ).compareTo(_createdAtOf(box.get(b))),
+        (a, b) => _createdAtOf(box.get(a)).compareTo(_createdAtOf(box.get(b))),
       );
     await box.deleteAll(oldest.take(box.length - maxEntries));
   }
@@ -339,7 +347,8 @@ class ReaderUnderlineStore {
     final doomed = <dynamic>[];
     for (final key in box.keys) {
       final raw = box.get(key);
-      final book = ReaderUnderline.fromMap(raw)?.bookId ??
+      final book =
+          ReaderUnderline.fromMap(raw)?.bookId ??
           ReaderRangeUnderline.fromMap(raw)?.bookId;
       if (book == bookId) doomed.add(key);
     }

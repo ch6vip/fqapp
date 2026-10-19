@@ -32,7 +32,10 @@ void main() {
       });
       expect(source.variants.map((v) => v.name).toList(), ['720P', '540P']);
       expect(source.variants[1].keyHex, 'bb');
-      expect(source.withVariant(source.variants[1]).url, 'https://cdn.example/540.mp4');
+      expect(
+        source.withVariant(source.variants[1]).url,
+        'https://cdn.example/540.mp4',
+      );
       expect(source.withVariant(source.variants[1]).keyHex, 'bb');
       // 档位列表跟随副本，切档后面板仍能再切回。
       expect(source.withVariant(source.variants[1]).variants.length, 2);
@@ -43,6 +46,22 @@ void main() {
         'data': {'video_url': 'https://cdn.example/only.mp4'},
       });
       expect(source.variants, isEmpty);
+    });
+
+    test('accepts a JSON decimal height without dropping the rendition', () {
+      final source = EpisodeSource.fromResponse({
+        'data': {
+          'video_url': 'https://cdn.example/1080.mp4',
+          'variants': [
+            {
+              'name': '1080P',
+              'height': 1080.0,
+              'url': 'https://cdn.example/1080.mp4',
+            },
+          ],
+        },
+      });
+      expect(source.variants.single.height, 1080);
     });
   });
 
@@ -106,27 +125,32 @@ void main() {
       expect(find.text('清晰度'), findsNothing);
     });
 
-    testWidgets('shows the row with the current rendition and selects another',
-        (tester) async {
-      EpisodeVariant? picked;
-      await openPanel(
-        tester,
-        qualityVariants: variants,
-        currentQualityUrl: 'https://cdn.example/720.mp4',
-        onQualitySelected: (v) => picked = v,
-      );
-      expect(find.text('清晰度'), findsOneWidget);
-      // 档位列表默认收起，行尾显示当前档名。
-      expect(find.text('720P'), findsOneWidget);
-      await tester.tap(find.text('清晰度'));
-      await tester.pumpAndSettle();
-      // 展开后两档都可见，当前档仅一行（行尾名收起后才出现）。
-      expect(find.text('540P'), findsOneWidget);
-      expect(find.byKey(const ValueKey('player-more-quality-1')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('player-more-quality-1')));
-      await tester.pumpAndSettle();
-      expect(picked?.name, '540P');
-      expect(picked?.keyHex, 'bb');
-    });
+    testWidgets(
+      'shows the row with the current rendition and selects another',
+      (tester) async {
+        EpisodeVariant? picked;
+        await openPanel(
+          tester,
+          qualityVariants: variants,
+          currentQualityUrl: 'https://cdn.example/720.mp4',
+          onQualitySelected: (v) => picked = v,
+        );
+        expect(find.text('清晰度'), findsOneWidget);
+        // 档位列表默认收起，行尾显示当前档名。
+        expect(find.text('720P'), findsOneWidget);
+        await tester.tap(find.text('清晰度'));
+        await tester.pumpAndSettle();
+        // 展开后两档都可见，当前档仅一行（行尾名收起后才出现）。
+        expect(find.text('540P'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('player-more-quality-1')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const ValueKey('player-more-quality-1')));
+        await tester.pumpAndSettle();
+        expect(picked?.name, '540P');
+        expect(picked?.keyHex, 'bb');
+      },
+    );
   });
 }

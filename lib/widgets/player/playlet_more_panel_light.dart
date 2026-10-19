@@ -336,12 +336,12 @@ class PlayletMorePanelLight extends StatelessWidget {
     onTap: onTap,
     excludeSemantics: true,
     child: InkWell(
+      key: ValueKey(key),
       onTap: onTap,
       excludeFromSemantics: true,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: SizedBox(
-          key: ValueKey(key),
           height: 48,
           child: Row(
             children: [
@@ -350,7 +350,10 @@ class PlayletMorePanelLight extends StatelessWidget {
               Text(label, style: _labelStyle(context)),
               const Spacer(),
               if (trailing != null) ...[
-                Text(trailing, style: TextStyle(fontSize: 14, color: _muted(context))),
+                Text(
+                  trailing,
+                  style: TextStyle(fontSize: 14, color: _muted(context)),
+                ),
                 const SizedBox(width: 4),
               ],
               Icon(Icons.chevron_right, size: 22, color: _muted(context)),
@@ -374,9 +377,7 @@ class PlayletMorePanelLight extends StatelessWidget {
     void onTap() {
       final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      messenger.showSnackBar(
-        SnackBar(content: Text('$label暂未支持')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('$label暂未支持')));
     }
 
     return _actionRow(
@@ -428,34 +429,31 @@ class _DanmakuSwitchRowState extends State<_DanmakuSwitchRow> {
 
   @override
   Widget build(BuildContext context) => Semantics(
-        key: const ValueKey('player-more-light-danmaku-row'),
-        label: '弹幕',
-        toggled: _enabled,
-        onTap: _toggle,
-        excludeSemantics: true,
-        child: InkWell(
-          onTap: _toggle,
-          excludeFromSemantics: true,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: SizedBox(
-              height: 48,
-              child: Row(
-                children: [
-                  _PanelIconLight(
-                    name: 'more_danmaku',
-                    color: widget.foreground,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text('弹幕', style: widget.labelStyle)),
-                  const SizedBox(width: 12),
-                  _LightSwitch(value: _enabled),
-                ],
-              ),
-            ),
+    key: const ValueKey('player-more-light-danmaku-row'),
+    label: '弹幕',
+    toggled: _enabled,
+    onTap: _toggle,
+    excludeSemantics: true,
+    child: InkWell(
+      onTap: _toggle,
+      excludeFromSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: SizedBox(
+          height: 48,
+          child: Row(
+            children: [
+              _PanelIconLight(name: 'more_danmaku', color: widget.foreground),
+              const SizedBox(width: 8),
+              Expanded(child: Text('弹幕', style: widget.labelStyle)),
+              const SizedBox(width: 12),
+              _LightSwitch(value: _enabled),
+            ],
           ),
         ),
-      );
+      ),
+    ),
+  );
 
   void _toggle() {
     setState(() => _enabled = !_enabled);
@@ -546,7 +544,10 @@ class _LightSwitch extends StatelessWidget {
         curve: Curves.easeInOut,
         alignment: value ? Alignment.centerRight : Alignment.centerLeft,
         child: const DecoratedBox(
-          decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+          ),
           child: SizedBox.square(dimension: 14),
         ),
       ),

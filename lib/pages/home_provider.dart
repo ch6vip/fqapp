@@ -21,6 +21,8 @@ class HomeState {
   final bool isLoading;
   final bool isLoadMore;
   final bool hasMore;
+  final bool loadMoreFailed;
+  final String? loadMoreError;
   final String? error;
 
   const HomeState({
@@ -29,6 +31,8 @@ class HomeState {
     this.isLoading = false,
     this.isLoadMore = false,
     this.hasMore = true,
+    this.loadMoreFailed = false,
+    this.loadMoreError,
     this.error,
   });
 
@@ -38,8 +42,11 @@ class HomeState {
     bool? isLoading,
     bool? isLoadMore,
     bool? hasMore,
+    bool? loadMoreFailed,
+    String? loadMoreError,
     String? error,
     bool clearError = false,
+    bool clearLoadMoreError = false,
   }) {
     return HomeState(
       items: items ?? this.items,
@@ -47,6 +54,10 @@ class HomeState {
       isLoading: isLoading ?? this.isLoading,
       isLoadMore: isLoadMore ?? this.isLoadMore,
       hasMore: hasMore ?? this.hasMore,
+      loadMoreFailed: loadMoreFailed ?? this.loadMoreFailed,
+      loadMoreError: clearLoadMoreError
+          ? null
+          : (loadMoreError ?? this.loadMoreError),
       error: clearError ? null : (error ?? this.error),
     );
   }
@@ -167,13 +178,7 @@ class HomeNotifier extends Notifier<HomeState> {
     // shows the same feed under 「推荐」 (用户截图与 ap3.xml 的兜底名都如此).
     '视频': 'video',
   };
-  static const tabTypes = {
-    '小说': 2,
-    '短剧': 8,
-    '漫剧': 24,
-    '听书': 5,
-    '视频': 16,
-  };
+  static const tabTypes = {'小说': 2, '短剧': 8, '漫剧': 24, '听书': 5, '视频': 16};
 
   final HomepageLoader _homepageLoader;
   final SearchTabsLoader _searchLoader;
@@ -228,6 +233,8 @@ class HomeNotifier extends Notifier<HomeState> {
   /// the tab changes, and on dispose, so leaving the page stops the upstream
   /// work instead of only ignoring its result.
   BackendRequest? _activeRequest;
+  Timer? _feedSaveTimer;
+  int? _pendingFeedSaveTab;
 
   /// The category this feed opens on. The home page starts on 全部; a page that
   /// is locked to one channel starts on that channel and never shows the strip.
@@ -236,7 +243,10 @@ class HomeNotifier extends Notifier<HomeState> {
     ++_generation;
     // Leaving the page (or rebuilding the provider) stops whatever is in
     // flight instead of only ignoring its result.
-    ref.onDispose(() => _activeRequest?.cancel());
+    ref.onDispose(() {
+      _activeRequest?.cancel();
+      _flushPendingFeedSave();
+    });
     _activeRequest?.cancel();
     _feeds.clear();
     return HomeState(tabIndex: initialTabIndex);
@@ -255,7 +265,9 @@ class HomeNotifier extends Notifier<HomeState> {
   Future<void> load({bool manualRefresh = false}) async {
     final tabIndex = state.tabIndex;
     final generation = ++_generation;
-    final feed = _feedFor(tabIndex)..reset();
+    final feed = _feedFor(tabIndex);
+    _flushPendingFeedSave();
+    feed.reset();
     // Stale-while-revalidate: show the last rendered cards while the network
     // refresh runs. The cursors stay reset, so the response replaces page one.
     final snapshot = manualRefresh ? null : _feedCache?.load(tabIndex);
@@ -296,6 +308,8 @@ class HomeNotifier extends Notifier<HomeState> {
       isLoading: true,
       isLoadMore: false,
       hasMore: true,
+      loadMoreFailed: false,
+      clearLoadMoreError: true,
       clearError: true,
     );
 
@@ -312,7 +326,7 @@ class HomeNotifier extends Notifier<HomeState> {
           state.tabIndex != tabIndex) {
         return;
       }
-        final resume = feed.resumedVid != null;
+      final resume = feed.resumedVid != null;
       feed.resumedVid = null;
       _applyFetched(feed, fetched, replace: !resume);
       state = state.copyWith(
@@ -320,11 +334,14 @@ class HomeNotifier extends Notifier<HomeState> {
         isLoading: false,
         isLoadMore: false,
         hasMore: feed.hasMore,
+        loadMoreFailed: false,
+        clearLoadMoreError: true,
       );
       // 上报只在翻页时发生：看第一张卡没滑动就没有 lastVid——兜底用
       // 当前列表首卡（它就是本次会话实际展示的第一张），让续接链在
       // 下一次冷启动成立。
-      final savedVid = feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
+      final savedVid =
+          feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
       unawaited(
         _feedCache?.save(
           tabIndex,
@@ -347,6 +364,8 @@ class HomeNotifier extends Notifier<HomeState> {
         isLoading: false,
         isLoadMore: false,
         hasMore: false,
+        loadMoreFailed: false,
+        clearLoadMoreError: true,
       );
     }
   }
@@ -355,6 +374,7 @@ class HomeNotifier extends Notifier<HomeState> {
   /// even on a cache hit, which invalidates requests started by the old tab.
   void selectTab(int index) {
     if (index == state.tabIndex || index < 0 || index >= tabs.length) return;
+    _flushPendingFeedSave();
     ++_generation;
     _activeRequest?.cancel();
     final cached = _feeds[index];
@@ -364,18 +384,26 @@ class HomeNotifier extends Notifier<HomeState> {
       isLoading: false,
       isLoadMore: false,
       hasMore: cached?.hasMore ?? true,
+      loadMoreFailed: false,
+      clearLoadMoreError: true,
       clearError: true,
     );
     if (cached == null || !cached.loaded) load();
   }
 
   /// Appends the next page to the selected feed.
-  Future<void> loadMore() async {
+  Future<void> loadMore({bool manual = false}) async {
     if (state.isLoading || state.isLoadMore || !state.hasMore) return;
+    if (state.loadMoreFailed && !manual) return;
     final tabIndex = state.tabIndex;
     final generation = _generation;
     final feed = _feedFor(tabIndex);
-    state = state.copyWith(isLoadMore: true, clearError: true);
+    state = state.copyWith(
+      isLoadMore: true,
+      loadMoreFailed: false,
+      clearLoadMoreError: true,
+      clearError: true,
+    );
 
     _activeRequest?.cancel();
     final request = _activeRequest = BackendRequest();
@@ -395,8 +423,11 @@ class HomeNotifier extends Notifier<HomeState> {
         items: feed.items,
         isLoadMore: false,
         hasMore: feed.hasMore,
+        loadMoreFailed: false,
+        clearLoadMoreError: true,
       );
-      final savedVid = feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
+      final savedVid =
+          feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
       unawaited(
         _feedCache?.save(
           tabIndex,
@@ -405,16 +436,21 @@ class HomeNotifier extends Notifier<HomeState> {
           lastVid: savedVid,
         ),
       );
-    } catch (_) {
+    } catch (error) {
       if (!ref.mounted ||
           generation != _generation ||
           state.tabIndex != tabIndex) {
         return;
       }
-      // Stop automatic bottom-of-grid retry loops. Pull-to-refresh gives the
-      // user an explicit retry path and resets this flag.
-      feed.hasMore = false;
-      state = state.copyWith(isLoadMore: false, hasMore: false);
+      // Keep the cursor retryable but stop automatic bottom-of-grid loops
+      // until the viewer explicitly asks for another page.
+      feed.hasMore = true;
+      state = state.copyWith(
+        isLoadMore: false,
+        hasMore: true,
+        loadMoreFailed: true,
+        loadMoreError: userFacingError(error),
+      );
     }
   }
 
@@ -422,7 +458,45 @@ class HomeNotifier extends Notifier<HomeState> {
   /// the resume point. The page reports this as the user swipes.
   void noteCurrentVid(String vid) {
     if (vid.isEmpty) return;
-    _feedFor(state.tabIndex).lastVid = vid;
+    final tabIndex = state.tabIndex;
+    _feedFor(tabIndex).lastVid = vid;
+    if (_pendingFeedSaveTab != null && _pendingFeedSaveTab != tabIndex) {
+      _flushPendingFeedSave();
+    }
+    // Page changes normally happen between network/page loads. Persist the
+    // one-card resume point separately, otherwise swiping within an already
+    // loaded page leaves the disk snapshot on the old card until a reload.
+    _feedSaveTimer?.cancel();
+    _pendingFeedSaveTab = tabIndex;
+    _feedSaveTimer = Timer(const Duration(milliseconds: 350), () {
+      _flushPendingFeedSave();
+    });
+  }
+
+  /// Starts the pending debounced snapshot write immediately.
+  ///
+  /// The page calls this when the app leaves the foreground, and provider
+  /// disposal calls it before cancelling the timer, so a card swiped less than
+  /// 350 ms before either event is still written.
+  void flushPendingSave() => _flushPendingFeedSave();
+
+  void _flushPendingFeedSave() {
+    _feedSaveTimer?.cancel();
+    _feedSaveTimer = null;
+    final tabIndex = _pendingFeedSaveTab;
+    _pendingFeedSaveTab = null;
+    if (tabIndex == null) return;
+    final feed = _feeds[tabIndex];
+    if (feed == null || feed.items.isEmpty) return;
+    final savedVid = feed.lastVid ?? feed.items.first.id;
+    unawaited(
+      _feedCache?.save(
+        tabIndex,
+        feed.items,
+        hasMore: feed.hasMore,
+        lastVid: savedVid,
+      ),
+    );
   }
 
   Future<_FetchedFeed> _loadInitial(int tabIndex) async {

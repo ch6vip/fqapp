@@ -31,9 +31,7 @@ void main() {
       final parsed = parseImportedBookBytes(
         fileName: '故事.txt',
         bytes: Uint8List.fromList(
-          utf8.encode(
-            '第一章 开始\n第二章 出发\n第一章 开始\n清晨醒来。\n第二章 出发\n走向远方。',
-          ),
+          utf8.encode('第一章 开始\n第二章 出发\n第一章 开始\n清晨醒来。\n第二章 出发\n走向远方。'),
         ),
       );
 
@@ -62,25 +60,19 @@ void main() {
       final archive = Archive()
         ..addFile(ArchiveFile.string('mimetype', 'application/epub+zip'))
         ..addFile(
-          ArchiveFile.string(
-            'META-INF/container.xml',
-            '''<?xml version="1.0"?>
+          ArchiveFile.string('META-INF/container.xml', '''<?xml version="1.0"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles>
-</container>''',
-          ),
+</container>'''),
         )
         ..addFile(
-          ArchiveFile.string(
-            'OEBPS/content.opf',
-            '''<?xml version="1.0"?>
+          ArchiveFile.string('OEBPS/content.opf', '''<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <metadata><dc:title>EPUB 书名</dc:title><dc:creator>作者甲</dc:creator></metadata>
   <manifest><item id="one" href="Text/one.xhtml" media-type="application/xhtml+xml"/>
     <item id="two" href="Text/two.xhtml" media-type="application/xhtml+xml"/></manifest>
   <spine><itemref idref="two"/><itemref idref="one"/></spine>
-</package>''',
-          ),
+</package>'''),
         )
         ..addFile(
           ArchiveFile.string(
@@ -95,7 +87,10 @@ void main() {
           ),
         );
       final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
-      final parsed = parseImportedBookBytes(fileName: 'fallback.epub', bytes: bytes);
+      final parsed = parseImportedBookBytes(
+        fileName: 'fallback.epub',
+        bytes: bytes,
+      );
 
       expect(parsed.title, 'EPUB 书名');
       expect(parsed.author, '作者甲');
@@ -107,25 +102,19 @@ void main() {
       final archive = Archive()
         ..addFile(ArchiveFile.string('mimetype', 'application/epub+zip'))
         ..addFile(
-          ArchiveFile.string(
-            'META-INF/container.xml',
-            '''<?xml version="1.0"?>
+          ArchiveFile.string('META-INF/container.xml', '''<?xml version="1.0"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles>
-</container>''',
-          ),
+</container>'''),
         )
         ..addFile(
-          ArchiveFile.string(
-            'OEBPS/content.opf',
-            '''<?xml version="1.0"?>
+          ArchiveFile.string('OEBPS/content.opf', '''<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <metadata><dc:title>EPUB 书名</dc:title></metadata>
   <manifest><item id="nav" href="Text/nav.xhtml" media-type="application/xhtml+xml"/>
     <item id="one" href="Text/one.xhtml" media-type="application/xhtml+xml"/></manifest>
   <spine><itemref idref="nav"/><itemref idref="one"/></spine>
-</package>''',
-          ),
+</package>'''),
         )
         ..addFile(
           ArchiveFile.string(
@@ -199,6 +188,26 @@ void main() {
       );
       expect((await store.books()).map((book) => book.id), [imported.id]);
     });
+
+    test('非法加入时间回退 epoch，而不是让导入书消失', () async {
+      final imported = await store.importBytes(
+        fileName: '坏时间.txt',
+        bytes: Uint8List.fromList(utf8.encode('第一章\n正文。')),
+      );
+      final manifest = File(
+        '${imported.directory}${Platform.pathSeparator}book.json',
+      );
+      final raw =
+          jsonDecode(await manifest.readAsString(encoding: utf8))
+              as Map<String, dynamic>;
+      raw['addedAt'] = 9007199254740991;
+      await manifest.writeAsString(jsonEncode(raw), encoding: utf8);
+
+      final loaded = await store.book(imported.id);
+      expect(loaded, isNotNull);
+      expect(loaded!.addedAt, DateTime(1970));
+      expect((await store.books()).single.id, imported.id);
+    });
   });
 
   group('EPUB 封面发现顺序', () {
@@ -267,9 +276,7 @@ void main() {
           metadata: '<meta name="cover" content="Images/art.png"/>',
           manifest:
               '<item id="art" href="Images/art.png" media-type="image/png"/>',
-          resources: {
-            'OEBPS/Images/art.png': _coverPng(transparency: true),
-          },
+          resources: {'OEBPS/Images/art.png': _coverPng(transparency: true)},
         ),
       );
 
@@ -324,9 +331,7 @@ void main() {
           manifest:
               '<item id="plate" href="Images/plate.png" '
               'media-type="image/png"/>',
-          resources: {
-            'OEBPS/Images/plate.png': _coverPng(transparency: false),
-          },
+          resources: {'OEBPS/Images/plate.png': _coverPng(transparency: false)},
         ),
       );
 
@@ -351,9 +356,7 @@ void main() {
           manifest:
               '<item id="notes" href="Text/notes.txt" '
               'media-type="text/plain"/>',
-          resources: {
-            'OEBPS/Text/notes.txt': utf8.encode('这里不是图片'),
-          },
+          resources: {'OEBPS/Text/notes.txt': utf8.encode('这里不是图片')},
         ),
       );
       expect(notAnImage.cover, isNull);
@@ -416,9 +419,7 @@ void main() {
           manifest:
               '<item id="art" href="Images/art.png" '
               'media-type="image/png" properties="cover-image"/>',
-          resources: {
-            'OEBPS/Images/art.png': _coverPng(transparency: true),
-          },
+          resources: {'OEBPS/Images/art.png': _coverPng(transparency: true)},
         ),
       );
 
@@ -501,15 +502,15 @@ Uint8List _epub({
       ArchiveFile.string(
         opfPath,
         '<?xml version="1.0"?>'
-            '<package xmlns="http://www.idpf.org/2007/opf" '
-            'xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            '<metadata><dc:title>封面书</dc:title>'
-            '<dc:creator>测试作者</dc:creator>$metadata</metadata>'
-            '<manifest>$manifest'
-            '<item id="c1" href="Text/c1.xhtml" '
-            'media-type="application/xhtml+xml"/></manifest>'
-            '<spine><itemref idref="c1"/></spine>$guide'
-            '</package>',
+        '<package xmlns="http://www.idpf.org/2007/opf" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<metadata><dc:title>封面书</dc:title>'
+        '<dc:creator>测试作者</dc:creator>$metadata</metadata>'
+        '<manifest>$manifest'
+        '<item id="c1" href="Text/c1.xhtml" '
+        'media-type="application/xhtml+xml"/></manifest>'
+        '<spine><itemref idref="c1"/></spine>$guide'
+        '</package>',
       ),
     )
     ..addFile(

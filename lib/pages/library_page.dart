@@ -19,6 +19,7 @@ import '../services/connectivity_status.dart';
 import '../services/imported_book_store.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
+import '../services/progress_format.dart';
 import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
 import '../widgets/bookshelf_card.dart';
@@ -624,8 +625,6 @@ class _LibraryPageState extends State<LibraryPage> {
     final palette = HomePalette.of(context);
     return PopScope<Object?>(
       // 编辑态拦下系统返回 / 侧滑：先退出编辑态，而不是把整页 pop 掉。
-      // 书架页是 RootShell 里 LazyIndexedStack 的一个 child、不是独立路由，
-      // 不拦的话返回事件会一路冒泡到根路由 —— 表现就是「侧滑直接退出应用」。
       canPop: !_editing,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _editing) _exitEdit();
@@ -659,148 +658,96 @@ class _LibraryPageState extends State<LibraryPage> {
     );
   }
 
-  /// 顶部一级 tab（选中 18sp w600，指示条宽度动画）+ 右侧搜索 / 更多。
+  /// Top-level tab row (minimal modern style).
   Widget _tabRow(HomePalette palette) {
     return Padding(
       padding: const EdgeInsets.only(
-        top: ShelfTokens.spaceM,
-        bottom: 7,
-        left: ShelfTokens.screenPadding,
+        top: 16,
+        bottom: 8,
+        left: HomeSpace.gutter,
+        right: HomeSpace.gutter,
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Row(
-              children: [
-                for (var index = 0; index < _tabTitles.length; index++) ...[
-                  if (index > 0) const SizedBox(width: 20),
-                  _TabButton(
-                    label: _tabTitles[index],
-                    selected: _tab == index,
-                    palette: palette,
-                    onTap: () => _selectTab(index),
-                  ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var index = 0; index < _tabTitles.length; index++) ...[
+                    if (index > 0) const SizedBox(width: 16),
+                    _TabButton(
+                      label: _tabTitles[index],
+                      selected: _tab == index,
+                      palette: palette,
+                      onTap: () => _selectTab(index),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
           _IconAction(
             key: const Key('library-search-button'),
             tooltip: '搜索',
             icon: LucideIcons.search,
-            color: palette.ink,
+            color: palette.primary,
             onTap: _openSearch,
           ),
-          const SizedBox(width: 6),
-          PopupMenuButton<_MenuAction>(
-            key: const Key('library-more-button'),
-            tooltip: '更多',
-            color: palette.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: palette.line, width: 0.6),
-            ),
-            elevation: 4,
+          const SizedBox(width: 4),
+          _MoreMenu(
+            palette: palette,
+            current: _layout,
+            canClearHistory: _browseHistory.isNotEmpty,
             onSelected: _handleMenu,
-            itemBuilder: (context) => [
-              for (final action in _MenuAction.values)
-                PopupMenuItem(
-                  key: Key('library-menu-${action.name}'),
-                  value: action,
-                  // 当前版式选中时不可再点；清空历史没有数据时也不可点。
-                  enabled: action.layout != null
-                      ? action.layout != _layout
-                      : action == _MenuAction.clearHistory
-                      ? _browseHistory.isNotEmpty
-                      : true,
-                  child: Row(
-                    children: [
-                      Icon(
-                        action.icon,
-                        size: 16,
-                        color: action.layout == _layout
-                            ? palette.muted
-                            : action == _MenuAction.clearHistory
-                            ? ShelfTokens.deleteRed
-                            : palette.ink,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        action.label,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: action.layout == _layout
-                              ? FontWeight.w400
-                              : FontWeight.w500,
-                          color: action.layout == _layout
-                              ? palette.muted
-                              : action == _MenuAction.clearHistory
-                              ? ShelfTokens.deleteRed
-                              : palette.ink,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.only(
-                right: ShelfTokens.screenPadding,
-                left: 6,
-                bottom: 2,
-              ),
-              child: Icon(LucideIcons.ellipsis, size: 22, color: palette.ink),
-            ),
           ),
         ],
       ),
     );
   }
 
-  /// L2 工具栏（书架 tab）：左今日已读胶囊，右版式分段控件。
-  ///
-  /// 2026-10-13 按用户要求删掉排序 / 筛选 / 编辑三个入口：排序退回固定「最近
-  /// 阅读优先」，类型筛选整个移除，编辑改由卡片长按进入（见 `_longPress`）。
-  /// 页头因此少一行；只剩两个控件，[Row] 即可放下，无需再折行。
+  /// L2 工具栏（书架 tab）：今日已读 + 版式分段。
   Widget _toolbar(HomePalette palette) {
     return Padding(
       padding: const EdgeInsets.only(
-        top: ShelfTokens.spaceXS,
-        bottom: ShelfTokens.spaceS,
-        left: ShelfTokens.screenPadding,
-        right: ShelfTokens.screenPadding,
+        top: 4,
+        bottom: 12,
+        left: HomeSpace.gutter,
+        right: HomeSpace.gutter,
       ),
-      child: Row(
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: palette.soft,
-              borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
-              border: Border.all(color: palette.line, width: 0.5),
+              color: palette.chipBg,
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  LucideIcons.clock,
-                  size: ShelfTokens.iconInline,
-                  color: palette.muted,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  '今日已读$_todayMinutes分钟',
-                  style: TextStyle(
-                    fontSize: ShelfTokens.subtitle,
-                    fontWeight: FontWeight.w500,
-                    color: palette.ink,
+                Icon(LucideIcons.clock, size: 13, color: palette.secondary),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '今日已读$_todayMinutes分钟',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: palette.primary,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          const Spacer(),
           _LayoutSegments(
             current: _layout,
             palette: palette,
@@ -851,9 +798,9 @@ class _LibraryPageState extends State<LibraryPage> {
       builder: (context, constraints) => GridView.builder(
         key: const Key('shelf-grid-view'),
         padding: const EdgeInsets.fromLTRB(
-          ShelfTokens.screenPadding,
-          ShelfTokens.spaceXS,
-          ShelfTokens.screenPadding,
+          HomeSpace.gutter,
+          8,
+          HomeSpace.gutter,
           ShelfTokens.contentBottomInset,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -892,9 +839,9 @@ class _LibraryPageState extends State<LibraryPage> {
       builder: (context, constraints) => GridView.builder(
         key: const Key('shelf-double-view'),
         padding: const EdgeInsets.fromLTRB(
-          ShelfTokens.screenPadding,
-          ShelfTokens.spaceXS,
-          ShelfTokens.screenPadding,
+          HomeSpace.gutter,
+          8,
+          HomeSpace.gutter,
           ShelfTokens.contentBottomInset,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -932,14 +879,14 @@ class _LibraryPageState extends State<LibraryPage> {
     return ListView.separated(
       key: const Key('shelf-list-view'),
       padding: const EdgeInsets.only(
-        top: ShelfTokens.spaceXS,
+        top: 8,
         bottom: ShelfTokens.contentBottomInset,
       ),
       itemCount: entries.length,
       separatorBuilder: (context, index) => Divider(
         height: 0.5,
         thickness: 0.5,
-        color: HomePalette.of(context).line,
+        color: HomePalette.of(context).divider,
       ),
       itemBuilder: (context, index) {
         final entry = entries[index];
@@ -970,14 +917,14 @@ class _LibraryPageState extends State<LibraryPage> {
     }
   }
 
-  /// 编辑态顶部操作栏（by1.xml）：全选 / 已选择 N 本 / 完成。
+  /// 编辑态顶部操作栏：全选 / 已选择 N 本 / 完成。
   Widget _editBar(HomePalette palette) {
     return Container(
       height: ShelfTokens.editBarHeight,
-      padding: const EdgeInsets.symmetric(horizontal: ShelfTokens.spaceS),
+      padding: const EdgeInsets.symmetric(horizontal: HomeSpace.gutter),
       decoration: BoxDecoration(
         color: palette.canvas,
-        border: Border(bottom: BorderSide(color: palette.line, width: 0.5)),
+        border: Border(bottom: BorderSide(color: palette.divider, width: 0.5)),
       ),
       child: Row(
         children: [
@@ -985,14 +932,12 @@ class _LibraryPageState extends State<LibraryPage> {
             key: const Key('shelf-select-all'),
             onPressed: _toggleSelectAll,
             style: TextButton.styleFrom(
-              foregroundColor: palette.ink,
-              padding: const EdgeInsets.symmetric(
-                horizontal: ShelfTokens.spaceM,
-              ),
+              foregroundColor: palette.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
             ),
             child: const Text(
               '全选',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ),
           Expanded(
@@ -1000,9 +945,9 @@ class _LibraryPageState extends State<LibraryPage> {
               child: Text(
                 '已选择 ${_selected.length} 本',
                 style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: palette.ink,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: palette.primary,
                 ),
               ),
             ),
@@ -1012,13 +957,11 @@ class _LibraryPageState extends State<LibraryPage> {
             onPressed: _exitEdit,
             style: TextButton.styleFrom(
               foregroundColor: HomePalette.accent,
-              padding: const EdgeInsets.symmetric(
-                horizontal: ShelfTokens.spaceL,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
             ),
             child: const Text(
               '完成',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -1026,12 +969,7 @@ class _LibraryPageState extends State<LibraryPage> {
     );
   }
 
-  /// 编辑态底功能栏（amb.xml）：每个条目 24dp 图标 + 11sp 文案。
-  ///
-  /// 官方底栏还有找相似书 / 移动至分组 / 分享为书单 / 加入桌面 / 云同步 /
-  /// 导入图书 / 最近删除 / 连载更新提醒，这些本地都没有数据源，不伪造入口；
-  /// 有数据支撑的只有「移出书架」（书架 tab，可撤销故直接执行）与「删除」
-  /// （浏览历史 tab，不可撤销故保留确认）。
+  /// 编辑态底功能栏：移出书架 / 删除。
   Widget _editBottomBar(HomePalette palette) {
     final removing = _tab == 0;
     return _SlideUp(
@@ -1039,24 +977,12 @@ class _LibraryPageState extends State<LibraryPage> {
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: palette.surface,
-            border: Border(top: BorderSide(color: palette.line, width: 0.6)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(
-                  alpha: palette.dark ? 0.28 : 0.05,
-                ),
-                blurRadius: 16,
-                offset: const Offset(0, -4),
-              ),
-            ],
+            border: Border(top: BorderSide(color: palette.divider, width: 0.5)),
           ),
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: ShelfTokens.spaceL,
-                vertical: ShelfTokens.spaceXS,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
               child: Row(
                 children: [
                   _BottomAction(
@@ -1067,7 +993,7 @@ class _LibraryPageState extends State<LibraryPage> {
                     ),
                     icon: removing ? LucideIcons.bookmark_x : LucideIcons.trash,
                     label: removing ? '移出书架' : '删除',
-                    color: removing ? palette.ink : ShelfTokens.deleteRed,
+                    color: removing ? palette.primary : ShelfTokens.deleteRed,
                     onTap: _selected.isEmpty
                         ? null
                         : removing
@@ -1157,7 +1083,7 @@ class _ShelfEntry {
   String? get badgeText {
     final value = progress;
     if (value == null || value <= 0) return null;
-    return '${(value * 100).round()}%';
+    return formatProgressPercent(value);
   }
 
   /// 宫格副信息 / 列表进度行：例如「第12章 · 35%」。
@@ -1167,7 +1093,7 @@ class _ShelfEntry {
     if (chapter != null && chapter >= 0) parts.add('第${chapter + 1}章');
     final value = progress;
     if (value != null && value > 0) {
-      parts.add('${(value * 100).round()}%');
+      parts.add(formatProgressPercent(value));
     }
     return parts.isEmpty ? null : parts.join(' · ');
   }
@@ -1225,7 +1151,7 @@ class _SlideUpState extends State<_SlideUp> {
   }
 }
 
-/// 一级 tab：选中 18sp w600，指示条宽度动画（AnimatedContainer）。
+/// 一级 tab：现代极简风格，蓝色选中态 + 底部指示条。
 class _TabButton extends StatelessWidget {
   final String label;
   final bool selected;
@@ -1246,9 +1172,9 @@ class _TabButton extends StatelessWidget {
       selected: selected,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -1256,18 +1182,18 @@ class _TabButton extends StatelessWidget {
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: selected ? 18 : 15,
+                  fontSize: selected ? 15 : 14,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  letterSpacing: -0.3,
-                  color: selected ? palette.ink : palette.muted,
+                  letterSpacing: 0,
+                  color: selected ? palette.primary : palette.secondary,
                 ),
               ),
-              const SizedBox(height: 5),
-              // 指示条宽度动画；高度恒定保持行高一致。
+              const SizedBox(height: 6),
+              // 底部蓝色指示条
               AnimatedContainer(
                 duration: _motionDuration(context, 220),
                 curve: Curves.easeOutCubic,
-                width: selected ? 26 : 0,
+                width: selected ? 20 : 0,
                 height: 3,
                 decoration: BoxDecoration(
                   color: selected ? HomePalette.accent : Colors.transparent,
@@ -1313,7 +1239,7 @@ class _IconAction extends StatelessWidget {
   }
 }
 
-/// L2 版式分段控件：宫格 / 双列 / 列表三个图标按钮，与更多菜单同 handler。
+/// 版式分段控件：宫格 / 双列 / 列表三个图标按钮。
 class _LayoutSegments extends StatelessWidget {
   final BookshelfLayout current;
   final HomePalette palette;
@@ -1328,11 +1254,10 @@ class _LayoutSegments extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(3),
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: palette.soft,
-        borderRadius: BorderRadius.circular(ShelfTokens.radiusButton),
-        border: Border.all(color: palette.line, width: 0.5),
+        color: palette.chipBg,
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1343,28 +1268,101 @@ class _LayoutSegments extends StatelessWidget {
               child: InkWell(
                 key: Key('shelf-layout-${layout.segmentKey}'),
                 onTap: () => onChanged(layout),
-                borderRadius: BorderRadius.circular(9),
+                borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  width: 34,
-                  height: 30,
+                  width: 32,
+                  height: 28,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: layout == current
-                        ? HomePalette.accent.withValues(alpha: 0.15)
+                        ? palette.canvas
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(9),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
                     layout.menuIcon,
-                    size: 17,
+                    size: 16,
                     color: layout == current
-                        ? HomePalette.accent
-                        : palette.muted,
+                        ? palette.primary
+                        : palette.tertiary,
                   ),
                 ),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 更多菜单：版式切换 / 导入图书 / 离线缓存 / 清空历史。
+class _MoreMenu extends StatelessWidget {
+  final HomePalette palette;
+  final BookshelfLayout current;
+  final bool canClearHistory;
+  final ValueChanged<_MenuAction> onSelected;
+
+  const _MoreMenu({
+    required this.palette,
+    required this.current,
+    required this.canClearHistory,
+    required this.onSelected,
+  });
+
+  bool _isCurrent(_MenuAction action) =>
+      action.layout != null && action.layout == current;
+
+  Color _tint(_MenuAction action) {
+    if (_isCurrent(action)) return palette.tertiary;
+    if (action == _MenuAction.clearHistory) return ShelfTokens.deleteRed;
+    return palette.primary;
+  }
+
+  bool _enabled(_MenuAction action) {
+    if (_isCurrent(action)) return false;
+    if (action == _MenuAction.clearHistory) return canClearHistory;
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<_MenuAction>(
+      key: const Key('library-more-button'),
+      tooltip: '更多',
+      color: palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: palette.divider, width: 0.5),
+      ),
+      elevation: 2,
+      onSelected: onSelected,
+      itemBuilder: (context) => [
+        for (final action in _MenuAction.values)
+          PopupMenuItem(
+            key: Key('library-menu-${action.name}'),
+            value: action,
+            enabled: _enabled(action),
+            child: Row(
+              children: [
+                Icon(action.icon, size: 16, color: _tint(action)),
+                const SizedBox(width: 10),
+                Text(
+                  action.label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: _isCurrent(action)
+                        ? FontWeight.w400
+                        : FontWeight.w500,
+                    color: _tint(action),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Icon(LucideIcons.ellipsis, size: 20, color: palette.primary),
       ),
     );
   }
@@ -1417,18 +1415,25 @@ class _BottomAction extends StatelessWidget {
 
 double? _progressOf(Map<String, dynamic>? history) {
   final value = history?['progress'];
-  if (value is! num || value <= 0) return null;
+  if (value is! num || !value.isFinite || value <= 0) return null;
   return value.toDouble().clamp(0, 1);
 }
 
 int? _episodeOf(Map<String, dynamic>? history) {
   final value = history?['episode'];
-  return value is num && value >= 0 ? value.toInt() : null;
+  return value is num && value.isFinite && value >= 0 && value <= 2147483647
+      ? value.toInt()
+      : null;
 }
 
 int? _timeOf(Map<String, dynamic>? history) {
   final value = history?['time'];
-  return value is num && value > 0 ? value.toInt() : null;
+  return value is num &&
+          value.isFinite &&
+          value > 0 &&
+          value <= 8640000000000000
+      ? value.toInt()
+      : null;
 }
 
 String? _relativeTime(int? time) {

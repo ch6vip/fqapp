@@ -841,7 +841,6 @@ class _AudioPageState extends State<AudioPage> {
 
   /// Sleep timer: pauses playback when the countdown elapses.
   Future<void> _showSleepTimer() async {
-    final palette = HomePalette.of(context);
     // -1 is the explicit 关闭定时 choice; a null result means the sheet was
     // dismissed and must leave any active timer untouched.
     const options = <int>[-1, 15, 30, 60];
@@ -874,9 +873,6 @@ class _AudioPageState extends State<AudioPage> {
         duration: const Duration(seconds: 2),
       ),
     );
-    if (!mounted) return;
-    // Keep the palette referenced so the sheet inherits the theme colours.
-    assert(palette.canvas != palette.surface);
   }
 
   Future<void> _showMore() async {

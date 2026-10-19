@@ -25,7 +25,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('01 / 03'), findsOneWidget);
+    expect(activePage(tester), 0);
 
     await tester.fling(
       find.byKey(const Key('home_spotlight_pages')),
@@ -33,21 +33,21 @@ void main() {
       600,
     );
     await tester.pumpAndSettle();
-    expect(find.text('02 / 03'), findsOneWidget);
+    expect(activePage(tester), 1);
     await tester.tap(find.text('故事 two').hitTestable());
     await tester.pumpAndSettle();
     expect(opened, ['two']);
 
     await tester.tap(find.byKey(const Key('home_spotlight_next')));
     await tester.pumpAndSettle();
-    expect(find.text('03 / 03'), findsOneWidget);
+    expect(activePage(tester), 2);
     await tester.tap(find.text('故事 three').hitTestable());
     await tester.pumpAndSettle();
     expect(opened, ['two', 'three']);
 
     await tester.tap(find.byKey(const Key('home_spotlight_next')));
     await tester.pumpAndSettle();
-    expect(find.text('01 / 03'), findsOneWidget);
+    expect(activePage(tester), 0);
     expect(tester.takeException(), isNull);
   });
 
@@ -68,7 +68,7 @@ void main() {
 
     await tester.pumpWidget(content([_item('fresh')]));
     await tester.pumpAndSettle();
-    expect(find.text('01 / 01'), findsOneWidget);
+    expect(activePage(tester), 0);
     expect(find.byKey(const Key('home_spotlight_next')), findsNothing);
     await tester.tap(find.text('故事 fresh'));
     await tester.pumpAndSettle();
@@ -179,6 +179,14 @@ void main() {
       ),
       isFalse,
     );
+    expect(
+      HomeTabBarDelegate(
+        selectedIndex: 0,
+        onSelect: ignore,
+        eink: true,
+      ).shouldRebuild(light),
+      isTrue,
+    );
   });
 
   testWidgets('the pinned tab bar follows the theme without changing tabs', (
@@ -206,15 +214,17 @@ void main() {
     }
 
     Color canvasOf() {
-      final box = tester
-          .widgetList<DecoratedBox>(
-            find.ancestor(
+      // 吸顶栏底色来自 Container(color: palette.canvas)（落成 ColoredBox）；
+      // 分类胶囊的底色是 AnimatedContainer 的 BoxDecoration，不会误命中。
+      final box = tester.widget<ColoredBox>(
+        find
+            .ancestor(
               of: find.byKey(const ValueKey('home_category_0')),
-              matching: find.byType(DecoratedBox),
-            ),
-          )
-          .first;
-      return (box.decoration as BoxDecoration).color!;
+              matching: find.byType(ColoredBox),
+            )
+            .first,
+      );
+      return box.color;
     }
 
     await tester.pumpWidget(app(Brightness.light));
@@ -251,7 +261,7 @@ void main() {
     await tester.tap(find.byKey(const Key('home_spotlight_next')));
     await tester.pump();
     await tester.pump();
-    expect(find.text('02 / 02'), findsOneWidget);
+    expect(activePage(tester), 1);
     // Standard Material ink feedback may finish its opacity transition;
     // the carousel itself must already be on the next page after one frame.
     await tester.pumpAndSettle();
@@ -291,3 +301,11 @@ MediaItem _item(
   ep: ep,
   kind: 'book',
 );
+
+/// 新版焦点区用右侧圆点代替「01 / 03」计数器：位置断言直接读 PageController。
+int activePage(WidgetTester tester) {
+  final view = tester.widget<PageView>(
+    find.byKey(const Key('home_spotlight_pages')),
+  );
+  return view.controller!.page!.round();
+}

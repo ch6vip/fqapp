@@ -561,6 +561,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      ref.read(dramaProvider.notifier).flushPendingSave();
+    }
     if (state == AppLifecycleState.resumed) {
       if (_tickerEnabled && !_modalOpen) {
         _resumeInline();
@@ -822,8 +825,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
               danmakuEnabled: _feedDanmakuEnabled,
               onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
               // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
-              onOpenDanmakuSettings: () =>
-                  _pendingFeedDanmakuSettings = true,
+              onOpenDanmakuSettings: () => _pendingFeedDanmakuSettings = true,
               // 官方 `jm3.t0`：行尾当前档 + 点击级联打开字号弹层。
               fontScaleLabel: ShortSeriesFontScale.label,
               onOpenFontSettings: () => _pendingFeedFontScale = true,
@@ -847,8 +849,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             danmakuEnabled: _feedDanmakuEnabled,
             onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
             // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
-            onOpenDanmakuSettings: () =>
-                _pendingFeedDanmakuSettings = true,
+            onOpenDanmakuSettings: () => _pendingFeedDanmakuSettings = true,
             clearScreen: _feedClearScreen,
             onToggleClearScreen: () =>
                 setState(() => _feedClearScreen = !_feedClearScreen),
@@ -918,12 +919,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
       await showModalBottomSheet<void>(
         context: context,
         useSafeArea: true,
-        backgroundColor: landscape ? Colors.transparent : const Color(0xFF1C1C1C),
+        backgroundColor: landscape
+            ? Colors.transparent
+            : const Color(0xFF1C1C1C),
         shape: landscape
             ? null
-            : RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+            : RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         builder: (sheetContext) {
           final panel = PlayletDanmakuSettingsPanel(
             settings: _feedDanmakuSettings,
@@ -932,9 +933,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
               setState(() => _feedDanmakuSettings = settings);
               unawaited(DanmakuSettings.save(settings));
             },
-            onReset: () => messenger.showSnackBar(
-              const SnackBar(content: Text('设置成功')),
-            ),
+            onReset: () =>
+                messenger.showSnackBar(const SnackBar(content: Text('设置成功'))),
           );
           if (!landscape) return panel;
           return Container(
@@ -1335,35 +1335,38 @@ class _DramaPageState extends ConsumerState<DramaPage>
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
     final bottomInset = _effectiveBottomInset(context);
-    return NotificationListener<ScrollNotification>(
-      onNotification: _onGridScroll,
-      child: GridView.builder(
-        key: Key(gridKey),
-        padding: EdgeInsets.fromLTRB(
-          12,
-          MediaQuery.paddingOf(context).top +
-              _searchRowHeight +
-              _stripHeight +
-              12,
-          12,
-          bottomInset + 20,
-        ),
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: columns,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 16,
-          // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
-          childAspectRatio: columns == 2 ? 0.56 : 0.52,
-        ),
-        itemCount: items.length,
-        itemBuilder: (context, index) => _BrowseCard(
-          key: ValueKey('$gridKey.${items[index].id}'),
-          item: items[index],
-          titleMaxLines: titleMaxLines,
-          // 官方网格卡点击 = 直接进播放页（cv2/c.java:371-376 →
-          // openShortSeriesActivity → ShortSeriesActivity 沉浸播放器），
-          // 不经过详情页；详情是播放页里的入口。
-          onTap: () => unawaited(_openPlayer(items[index])),
+    return _withLoadMoreRetry(
+      state,
+      NotificationListener<ScrollNotification>(
+        onNotification: _onGridScroll,
+        child: GridView.builder(
+          key: Key(gridKey),
+          padding: EdgeInsets.fromLTRB(
+            12,
+            MediaQuery.paddingOf(context).top +
+                _searchRowHeight +
+                _stripHeight +
+                12,
+            12,
+            bottomInset + 20,
+          ),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 16,
+            // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
+            childAspectRatio: columns == 2 ? 0.56 : 0.52,
+          ),
+          itemCount: items.length,
+          itemBuilder: (context, index) => _BrowseCard(
+            key: ValueKey('$gridKey.${items[index].id}'),
+            item: items[index],
+            titleMaxLines: titleMaxLines,
+            // 官方网格卡点击 = 直接进播放页（cv2/c.java:371-376 →
+            // openShortSeriesActivity → ShortSeriesActivity 沉浸播放器），
+            // 不经过详情页；详情是播放页里的入口。
+            onTap: () => unawaited(_openPlayer(items[index])),
+          ),
         ),
       ),
     );
@@ -1429,90 +1432,117 @@ class _DramaPageState extends ConsumerState<DramaPage>
       return const _FeedMessage(key: Key('drama_empty'), message: '暂无符合条件的短剧');
     }
 
-    return NotificationListener<ScrollNotification>(
-      onNotification: _onFeedScroll,
-      child: PageView.builder(
-        key: const Key('drama_feed'),
-        controller: _pages,
-        scrollDirection: Axis.vertical,
-        // 官方翻页物理：fling 沿方向翻一页、恒速 1600px/s 吸附（100ms/英寸）。
-        // 默认 PageScrollPhysics 的弹簧收尾起步猛、收尾硬。
-        // Note: 物理对齐依据 — 见
-        // .agents/notes/implemented/feature/2026-09-28-series-pager-physics.md
-        physics: const SeriesPagerScrollPhysics(),
-        itemCount: items.length,
-        onPageChanged: (index) {
-          // The page that owns the texture is decided by `_screenIndex`, so it
-          // has to go through setState: without it the card list is never
-          // rebuilt, `video` stays on the first page and every page after it
-          // keeps showing its cover even though the session has already
-          // switched to the new drama.
-          setState(() => _screenIndex = index);
+    return _withLoadMoreRetry(
+      state,
+      NotificationListener<ScrollNotification>(
+        onNotification: _onFeedScroll,
+        child: PageView.builder(
+          key: const Key('drama_feed'),
+          controller: _pages,
+          scrollDirection: Axis.vertical,
+          // 官方翻页物理：fling 沿方向翻一页、恒速 1600px/s 吸附（100ms/英寸）。
+          // 默认 PageScrollPhysics 的弹簧收尾起步猛、收尾硬。
+          // Note: 物理对齐依据 — 见
+          // .agents/notes/implemented/feature/2026-09-28-series-pager-physics.md
+          physics: const SeriesPagerScrollPhysics(),
+          itemCount: items.length,
+          onPageChanged: (index) {
+            // The page that owns the texture is decided by `_screenIndex`, so it
+            // has to go through setState: without it the card list is never
+            // rebuilt, `video` stays on the first page and every page after it
+            // keeps showing its cover even though the session has already
+            // switched to the new drama.
+            setState(() => _screenIndex = index);
 
-          // 记录停留卡片，快照保存时作为下次冷启动的续接点（官方落地缓存
-          // `recordNextVideoData` 的等价物：单条视频 + 位置）。
-          if (index < items.length) {
-            ref.read(dramaProvider.notifier).noteCurrentVid(items[index].id);
-          }
+            // 记录停留卡片，快照保存时作为下次冷启动的续接点（官方落地缓存
+            // `recordNextVideoData` 的等价物：单条视频 + 位置）。
+            if (index < items.length) {
+              ref.read(dramaProvider.notifier).noteCurrentVid(items[index].id);
+            }
 
-          // Two cards of runway, so a swipe never lands on an empty page.
-          if (index >= items.length - 2) {
-            ref.read(dramaProvider.notifier).loadMore();
-          }
-          // Only after the drag settles: starting mid-swipe would overlap the
-          // episode the finger is still covering.
-          if (!_paging) _syncInline();
-        },
-        itemBuilder: (context, index) {
-          final item = items[index];
-          // Only the card on screen may own a texture. The layer itself waits
-          // for this drama to be the session's target.
-          final onScreen = index == _screenIndex;
-          // 官方在 holder 绑定时拉热评；这里只在剧首次上屏时请求一次。
-          if (onScreen) unawaited(_loadFeedHotComments(item));
-          return _DramaFeedCard(
-            item: item,
-            bottomInset: _effectiveBottomInset(context),
-            opening: _openingId == item.id,
-            playback: onScreen ? _inline : null,
-            video: onScreen
-                ? _InlineVideoLayer(item: item, playback: _inline)
-                : null,
-            // 弹幕与视频同裁剪（12dp 圆角内），清屏态整层不出现（与播放
-            // 页 chrome 的 `!_clearScreen` 同门）。
-            danmakuOverlay: onScreen
-                ? _FeedDanmakuOverlay(
-                    item: item,
-                    playback: _inline,
-                    entries: _feedDanmaku.entries,
-                    enabled: _feedDanmakuEnabled,
-                    clearScreen: _feedClearScreen,
-                    settings: _feedDanmakuSettings,
-                  )
-                : null,
-            errorOverlay: onScreen
-                ? _InlineVideoError(
-                    item: item,
-                    playback: _inline,
-                    onRetry: () => unawaited(_inline.activate(item)),
-                  )
-                : null,
-            // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
-            onFullscreen: () => _openPlayer(item),
-            onQuickCatalog: () => _openQuickCatalog(item),
-            // 标题行「剧名 >」= 官方进剧集详情页的入口（ql3/v0.a1）。
-            onOpenSeriesDetail: () => _openSeriesDetail(item),
-            onTogglePlay: _togglePlay,
-            onOpenMorePanel: () => unawaited(_showFeedMorePanel()),
-            clearScreen: onScreen && _feedClearScreen,
-            hotComments: _feedHotComments[item.id] ?? const [],
-            onHotCommentTap: (comment) =>
-                unawaited(_openFeedComments(item, comment)),
-            hotCommentActive:
-                onScreen && !_modalOpen && !_feedPanelOpen && !_paging,
-          );
-        },
+            // Two cards of runway, so a swipe never lands on an empty page.
+            if (index >= items.length - 2) {
+              ref.read(dramaProvider.notifier).loadMore();
+            }
+            // Only after the drag settles: starting mid-swipe would overlap the
+            // episode the finger is still covering.
+            if (!_paging) _syncInline();
+          },
+          itemBuilder: (context, index) {
+            final item = items[index];
+            // Only the card on screen may own a texture. The layer itself waits
+            // for this drama to be the session's target.
+            final onScreen = index == _screenIndex;
+            // 官方在 holder 绑定时拉热评；这里只在剧首次上屏时请求一次。
+            if (onScreen) unawaited(_loadFeedHotComments(item));
+            return _DramaFeedCard(
+              item: item,
+              bottomInset: _effectiveBottomInset(context),
+              opening: _openingId == item.id,
+              playback: onScreen ? _inline : null,
+              video: onScreen
+                  ? _InlineVideoLayer(item: item, playback: _inline)
+                  : null,
+              // 弹幕与视频同裁剪（12dp 圆角内），清屏态整层不出现（与播放
+              // 页 chrome 的 `!_clearScreen` 同门）。
+              danmakuOverlay: onScreen
+                  ? _FeedDanmakuOverlay(
+                      item: item,
+                      playback: _inline,
+                      entries: _feedDanmaku.entries,
+                      enabled: _feedDanmakuEnabled,
+                      clearScreen: _feedClearScreen,
+                      settings: _feedDanmakuSettings,
+                    )
+                  : null,
+              errorOverlay: onScreen
+                  ? _InlineVideoError(
+                      item: item,
+                      playback: _inline,
+                      onRetry: () => unawaited(_inline.activate(item)),
+                    )
+                  : null,
+              // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
+              onFullscreen: () => _openPlayer(item),
+              onQuickCatalog: () => _openQuickCatalog(item),
+              // 标题行「剧名 >」= 官方进剧集详情页的入口（ql3/v0.a1）。
+              onOpenSeriesDetail: () => _openSeriesDetail(item),
+              onTogglePlay: _togglePlay,
+              onOpenMorePanel: () => unawaited(_showFeedMorePanel()),
+              clearScreen: onScreen && _feedClearScreen,
+              hotComments: _feedHotComments[item.id] ?? const [],
+              onHotCommentTap: (comment) =>
+                  unawaited(_openFeedComments(item, comment)),
+              hotCommentActive:
+                  onScreen && !_modalOpen && !_feedPanelOpen && !_paging,
+            );
+          },
+        ),
       ),
+    );
+  }
+
+  Widget _withLoadMoreRetry(HomeState state, Widget child) {
+    if (!state.loadMoreFailed) return child;
+    return Stack(
+      children: [
+        Positioned.fill(child: child),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: _effectiveBottomInset(context) + 16,
+          child: Center(
+            child: FilledButton.tonalIcon(
+              key: const Key('drama_load_more_retry'),
+              onPressed: () => unawaited(
+                ref.read(dramaProvider.notifier).loadMore(manual: true),
+              ),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('加载失败，点击重试'),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1612,9 +1642,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   void _openDetail(MediaItem item) {
-    unawaited(
-      _pushOverFeed(() => openBookDetail(context, item)),
-    );
+    unawaited(_pushOverFeed(() => openBookDetail(context, item)));
   }
 
   /// feed 卡片标题行「剧名 >」→ 剧集详情页（官方 `ql3/v0.a1()` 默认分支，

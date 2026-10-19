@@ -67,16 +67,17 @@ class _MemoryRankCache extends RankCache {
 RankPageLoader _countingLoader(
   int Function() counter,
   Future<RankBoard> Function() load,
-) => ({
-  required rankId,
-  required algo,
-  required categoryId,
-  required offset,
-  required startAt,
-}) async {
-  counter();
-  return load();
-};
+) =>
+    ({
+      required rankId,
+      required algo,
+      required categoryId,
+      required offset,
+      required startAt,
+    }) async {
+      counter();
+      return load();
+    };
 
 void main() {
   setUpAll(() async {
@@ -110,39 +111,57 @@ void main() {
     expect(restored.entries[1].metaLabel, contains('作者'));
   });
 
-  test('real Hive save and load round trips, and the TTL drops stale rows',
-      () async {
-    RankCache.hiveReady = true;
-    final cache = RankCache();
-    await cache.saveCatalog(_catalog());
-    await cache.saveBoard(
-      rankId: 'r1',
-      algo: 5,
-      categoryId: 0,
-      board: RankBoard(entries: [_entry('a', 1)], hasMore: true),
-    );
-    expect(cache.loadCatalog()?.catalog.rankId, 'r1');
-    expect(cache.loadBoard(rankId: 'r1', algo: 5, categoryId: 0)?.board
-        .entries
-        .single
-        .id, 'a');
+  test(
+    'real Hive save and load round trips, and the TTL drops stale rows',
+    () async {
+      RankCache.hiveReady = true;
+      final cache = RankCache();
+      await cache.saveCatalog(_catalog());
+      await cache.saveBoard(
+        rankId: 'r1',
+        algo: 5,
+        categoryId: 0,
+        board: RankBoard(entries: [_entry('a', 1)], hasMore: true),
+      );
+      expect(cache.loadCatalog()?.catalog.rankId, 'r1');
+      expect(
+        cache
+            .loadBoard(rankId: 'r1', algo: 5, categoryId: 0)
+            ?.board
+            .entries
+            .single
+            .id,
+        'a',
+      );
 
-    // Rewrite savedAt past the stale bound through the same box.
-    final box = await Hive.openBox<dynamic>('rank_cache_v1');
-    final raw = Map<String, dynamic>.from(box.get('r1|5|0') as Map);
-    raw['savedAt'] =
-        DateTime.now().millisecondsSinceEpoch -
-        const Duration(hours: 25).inMilliseconds;
-    await box.put('r1|5|0', raw);
-    expect(cache.loadBoard(rankId: 'r1', algo: 5, categoryId: 0), isNull);
-    await cache.close();
-  });
+      // Rewrite savedAt past the stale bound through the same box.
+      final box = await Hive.openBox<dynamic>('rank_cache_v1');
+      final raw = Map<String, dynamic>.from(box.get('r1|5|0') as Map);
+      raw['savedAt'] =
+          DateTime.now().millisecondsSinceEpoch -
+          const Duration(hours: 25).inMilliseconds;
+      await box.put('r1|5|0', raw);
+      expect(cache.loadBoard(rankId: 'r1', algo: 5, categoryId: 0), isNull);
+
+      raw['savedAt'] = 8640000000000001;
+      await box.put('r1|5|0', raw);
+      expect(cache.loadBoard(rankId: 'r1', algo: 5, categoryId: 0), isNull);
+
+      raw['savedAt'] = DateTime.now().millisecondsSinceEpoch + 60000;
+      await box.put('r1|5|0', raw);
+      expect(cache.loadBoard(rankId: 'r1', algo: 5, categoryId: 0), isNull);
+      await cache.close();
+    },
+  );
 
   testWidgets('a fresh board snapshot is served without the network', (
     tester,
   ) async {
     final cache = _MemoryRankCache()
-      ..catalog = RankCatalogSnapshot(catalog: _catalog(), savedAt: DateTime.now())
+      ..catalog = RankCatalogSnapshot(
+        catalog: _catalog(),
+        savedAt: DateTime.now(),
+      )
       ..boards['r1|5|0'] = RankBoardSnapshot(
         board: RankBoard(entries: [_entry('cached', 1)], hasMore: true),
         savedAt: DateTime.now(),
@@ -171,7 +190,10 @@ void main() {
     tester,
   ) async {
     final cache = _MemoryRankCache()
-      ..catalog = RankCatalogSnapshot(catalog: _catalog(), savedAt: DateTime.now())
+      ..catalog = RankCatalogSnapshot(
+        catalog: _catalog(),
+        savedAt: DateTime.now(),
+      )
       ..boards['r1|5|0'] = RankBoardSnapshot(
         board: RankBoard(entries: [_entry('cached', 1)], hasMore: true),
         // Older than RankCache.freshTtl, younger than staleTtl.
@@ -208,9 +230,14 @@ void main() {
     expect(find.text('书 fresh'), findsOneWidget);
   });
 
-  testWidgets('a failed refresh keeps the cached board visible', (tester) async {
+  testWidgets('a failed refresh keeps the cached board visible', (
+    tester,
+  ) async {
     final cache = _MemoryRankCache()
-      ..catalog = RankCatalogSnapshot(catalog: _catalog(), savedAt: DateTime.now())
+      ..catalog = RankCatalogSnapshot(
+        catalog: _catalog(),
+        savedAt: DateTime.now(),
+      )
       ..boards['r1|5|0'] = RankBoardSnapshot(
         board: RankBoard(entries: [_entry('kept', 1)], hasMore: true),
         savedAt: DateTime.now().subtract(const Duration(minutes: 10)),
@@ -239,9 +266,14 @@ void main() {
     expect(find.byKey(const Key('rank_retry')), findsNothing);
   });
 
-  testWidgets('a failed catalogue falls back to the stored one', (tester) async {
+  testWidgets('a failed catalogue falls back to the stored one', (
+    tester,
+  ) async {
     final cache = _MemoryRankCache()
-      ..catalog = RankCatalogSnapshot(catalog: _catalog(), savedAt: DateTime.now());
+      ..catalog = RankCatalogSnapshot(
+        catalog: _catalog(),
+        savedAt: DateTime.now(),
+      );
 
     await tester.pumpWidget(
       MaterialApp(

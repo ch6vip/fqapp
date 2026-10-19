@@ -1227,7 +1227,7 @@ String _entryTitle(
 
 int? _asInt(dynamic value) {
   if (value is int) return value;
-  if (value is num) return value.toInt();
+  if (value is num) return value.isFinite ? value.toInt() : null;
   return int.tryParse('$value');
 }
 

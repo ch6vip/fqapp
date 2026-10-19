@@ -7,55 +7,62 @@ import '../models/media_item.dart';
 import '../widgets/home/ambient_backdrop.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
+import '../widgets/home/home_filter.dart';
 import '../widgets/home/home_hero.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
 import 'detail_page.dart';
+import 'home_provider.dart';
 import 'rank_page.dart';
 import 'search_page.dart';
-import 'home_provider.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
+
+  static final _scrollToTopSignal = ValueNotifier<int>(0);
+
+  /// Smoothly scroll the home feed back to the top.
+  static void scrollToTop() {
+    _scrollToTopSignal.value++;
+  }
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends ConsumerState<HomePage> {
-  static const _captions = [
-    '换个故事，换一种心情',
-    '翻开之后，就舍不得合上',
-    '好戏开场，下一集更精彩',
-    '画中的故事，正在上演',
-    '每一格，都藏着一个新世界',
-    '让好故事，陪你走过日常',
-  ];
-
-  static const _gridPadding = 20.0;
-
+class _HomePageState extends ConsumerState<HomePage>
+    with WidgetsBindingObserver {
   final ScrollController _scroll = ScrollController();
   Timer? _loadMoreTimer;
   bool _visible = false;
 
-  /// Item keys whose entrance animation already played. A sliver disposes the
-  /// children that leave its cache extent, so without this each scroll back up
-  /// the feed replays a fade layer for every card it re-mounts.
+  /// Cards whose one-shot entrance already played. Slivers dispose children
+  /// outside the cache extent, so replaying the animation after a scroll would
+  /// waste a layer for every remounted card.
   final _entered = <String>{};
 
-  /// The card grid, reused while it still describes the same feed.
+  /// Reuse the grid sliver while the feed, filter and geometry are unchanged.
   Widget? _gridSliver;
   List<MediaItem>? _gridItems;
   int? _gridTabIndex;
+  HomeFeedFilter? _gridFilter;
   double? _gridWidth;
   double? _gridTitleScale;
   double? _gridMetaScale;
+  bool? _gridEink;
+
+  final Map<int, HomeFeedFilter> _tabFilters = {};
+
+  HomeFeedFilter _filterFor(int tabIndex) =>
+      _tabFilters[tabIndex] ?? const HomeFeedFilter();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    HomePage._scrollToTopSignal.addListener(_onScrollToTop);
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(homeProvider.notifier).load();
@@ -68,8 +75,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     final visible = TickerMode.valuesOf(context).enabled;
     if (_visible == visible) return;
     _visible = visible;
-    // Muting tickers does not stop this page's pagination timer.
-    // Note: .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md
     if (!_visible) {
       _loadMoreTimer?.cancel();
       _loadMoreTimer = null;
@@ -80,9 +85,31 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    HomePage._scrollToTopSignal.removeListener(_onScrollToTop);
     _loadMoreTimer?.cancel();
     _scroll.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) return;
+    ref.read(homeProvider.notifier).flushPendingSave();
+  }
+
+  void _onScrollToTop() {
+    if (!mounted || !_scroll.hasClients) return;
+    if (_scroll.offset <= 0) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _scroll.jumpTo(0);
+    } else {
+      _scroll.animateTo(
+        0,
+        duration: const Duration(milliseconds: 360),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   void _onScroll() {
@@ -96,16 +123,29 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (position.pixels >= position.maxScrollExtent - 600) _maybeLoadMore();
   }
 
-  /// Short and empty pages must continue even without a user scroll event.
+  /// Short and empty pages must keep paginating without a user scroll event.
   void _maybeLoadMore() {
     if (!mounted || !_visible || _loadMoreTimer != null) return;
     final state = ref.read(homeProvider);
-    if (state.isLoading || state.isLoadMore || !state.hasMore) return;
+    if (state.isLoading ||
+        state.isLoadMore ||
+        state.loadMoreFailed ||
+        !state.hasMore) {
+      return;
+    }
+    // A restrictive filter can leave the loaded page with no visible result.
+    // Do not walk the upstream cursor automatically; expose a manual button
+    // instead, matching the search filter's continuation contract.
+    if (_filterFor(state.tabIndex).isActive) return;
     _loadMoreTimer = Timer(const Duration(milliseconds: 500), () {
       _loadMoreTimer = null;
       if (mounted) _onScroll();
     });
     ref.read(homeProvider.notifier).loadMore();
+  }
+
+  void _manualLoadMore() {
+    unawaited(ref.read(homeProvider.notifier).loadMore(manual: true));
   }
 
   List<MediaItem> _visibleItems(HomeState state) {
@@ -114,12 +154,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     return state.items.where((item) => item.kind == kind).toList();
   }
 
+  Future<void> _manualRefresh() =>
+      ref.read(homeProvider.notifier).load(manualRefresh: true);
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
     final notifier = ref.read(homeProvider.notifier);
     final palette = HomePalette.of(context);
-    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
 
     return Scaffold(
       backgroundColor: palette.canvas,
@@ -129,28 +171,20 @@ class _HomePageState extends ConsumerState<HomePage> {
           Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 840),
+              constraints: const BoxConstraints(maxWidth: 900),
               child: SafeArea(
                 bottom: false,
                 child: state.error != null && state.items.isEmpty
                     ? HomeFeedError(
-                        headline: '故事还在路上',
-                        message: '暂时无法加载推荐，稍后再试一次。',
+                        headline: '故事暂时走丢了',
+                        message: '检查网络后再试一次。',
                         detail: state.error!,
-                        onRetry: notifier.load,
+                        onRetry: _manualRefresh,
                       )
                     : RefreshIndicator(
                         color: HomePalette.accent,
                         backgroundColor: palette.surface,
-                        onRefresh: notifier.load,
-                        // The grid used to measure itself from inside a sliver
-                        // (SliverLayoutBuilder). A sliver's constraints carry
-                        // the scroll offset, so they differ on every scroll
-                        // frame -- which re-ran the builder, handed the sliver
-                        // a fresh SliverChildBuilderDelegate, and rebuilt every
-                        // visible card for the whole duration of the scroll.
-                        // Measuring once here keeps the grid out of the scroll
-                        // path completely.
+                        onRefresh: _manualRefresh,
                         child: LayoutBuilder(
                           builder: (context, constraints) => CustomScrollView(
                             key: const Key('home_feed'),
@@ -163,8 +197,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 child: HomeHero(
                                   onSearch: _openSearch,
                                   onRanks: _openRanks,
-                                  onRefresh: notifier.load,
-                                  refreshing: state.isLoading,
+                                  issue: _issueLabel(),
                                 ),
                               ),
                               SliverPersistentHeader(
@@ -172,14 +205,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 delegate: HomeTabBarDelegate(
                                   selectedIndex: state.tabIndex,
                                   onSelect: notifier.selectTab,
-                                  extent: 54 + (textScale - 1).clamp(0, 2) * 20,
                                   dark: palette.dark,
+                                  eink: palette.eink,
                                 ),
                               ),
-                              ..._contentSlivers(
-                                state,
-                                constraints.maxWidth - _gridPadding * 2,
-                              ),
+                              ..._contentSlivers(state, constraints.maxWidth),
                             ],
                           ),
                         ),
@@ -192,25 +222,37 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  List<Widget> _contentSlivers(HomeState state, double gridWidth) {
+  List<Widget> _contentSlivers(HomeState state, double viewportWidth) {
+    final palette = HomePalette.of(context);
     final items = _visibleItems(state);
+    final currentFilter = _filterFor(state.tabIndex);
+    final category = homeCategories[state.tabIndex].label;
     if (items.isEmpty) {
-      if (state.isLoading || state.hasMore) {
-        if (!state.isLoading) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
-        }
+      if (state.isLoading) {
         return const [
-          SliverToBoxAdapter(child: HomeFeedLoading(message: '正在寻找好故事')),
+          SliverToBoxAdapter(child: HomeFeedLoading(message: '正在挑选好故事')),
+        ];
+      }
+      if (currentFilter.isActive) {
+        return [
+          ..._filterHeadingSlivers(state, currentFilter, category),
+          _filteredEmptySliver(state, palette),
+        ];
+      }
+      if (state.hasMore) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
+        return const [
+          SliverToBoxAdapter(child: HomeFeedLoading(message: '正在挑选好故事')),
         ];
       }
       return [
         SliverFillRemaining(
           hasScrollBody: false,
           child: HomeFeedEmpty(
-            title: '暂无内容',
-            message: '换个分类，或刷新发现新故事',
-            actionLabel: '刷新推荐',
-            onRefresh: ref.read(homeProvider.notifier).load,
+            title: '这里还很安静',
+            message: '换个分类，或刷新看看。',
+            actionLabel: '刷新',
+            onRefresh: _manualRefresh,
           ),
         ),
       ];
@@ -218,7 +260,8 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     final featured = items.take(3).toList(growable: false);
     final rest = items.skip(featured.length).toList(growable: false);
-    // The next page may be needed before any grid card has been built.
+    final filteredRest = currentFilter.apply(rest);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _onScroll();
     });
@@ -228,6 +271,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: HomeEntrance(
           child: HomeSpotlight(
             key: ValueKey('spotlight_${state.tabIndex}'),
+            title: state.tabIndex == 0 ? '今日焦点' : '精选$category',
             items: featured,
             onOpen: _openItem,
           ),
@@ -235,91 +279,219 @@ class _HomePageState extends ConsumerState<HomePage> {
       ),
       if (state.tabIndex == 0)
         SliverToBoxAdapter(
-          child: HomeResumeCard(
-            onOpen: _openItem,
-          ),
+          child: HomeEntrance(child: HomeResumeCard(onOpen: _openItem)),
         ),
-      if (rest.isNotEmpty) ...[
-        SliverToBoxAdapter(
-          child: HomeSectionHeader(
-            title: state.tabIndex == 0
-                ? '发现更多好故事'
-                : '值得一看的${homeCategories[state.tabIndex].label}',
-            subtitle: _captions[state.tabIndex],
+      if (rest.isNotEmpty || currentFilter.isActive) ...[
+        ..._filterHeadingSlivers(state, currentFilter, category),
+        if (filteredRest.isEmpty)
+          _filteredEmptySliver(state, palette)
+        else
+          _gridSliverFor(state, filteredRest, currentFilter, viewportWidth),
+        if (filteredRest.isNotEmpty && currentFilter.isActive && state.hasMore)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Center(
+                child: TextButton(
+                  key: const Key('home_filter_load_more'),
+                  onPressed: state.isLoadMore ? null : _manualLoadMore,
+                  child: Text(
+                    state.isLoadMore
+                        ? '正在加载…'
+                        : state.loadMoreFailed
+                        ? '加载失败，点击重试'
+                        : '加载更多匹配内容',
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        _gridSliverFor(state, rest, gridWidth),
       ],
-      if (state.isLoadMore)
-        const SliverToBoxAdapter(
+      if (!currentFilter.isActive && state.loadMoreFailed)
+        SliverToBoxAdapter(
+          child: Center(
+            child: TextButton(
+              key: const Key('home_load_more_retry'),
+              onPressed: _manualLoadMore,
+              child: const Text('加载更多失败，点击重试'),
+            ),
+          ),
+        ),
+      if (state.isLoadMore && !currentFilter.isActive)
+        SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.symmetric(vertical: 28),
+            padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(
               child: SizedBox(
-                width: 20,
-                height: 20,
+                width: 18,
+                height: 18,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: HomePalette.accent,
+                  color: palette.accentText,
                 ),
               ),
             ),
           ),
         )
       else if (!state.hasMore)
-        const SliverToBoxAdapter(child: HomeEndOfFeed(message: '好故事，未完待续'))
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 28),
+            child: Center(
+              child: Text(
+                '今天的好故事就看到这里',
+                style: TextStyle(color: palette.tertiary, fontSize: 11.5),
+              ),
+            ),
+          ),
+        )
       else
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-      const SliverToBoxAdapter(child: SizedBox(height: 84)),
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+      const SliverToBoxAdapter(child: SizedBox(height: 100)),
     ];
   }
 
-  /// The card grid, reused verbatim while it still describes the same feed.
-  ///
-  /// Widgets are immutable descriptions, so handing the framework back the
-  /// identical instance lets it skip the visible cards when a rebuild only
-  /// carries a new loading flag. Column count, cell height and coverWidth are
-  /// baked into that instance, so the cache key also includes the text scales
-  /// those values were computed from. Theme colors and device pixel ratio still
-  /// reach the cards through inherited widgets.
-  ///
-  /// Note: 网格曾在 sliver 内部量宽度，导致每帧重建全部可见卡片；字号变化
-  /// 必须使这份缓存失效 — 见
-  /// .agents/notes/implemented/bug-fix/2026-09-18-home-scroll-cost.md
+  List<Widget> _filterHeadingSlivers(
+    HomeState state,
+    HomeFeedFilter currentFilter,
+    String category,
+  ) {
+    final scopeLabel = state.tabIndex == 0 ? '为你推荐' : '更多$category';
+    return [
+      SliverToBoxAdapter(
+        child: HomeSectionHeader(
+          title: scopeLabel,
+          trailing: HomeFilterButton(
+            active: currentFilter.isActive,
+            onTap: () => _openFilter(state.tabIndex, currentFilter),
+          ),
+        ),
+      ),
+      SliverToBoxAdapter(
+        child: HomeFilterSummary(
+          filter: currentFilter,
+          scopeLabel: scopeLabel,
+          onClear: () => setState(
+            () => _tabFilters[state.tabIndex] = const HomeFeedFilter(),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _filteredEmptySliver(HomeState state, HomePalette palette) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          HomeSpace.gutter,
+          8,
+          HomeSpace.gutter,
+          36,
+        ),
+        child: Column(
+          children: [
+            Text(
+              '没有符合条件的内容',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: palette.primary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '放宽一点条件，好故事会回来的。',
+              style: TextStyle(fontSize: 12, color: palette.muted),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              key: const Key('home_filter_clear'),
+              onPressed: () => setState(
+                () => _tabFilters[state.tabIndex] = const HomeFeedFilter(),
+              ),
+              child: const Text('清除筛选'),
+            ),
+            if (state.hasMore)
+              TextButton(
+                key: const Key('home_filter_load_more'),
+                onPressed: state.isLoadMore ? null : _manualLoadMore,
+                child: Text(
+                  state.isLoadMore
+                      ? '正在加载…'
+                      : state.loadMoreFailed
+                      ? '加载失败，点击重试'
+                      : '继续加载',
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openFilter(int tabIndex, HomeFeedFilter current) async {
+    final scopeLabel = tabIndex == 0
+        ? '为你推荐'
+        : '更多${homeCategories[tabIndex].label}';
+    await showHomeFilterSheet(
+      context,
+      current: current,
+      scopeLabel: scopeLabel,
+      onApply: (filter) {
+        if (mounted) {
+          setState(() => _tabFilters[tabIndex] = filter);
+        }
+      },
+    );
+  }
+
+  /// Grid sliver measured once outside the scroll path.
   Widget _gridSliverFor(
     HomeState state,
     List<MediaItem> rest,
-    double gridWidth,
+    HomeFeedFilter currentFilter,
+    double viewportWidth,
   ) {
     final scaler = MediaQuery.textScalerOf(context);
-    final titleScale = scaler.scale(14);
-    final metaScale = scaler.scale(11);
+    final palette = HomePalette.of(context);
+    final titleScale = scaler.scale(15);
+    final metaScale = scaler.scale(12);
     final cached = _gridSliver;
+
     if (cached != null &&
         identical(_gridItems, state.items) &&
         _gridTabIndex == state.tabIndex &&
-        _gridWidth == gridWidth &&
+        _gridFilter == currentFilter &&
+        _gridWidth == viewportWidth &&
         _gridTitleScale == titleScale &&
-        _gridMetaScale == metaScale) {
+        _gridMetaScale == metaScale &&
+        _gridEink == palette.eink) {
       return cached;
     }
+
     _gridItems = state.items;
     _gridTabIndex = state.tabIndex;
-    _gridWidth = gridWidth;
+    _gridFilter = currentFilter;
+    _gridWidth = viewportWidth;
     _gridTitleScale = titleScale;
     _gridMetaScale = metaScale;
-    final cardWidth = homeCardWidth(context, gridWidth);
+    _gridEink = palette.eink;
+
+    // The grid delegate receives the content width, not the viewport width, so
+    // its cell size is exactly the same value passed to the cover decoder.
+    final contentWidth = viewportWidth - HomeSpace.gutter * 2;
+    final cardWidth = homeCardWidth(context, contentWidth);
+
     return _gridSliver = SliverPadding(
-      padding: const EdgeInsets.symmetric(horizontal: _gridPadding),
+      padding: const EdgeInsets.symmetric(horizontal: HomeSpace.gutter),
       sliver: SliverGrid(
-        gridDelegate: homeGridDelegate(context, gridWidth),
+        gridDelegate: homeGridDelegate(context, contentWidth),
         delegate: SliverChildBuilderDelegate((context, index) {
           final item = rest[index];
           final key = '${item.kind}:${item.id}';
           return HomeEntrance(
             key: ValueKey(key),
             index: index,
-            // Only the first appearance of an item animates; see HomeEntrance.
             animate: _entered.add(key),
             child: HomeMediaCard(
               item: item,
@@ -332,6 +504,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// `9月15日 · 第 258 期`, using tabular figures in the hero so the header does
+  /// not jitter when the day changes.
+  String _issueLabel() {
+    final now = DateTime.now();
+    final dayOfYear = now.difference(DateTime(now.year)).inDays + 1;
+    return '${now.month}月${now.day}日 · 第 $dayOfYear 期';
+  }
+
   void _openSearch() {
     Navigator.push(
       context,
@@ -339,11 +519,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  /// The rank board. Its catalogue (and the rank id the entries endpoint needs)
-  /// only exist inside the novel homepage response the app already fetches.
-  ///
-  /// Note: 榜单目录与 rank_id 的来源 — 见
-  /// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
+  /// Rank ids only exist inside the novel homepage response the app already
+  /// fetches, so this opens the existing in-app rank surface.
   void _openRanks() {
     Navigator.push(
       context,
@@ -355,4 +532,3 @@ class _HomePageState extends ConsumerState<HomePage> {
     openBookDetail(context, item);
   }
 }
-

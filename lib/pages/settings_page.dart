@@ -117,116 +117,95 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
 
-    const categoryColors = [
-      Color(0xFFEF5038), // 外观
-      Color(0xFF14B8A6), // 阅读
-      Color(0xFF8B5CF6), // 听书
-      Color(0xFFF59E0B), // 短剧
-      Color(0xFF3B82F6), // 数据
-      Color(0xFF10B981), // 服务
-      Color(0xFF6366F1), // 关于
-    ];
-
     return Scaffold(
       backgroundColor: palette.canvas,
       appBar: AppBar(
         title: const Text('设置'),
-        centerTitle: true,
+        centerTitle: false,
         backgroundColor: palette.canvas,
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
+        titleTextStyle: TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.4,
+          color: palette.primary,
+        ),
+        iconTheme: IconThemeData(color: palette.primary),
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        children: [
-          Material(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(20),
-            clipBehavior: Clip.antiAlias,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: palette.line,
-                  width: 0.6,
+      body: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(
+          HomeSpace.gutter,
+          8,
+          HomeSpace.gutter,
+          32,
+        ),
+        itemCount: categories.length,
+        separatorBuilder: (_, _) =>
+            Divider(height: 1, thickness: 0.5, color: palette.divider),
+        itemBuilder: (context, i) {
+          final cat = categories[i];
+          return InkWell(
+            onTap: () {
+              final pageBuilder = cat.pageBuilder;
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      pageBuilder ??
+                      (_) => SettingsCategoryPage(
+                        title: cat.title,
+                        items: cat.items,
+                      ),
                 ),
-              ),
-              child: Column(
-              children: [
-                for (var i = 0; i < categories.length; i++) ...[
-                  if (i > 0)
-                    Divider(
-                      height: 1,
-                      indent: 68,
-                      color: palette.line,
-                    ),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
-                    ),
-                    leading: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: (i < categoryColors.length
-                                ? categoryColors[i]
-                                : HomePalette.accent)
-                            .withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        categories[i].icon,
-                        size: 20,
-                        color: i < categoryColors.length
-                            ? categoryColors[i]
-                            : HomePalette.accent,
-                      ),
-                    ),
-                    title: Text(
-                      categories[i].title,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                        color: palette.ink,
-                      ),
-                    ),
-                    subtitle: Text(
-                      categories[i].subtitle,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: palette.muted,
-                      ),
-                    ),
-                    trailing: Icon(
-                      LucideIcons.chevron_right,
-                      size: 18,
-                      color: palette.muted,
-                    ),
-                    onTap: () {
-                      final cat = categories[i];
-                      final pageBuilder = cat.pageBuilder;
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder:
-                              pageBuilder ??
-                              (_) => SettingsCategoryPage(
-                                title: cat.title,
-                                items: cat.items,
-                              ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Row(
+                children: [
+                  Icon(cat.icon, size: 20, color: palette.secondary),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          cat.title,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.1,
+                            color: palette.primary,
+                          ),
                         ),
-                      );
-                    },
+                        const SizedBox(height: 3),
+                        Text(
+                          cat.subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: palette.secondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    LucideIcons.chevron_right,
+                    size: 16,
+                    color: palette.tertiary,
                   ),
                 ],
-              ],
+              ),
             ),
-          ),
-        ),
-      ],
-    ),
-  );
+          );
+        },
+      ),
+    );
   }
 
   // ── 外观 ──────────────────────────────────────────────────────────────
@@ -371,7 +350,8 @@ class SettingsPage extends StatelessWidget {
       valueListenable: AudioPreferences.instance.backgroundPlayback,
       builder: (context, value, _) => Switch(
         value: value,
-        onChanged: (v) => unawaited(AudioPreferences.instance.setBackgroundPlayback(v)),
+        onChanged: (v) =>
+            unawaited(AudioPreferences.instance.setBackgroundPlayback(v)),
       ),
     ),
     onTap: (context, setState) {

@@ -153,7 +153,11 @@ class InlineVideoPlayback {
   /// 入池那一刻每部剧正在播的目录与集号，键与 [PlayerPool] 一致。复用
   /// 出池时还原——否则 `_episodes`/`_activeIndex` 还停留在新激活的剧上，
   /// 之后一次进度持久化就会把别的剧的 episodeId 写进这部剧的历史。
-  final Map<String, ({List<Chapter> episodes, int index})> _parkedPlayback = {};
+  final Map<
+    String,
+    ({List<Chapter> episodes, int index, EpisodeSource? source})
+  >
+  _parkedPlayback = {};
   final List<StreamSubscription<dynamic>> _subs = [];
   Future<void> _releases = Future<void>.value();
 
@@ -195,6 +199,9 @@ class InlineVideoPlayback {
   /// A reused player already has its texture, its size and its position, so
   /// [activate] must not reset those notifiers or seek back to the start.
   bool get reusedFromPool => _reusedFromPool;
+
+  @visibleForTesting
+  int get parkedPlaybackStateCount => _parkedPlayback.length;
 
   PlayerHistory get _history =>
       PlayerHistory(historyStore ?? LibraryStore.instance);
@@ -298,6 +305,7 @@ class InlineVideoPlayback {
       // Same drama re-activated (a retry): the old decoder is stale.
       unawaited(previous.dispose());
     }
+    _currentSource = null;
 
     // Reuse path: the pool still holds this drama's paused decoder.
     final parked = pool.acquire(contentId);
@@ -319,6 +327,7 @@ class InlineVideoPlayback {
         final restored = _parkedPlayback.remove(contentId);
         _episodes = restored?.episodes ?? const [];
         _activeIndex = restored?.index;
+        _currentSource = restored?.source;
         activeVid.value = activeEpisode?.itemId;
         _subscribe(player, generation);
         textureId.value = player.textureId;
@@ -371,11 +380,11 @@ class InlineVideoPlayback {
       }
       activeVid.value = episodes[index].itemId;
       var source = await _sources.request(episodes[index]).future;
+      if (!_current(generation)) return;
       // 会话内记住的画质选择（官方=引擎当前档）：同一集再次激活时沿用。
       final chosen = _chosen[episodes[index].itemId];
       if (chosen != null) source = source.withVariant(chosen);
       _currentSource = source;
-      if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
       if (uri == null ||
           (uri.scheme != 'http' && uri.scheme != 'https') ||
@@ -470,11 +479,11 @@ class InlineVideoPlayback {
     if (variant.url == source.url) return;
     final generation = ++_generation;
     final resume = position.value;
-    final resumeWantsPlay = _wantsPlay && _playbackRequested(player);
     _detachSubscriptions();
     if (identical(_player, player)) _player = null;
     _currentSource = source.withVariant(variant);
-    _chosen[series.id] = variant;
+    final episodeId = activeEpisode?.itemId;
+    if (episodeId != null) _chosen[episodeId] = variant;
     // A replacement texture must not inherit the previous rendition's frame,
     // size, or rotation. The layer keeps its cover until the new stream is ready.
     textureId.value = null;
@@ -508,7 +517,7 @@ class InlineVideoPlayback {
       await fresh.seek(resume);
       seeked.value = resume;
       if (!_current(generation, fresh)) return;
-      if (resumeWantsPlay || _wantsPlay) {
+      if (_wantsPlay) {
         await fresh.play();
         if (!_current(generation, fresh)) return;
       }
@@ -843,6 +852,8 @@ class InlineVideoPlayback {
     _detachSubscriptions();
     _player = null;
     if (series == null || !player.isCreated) {
+      if (series != null) _parkedPlayback.remove(_poolKey(series));
+      _currentSource = null;
       unawaited(player.dispose());
       return;
     }
@@ -853,13 +864,29 @@ class InlineVideoPlayback {
   /// the reuse path can restore [_episodes]/[_activeIndex] — the progress
   /// write-back and the danmaku vid both read them（见 [_parkedPlayback]）。
   void _parkWithState(String key, NativePlayer player) {
+    if (!player.isCreated) {
+      _parkedPlayback.remove(key);
+      _currentSource = null;
+      unawaited(player.dispose());
+      return;
+    }
     final index = _activeIndex;
     if (index != null && index >= 0 && index < _episodes.length) {
-      _parkedPlayback[key] = (episodes: _episodes, index: index);
+      _parkedPlayback[key] = (
+        episodes: _episodes,
+        index: index,
+        source: _currentSource,
+      );
     } else {
       _parkedPlayback.remove(key);
     }
     pool.park(key, player);
+    _currentSource = null;
+    // PlayerPool evicts the oldest decoder once it is full, but this side map
+    // holds the matching episode lists. Drop state for keys the pool no longer
+    // owns, otherwise every drama ever visited would retain its full catalogue.
+    final live = pool.keys.toSet();
+    _parkedPlayback.removeWhere((key, _) => !live.contains(key));
   }
 
   void _subscribe(NativePlayer player, int generation) {
@@ -973,6 +1000,7 @@ class InlineVideoPlayback {
     _player = null;
     _episodes = const [];
     _activeIndex = null;
+    _currentSource = null;
     activeVid.value = null;
     _hasDisplayed = false;
     if (!_disposed) textureId.value = null;

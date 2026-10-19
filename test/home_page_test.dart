@@ -3,13 +3,27 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
+
+class _RecordingHomeNotifier extends HomeNotifier {
+  _RecordingHomeNotifier({
+    required HomepageLoader homepageLoader,
+    required SearchTabsLoader searchLoader,
+  }) : super(homepageLoader: homepageLoader, searchLoader: searchLoader);
+
+  final List<bool> loads = [];
+
+  @override
+  Future<void> load({bool manualRefresh = false}) {
+    loads.add(manualRefresh);
+    return super.load(manualRefresh: manualRefresh);
+  }
+}
 
 void main() {
   testWidgets(
@@ -110,12 +124,19 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final hint = find.text('搜索你想看的故事');
+      final hint = find.text('搜索书、剧或作者');
       expect(hint, findsOneWidget);
+      // 提示文案必须落在搜索框内、且不与同一行的右侧入口（榜单）重叠。
+      // 搜索与榜单仍是同一视觉行里的两个独立点击区域。
+      final hintRect = tester.getRect(hint);
+      final searchRect = tester.getRect(
+        find.byKey(const Key('home_search_button')),
+      );
+      expect(hintRect.right, lessThanOrEqualTo(searchRect.right));
       expect(
-        tester.getRect(hint).right,
+        hintRect.right,
         lessThanOrEqualTo(
-          tester.getRect(find.byIcon(LucideIcons.refresh_ccw)).left,
+          tester.getRect(find.byKey(const Key('home_ranks_button'))).left,
         ),
       );
       expect(tester.takeException(), isNull);
@@ -131,31 +152,28 @@ void main() {
     final message = List.filled(60, '服务暂时不可用，请稍后重试。').join();
     var failing = true;
     var homepageRequests = 0;
+    final notifier = _RecordingHomeNotifier(
+      homepageLoader:
+          ({int tabType = 2, int offset = 0, String? sessionId}) async {
+            // Count the novel stream only: the combined feed also asks
+            // the manju stream (24) for its manju group, which is not
+            // what this retry assertion is about.
+            if (tabType == 2) homepageRequests++;
+            if (failing) throw ApiException(message);
+            return const HomepagePage(
+              items: [],
+              nextOffset: null,
+              sessionId: null,
+            );
+          },
+      searchLoader: (query, {int page = 1}) async {
+        if (failing) throw ApiException(message);
+        return [];
+      },
+    );
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [
-          homeProvider.overrideWith(
-            () => HomeNotifier(
-              homepageLoader:
-                  ({int tabType = 2, int offset = 0, String? sessionId}) async {
-                    // Count the novel stream only: the combined feed also asks
-                    // the manju stream (24) for its manju group, which is not
-                    // what this retry assertion is about.
-                    if (tabType == 2) homepageRequests++;
-                    if (failing) throw ApiException(message);
-                    return const HomepagePage(
-                      items: [],
-                      nextOffset: null,
-                      sessionId: null,
-                    );
-                  },
-              searchLoader: (query, {int page = 1}) async {
-                if (failing) throw ApiException(message);
-                return [];
-              },
-            ),
-          ),
-        ],
+        overrides: [homeProvider.overrideWith(() => notifier)],
         child: MaterialApp(
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(
@@ -191,7 +209,8 @@ void main() {
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(homepageRequests, 2);
-    expect(find.text('暂无内容'), findsOneWidget);
+    expect(notifier.loads, [false, true]);
+    expect(find.text('这里还很安静'), findsOneWidget);
     expect(find.text(message), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -385,21 +404,77 @@ void main() {
     await tester.pumpAndSettle();
 
     Color canvasOf() {
-      final box = tester
-          .widgetList<DecoratedBox>(
-            find.ancestor(
+      // 吸顶栏底色来自 Container(color: palette.canvas)（落成 ColoredBox）。
+      final box = tester.widget<ColoredBox>(
+        find
+            .ancestor(
               of: find.byKey(const ValueKey('home_category_0')),
-              matching: find.byType(DecoratedBox),
-            ),
-          )
-          .first;
-      return (box.decoration as BoxDecoration).color!;
+              matching: find.byType(ColoredBox),
+            )
+            .first,
+      );
+      return box.color;
     }
 
     expect(canvasOf(), const HomePalette(false).canvas);
     mode.value = ThemeMode.dark;
     await tester.pumpAndSettle();
     expect(canvasOf(), const HomePalette(true).canvas);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pull-to-refresh and empty-state refresh are manual loads', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    var empty = false;
+    final notifier = _RecordingHomeNotifier(
+      homepageLoader:
+          ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+              HomepagePage(
+                items: empty
+                    ? const []
+                    : [
+                        MediaItem(
+                          id: 'first',
+                          title: '第一本',
+                          cover: '',
+                          author: '',
+                          badge: '',
+                          ep: '',
+                          kind: 'book',
+                        ),
+                      ],
+                nextOffset: null,
+                sessionId: null,
+              ),
+      searchLoader: (query, {int page = 1}) async => const [],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [homeProvider.overrideWith(() => notifier)],
+        child: const MaterialApp(home: HomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(notifier.loads, [false]);
+
+    empty = true;
+    final indicator = tester.widget<RefreshIndicator>(
+      find.byType(RefreshIndicator),
+    );
+    await indicator.onRefresh();
+    await tester.pumpAndSettle();
+    expect(notifier.loads, [false, true]);
+    expect(find.text('这里还很安静'), findsOneWidget);
+
+    await tester.tap(find.text('刷新'));
+    await tester.pumpAndSettle();
+    expect(notifier.loads, [false, true, true]);
     expect(tester.takeException(), isNull);
   });
 }
