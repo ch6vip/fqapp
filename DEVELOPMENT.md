@@ -95,9 +95,9 @@ fqapp/
 > **仓库不含原生二进制**：`libfqapi_core.so` 和 `libshortplay_crypto.so` 均被 Git 忽略。
 > 前者可由 `rust/` 中的 Rust 源码经 `scripts/build_rust_backend.*` 重建；
 > `libshortplay_crypto.so` 由本仓库 `native/` 中的 C 源码在 Android 构建时自动生成。
-> Android 构建前需先运行 Rust 构建脚本生成 ARM64 核心库。
+> Android 构建前需先运行 Rust 构建脚本生成两个 ABI 的核心库。
 >
-> 体积参考：Rust ARM64 `libfqapi_core.so` 为 6,125,392 字节（约 5.84 MiB）。这是本地 release
+> 体积参考：Rust `libfqapi_core.so`（arm64-v8a）为 6,125,392 字节（约 5.84 MiB）。这是本地 release
 > 构建产物的实测大小，不是安装包体积，也不是性能结论。
 
 ---

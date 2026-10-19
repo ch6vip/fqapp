@@ -4,10 +4,13 @@
 # an ancestor of any cargo invocation and its 16 KiB rustflags were silently
 # ignored. Do not move it back under rust/.
 #
-# Cross-compilation settings for the Android ARM64 target.
+# Cross-compilation settings for the Android ARM64 and ARMv7 targets.
 #
 # The linker is provided by scripts/build_rust_backend.ps1 / .sh (the NDK path
 # differs per machine), while the 16 KiB page alignment required by Android
 # 15+ is pinned here so every cargo invocation produces a compliant ELF.
 [target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.armv7-linux-androideabi]
 rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
