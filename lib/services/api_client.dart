@@ -88,7 +88,7 @@ class ApiClient {
     String? folderId,
   }) async {
     final response = await _get(
-      '$_base/api/v1/account/fanqie/library',
+      '/api/v1/account/fanqie/library',
       method: 'POST',
       body: Uint8List.fromList(
         utf8.encode(
@@ -126,7 +126,7 @@ class ApiClient {
     String? deviceId,
   }) async {
     final response = await _get(
-      '$_base/api/v1/account/fanqie/history',
+      '/api/v1/account/fanqie/history',
       method: 'POST',
       body: Uint8List.fromList(
         utf8.encode(
