@@ -66,13 +66,21 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        // The Rust core is built for arm64-v8a and armeabi-v7a
-        // (scripts/build_rust_backend.ps1 / .sh produce both). An explicit
-        // filter prevents installing an APK on an ABI where the native
-        // backend cannot start and Process.start is blocked by SELinux.
-        ndk {
-            abiFilters += setOf("arm64-v8a", "armeabi-v7a")
-        }
+        // No ndk.abiFilters here on purpose: `flutter build apk
+        // --split-per-abi` makes the Flutter Gradle plugin configure AGP
+        // splits, and AGP rejects abiFilters whenever splits are set
+        // ("abiFilters cannot be present when splits abi filters are set").
+        // The split APKs therefore contain exactly the ABIs Flutter was
+        // asked to build (--target-platform android-arm,android-arm64).
+        // The guards against a backend-less slice are the packaging check
+        // below (both libfqapi_core.so files must exist and match their
+        // ABI) and scripts/verify_android_apk.py --abi, which rejects any
+        // unexpected ABI in the APK. Always build with the documented
+        // split command; a plain fat `flutter build apk` would include an
+        // x86_64 slice with no Rust backend.
+        //
+        // NOTE: do not re-add abiFilters to "restrict" the build. It breaks
+        // every split build at configuration time.
         externalNativeBuild {
             cmake {
                 targets += "shortplay_crypto"

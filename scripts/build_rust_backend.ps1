@@ -3,9 +3,10 @@ Builds the Rust native core (rust/ -> libfqapi_core.so) for Android
 (arm64-v8a and armeabi-v7a) and copies each library into its
 android/app/src/main/jniLibs/<abi> directory.
 
-Both ABIs are always built: Gradle packages both (see abiFilters in
-android/app/build.gradle.kts), so building only one would leave the
-packaging verification without the other library and fail the build.
+Both ABIs are always built: the split APK build packages both (see the
+split-per-ABI build in .github/workflows/android-apk.yml), so building
+only one would leave the packaging verification without the other
+library and fail the build.
 Cargo caches per target, so a rebuild with no Rust changes is fast.
 
 This is the single entry point for the Rust build: it regenerates the
