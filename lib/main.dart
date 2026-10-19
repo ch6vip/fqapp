@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -164,6 +165,11 @@ class _FqAppState extends State<FqApp> {
               theme: _theme(Brightness.light, eink: eink),
               darkTheme: _theme(Brightness.dark, eink: eink),
               themeMode: effectiveMode,
+              // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
+              // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
+              locale: const Locale('zh', 'CN'),
+              supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+              localizationsDelegates: GlobalMaterialLocalizations.delegates,
               home: const AppBootstrap(child: RootShell()),
             );
           },
