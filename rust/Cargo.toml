@@ -56,3 +56,10 @@ strip = true
 # NOTE: panics must unwind. flutter_rust_bridge turns a caught panic into a
 # typed error on the Dart side; `panic = "abort"` would kill the whole app
 # instead, which is exactly the failure mode the migration contract forbids.
+[profile.dev]
+# Windows/MSVC embeds full debug info into every linked binary by default: each
+# test executable came out at 180-200 MB and `target/debug/deps` grew to 10.9 GB.
+# The dev profile here is only a desktop test host (shipping code is the release
+# AArch64 build), so those symbols buy nothing and cost most of the disk budget.
+# Set `debug = 1` temporarily if you need file:line frames in a backtrace.
+debug = 0
