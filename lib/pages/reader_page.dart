@@ -15,6 +15,7 @@ import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
+import '../widgets/reader/eink_reading.dart';
 import '../services/eink_refresh.dart';
 import '../services/volume_key.dart';
 import '../services/reader_history.dart';
@@ -148,7 +149,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// textColor（默认米白 #292724）——实测设备上正文主色 RGB(41,39,36)，
   /// 墨水屏把它量化成明显发灰的一档。保存的预设不动，关闭墨水屏即恢复。
   ReaderPreferences get _displayPreferences => einkModeNotifier.value
-      ? _preferences.copyWith(themePreset: ReaderThemePreset.eink)
+      ? _preferences.copyWith(
+          themePreset: ReaderThemePreset.eink,
+          // 墨水屏最低 500 字重：Flutter 没有关亚像素抗锯齿的 API，
+          // 加粗是唯一能用的笔画加深手段。
+          fontWeight: einkEffectiveFontWeight(
+            eink: true,
+            fontWeight: _preferences.fontWeight,
+          ),
+        )
       : _preferences;
 
   /// 原生层（MainActivity.dispatchKeyEvent）拦截到音量键后回调：仅在阅读页
@@ -300,6 +309,19 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 然后归零。仅在全局墨水屏模式开启时累加。
   int _einkPageCounter = 0;
 
+  /// 墨水屏软件白闪显隐：[EinkRefreshService] 在厂商接口不可用时发请求，
+  /// 这里盖一张全屏白帧再撤掉，迫使 EPD 控制器做一次全量刷新。
+  bool _einkFlashVisible = false;
+  Timer? _einkFlashTimer;
+
+  /// 滚动模式下的墨水屏刷新累积：滚动没有“翻页”计数，改按滚动距离累积，
+  /// 每滚够约 3 屏刷一次，避免滚动模式残影只增不减。
+  double _einkScrollDistance = 0;
+  double _einkLastScrollOffset = 0;
+
+  /// 上一次已触发过切章刷新的章节 id：首章打开不闪，只有切章才刷。
+  String? _lastEinkRefreshChapterId;
+
   /// Chapter-boundary transition handed to [ReaderPagedView]; see
   /// [ReaderChapterTurn]. Set by [_next] / [_prev] and cleared once the slide
   /// finishes, or when the chapter fails to load.
@@ -423,6 +445,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _index = widget.chapters.isEmpty
         ? 0
         : widget.startIndex.clamp(0, widget.chapters.length - 1);
+    _lastEinkRefreshChapterId = widget.chapters.isEmpty
+        ? null
+        : widget.chapters[_index].itemId;
+    EinkRefreshService.instance.flashRequest.addListener(_onEinkFlashRequest);
     _scrollController.addListener(_onScroll);
     _preferencesFuture = _loadPreferences();
     if (widget.chapters.isEmpty) {
@@ -1006,6 +1032,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _settleReadTime();
     _sessionActive = false;
     unawaited(_persistProgress());
+    EinkRefreshService.instance.flashRequest.removeListener(
+      _onEinkFlashRequest,
+    );
+    _einkFlashTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -1094,6 +1124,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _selection = null;
         _selectionBarOpen = false;
       });
+      // 墨水屏切章刷一次：弹窗/翻页之外的残影来源。首章打开不闪
+      // （_lastEinkRefreshChapterId 在 initState 已记为首章）。
+      if (einkModeNotifier.value &&
+          _lastEinkRefreshChapterId != chapter.itemId) {
+        _lastEinkRefreshChapterId = chapter.itemId;
+        unawaited(EinkRefreshService.instance.requestRefresh());
+      }
       unawaited(_prefetchAround(_index));
       unawaited(_loadIdeas(chapter, generation));
       unawaited(_loadUnderlines());
@@ -1226,6 +1263,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _ideasSheetOpen = false;
         _syncSystemBars();
       }
+      // 墨水屏：段评面板关闭后刷一次，清掉面板残影。
+      _maybeEinkRefresh();
     }
   }
 
@@ -1587,6 +1626,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   void _onScroll() {
     _saveTimer?.cancel();
     if (!_progressReady || _paged) return;
+    // 墨水屏滚动模式：按滚动距离累积，每滚够约 3 屏刷一次。
+    if (einkModeNotifier.value && _scrollController.hasClients) {
+      final offset = _scrollController.offset;
+      _einkScrollDistance += (offset - _einkLastScrollOffset).abs();
+      _einkLastScrollOffset = offset;
+      final viewport = _scrollController.position.viewportDimension;
+      if (viewport > 0 && _einkScrollDistance >= viewport * 3) {
+        _einkScrollDistance = 0;
+        unawaited(EinkRefreshService.instance.requestRefresh());
+      }
+    }
     _captureScrollProgress(updateTextOffset: true);
     _saveTimer = Timer(const Duration(milliseconds: 500), () {
       _settleReadTime();
@@ -1642,6 +1692,24 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _recordEinkPageTurn();
   }
 
+  /// 墨水屏：弹窗/菜单关闭后刷一次，清掉弹窗残影。非墨水屏不做事。
+  void _maybeEinkRefresh() {
+    if (!einkModeNotifier.value) return;
+    unawaited(EinkRefreshService.instance.requestRefresh());
+  }
+
+  /// 软件白闪：盖一张全屏白帧 150ms 再撤掉。白帧本身就是一次可见闪烁，
+  /// 墨水屏上这正是全刷的观感；连续请求进来时重计时，不叠加多闪。
+  void _onEinkFlashRequest() {
+    if (!mounted) return;
+    _einkFlashTimer?.cancel();
+    if (!_einkFlashVisible) setState(() => _einkFlashVisible = true);
+    _einkFlashTimer = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted) return;
+      setState(() => _einkFlashVisible = false);
+    });
+  }
+
   /// 墨水屏整屏刷新：翻够 [_preferences.einkRefreshInterval] 页触发一次海信 EPD
   /// 全刷压残影。全局墨水屏未开或间隔为 0 时直接跳过，计数不累加。
   void _recordEinkPageTurn() {
@@ -1651,7 +1719,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _einkPageCounter++;
     if (_einkPageCounter >= interval) {
       _einkPageCounter = 0;
-      unawaited(EinkRefreshService.instance.refreshIfSupported());
+      unawaited(EinkRefreshService.instance.requestRefresh());
     }
   }
 
@@ -1920,6 +1988,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         onPickFont: _pickFont,
       ),
     );
+    // 墨水屏：排版面板关闭后刷一次，清掉面板残影。
+    _maybeEinkRefresh();
     await _savePreferences();
   }
 
@@ -1969,6 +2039,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         ),
       ),
     );
+    // 墨水屏：目录关闭后刷一次（选了章节时切章本身也会刷一次，不叠加也无妨）。
+    _maybeEinkRefresh();
     if (selected != null && mounted) await _jumpToChapter(selected);
   }
 
@@ -2282,6 +2354,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ),
                 _menuEdge(top: true, child: _buildToolbar(preset)),
                 _menuEdge(top: false, child: _buildReaderControls(preset)),
+                // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
+                if (_einkFlashVisible)
+                  const Positioned.fill(
+                    child: ColoredBox(color: Colors.white),
+                  ),
               ],
             ),
           ),
@@ -2300,7 +2377,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       child: ExcludeSemantics(
         excluding: !_controlsVisible,
         child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 180),
+          // 墨水屏：菜单滑入/淡出动画也会留残影，直接跳变。
+          duration: einkModeNotifier.value
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
           switchInCurve: Curves.easeOutCubic,
           switchOutCurve: Curves.easeInCubic,
           transitionBuilder: (child, animation) => SlideTransition(
@@ -2450,10 +2530,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                         onPageChanged: _onPageChanged,
                         onBoundary: _pageBoundary,
                         onDragStart: _hideControlsOnDrag,
-                        instantSwipe: _preferences.instantSwipeTurn,
-                        turnStyle: _preferences.instantSwipeTurn
-                            ? ReaderPageTurnStyle.none
-                            : _preferences.pageTurnStyle,
+                        // 墨水屏强制零动画翻页：动画帧在墨水屏上全是残影。
+                        // turnStyle == none 时章节边界动画也随之跳过。
+                        instantSwipe: einkEffectiveInstantSwipe(
+                          eink: einkModeNotifier.value,
+                          instantSwipeTurn: _preferences.instantSwipeTurn,
+                        ),
+                        turnStyle: einkEffectiveTurnStyle(
+                          eink: einkModeNotifier.value,
+                          instantSwipeTurn: _preferences.instantSwipeTurn,
+                          pageTurnStyle: _preferences.pageTurnStyle,
+                        ),
                         backgroundColor: preset.backgroundColor,
                         endPage: _index == widget.chapters.length - 1
                             ? _buildChapterEndPage(preset)
