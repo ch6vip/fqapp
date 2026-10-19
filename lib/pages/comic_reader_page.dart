@@ -8,6 +8,7 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/backend_transport.dart';
 import '../services/comic_page_layout.dart';
+import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
@@ -98,6 +99,8 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   bool _sessionActive = false;
   DateTime _readStart = DateTime.now();
   Timer? _saveTimer;
+  // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
+  VoidCallback? _unregisterFairMemoryFlush;
   String? _error;
 
   Chapter get _chapter => widget.chapters[_chapterIndex];
@@ -106,6 +109,9 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 小米公平运行内存：KILL 广播到达时刷一次漫画进度，避免被杀丢进度。
+    _unregisterFairMemoryFlush =
+        FairMemoryService.instance.registerFlushHandler(_saveProgress);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -125,6 +131,8 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   void dispose() {
     _imageRequest?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _unregisterFairMemoryFlush?.call();
+    _unregisterFairMemoryFlush = null;
     _saveTimer?.cancel();
     _settleReadTime();
     _sessionActive = false;

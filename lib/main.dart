@@ -22,6 +22,7 @@ import 'services/backend_service.dart';
 import 'services/digg_store.dart';
 import 'services/drama_download_store.dart';
 import 'services/drama_downloader.dart';
+import 'services/fair_memory.dart';
 import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
@@ -122,6 +123,9 @@ Future<void> _initializeLocalData() async {
   } catch (_) {}
   // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
   unawaited(PosterCache.instance.enforceBudget());
+  // 小米澎湃 OS 公平运行内存：注册 TRIM/KILL 通道回调。必须在启动时构造，
+  // 否则广播到达时 Dart 侧还没有处理函数，原生侧只能按“未处理”回。
+  FairMemoryService.instance.init();
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.

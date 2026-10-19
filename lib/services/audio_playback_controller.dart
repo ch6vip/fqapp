@@ -36,6 +36,8 @@ class _AudioPlaybackController extends ChangeNotifier
   int _generation = 0;
   int _seekGeneration = 0;
   Timer? _saveTimer;
+  // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
+  VoidCallback? _unregisterFairMemoryFlush;
   bool _appActive = true;
   bool _loading = true;
   bool _wantPlay = true;
@@ -123,6 +125,9 @@ class _AudioPlaybackController extends ChangeNotifier
 
   void start() {
     WidgetsBinding.instance.addObserver(this);
+    // 小米公平运行内存：KILL 广播到达时刷一次听书进度，避免被杀丢进度。
+    _unregisterFairMemoryFlush =
+        FairMemoryService.instance.registerFlushHandler(_persistProgress);
     NativePlayer.setRemoteCommandHandler(
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
@@ -1206,6 +1211,8 @@ class _AudioPlaybackController extends ChangeNotifier
   Future<void> _close() async {
     if (_closed) return;
     _closed = true;
+    _unregisterFairMemoryFlush?.call();
+    _unregisterFairMemoryFlush = null;
     ++_generation;
     ++_seekGeneration;
     ++_settingsGeneration;

@@ -16,6 +16,7 @@ import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
 import '../services/eink_refresh.dart';
+import '../services/fair_memory.dart';
 import '../services/volume_key.dart';
 import '../services/reader_history.dart';
 import '../services/reader_preferences.dart';
@@ -105,6 +106,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   late int _index;
   final ScrollController _scrollController = ScrollController();
   Timer? _saveTimer;
+  // 小米公平运行内存 KILL 广播的刷盘注销函数：dispose 时注销，避免 KILL
+  // 到达时调用已 dispose 页面的保存。
+  VoidCallback? _unregisterFairMemoryFlush;
 
   /// 滚动模式下拖过边界的累计量：超过阈值才触发连续阅读跨章，避免轻微
   /// 回弹误触（与分页视图的 32px 边界阈值一致）。带符号：拖过底部为正，
@@ -417,6 +421,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _syncVolumeKeyEnabled();
     ListeningSession.instance.addListener(_onListeningTick);
     WidgetsBinding.instance.addObserver(this);
+    // 小米公平运行内存：KILL 广播到达时刷一次阅读进度，避免被杀丢进度。
+    _unregisterFairMemoryFlush =
+        FairMemoryService.instance.registerFlushHandler(_persistProgress);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -993,6 +1000,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     VolumeKeyService.instance.setOnVolumeKey(null);
     unawaited(VolumeKeyService.instance.setEnabled(false));
     ListeningSession.instance.removeListener(_onListeningTick);
+    _unregisterFairMemoryFlush?.call();
+    _unregisterFairMemoryFlush = null;
     _autoTurnTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     ++_deviceGeneration;
