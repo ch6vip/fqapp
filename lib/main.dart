@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -17,11 +18,14 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
+import 'services/audio_download_store.dart';
+import 'services/audio_downloader.dart';
 import 'services/audio_preferences.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
 import 'services/drama_download_store.dart';
 import 'services/drama_downloader.dart';
+import 'services/fair_memory.dart';
 import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
@@ -111,6 +115,8 @@ Future<void> _initializeLocalData() async {
     // （避免运行中途首次 openBox 失败产生游离异步错误）。可选数据，失败
     // 只退化为「本会话不查离线」。
     optional(HiveDramaDownloadStore.instance.warmUp),
+    // 听书音频离线记录箱：与短剧箱分开，同样只在就绪时才查离线命中。
+    optional(HiveAudioDownloadStore.instance.warmUp),
   ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
@@ -123,10 +129,17 @@ Future<void> _initializeLocalData() async {
         online: view.online,
         metered: view.metered,
       );
+      AudioDownloader.instance.updateConnectivity(
+        online: view.online,
+        metered: view.metered,
+      );
     });
   } catch (_) {}
   // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
   unawaited(PosterCache.instance.enforceBudget());
+  // 小米澎湃 OS 公平运行内存：注册 TRIM/KILL 通道回调。必须在启动时构造，
+  // 否则广播到达时 Dart 侧还没有处理函数，原生侧只能按“未处理”回。
+  FairMemoryService.instance.init();
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
@@ -169,6 +182,11 @@ class _FqAppState extends State<FqApp> {
               theme: _theme(Brightness.light, eink: eink),
               darkTheme: _theme(Brightness.dark, eink: eink),
               themeMode: effectiveMode,
+              // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
+              // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
+              locale: const Locale('zh', 'CN'),
+              supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+              localizationsDelegates: GlobalMaterialLocalizations.delegates,
               home: AppBootstrap(
                 backendStarter: BackendService.instance.start,
                 child: const RootShell(),

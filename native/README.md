@@ -30,22 +30,22 @@ Android 仍加载 `libshortplay_crypto.so`，保留 `com.example.shortplay.Crypt
 ## Android 构建
 
 Gradle `externalNativeBuild` 使用本目录 [CMakeLists.txt](CMakeLists.txt)，
-固定 NDK `28.2.13676358`、CMake `3.22.1`，自动生成并打包 ARM64 crypto 库。
+固定 NDK `28.2.13676358`、CMake `3.22.1`，自动生成并打包两个 ABI 的 crypto 库。
 共享库显式设置 `max-page-size=16384` 和 `common-page-size=16384`，未增加运行时共享库依赖。
 Rust 核心库 `libfqapi_core.so` 由 `scripts/build_rust_backend.ps1` / `build_rust_backend.sh` 生成，
 与 C 库一起打包；两者互不依赖。
 
-升级旧工作区时，把 `android/app/src/main/jniLibs/arm64-v8a/libshortplay_crypto.so`
+升级旧工作区时，把 `android/app/src/main/jniLibs/` 下两个 ABI 目录里的 `libshortplay_crypto.so`
 备份到 `jniLibs` 之外。预编译旧库与 CMake 产物不能同时打包，Gradle 会提示清理旧输入。
 JNI 方法名保留，但网络回调增加了长度探测和分两步准备/连接请求，必须将 Kotlin 与新库一起构建。
 
 ```powershell
-flutter build apk --release --target-platform android-arm64
+flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
 ```
 
 ELF 的 LOAD 段和 APK ZIP 都需要满足 16 KiB 对齐，构建后还需在 16 KiB 页 Android 设备上
 验证实际播放、拖动和生命周期；仅通过链接检查不能视为设备验证完成。
-可用 `node scripts/check_native_alignment.cjs path/to/library.so` 检查 ARM64 ELF 程序头、
+可用 `node scripts/check_native_alignment.cjs path/to/library.so` 检查 ELF 程序头、
 LOAD 段对齐和文件偏移/虚拟地址同余条件；APK 内的所有 `.so` 都应检查。
 
 ## I/O 与生命周期

@@ -4,12 +4,9 @@ class PlayerPreferences {
   static const _playbackRateKey = 'player_playback_rate';
   static const _autoAdvanceKey = 'player_auto_advance';
   static Future<void>? _autoAdvanceWrites;
-  static const playbackRates = <double>[0.75, 1, 1.25, 1.5, 1.75, 2];
-
-  /// 官方浅色更多面板（style 未下发）的药丸档位，与深色 V2 不同：
-  /// 无 1.75x，多 2x/3x（官方截图对照）。
-  static const lightPanelPlaybackRates = <double>[0.75, 1, 1.25, 1.5, 2, 3];
-
+  /// 官方 `player_control_panel_opt_v645.playrate_list` 的实测档位（用户设备
+  /// 官方截图 + 横屏子列表证据）：含 2x/3x，**没有 1.75x**。
+  static const playbackRates = <double>[0.75, 1, 1.25, 1.5, 2, 3];
   static Future<double> loadPlaybackRate() async {
     final preferences = await SharedPreferences.getInstance();
     final saved = preferences.get(_playbackRateKey);

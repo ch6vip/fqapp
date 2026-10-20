@@ -110,16 +110,6 @@ class _PlayletQuickCatalogSheetState extends State<PlayletQuickCatalogSheet> {
     }
   }
 
-  Future<void> _openRelatedSeries() async {
-    final entry = await RelatedSeriesSheet.show(
-      context,
-      widget.item.seriesId ?? widget.item.id,
-    );
-    if (!mounted || entry == null) return;
-    Navigator.of(context).pop();
-    widget.onRelatedSeriesSelected?.call(entry);
-  }
-
   Future<void> _loadDirectory() async {
     setState(() {
       _loading = true;
@@ -340,17 +330,22 @@ class _PlayletQuickCatalogSheetState extends State<PlayletQuickCatalogSheet> {
               ),
             ),
 
-            const Divider(color: Color(0x1FFFFFFF), height: 1),
+
+            // 官方 `catalogdialog/view/s`：同系列是选集弹层**内的一块**（双列
+            // 网格），不是一个会再开弹层的按钮。只在详情表明有关联时出现。
             if (_hasRelatedSeries)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  key: const ValueKey('quick-catalog-related-series'),
-                  onPressed: _openRelatedSeries,
-                  style: TextButton.styleFrom(foregroundColor: Colors.white),
-                  child: const Text('同系列'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: RelatedSeriesBlock(
+                  seriesId: widget.item.seriesId ?? widget.item.id,
+                  title: '同系列剧',
+                  onSelected: (entry) {
+                    Navigator.pop(context);
+                    widget.onRelatedSeriesSelected?.call(entry);
+                  },
                 ),
               ),
+            const Divider(color: Color(0x1FFFFFFF), height: 1),
 
             // Content body
             Flexible(child: _buildBody(context)),
