@@ -53,82 +53,25 @@
 
 ## 三、提交代码
 
-### 分支与提交
-
-本项目是单人维护，**默认直接在 `master` 上迭代**，不强制走 PR。你提交 PR 也会被正常审阅和合并，但请理解：
-
-- 维护者可能直接在你的分支基础上改动，而不是逐行 review 后要求你返工
-- 小改动（错别字、一行修复）直接说明即可，不必纠结流程
-
-提交信息格式：
-
-```
-<type>(<scope>): <summary> (#issue)
-```
-
-- `type`：`feat` / `fix` / `perf` / `refactor` / `docs` / `chore` / `test`
-- `scope`：受影响模块，如 `search`、`reader`、`player`、`android`、`rust`
-- 关联 issue 时在末尾带 `(#123)`
-
-示例：
+单人维护，直接在 `master` 上迭代，不强制 PR。提交信息跟现有历史保持一致即可：
 
 ```
 feat(search): persist the rating threshold and show the work length (#90)
-fix(reader): keep immersive mode when the ideas sheet closes (#57)
 ```
 
-### 提交前必须通过
+提交前请确认这两条干净：
 
 ```bash
 flutter analyze --no-pub
 flutter test
 ```
 
-两者都必须干净。**只跑定向测试不算通过**，涉及共享代码时要跑全量。
+改了 `rust/` 再加跑 `cargo test --manifest-path rust/Cargo.toml --locked`。
 
-改到 `rust/` 时另需：
+两处不要碰：
 
-```bash
-cargo test --manifest-path rust/Cargo.toml --locked
-cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings
-```
-
-仓库已封装了 Dart → Rust 的宿主端集成测试，它会自己起 mock 上游，不碰真机也不打真实上游：
-
-```bash
-# Windows PowerShell
-.\scripts\run_rust_host_tests.ps1
-# macOS / Linux
-./scripts/run_rust_host_tests.sh
-```
-
-格式检查用 `rustfmt --check --edition 2021 --config skip_children=true <文件>`，逐文件枚举 Git 跟踪的手写 `.rs`，**排除 `frb_generated.rs`**。不要用 `cargo fmt --all -- --check` 代替。
-
-### 不要手改生成代码
-
-以下文件由 codegen 生成，手改会在下次生成时被覆盖：
-
-- `rust/src/frb_generated.rs`
-- `lib/src/rust/`
-
-改动绑定接口时执行：
-
-```bash
-flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
-```
-
-`flutter_rust_bridge` 的 Rust crate、Dart 包与 codegen **统一固定 2.13.0**，不要单独升级其中一个。
-
-### 改 UI 时
-
-- 跟随现有页面的视觉语言，不引入新的设计体系
-- 墨水屏模式（设置 → 外观）会退化配色，新增元素请确认在该模式下仍可读
-- 窄屏与大字号要能用，不要写死宽度
-- 有交互的控件请带 `Key`，测试需要锚点
-
-### 改协议解析时
-
-`rust/testdata/` 与 `test/fixtures/` 里的样本承载协议语义。**不要为了让测试通过而修改期望值**——如果上游真的变了，请在 PR 里说明依据（抓包、版本号、时间）。
+- **不要手改 `rust/src/frb_generated.rs` 和 `lib/src/rust/`**，它们由 codegen 生成，改绑定接口请重新生成（命令见 [DEVELOPMENT.md](DEVELOPMENT.md)）。
+- **不要为了让测试通过而修改 `rust/testdata/` 或 `test/fixtures/` 里的期望值**。上游真变了请在提交信息里说明依据（抓包、版本、时间）。
 
 ---
 
