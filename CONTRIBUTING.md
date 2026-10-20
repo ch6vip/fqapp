@@ -53,25 +53,7 @@
 
 ## 三、提交代码
 
-单人维护，直接在 `master` 上迭代，不强制 PR。提交信息跟现有历史保持一致即可：
-
-```
-feat(search): persist the rating threshold and show the work length (#90)
-```
-
-提交前请确认这两条干净：
-
-```bash
-flutter analyze --no-pub
-flutter test
-```
-
-改了 `rust/` 再加跑 `cargo test --manifest-path rust/Cargo.toml --locked`。
-
-两处不要碰：
-
-- **不要手改 `rust/src/frb_generated.rs` 和 `lib/src/rust/`**，它们由 codegen 生成，改绑定接口请重新生成（命令见 [DEVELOPMENT.md](DEVELOPMENT.md)）。
-- **不要为了让测试通过而修改 `rust/testdata/` 或 `test/fixtures/` 里的期望值**。上游真变了请在提交信息里说明依据（抓包、版本、时间）。
+单人维护，直接推 `master` 即可，提交信息跟现有历史保持一致（如 `feat(search): persist the rating threshold (#90)`），提交前跑一下 `flutter analyze --no-pub` 和 `flutter test`，改了 `rust/` 再跑 `cargo test --manifest-path rust/Cargo.toml --locked`。唯一请别做的是手改 `rust/src/frb_generated.rs`、`lib/src/rust/` 这两个 codegen 产物，或者改 `rust/testdata/`、`test/fixtures/` 的期望值去凑测试通过。
 
 ---
 
