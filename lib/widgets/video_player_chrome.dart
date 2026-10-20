@@ -156,6 +156,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final RelatedWork? originalBook;
   final VoidCallback? onOpenOriginalBook;
 
+  /// 进页即全屏（官方 feed 的横屏钮是独立 `ShortSeriesLandActivity`，
+  /// `jq3/x.java:4499`；本地等价是推播放页后立刻进入全屏态并请求横屏，
+  /// 见 `_FullscreenRoundButton` 的调用方）。默认 false。
+  final bool openFullScreen;
+
   const VideoPlayerChrome({
     super.key,
     required this.player,
@@ -211,6 +216,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.qualityVariants = const [],
     this.currentQualityUrl,
     this.onQualitySelected,
+    this.openFullScreen = false,
   });
 
   @override
@@ -370,6 +376,18 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         !widget.hasBanner &&
         !widget.reverseClearScreen) {
       _clearScreen = true;
+    }
+    if (widget.openFullScreen) {
+      // 官方横屏钮进的是独立横屏 Activity，页面一起来就是横屏全屏，没有
+      // 「先竖屏、再点一次」的中间态。这里同等：进页即置全屏态并请求
+      // 横屏，随后照常安排控件收起（全屏态下 `_scheduleHide` 不会被
+      // 竖屏常驻分支拦住）。
+      _fullScreen = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_applySystemUi());
+        _scheduleHide();
+      });
     }
     _scheduleHide();
     _scheduleLockHide();
