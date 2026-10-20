@@ -1,9 +1,45 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class PlayerPreferences {
   static const _playbackRateKey = 'player_playback_rate';
   static const _autoAdvanceKey = 'player_auto_advance';
+  static const _floatingWindowKey = 'player_floating_window_enabled';
   static Future<void>? _autoAdvanceWrites;
+
+  /// 切后台悬浮窗播放（#24，默认关）：开启且已授予悬浮窗权限时，切到
+  /// 后台或锁屏用悬浮小窗继续播；关闭则切后台暂停（现有行为）。
+  static final ValueNotifier<bool> floatingWindow = ValueNotifier<bool>(false);
+  static bool _floatingLoaded = false;
+
+  static Future<void> loadFloatingWindow() async {
+    if (_floatingLoaded) return;
+    _floatingLoaded = true;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      floatingWindow.value = preferences.getBool(_floatingWindowKey) ?? false;
+    } catch (_) {
+      // 异常时退回默认关闭
+    }
+  }
+
+  /// 重置测试状态，让下一次 [loadFloatingWindow] 重新读取。
+  @visibleForTesting
+  static void resetFloatingWindowForTest() {
+    _floatingLoaded = false;
+    floatingWindow.value = false;
+  }
+
+  static Future<void> setFloatingWindow(bool enabled) async {
+    floatingWindow.value = enabled;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setBool(_floatingWindowKey, enabled);
+    } catch (_) {
+      // 忽略持久化失败
+    }
+  }
+
   /// 官方 `player_control_panel_opt_v645.playrate_list` 的实测档位（用户设备
   /// 官方截图 + 横屏子列表证据）：含 2x/3x，**没有 1.75x**。
   static const playbackRates = <double>[0.75, 1, 1.25, 1.5, 2, 3];

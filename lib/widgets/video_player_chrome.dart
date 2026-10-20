@@ -523,11 +523,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // `inactive` 只是瞬态打断（下拉通知栏/控制中心/分屏呼出）：应用仍在
-    // 前台可见，播放继续；只有 hidden/paused/detached 才表示真正离场。
-    if (state == AppLifecycleState.inactive) return;
+    // `inactive` 只是瞬态打断（下拉通知栏/控制中心/分屏呼出、画中画失焦）：
+    // 应用仍在前台可见，播放继续；只有 hidden/paused/detached 才表示真正离场，
+    // 此时暂停并在回前台时续播。
+    final backgrounded =
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached;
     final active = state == AppLifecycleState.resumed;
-    if (!active && _appActive) {
+    if (backgrounded && _appActive) {
       _appActive = false;
       ++_interaction;
       _resumeOnForeground =

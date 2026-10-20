@@ -9,4 +9,8 @@
     <string name="listen_pause">暂停</string>
     <string name="listen_next">下一章</string>
     <string name="listen_stop">关闭</string>
+    <!-- 短剧 / 漫剧悬浮窗播放（#24）前台服务的通知文案。 -->
+    <string name="floating_channel_name">视频悬浮窗播放</string>
+    <string name="floating_notification_title">悬浮窗播放中</string>
+    <string name="floating_notification_text">视频已搬进悬浮小窗，回到应用恢复全屏</string>
 </resources>

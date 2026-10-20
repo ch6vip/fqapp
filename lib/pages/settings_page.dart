@@ -8,6 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/audio_preferences.dart';
+import '../services/native_player.dart';
+import '../services/player_preferences.dart';
 import '../services/backend_service.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
@@ -65,7 +67,7 @@ class SettingsPage extends StatelessWidget {
         icon: LucideIcons.film,
         title: '短剧',
         subtitle: '播放',
-        items: [_muteWhenColdStartItem()],
+        items: [_muteWhenColdStartItem(), _floatingWindowItem()],
       ),
       SettingsCategory(
         icon: LucideIcons.database,
@@ -344,6 +346,46 @@ class SettingsPage extends StatelessWidget {
   // ── 阅读 ──────────────────────────────────────────────────────────────
 
   /// issue #19 第 3 条：点书跳过详情页，直接按上次进度进阅读器（小说/漫画）。
+  /// 切后台悬浮窗播放（#24，默认关）：开启且已授予悬浮窗权限时，切到
+  /// 后台或锁屏用悬浮小窗继续播；关闭则切后台暂停（现有行为）。
+  /// 开启时若无权限，先打开系统设置让用户授予，授予后回来再点一次。
+  SettingsItem _floatingWindowItem() => SettingsItem(
+    icon: LucideIcons.video,
+    title: '切后台悬浮窗播放',
+    subtitle: '切到后台或锁屏时用悬浮小窗继续播放，需要悬浮窗权限',
+    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: PlayerPreferences.floatingWindow,
+      builder: (context, value, _) => Switch(
+        value: value,
+        onChanged: (enabled) =>
+            unawaited(_setFloatingWindow(context, enabled)),
+      ),
+    ),
+    onTap: (context, setState) {
+      final current = PlayerPreferences.floatingWindow.value;
+      unawaited(_setFloatingWindow(context, !current));
+    },
+  );
+
+  Future<void> _setFloatingWindow(BuildContext context, bool enabled) async {
+    if (!enabled) {
+      await PlayerPreferences.setFloatingWindow(false);
+      return;
+    }
+    if (await NativePlayer.canDrawOverlays()) {
+      await PlayerPreferences.setFloatingWindow(true);
+      return;
+    }
+    await NativePlayer.requestOverlayPermission();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('请在系统设置中允许“显示在其他应用的上层”，然后回来再开启'),
+        ),
+      );
+    }
+  }
+
   /// 默认关＝现有行为（先进详情页）。听书/短剧与加载失败时仍停留在详情页。
   SettingsItem _directReaderItem() => SettingsItem(
     icon: LucideIcons.book_open,

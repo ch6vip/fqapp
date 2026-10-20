@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- 短剧 / 漫剧悬浮窗播放（#24）：切后台时把画面搬进系统悬浮窗，需要用户在系统设置里允许 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <!-- Device identity and reading data stay on-device; see
          .agents/notes/implemented/bug-fix/2026-09-18-home-geometry-and-backup.md -->
     <application
@@ -18,6 +20,10 @@
         android:networkSecurityConfig="@xml/network_security_config">
         <service
             android:name=".ListenKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"/>
+        <service
+            android:name=".FloatingVideoService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
         <activity
