@@ -12,6 +12,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
+import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/drama_mute_preferences.dart';
@@ -292,6 +293,41 @@ void main() {
     expect(rect.bottom, lessThanOrEqualTo(feed.bottom + 0.5));
     // 横版源：官方 `vk3.a.a` 只在非竖屏源上显示 30dp 圆形全屏钮。
     expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('上划换集后横屏钮仍在（判据不随 videoSize 重置退回未知）', (tester) async {
+    // 官方 `vk3.a.a` 读数据层 `isVertical()`，与「解码尺寸此刻是否已知」无关；
+    // 此前用 `videoSize` 宽高比代理，换集时它被重置成 `Size.zero`，图标就再也
+    // 不出现（用户反馈「上划后按钮不见了」）。
+    final session = _Session(width: 1920, height: 1080);
+    await _mount(tester, session);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+
+    await _swipeUp(tester);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('点横屏钮进播放页且一进去就是全屏（官方独立横屏页）', (tester) async {
+    // 官方那颗钮走 `zf3.c.w` → `transformToLandActivity` →
+    // `startActivity(ShortSeriesLandActivity)`（`jq3/x.java:4499`），页面一起来
+    // 就是横屏全屏，不是「观看全集」那种先竖屏播放页。
+    final session = _Session(width: 1920, height: 1080);
+    await _mount(tester, session);
+    final button = find.byKey(const Key('drama_fullscreen_button'));
+    expect(button, findsOneWidget);
+
+    await tester.tap(button);
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
+
+    expect(find.byType(PlayerPage), findsOneWidget);
+    // 进页即全屏：`openFullScreen` 把播放页放在全屏态，与官方横屏 Activity
+    // 一致（竖屏常驻的「全屏观看」药丸在全屏态下已收起）。
+    final page = tester.widget<PlayerPage>(find.byType(PlayerPage));
+    expect(page.openFullScreen, isTrue);
     expect(tester.takeException(), isNull);
   });
 

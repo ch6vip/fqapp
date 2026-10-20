@@ -67,6 +67,13 @@ class PlayerPage extends StatefulWidget {
   /// 播放页信息层的 AI 声明行。
   final bool aiGenerated;
 
+  /// 进页即全屏（并请求横屏）。官方 feed 卡片右侧的横屏钮不是「观看全集」
+  /// 的同一条路：它 `transformToLandActivity` → 起独立
+  /// `ShortSeriesLandActivity`（`jq3/x.java:4499-4538`，manifest 锁
+  /// `userLandscape`），页面一起来就是横屏全屏。本地用同一个播放页承载，
+  /// 靠这个参数在进页时置全屏态。
+  final bool openFullScreen;
+
   const PlayerPage({
     super.key,
     required this.bookId,
@@ -84,6 +91,7 @@ class PlayerPage extends StatefulWidget {
     this.danmakuFetcher,
     this.shortSeries = false,
     this.aiGenerated = false,
+    this.openFullScreen = false,
   });
 
   @override
@@ -1371,6 +1379,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       duration: _duration,
       playing: _playing,
       shortSeries: widget.shortSeries,
+      openFullScreen: widget.openFullScreen,
       watchedEpisodes: watchedIndexes(_watchedIds, widget.eps),
       interactionBlocked: _externalPanelOpen || _switchingSeries,
       aiGenerated: widget.aiGenerated,

@@ -8,6 +8,7 @@ import 'dart:ui' show Size;
 import 'package:flutter/foundation.dart';
 
 import '../models/media_item.dart';
+import '../widgets/player/player_video_layout.dart';
 import 'api_client.dart';
 import 'drama_download_store.dart';
 import 'drama_mute_preferences.dart';
@@ -137,6 +138,15 @@ class InlineVideoPlayback {
   /// the full page player, so a landscape drama is not squeezed into a 9:16
   /// box; `PlayerVideoLayout` turns an unknown (0×0) size into that fallback.
   final ValueNotifier<Size> videoSize = ValueNotifier<Size>(Size.zero);
+
+  /// 本集是否为横版片源，`null` 表示还没判出来。
+  ///
+  /// 官方那颗横屏钮的显隐看数据层的 `saasVideoData.isVertical()`
+  /// （`vk3/a.java:32`），换集后立刻成立。本地源数据没有这个字段，只能等
+  /// 解码器报尺寸；但一旦报过就是确定的，不能因为换集时 [videoSize] 被重置
+  /// 成 `Size.zero` 就退回「未知」——那正是「上划一集后钮就再也不出现」的
+  /// 成因。所以结论在这里单独记一份，随集切换一起清空。
+  final ValueNotifier<bool?> landscapeSource = ValueNotifier<bool?>(null);
 
   bool _muted = false;
   bool _coldStartMuteApplied = false;
@@ -338,6 +348,8 @@ class InlineVideoPlayback {
     _activeIndex = null;
     rotation.value = 0;
     videoSize.value = Size.zero;
+    // 换剧即换片源，横竖结论跟着作废（同一部剧内换集不会走到这里）。
+    landscapeSource.value = null;
     // The progress bar belongs to one episode, so it restarts empty.
     position.value = Duration.zero;
     duration.value = Duration.zero;
@@ -950,6 +962,9 @@ class InlineVideoPlayback {
     final height = player.videoHeight;
     if (width <= 0 || height <= 0) return;
     videoSize.value = Size(width.toDouble(), height.toDouble());
+    // 与 `PlayerVideoLayout.fillsFrame` 同一道门槛：宽高比达到
+    // `landscapeRatio` 才算横版片源。判出来就不再回退成未知。
+    landscapeSource.value = width / height >= PlayerVideoLayout.landscapeRatio;
   }
 
   void _onFirstFrame(NativePlayer player, int generation) {
