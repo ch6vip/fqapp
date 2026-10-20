@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/poster_cache.dart';
+import '../models/book_detail.dart' show formatWordCount;
 import '../models/media_item.dart';
 import 'cover_tag_chip.dart';
 
@@ -20,6 +21,27 @@ const kindColors = {
   'manga': Color(0xFF34A853),
   'audio': Color(0xFF9C6ADE),
 };
+
+/// Compact length caption for a search card: 「共93集」 for dramas/manju,
+/// 「216万字」 for novels. Empty when the card carries neither, so callers can
+/// drop the segment instead of rendering a dangling separator.
+///
+/// Search responses ship the length inside the nested card record: novels put
+/// `word_number` on `book_data`, dramas put `episode_cnt` on `video_data`.
+/// Both are real values in the captured payloads, not guesses — see
+/// docs/validation/issue90-search-length-and-score-20261020.md.
+String mediaLengthLabel(MediaItem item) {
+  switch (item.kind) {
+    case 'book':
+      final words = formatWordCount(item.wordNumber);
+      if (words.isNotEmpty) return words;
+    case 'video':
+    case 'manju':
+      final episodes = int.tryParse(item.ep.trim());
+      if (episodes != null && episodes > 0) return '共$episodes集';
+  }
+  return '';
+}
 
 /// Baseline grid used by tests and callers without a BuildContext. A maximum
 /// tile width makes it naturally expand from two columns on narrow windows to
@@ -209,7 +231,13 @@ class MediaCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    item.author,
+                    // Author and length share one line: the tile is narrow, and
+                    // a second caption row would push the grid taller.
+                    [
+                      if (item.author.isNotEmpty) item.author,
+                      if (mediaLengthLabel(item).isNotEmpty)
+                        mediaLengthLabel(item),
+                    ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

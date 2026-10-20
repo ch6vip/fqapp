@@ -38,6 +38,10 @@ class MediaItem {
   final String ep;
   final String kind; // 'book' | 'video' | 'manju' | 'manga' | 'audio'
 
+  /// Novel length (`word_number`) from the search card's `book_data`.
+  /// Zero when the card carries none, which is normal for non-novel kinds.
+  final int wordNumber;
+
   /// Upstream rating on a 0–10 scale; absent or invalid ratings stay unknown.
   final double? score;
 
@@ -80,6 +84,7 @@ class MediaItem {
     required this.badge,
     required this.ep,
     required this.kind,
+    this.wordNumber = 0,
     this.score,
     this.tag,
     this.seriesId,
@@ -107,6 +112,7 @@ class MediaItem {
     String? badge,
     String? ep,
     String? kind,
+    int? wordNumber,
     double? score,
     MediaTag? tag,
     String? seriesId,
@@ -124,6 +130,7 @@ class MediaItem {
     badge: badge ?? this.badge,
     ep: ep ?? this.ep,
     kind: kind ?? this.kind,
+    wordNumber: wordNumber ?? this.wordNumber,
     score: score ?? this.score,
     tag: tag ?? this.tag,
     seriesId: seriesId ?? this.seriesId,
@@ -238,6 +245,7 @@ class MediaItem {
           _firstString(item, idKeys) ??
           '',
       kind: kind,
+      wordNumber: _asInt(bd['word_number']) ?? _asInt(item['word_number']) ?? 0,
       score: _validScore(bd['score'] ?? item['score']),
       seriesId: seriesId,
       episodeId: episodeId,
@@ -1281,6 +1289,7 @@ extension MediaItemJson on MediaItem {
     'badge': badge,
     'ep': ep,
     'kind': kind,
+    if (wordNumber > 0) 'wordNumber': wordNumber,
     if (score != null) 'score': score,
     if (seriesId != null) 'seriesId': seriesId,
     if (episodeId != null) 'episodeId': episodeId,
@@ -1314,6 +1323,7 @@ extension MediaItemJson on MediaItem {
       badge: field('badge'),
       ep: field('ep'),
       kind: kind,
+      wordNumber: _asInt(map['wordNumber']) ?? 0,
       score: MediaItem._validScore(map['score']),
       tag: MediaTag.fromRaw(
         map['tag'] is Map ? (map['tag'] as Map).cast<String, dynamic>() : null,

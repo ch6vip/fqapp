@@ -288,6 +288,92 @@ void main() {
     expect(item.id, 'series-video');
   });
 
+  // Real upstream cards, trimmed to the fields these two assertions need.
+  // Values are copied verbatim from the captured search responses
+  // (build/review-20260917-mumu/38-drama-search.json): note that both
+  // `word_number` and `episode_cnt` arrive type-inconsistently — the novel
+  // fields are JSON strings ("1962856") while the drama count is a JSON number
+  // (103). The parser has to accept both spellings.
+  test('search cards keep the length the list caption renders', () {
+    final tabs = parseSearchTabs({
+      'search_tabs': [
+        {
+          'title': '短剧',
+          'data': [
+            {
+              'series_id': '7681506169860394009',
+              'video_data': [
+                {
+                  'raw_book_name': '无敌神医',
+                  'episode_cnt': 103,
+                  'episode': true,
+                  'score': '8.1',
+                  'series_id': '7681506169860394009',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          'title': '书籍',
+          'data': [
+            {
+              'book_data': [
+                {
+                  'book_id': '7182857736776846396',
+                  'book_name': '无敌神医',
+                  'author': '入梦七星',
+                  'serial_count': '948',
+                  'word_number': '1962856',
+                  'score': '8.3',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    final drama = tabs.singleWhere((tab) => tab.title == '短剧').items.single;
+    expect(drama.kind, 'video');
+    expect(drama.ep, '103');
+    expect(drama.score, 8.1);
+
+    final novel = tabs.singleWhere((tab) => tab.title == '书籍').items.single;
+    expect(novel.kind, 'book');
+    expect(novel.wordNumber, 1962856);
+    expect(novel.score, 8.3);
+    // The chapter count is already carried by the existing `ep` field; the
+    // caption prefers 字数 for novels, so this is the fallback signal.
+    expect(novel.ep, '948');
+  });
+
+  test('a novel card without word_number keeps zero instead of failing', () {
+    // 7498641850283084825 ships word_number = 0 in the same response.
+    final tabs = parseSearchTabs({
+      'search_tabs': [
+        {
+          'title': '书籍',
+          'data': [
+            {
+              'book_data': [
+                {
+                  'book_id': '7498641850283084825',
+                  'book_name': '短视频剧透，华夏民族伟大复兴',
+                  'serial_count': '522',
+                  'word_number': 0,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    final novel = tabs.single.items.single;
+    expect(novel.wordNumber, 0);
+    expect(novel.ep, '522');
+  });
+
   test('merges parent metadata into nested video search results', () {
     final tabs = parseSearchTabs({
       'data': {
