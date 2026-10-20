@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Builds the Rust native core (rust/ -> libfqapi_core.so) for Android arm64 and
-# copies it into android/app/src/main/jniLibs/arm64-v8a.
+# Builds the Rust native core (rust/ -> libfqapi_core.so) for Android
+# (arm64-v8a and armeabi-v7a) and copies each library into its
+# android/app/src/main/jniLibs/<abi> directory.
+#
+# Both ABIs are always built: the split APK build packages both (see the
+# split-per-ABI build in .github/workflows/android-apk.yml), so building
+# only one would leave the packaging verification without the other library
+# and fail the build.
+# Cargo caches per target, so a rebuild with no Rust changes is fast.
 #
 # This is the single entry point for the Rust build: it regenerates the
 # flutter_rust_bridge bindings, cross-compiles with the pinned NDK, and places
@@ -108,42 +115,58 @@ case "$(uname -s)" in
   *) echo "错误：不支持当前 NDK 主机平台。" >&2; exit 1 ;;
 esac
 TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG/bin"
-CC_PATH="$TOOLCHAIN/aarch64-linux-android21-clang"
-# Windows 的 NDK 里不带扩展名的 clang 是 shell 脚本，cargo 无法 exec
-# （os error 193）；与 .ps1 同策略优先选 .cmd 包装器。
-if [ "$HOST_TAG" = "windows-x86_64" ] && [ -f "$CC_PATH.cmd" ]; then
-  CC_PATH="$CC_PATH.cmd"
-fi
-if [ ! -f "$CC_PATH" ]; then
-  echo "错误：在 $TOOLCHAIN 下找不到 aarch64-linux-android21-clang。" >&2
-  exit 1
-fi
 
-export CC_aarch64_linux_android="$CC_PATH"
-export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_PATH"
+# Cross-compiles the Rust core for one Android ABI and installs it into
+# that ABI's jniLibs directory. Arguments: Rust target triple, NDK clang
+# triple (without the API level or -clang suffix), jniLibs ABI directory.
+# The armv7 target uses the armv7a NDK triple (armeabi-v7a with NEON, the
+# same assumption the Flutter engine build makes for 32-bit ARM).
+build_android_target() {
+  local rust_target="$1" clang_triple="$2" abi="$3"
+  local cc_path="$TOOLCHAIN/${clang_triple}21-clang"
+  # Windows 的 NDK 里不带扩展名的 clang 是 shell 脚本，cargo 无法 exec
+  # （os error 193）；与 .ps1 同策略优先选 .cmd 包装器。
+  if [ "$HOST_TAG" = "windows-x86_64" ] && [ -f "$cc_path.cmd" ]; then
+    cc_path="$cc_path.cmd"
+  fi
+  if [ ! -f "$cc_path" ]; then
+    echo "错误：在 $TOOLCHAIN 下找不到 ${clang_triple}21-clang。" >&2
+    exit 1
+  fi
+  local cc_var="CC_${rust_target//-/_}"
+  local ar_var="AR_${rust_target//-/_}"
+  # Uppercase via tr: ${var^^} needs bash 4+, but macOS ships bash 3.2.
+  local linker_var
+  linker_var="$(printf '%s' "CARGO_TARGET_${rust_target//-/_}_LINKER" | tr 'a-z' 'A-Z')"
+  export "$cc_var=$cc_path"
+  export "$ar_var=$TOOLCHAIN/llvm-ar"
+  export "$linker_var=$cc_path"
 
-JNI_DIR="$APP_DIR/android/app/src/main/jniLibs/arm64-v8a"
-mkdir -p "$JNI_DIR"
+  local jni_dir="$APP_DIR/android/app/src/main/jniLibs/$abi"
+  mkdir -p "$jni_dir"
 
-PROFILE_ARGS=()
-if [ "$PROFILE" = "release" ]; then PROFILE_ARGS=(--release); fi
+  local profile_args=()
+  if [ "$PROFILE" = "release" ]; then profile_args=(--release); fi
 
-echo "==> cargo build --target aarch64-linux-android ($PROFILE)..."
-( cd "$APP_DIR" && cargo build --manifest-path "$MANIFEST" --target aarch64-linux-android "${PROFILE_ARGS[@]}" )
+  echo "==> cargo build --target $rust_target ($PROFILE)..."
+  ( cd "$APP_DIR" && cargo build --manifest-path "$MANIFEST" --target "$rust_target" "${profile_args[@]}" )
 
-BUILT_SO="$APP_DIR/rust/target/aarch64-linux-android/$PROFILE/libfqapi_core.so"
-if [ ! -s "$BUILT_SO" ]; then
-  echo "错误：Rust 交叉编译未产出 $BUILT_SO" >&2
-  exit 1
-fi
-cp -f "$BUILT_SO" "$JNI_DIR/libfqapi_core.so"
-echo "==> jniLibs: $JNI_DIR/libfqapi_core.so"
-if command -v sha256sum >/dev/null 2>&1; then
-  sha256sum "$JNI_DIR/libfqapi_core.so"
-else
-  shasum -a 256 "$JNI_DIR/libfqapi_core.so"
-fi
+  local built_so="$APP_DIR/rust/target/$rust_target/$PROFILE/libfqapi_core.so"
+  if [ ! -s "$built_so" ]; then
+    echo "错误：Rust 交叉编译未产出 $built_so" >&2
+    exit 1
+  fi
+  cp -f "$built_so" "$jni_dir/libfqapi_core.so"
+  echo "==> jniLibs: $jni_dir/libfqapi_core.so"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$jni_dir/libfqapi_core.so"
+  else
+    shasum -a 256 "$jni_dir/libfqapi_core.so"
+  fi
+}
+
+build_android_target aarch64-linux-android aarch64-linux-android arm64-v8a
+build_android_target armv7-linux-androideabi armv7a-linux-androideabi armeabi-v7a
 
 if [ "$HOST_LIB" -eq 1 ]; then
   echo "==> 编译宿主 cdylib..."

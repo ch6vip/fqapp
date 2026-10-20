@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Verify the packaged ARM64 APK and retain reproducible inspection artifacts.
+r"""Verify a packaged APK and retain reproducible inspection artifacts.
 
 Usage:
     python scripts/verify_android_apk.py --apk app-release.apk \
@@ -28,12 +28,22 @@ import zipfile
 import zlib
 
 
-REQUIRED_LIBRARIES = {
-    "lib/arm64-v8a/libfqapi_core.so",
-    "lib/arm64-v8a/libshortplay_crypto.so",
-    "lib/arm64-v8a/libflutter.so",
-    "lib/arm64-v8a/libapp.so",
+REQUIRED_LIBRARIES_BY_ABI = {
+    "arm64-v8a": {
+        "lib/arm64-v8a/libfqapi_core.so",
+        "lib/arm64-v8a/libshortplay_crypto.so",
+        "lib/arm64-v8a/libflutter.so",
+        "lib/arm64-v8a/libapp.so",
+    },
+    "armeabi-v7a": {
+        "lib/armeabi-v7a/libfqapi_core.so",
+        "lib/armeabi-v7a/libshortplay_crypto.so",
+        "lib/armeabi-v7a/libflutter.so",
+        "lib/armeabi-v7a/libapp.so",
+    },
 }
+# The ARM64 set, kept for callers that predate the --abi option.
+REQUIRED_LIBRARIES = REQUIRED_LIBRARIES_BY_ABI["arm64-v8a"]
 MAX_ZIP_ENTRIES = 100_000
 MAX_NATIVE_LIBRARIES = 256
 MAX_LIBRARY_BYTES = 256 * 1024 * 1024
@@ -102,7 +112,8 @@ def write_text(directory: Path, relative: str, content: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def inspect_archive(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+def inspect_archive(archive: zipfile.ZipFile, abi: str) -> list[zipfile.ZipInfo]:
+    required_libraries = REQUIRED_LIBRARIES_BY_ABI[abi]
     entries = archive.infolist()
     if len(entries) > MAX_ZIP_ENTRIES:
         raise VerificationError("APK has too many ZIP entries")
@@ -126,11 +137,11 @@ def inspect_archive(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
             raise VerificationError(f"ZIP symlinks are not allowed: {name!r}")
         if entry.flag_bits & 1:
             raise VerificationError(f"Encrypted ZIP entries are not allowed: {name!r}")
-        if parts[0] == "lib" and len(parts) >= 2 and parts[1] != "arm64-v8a":
-            raise VerificationError(f"Unexpected APK ABI: {parts[1]!r}")
+        if parts[0] == "lib" and len(parts) >= 2 and parts[1] != abi:
+            raise VerificationError(f"Unexpected APK ABI: {parts[1]!r} (expected {abi})")
         if not name.lower().endswith(".so"):
             continue
-        if (entry.is_dir() or len(parts) != 3 or parts[:2] != ["lib", "arm64-v8a"]
+        if (entry.is_dir() or len(parts) != 3 or parts[:2] != ["lib", abi]
                 or re.fullmatch(r"lib[A-Za-z0-9_.+\-]+\.so", parts[2]) is None):
             raise VerificationError(f"Native library has an unsupported APK location: {name!r}")
         # The same report remains safe to generate on a case-insensitive host.
@@ -147,9 +158,9 @@ def inspect_archive(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
         native_entries.append(entry)
         if len(native_entries) > MAX_NATIVE_LIBRARIES or total_native_size > MAX_TOTAL_LIBRARY_BYTES:
             raise VerificationError("APK native libraries exceed extraction limits")
-    missing = REQUIRED_LIBRARIES.difference(entry.filename for entry in native_entries)
+    missing = required_libraries.difference(entry.filename for entry in native_entries)
     if missing:
-        raise VerificationError("APK is missing required ARM64 libraries: " + ", ".join(sorted(missing)))
+        raise VerificationError(f"APK is missing required {abi} libraries: " + ", ".join(sorted(missing)))
     return sorted(native_entries, key=lambda entry: entry.filename)
 
 
@@ -325,8 +336,10 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
 
     libraries = []
     report["native_libraries"] = []
+    abi = getattr(args, "abi", "arm64-v8a")
+    report["abi"] = abi
     with zipfile.ZipFile(apk, "r") as archive:
-        entries = inspect_archive(archive)
+        entries = inspect_archive(archive, abi)
         report["checks"]["zip_entries"] = "passed"
         for entry in entries:
             path, details = extract_library(archive, entry, report_dir)
@@ -414,6 +427,10 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apk", required=True, help="Built APK to verify without modifying it")
+    parser.add_argument("--abi", choices=sorted(REQUIRED_LIBRARIES_BY_ABI),
+                        default="arm64-v8a",
+                        help="Native ABI the APK must contain (default: arm64-v8a). "
+                             "A split-per-ABI build is verified once per APK, each with its own ABI.")
     parser.add_argument("--build-tools", required=True, help="Android SDK build-tools version directory")
     parser.add_argument("--report-dir", required=True, help="Directory for verification logs, JSON, and extracted libraries")
     parser.add_argument("--expected-signer-sha256", type=sha256_argument,
