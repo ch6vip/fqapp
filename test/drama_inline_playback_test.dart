@@ -681,6 +681,11 @@ void main() {
 
     // 选 1.25x：药丸点击立即回传（官方 jj3/i.e 语义），feed 播放器生效并
     // 写入全局速率配置（全页播放页读同一份）。面板退场动画跨帧推进。
+    // 官方 6 档 + 1x 带「（默认）」，药丸轨道需要横向滚动，先滚到目标档再点。
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('player-more-light-rate-1.25')),
+    );
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('player-more-light-rate-1.25')));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 300));

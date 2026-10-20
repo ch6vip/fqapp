@@ -106,4 +106,61 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('related seasons render as a two-column grid', (tester) async {
+    // 官方 `catalogdialog/view/s` 的双列形态（`enableDoubleRow`）：前三项应有
+    // 两个落在同一行，且卡片带「共 N 集」。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RelatedSeriesSheet(
+          seriesId: '1',
+          loader: (_) async => const [
+            RelatedSeries(id: '2', title: '第二季', episodeCount: 96),
+            RelatedSeries(id: '3', title: '第三季', episodeCount: 96),
+            RelatedSeries(id: '4', title: '第四季', episodeCount: 96),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final first = tester.getTopLeft(
+      find.byKey(const ValueKey('related-series-2')),
+    );
+    final second = tester.getTopLeft(
+      find.byKey(const ValueKey('related-series-3')),
+    );
+    expect(second.dy, closeTo(first.dy, 0.5), reason: '前两张卡应在同一行');
+    expect(second.dx, greaterThan(first.dx), reason: '第二张卡应在其右侧');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('embedded block reports the pick to its host instead of popping', (
+    tester,
+  ) async {
+    // 选集弹层内嵌形态（官方 catalogdialog/view/s）：区块不自己开/关弹层，
+    // 选中就把条目交给宿主的 onSelected。
+    RelatedSeries? picked;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RelatedSeriesBlock(
+            seriesId: '1',
+            loader: (_) async => const [
+              RelatedSeries(id: '2', title: '第二季', episodeCount: 96),
+            ],
+            onSelected: (entry) => picked = entry,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('related-series-block')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('related-series-2')));
+    await tester.pumpAndSettle();
+    expect(picked?.id, '2');
+    expect(find.byKey(const ValueKey('related-series-block')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }

@@ -165,7 +165,7 @@ void main() {
   });
 
   testWidgets(
-    'horizontal rates include 1.75 and restore it on the next player',
+    'rate pills follow the panel list and restore on the next player',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(360, 780));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -177,23 +177,23 @@ void main() {
       await scrollRates(tester, -200);
       expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
       expect(player.calls, isEmpty);
-      await tester.tap(find.byKey(const ValueKey('player-more-rate-1.75')));
+      await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 150));
       expect(player.rate, 1);
       await tester.pumpAndSettle();
-      expect(player.rate, 1.75);
-      expect(player.calls, ['rate:1.75']);
-      expect(await PlayerPreferences.loadPlaybackRate(), 1.75);
+      expect(player.rate, 2);
+      expect(player.calls, ['rate:2.0']);
+      expect(await PlayerPreferences.loadPlaybackRate(), 2);
       expect(find.byKey(const ValueKey('player-more-panel')), findsNothing);
 
       await tester.pumpWidget(const SizedBox.shrink());
       final next = FakeNativePlayer()..isPlaying = true;
       await tester.pumpWidget(app(nativePlayer: next));
       await tester.pumpAndSettle();
-      expect(next.rate, 1.75);
+      expect(next.rate, 2);
       await openMore(tester);
-      final selected = find.byKey(const ValueKey('player-more-rate-1.75'));
+      final selected = find.byKey(const ValueKey('player-more-rate-2.0'));
       expect(selected.hitTestable(), findsOneWidget);
       expect(tester.widget<Semantics>(selected).properties.selected, isTrue);
       // 官方点当前档位不重复提交，也不会关闭。
@@ -213,7 +213,7 @@ void main() {
       await tester.pumpAndSettle();
       await openMore(tester);
       player.calls.clear();
-      await tester.tap(find.byKey(const ValueKey('player-more-rate-1.75')));
+      await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 150));
       await tester.binding.handlePopRoute();
@@ -376,7 +376,9 @@ void main() {
       expect(danmakuToggles, 1);
       final rates = find.byKey(const ValueKey('player-more-rate-scroll'));
       await tester.ensureVisible(rates);
-      await scrollRates(tester, -650);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('player-more-rate-2.0')),
+      );
       await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
       await tester.pumpAndSettle();
       expect(await PlayerPreferences.loadPlaybackRate(), 2);

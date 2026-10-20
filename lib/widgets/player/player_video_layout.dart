@@ -56,6 +56,19 @@ class PlayerVideoLayout {
     return source.width / source.height < landscapeRatio;
   }
 
+  /// The fit the surface should actually use.
+  ///
+  /// 官方 `cq3/o.d()`：wide screen 时强制 `DISPLAY_MODE_ASPECT_FIT`(mode 3)，
+  /// 于是横屏全屏**永远**是居中完整显示——即使竖屏里开着「画面撑满」
+  /// (`is_fill_screen`) 也一样。竖版片源在横屏里因此两侧留黑边，不会被放大
+  /// 裁切（issue #59 复测：撑满带进横屏会把 720P 放大成一片糊）。
+  ///
+  /// Note: .agents/notes/implemented/bug-fix/2026-10-19-fullscreen-landscape-alignment.md
+  static VideoFit fitFor({
+    required bool fillScreen,
+    required bool fullScreen,
+  }) => !fillScreen || fullScreen ? VideoFit.contain : VideoFit.fillFrame;
+
   static double panelFractionFor(Size videoSize) =>
       videoSize.width <= 0 ||
           videoSize.height <= 0 ||

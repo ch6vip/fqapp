@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -298,14 +297,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Offset? _dragSeekOrigin;
   bool _dragSeekActive = false;
 
-  /// The orientation list currently pinned while fullscreen, so an unchanged
-  /// answer does not re-issue a rotation request.
-  List<DeviceOrientation>? _appliedOrientations;
-
-  /// The video size [appliedOrientations] was decided from. The player mutates
-  /// its own size when the media loads, so comparing widget generations would
-  /// read the new value on both sides and never notice the change.
-  Size _appliedVideoSize = Size.zero;
+  /// 官方全屏的方向集合：manifest 把 `ShortSeriesLandActivity` 锁成
+  /// `userLandscape`，所以进全屏就请求这一组，不看片源尺寸。
+  ///
+  /// Note: .agents/notes/implemented/bug-fix/2026-10-19-fullscreen-landscape-alignment.md
+  static const _fullScreenOrientations = [
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ];
 
   double get _panelFraction => _panelExtent.value;
 
@@ -434,10 +433,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         }
       });
     }
-    // The video size arrives a moment after a player is created, so this is
-    // where a fullscreen episode learns whether it is landscape. The check is
-    // size-based because the player mutates its own size in place.
-    _adoptVideoOrientation();
     if (oldWidget.enabled != widget.enabled ||
         oldWidget.playing != widget.playing ||
         oldWidget.player != widget.player) {
@@ -539,7 +534,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     // 走；淡出仅随面板滑出 o.g6(1-f2) 与清屏发生）。此前的 3s 自动收起是
     // 推断值（f01-f08 总表:117「官方自动收起计时值未定位」），按官方行为
     // 让该形态常驻；通用播放器与横屏保留原计时。
-    if (widget.shortSeries && _catalogStyle && !_isLandscape) return;
+    //
+    // 例外：竖屏里点了「全屏观看」时设备没有转向（`_isLandscape` 仍为
+    // false），但用户要的就是沉浸，控件必须能收起——否则只会把按钮文案换成
+    // 「退出全屏」，画面一点没变（issue #59）。
+    if (widget.shortSeries && _catalogStyle && !_isLandscape && !_fullScreen) {
+      return;
+    }
     if (!_ready ||
         _clearScreen ||
         _locked ||
@@ -1426,7 +1427,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       await Navigator.maybePop(context);
     }
   }
-
   Future<void> _toggleFullScreen() async {
     _endBoost();
     _cancelSeek();
@@ -1434,11 +1434,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     // 官方在 Activity 退出横屏时无条件解锁（`EXIST_LAND_ACTIVITY`）。
     if (_fullScreen) _releaseLock();
     setState(() => _fullScreen = !_fullScreen);
+    // 收起计时必须排在系统 UI / 转向请求之前：`setPreferredOrientations`
+    // 在设备拒绝转向或平台通道没响应时可能长期不返回，排在后面就等于永不
+    // 收起——issue #59 的症状正是「点了全屏观看，控件一直钉在画面上」。
+    _scheduleHide();
     await _applySystemUi();
-    if (mounted) {
-      setState(() {});
-      _scheduleHide();
-    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _applySystemUi() async {
@@ -1448,20 +1449,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       if (!mounted || _fullScreen != fullScreen) return;
       if (fullScreen) {
         await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-        final orientations = _orientationsForVideo;
-        // A freshly created player reports no video size, so the orientation is
-        // unknown rather than portrait. Deciding "0 > 0 is false, therefore
-        // portrait" is what snapped landscape playback back to portrait every
-        // time the next episode auto-played. With no answer, leave the device in
-        // the orientation the viewer already chose; [_adoptVideoOrientation]
-        // applies the real one once the size arrives.
-        _appliedOrientations = orientations;
-        _appliedVideoSize = _playerVideoSize;
-        if (orientations == null) return;
-        await SystemChrome.setPreferredOrientations(orientations);
+        // 官方「全屏观看」= 起一个独立 `ShortSeriesLandActivity`，manifest 里
+        // `android:screenOrientation="userLandscape"`：全屏**一律横屏**，与片源
+        // 是横版还是竖版无关，视频尺寸未知时也一样。不再按尺寸猜方向，也就
+        // 不会再有「未知尺寸被当成竖屏」的连播回弹问题（issue #59）。
+        await SystemChrome.setPreferredOrientations(_fullScreenOrientations);
       } else {
-        _appliedOrientations = null;
-        _appliedVideoSize = Size.zero;
         await _restoreSystemUi();
       }
     });
@@ -1469,49 +1462,6 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     await _systemUiUpdates;
   }
 
-  /// 官方「画面撑满」（SP `is_fill_screen`）：只改画面铺排，
-  /// 不打断播放。`fillsFrame` 为假的横版片源会被降级成按宽度铺满，
-  /// 与官方 `ShortVideoCropConfig.landscapeRatio` 的规则一致。
-  VideoFit get _videoFit =>
-      widget.fillScreen ? VideoFit.fillFrame : VideoFit.contain;
-
-  /// The player's reported video size; 0x0 until the media has loaded.
-  Size get _playerVideoSize => Size(
-    (widget.player?.videoWidth ?? 0).toDouble(),
-    (widget.player?.videoHeight ?? 0).toDouble(),
-  );
-
-  /// The orientations fullscreen should use, or null while the video size is
-  /// still unknown (a new player starts at 0x0).
-  ///
-  /// Note: 未知尺寸不得判成竖屏，否则连播会把横屏掰回竖屏 — 见
-  /// .agents/notes/implemented/bug-fix/2026-09-11-player-orientation-on-auto-advance.md
-  List<DeviceOrientation>? get _orientationsForVideo {
-    final size = _playerVideoSize;
-    if (size.width <= 0 || size.height <= 0) return null;
-    return size.width > size.height
-        ? const [
-            DeviceOrientation.landscapeLeft,
-            DeviceOrientation.landscapeRight,
-          ]
-        : const [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown];
-  }
-
-  /// Applies the video's orientation once its size is known.
-  ///
-  /// Called from [didUpdateWidget], which runs on the rebuild the size event
-  /// triggers. Without it a fullscreen episode would keep whatever orientation
-  /// was in effect while its size was still unknown.
-  void _adoptVideoOrientation() {
-    if (!_fullScreen) return;
-    final orientations = _orientationsForVideo;
-    if (orientations == null) return;
-    if (_playerVideoSize == _appliedVideoSize &&
-        listEquals(orientations, _appliedOrientations)) {
-      return;
-    }
-    unawaited(_applySystemUi());
-  }
 
   /// 画面是否处于横屏全屏态。锁只在横屏有效，退出横屏即解锁。
   bool get _isLandscape {
@@ -1589,17 +1539,23 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           // 横屏单击切换控件，双击播放继续由横屏配置控制。
           final portraitSeries = widget.shortSeries && !landscape;
           final catalogStyle = _catalogStyle && !landscape;
+          // 竖屏「常驻」形态下单击切播放（官方行为）；但竖屏里进了全屏后控件
+          // 会收起，单击必须能把控件叫回来——否则是一个没有出口的隐藏态。
           final tapTogglesPlayback =
-              widget.shortSeries && (!landscape || _clearScreen);
+              widget.shortSeries &&
+              ((!landscape && !_fullScreen) || _clearScreen);
           final canPage =
               unobstructed && !_seeking && !_boosting && !_locked && !landscape;
           // 短剧横屏底条（批次四）：官方 `c0i.xml` + `cw7.xml` 的形态，
           // 替换通用运输条在此朝向的全部残留（prev/±10/全屏钮）。
           final landscapeBar = widget.shortSeries && landscape;
           // 自动收起保留信息区，清屏则统一隐藏；计时器不是清屏状态来源。
+          // 竖屏全屏例外：用户点「全屏观看」要的是整块画面，收起后连信息带
+          // 一起隐藏（否则剧名/选集/全屏按钮会一直钉在画面上，issue #59）。
           final bandVisible =
               widget.shortSeries &&
               !landscape &&
+              !_fullScreen &&
               _ready &&
               !_visible &&
               !_seeking &&
@@ -2118,9 +2074,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         window: window,
         insets: insets,
         videoSize: _videoSize,
-        // 官方「画面撑满」只换铺排方式，不动解码与进度：本地用同一套
-        // PlayerVideoLayout，切换 fillFrame/contain 即可，无需重新起播。
-        fit: _videoFit,
+        // 官方「画面撑满」只换铺排方式，不动解码与进度；但宽屏全屏时
+        // `cq3/o.d()` 强制 ASPECT_FIT，撑满不再生效——竖版片源在横屏里居中、
+        // 两侧留黑边（`PlayerVideoLayout.fitFor`）。
+        fit: PlayerVideoLayout.fitFor(
+          fillScreen: widget.fillScreen,
+          fullScreen: _fullScreen,
+        ),
         panelFraction: fraction,
         restingPanelFraction: _panelRestFraction,
         fullScreen: _fullScreen,

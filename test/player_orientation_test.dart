@@ -79,7 +79,7 @@ void main() {
     await second.dispose();
   });
 
-  testWidgets('the real orientation is applied once the size arrives', (
+  testWidgets('an unknown size pins landscape and a late size changes nothing', (
     tester,
   ) async {
     final orientations = _OrientationLog()..install(tester);
@@ -90,15 +90,22 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('全屏'));
     await tester.pumpAndSettle();
-    // Nothing pinned yet: the device keeps whatever it is using.
-    expect(orientations.last, isNull);
+    // 尺寸未知也直接请求横屏：官方全屏是独立横屏 Activity，不按片源尺寸决定。
+    expect(orientations.last, isNotNull);
+    expect(
+      orientations.last!.every(
+        (value) => value.startsWith('DeviceOrientation.landscape'),
+      ),
+      isTrue,
+    );
+    expect(orientations.requests.length, 1);
 
-    // The size arrives; fullscreen must adopt the video's orientation.
+    // 尺寸到达后方向不再变化（没有第二次请求）。
     player.width = 1920;
     player.height = 1080;
     await tester.pumpWidget(_app(player));
     await tester.pumpAndSettle();
-    expect(orientations.last, isNotNull);
+    expect(orientations.requests.length, 1);
     expect(
       orientations.last!.every(
         (value) => value.startsWith('DeviceOrientation.landscape'),
@@ -110,7 +117,12 @@ void main() {
     await player.dispose();
   });
 
-  testWidgets('a portrait video pins portrait', (tester) async {
+  testWidgets('a portrait video still goes fullscreen in landscape (#59)', (
+    tester,
+  ) async {
+    // 官方 `ShortSeriesLandActivity` 的 manifest 是 `userLandscape`：竖版片源
+    // 点「全屏观看」也横过来。见
+    // .agents/notes/implemented/bug-fix/2026-10-19-fullscreen-landscape-alignment.md
     final orientations = _OrientationLog()..install(tester);
     final player = FakeNativePlayer(width: 1080, height: 1920);
 
@@ -118,7 +130,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('全屏'));
     await tester.pumpAndSettle();
-    expect(orientations.pinnedPortraitOnly, isTrue);
+    expect(orientations.last, [
+      'DeviceOrientation.landscapeLeft',
+      'DeviceOrientation.landscapeRight',
+    ]);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await player.dispose();

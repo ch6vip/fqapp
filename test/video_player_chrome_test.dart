@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -95,6 +96,116 @@ void main() {
       expect(find.byTooltip('快进10秒'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
       await player.dispose();
+    },
+  );
+
+  testWidgets(
+    'portrait fullscreen hides the chrome and a tap brings it back (#59)',
+    (tester) async {
+      // 设备没有转向时点「全屏观看」：`_fullScreen` 为真但视口仍是竖屏。
+      // 修复前 `_scheduleHide` 对竖屏常驻形态一律早退，控件永远不收起，只有
+      // 按钮文案变成「退出全屏」，画面一点没变（issue #59）。
+      //
+      final rotations = <List<Object?>>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'SystemChrome.setPreferredOrientations') {
+            rotations.add((call.arguments as List).cast<Object?>());
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await tester.binding.setSurfaceSize(const Size(400, 888));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final player = FakeNativePlayer()..isPlaying = true;
+      await tester.pumpWidget(_app(player, shortSeries: true));
+      await tester.pumpAndSettle();
+
+      // 浏览态：竖屏常驻，没有隐藏计时器（官方竖屏新底栏行为，保持不变）。
+      expect(find.text('全屏观看'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.text('全屏观看'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 4));
+      // 进全屏后整层控件（含「全屏观看」按钮与剧名/选集信息带）都收起。
+      expect(find.text('全屏观看'), findsNothing);
+      // 官方全屏 = 独立横屏 Activity：一进全屏就请求横屏。
+      expect(rotations.last, [
+        'DeviceOrientation.landscapeLeft',
+        'DeviceOrientation.landscapeRight',
+      ]);
+
+      // 单击画面把控件叫回来，而不是像浏览态那样切成暂停。
+      final paused = player.calls.where((call) => call == 'pause').length;
+      await tester.tap(find.byKey(const ValueKey('video-surface')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('全屏观看'), findsOneWidget);
+      expect(player.calls.where((call) => call == 'pause').length, paused);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    },
+  );
+
+  testWidgets(
+    'fullscreen always requests landscape, whatever the video shape (#59)',
+    (tester) async {
+      // 官方 `ShortSeriesLandActivity` 在 manifest 里是
+      // `android:screenOrientation="userLandscape"`：全屏一律横屏，竖版片源
+      // 与「尺寸还没到」都不例外。修复前竖版片源会请求 portrait、尺寸未知则
+      // 干脆不请求，于是停在竖屏全屏里。
+      final rotations = <List<Object?>>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'SystemChrome.setPreferredOrientations') {
+            rotations.add((call.arguments as List).cast<Object?>());
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      const landscape = [
+        'DeviceOrientation.landscapeLeft',
+        'DeviceOrientation.landscapeRight',
+      ];
+
+      for (final size in [
+        const Size(1080, 1920), // 竖版片源
+        Size.zero, // 尺寸还没到（新播放器）
+        const Size(1920, 1080), // 横版片源
+      ]) {
+        final player = FakeNativePlayer()
+          ..width = size.width.toInt()
+          ..height = size.height.toInt();
+        rotations.clear();
+        await tester.pumpWidget(_app(player, shortSeries: true));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+        await tester.pump();
+        await tester.pump();
+        expect(
+          rotations.last,
+          landscape,
+          reason: '${size.width}x${size.height} 的片源进全屏也必须请求横屏',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await player.dispose();
+      }
     },
   );
 

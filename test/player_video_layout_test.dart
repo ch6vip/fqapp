@@ -105,4 +105,39 @@ void main() {
     expect(result.video.width, closeTo(result.video.height, .0001));
     expect(result.video.height, greaterThanOrEqualTo(result.viewport.height));
   });
+
+  test('a wide screen forces contain even when 画面撑满 is on (#59)', () {
+    // 官方 `cq3/o.d()`：宽屏时强制 `DISPLAY_MODE_ASPECT_FIT`(mode 3)，所以
+    // 横屏全屏里「画面撑满」不再生效。
+    expect(
+      PlayerVideoLayout.fitFor(fillScreen: true, fullScreen: true),
+      VideoFit.contain,
+    );
+    expect(
+      PlayerVideoLayout.fitFor(fillScreen: true, fullScreen: false),
+      VideoFit.fillFrame,
+    );
+    expect(
+      PlayerVideoLayout.fitFor(fillScreen: false, fullScreen: false),
+      VideoFit.contain,
+    );
+  });
+
+  test('a portrait source in a landscape fullscreen keeps its whole picture', () {
+    // 修复前会走 fillFrame：9:16 的片子被放大到铺满横屏、两轴都溢出并被裁切
+    // （720P 拉大近 3 倍，画面一片糊）。修复后按 contain 居中：高度贴满、
+    // 宽度留黑边，比例不变。
+    final fit = PlayerVideoLayout.fitFor(fillScreen: true, fullScreen: true);
+    final result = PlayerVideoLayout.calculate(
+      window: const Size(800, 400),
+      insets: EdgeInsets.zero,
+      videoSize: const Size(1080, 1920),
+      fit: fit,
+      fullScreen: true,
+    );
+    expect(result.video.height, closeTo(result.viewport.height, .5));
+    expect(result.video.width, lessThan(result.viewport.width));
+    expect(result.video.width / result.video.height, closeTo(9 / 16, .0001));
+    expect(result.video.center, result.viewport.center);
+  });
 }
