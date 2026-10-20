@@ -17,6 +17,7 @@ import '../services/player_panel_preferences.dart';
 import '../services/watched_episodes.dart';
 import 'listen_mode_page.dart';
 import '../services/episode_source_cache.dart';
+import '../services/fair_memory.dart';
 import '../services/drama_download_store.dart';
 import 'drama_download_sheet.dart';
 import '../services/library_store.dart';
@@ -96,6 +97,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _hasDisplayed = false;
   NativePlayer? _player;
   Timer? _progressTimer;
+  // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
+  VoidCallback? _unregisterFairMemoryFlush;
   bool _initVideo = false;
   bool _paging = false;
   Completer<void>? _pagingSettled;
@@ -164,6 +167,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 小米公平运行内存：KILL 广播到达时刷一次播放进度，避免被杀丢进度。
+    _unregisterFairMemoryFlush =
+        FairMemoryService.instance.registerFlushHandler(_persistProgress);
     unawaited(NativePlayer.setKeepScreenOn(true).catchError((Object _) {}));
     _index = widget.eps.isEmpty
         ? 0
@@ -705,6 +711,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _unregisterFairMemoryFlush?.call();
+    _unregisterFairMemoryFlush = null;
     unawaited(NativePlayer.setKeepScreenOn(false).catchError((Object _) {}));
     _progressTimer?.cancel();
     _prefetchTimer?.cancel();
