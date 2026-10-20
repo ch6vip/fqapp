@@ -21,6 +21,7 @@ import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_downloader.dart';
 import 'services/audio_preferences.dart';
+import 'services/player_preferences.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
 import 'services/drama_download_store.dart';
@@ -31,7 +32,6 @@ import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
 import 'services/player_style_config.dart';
-import 'services/player_preferences.dart';
 import 'services/short_series_font_scale.dart';
 import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
@@ -124,6 +124,8 @@ Future<void> _initializeLocalData() async {
   ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
+  // 短剧切后台悬浮窗开关（#24）：异步读取，失败退化为默认关闭。
+  unawaited(PlayerPreferences.loadFloatingWindow());
   // 离线缓存的网络门（官方 onNetChangeCheck）：断网/只剩计费链路时
   // 自动暂停下载队列，半成品保留。监听失败只退化为「无自动暂停」。
   try {

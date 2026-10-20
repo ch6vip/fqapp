@@ -8,8 +8,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -111,6 +114,14 @@ class NativePlayerPlugin internal constructor(
     private val pendingPlayerIds = ConcurrentHashMap.newKeySet<Int>()
     private val nextId = AtomicInteger(1)
     private val handler = Handler(Looper.getMainLooper())
+
+    /** 正在悬浮窗里播的播放器；null 表示没有悬浮播放。 */
+    private var floatingPlayerId: Int? = null
+    private var floatingSurfaceAttached = false
+    private var floatingSurface: android.view.Surface? = null
+    private var floatingFocusRequest: Any? = null
+    private var floatingFocusListener: AudioManager.OnAudioFocusChangeListener? = null
+    private var floatingVolumeBeforeDuck: Float? = null
 
     private var eventSink: EventChannel.EventSink? = null
     private var noisyReceiverRegistered = false
@@ -216,6 +227,9 @@ class NativePlayerPlugin internal constructor(
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         attachedToEngine = false
         if (instance === this) instance = null
+        stopFloatingInternal()
+        FloatingVideoService.onSurfaceReady = null
+        FloatingVideoService.onSurfaceDestroyed = null
         activityBinding?.removeRequestPermissionsResultListener(this)
         activityBinding = null
         activity = null
@@ -390,6 +404,146 @@ class NativePlayerPlugin internal constructor(
                     Log.w(TAG, "listen foreground stop failed", error)
                 }
                 result.success(null)
+            }
+            "canDrawOverlays" -> {
+                val context = activity ?: flutterBinding.applicationContext
+                result.success(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        Settings.canDrawOverlays(context)
+                    } else {
+                        true
+                    },
+                )
+            }
+            "requestOverlayPermission" -> {
+                val currentActivity = activity
+                if (currentActivity == null ||
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                ) {
+                    result.success(false)
+                    return
+                }
+                try {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${currentActivity.packageName}"),
+                    )
+                    currentActivity.startActivity(intent)
+                    result.success(true)
+                } catch (error: Throwable) {
+                    Log.w(TAG, "overlay permission request failed", error)
+                    result.success(false)
+                }
+            }
+            "startFloating" -> {
+                val id = call.argument<Int>("playerId")
+                val instance = id?.let { players[it] }
+                if (instance == null) {
+                    result.error("FLOATING_NO_PLAYER", "悬浮窗播放器不存在", null)
+                    return
+                }
+                if (!requestFloatingFocus()) {
+                    // 焦点被电话等独占时不抢声，交给 Dart 侧暂停。
+                    floatingFocusListener = null
+                    floatingFocusRequest = null
+                    result.error("FLOATING_FOCUS_DENIED", "音频焦点被占用，暂不悬浮", null)
+                    return
+                }
+                floatingPlayerId = id
+                FloatingVideoService.onSurfaceReady = { surface ->
+                    handler.post { onFloatingSurfaceReady(surface) }
+                }
+                FloatingVideoService.onSurfaceDestroyed = {
+                    handler.post { onFloatingSurfaceDestroyed() }
+                }
+                val extras = mapOf<String, Any?>(
+                    FloatingVideoService.EXTRA_TITLE to call.argument<String>("title"),
+                    FloatingVideoService.EXTRA_EPISODE to call.argument<String>("episode"),
+                    FloatingVideoService.EXTRA_PLAYING to
+                        (call.argument<Boolean>("playing") ?: true),
+                    FloatingVideoService.EXTRA_HAS_PREV to
+                        (call.argument<Boolean>("hasPrev") ?: true),
+                    FloatingVideoService.EXTRA_HAS_NEXT to
+                        (call.argument<Boolean>("hasNext") ?: true),
+                    FloatingVideoService.EXTRA_POSITION_MS to
+                        (call.argument<Number>("positionMs")?.toLong() ?: 0L),
+                    FloatingVideoService.EXTRA_DURATION_MS to
+                        (call.argument<Number>("durationMs")?.toLong() ?: 0L),
+                    FloatingVideoService.EXTRA_SPEED to
+                        (call.argument<Number>("speed")?.toFloat() ?: 1f),
+                    FloatingVideoService.EXTRA_VIDEO_WIDTH to
+                        (call.argument<Number>("videoWidth")?.toInt() ?: 0),
+                    FloatingVideoService.EXTRA_VIDEO_HEIGHT to
+                        (call.argument<Number>("videoHeight")?.toInt() ?: 0),
+                )
+                try {
+                    FloatingVideoService.start(
+                        activity ?: flutterBinding.applicationContext,
+                        extras,
+                    )
+                    result.success(null)
+                } catch (error: Throwable) {
+                    Log.w(TAG, "floating start failed", error)
+                    stopFloatingInternal()
+                    result.error("FLOATING_START_FAILED", "悬浮窗启动失败", null)
+                }
+            }
+            "showFloating" -> {
+                try {
+                    FloatingVideoService.show(activity ?: flutterBinding.applicationContext)
+                } catch (error: Throwable) {
+                    Log.w(TAG, "floating show failed", error)
+                }
+                result.success(null)
+            }
+            "updateFloating" -> {
+                val extras = mapOf<String, Any?>(
+                    FloatingVideoService.EXTRA_TITLE to call.argument<String>("title"),
+                    FloatingVideoService.EXTRA_EPISODE to call.argument<String>("episode"),
+                    FloatingVideoService.EXTRA_PLAYING to call.argument<Boolean>("playing"),
+                    FloatingVideoService.EXTRA_HAS_PREV to call.argument<Boolean>("hasPrev"),
+                    FloatingVideoService.EXTRA_HAS_NEXT to call.argument<Boolean>("hasNext"),
+                    FloatingVideoService.EXTRA_POSITION_MS to
+                        call.argument<Number>("positionMs")?.toLong(),
+                    FloatingVideoService.EXTRA_DURATION_MS to
+                        call.argument<Number>("durationMs")?.toLong(),
+                    FloatingVideoService.EXTRA_SPEED to
+                        call.argument<Number>("speed")?.toFloat(),
+                )
+                try {
+                    FloatingVideoService.update(
+                        activity ?: flutterBinding.applicationContext,
+                        extras,
+                    )
+                } catch (error: Throwable) {
+                    Log.w(TAG, "floating update failed", error)
+                }
+                result.success(null)
+            }
+            "stopFloating" -> {
+                stopFloatingInternal()
+                result.success(null)
+            }
+            "swapFloatingPlayer" -> {
+                // 后台自动切集：旧播放器已销毁，新播放器接手悬浮窗。服务不重启，
+                // 避免在后台触发前台服务启动限制；只换 surface 绑定。
+                val id = call.argument<Int>("playerId")
+                val instance = id?.let { players[it] }
+                val surface = floatingSurface
+                if (instance == null || surface == null) {
+                    result.error("FLOATING_SWAP_FAILED", "悬浮窗 surface 不可用", null)
+                    return
+                }
+                floatingPlayerId = id
+                try {
+                    instance.videoOutput.detachForFloating()
+                    instance.videoOutput.attachFloating(surface)
+                    floatingSurfaceAttached = true
+                    result.success(null)
+                } catch (error: Throwable) {
+                    Log.w(TAG, "floating swap failed", error)
+                    result.error("FLOATING_SWAP_FAILED", "悬浮窗接手失败", null)
+                }
             }
             else -> result.notImplemented()
         }
@@ -697,7 +851,161 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
+    /**
+     * 悬浮窗 surface 就绪：把解码画面从 Flutter 纹理换到悬浮窗。
+     * 只在仍处于悬浮状态时换，迟到的回调（服务已停）直接丢弃。
+     */
+    private fun onFloatingSurfaceReady(surface: android.view.Surface) {
+        floatingSurface = surface
+        val id = floatingPlayerId ?: return
+        val instance = players[id] ?: return
+        try {
+            instance.videoOutput.detachForFloating()
+            instance.videoOutput.attachFloating(surface)
+            floatingSurfaceAttached = true
+        } catch (error: Throwable) {
+            Log.w(TAG, "floating surface attach failed", error)
+        }
+    }
+
+    /** 悬浮窗 surface 销毁：画面回落到 Flutter 纹理，声音继续（服务还在就还在）。 */
+    private fun onFloatingSurfaceDestroyed() {
+        floatingSurface = null
+        val id = floatingPlayerId ?: return
+        if (!floatingSurfaceAttached) return
+        floatingSurfaceAttached = false
+        try {
+            players[id]?.videoOutput?.restoreFromFloating()
+        } catch (error: Throwable) {
+            Log.w(TAG, "floating surface restore failed", error)
+        }
+    }
+
+    /** 停悬浮：画面先回 Flutter 纹理，再停服务，避免销毁回调重复恢复。 */
+    private fun stopFloatingInternal() {
+        val id = floatingPlayerId
+        floatingPlayerId = null
+        floatingSurface = null
+        abandonFloatingFocus()
+        if (id != null && floatingSurfaceAttached) {
+            floatingSurfaceAttached = false
+            try {
+                players[id]?.videoOutput?.restoreFromFloating()
+            } catch (error: Throwable) {
+                Log.w(TAG, "floating restore failed", error)
+            }
+        }
+        FloatingVideoService.onSurfaceReady = null
+        FloatingVideoService.onSurfaceDestroyed = null
+        try {
+            FloatingVideoService.stop(flutterBinding.applicationContext)
+        } catch (error: Throwable) {
+            Log.w(TAG, "floating stop failed", error)
+        }
+    }
+
+    /**
+     * 悬浮播放期间独占音频焦点：电话、其他媒体进来时暂停而不是混音；
+     * 短暂可降音（duck）时只降音量，焦点回来后恢复音量、但不自动续播。
+     */
+    private fun requestFloatingFocus(): Boolean {
+        val context = flutterBinding.applicationContext
+        val audioManager =
+            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return false
+        val listener = AudioManager.OnAudioFocusChangeListener { change ->
+            val id = floatingPlayerId ?: return@OnAudioFocusChangeListener
+            val instance = players[id] ?: return@OnAudioFocusChangeListener
+            when (change) {
+                AudioManager.AUDIOFOCUS_LOSS,
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    try {
+                        instance.player.pause()
+                    } catch (_: Throwable) {
+                    }
+                    FloatingVideoService.update(
+                        context,
+                        mapOf(FloatingVideoService.EXTRA_PLAYING to false),
+                    )
+                }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    if (floatingVolumeBeforeDuck == null) {
+                        floatingVolumeBeforeDuck = instance.player.volume
+                        try {
+                            instance.player.volume =
+                                (instance.player.volume * 0.2f).coerceIn(0f, 1f)
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    floatingVolumeBeforeDuck?.let { volume ->
+                        floatingVolumeBeforeDuck = null
+                        try {
+                            instance.player.volume = volume
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
+        }
+        floatingFocusListener = listener
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build(),
+                )
+                .setOnAudioFocusChangeListener(listener)
+                .build()
+            floatingFocusRequest = request
+            audioManager.requestAudioFocus(request) ==
+                AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                listener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN,
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    private fun abandonFloatingFocus() {
+        val listener = floatingFocusListener
+        floatingFocusListener = null
+        floatingVolumeBeforeDuck = null
+        val context = flutterBinding.applicationContext
+        // 单元测试的 mock Context 不提供系统服务；缺 AudioManager 时只是没有
+        // 焦点可放弃，不能让 detach 抛异常。
+        val audioManager =
+            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val request = floatingFocusRequest
+        floatingFocusRequest = null
+        if (request != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                audioManager.abandonAudioFocusRequest(request as AudioFocusRequest)
+            } catch (_: Throwable) {
+            }
+        } else if (listener != null) {
+            @Suppress("DEPRECATION")
+            try {
+                audioManager.abandonAudioFocus(listener)
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
     private fun disposePlayer(id: Int) {
+        if (id == floatingPlayerId) {
+            // 悬浮播放器销毁（通常是后台自动切集）：服务与悬浮窗留着，等 Dart
+            // 用 swapFloatingPlayer 把新播放器接进来；页面关闭时 Dart 会
+            // 显式调 stopFloating，不会留下幽灵窗口。
+            floatingPlayerId = null
+            floatingSurfaceAttached = false
+        }
         // Only a still-pending request may allocate. A queued create callback
         // must stay cancelled even if the platform thread stalls.
         pendingPlayerIds.remove(id)

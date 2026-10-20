@@ -4,7 +4,19 @@ import android.view.Surface
 import androidx.media3.common.Player
 import io.flutter.view.TextureRegistry
 
-/** Owns the decoder and its Flutter-managed output surface on the platform thread. */
+/**
+ * Owns the decoder and its Flutter-managed output surface on the platform thread.
+ *
+ * Two surface moves share this class and must not step on each other:
+ *
+ * - [swapped] — the software-decoder path from #2: decoder output moves once
+ *   from the ImageReader producer to a legacy SurfaceTexture entry so the
+ *   decoder's crop rect applies instead of drawing stride padding as a green
+ *   bar.
+ * - [floating] — the #24 background floating window: the decoder temporarily
+ *   renders to the overlay's SurfaceView and comes back to whichever Flutter
+ *   surface is current when playback returns.
+ */
 internal class NativeVideoOutput(
     private val player: Player,
     private val producer: TextureRegistry.SurfaceProducer
@@ -15,7 +27,16 @@ internal class NativeVideoOutput(
     private var surfaceTextureSurface: Surface? = null
     private var swapped = false
 
-    val textureId: Long get() = surfaceTextureEntry?.id() ?: producer.id()
+    /**
+     * True while the decoder renders to the floating overlay instead of the
+     * Flutter texture. While floating, producer callbacks must not clear the
+     * overlay surface; they only record that the Flutter surface needs a
+     * rebind when playback returns.
+     */
+    private var floating = false
+
+    val textureId: Long
+        get() = surfaceTextureEntry?.id() ?: producer.id()
 
     fun attach() {
         if (released || swapped) return
@@ -24,7 +45,7 @@ internal class NativeVideoOutput(
     }
 
     override fun onSurfaceAvailable() {
-        if (released || swapped || !needsSurface) return
+        if (released || swapped || floating || !needsSurface) return
         // A restored producer may return a different Surface. Never keep the
         // Surface returned before cleanup or bind it back to the decoder.
         player.setVideoSurface(producer.surface)
@@ -32,9 +53,52 @@ internal class NativeVideoOutput(
     }
 
     override fun onSurfaceCleanup() {
-        if (released || swapped || needsSurface) return
+        if (released) return
+        if (swapped) {
+            if (needsSurface) return
+            needsSurface = true
+            player.clearVideoSurface()
+            return
+        }
+        val wasNeeding = needsSurface
         needsSurface = true
+        // While floating the overlay owns the surface; only remember that the
+        // Flutter side will need a rebind later.
+        if (floating || wasNeeding) return
         player.clearVideoSurface()
+    }
+
+    /** Detach the Flutter texture so the decoder can render to the floating overlay. */
+    fun detachForFloating() {
+        if (released) return
+        floating = true
+        if (!swapped) needsSurface = true
+        player.clearVideoSurface()
+    }
+
+    /** Bind the decoder to the floating overlay's surface. */
+    fun attachFloating(surface: Surface) {
+        if (released) return
+        player.setVideoSurface(surface)
+    }
+
+    /**
+     * Return the decoder to the Flutter texture. If the Flutter surface was
+     * cleaned up while floating, [needsSurface] stays true and the next
+     * [onSurfaceAvailable] rebinds it; otherwise rebind immediately.
+     */
+    fun restoreFromFloating() {
+        if (released) return
+        floating = false
+        player.clearVideoSurface()
+        // After a #2 swap the current Flutter surface is the SurfaceTexture
+        // entry, not the producer.
+        if (needsSurface) return
+        if (swapped) {
+            surfaceTextureSurface?.let { player.setVideoSurface(it) }
+        } else {
+            player.setVideoSurface(producer.surface)
+        }
     }
 
     /**
