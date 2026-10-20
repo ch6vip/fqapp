@@ -4,6 +4,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/app_theme.dart';
 import '../../services/chapter_text_formatter.dart';
+import '../../services/poster_cache.dart';
 import 'eink_image_provider.dart';
 
 typedef ReaderImageProviderFactory =
@@ -57,6 +58,9 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
           widget.image.url,
           maxWidth: 2048,
           maxHeight: 4096,
+          // 与海报共用 PosterCache（2000 对象 / 256MiB）：默认的
+          // DefaultCacheManager 只有 200 对象上限，插图更容易被挤出重下。
+          cacheManager: PosterCache.instance,
         );
     // 墨水屏：包一层灰度抖动处理，彩色插图不再靠屏幕自己量化。
     if (einkModeNotifier.value) return EinkImageProvider(base);
