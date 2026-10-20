@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -9,9 +10,11 @@ import '../models/book_detail.dart';
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/audio_download_store.dart';
 import '../services/audio_history.dart';
 import '../services/audio_preferences.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/native_player.dart';
@@ -19,10 +22,12 @@ import '../services/playback_format.dart';
 import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
+import '../widgets/audio/audio_offline_section.dart';
 import '../widgets/audio/audio_sections.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
 import '../widgets/audio/system_tts_controls.dart';
 import '../widgets/chapter_cache_sheet.dart';
+import '../widgets/comment_images.dart';
 import '../widgets/home/home_design.dart';
 import 'detail_page.dart';
 import 'reader_page.dart';
@@ -70,6 +75,10 @@ class AudioPage extends StatefulWidget {
   /// switch uses that book's own chapter IDs. Defaults to the listening API.
   final Future<List<Chapter>> Function(String bookId)? directoryLoader;
 
+  /// 离线音频记录箱。默认用 [HiveAudioDownloadStore.instance]；测试注入
+  /// 内存实现后，离线命中判断不依赖真实 Hive 箱。
+  final AudioDownloadStore? downloadStore;
+
   const AudioPage({
     super.key,
     required this.bookId,
@@ -90,6 +99,7 @@ class AudioPage extends StatefulWidget {
     this.subtitleLoader,
     this.excerptLoader,
     this.directoryLoader,
+    this.downloadStore,
   });
 
   @override
@@ -815,6 +825,13 @@ class _AudioPageState extends State<AudioPage> {
         currentIndex: c._index,
         cache: cache,
         loader: (chapter) => ApiClient.instance.contentText(chapter.itemId),
+        extraSection: AudioOfflineSection(
+          bookId: c._bookId,
+          title: c._title,
+          cover: c._cover,
+          toneId: c._toneId,
+          chapters: c._chapters,
+        ),
       ),
     );
   }
@@ -1445,14 +1462,20 @@ class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
                               ],
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              comment.text,
-                              style: TextStyle(
-                                color: palette.ink,
-                                fontSize: 13,
-                                height: 1.65,
+                            if (comment.text.isNotEmpty)
+                              Text(
+                                comment.text,
+                                style: TextStyle(
+                                  color: palette.ink,
+                                  fontSize: 13,
+                                  height: 1.65,
+                                ),
                               ),
-                            ),
+                            if (comment.imageUrls.isNotEmpty) ...[
+                              if (comment.text.isNotEmpty)
+                                const SizedBox(height: 8),
+                              CommentImages(imageUrls: comment.imageUrls),
+                            ],
                           ],
                         ),
                       );

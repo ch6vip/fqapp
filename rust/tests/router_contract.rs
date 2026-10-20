@@ -276,22 +276,6 @@ fn rest_paths_match_the_go_route_table() {
             "forum_id",
             vec![("author_user_id", "a"), ("book_id", "b"), ("item_id", "i")],
         ),
-        (
-            "/api/v1/viewer",
-            vec![
-                ("plugin", "manga_reader"),
-                ("book_id", "x"),
-                ("item_id", "y"),
-            ],
-            "manga_reader",
-            vec![("plugin", "manga_reader")],
-        ),
-        (
-            "/api/v1/viewer",
-            vec![("plugin", "player"), ("book_id", "x"), ("item_id", "y")],
-            "player",
-            vec![("plugin", "player")],
-        ),
         // trailing slash normalisation
         (
             "/api/v1/books/123/",
@@ -328,7 +312,6 @@ fn rest_paths_that_must_not_match() {
         "/src/img.png",
         "?api=content",
         "/?api=content",
-        "/api/v1/viewer",
     ];
     for path in misses {
         assert!(

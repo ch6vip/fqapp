@@ -357,6 +357,7 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
 
     let mut urls: Vec<String> = Vec::new();
     let mut html = String::new();
+    let mut last_written: Option<std::path::PathBuf> = None;
     for (i, pic) in pic_infos.iter().enumerate() {
         if pic.pic_url.is_empty() {
             continue;
@@ -380,6 +381,7 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
         if write_image_once(&fp, &dec).await.is_err() {
             continue;
         }
+        last_written = Some(fp.clone());
         let served = format!("/src/{name}");
         urls.push(served.clone());
         if show_html {
@@ -391,6 +393,13 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
             html.push_str(&i.to_string());
             html.push_str("\">");
         }
+    }
+    // P1-6: manga images share `src_dir` with the video cache, so run the
+    // same eviction pass — otherwise plaintext images accumulate with no
+    // budget and no eviction. The newest image is kept; older files go
+    // first. Images are re-downloadable, so eviction is safe.
+    if let Some(last) = last_written {
+        crate::endpoints::video::prune_src_cache(&ctx.src_dir, &last);
     }
     (urls, html)
 }

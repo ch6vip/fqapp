@@ -244,8 +244,25 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     super.dispose();
   }
 
+  // The mini bars below are siblings of the Navigator, not descendants,
+  // so they have no Overlay ancestor for their IconButton tooltips
+  // (the Navigator owns its own Overlay internally). Wrap the column
+  // in an Overlay so the tooltips resolve to this outer Overlay, while
+  // route content still resolves to the Navigator's inner Overlay.
+  //
+  // The entry is created once: Overlay only reads initialEntries in
+  // initState, so an entry rebuilt in build() would never be inserted
+  // and its builder would stay frozen on the first build's values
+  // (mini bars never appearing). The builder below reads live state,
+  // so each scope rebuild re-renders the bars with current values.
+  late final OverlayEntry _entry = OverlayEntry(builder: _buildEntry);
+
   @override
   Widget build(BuildContext context) {
+    return Overlay(initialEntries: [_entry]);
+  }
+
+  Widget _buildEntry(BuildContext context) {
     final session = _session;
     final tts = _tts;
     final showBar =

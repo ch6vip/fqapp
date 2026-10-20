@@ -40,7 +40,11 @@ async fn search_fanqie(ctx: &Ctx, query: &str, offset: &str) -> ApiResult<Value>
 
     let raw = Upstream::new(ctx.up.clone())
         .raw(&UpstreamRequestSpec {
-            mode: UpstreamMode::Signed,
+            // The suffix carries `openudid={openudid}`, and the only path that
+            // substitutes device placeholders is DeviceSigned - `encode_query`
+            // restores the `%7B...%7D` forms precisely so that substitution can
+            // happen. Under Signed the literal placeholder went out unchanged.
+            mode: UpstreamMode::DeviceSigned,
             raw_url: Some(u),
             headers: crate::endpoints::util::user_agent_headers(
                 "com.ss.android.article.news/13400",

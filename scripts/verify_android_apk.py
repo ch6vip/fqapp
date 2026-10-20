@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Verify the packaged ARM64 APK and retain reproducible inspection artifacts.
+r"""Verify a packaged APK and retain reproducible inspection artifacts.
 
 Usage:
     python scripts/verify_android_apk.py --apk app-release.apk \
@@ -28,12 +28,22 @@ import zipfile
 import zlib
 
 
-REQUIRED_LIBRARIES = {
-    "lib/arm64-v8a/libfqapi_core.so",
-    "lib/arm64-v8a/libshortplay_crypto.so",
-    "lib/arm64-v8a/libflutter.so",
-    "lib/arm64-v8a/libapp.so",
+REQUIRED_LIBRARIES_BY_ABI = {
+    "arm64-v8a": {
+        "lib/arm64-v8a/libfqapi_core.so",
+        "lib/arm64-v8a/libshortplay_crypto.so",
+        "lib/arm64-v8a/libflutter.so",
+        "lib/arm64-v8a/libapp.so",
+    },
+    "armeabi-v7a": {
+        "lib/armeabi-v7a/libfqapi_core.so",
+        "lib/armeabi-v7a/libshortplay_crypto.so",
+        "lib/armeabi-v7a/libflutter.so",
+        "lib/armeabi-v7a/libapp.so",
+    },
 }
+# The ARM64 set, kept for callers that predate the --abi option.
+REQUIRED_LIBRARIES = REQUIRED_LIBRARIES_BY_ABI["arm64-v8a"]
 MAX_ZIP_ENTRIES = 100_000
 MAX_NATIVE_LIBRARIES = 256
 MAX_LIBRARY_BYTES = 256 * 1024 * 1024
@@ -102,7 +112,8 @@ def write_text(directory: Path, relative: str, content: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def inspect_archive(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+def inspect_archive(archive: zipfile.ZipFile, abi: str) -> list[zipfile.ZipInfo]:
+    required_libraries = REQUIRED_LIBRARIES_BY_ABI[abi]
     entries = archive.infolist()
     if len(entries) > MAX_ZIP_ENTRIES:
         raise VerificationError("APK has too many ZIP entries")
@@ -126,11 +137,11 @@ def inspect_archive(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
             raise VerificationError(f"ZIP symlinks are not allowed: {name!r}")
         if entry.flag_bits & 1:
             raise VerificationError(f"Encrypted ZIP entries are not allowed: {name!r}")
-        if parts[0] == "lib" and len(parts) >= 2 and parts[1] != "arm64-v8a":
-            raise VerificationError(f"Unexpected APK ABI: {parts[1]!r}")
+        if parts[0] == "lib" and len(parts) >= 2 and parts[1] != abi:
+            raise VerificationError(f"Unexpected APK ABI: {parts[1]!r} (expected {abi})")
         if not name.lower().endswith(".so"):
             continue
-        if (entry.is_dir() or len(parts) != 3 or parts[:2] != ["lib", "arm64-v8a"]
+        if (entry.is_dir() or len(parts) != 3 or parts[:2] != ["lib", abi]
                 or re.fullmatch(r"lib[A-Za-z0-9_.+\-]+\.so", parts[2]) is None):
             raise VerificationError(f"Native library has an unsupported APK location: {name!r}")
         # The same report remains safe to generate on a case-insensitive host.
@@ -147,9 +158,9 @@ def inspect_archive(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
         native_entries.append(entry)
         if len(native_entries) > MAX_NATIVE_LIBRARIES or total_native_size > MAX_TOTAL_LIBRARY_BYTES:
             raise VerificationError("APK native libraries exceed extraction limits")
-    missing = REQUIRED_LIBRARIES.difference(entry.filename for entry in native_entries)
+    missing = required_libraries.difference(entry.filename for entry in native_entries)
     if missing:
-        raise VerificationError("APK is missing required ARM64 libraries: " + ", ".join(sorted(missing)))
+        raise VerificationError(f"APK is missing required {abi} libraries: " + ", ".join(sorted(missing)))
     return sorted(native_entries, key=lambda entry: entry.filename)
 
 
@@ -218,12 +229,15 @@ def run_logged(command: list[str], report_dir: Path, log_name: str,
         raise VerificationError(f"Cannot run verification command; see {log_name}") from error
     write_text(report_dir, log_name, result.stdout)
     # A tolerated exit code is recorded in the log rather than hidden, so the
-    # report still shows what the tool actually said about the package.
+    # report still shows what the tool actually said about the package. The
+    # output is returned even for a tolerated code: callers that distinguish
+    # "unsigned" from "tool failed" need the actual output, not an empty
+    # string that erases the difference.
     if result.returncode != 0:
         if result.returncode in allowed_returncodes:
             write_text(report_dir, log_name,
                        result.stdout + f"\nAllowed exit code {result.returncode}.\n")
-            return ""
+            return result.stdout
         raise VerificationError(f"Verification command exited with {result.returncode}; see {log_name}")
     return result.stdout
 
@@ -256,11 +270,47 @@ def certificate_digests(output: str) -> list[str]:
     return digests
 
 
+# Phrases apksigner prints for a package with no signature at all. An
+# unsigned-tolerant check must see one of these (and no signer certificate)
+# before reporting "unsigned": apksigner also exits 1 for a broken signature
+# and for tool failures, and none of those may be mistaken for "unsigned".
+UNSIGNED_SIGNATURE_MARKERS = (
+    "number of signers: 0",
+    "not signed",
+    "no signature",
+)
+
+
+def has_signature_material(apk: Path) -> bool:
+    """Retain broken-signature rejection when apksigner finds no signer."""
+    with zipfile.ZipFile(apk) as archive:
+        if any(name.upper().startswith("META-INF/") and
+               name.upper().endswith((".SF", ".RSA", ".DSA", ".EC"))
+               for name in archive.namelist()):
+            return True
+        central_directory = archive.start_dir
+    # APK v2/v3 signing blocks end immediately before the ZIP central directory.
+    # A block with bad sizes/signatures still counts as material, not absence.
+    if central_directory >= 16:
+        with apk.open("rb") as stream:
+            stream.seek(central_directory - 16)
+            return stream.read(16) == b"APK Sig Block 42"
+    return False
+
+
 def sha256_argument(value: str) -> str:
     digest = value.strip().replace(":", "").lower()
     if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         raise argparse.ArgumentTypeError("Expected a 64-digit SHA-256 certificate digest")
     return digest
+
+
+def version_name_argument(value: str) -> str:
+    version = value.strip()
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+        raise argparse.ArgumentTypeError(
+            "Expected a semver triple such as 1.2.3 (the APK versionName, without a build number)")
+    return version
 
 
 def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
@@ -286,8 +336,10 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
 
     libraries = []
     report["native_libraries"] = []
+    abi = getattr(args, "abi", "arm64-v8a")
+    report["abi"] = abi
     with zipfile.ZipFile(apk, "r") as archive:
-        entries = inspect_archive(archive)
+        entries = inspect_archive(archive, abi)
         report["checks"]["zip_entries"] = "passed"
         for entry in entries:
             path, details = extract_library(archive, entry, report_dir)
@@ -305,11 +357,39 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
     # exits non-zero on such a package. That is an expected outcome rather than
     # a defect when the caller asks for an unsigned-tolerant verification, so
     # the signature block is reported as absent instead of aborting the run.
+    # But apksigner also exits non-zero for a broken signature and for tool
+    # failures (empty output, unparseable output), and those must not be
+    # mistaken for "unsigned": the output must positively establish that the
+    # package has no signature.
     if args.allow_unsigned:
         signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
                                 "--print-certs", str(apk)], report_dir, "apksigner.log",
                                allowed_returncodes=(1,))
-        signer_digests = [] if not signature else certificate_digests(signature)
+        if not signature.strip():
+            raise VerificationError(
+                "apksigner produced no output for an unsigned-tolerant check; "
+                "cannot distinguish an unsigned APK from a tool failure (see apksigner.log)")
+        try:
+            signer_digests = certificate_digests(signature)
+        except VerificationError:
+            signer_digests = []
+        lowered = signature.lower()
+        if signer_digests and "does not verify" in lowered:
+            raise VerificationError(
+                "APK carries a signing certificate but apksigner did not verify it; "
+                "the signature is broken, not absent (see apksigner.log)")
+        # Build-tools 36 reports an ordinary Gradle unsigned APK this way,
+        # without printing the other explicit "not signed" markers. Accept
+        # that exact diagnostic only with independent absence of v1/v2/v3 data.
+        missing_manifest_only = [line.strip() for line in signature.splitlines() if line.strip()] == [
+            "DOES NOT VERIFY", "ERROR: Missing META-INF/MANIFEST.MF",
+        ]
+        unsigned_diagnostic = missing_manifest_only or any(
+            marker in lowered for marker in UNSIGNED_SIGNATURE_MARKERS)
+        if not signer_digests and (not unsigned_diagnostic or has_signature_material(apk)):
+            raise VerificationError(
+                "apksigner output establishes neither a signature nor an unsigned "
+                "package; refusing to treat it as unsigned (see apksigner.log)")
     else:
         signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
                                 "--print-certs", str(apk)], report_dir, "apksigner.log")
@@ -330,6 +410,13 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
     badging = run_logged([aapt, "dump", "badging", str(apk)], report_dir, "aapt-badging.log")
     report["application"] = application_metadata(badging)
     report["checks"]["application_metadata"] = "passed"
+    if args.expected_version_name is not None:
+        report["application"]["expected_version_name"] = args.expected_version_name
+        if report["application"]["version_name"] != args.expected_version_name:
+            raise VerificationError(
+                f"APK versionName {report['application']['version_name']!r} does not match "
+                f"the expected version {args.expected_version_name!r}; the tag and pubspec disagree")
+        report["checks"]["expected_version_name"] = "passed"
 
     if apk.stat().st_size != size or sha256_file(apk) != digest:
         raise VerificationError("APK changed during verification; results cannot be trusted")
@@ -340,10 +427,18 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apk", required=True, help="Built APK to verify without modifying it")
+    parser.add_argument("--abi", choices=sorted(REQUIRED_LIBRARIES_BY_ABI),
+                        default="arm64-v8a",
+                        help="Native ABI the APK must contain (default: arm64-v8a). "
+                             "A split-per-ABI build is verified once per APK, each with its own ABI.")
     parser.add_argument("--build-tools", required=True, help="Android SDK build-tools version directory")
     parser.add_argument("--report-dir", required=True, help="Directory for verification logs, JSON, and extracted libraries")
     parser.add_argument("--expected-signer-sha256", type=sha256_argument,
                         help="Require the APK's sole signing certificate to have this SHA-256 digest")
+    parser.add_argument("--expected-version-name", type=version_name_argument,
+                        help=("Require the APK versionName to equal this semver triple, e.g. 1.2.3. "
+                              "Tag builds pass the tag name with the leading v stripped; "
+                              "branch and PR builds omit it and skip the assertion."))
     parser.add_argument("--allow-unsigned", action="store_true",
                         help=("Accept a package with no signature and report it as unsigned. "
                               "Every other check still runs. Use only where the release keystore "

@@ -109,12 +109,16 @@ class _RankPageState extends State<RankPage> {
   Future<RankBoard> _fetch({required int offset, required int startAt}) {
     final rank = _rank;
     if (rank == null) return Future.value(RankBoard.empty);
+    // The catalogue's sub-categories are novel genres (穿越 / 系统 …);
+    // they mean nothing for drama boards, so drama requests always use
+    // 全部 (0) instead of a stale novel category.
+    final categoryId = rank.isDrama ? 0 : (_category?.id ?? 0);
     final loader = widget.pageLoader;
     if (loader != null) {
       return loader(
         rankId: _catalog.rankId,
         algo: rank.algo,
-        categoryId: _category?.id ?? 0,
+        categoryId: categoryId,
         offset: offset,
         startAt: startAt,
       );
@@ -122,7 +126,7 @@ class _RankPageState extends State<RankPage> {
     return ApiClient.instance.rankBoard(
       rankId: _catalog.rankId,
       algo: rank.algo,
-      categoryId: _category?.id ?? 0,
+      categoryId: categoryId,
       offset: offset,
       startAt: startAt,
     );
@@ -253,7 +257,8 @@ class _RankPageState extends State<RankPage> {
           child: Column(
             children: [
               if (_catalog.tabs.isNotEmpty) _rankTabs(palette),
-              if (_catalog.categories.isNotEmpty) _categoryChips(palette),
+              if (_catalog.categories.isNotEmpty && !(_rank?.isDrama ?? false))
+                _categoryChips(palette),
               Expanded(child: _body(palette)),
             ],
           ),
@@ -425,7 +430,8 @@ class _RankPageState extends State<RankPage> {
         author: entry.author,
         badge: entry.category,
         ep: '',
-        kind: 'book',
+        kind: entry.kind,
+        seriesId: entry.seriesId.isEmpty ? null : entry.seriesId,
       ),
     );
   }

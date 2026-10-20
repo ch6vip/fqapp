@@ -9,6 +9,7 @@ import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_ideas_sheet.dart';
+import 'package:fqapp/widgets/reader/reader_illustration.dart';
 
 import 'support/fakes.dart';
 
@@ -112,6 +113,41 @@ void main() {
       );
       await tester.pumpAndSettle();
     }
+
+    testWidgets('shows paragraph images and opens the zoomable viewer', (
+      tester,
+    ) async {
+      final page = parseParagraphComments({
+        'data': {
+          'data_list': [
+            {
+              'comment': {
+                'common': {
+                  'content': {
+                    'text': '带图评论',
+                    'image_data_list': {
+                      'image_data': [
+                        {'web_url': 'https://example.test/comment.jpg'},
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+      await pumpSheet(tester, load: (_, _) async => page);
+      expect(find.text('带图评论'), findsOneWidget);
+      expect(find.byType(ReaderIllustration), findsOneWidget);
+      await tester.tap(find.byType(ReaderIllustration));
+      await tester.pumpAndSettle();
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      await tester.tap(find.byTooltip('关闭插图'));
+      await tester.pumpAndSettle();
+      expect(find.text('带图评论'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('shows the selected count above a direct comment list', (
       tester,

@@ -405,6 +405,11 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       duration: Duration.zero,
       playing: wantPlay && !loading && error == null,
       textProgress: progress,
+      // The piece being spoken is one sentence (see _speak's sentence-sized
+      // split). Before the first piece the range is empty: no highlight.
+      sentenceRange: _pieceEnd > _pieceStart
+          ? (start: _pieceStart, end: _pieceEnd)
+          : null,
     );
     notifyListeners();
     if (notification) {
@@ -455,7 +460,12 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     NativePlayer.clearRemoteCommandHandler();
     ListeningSession.instance.clear();
     notifyListeners();
-    await _subscription?.cancel();
+    // Do not await the EventChannel cancel: awaiting a platform-stream
+    // subscription cancel stalls every later await in this zone (widget
+    // tests hang in shutdown below), so fire it and forget it. Late events
+    // are already ignored because `closed` is set above.
+    unawaited(_subscription?.cancel());
+    _subscription = null;
     try {
       await SystemTts.shutdown();
     } catch (_) {}

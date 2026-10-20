@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
+import 'encrypted_hive.dart';
+import 'secure_key_provider.dart';
 
 abstract interface class ChapterCache {
   Future<String?> read({required String bookId, required String chapterId});
@@ -112,6 +114,7 @@ class CachedBookSummary {
 class ChapterCacheStore implements ChapterCache {
   ChapterCacheStore({
     HiveInterface? hive,
+    this._keys,
     this.maxEntries = 500,
     this.maxBytes = 80 * 1024 * 1024,
     this.catalogTtl = const Duration(days: 30),
@@ -121,6 +124,11 @@ class ChapterCacheStore implements ChapterCache {
   static const _boxName = 'chapter_cache_v1';
 
   final HiveInterface _hive;
+
+  /// Encryption-key source. Production uses the shared secure-storage
+  /// provider; tests inject an in-memory one. Chapter text must never fall
+  /// back to a plaintext box, so [_box] opens with `requireEncryption`.
+  final SecureKeyProvider? _keys;
 
   /// Chapters the automatic cache keeps before evicting the least recently read
   /// ones. What the user downloads is pinned and lives outside this budget, so
@@ -144,8 +152,14 @@ class ChapterCacheStore implements ChapterCache {
   int _lastAccessTime = 0;
 
   Future<Box<dynamic>> _box() async {
-    final box = await (_opening ??= _hive.openBox<dynamic>(
+    // P1-5: decrypted chapter text stays in the encrypted box (offline
+    // reading still works — the box is on disk, just ciphertext). Never a
+    // plaintext fallback: without a key the open fails closed.
+    final box = await (_opening ??= EncryptedHive.openBox<dynamic>(
+      _hive,
       _boxName,
+      keys: _keys,
+      requireEncryption: true,
       compactionStrategy: (entries, deleted) =>
           deleted >= 50 && deleted > entries ~/ 2,
     ));

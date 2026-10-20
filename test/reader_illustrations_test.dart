@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_device.dart';
@@ -359,6 +360,21 @@ void main() {
     await tester.pumpAndSettle();
     final viewer = find.byKey(const ValueKey('reader-illustration-viewer'));
     expect(viewer, findsOneWidget);
+    final title = find.text('插图');
+    expect(
+      tester.widget<Text>(title).style?.color ??
+          DefaultTextStyle.of(tester.element(title)).style.color,
+      Colors.white,
+    );
+    final closeIcon = find.descendant(
+      of: find.byTooltip('关闭插图'),
+      matching: find.byType(Icon),
+    );
+    final icon = tester.widget<Icon>(closeIcon);
+    expect(
+      icon.color ?? IconTheme.of(tester.element(closeIcon)).color,
+      Colors.white,
+    );
     expect(store.entry!['textOffset'], anchor);
     final center = tester.getCenter(viewer);
     final left = await tester.startGesture(
@@ -826,6 +842,7 @@ Widget _app({
   ChapterTextLoader? loader,
   List<Chapter>? chapters,
 }) => MaterialApp(
+  theme: AppTheme.createTheme(Brightness.light),
   home: ReaderPage(
     bookId: _bookId,
     title: _bookTitle,
@@ -862,7 +879,15 @@ Future<void> _showImage(WidgetTester tester, {int index = 0}) async {
 
 Future<void> _openMenu(WidgetTester tester) async {
   if (find.byTooltip('收起阅读菜单').hitTestable().evaluate().isNotEmpty) return;
-  await tester.tap(find.text(_bookTitle).hitTestable().first);
+  // The book title lives in the menu header, so it is not visible while
+  // the menu is closed. Tap the reading surface instead: the middle
+  // third toggles the controls (the outer thirds turn pages). Tap the
+  // top margin strip, which is outside every content block: on an
+  // image-only page the illustration covers the whole middle third and
+  // would swallow the tap to open the viewer instead of the menu.
+  final surface = find.byKey(const ValueKey('reader-page-surface'));
+  final rect = tester.getRect(surface);
+  await tester.tapAt(Offset(rect.center.dx, rect.top + 8));
   await tester.pumpAndSettle();
 }
 

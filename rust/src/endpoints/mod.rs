@@ -4,6 +4,8 @@
 //! adapter and the built-in Web UI all dispatch through it. Endpoint names and
 //! path matching are identical across all three dispatch paths.
 
+pub mod account_history;
+pub mod account_library;
 pub mod audio;
 pub mod author;
 pub mod base;
@@ -15,7 +17,6 @@ pub mod dhcontent;
 pub mod full;
 pub mod home;
 pub mod manga;
-pub mod pages;
 pub mod router;
 pub mod search;
 pub mod session;
@@ -183,6 +184,5 @@ pub mod server {
         audio::register(s);
         video::register(s);
         manga::register(s);
-        pages::register(s);
     }
 }

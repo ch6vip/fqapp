@@ -222,7 +222,7 @@ class _CoverTile extends StatelessWidget {
   }
 }
 
-/// `番茄原创` chip shown under the metadata line for original works.
+/// `原创` chip shown under the metadata line for original works.
 class _OriginBadge extends StatelessWidget {
   const _OriginBadge();
 
@@ -249,7 +249,7 @@ class _OriginBadge extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            '番茄原创',
+            '原创',
             style: TextStyle(
               color: palette.accentText,
               fontSize: 11,

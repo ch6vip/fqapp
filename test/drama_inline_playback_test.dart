@@ -5,13 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
+import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/drama_mute_preferences.dart';
@@ -256,6 +257,26 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // P1-15：feed 内联播放的 inactive（通知栏/控制中心）继续播，hidden
+  // 暂停，resumed 恢复。参考 audio_page_test 的 lifecycle 循环写法。
+  testWidgets('inactive keeps the feed playing, hidden pauses it', (
+    tester,
+  ) async {
+    final session = _Session();
+    await _mount(tester, session);
+    final player = session.players.single;
+    expect(player.isPlaying, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await _flush(tester);
+    expect(player.isPlaying, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    expect(player.isPlaying, isFalse);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(player.isPlaying, isTrue);
+  });
+
   testWidgets('内联矩形按解码尺寸排布，横屏剧不按 9:16', (tester) async {
     final session = _Session(width: 1920, height: 1080);
     await _mount(tester, session);
@@ -272,6 +293,83 @@ void main() {
     expect(rect.bottom, lessThanOrEqualTo(feed.bottom + 0.5));
     // 横版源：官方 `vk3.a.a` 只在非竖屏源上显示 30dp 圆形全屏钮。
     expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('上划换集后横屏钮仍在（判据不随 videoSize 重置退回未知）', (tester) async {
+    // 官方 `vk3.a.a` 读数据层 `isVertical()`，与「解码尺寸此刻是否已知」无关；
+    // 此前用 `videoSize` 宽高比代理，换集时它被重置成 `Size.zero`，图标就再也
+    // 不出现（用户反馈「上划后按钮不见了」）。
+    final session = _Session(width: 1920, height: 1080);
+    await _mount(tester, session);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+
+    await _swipeUp(tester);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('尺寸晚到也要点亮横屏钮（真机时序：创建时 0×0）', (tester) async {
+    // 真机上 `create()` 那一刻播放器还是 0×0，真实尺寸随后才由
+    // `videoSizeStream` 送来。此前只在 `_adoptVideoSize`（创建/复用当下读
+    // 尺寸）里判横竖，于是 `landscapeSource` 永远是 null、钮不出现——用户
+    // 在 CI 产物上实测到的就是这个回归。
+    final session = _Session(width: 0, height: 0);
+    await _mount(tester, session);
+    // 尺寸未知：不渲染（官方此时也无从知道横竖）。
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsNothing);
+
+    session.players.single.emitVideoSize(1920, 1080);
+    await _flush(tester);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+
+    // 竖版片源尺寸晚到：仍然不给入口（官方 `!isVertical()` 才显示）。
+    session.players.single.emitVideoSize(1080, 1920);
+    await _flush(tester);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('滑回复用池内解码器后，横屏钮仍在（复用路径也要恢复判据）', (tester) async {
+    // 播放器那条路。如果这条路不重算横竖，滑回来时钮就没了。
+    final session = _Session(width: 1920, height: 1080);
+    await _mount(tester, session);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+
+    await _swipeUp(tester);
+    await _flush(tester);
+    expect(session.players, hasLength(2));
+
+    await tester.drag(
+      find.byKey(const Key('drama_feed')),
+      const Offset(0, 600),
+    );
+    await tester.pumpAndSettle();
+    await _flush(tester);
+    expect(session.players, hasLength(2));
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('点横屏钮进播放页且一进去就是全屏（官方独立横屏页）', (tester) async {
+    // 官方那颗钮走 `zf3.c.w` → `transformToLandActivity` →
+    // `startActivity(ShortSeriesLandActivity)`（`jq3/x.java:4499`），页面一起来
+    // 就是横屏全屏，不是「观看全集」那种先竖屏播放页。
+    final session = _Session(width: 1920, height: 1080);
+    await _mount(tester, session);
+    final button = find.byKey(const Key('drama_fullscreen_button'));
+    expect(button, findsOneWidget);
+
+    await tester.tap(button);
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
+
+    expect(find.byType(PlayerPage), findsOneWidget);
+    // 进页即全屏：`openFullScreen` 把播放页放在全屏态，与官方横屏 Activity
+    // 一致（竖屏常驻的「全屏观看」药丸在全屏态下已收起）。
+    final page = tester.widget<PlayerPage>(find.byType(PlayerPage));
+    expect(page.openFullScreen, isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -569,7 +667,7 @@ void main() {
       find.byKey(const ValueKey('drama_inline_cover_video_16-0')),
       findsOneWidget,
     );
-    expect(find.text('网络异常，请稍后再试'), findsOneWidget);
+    expect(find.text('内容加载失败'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('drama_inline_retry_video_16-0')),
       findsOneWidget,
@@ -661,6 +759,11 @@ void main() {
 
     // 选 1.25x：药丸点击立即回传（官方 jj3/i.e 语义），feed 播放器生效并
     // 写入全局速率配置（全页播放页读同一份）。面板退场动画跨帧推进。
+    // 官方 6 档 + 1x 带「（默认）」，药丸轨道需要横向滚动，先滚到目标档再点。
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('player-more-light-rate-1.25')),
+    );
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('player-more-light-rate-1.25')));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 300));

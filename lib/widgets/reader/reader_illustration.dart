@@ -2,7 +2,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/app_theme.dart';
 import '../../services/chapter_text_formatter.dart';
+import '../../services/poster_cache.dart';
+import 'eink_image_provider.dart';
 
 typedef ReaderImageProviderFactory =
     ImageProvider<Object> Function(ChapterImage image);
@@ -28,13 +31,41 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
   int _attempt = 0;
   bool _retrying = false;
 
-  ImageProvider<Object> _createProvider() =>
-      widget.providerFactory?.call(widget.image) ??
-      CachedNetworkImageProvider(
-        widget.image.url,
-        maxWidth: 2048,
-        maxHeight: 4096,
-      );
+  @override
+  void initState() {
+    super.initState();
+    einkModeNotifier.addListener(_onEinkChanged);
+  }
+
+  @override
+  void dispose() {
+    einkModeNotifier.removeListener(_onEinkChanged);
+    super.dispose();
+  }
+
+  void _onEinkChanged() {
+    if (!mounted) return;
+    setState(() {
+      _provider = _createProvider();
+      ++_attempt;
+    });
+  }
+
+  ImageProvider<Object> _createProvider() {
+    final base =
+        widget.providerFactory?.call(widget.image) ??
+        CachedNetworkImageProvider(
+          widget.image.url,
+          maxWidth: 2048,
+          maxHeight: 4096,
+          // 与海报共用 PosterCache（2000 对象 / 256MiB）：默认的
+          // DefaultCacheManager 只有 200 对象上限，插图更容易被挤出重下。
+          cacheManager: PosterCache.instance,
+        );
+    // 墨水屏：包一层灰度抖动处理，彩色插图不再靠屏幕自己量化。
+    if (einkModeNotifier.value) return EinkImageProvider(base);
+    return base;
+  }
 
   @override
   void didUpdateWidget(covariant ReaderIllustration oldWidget) {
@@ -69,18 +100,22 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
     final navigator = Navigator.of(context);
     final image = widget.image;
     final factory = widget.providerFactory;
+    // 墨水屏：查看器也用白底黑字，黑底在墨水屏上是大块反色残影。
+    final eink = einkModeNotifier.value;
+    final chrome = eink ? Colors.white : Colors.black;
+    final onChrome = eink ? Colors.black : Colors.white;
     navigator.push<void>(
       MaterialPageRoute(
         builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
+          backgroundColor: chrome,
           appBar: AppBar(
-            backgroundColor: Colors.black,
-            foregroundColor: Colors.white,
-            title: const Text('插图'),
+            backgroundColor: chrome,
+            foregroundColor: onChrome,
+            title: Text('插图', style: TextStyle(color: onChrome)),
             leading: IconButton(
               tooltip: '关闭插图',
               onPressed: () => navigator.pop(),
-              icon: const Icon(LucideIcons.x),
+              icon: Icon(LucideIcons.x, color: onChrome),
             ),
           ),
           body: SafeArea(

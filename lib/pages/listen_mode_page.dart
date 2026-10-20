@@ -149,30 +149,44 @@ class _ListenModePageState extends State<ListenModePage>
             );
       final url = variant?.url ?? source.url;
       final keyHex = variant?.keyHex ?? source.keyHex;
-      await _player?.dispose();
-      final player = (widget.playerFactory ?? NativePlayer.new)();
-      await player.create(url, keyHex);
-      await player.setRate(_rate);
-      if (autoplay) unawaited(player.play());
-      _completedSub?.cancel();
-      _completedSub = player.completedStream.listen((completed) {
-        if (completed) _onEpisodeEnded();
-      });
-      _positionSub?.cancel();
-      _positionSub = player.positionStream.listen((_) {
-        if (mounted && !_switching) setState(() {});
-      });
-      if (!mounted) {
-        await player.dispose();
-        return;
+      // 旧播放器释放后立即把字段置空：否则下面任何一步抛异常都会让 `_player`
+      // 继续指向已释放的句柄，播放按钮可点却静默无响应。
+      final previous = _player;
+      _player = null;
+      await previous?.dispose();
+      NativePlayer? created;
+      try {
+        final player = (widget.playerFactory ?? NativePlayer.new)();
+        created = player;
+        await player.create(url, keyHex);
+        await player.setRate(_rate);
+        if (autoplay) unawaited(player.play());
+        _completedSub?.cancel();
+        _completedSub = player.completedStream.listen((completed) {
+          if (completed) _onEpisodeEnded();
+        });
+        _positionSub?.cancel();
+        _positionSub = player.positionStream.listen((_) {
+          if (mounted && !_switching) setState(() {});
+        });
+        if (!mounted) return;
+        setState(() {
+          _player = player;
+          _index = index;
+        });
+        // 所有权已交给 `_player`，不能在这里释放。
+        created = null;
+        unawaited(_startForeground());
+      } finally {
+        // 创建/初始化失败，或页面已卸载：新建的播放器不能泄漏。
+        await created?.dispose();
       }
-      setState(() {
-        _player = player;
-        _index = index;
-      });
-      unawaited(_startForeground());
     } catch (_) {
-      messenger?.showSnackBar(const SnackBar(content: Text('本集暂时无法收听')));
+      // `messenger` 要等首个 await 之后才能取（见上），而这里正是那条 await
+      // 抛出的路径——不补取一次，取流失败会被静默吞掉，界面毫无提示。
+      final state =
+          messenger ?? (mounted ? ScaffoldMessenger.maybeOf(context) : null);
+      state?.showSnackBar(const SnackBar(content: Text('本集暂时无法收听')));
     } finally {
       _switching = false;
     }

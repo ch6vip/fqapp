@@ -181,7 +181,10 @@ fn directory<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Va
             );
             return Upstream::new(ctx.up.clone())
                 .json(&UpstreamRequestSpec {
-                    mode: UpstreamMode::Signed,
+                    // `DIRECTORY_NOVEL_QUERY_SUFFIX` ends in
+                    // `openudid={openudid}`; only DeviceSigned substitutes it,
+                    // so under Signed the literal placeholder was sent.
+                    mode: UpstreamMode::DeviceSigned,
                     raw_url: Some(u),
                     headers: user_agent_headers("com.ss.android.article.news"),
                     ..Default::default()

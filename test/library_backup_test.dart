@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/library_backup.dart';

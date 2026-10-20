@@ -18,6 +18,12 @@ class ListeningSession extends ChangeNotifier {
   /// System TTS reports character progress, never a fabricated audio duration.
   double? textProgress;
 
+  /// The sentence currently being spoken, in TTS-text coordinates (offsets
+  /// into SystemTtsBook.plainText: body paragraphs joined by '\n', title
+  /// stripped, images excluded). The reader translates it into layout
+  /// coordinates to paint the 句高亮 wash. Null for audiobook playback,
+  /// which has no text positions.
+
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// Whether this session is narrating the given chapter right now.
@@ -35,6 +41,8 @@ class ListeningSession extends ChangeNotifier {
   /// Publishes a state change. Position updates arrive far more often than the
   /// reader needs, so notifications are throttled to one per second unless
   /// something structural changed (chapter, playing).
+  ({int start, int end})? sentenceRange;
+
   void update({
     required String bookId,
     required String chapterId,
@@ -43,11 +51,13 @@ class ListeningSession extends ChangeNotifier {
     required Duration duration,
     required bool playing,
     double? textProgress,
+    ({int start, int end})? sentenceRange,
   }) {
     final structural =
         this.bookId != bookId ||
         this.chapterId != chapterId ||
-        this.playing != playing;
+        this.playing != playing ||
+        this.sentenceRange != sentenceRange;
     this.bookId = bookId;
     this.chapterId = chapterId;
     this.chapterTitle = chapterTitle;
@@ -55,6 +65,7 @@ class ListeningSession extends ChangeNotifier {
     this.duration = duration;
     this.playing = playing;
     this.textProgress = textProgress;
+    this.sentenceRange = sentenceRange;
     final now = DateTime.now();
     if (structural ||
         now.difference(_lastNotify) >= const Duration(seconds: 1)) {
@@ -73,6 +84,7 @@ class ListeningSession extends ChangeNotifier {
     duration = Duration.zero;
     playing = false;
     textProgress = null;
+    sentenceRange = null;
     notifyListeners();
   }
 }

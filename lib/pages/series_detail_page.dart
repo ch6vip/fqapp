@@ -934,8 +934,13 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     final statusText = _episodes.isEmpty ? null : _episodeStatusText;
     final header = _sectionHeader(
       '选集',
-      trailing: Flexible(
-        child: Wrap(
+      trailing:
+          // No Flexible here: _sectionHeader itself is a Wrap, and a
+          // Flexible directly inside a Wrap is an illegal ParentDataWidget
+          // combination (threw in 26 tests). The inner Wrap sizes itself
+          // and the outer Wrap wraps the two children onto two lines
+          // when the title is long.
+          Wrap(
           alignment: WrapAlignment.end,
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 8,
@@ -958,7 +963,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
               ),
           ],
         ),
-      ),
     );
     Widget body;
     if (_episodes.isEmpty) {

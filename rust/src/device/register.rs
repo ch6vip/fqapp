@@ -7,7 +7,7 @@ use crate::crypto::gzip;
 use crate::device::crypto::*;
 use crate::device::Device;
 use crate::sign::Manager;
-use crate::upstream::http::HttpTransport;
+use crate::upstream::http::{HttpTransport, API_BODY_LIMIT_BYTES};
 
 const PKG_NAME: &str = "com.dragon.read";
 const SDK_VERSION: &str = "v04.04.05-ov-android";
@@ -207,9 +207,11 @@ impl Registrar {
         let secret_key = match self.register_key(&device_id, &install_id).await {
             Ok(k) => k,
             Err(e) => {
-                log_line(&format!(
-                    "registerKey failed (secret_key will be empty): {e}"
-                ));
+                // The device is still returned, but with an empty key it can
+                // decrypt nothing. The reason must reach the log: this used to
+                // go to a no-op `log_line`, which made the degradation
+                // invisible in `rust.log` and `logcat` alike.
+                log::warn!("registerKey failed (secret_key will be empty): {e}");
                 String::new()
             }
         };
@@ -300,12 +302,13 @@ impl Registrar {
 
         let resp = self
             .http
-            .request(
+            .request_with_limit(
                 "POST",
                 &self.target(&req_url),
                 &headers,
                 Some(post_data),
                 None,
+                Some(API_BODY_LIMIT_BYTES),
             )
             .await
             .map_err(|e| format!("{e:?}"))?;
@@ -317,7 +320,7 @@ impl Registrar {
         let device_id = pick_str(&rd, &["device_id_str", "device_id"]);
         let install_id = pick_str(&rd, &["install_id_str", "install_id"]);
         if device_id.is_empty() || install_id.is_empty() {
-            return Err(format!("bad response: {}", String::from_utf8_lossy(&raw)));
+            return Err(format!("bad response: {}", body_head(&raw)));
         }
         Ok((device_id, install_id))
     }
@@ -364,7 +367,14 @@ impl Registrar {
 
         let _ = self
             .http
-            .request("GET", &self.target(&req_url), &headers, None, None)
+            .request_with_limit(
+                "GET",
+                &self.target(&req_url),
+                &headers,
+                None,
+                None,
+                Some(API_BODY_LIMIT_BYTES),
+            )
             .await;
         Ok(())
     }
@@ -406,7 +416,14 @@ impl Registrar {
 
         let _ = self
             .http
-            .request("POST", &self.target(&req_url), &[], Some(body_json), None)
+            .request_with_limit(
+                "POST",
+                &self.target(&req_url),
+                &[],
+                Some(body_json),
+                None,
+                Some(API_BODY_LIMIT_BYTES),
+            )
             .await;
         Ok(())
     }
@@ -448,12 +465,13 @@ impl Registrar {
 
             let resp = match self
                 .http
-                .request(
+                .request_with_limit(
                     "POST",
                     &self.target(&req_url),
                     &headers,
                     Some(compressed.clone()),
                     None,
+                    Some(API_BODY_LIMIT_BYTES),
                 )
                 .await
             {
@@ -465,11 +483,7 @@ impl Registrar {
                 }
             };
             if resp.status != 200 {
-                last_err = format!(
-                    "HTTP {} body={}",
-                    resp.status,
-                    String::from_utf8_lossy(&resp.body)
-                );
+                last_err = format!("HTTP {} body={}", resp.status, body_head(&resp.body));
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 continue;
             }
@@ -536,6 +550,13 @@ fn pick_str(v: &Value, keys: &[&str]) -> String {
     String::new()
 }
 
-fn log_line(msg: &str) {
-    let _ = msg;
+/// A diagnostic prefix of a response body.
+///
+/// Bodies here can be up to `API_BODY_LIMIT_BYTES` (64 MiB) and the strings
+/// built from them end up in `rust.log`, which rotates at 1 MiB - interpolating
+/// a whole body would evict the log's history in one line. 256 bytes is enough
+/// to recognise an error envelope.
+fn body_head(bytes: &[u8]) -> String {
+    let head = &bytes[..bytes.len().min(256)];
+    String::from_utf8_lossy(head).into_owned()
 }

@@ -8,6 +8,7 @@ import '../../services/poster_cache.dart';
 import '../../models/book_comment.dart';
 import '../../models/book_detail.dart';
 import '../../models/comment_reply.dart';
+import '../comment_images.dart';
 import '../home/home_design.dart';
 import 'detail_sections.dart';
 
@@ -329,11 +330,20 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
             ),
           ],
           const SizedBox(height: 8),
-          Text(
-            comment.text,
-            key: ValueKey('detail_review_text_${comment.id}'),
-            style: TextStyle(color: palette.ink, fontSize: 13.5, height: 1.65),
-          ),
+          if (comment.text.isNotEmpty)
+            Text(
+              comment.text,
+              key: ValueKey('detail_review_text_${comment.id}'),
+              style: TextStyle(
+                color: palette.ink,
+                fontSize: 13.5,
+                height: 1.65,
+              ),
+            ),
+          if (comment.imageUrls.isNotEmpty) ...[
+            if (comment.text.isNotEmpty) const SizedBox(height: 8),
+            CommentImages(imageUrls: comment.imageUrls),
+          ],
           if (comment.diggCount > 0 || comment.replyCount > 0) ...[
             const SizedBox(height: 10),
             Row(
@@ -533,14 +543,19 @@ class _ReplyTile extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  reply.text,
-                  style: TextStyle(
-                    color: palette.ink,
-                    fontSize: 12.5,
-                    height: 1.55,
+                if (reply.text.isNotEmpty)
+                  Text(
+                    reply.text,
+                    style: TextStyle(
+                      color: palette.ink,
+                      fontSize: 12.5,
+                      height: 1.55,
+                    ),
                   ),
-                ),
+                if (reply.imageUrls.isNotEmpty) ...[
+                  if (reply.text.isNotEmpty) const SizedBox(height: 8),
+                  CommentImages(imageUrls: reply.imageUrls),
+                ],
               ],
             ),
           ),

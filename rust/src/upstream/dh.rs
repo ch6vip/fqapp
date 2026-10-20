@@ -1,9 +1,11 @@
 //! Toutiao/Full DH key-exchange decryption.
 
 use base64::Engine as _;
-use num_bigint::{BigUint, RandBigInt};
+use num_bigint::BigUint;
 use num_traits::Zero;
 use once_cell::sync::OnceCell;
+use rand::Rng;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const DH_PRIME_DEC: &str = "2410312426921032588552076022197566074856950548502459942654116941958108831682612228890093858261341614673227141477904012196503648957050582631942730706805009223062734745341073406696246014589361659774041027169249453200378729434170325843778659198143763193776859869524088940195577346119843545301547043747207749969763750084308926339295559968882457872412993810129130294592999947926365264059284647209730384947211681434464714438488520940127459844288859336526896320919633919";
 
@@ -17,9 +19,13 @@ fn dh_g() -> BigUint {
 }
 
 /// Client private key for the follow-up decrypt.
-#[derive(Debug, Clone)]
+///
+/// Stored as big-endian bytes in a `Zeroizing` wrapper so the exponent is
+/// wiped when the handshake state drops (a `BigUint` has no `Zeroize`
+/// impl). Read it back with `BigUint::from_bytes_be(&state.a)`.
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct DHState {
-    pub a: BigUint,
+    pub a: Zeroizing<Vec<u8>>,
 }
 
 /// Java `BigInteger.toByteArray`: big-endian, leading 0x00 when the top bit is
@@ -53,7 +59,8 @@ pub fn dh_req_key() -> Vec<u8> {
 /// Builds the "y" request header plus the DH state for the decrypt step.
 pub fn generate_y() -> Result<(String, DHState), String> {
     let mut rng = rand::thread_rng();
-    let a = rng.gen_biguint(256);
+    let priv_bytes: [u8; 32] = rng.gen();
+    let a = BigUint::from_bytes_be(&priv_bytes);
     let big_a = dh_g().modpow(&a, dh_prime());
     let a_bytes = java_big_int_bytes(&big_a);
 
@@ -66,7 +73,9 @@ pub fn generate_y() -> Result<(String, DHState), String> {
     blob.extend_from_slice(&ct);
     Ok((
         base64::engine::general_purpose::STANDARD.encode(blob),
-        DHState { a },
+        DHState {
+            a: Zeroizing::new(priv_bytes.to_vec()),
+        },
     ))
 }
 
@@ -81,7 +90,11 @@ pub fn decrypt_dh_content(
         .decode(server_y_b64)
         .map_err(|e| format!("decode server y: {e}"))?;
     let b = BigUint::from_bytes_be(&b_bytes);
-    let s = b.modpow(&st.a, dh_prime());
+    // P2-10: never derive a shared secret from an unvalidated peer
+    // value — a degenerate y collapses the secret to a known value.
+    crate::upstream::validate_peer_pubkey(&b, dh_prime())?;
+    let a = BigUint::from_bytes_be(&st.a);
+    let s = b.modpow(&a, dh_prime());
     let s_bytes = if s.is_zero() {
         Vec::new()
     } else {
@@ -106,5 +119,5 @@ pub fn decrypt_dh_content(
         return Err(format!("content not block-aligned: {}", ct.len()));
     }
     let pt = crate::crypto::aes_cbc_decrypt(ct, key, iv);
-    Ok(crate::crypto::pkcs7_unpad(&pt, 16).to_vec())
+    Ok(crate::crypto::pkcs7_unpad_strict(&pt, 16)?.to_vec())
 }

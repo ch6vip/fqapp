@@ -282,10 +282,25 @@ void main() {
               .data ??
           '';
       expect(pageNumber(), contains('本章 1 /'));
-      await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeDown);
+      // 音量键已由 HardwareKeyboard 改为原生 MethodChannel 回调
+      // （fqapp/volume-key），测试里没有原生端，改用平台通道模拟原生回调。
+      Future<void> sendVolumeKey(int direction) async {
+        await TestDefaultBinaryMessengerBinding
+            .instance
+            .defaultBinaryMessenger
+            .handlePlatformMessage(
+              'fqapp/volume-key',
+              const StandardMethodCodec().encodeMethodCall(
+                MethodCall('volumeKey', direction),
+              ),
+              (_) {},
+            );
+      }
+
+      await sendVolumeKey(1);
       await tester.pumpAndSettle();
       expect(pageNumber(), contains('本章 2 /'));
-      await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeUp);
+      await sendVolumeKey(-1);
       await tester.pumpAndSettle();
       expect(pageNumber(), contains('本章 1 /'));
     });

@@ -99,7 +99,9 @@ impl UpstreamClient {
     }
 
     /// Applies the mock-origin rewrite, keeping path and query intact.
-    fn effective_url(&self, url: &str) -> String {
+    /// Shared by the request path and the streaming video download, which
+    /// bypasses `do_request` with its own client.
+    pub(crate) fn effective_url(&self, url: &str) -> String {
         let Some(origin) = self.mock_origin.as_deref() else {
             return url.to_string();
         };
@@ -118,16 +120,29 @@ impl UpstreamClient {
     }
 
     /// Performs a request with signature injection but no device retry.
+    ///
+    /// Uncapped: only the video download path uses this. API callers must
+    /// use [UpstreamClient::do_request_capped].
     pub async fn do_request(
         &self,
         req: &UpstreamRequest,
     ) -> Result<(Vec<u8>, Vec<(String, String)>), ClientError> {
-        self.do_resp(req).await
+        self.do_resp(req, None).await
+    }
+
+    /// Capped variant of [UpstreamClient::do_request] for JSON/API calls.
+    pub async fn do_request_capped(
+        &self,
+        req: &UpstreamRequest,
+        body_limit: usize,
+    ) -> Result<(Vec<u8>, Vec<(String, String)>), ClientError> {
+        self.do_resp(req, Some(body_limit)).await
     }
 
     async fn do_resp(
         &self,
         req: &UpstreamRequest,
+        body_limit: Option<usize>,
     ) -> Result<(Vec<u8>, Vec<(String, String)>), ClientError> {
         let target = self.effective_url(&req.url);
         let parsed =
@@ -163,10 +178,21 @@ impl UpstreamClient {
 
         let resp = self
             .http
-            .request(&method, &target, &headers, req.body.clone(), None)
+            .request_with_limit(
+                &method,
+                &target,
+                &headers,
+                req.body.clone(),
+                None,
+                body_limit,
+            )
             .await
             .map_err(|e| match e {
                 TransportError::Network(m) => ClientError::DeviceFailed(m),
+                // A local size limit is not a device fault: retiring the
+                // device here would rotate identities over a response that was
+                // merely too large.
+                TransportError::TooLarge(m) => ClientError::Other(m),
             })?;
 
         if resp.status != 200 {
@@ -180,9 +206,29 @@ impl UpstreamClient {
 
     /// Fetches a device, substitutes placeholders, signs, and retries with a
     /// fresh device on device-class failures.
+    ///
+    /// Uncapped: only the video download path uses this. API callers must
+    /// use [UpstreamClient::do_with_device_capped].
     pub async fn do_with_device(
         &self,
         req: &UpstreamRequest,
+    ) -> Result<(Vec<u8>, Device), ClientError> {
+        self.do_with_device_inner(req, None).await
+    }
+
+    /// Capped variant of [UpstreamClient::do_with_device] for JSON/API calls.
+    pub async fn do_with_device_capped(
+        &self,
+        req: &UpstreamRequest,
+        body_limit: usize,
+    ) -> Result<(Vec<u8>, Device), ClientError> {
+        self.do_with_device_inner(req, Some(body_limit)).await
+    }
+
+    async fn do_with_device_inner(
+        &self,
+        req: &UpstreamRequest,
+        body_limit: Option<usize>,
     ) -> Result<(Vec<u8>, Device), ClientError> {
         let mut last_err: Option<ClientError> = None;
         let mut pin = req.pin.clone();
@@ -213,7 +259,7 @@ impl UpstreamClient {
             attempt.url = substitute_device(&req.url, &dev);
             attempt.pin = None;
 
-            match self.do_request(&attempt).await {
+            match self.do_resp(&attempt, body_limit).await {
                 Ok((data, _)) => return Ok((data, dev)),
                 Err(err) => {
                     last_err = Some(err.clone());

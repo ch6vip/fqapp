@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../src/rust/api.dart' as rust;
 import '../src/rust/frb_generated.dart';
+import 'secure_key_provider.dart';
 
 /// One backend response.
 ///
@@ -26,9 +27,14 @@ class BackendResponse {
 /// write - so a late result is never published. A filesystem write the OS has
 /// already accepted is not rolled back: Tokio file I/O is not a transaction.
 class BackendRequestAborted implements Exception {
-  BackendRequestAborted(this.message);
+  BackendRequestAborted(this.message, {this.timedOut = false});
 
   final String message;
+
+  /// The core hit its deadline instead of the caller cancelling. The two are
+  /// different events: a joiner must not treat a timeout as "the owner
+  /// cancelled" and re-send a request that already ran out of time.
+  final bool timedOut;
 
   @override
   String toString() => message;
@@ -181,6 +187,18 @@ class RustBackendTransport implements BackendTransport {
     required String runtimeDir,
   }) async {
     await ensureRuntime();
+    // P1-2: provision the device-pool encryption key before init, so the
+    // Rust core reads an encrypted pool file on its first load. A null
+    // key (secure storage unavailable) keeps the old plaintext behavior;
+    // a provisioning failure never blocks startup.
+    final poolKey = await SecureKeyProvider().devicePoolKey();
+    if (poolKey != null) {
+      try {
+        await rust.setDevicePoolKey(key: poolKey);
+      } catch (_) {
+        // Keep starting: the pool falls back to plaintext + a warning.
+      }
+    }
     final result = await rust.init(
       configPath: configPath,
       poolPath: poolPath,
@@ -269,7 +287,7 @@ class RustBackendTransport implements BackendTransport {
         throw BackendRequestAborted('请求已取消');
       }
       if (response.status == 504) {
-        throw BackendRequestAborted('请求超时');
+        throw BackendRequestAborted('请求超时', timedOut: true);
       }
       return BackendResponse(
         response.status,

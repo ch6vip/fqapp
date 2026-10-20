@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'reader_tap_zones.dart';
+
 enum ReaderThemePreset { light, eyeCare, parchment, dark, eink }
 
 enum ReaderTitleAlignment { start, center }
@@ -15,7 +17,7 @@ enum ReaderInfoMode { hidden, compact, detailed }
 /// the new page slides in normally (平移), slides over a pinned outgoing page
 /// (覆盖), or appears instantly (无). See
 /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
-enum ReaderPageTurnStyle { cover, slide, none }
+enum ReaderPageTurnStyle { cover, slide, curl, none }
 
 @immutable
 class ReaderPreferences {
@@ -42,7 +44,13 @@ class ReaderPreferences {
   static const _keepScreenOnKey = 'reader_keep_screen_on';
   static const _autoTurnSecondsKey = 'reader_auto_turn_seconds';
   static const _listeningFollowKey = 'reader_listening_follow';
+  static const _narrationHighlightKey = 'reader_narration_highlight';
   static const _continuousReadingKey = 'reader_continuous_reading';
+  static const _einkRefreshIntervalKey = 'reader_eink_refresh_interval';
+  static const _instantSwipeTurnKey = 'reader_instant_swipe_turn';
+  static const _tapLeftTurnsNextKey = 'reader_tap_left_turns_next';
+  static const _tapZonesKey = 'reader_tap_zones';
+  static const _showParagraphBubblesKey = 'reader_show_paragraph_bubbles';
 
   final double fontSize;
   final int fontWeight;
@@ -70,9 +78,33 @@ class ReaderPreferences {
   /// playback (听书跟随翻页).
   final bool listeningFollow;
 
+  /// While the audio page narrates this chapter, paint a background wash
+  /// behind the sentence being spoken (朗读句高亮, #25). Independent of
+  /// [listeningFollow]: the highlight can show without auto page turns.
+  final bool narrationHighlight;
+
   /// 滚动模式连续阅读：到底继续下拉进入下一章。默认开启。
   /// 普通分页始终直接跨章，不受这个滚动手势开关影响。
   final bool continuousReading;
+
+  /// 墨水屏整屏刷新间隔（页）：翻够这么多页调用一次厂商 EPD 全刷压残影。
+  /// 0 表示关闭。默认 10 页，只在设备提供海信 EPD 接口时才会真正触发。
+  final int einkRefreshInterval;
+
+  /// 分页模式“滑动直翻”：滑动越过阈值直接翻页，不显示翻页过渡页面与动画。
+  /// 适合墨水屏（翻页动画/残影明显）。仅分页模式生效，开启后翻页方式被强制为“无”。
+  final bool instantSwipeTurn;
+
+  /// “点击左侧翻右”：旧单手模式开关，已由点击区域九宫格取代。
+  /// 仅用于首次加载迁移：无九宫格配置且该开关开着时，迁移为单手九宫格。
+  final bool tapLeftTurnsNext;
+
+  /// 点击区域九宫格：9 个动作，行优先（上行 0-2，中行 3-5，下行 6-8）。
+  final List<ReaderTapZoneAction> tapZones;
+
+  /// 段评气泡：段落末尾的评论数气泡，点按打开段评。默认开启。
+  /// 关闭只关气泡渲染，段评本身仍从段落菜单和章节末尾打开。
+  final bool showParagraphBubbles;
 
   const ReaderPreferences({
     this.fontSize = 18,
@@ -97,7 +129,13 @@ class ReaderPreferences {
     this.keepScreenOn = false,
     this.autoTurnSeconds = 10,
     this.listeningFollow = true,
+    this.narrationHighlight = true,
     this.continuousReading = true,
+    this.einkRefreshInterval = 10,
+    this.instantSwipeTurn = false,
+    this.tapLeftTurnsNext = false,
+    this.tapZones = defaultReaderTapZones,
+    this.showParagraphBubbles = true,
   }) : readingInfoMode = showReadingInfo == false
            ? ReaderInfoMode.hidden
            : readingInfoMode;
@@ -125,7 +163,13 @@ class ReaderPreferences {
     bool? keepScreenOn,
     int? autoTurnSeconds,
     bool? listeningFollow,
+    bool? narrationHighlight,
     bool? continuousReading,
+    int? einkRefreshInterval,
+    bool? instantSwipeTurn,
+    bool? tapLeftTurnsNext,
+    List<ReaderTapZoneAction>? tapZones,
+    bool? showParagraphBubbles,
   }) {
     return ReaderPreferences(
       fontSize: fontSize ?? this.fontSize,
@@ -156,7 +200,15 @@ class ReaderPreferences {
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       autoTurnSeconds: autoTurnSeconds ?? this.autoTurnSeconds,
       listeningFollow: listeningFollow ?? this.listeningFollow,
+      narrationHighlight: narrationHighlight ?? this.narrationHighlight,
       continuousReading: continuousReading ?? this.continuousReading,
+      einkRefreshInterval:
+          einkRefreshInterval ?? this.einkRefreshInterval,
+      instantSwipeTurn: instantSwipeTurn ?? this.instantSwipeTurn,
+      tapLeftTurnsNext: tapLeftTurnsNext ?? this.tapLeftTurnsNext,
+      tapZones: tapZones ?? this.tapZones,
+      showParagraphBubbles:
+          showParagraphBubbles ?? this.showParagraphBubbles,
     ).normalized();
   }
 
@@ -193,7 +245,13 @@ class ReaderPreferences {
           ? autoTurnSeconds.round().clamp(3, 60)
           : 10,
       listeningFollow: listeningFollow,
+      narrationHighlight: narrationHighlight,
       continuousReading: continuousReading,
+      einkRefreshInterval: einkRefreshInterval.clamp(0, 100),
+      instantSwipeTurn: instantSwipeTurn,
+      tapLeftTurnsNext: tapLeftTurnsNext,
+      tapZones: ensureReaderTapZonesHaveMenu(tapZones),
+      showParagraphBubbles: showParagraphBubbles,
     );
   }
 
@@ -246,7 +304,16 @@ class ReaderPreferences {
           .round()
           .clamp(3, 60),
       listeningFollow: _boolean(preferences, _listeningFollowKey) ?? true,
+      narrationHighlight:
+          _boolean(preferences, _narrationHighlightKey) ?? true,
       continuousReading: _boolean(preferences, _continuousReadingKey) ?? true,
+      einkRefreshInterval:
+          (_number(preferences, _einkRefreshIntervalKey) ?? 10).round(),
+      instantSwipeTurn: _boolean(preferences, _instantSwipeTurnKey) ?? false,
+      tapLeftTurnsNext: _boolean(preferences, _tapLeftTurnsNextKey) ?? false,
+      tapZones: _tapZones(preferences),
+      showParagraphBubbles:
+          _boolean(preferences, _showParagraphBubblesKey) ?? true,
     ).normalized();
   }
 
@@ -290,7 +357,22 @@ class ReaderPreferences {
       preferences.setBool(_keepScreenOnKey, value.keepScreenOn),
       preferences.setInt(_autoTurnSecondsKey, value.autoTurnSeconds),
       preferences.setBool(_listeningFollowKey, value.listeningFollow),
+      preferences.setBool(_narrationHighlightKey, value.narrationHighlight),
       preferences.setBool(_continuousReadingKey, value.continuousReading),
+      preferences.setInt(
+        _einkRefreshIntervalKey,
+        value.einkRefreshInterval,
+      ),
+      preferences.setBool(_instantSwipeTurnKey, value.instantSwipeTurn),
+      preferences.setBool(_tapLeftTurnsNextKey, value.tapLeftTurnsNext),
+      preferences.setStringList(
+        _tapZonesKey,
+        encodeReaderTapZones(value.tapZones),
+      ),
+      preferences.setBool(
+        _showParagraphBubblesKey,
+        value.showParagraphBubbles,
+      ),
     ]);
   }
 
@@ -302,6 +384,21 @@ class ReaderPreferences {
   static bool? _boolean(SharedPreferences preferences, String key) {
     final value = preferences.get(key);
     return value is bool ? value : null;
+  }
+
+  /// 九宫格加载：无保存值时回落默认；旧单手开关开着且无九宫格时，
+  /// 迁移为单手九宫格（保持旧用户行为不变）。
+  static List<ReaderTapZoneAction> _tapZones(
+    SharedPreferences preferences,
+  ) {
+    final raw = preferences.getStringList(_tapZonesKey);
+    if (raw == null) {
+      if (_boolean(preferences, _tapLeftTurnsNextKey) == true) {
+        return List<ReaderTapZoneAction>.of(oneHandReaderTapZones);
+      }
+      return List<ReaderTapZoneAction>.of(defaultReaderTapZones);
+    }
+    return normalizeReaderTapZones(raw);
   }
 
   static String _string(SharedPreferences preferences, String key) {

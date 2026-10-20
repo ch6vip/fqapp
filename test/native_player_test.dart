@@ -355,6 +355,84 @@ void main() {
       },
     );
   }
+  nativeTest(
+    'textureChanged updates the texture id for soft-decoder fallback',
+    (tester, player) async {
+      final creation = player.create('https://example.invalid/swap.mp4', '');
+      await tester.pump();
+      await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+      await tester.pump();
+      expect(await creation, 9);
+      expect(player.textureId, 9);
+      final seen = <int>[];
+      final sub = player.textureIdStream.listen(seen.add);
+      await _sendEvent({'playerId': 71, 'type': 'textureChanged', 'value': 12});
+      await tester.pump();
+      expect(player.textureId, 12);
+      expect(seen, [12]);
+      // No awaited cancel: awaiting a lone broadcast cancel() stalls in the
+      // test's fake-async zone. dispose() closes the controller, which drops
+      // the subscription; production cancels via the shared Future.wait path.
+      unawaited(sub.cancel());
+    },
+  );
+
+  nativeTest(
+    'textureChanged resets a pre-swap rotation correction (#36)',
+    (tester, player) async {
+      final creation = player.create(
+        'https://example.invalid/swap-rotation.mp4',
+        '',
+      );
+      await tester.pump();
+      await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+      await tester.pump();
+      expect(await creation, 9);
+      // The size event landed before the SurfaceTexture swap, so it still
+      // carries the pre-swap correction for the rotated source.
+      await _sendEvent({
+        'playerId': 71,
+        'type': 'videoSize',
+        'width': 1920,
+        'height': 1080,
+        'rotationCorrection': 90,
+      });
+      await tester.pump();
+      expect(player.videoRotationCorrection, 90);
+      // The swap moves output to a SurfaceTexture, which applies the format
+      // rotation itself: the correction must drop to 0, or the texture gets
+      // rotated a second time and stretches up to fullscreen. The geometry
+      // re-emit is what refreshes the feed's rotation notifier.
+      final sizes = <Size>[];
+      final sub = player.videoSizeStream.listen(sizes.add);
+      await _sendEvent({'playerId': 71, 'type': 'textureChanged', 'value': 12});
+      await tester.pump();
+      expect(player.textureId, 12);
+      expect(player.videoRotationCorrection, 0);
+      expect(sizes, [const Size(1920, 1080)]);
+      // No awaited cancel: awaiting a lone broadcast cancel() stalls in the
+      // test's fake-async zone. dispose() closes the controller, which drops
+      // the subscription; production cancels via the shared Future.wait path.
+      unawaited(sub.cancel());
+    },
+  );
+
+  nativeTest(
+    'textureChanged arriving before the create reply wins over created',
+    (tester, player) async {
+      createGate = Completer<Map<String, dynamic>>();
+      final creation = player
+          .create('https://example.invalid/early-swap.mp4', '')
+          .then<Object>((value) => value, onError: (Object error) => error);
+      await tester.pump();
+      await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+      await _sendEvent({'playerId': 71, 'type': 'textureChanged', 'value': 12});
+      createGate!.complete({'playerId': 71});
+      await tester.pump();
+      expect(await creation, 12);
+      expect(player.textureId, 12);
+    },
+  );
 }
 
 Future<void> _createPlayer(WidgetTester tester, NativePlayer player) async {

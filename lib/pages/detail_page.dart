@@ -165,6 +165,7 @@ class _DetailPageState extends State<DetailPage> {
   bool _opening = false;
   bool _autoOpened = false;
   ChapterDownload? _download;
+
   /// 目录联网失败时查到的本地整本缓存；非空即给出「从缓存阅读」入口。
   CachedBook? _cachedBook;
 
@@ -1064,7 +1065,16 @@ class _DetailPageState extends State<DetailPage> {
       if (!mounted || generation != _openGeneration || _allChapters.isEmpty) {
         return;
       }
-      final index = _savedIndex(saved) ?? 0;
+      final restored = _savedIndex(saved);
+      if (saved?['fanqieImported'] == true &&
+          saved?['chapterId'] != null &&
+          restored == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导入的章节暂不在当前目录中，请在目录中选择可阅读章节')),
+        );
+        return;
+      }
+      final index = restored ?? 0;
       _openChapter(_allChapters[index], replace: replace);
     } finally {
       if (mounted && generation == _openGeneration) {

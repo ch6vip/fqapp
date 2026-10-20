@@ -124,7 +124,7 @@ class BookDetail {
 
   final List<String> tags;
 
-  /// `authorize_type == "1"` marks an original 番茄 work.
+  /// `authorize_type == "1"` marks an original work.
   final bool original;
   final String subInfo;
   final String lastChapterTitle;

@@ -12,7 +12,7 @@ class AboutPage extends StatelessWidget {
   /// `version`. Without a package_info dependency the value is
   /// static, so test/about_version_test.dart parses the pubspec and fails the
   /// build check when the two drift apart after a version bump.
-  static const versionText = '1.0.113 (118)';
+  static const versionText = '1.0.122 (127)';
 
   /// Pixel width of the bundled logo (assets/images/app_logo.webp). The logo
   /// is displayed at 96dp, so it only needs re-decoding above 4× DPI; clamping
@@ -67,7 +67,7 @@ class AboutPage extends StatelessWidget {
           Column(
             children: [
               Text(
-                '番茄小铺',
+                'fqapp',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
@@ -76,7 +76,7 @@ class AboutPage extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                '番茄小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端',
+                '小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: outline, fontSize: 13),
               ),

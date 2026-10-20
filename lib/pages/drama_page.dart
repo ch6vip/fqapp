@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive_ce.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lottie/lottie.dart';
 
@@ -308,6 +308,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// 再开弹层，`_modalOpen` 计账在弹层方法内部）。
   bool _pendingFeedFontScale = false;
 
+  /// 面板「弹幕设置」行级联打开的设置面板（官方 `jm3.e`：先关面板
+  /// 再开设置面板，与字号行同款级联，避免 `_modalOpen` 计账互相覆盖）。
+  bool _pendingFeedDanmakuSettings = false;
+
   /// feed 弹幕（官方信息流同样渲染弹幕，面板有开关行）：时间轴、取数
   /// 调度器与全局配置都复用播放页的那一套（CRIT-009 的时间字段约定在
   /// 模型层已固化）。vid -> seriesId 随每次切集登记，取数时按 vid 取，
@@ -565,6 +569,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
     } else if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      // `inactive` 只是瞬态打断（下拉通知栏/控制中心）：feed 继续播；
+      // 只有 hidden/paused/detached 才暂停（视频绝不能从后台出声）。
       // A video must never keep playing from the background.
       unawaited(_inline.pause());
     }
@@ -817,6 +823,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   setState(() => _feedClearScreen = !_feedClearScreen),
               danmakuEnabled: _feedDanmakuEnabled,
               onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
+              // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
+              onOpenDanmakuSettings: () =>
+                  _pendingFeedDanmakuSettings = true,
               // 官方 `jm3.t0`：行尾当前档 + 点击级联打开字号弹层。
               fontScaleLabel: ShortSeriesFontScale.label,
               onOpenFontSettings: () => _pendingFeedFontScale = true,
@@ -839,6 +848,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
             onDefaultMuteChanged: (_) => unawaited(_inline.toggleMute()),
             danmakuEnabled: _feedDanmakuEnabled,
             onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
+            // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
+            onOpenDanmakuSettings: () =>
+                _pendingFeedDanmakuSettings = true,
             clearScreen: _feedClearScreen,
             onToggleClearScreen: () =>
                 setState(() => _feedClearScreen = !_feedClearScreen),
@@ -858,12 +870,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _feedPanelOpen = false;
       if (mounted) setState(() {});
     }
-    // 「字体大小」行是唯一级联行（官方 jm3.t0.m：面板收起后再开弹层，
-    // 避免 _modalOpen 计账互相覆盖）；听视频/离线缓存行走面板行回调直推。
+    // 「字体大小」「弹幕设置」行是级联行（官方 jm3.t0.m / jm3.e：面板收起
+    // 后再开弹层，避免 _modalOpen 计账互相覆盖）；听视频/离线缓存行走
+    // 面板行回调直推。
     if (!mounted) return;
     if (_pendingFeedFontScale) {
       _pendingFeedFontScale = false;
       unawaited(_showFeedFontScaleSheet());
+    }
+    // 「弹幕设置」行同款级联（官方 jm3.e）：面板收起后再开设置面板。
+    if (_pendingFeedDanmakuSettings) {
+      _pendingFeedDanmakuSettings = false;
+      unawaited(_showFeedDanmakuSettings());
     }
   }
 
@@ -882,6 +900,61 @@ class _DramaPageState extends ConsumerState<DramaPage>
     setState(() => _modalOpen = true);
     try {
       await showPlayletFontScaleSheet(context);
+    } finally {
+      _modalOpen = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// 弹幕设置面板（官方 `ay1/v.java`，与播放页共用同一张
+  /// [PlayletDanmakuSettingsPanel]）：滑杆变化实时回调并落盘（官方
+  /// UpdateDanmakuConfigEvent），feed 与播放页读同一份 `danmaku_config`。
+  /// 横屏用 372dp 右对齐的面板形态（与播放页同款）。
+  Future<void> _showFeedDanmakuSettings() async {
+    if (_modalOpen || _openingId != null) return;
+    setState(() => _modalOpen = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        useSafeArea: true,
+        backgroundColor: landscape ? Colors.transparent : const Color(0xFF1C1C1C),
+        shape: landscape
+            ? null
+            : RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+        builder: (sheetContext) {
+          final panel = PlayletDanmakuSettingsPanel(
+            settings: _feedDanmakuSettings,
+            landscape: landscape,
+            onChanged: (settings) {
+              setState(() => _feedDanmakuSettings = settings);
+              unawaited(DanmakuSettings.save(settings));
+            },
+            onReset: () => messenger.showSnackBar(
+              const SnackBar(content: Text('设置成功')),
+            ),
+          );
+          if (!landscape) return panel;
+          return Container(
+            alignment: Alignment.bottomRight,
+            padding: const EdgeInsets.only(right: 8, bottom: 8),
+            child: SizedBox(
+              width: 372,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1C1C1C),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: panel,
+              ),
+            ),
+          );
+        },
+      );
     } finally {
       _modalOpen = false;
       if (mounted) setState(() {});
@@ -1426,8 +1499,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
                     onRetry: () => unawaited(_inline.activate(item)),
                   )
                 : null,
-            // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
+            // 「观看全集·N集」药丸 = 进全页播放器（官方 `nk3.c.e` →
+            // `zf3.c.s` goToSingleFeed）。
             onFullscreen: () => _openPlayer(item),
+            // 右侧横屏钮是另一条路：官方 `nk3.c.g` → `zf3.c.w` →
+            // `transformToLandActivity`，起独立横屏页。
+            onLandscape: () => _openPlayer(item, openFullScreen: true),
             onQuickCatalog: () => _openQuickCatalog(item),
             // 标题行「剧名 >」= 官方进剧集详情页的入口（ql3/v0.a1）。
             onOpenSeriesDetail: () => _openSeriesDetail(item),
@@ -1455,6 +1532,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
     int? startEpisodeIndex,
     List<Chapter>? loadedEpisodes,
     SeriesDetail? initialDetail,
+
+    /// 进页即横屏全屏（feed 卡片右侧的横屏钮）。官方那颗钮不是「观看全集」
+    /// 的同一条路，它 `transformToLandActivity` 起独立
+    /// `ShortSeriesLandActivity`（`jq3/x.java:4499-4538`）。
+    bool openFullScreen = false,
   }) async {
     if (_openingId != null) return;
     setState(() => _openingId = item.id);
@@ -1519,6 +1601,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             // 进度不需要显式传——上面的 `disposePlayer()` 已把 feed 的
             // 当前集与播放进度写进历史，PlayerPage 从同一条历史续播。
             shortSeries: true,
+            openFullScreen: openFullScreen,
             aiGenerated: item.aiGenerated,
           ),
         ),
@@ -1878,6 +1961,10 @@ class _DramaFeedCard extends StatelessWidget {
   final Widget? errorOverlay;
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
+
+  /// 右侧横屏钮（官方 `nk3.c.g` → `transformToLandActivity`），与
+  /// [onFullscreen] 是两条路：那颗钮起独立的横屏页，不是「观看全集」。
+  final VoidCallback? onLandscape;
   final VoidCallback? onQuickCatalog;
   final VoidCallback onTogglePlay;
   final VoidCallback onOpenMorePanel;
@@ -1900,6 +1987,7 @@ class _DramaFeedCard extends StatelessWidget {
     this.errorOverlay,
     this.playback,
     this.onFullscreen,
+    this.onLandscape,
     this.onQuickCatalog,
     required this.onTogglePlay,
     required this.onOpenMorePanel,
@@ -2053,6 +2141,7 @@ class _DramaFeedCard extends StatelessWidget {
               playback: playback,
               onOpenSeriesDetail: onOpenSeriesDetail,
               onFullscreen: onFullscreen,
+              onLandscape: onLandscape,
               onQuickCatalog: onQuickCatalog,
               hotComments: hotComments,
               onHotCommentTap: onHotCommentTap,
@@ -2695,6 +2784,9 @@ class _InfoPanel extends StatefulWidget {
   final MediaItem item;
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
+
+  /// 右侧横屏钮（官方 `nk3.c.g`）。null 时该钮不渲染。
+  final VoidCallback? onLandscape;
   final VoidCallback? onQuickCatalog;
 
   /// 标题行「剧名 >」点击 → 剧集详情页。
@@ -2707,6 +2799,7 @@ class _InfoPanel extends StatefulWidget {
     required this.item,
     required this.playback,
     required this.onFullscreen,
+    this.onLandscape,
     this.onQuickCatalog,
     required this.onOpenSeriesDetail,
     this.hotComments = const [],
@@ -2738,11 +2831,11 @@ class _InfoPanelState extends State<_InfoPanel> {
                   const SizedBox(width: 8),
                   _QuickCatalogButton(onTap: widget.onQuickCatalog!),
                 ],
-                if (widget.playback != null) ...[
+                if (widget.playback != null && widget.onLandscape != null) ...[
                   const SizedBox(width: 8),
                   _FullscreenRoundButton(
                     playback: widget.playback!,
-                    onTap: widget.onFullscreen!,
+                    onTap: widget.onLandscape!,
                   ),
                 ],
               ],
@@ -2979,9 +3072,13 @@ class _QuickCatalogButton extends StatelessWidget {
   }
 }
 
-/// 官方 30×30dp 圆形全屏钮（`ad9.xml` 的 `@id/dgu`）。官方只在横版片源上
-/// 显示（`vk3.a.a`：非 vertical 才可见），这里用解码尺寸比例（≥1.666，
-/// 同 `VideoFit.landscapeRatio`）作代理；解码前不显示。
+/// 官方 30×30dp 圆形全屏钮（`ad9.xml` 的 `@id/dgu`），进入横屏播放页。
+///
+/// 显隐照官方 `vk3.a.a(saasVideoData, false)`：判据是横版片源，而不是「解码
+/// 尺寸此刻是否已知」。官方读的是数据层 `isVertical()`，换集立刻成立；本地
+/// 源数据没有该字段，只能等解码器报尺寸，但结论一旦拿到就由
+/// [InlineVideoPlayback.landscapeSource] 记住，不随 `videoSize` 换集重置而
+/// 退回未知——那正是「上划一集后钮再也不出现」的成因。
 class _FullscreenRoundButton extends StatelessWidget {
   final InlineVideoPlayback playback;
   final VoidCallback onTap;
@@ -2989,14 +3086,11 @@ class _FullscreenRoundButton extends StatelessWidget {
   const _FullscreenRoundButton({required this.playback, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<Size>(
-    valueListenable: playback.videoSize,
-    builder: (context, size, _) {
-      final landscape =
-          size.width > 0 &&
-          size.height > 0 &&
-          size.width / size.height >= PlayerVideoLayout.landscapeRatio;
-      if (!landscape) return const SizedBox.shrink();
+  Widget build(BuildContext context) => ValueListenableBuilder<bool?>(
+    valueListenable: playback.landscapeSource,
+    builder: (context, landscape, _) {
+      // `null`（还没解出尺寸）与竖版同样不渲染，避免闪出又消失。
+      if (landscape != true) return const SizedBox.shrink();
       return GestureDetector(
         key: const Key('drama_fullscreen_button'),
         onTap: onTap,

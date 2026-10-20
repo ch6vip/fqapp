@@ -1,6 +1,13 @@
 <#
-Builds the Rust native core (rust/ -> libfqapi_core.so) for Android arm64 and
-copies it into android/app/src/main/jniLibs/arm64-v8a.
+Builds the Rust native core (rust/ -> libfqapi_core.so) for Android
+(arm64-v8a and armeabi-v7a) and copies each library into its
+android/app/src/main/jniLibs/<abi> directory.
+
+Both ABIs are always built: the split APK build packages both (see the
+split-per-ABI build in .github/workflows/android-apk.yml), so building
+only one would leave the packaging verification without the other
+library and fail the build.
+Cargo caches per target, so a rebuild with no Rust changes is fast.
 
 This is the single entry point for the Rust build: it regenerates the
 flutter_rust_bridge bindings, cross-compiles with the pinned NDK, and places the
@@ -13,6 +20,11 @@ Usage:
   .\scripts\build_rust_backend.ps1 -HostLib
   .\scripts\build_rust_backend.ps1 -Profile debug
 
+Unknown parameters are a hard error (PowerShell rejects them before the
+script body runs). -Profile only accepts release|debug (ValidateSet). The NDK
+must be exactly the pinned revision below; any other revision is a hard error,
+never a silent fallback to the newest installed NDK.
+
 Comments are kept in ASCII on purpose so the file parses cleanly on
 Windows PowerShell 5.1 without a UTF-8 BOM.
 #>
@@ -20,10 +32,15 @@ Windows PowerShell 5.1 without a UTF-8 BOM.
 param(
     [switch]$SkipCodegen,
     [switch]$HostLib,
-    [string]$Profile = 'release'
+    [ValidateSet('release', 'debug')][string]$Profile = 'release'
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The NDK revision the project pins. Resolve-NdkRoot below only ever returns
+# this revision or $null; the post-resolution check rejects an env override
+# pointing anywhere else.
+$PinnedNdkVersion = '28.2.13676358'
 
 $AppDir = Split-Path -Parent $PSScriptRoot
 $Manifest = Join-Path $AppDir 'rust\Cargo.toml'
@@ -92,18 +109,23 @@ function Resolve-NdkRoot {
         }
     }
     if (-not $sdkRoot) { return $null }
-    # Prefer the NDK revision the project already uses.
-    $preferred = Join-Path $sdkRoot 'ndk\28.2.13676358'
+    # Only the pinned revision is acceptable: falling back to the newest
+    # installed NDK would silently change the toolchain the release was
+    # built with.
+    $preferred = Join-Path $sdkRoot "ndk\$PinnedNdkVersion"
     if (Test-Path -LiteralPath $preferred) { return $preferred }
-    $latest = Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'ndk') -Directory -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | Select-Object -First 1
-    if ($latest) { return $latest.FullName }
     return $null
 }
 
 $NdkRoot = Resolve-NdkRoot
 if (-not $NdkRoot -or -not (Test-Path -LiteralPath $NdkRoot)) {
-    Write-Error 'Android NDK not found. Set ANDROID_NDK_HOME or install an NDK under the Android SDK.'
+    Write-Error "Android NDK $PinnedNdkVersion not found. Set ANDROID_NDK_HOME to that revision or install NDK $PinnedNdkVersion under the Android SDK."
+    exit 1
+}
+# An env override pointing at a different revision is a hard error, never a
+# silent substitution.
+if ((Split-Path -Leaf $NdkRoot.TrimEnd('\')) -ne $PinnedNdkVersion) {
+    Write-Error "Resolved NDK is not the pinned revision $PinnedNdkVersion (resolved to $NdkRoot). Install the pinned revision and point at it."
     exit 1
 }
 Write-Host "==> NDK: $NdkRoot"
@@ -114,44 +136,61 @@ if (-not (Test-Path -LiteralPath $Prebuilt)) {
     exit 1
 }
 $ApiLevel = 21
-$Cc = Join-Path $Prebuilt "bin\aarch64-linux-android$ApiLevel-clang.cmd"
-if (-not (Test-Path -LiteralPath $Cc)) { $Cc = Join-Path $Prebuilt "bin\aarch64-linux-android$ApiLevel-clang" }
-if (-not (Test-Path -LiteralPath $Cc)) { Write-Error "aarch64 clang not found under $Prebuilt"; exit 1 }
 
-$CcForward = $Cc.Replace('\', '/')
-$env:CC_aarch64_linux_android = $CcForward
-$env:AR_aarch64_linux_android = (Join-Path $Prebuilt 'bin\llvm-ar.exe').Replace('\', '/')
-$env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $CcForward
+# Cross-compiles the Rust core for one Android ABI and installs it into
+# that ABI's jniLibs directory. The armv7 target uses the armv7a NDK triple
+# (armeabi-v7a with NEON, the same assumption the Flutter engine build
+# makes for 32-bit ARM).
+function Build-AndroidTarget {
+    param(
+        [Parameter(Mandatory = $true)][string]$RustTarget,
+        [Parameter(Mandatory = $true)][string]$ClangTriple,
+        [Parameter(Mandatory = $true)][string]$Abi
+    )
+    $Cc = Join-Path $Prebuilt "bin\$ClangTriple$ApiLevel-clang.cmd"
+    if (-not (Test-Path -LiteralPath $Cc)) { $Cc = Join-Path $Prebuilt "bin\$ClangTriple$ApiLevel-clang" }
+    if (-not (Test-Path -LiteralPath $Cc)) { Write-Error "$ClangTriple clang not found under $Prebuilt"; exit 1 }
 
-Write-Host "==> CC: $CcForward"
+    $CcForward = $Cc.Replace('\', '/')
+    $CcEnv = 'CC_' + ($RustTarget -replace '-', '_')
+    $ArEnv = 'AR_' + ($RustTarget -replace '-', '_')
+    $LinkerEnv = 'CARGO_TARGET_' + (($RustTarget -replace '-', '_').ToUpper()) + '_LINKER'
+    Set-Item -Path "env:$CcEnv" -Value $CcForward
+    Set-Item -Path "env:$ArEnv" -Value (Join-Path $Prebuilt 'bin\llvm-ar.exe').Replace('\', '/')
+    Set-Item -Path "env:$LinkerEnv" -Value $CcForward
 
-$Target = 'aarch64-linux-android'
-$JniDir = Join-Path $AppDir 'android\app\src\main\jniLibs\arm64-v8a'
-New-Item -ItemType Directory -Force -Path $JniDir | Out-Null
+    Write-Host "==> CC ($Abi): $CcForward"
 
-$ProfileArgs = @()
-if ($Profile -eq 'release') { $ProfileArgs = @('--release') }
+    $JniDir = Join-Path $AppDir "android\app\src\main\jniLibs\$Abi"
+    New-Item -ItemType Directory -Force -Path $JniDir | Out-Null
 
-Write-Host "==> cargo build --target $Target ($Profile)..."
-Push-Location -LiteralPath $AppDir
-try {
-    Invoke-NativeCommand -Exe 'cargo' `
-        -Arguments (@('build', '--manifest-path', $Manifest, '--target', $Target) + $ProfileArgs) `
-        -FailureMessage 'rust cross build failed'
+    $ProfileArgs = @()
+    if ($Profile -eq 'release') { $ProfileArgs = @('--release') }
+
+    Write-Host "==> cargo build --target $RustTarget ($Profile)..."
+    Push-Location -LiteralPath $AppDir
+    try {
+        Invoke-NativeCommand -Exe 'cargo' `
+            -Arguments (@('build', '--manifest-path', $Manifest, '--target', $RustTarget) + $ProfileArgs) `
+            -FailureMessage 'rust cross build failed'
+    }
+    finally { Pop-Location }
+
+    $ProfileDir = if ($Profile -eq 'release') { 'release' } else { 'debug' }
+    $BuiltSo = Join-Path $AppDir "rust\target\$RustTarget\$ProfileDir\libfqapi_core.so"
+    if (-not (Test-Path -LiteralPath $BuiltSo)) {
+        Write-Error "rust build produced no $BuiltSo"
+        exit 1
+    }
+
+    $DestSo = Join-Path $JniDir 'libfqapi_core.so'
+    Copy-Item -LiteralPath $BuiltSo -Destination $DestSo -Force
+    Write-Host "==> jniLibs: $DestSo"
+    Get-FileHash -Algorithm SHA256 -LiteralPath $DestSo | Format-List
 }
-finally { Pop-Location }
 
-$ProfileDir = if ($Profile -eq 'release') { 'release' } else { 'debug' }
-$BuiltSo = Join-Path $AppDir "rust\target\$Target\$ProfileDir\libfqapi_core.so"
-if (-not (Test-Path -LiteralPath $BuiltSo)) {
-    Write-Error "rust build produced no $BuiltSo"
-    exit 1
-}
-
-$DestSo = Join-Path $JniDir 'libfqapi_core.so'
-Copy-Item -LiteralPath $BuiltSo -Destination $DestSo -Force
-Write-Host "==> jniLibs: $DestSo"
-Get-FileHash -Algorithm SHA256 -LiteralPath $DestSo | Format-List
+Build-AndroidTarget -RustTarget 'aarch64-linux-android' -ClangTriple 'aarch64-linux-android' -Abi 'arm64-v8a'
+Build-AndroidTarget -RustTarget 'armv7-linux-androideabi' -ClangTriple 'armv7a-linux-androideabi' -Abi 'armeabi-v7a'
 
 if ($HostLib) {
     Write-Host '==> building host cdylib...'

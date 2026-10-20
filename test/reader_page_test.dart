@@ -348,6 +348,14 @@ void main() {
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(360, 900));
         addTearDown(() => tester.binding.setSurfaceSize(null));
+        // The detailed info row shows the chapter title a second time
+        // (the first is the content title block). It is compact by
+        // default, so opt into detailed here to keep both assertions.
+        // Keep the file setUp's scroll page mode as well.
+        SharedPreferences.setMockInitialValues({
+          'reader_page_mode': 'scroll',
+          'reader_info_mode': 'detailed',
+        });
         const first = '“尉迟，南宫，欧阳，上官，司马，东方……”';
         const second = '黎问音站在学校门口的优秀学生公告栏那，碎碎念着这些学生的姓氏，就明白了。';
         final cache = MemoryChapterCache();
@@ -551,6 +559,56 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('排版设置'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('scroll mode: dragging past the top returns to the previous chapter', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 560));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_readerApp());
+    await tester.pumpAndSettle();
+    expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
+
+    // The overscroll notifications are dispatched directly: tester.drag does
+    // not produce drag overscroll against this harness, and the
+    // gesture-to-notification path is framework behaviour this fix does
+    // not touch. What changed is the listener's handling of the
+    // notification, which is exactly what is exercised here.
+    final listElement = tester.element(
+      find.byKey(const ValueKey('reader-paragraph-list')),
+    );
+    final scrollable = Scrollable.of(
+      tester.element(find.textContaining('这是 第一章 的正文。')),
+    );
+    OverscrollNotification(
+      metrics: scrollable.position,
+      context: listElement,
+      overscroll: 100,
+      velocity: 0,
+      dragDetails: DragUpdateDetails(globalPosition: Offset.zero),
+    ).dispatch(listElement);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
+
+    // Dragging past the top retreats to the previous chapter, landing at
+    // its end — this used to do nothing (#27).
+    final listElement2 = tester.element(
+      find.byKey(const ValueKey('reader-paragraph-list')),
+    );
+    final scrollable2 = Scrollable.of(
+      tester.element(find.textContaining('这是 第二章 的正文。')),
+    );
+    OverscrollNotification(
+      metrics: scrollable2.position,
+      context: listElement2,
+      overscroll: -100,
+      velocity: 0,
+      dragDetails: DragUpdateDetails(globalPosition: Offset.zero),
+    ).dispatch(listElement2);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

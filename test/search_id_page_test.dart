@@ -164,9 +164,12 @@ void main() {
           },
           keywordLoader:
               (query, {required int tabType, required int offset}) async => [
+                // The search stays on the current tab (漫画), and the real
+                // loader normalizes the returned tab title to the requested
+                // category, so the stub must return the manga tab.
                 SearchTab(
-                  title: '综合',
-                  items: [_item('new', '新关键词结果', 'book')],
+                  title: '漫画',
+                  items: [_item('new', '新关键词结果', 'manga')],
                   hasMore: false,
                 ),
               ],

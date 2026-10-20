@@ -5,7 +5,7 @@
 <h1 align="center">fqapp</h1>
 
 <p align="center">
-  <strong>番茄内容聚合客户端</strong><br>
+  <strong>内容聚合客户端</strong><br>
   小说 · 短剧 · 漫剧 · 漫画 · 听书，签名 / 解密 / 缓存全部在手机本地完成
 </p>
 
@@ -27,7 +27,7 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/ch6vip/fqapp/total?color=14B8A6&label=Downloads&logo=github">
   </a>
   &nbsp;
-  <img alt="Platform" src="https://img.shields.io/badge/Platform-Android%207.0%2B%20%C2%B7%20arm64--v8a-3DDC84?logo=android&logoColor=white">
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Android%207.0%2B%20%C2%B7%20arm64%2Farmv7-3DDC84?logo=android&logoColor=white">
   &nbsp;
   <a href="LICENSE">
     <img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-blue">
@@ -44,7 +44,7 @@
   </a>
 </p>
 
-> ⚠️ **免责声明**：本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自番茄公开接口，版权归字节跳动及原权利方所有。本项目与番茄/字节跳动无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。
+> ⚠️ **免责声明**：本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自第三方公开接口，版权归原权利方所有。本项目与内容提供方无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。
 
 ---
 
@@ -66,19 +66,19 @@
 
 ### 设备要求
 
-- Android 7.0（API 24）及以上，**arm64-v8a** 设备（绝大多数近几年的手机）。
-- 需要网络：在线内容实时从番茄上游获取，App 本身不内置任何内容。
+- Android 7.0（API 24）及以上，**arm64-v8a** 或 **armeabi-v7a**（32 位）设备。32 位包面向老款电子书等旧设备，两个包功能相同。
+- 需要网络：在线内容实时从上游获取，App 本身不内置任何内容。
 - 不需要 root。
 
 ### 获取安装包
 
 **推荐：[GitHub Releases](https://github.com/ch6vip/fqapp/releases/latest)** —— 下载最新发布版的
-`fqapp-<版本>-arm64.apk`，同一发布页附 `SHA256SUMS` 与 `verify-report.json`（签名、16 KiB 对齐等
+`fqapp-<版本>-arm64.apk`（64 位设备）或 `fqapp-<版本>-armv7.apk`（32 位旧设备），同一发布页附 `SHA256SUMS` 与 `verify-report.json`（签名、16 KiB 对齐等
 8 项校验的原始报告），可自行核对。
 
 其他方式：
 
-1. **GitHub Actions 云端构建**：打开仓库的 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，点击 **Run workflow** 运行一次构建；成功后在本次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`，解压得到 `app-release.apk`（同样附带校验报告；**产物仅保留 14 天**，需要长期留存请用 Releases）。
+1. **GitHub Actions 云端构建**：打开仓库的 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，点击 **Run workflow** 运行一次构建；成功后在本次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`（64 位）或 `fqapp-armv7-运行编号`（32 位），解压得到对应 APK（同样附带校验报告；**产物仅保留 14 天**，需要长期留存请用 Releases）。
 2. **本地构建**：需要 Flutter / Rust / Android NDK 工具链，步骤见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 > **在 fork 中构建**：正式签名的密钥只对上游仓库可用，fork 出来的构建拿不到它。此时工作流
@@ -87,7 +87,7 @@
 
 ### 安装与首次启动
 
-1. 安装 APK（直接点击安装，或 `adb install fqapp-<版本>-arm64.apk`）。
+1. 安装 APK（直接点击安装，或 `adb install fqapp-<版本>-arm64.apk` / `adb install fqapp-<版本>-armv7.apk`）。
 2. 首次启动时 App 自动完成初始化：部署运行资源 → 启动本地核心并注册设备 → 健康检查通过后进入主界面。首次请保持联网。
 3. 之后即可随时离线打开 App，阅读已缓存的内容。
 
@@ -162,7 +162,7 @@
 不需要。App 没有登录、支付等任何账号功能。
 
 **Q：有 iOS 版吗？**
-没有。当前仅支持 Android（arm64）。
+没有。当前仅支持 Android（arm64-v8a 与 armeabi-v7a 两个架构）。
 
 ## 💖 支持作者
 
@@ -186,7 +186,7 @@ Thanks to the [LINUX DO](https://linux.do/) community for its support and feedba
 
 本项目代码以 [GPL-3.0](LICENSE) 协议开源，Copyright (C) 2026 ch6vip。
 
-本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自番茄公开接口，版权归字节跳动及原权利方所有。本项目与番茄/字节跳动无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。请遵守相关法律法规，仅限个人学习研究使用。
+本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自第三方公开接口，版权归原权利方所有。本项目与内容提供方无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。请遵守相关法律法规，仅限个人学习研究使用。
 
 ## ⭐ Star History
 

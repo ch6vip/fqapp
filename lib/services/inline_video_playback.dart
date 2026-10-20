@@ -8,6 +8,7 @@ import 'dart:ui' show Size;
 import 'package:flutter/foundation.dart';
 
 import '../models/media_item.dart';
+import '../widgets/player/player_video_layout.dart';
 import 'api_client.dart';
 import 'drama_download_store.dart';
 import 'drama_mute_preferences.dart';
@@ -19,6 +20,7 @@ import 'player_history.dart';
 import 'player_panel_preferences.dart';
 import 'player_preferences.dart';
 import 'player_pool.dart';
+import 'quality_memory.dart';
 import 'user_facing_error.dart';
 
 /// The inline playback session of one 短剧 feed page.
@@ -136,6 +138,15 @@ class InlineVideoPlayback {
   /// the full page player, so a landscape drama is not squeezed into a 9:16
   /// box; `PlayerVideoLayout` turns an unknown (0×0) size into that fallback.
   final ValueNotifier<Size> videoSize = ValueNotifier<Size>(Size.zero);
+
+  /// 本集是否为横版片源，`null` 表示还没判出来。
+  ///
+  /// 官方那颗横屏钮的显隐看数据层的 `saasVideoData.isVertical()`
+  /// （`vk3/a.java:32`），换集后立刻成立。本地源数据没有这个字段，只能等
+  /// 解码器报尺寸；但一旦报过就是确定的，不能因为换集时 [videoSize] 被重置
+  /// 成 `Size.zero` 就退回「未知」——那正是「上划一集后钮就再也不出现」的
+  /// 成因。所以结论在这里单独记一份，随集切换一起清空。
+  final ValueNotifier<bool?> landscapeSource = ValueNotifier<bool?>(null);
 
   bool _muted = false;
   bool _coldStartMuteApplied = false;
@@ -337,6 +348,8 @@ class InlineVideoPlayback {
     _activeIndex = null;
     rotation.value = 0;
     videoSize.value = Size.zero;
+    // 换剧即换片源，横竖结论跟着作废（同一部剧内换集不会走到这里）。
+    landscapeSource.value = null;
     // The progress bar belongs to one episode, so it restarts empty.
     position.value = Duration.zero;
     duration.value = Duration.zero;
@@ -371,9 +384,19 @@ class InlineVideoPlayback {
       }
       activeVid.value = episodes[index].itemId;
       var source = await _sources.request(episodes[index]).future;
-      // 会话内记住的画质选择（官方=引擎当前档）：同一集再次激活时沿用。
-      final chosen = _chosen[episodes[index].itemId];
-      if (chosen != null) source = source.withVariant(chosen);
+      // 会话内记住的画质选择（官方=引擎当前档）：按画质名在本集自己
+      // 的 variants 里找，找到就用，找不到回默认。记忆由
+      // [QualityMemory] 在 Feed 与播放页之间共享；只记名、不搬
+      // variant 对象——variant 的 URL 属于它自己的集。
+      final chosenName = QualityMemory.nameFor(contentId);
+      if (chosenName != null) {
+        for (final variant in source.variants) {
+          if (variant.name == chosenName) {
+            source = source.withVariant(variant);
+            break;
+          }
+        }
+      }
       _currentSource = source;
       if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
@@ -436,11 +459,6 @@ class InlineVideoPlayback {
   /// list. Null while nothing plays.
   EpisodeSource? _currentSource;
 
-  /// Session-level quality choice per episode id. The official client keeps
-  /// the resolution on the engine instance for the session only; there is no
-  /// cross-launch preference evidence, so none is stored here either.
-  final Map<String, EpisodeVariant> _chosen = {};
-
   /// Renditions of the playing episode, best-quality first. Empty while
   /// nothing plays or the upstream offered a single stream (the panel hides
   /// the quality row then, mirroring the official `oi3/k.P()` gate).
@@ -474,7 +492,7 @@ class InlineVideoPlayback {
     _detachSubscriptions();
     if (identical(_player, player)) _player = null;
     _currentSource = source.withVariant(variant);
-    _chosen[series.id] = variant;
+    QualityMemory.remember(_poolKey(series), variant.name);
     // A replacement texture must not inherit the previous rendition's frame,
     // size, or rotation. The layer keeps its cover until the new stream is ready.
     textureId.value = null;
@@ -887,6 +905,15 @@ class InlineVideoPlayback {
         // applied to auto-advance (`_appliedVideoSize`).
         if (size.width <= 0 || size.height <= 0) return;
         videoSize.value = size;
+        // 横竖判据必须跟着真实尺寸走。新建/复用播放器那两处
+        // `_adoptVideoSize` 读的是创建当下的大小，此时通常还是 0×0，
+        // 真正尺寸只在这里到达——漏了这一步 `landscapeSource` 会一直是
+        // null，feed 的横屏钮就永远不出现（用户实测回归）。
+        landscapeSource.value =
+            size.width / size.height >= PlayerVideoLayout.landscapeRatio;
+      }),
+      player.textureIdStream.listen((id) {
+        if (_current(generation, player)) textureId.value = id;
       }),
       // The card's progress bar reads these two (`cjt.xml`).
       player.positionStream.listen((value) {
@@ -941,6 +968,9 @@ class InlineVideoPlayback {
     final height = player.videoHeight;
     if (width <= 0 || height <= 0) return;
     videoSize.value = Size(width.toDouble(), height.toDouble());
+    // 与 `PlayerVideoLayout.fillsFrame` 同一道门槛：宽高比达到
+    // `landscapeRatio` 才算横版片源。判出来就不再回退成未知。
+    landscapeSource.value = width / height >= PlayerVideoLayout.landscapeRatio;
   }
 
   void _onFirstFrame(NativePlayer player, int generation) {

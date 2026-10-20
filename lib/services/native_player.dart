@@ -233,6 +233,7 @@ class NativePlayer {
   final _bufferingCtrl = StreamController<bool>.broadcast();
   final _firstFrameCtrl = StreamController<bool>.broadcast();
   final _videoSizeCtrl = StreamController<Size>.broadcast();
+  final _textureIdCtrl = StreamController<int>.broadcast();
   final _errorCtrl = StreamController<Object>.broadcast();
 
   Stream<Duration> get positionStream => _positionCtrl.stream;
@@ -244,6 +245,11 @@ class NativePlayer {
   Stream<bool> get firstFrameStream => _firstFrameCtrl.stream;
   Stream<Size> get videoSizeStream => _videoSizeCtrl.stream;
   Stream<Object> get errorStream => _errorCtrl.stream;
+
+  /// Fires when native swaps the output surface (software-decoder fallback
+  /// moves from SurfaceProducer to SurfaceTexture in #2) and the Texture
+  /// widget must rebuild with the new id. The old id stops producing frames.
+  Stream<int> get textureIdStream => _textureIdCtrl.stream;
 
   final _createdCompleter = Completer<int>();
 
@@ -294,9 +300,17 @@ class NativePlayer {
         }
       }
 
-      _textureId = await _createdCompleter.future.timeout(_createTimeout);
+      await _createdCompleter.future.timeout(_createTimeout);
       if (_disposed) {
         throw StateError('NativePlayer was disposed during creation');
+      }
+      // _textureId is maintained by the event handler, not by the completer's
+      // value: a textureChanged that arrived with the pending replay (native
+      // posts created → decoderInitialized → textureChanged in order) already
+      // superseded the created id, and assigning the completer's stale value
+      // here would resurrect the dead texture.
+      if (_textureId == null) {
+        throw StateError('Native player returned no texture id');
       }
       return _textureId!;
     } catch (_) {
@@ -385,18 +399,20 @@ class NativePlayer {
     double speed = 1,
   }) async {
     try {
-      await _channel
-          .invokeMethod<void>('startListenForeground', {
-            'title': title,
-            'episode': episode,
-            'playing': playing,
-            'hasPrev': hasPrev,
-            'hasNext': hasNext,
-            'positionMs': positionMs,
-            'durationMs': durationMs,
-            'speed': speed,
-          })
-          .timeout(_methodTimeout);
+      // No .timeout() here on purpose: the call is best-effort and the
+      // plugin replies synchronously, while Future.timeout() leaves a
+      // pending 10s timer that breaks widget tests under FakeAsync when
+      // the fire-and-forget call is still in flight at test end.
+      await _channel.invokeMethod<void>('startListenForeground', {
+        'title': title,
+        'episode': episode,
+        'playing': playing,
+        'hasPrev': hasPrev,
+        'hasNext': hasNext,
+        'positionMs': positionMs,
+        'durationMs': durationMs,
+        'speed': speed,
+      });
     } catch (_) {
       // Best effort when channel/platform is unavailable or testing.
     }
@@ -404,9 +420,8 @@ class NativePlayer {
 
   static Future<void> stopListenForeground() async {
     try {
-      await _channel
-          .invokeMethod<void>('stopListenForeground')
-          .timeout(_methodTimeout);
+      // Same as startListenForeground: no .timeout(), see above.
+      await _channel.invokeMethod<void>('stopListenForeground');
     } catch (_) {
       // Best effort when channel/platform is unavailable or testing.
     }
@@ -542,6 +557,7 @@ class NativePlayer {
       _bufferingCtrl.close(),
       _firstFrameCtrl.close(),
       _videoSizeCtrl.close(),
+      _textureIdCtrl.close(),
       _errorCtrl.close(),
     ]);
   }
@@ -582,8 +598,31 @@ class NativePlayer {
     switch (type) {
       case 'created':
         final value = event['value'];
-        if (value is num && !_createdCompleter.isCompleted) {
-          _createdCompleter.complete(value.toInt());
+        if (value is num) {
+          _textureId = value.toInt();
+          if (!_createdCompleter.isCompleted) {
+            _createdCompleter.complete(value.toInt());
+          }
+        }
+      case 'textureChanged':
+        final value = event['value'];
+        if (value is num) {
+          _textureId = value.toInt();
+          // The swap moves decoder output to a legacy SurfaceTexture, which
+          // applies the format rotation itself (#36). A videoSize event that
+          // landed before the swap still carries the pre-swap correction
+          // (e.g. 90 for a rotated source); keeping it would rotate the
+          // already-rotated texture a second time, stretching a landscape
+          // picture up to fullscreen. Reset it and re-emit the geometry so
+          // size/rotation subscribers refresh (the feed reads rotation from
+          // its own notifier, not from the player, on rebuild).
+          _videoRotationCorrection = 0;
+          if (!_videoSizeCtrl.isClosed) {
+            _videoSizeCtrl.add(
+              Size(_videoWidth.toDouble(), _videoHeight.toDouble()),
+            );
+          }
+          if (!_textureIdCtrl.isClosed) _textureIdCtrl.add(_textureId!);
         }
       case 'error':
         final error = NativePlaybackException.fromEvent(event['value']);

@@ -3,6 +3,11 @@ name: Android APK
 on:
   push:
     branches: [master]
+    # 打 tag 也出包：tag 推送不走 paths 过滤（native-crypto 在
+    # v1.0.117 tag 推送时已跑过一次可作证），branches/tags 是 OR 关系，
+    # 所以加 tags 后推 v* 就会触发一次完整构建，APK 在 Artifacts 里，
+    # 不用建 Release 也能拿到安装包。
+    tags: ['v*']
     paths:
       - 'lib/**'
       - 'android/**'
@@ -23,6 +28,32 @@ on:
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
       - '.github/workflows/android-apk.yml'
+      - '.cargo/config.toml'
+  pull_request:
+    # Fork PRs receive no signing secrets, so the signing step degrades to an
+    # unsigned build instead of failing; the same paths filter keeps
+    # unrelated PRs from running the full build.
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'native/**'
+      - 'rust/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'analysis_options.yaml'
+      - 'test/**'
+      - 'flutter_rust_bridge.yaml'
+      - 'scripts/build_rust_backend.sh'
+      - 'scripts/build_rust_backend.ps1'
+      - 'scripts/run_rust_host_tests.sh'
+      - 'scripts/run_rust_host_tests.ps1'
+      - 'scripts/check_native_alignment.cjs'
+      - 'scripts/generate_app_icons.py'
+      - 'scripts/verify_android_apk.py'
+      - 'scripts/verify_audio_cenc.cjs'
+      - '.github/workflows/android-apk.yml'
+      - '.cargo/config.toml'
   workflow_dispatch:
 
 permissions:
@@ -40,7 +71,6 @@ env:
   NDK_VERSION: '28.2.13676358'
   CMAKE_VERSION: '3.22.1'
   BUILD_TOOLS_VERSION: '36.0.0'
-  RUST_TARGET: 'aarch64-linux-android'
   # Certificate the release APK must carry. The built APK is compared against
   # this, so a package signed with the wrong key -- or not signed at all --
   # fails here instead of being published. The matching keystore is stored
@@ -62,38 +92,69 @@ jobs:
         working-directory: app
     steps:
       - name: Check out app source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: app
           persist-credentials: false
+
+      - name: Compute artifact identifiers
+        id: artifact-ids
+        run: |
+          # Placed right after checkout so the failure-diagnostics upload can
+          # use the same identifiers even when the build fails early.
+          # Artifact names reject '/', which a PR ref (123/merge) contains,
+          # so sanitize the ref. run_number stays so re-runs never collide.
+          printf 'safe_ref=%s\n' "${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+          printf 'short_sha=%s\n' "${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate version tag
+        if: github.ref_type == 'tag'
+        run: |
+          # A version tag must be a plain semver triple (v1.2.3): the APK's
+          # versionName is compared against the tag below, and anything else
+          # (v1.2, v1.2.3-rc.1, a typo) would silently ship a mismatched build.
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version tag must match v<major>.<minor>.<patch> (got '$GITHUB_REF_NAME')" >&2
+            exit 1
+          fi
+          printf 'Building version tag %s (expected versionName %s)\n' \
+            "$GITHUB_REF_NAME" "${GITHUB_REF_NAME#v}"
 
       # The product build has no private backend checkout and no extra
       # toolchain. The golden vectors in rust/testdata/ are checked in and
       # are never an input to this workflow.
 
       - name: Install the pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          targets: aarch64-linux-android
+          # Pinned to the exact stable release (1.99.1 as of 2026-10-16),
+          # not the floating `stable` channel: a new stable must not silently
+          # change the toolchain a release was built with. Bump deliberately.
+          toolchain: '1.99.1'
+          targets: aarch64-linux-android, armv7-linux-androideabi
           components: rustfmt, clippy
 
       - name: Cache the Cargo build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: app/rust
 
       - name: Cache flutter_rust_bridge_codegen
         id: frb-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cargo/bin/flutter_rust_bridge_codegen
-          key: frb-codegen-${{ env.FRB_VERSION }}-${{ runner.os }}
+          # The lockfile pins the codegen binary's exact transitive
+          # dependency tree: without its hash a stale cached binary would
+          # survive a lockfile change that should have rebuilt it.
+          # (Checkout path is app/, so the hash path is repo-root-relative.)
+          key: frb-codegen-${{ env.FRB_VERSION }}-${{ runner.os }}-${{ hashFiles('app/rust/Cargo.lock') }}
 
       - name: Install flutter_rust_bridge_codegen
         if: steps.frb-cache.outputs.cache-hit != 'true'
         run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
@@ -101,11 +162,11 @@ jobs:
           cache-dependency-path: |
             app/android/**/*.gradle.kts
             app/android/gradle/wrapper/gradle-wrapper.properties
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -120,11 +181,13 @@ jobs:
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
           flutter config --android-sdk "$ANDROID_HOME" --no-analytics
 
-      - name: Check the Web assets, audio diagnostics, and Rust build scripts
+      - name: Check the Web assets, audio diagnostics, Rust build scripts, and .so freshness
         run: >-
           node --test test/web_assets_test.cjs
           test/verify_audio_cenc_test.cjs
           test/build_rust_backend_scripts_test.cjs
+          test/check_native_alignment_test.cjs
+          test/check_so_freshness_test.cjs
 
       # rustfmt follows `mod` declarations, so a plain `cargo fmt --all` also
       # checks rust/src/frb_generated.rs -- codegen output that no human edits.
@@ -200,30 +263,38 @@ jobs:
             printf 'bindings_sha256=%s\n' "$after"
           } > build/ci-artifacts/bindings-digest.txt
 
-      - name: Compile the Rust core for Android ARM64
+      - name: Compile the Rust core for Android (ARM64 + ARMv7)
         run: bash scripts/build_rust_backend.sh --skip-codegen
 
-      - name: Check the Android Rust core library
+      - name: Check the Android Rust core libraries
         run: |
           mkdir -p build/ci-artifacts
-          so=android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so
-          test -s "$so"
-          nm_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-          "$nm_bin" --dynamic --defined-only "$so" > build/ci-artifacts/rust-core-symbols.txt
-          # flutter_rust_bridge entry points must be exported for dart:ffi.
-          for symbol in frb_get_rust_content_hash store_dart_post_cobject; do
-            if ! grep -Eq "[[:space:]]${symbol}$" build/ci-artifacts/rust-core-symbols.txt; then
-              echo "Missing Rust bridge symbol: $symbol" >&2
-              exit 1
-            fi
+          # Both ABIs are built by the script above; each library gets the
+          # same gates (bridge symbols exported, 16 KiB ELF layout).
+          for abi in arm64-v8a armeabi-v7a; do
+            so=android/app/src/main/jniLibs/$abi/libfqapi_core.so
+            test -s "$so"
+            nm_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+            "$nm_bin" --dynamic --defined-only "$so" > "build/ci-artifacts/rust-core-symbols-$abi.txt"
+            # flutter_rust_bridge entry points must be exported for dart:ffi.
+            for symbol in frb_get_rust_content_hash store_dart_post_cobject; do
+              if ! grep -Eq "[[:space:]]${symbol}$" "build/ci-artifacts/rust-core-symbols-$abi.txt"; then
+                echo "Missing Rust bridge symbol in $abi: $symbol" >&2
+                exit 1
+              fi
+            done
+            # 16 KiB page alignment is required by Android 15+. The check runs
+            # through scripts/check_native_alignment.cjs -- the same script the
+            # APK verifier uses on the packaged libraries -- so there is one
+            # definition of "aligned": every LOAD segment p_align >= 16 KiB,
+            # power-of-two, with offset/address congruent mod 16 KiB. The old
+            # inline `readelf | grep LOAD.*0x4000$` only eyeballed one field
+            # and could pass a library misaligned in the other dimensions.
+            # The readelf dump stays as a diagnostics artifact.
+            readelf_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+            "$readelf_bin" -l "$so" > "build/ci-artifacts/rust-core-program-headers-$abi.txt"
+            node scripts/check_native_alignment.cjs "$so"
           done
-          # 16 KiB page alignment is required by Android 15+.
-          readelf_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          "$readelf_bin" -l "$so" > build/ci-artifacts/rust-core-program-headers.txt
-          if ! grep -Eq 'LOAD.*0x4000$' build/ci-artifacts/rust-core-program-headers.txt; then
-            echo 'Rust core library is not 16 KiB aligned.' >&2
-            exit 1
-          fi
 
       # A contributor or fork has no access to the release keystore secrets, and
       # a hard failure here would make the workflow README recommends unusable
@@ -276,13 +347,20 @@ jobs:
 
       # Dependencies were resolved once, before the Rust gates; every step from
       # there on runs with --no-pub against that resolved package config.
+      # --reporter compact prints progress ticks instead of one line per
+      # passing test: passing tests whose names contain "failed"/"error"
+      # (error-handling coverage) no longer look like failures in the log,
+      # while failing tests still print their full exception and stack trace.
       - name: Check Flutter application
         run: |
           flutter analyze --no-pub
-          flutter test --no-pub --concurrency=2
+          flutter test --no-pub --concurrency=2 --reporter compact
 
-      - name: Compile ARM64 release APK
-        run: flutter build apk --release --target-platform android-arm64 --no-pub
+      - name: Compile release APKs (ARM64 + ARMv7)
+        # --split-per-abi produces one APK per ABI (app-arm64-v8a-release.apk,
+        # app-armeabi-v7a-release.apk) instead of a fat APK, so a 32-bit
+        # device does not download the ARM64 native libraries and vice versa.
+        run: flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi --no-pub
 
       - name: Test Android runtime boundaries
         working-directory: app/android
@@ -304,21 +382,51 @@ jobs:
               exit 1
               ;;
           esac
+          # Tag builds must carry exactly the version the tag names; branch
+          # and PR builds skip the assertion (no tag to compare against).
+          # Version monotonicity. The two consistency gates (pubspec vs About,
+          # and the tag assertion below) both pass on a *full revert* - f39daa5
+          # followed by c3c858b moved both files back together - so the version
+          # could silently go backwards. Compare against the highest existing
+          # tag instead. Skipped when no tag is available in this checkout.
+          version_name="$(grep -m1 '^version:' pubspec.yaml | sed -E 's/^version:[[:space:]]*([^+]+).*/\1/')"
+          highest_tag="$(git tag --list 'v*' --sort=-v:refname | head -1)"
+          if [ -n "$highest_tag" ] && [ -n "$version_name" ]; then
+            highest_version="${highest_tag#v}"
+            lowest="$(printf '%s\n%s\n' "$version_name" "$highest_version" | sort -V | head -1)"
+            if [ "$lowest" = "$version_name" ] && [ "$version_name" != "$highest_version" ]; then
+              echo "::error::pubspec version $version_name is below the highest tag $highest_tag" >&2
+              exit 1
+            fi
+          fi
+          version_args=()
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            # Tag shape was validated above; strip the leading v.
+            version_args=(--expected-version-name "${GITHUB_REF_NAME#v}")
+          fi
           # The fingerprint is only asserted when a release signature was
           # actually applied. Without the secrets the package is unsigned, so
           # pinning a certificate there could never pass; every other check
           # (16 KiB alignment, packaged native libraries) still runs.
-          python3 scripts/verify_android_apk.py \
-            --apk build/app/outputs/flutter-apk/app-release.apk \
-            --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
-            "${signer_args[@]}" \
-            --report-dir build/ci-artifacts/verification
-          cp build/app/outputs/flutter-apk/app-release.apk build/ci-artifacts/app-release.apk
+          # Each split APK is verified with its own ABI, into its own report
+          # directory, so the two reports never overwrite each other.
+          for abi in arm64-v8a armeabi-v7a; do
+            python3 scripts/verify_android_apk.py \
+              --apk "build/app/outputs/flutter-apk/app-$abi-release.apk" \
+              --abi "$abi" \
+              --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
+              "${signer_args[@]}" \
+              "${version_args[@]}" \
+              --report-dir "build/ci-artifacts/verification/$abi"
+            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "build/ci-artifacts/app-$abi-release.apk"
+          done
           {
             printf 'App commit: %s\n' "$GITHUB_SHA"
             printf 'Rust core: fqapi_core (flutter_rust_bridge %s)\n' "$FRB_VERSION"
-            printf 'Rust core library SHA-256: '
-            sha256sum android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so
+            for abi in arm64-v8a armeabi-v7a; do
+              printf 'Rust core library SHA-256 (%s): ' "$abi"
+              sha256sum "android/app/src/main/jniLibs/$abi/libfqapi_core.so"
+            done
             if [ "$HAS_RELEASE_SIGNING" = "true" ]; then
               printf 'Release signer SHA-256: %s\n' "$RELEASE_SIGNER_SHA256"
             else
@@ -331,48 +439,89 @@ jobs:
             java -version 2>&1
           } > build/ci-artifacts/build-info.txt
 
-      - name: Upload APK and verification reports
-        id: artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload ARM64 APK and verification reports
+        id: artifact-arm64
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fqapp-arm64-${{ github.run_number }}
+          # Artifacts expire after retention-days (14 days here, unchanged);
+          # download promptly -- the name carries the ref and commit so a
+          # tag build is distinguishable from a master build.
+          name: fqapp-arm64-${{ steps.artifact-ids.outputs.safe_ref }}-${{ steps.artifact-ids.outputs.short_sha }}-${{ github.run_number }}
           retention-days: 14
           if-no-files-found: error
           compression-level: 0
           path: |
-            app/build/ci-artifacts/app-release.apk
+            app/build/ci-artifacts/app-arm64-v8a-release.apk
             app/build/ci-artifacts/build-info.txt
-            app/build/ci-artifacts/rust-core-symbols.txt
-            app/build/ci-artifacts/rust-core-program-headers.txt
-            app/build/ci-artifacts/verification/*.json
-            app/build/ci-artifacts/verification/*.sha256
-            app/build/ci-artifacts/verification/*.log
+            app/build/ci-artifacts/rust-core-symbols-arm64-v8a.txt
+            app/build/ci-artifacts/rust-core-program-headers-arm64-v8a.txt
+            app/build/ci-artifacts/verification/arm64-v8a/*.json
+            app/build/ci-artifacts/verification/arm64-v8a/*.sha256
+            app/build/ci-artifacts/verification/arm64-v8a/*.log
+
+      - name: Upload ARMv7 (32-bit) APK and verification reports
+        id: artifact-armv7
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          # Same retention as the ARM64 artifact. Older 32-bit devices
+          # (including many e-readers) install this one; the ARM64 APK
+          # refuses to install on them.
+          name: fqapp-armv7-${{ steps.artifact-ids.outputs.safe_ref }}-${{ steps.artifact-ids.outputs.short_sha }}-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            app/build/ci-artifacts/app-armeabi-v7a-release.apk
+            app/build/ci-artifacts/build-info.txt
+            app/build/ci-artifacts/rust-core-symbols-armeabi-v7a.txt
+            app/build/ci-artifacts/rust-core-program-headers-armeabi-v7a.txt
+            app/build/ci-artifacts/verification/armeabi-v7a/*.json
+            app/build/ci-artifacts/verification/armeabi-v7a/*.sha256
+            app/build/ci-artifacts/verification/armeabi-v7a/*.log
 
       - name: Retain diagnostics if a build or APK check fails
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fqapp-apk-diagnostics-${{ github.run_number }}
+          # Diagnostics expire after 7 days (unchanged); same ref/sha naming
+          # as the main artifact so a failed run stays identifiable.
+          name: fqapp-apk-diagnostics-${{ steps.artifact-ids.outputs.safe_ref }}-${{ steps.artifact-ids.outputs.short_sha }}-${{ github.run_number }}
           retention-days: 7
           if-no-files-found: ignore
           path: |
-            app/build/ci-artifacts/rust-core-symbols.txt
-            app/build/ci-artifacts/rust-core-program-headers.txt
-            app/build/ci-artifacts/verification/*.json
-            app/build/ci-artifacts/verification/*.log
+            app/build/ci-artifacts/rust-core-symbols-*.txt
+            app/build/ci-artifacts/rust-core-program-headers-*.txt
+            app/build/ci-artifacts/verification/*/*.json
+            app/build/ci-artifacts/verification/*/*.log
 
       - name: Write download summary
         env:
-          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          ARTIFACT_URL_ARM64: ${{ steps.artifact-arm64.outputs.artifact-url }}
+          ARTIFACT_URL_ARMV7: ${{ steps.artifact-armv7.outputs.artifact-url }}
+          HAS_RELEASE_SIGNING: ${{ steps.signing.outputs.has_release_signing }}
         run: |
           {
-            printf '[下载 ARM64 APK 和校验报告](%s)\n\n' "$ARTIFACT_URL"
+            printf '[下载 ARM64 APK 和校验报告](%s)\n\n' "$ARTIFACT_URL_ARM64"
+            printf '[下载 ARMv7（32 位）APK 和校验报告](%s)\n\n' "$ARTIFACT_URL_ARMV7"
             printf 'App commit: `%s`  \n' "$GITHUB_SHA"
             printf 'Rust core: `fqapi_core` (flutter_rust_bridge `%s`)\n\n' "$FRB_VERSION"
-            printf 'Rust core library SHA-256: `%s`\n\n' \
+            printf 'Rust core library SHA-256 (arm64-v8a): `%s`\n\n' \
               "$(sha256sum android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so | cut -d ' ' -f 1)"
-            printf 'Release signer SHA-256: `%s`\n\n' "$RELEASE_SIGNER_SHA256"
-            printf '使用正式 release 签名。已验证 Rust 核心库与 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+            printf 'Rust core library SHA-256 (armeabi-v7a): `%s`\n\n' \
+              "$(sha256sum android/app/src/main/jniLibs/armeabi-v7a/libfqapi_core.so | cut -d ' ' -f 1)"
+            # Only a build that actually restored the release signing identity
+            # may claim the formal release signature. Anything else (missing
+            # secrets, fork PR) is unsigned: say so plainly, print no
+            # formal-signature fingerprint, and warn it cannot upgrade a
+            # signed install.
+            if [ "$HAS_RELEASE_SIGNING" = "true" ]; then
+              printf 'Release signer SHA-256: `%s`\n\n' "$RELEASE_SIGNER_SHA256"
+              printf '使用正式 release 签名。已验证 Rust 核心库与 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+            else
+              printf '未签名（UNSIGNED）构建，仅供检查。\n\n'
+              printf '未使用正式 release 签名，不可覆盖安装到已签名版本；如需安装请先卸载已签名版本。\n\n'
+              printf '已验证 Rust 核心库与 APK ZIP 的 16 KiB 对齐；设备播放仍需实测。\n'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove temporary signing file

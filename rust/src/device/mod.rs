@@ -5,6 +5,7 @@
 //! version-guarded so an in-flight registration cannot overwrite newer state.
 
 pub mod crypto;
+pub mod pool_crypto;
 pub mod register;
 
 use std::path::{Path, PathBuf};
@@ -61,12 +62,18 @@ impl CommitGate {
 
     /// Commits `data` as the pool file unless the pool is retired or a newer
     /// snapshot exists.
+    ///
+    /// `plaintext_without_key` says the payload was written without a pool key
+    /// (the documented fallback). Taking the gate is still the first thing this
+    /// does, and the encrypted-file backup runs under it, so a backup and its
+    /// write are one unit against a racing `retire()`.
     async fn commit(
         &self,
         file: &Path,
         state: &Mutex<PoolState>,
         version: u64,
         data: &[u8],
+        plaintext_without_key: bool,
     ) -> Result<(), String> {
         let _guard = self.lock.lock().await;
         if self.is_retired() {
@@ -75,6 +82,16 @@ impl CommitGate {
         if state.lock().await.version != version {
             // A newer snapshot landed while this one was being serialized.
             return Ok(());
+        }
+        // pool_crypto's contract is that an encrypted pool file is never
+        // silently overwritten with plaintext - that would destroy the device
+        // identities with no way back. The pool is deliberately *left in place*
+        // on the no-key load path (so a later session that does get the key can
+        // still decrypt it), which makes this write the destructive step. The
+        // move-aside is self-limiting: once the path is gone the check stops
+        // matching and the documented plaintext fallback proceeds.
+        if plaintext_without_key {
+            back_up_encrypted_pool_file(file).await;
         }
         if let Some(parent) = file.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
@@ -98,6 +115,17 @@ impl CommitGate {
                 Err(e.to_string())
             }
         }
+    }
+}
+
+/// Moves an encrypted pool file aside just before a plaintext save would
+/// clobber it; a no-op when the file is missing or already plaintext.
+async fn back_up_encrypted_pool_file(file: &Path) {
+    let Ok(data) = tokio::fs::read(file).await else {
+        return;
+    };
+    if pool_crypto::pool_file_is_encrypted(&data) {
+        DevicePool::backup_corrupt_file(file, "is encrypted but the save has no key").await;
     }
 }
 
@@ -165,6 +193,23 @@ impl DevicePool {
         Self::build(file, Some(origin.into())).await
     }
 
+    /// Renames `file` to `<file>.corrupt-<unix-seconds>` and logs `reason`.
+    /// Best effort: a failed rename leaves the file for the next save to
+    /// overwrite.
+    async fn backup_corrupt_file(file: &Path, reason: &str) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = PathBuf::from(format!("{}.corrupt-{stamp}", file.display()));
+        match tokio::fs::rename(file, &backup).await {
+            Ok(()) => log::warn!("device pool {reason}, backed up to {}", backup.display()),
+            Err(rename_err) => {
+                log::warn!("device pool {reason}, backup failed: {rename_err}")
+            }
+        }
+    }
+
     async fn build(
         file: impl AsRef<Path>,
         mock_origin: Option<String>,
@@ -172,8 +217,62 @@ impl DevicePool {
         let file = file.as_ref().to_path_buf();
         let mut devices = Vec::new();
         if let Ok(data) = tokio::fs::read(&file).await {
-            if let Ok(pf) = serde_json::from_slice::<PoolFile>(&data) {
-                devices = pf.android;
+            if pool_crypto::pool_file_is_encrypted(&data) {
+                // P1-2: encrypted pool file. Decrypt with the provisioned
+                // key; an undecryptable file (wrong key, tampering) is
+                // backed up per P2-14 and the pool starts empty. With no
+                // key provisioned yet (Dart provisions at startup), leave
+                // the file untouched and start empty — the pool refills by
+                // re-registering, and if a plaintext save follows, that save
+                // moves this file aside before writing (see `save`), so the
+                // identities stay recoverable instead of being clobbered.
+                match pool_crypto::decrypt_pool_file(&data) {
+                    Ok(plain) => match serde_json::from_slice::<PoolFile>(&plain) {
+                        Ok(pf) => {
+                            devices = pf.android;
+                        }
+                        Err(e) => {
+                            Self::backup_corrupt_file(
+                                &file,
+                                &format!("decrypted pool JSON invalid: {e}"),
+                            )
+                            .await;
+                        }
+                    },
+                    Err(e) => {
+                        if pool_crypto::pool_key().is_some() {
+                            Self::backup_corrupt_file(
+                                &file,
+                                &format!("pool file undecryptable: {e}"),
+                            )
+                            .await;
+                        } else {
+                            log::warn!(
+                                "device pool file is encrypted but no pool key provisioned; starting empty"
+                            );
+                        }
+                    }
+                }
+            } else {
+                // Legacy plaintext JSON (or garbage). A plaintext file
+                // loads normally and is encrypted on the next save once a
+                // key is provisioned (migration on save).
+                match serde_json::from_slice::<PoolFile>(&data) {
+                    Ok(pf) => {
+                        devices = pf.android;
+                    }
+                    Err(e) => {
+                        // P2-14: a corrupt pool file (torn write,
+                        // truncation, garbage) must never be silently
+                        // discarded. Back it up next to the original with
+                        // a timestamp, log the parse failure, and start
+                        // empty; the pool refills by re-registering. If
+                        // the rename itself fails, the corrupt file stays
+                        // and the next save overwrites it.
+                        Self::backup_corrupt_file(&file, &format!("pool file unparseable: {e}"))
+                            .await;
+                    }
+                }
             }
         }
         devices.truncate(MAX_POOL_SIZE);
@@ -197,21 +296,25 @@ impl DevicePool {
     /// Least-recently-used device, refilling the pool when needed.
     pub async fn get(&self) -> Result<Device, String> {
         let refill_err = self.check_and_refill().await;
-        {
-            let s = self.state.lock().await;
-            if s.devices.is_empty() {
-                return Err(match refill_err {
-                    Err(e) => e,
-                    Ok(()) => "device pool empty".to_string(),
-                });
-            }
-        }
 
-        // least-recently-used selection (sorted by last_used)
+        // Least-recently-used selection, with the emptiness check and the pick
+        // inside ONE lock scope. These used to be two separate `state` locks,
+        // and the empty-key branch below can drain the pool in between (it
+        // `retain`s the selected device away and then re-registers it over a
+        // multi-second network round trip), so `devices[0]` could index an
+        // empty vec and panic the whole call.
         let mut dev = {
             let mut s = self.state.lock().await;
             s.devices.sort_by(|a, b| a.last_used.cmp(&b.last_used));
-            s.devices[0].clone()
+            match s.devices.first().cloned() {
+                Some(dev) => dev,
+                None => {
+                    return Err(match refill_err {
+                        Err(e) => e,
+                        Ok(()) => "device pool empty".to_string(),
+                    });
+                }
+            }
         };
 
         if dev.secret_key.is_empty() {
@@ -233,8 +336,21 @@ impl DevicePool {
                         .await
                         .devices
                         .retain(|d| d.device_id != current.device_id);
+                    // `register()`-level success is not the same as a usable
+                    // device: when `registerKey` fails it still returns
+                    // `Ok(Device { secret_key: "" })` (register.rs). Handing
+                    // that out makes every decrypting request fail with
+                    // "bad secret key" and persists the bad device, so mirror
+                    // the `replace_failed` guard and fail instead.
                     let new_dev = match self.register_one().await {
-                        Ok(device) => device,
+                        Ok(device) if !device.secret_key.is_empty() => device,
+                        Ok(_) => {
+                            self.state.lock().await.devices.push(current);
+                            return Err(
+                                "re-register empty-key device: replacement has no secret key"
+                                    .to_string(),
+                            );
+                        }
                         Err(error) => {
                             self.state.lock().await.devices.push(current);
                             return Err(format!("re-register empty-key device: {error}"));
@@ -388,10 +504,16 @@ impl DevicePool {
         let mut last_err = None;
         for _ in 0..room {
             match self.register_one().await {
-                Ok(dev) => {
+                // Registration can "succeed" with an empty `secret_key` when
+                // `registerKey` fails (register.rs). Such a device still takes
+                // a pool slot under MAX_POOL_SIZE and counts as healthy in
+                // `status()`, while every decrypting request against it fails,
+                // so it is reported as an error instead of admitted.
+                Ok(dev) if !dev.secret_key.is_empty() => {
                     let mut s = self.state.lock().await;
                     s.devices.push(dev);
                 }
+                Ok(_) => last_err = Some("registered device has no secret key".to_string()),
                 Err(e) => last_err = Some(e),
             }
         }
@@ -418,10 +540,16 @@ impl DevicePool {
         let mut last_err = None;
         for _ in 0..need {
             match self.register_one().await {
-                Ok(dev) => {
+                // Registration can "succeed" with an empty `secret_key` when
+                // `registerKey` fails (register.rs). Such a device still takes
+                // a pool slot under MAX_POOL_SIZE and counts as healthy in
+                // `status()`, while every decrypting request against it fails,
+                // so it is reported as an error instead of admitted.
+                Ok(dev) if !dev.secret_key.is_empty() => {
                     let mut s = self.state.lock().await;
                     s.devices.push(dev);
                 }
+                Ok(_) => last_err = Some("registered device has no secret key".to_string()),
                 Err(e) => last_err = Some(e),
             }
         }
@@ -457,7 +585,7 @@ impl DevicePool {
         if self.is_retired() {
             return Ok(());
         }
-        let (version, data) = {
+        let (version, data, plaintext_without_key) = {
             let mut s = self.state.lock().await;
             let now = crate::timeutil::now_string();
             s.last_update = now.clone();
@@ -466,16 +594,30 @@ impl DevicePool {
                 android: s.devices.clone(),
                 last_update: now,
             };
-            (
-                s.version,
-                serde_json::to_vec_pretty(&pf).map_err(|e| e.to_string())?,
-            )
+            let json = serde_json::to_vec_pretty(&pf).map_err(|e| e.to_string())?;
+            // P1-2: encrypt the pool file when a key is provisioned; this
+            // is also what migrates a legacy plaintext file to encrypted
+            // on the first save after provisioning. With no key, keep
+            // the old plaintext behavior and warn once per process.
+            let (data, plaintext_without_key) = if pool_crypto::pool_key().is_some() {
+                (pool_crypto::encrypt_pool_file(&json)?, false)
+            } else {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    log::warn!("saving device pool unencrypted: no pool key provisioned");
+                });
+                (json, true)
+            };
+            (s.version, data, plaintext_without_key)
         };
 
         let gate = Arc::clone(&self.commit);
         let state = Arc::clone(&self.state);
         let file = self.file.clone();
-        let handle = tokio::spawn(async move { gate.commit(&file, &state, version, &data).await });
+        let handle = tokio::spawn(async move {
+            gate.commit(&file, &state, version, &data, plaintext_without_key)
+                .await
+        });
         match handle.await {
             Ok(result) => result,
             // The commit task is never aborted, but a panic or a cancelled
@@ -688,6 +830,45 @@ mod persistence_tests {
             assert!(
                 content.contains("android"),
                 "the file stays valid: {content}"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    /// P2-14: a corrupt pool file is backed up, not silently discarded.
+    #[test]
+    fn corrupt_pool_file_is_backed_up_not_silently_discarded() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        runtime.block_on(async {
+            let dir = temp_dir("pool-corrupt");
+            let path = dir.join("device_pool.json");
+            tokio::fs::write(&path, b"{not json, truncated")
+                .await
+                .expect("seed corrupt pool");
+            let pool = DevicePool::new(&path).await.expect("pool");
+            assert_eq!(pool.count().await, 0, "corrupt pool starts empty");
+
+            // The original bytes survive next to the pool file.
+            let mut backups = std::fs::read_dir(&dir)
+                .expect("read dir")
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with("device_pool.json.corrupt-"))
+                .collect::<Vec<_>>();
+            assert_eq!(backups.len(), 1, "exactly one backup: {backups:?}");
+            let backup = dir.join(backups.pop().expect("backup"));
+            assert_eq!(
+                std::fs::read(&backup).expect("backup bytes"),
+                b"{not json, truncated"
+            );
+            assert!(
+                !path.exists(),
+                "the corrupt file is renamed away, not left in place"
             );
             let _ = std::fs::remove_dir_all(&dir);
         });

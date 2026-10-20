@@ -170,7 +170,7 @@ class LibraryBackup {
         }
         clean['positionUnit'] = 'comic-page';
       }
-      for (final key in ['autoAdvance', 'completed']) {
+      for (final key in ['autoAdvance', 'completed', 'fanqieImported']) {
         if (record[key] == null) continue;
         if (record[key] is! bool) throw FormatException('备份字段 $key 无效');
         clean[key] = record[key];

@@ -61,6 +61,13 @@ impl RotatingFile {
     /// 追加一行。任何 IO 失败都只丢这一行——日志不能反过来拖垮核心。
     pub fn write_line(&mut self, line: &str) {
         if self.file.is_none() {
+            // A reopen that failed inside `rotate` must only lose that rotation,
+            // not the rest of the session - which is what the contract above
+            // promises. Retry lazily on the next line instead of staying mute
+            // until the process restarts.
+            self.file = self.open_current();
+        }
+        if self.file.is_none() {
             return;
         }
         let bytes = line.len() as u64 + 1;
@@ -95,11 +102,16 @@ impl RotatingFile {
             let _ = fs::rename(&current, self.backup_path(1));
         }
         self.size = 0;
-        self.file = OpenOptions::new()
+        self.file = self.open_current();
+    }
+
+    /// Opens (creating if needed) the current log file; `None` on any IO error.
+    fn open_current(&self) -> Option<File> {
+        OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&current)
-            .ok();
+            .open(self.path())
+            .ok()
     }
 }
 

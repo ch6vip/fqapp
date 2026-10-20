@@ -35,6 +35,7 @@ class PlayletMorePanelLight extends StatelessWidget {
     this.onToggleClearScreen,
     this.danmakuEnabled = false,
     this.onToggleDanmaku,
+    this.onOpenDanmakuSettings,
     this.fontScaleLabel,
     this.onOpenFontSettings,
     this.onOpenListenMode,
@@ -54,6 +55,10 @@ class PlayletMorePanelLight extends StatelessWidget {
   final bool danmakuEnabled;
   final VoidCallback? onToggleDanmaku;
 
+  /// 「弹幕设置」入口（官方 `jm3.e`，label `a2v`，在弹幕开关之后）。
+  /// null 时整行不出现（深色分支同门）。
+  final VoidCallback? onOpenDanmakuSettings;
+
   /// 官方 `jm3.t0`：行尾展示当前字号档（`jk3/b.f()`）。null 时不显示档位。
   final String? fontScaleLabel;
 
@@ -67,6 +72,7 @@ class PlayletMorePanelLight extends StatelessWidget {
   /// 官方 `jm3.u`：点击关闭面板并打开选集下载弹窗。null 时退化为
   /// 「暂未支持」占位（feed 长按面板未接下载）。
   final VoidCallback? onOpenOfflineCache;
+
 
   static Color _foreground(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -180,7 +186,26 @@ class PlayletMorePanelLight extends StatelessWidget {
                         },
                       ),
                     if (onToggleDanmaku != null)
-                      _danmakuRow(context, _foreground(context)),
+                      _SwitchRow(
+                        rowKey: 'player-more-light-danmaku',
+                        icon: 'more_danmaku',
+                        label: '弹幕',
+                        toggled: danmakuEnabled,
+                        onToggle: onToggleDanmaku!,
+                        foreground: _foreground(context),
+                        labelStyle: _labelStyle(context),
+                      ),
+                    if (onOpenDanmakuSettings != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-danmaku-settings',
+                        icon: 'more_danmaku_settings',
+                        label: '弹幕设置',
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenDanmakuSettings!();
+                        },
+                      ),
                     if (onOpenFontSettings != null)
                       _actionRow(
                         context,
@@ -227,7 +252,11 @@ class PlayletMorePanelLight extends StatelessWidget {
     ),
   );
 
-  /// 倍速行：图标 + 标签 + 药丸档位（浅色支档位与深色 V2 不同，无 1.75x）。
+  /// 倍速行：图标 + 标签 + 药丸档位。
+  ///
+  /// 档位来自 `PlayerPreferences.playbackRates`（用户设备官方实测：含
+  /// 2x/3x、无 1.75x）。药丸文案就是 `1x`；「（默认）」只出现在横屏沉浸面板
+  /// 的大字号子列表里（官方 `strings/ec5`）。
   Widget _rateRow(BuildContext context) => Padding(
     key: const ValueKey('player-more-light-rate-row'),
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -244,7 +273,7 @@ class PlayletMorePanelLight extends StatelessWidget {
               context,
               Row(
                 children: [
-                  for (final rate in PlayerPreferences.lightPanelPlaybackRates)
+                  for (final rate in PlayerPreferences.playbackRates)
                     _OptionPill(
                       key: ValueKey('player-more-light-rate-$rate'),
                       label:
@@ -296,33 +325,6 @@ class PlayletMorePanelLight extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    ),
-  );
-
-  Widget _danmakuRow(BuildContext context, Color foreground) => Semantics(
-    key: const ValueKey('player-more-light-danmaku-row'),
-    label: '弹幕',
-    toggled: danmakuEnabled,
-    onTap: onToggleDanmaku,
-    excludeSemantics: true,
-    child: InkWell(
-      onTap: onToggleDanmaku,
-      excludeFromSemantics: true,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: SizedBox(
-          height: 48,
-          child: Row(
-            children: [
-              _PanelIconLight(name: 'more_danmaku', color: foreground),
-              const SizedBox(width: 8),
-              Expanded(child: Text('弹幕', style: _labelStyle(context))),
-              const SizedBox(width: 12),
-              _LightSwitch(value: danmakuEnabled),
-            ],
-          ),
-        ),
       ),
     ),
   );
@@ -393,6 +395,83 @@ class PlayletMorePanelLight extends StatelessWidget {
       trailing: trailing,
       onTap: onTap,
     );
+  }
+}
+
+/// 弹幕开关行：自带本地 state（深色面板同款模式）。
+///
+/// bottom sheet 不跟随父级 setState 重建，开关若只渲染传入的快照，
+/// 点完会停在旧状态、重开面板才刷新；本地 state 让开关动画立刻跟随。
+/// 面板其余行都随面板关闭（清屏/字号/下钻行）或随关闭回传（倍速/
+/// 清晰度），不受此问题影响。
+class _SwitchRow extends StatefulWidget {
+  const _SwitchRow({
+    required this.rowKey,
+    required this.icon,
+    required this.label,
+    required this.toggled,
+    required this.onToggle,
+    required this.foreground,
+    required this.labelStyle,
+  });
+
+  /// 行 key 前缀；渲染出的行 key 是 `<rowKey>-row`（与既有弹幕行保持一致）。
+  final String rowKey;
+  final String icon;
+  final String label;
+  final bool toggled;
+  final VoidCallback onToggle;
+  final Color foreground;
+  final TextStyle labelStyle;
+
+  @override
+  State<_SwitchRow> createState() => _SwitchRowState();
+}
+
+class _SwitchRowState extends State<_SwitchRow> {
+  late bool _enabled = widget.toggled;
+
+  @override
+  void didUpdateWidget(_SwitchRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 面板打开期间父级已翻转该开关且 sheet 子树原地重建时，旧 State 仍持旧值
+    // 会导致之后每次点击与父级持续反向；跟随父级同步。
+    if (oldWidget.toggled != widget.toggled) {
+      _enabled = widget.toggled;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        key: ValueKey('${widget.rowKey}-row'),
+        label: widget.label,
+        toggled: _enabled,
+        onTap: _toggle,
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: _toggle,
+          excludeFromSemantics: true,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox(
+              height: 48,
+              child: Row(
+                children: [
+                  _PanelIconLight(name: widget.icon, color: widget.foreground),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(widget.label, style: widget.labelStyle)),
+                  const SizedBox(width: 12),
+                  _LightSwitch(value: _enabled),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  void _toggle() {
+    setState(() => _enabled = !_enabled);
+    widget.onToggle();
   }
 }
 

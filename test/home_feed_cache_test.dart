@@ -7,7 +7,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/home_feed_cache.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 MediaItem _item(String id, {String kind = 'video'}) => MediaItem(
   id: id,

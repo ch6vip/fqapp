@@ -27,6 +27,26 @@ void main() {
       expect(parsed.chapters.last.text, contains('走向远方'));
     });
 
+    test('跳过只有标题没有正文的章节，如文件开头的目录页', () {
+      final parsed = parseImportedBookBytes(
+        fileName: '故事.txt',
+        bytes: Uint8List.fromList(
+          utf8.encode(
+            '第一章 开始\n第二章 出发\n第一章 开始\n清晨醒来。\n第二章 出发\n走向远方。',
+          ),
+        ),
+      );
+
+      // 开头的两条目录条目只有标题、没有正文，丢弃后只剩带正文的真章节，
+      // 否则阅读器打开它们会报“正文为空”。
+      expect(parsed.chapters.map((chapter) => chapter.title), [
+        '第一章 开始',
+        '第二章 出发',
+      ]);
+      expect(parsed.chapters.first.text, contains('清晨醒来'));
+      expect(parsed.chapters.last.text, contains('走向远方'));
+    });
+
     test('没有章节标题时把 TXT 作为单章导入', () {
       final parsed = parseImportedBookBytes(
         fileName: '散文.TXT',
@@ -83,6 +103,49 @@ void main() {
       expect(parsed.chapters.first.text, contains('正文二'));
     });
 
+    test('跳过 EPUB spine 里只有标题的 nav 目录文档', () {
+      final archive = Archive()
+        ..addFile(ArchiveFile.string('mimetype', 'application/epub+zip'))
+        ..addFile(
+          ArchiveFile.string(
+            'META-INF/container.xml',
+            '''<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles>
+</container>''',
+          ),
+        )
+        ..addFile(
+          ArchiveFile.string(
+            'OEBPS/content.opf',
+            '''<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <metadata><dc:title>EPUB 书名</dc:title></metadata>
+  <manifest><item id="nav" href="Text/nav.xhtml" media-type="application/xhtml+xml"/>
+    <item id="one" href="Text/one.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="nav"/><itemref idref="one"/></spine>
+</package>''',
+          ),
+        )
+        ..addFile(
+          ArchiveFile.string(
+            'OEBPS/Text/nav.xhtml',
+            '<html><body><h1>目录</h1><nav><ol><li><a href="one.xhtml">第一章</a></li></ol></nav></body></html>',
+          ),
+        )
+        ..addFile(
+          ArchiveFile.string(
+            'OEBPS/Text/one.xhtml',
+            '<html><body><h1>第一章</h1><p>正文一。</p></body></html>',
+          ),
+        );
+      final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
+      final parsed = parseImportedBookBytes(fileName: 'nav.epub', bytes: bytes);
+
+      expect(parsed.chapters.map((chapter) => chapter.title), ['第一章']);
+      expect(parsed.chapters.single.text, contains('正文一'));
+    });
+
     test('拒绝不支持的格式与空正文', () {
       expect(
         () => parseImportedBookBytes(
@@ -95,6 +158,13 @@ void main() {
         () => parseImportedBookBytes(
           fileName: 'empty.txt',
           bytes: Uint8List.fromList(utf8.encode('  ')),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => parseImportedBookBytes(
+          fileName: '只有标题.txt',
+          bytes: Uint8List.fromList(utf8.encode('第一章 开始')),
         ),
         throwsFormatException,
       );

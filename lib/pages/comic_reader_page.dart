@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/chapter_media.dart';
@@ -9,6 +8,7 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/backend_transport.dart';
 import '../services/comic_page_layout.dart';
+import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
@@ -17,6 +17,28 @@ import '../services/user_facing_error.dart';
 typedef ComicChapterLoader = Future<List<ComicImage>> Function(Chapter chapter);
 typedef ComicImageProviderFactory =
     ImageProvider<Object> Function(ComicImage image);
+
+/// Default provider for one comic page: memory-only.
+///
+/// Comic URLs carry the per-launch loopback capability in their path, so
+/// they must never go through a disk-persisted image cache: a cached entry
+/// would keep the capability alive past the launch that issued it.
+/// [NetworkImage] only feeds Flutter's in-memory [ImageCache], and
+/// [ResizeImage] with [ResizeImagePolicy.fit] keeps the old 2048×8192
+/// decode bound as an aspect-preserving max box (the old
+/// `CachedNetworkImageProvider` maxWidth/maxHeight semantics; the
+/// `exact` default would stretch to 2048×8192).
+@visibleForTesting
+ImageProvider<Object> defaultComicImageProvider(ComicImage image) =>
+    ResizeImage(
+      NetworkImage(
+        image.url,
+        headers: image.headers.isEmpty ? null : image.headers,
+      ),
+      width: 2048,
+      height: 8192,
+      policy: ResizeImagePolicy.fit,
+    );
 
 class ComicReaderPage extends StatefulWidget {
   final String bookId;
@@ -77,6 +99,8 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   bool _sessionActive = false;
   DateTime _readStart = DateTime.now();
   Timer? _saveTimer;
+  // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
+  VoidCallback? _unregisterFairMemoryFlush;
   String? _error;
 
   Chapter get _chapter => widget.chapters[_chapterIndex];
@@ -85,6 +109,9 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 小米公平运行内存：KILL 广播到达时刷一次漫画进度，避免被杀丢进度。
+    _unregisterFairMemoryFlush =
+        FairMemoryService.instance.registerFlushHandler(_saveProgress);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -104,6 +131,8 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   void dispose() {
     _imageRequest?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _unregisterFairMemoryFlush?.call();
+    _unregisterFairMemoryFlush = null;
     _saveTimer?.cancel();
     _settleReadTime();
     _sessionActive = false;
@@ -606,14 +635,7 @@ class _ComicImageTileState extends State<_ComicImageTile> {
   void _resolve() {
     _removeListener();
     final provided = widget.providerFactory?.call(widget.image);
-    _provider =
-        provided ??
-        CachedNetworkImageProvider(
-          widget.image.url,
-          headers: widget.image.headers,
-          maxWidth: 2048,
-          maxHeight: 8192,
-        );
+    _provider = provided ?? defaultComicImageProvider(widget.image);
     final attempt = _attempt;
     var reported = false;
     _listener = ImageStreamListener(
@@ -651,9 +673,7 @@ class _ComicImageTileState extends State<_ComicImageTile> {
     if (_retrying) return;
     setState(() => _retrying = true);
     try {
-      if (widget.providerFactory == null) {
-        await CachedNetworkImage.evictFromCache(widget.image.url);
-      }
+      // 内存图片缓存没有落盘层：只清内存缓存就足以强制重新拉取。
       await _provider?.evict();
     } catch (_) {
       // A cache cleanup failure should not suppress an explicit network retry.

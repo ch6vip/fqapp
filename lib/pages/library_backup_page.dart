@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/library_backup.dart';
 import '../services/library_backup_service.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/data_transfer_widgets.dart';
+import 'fanqie_history_import_page.dart';
 
 class LibraryBackupPage extends StatefulWidget {
   const LibraryBackupPage({super.key});
@@ -17,6 +22,9 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
   LibraryBackup? _preview;
   String? _busy;
   String? _message;
+  bool _error = false;
+  final _previewKey = GlobalKey();
+  final _messageKey = GlobalKey();
 
   Future<void> _run(
     String label,
@@ -27,12 +35,14 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
     setState(() {
       _busy = label;
       _message = null;
+      _error = false;
     });
     try {
       await action();
     } catch (error) {
       if (!mounted) return;
       setState(() {
+        _error = true;
         _message = restoring
             ? '恢复未完成，部分记录可能已写入。可重试同一文件，已存在的数据会保留。'
             : switch (error) {
@@ -43,7 +53,25 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
               };
       });
     } finally {
-      if (mounted) setState(() => _busy = null);
+      if (mounted) {
+        setState(() => _busy = null);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final target =
+              (_message != null ? _messageKey : _previewKey).currentContext;
+          if (target != null) {
+            unawaited(
+              Scrollable.ensureVisible(
+                target,
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                alignment: .1,
+              ),
+            );
+          }
+        });
+      }
     }
   }
 
@@ -103,7 +131,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       child: Scaffold(
         backgroundColor: palette.canvas,
         appBar: AppBar(
-          title: const Text('备份与恢复'),
+          title: const Text('备份与导入'),
           centerTitle: true,
           backgroundColor: palette.canvas,
           surfaceTintColor: Colors.transparent,
@@ -114,109 +142,190 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 640),
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 children: [
-                  _section(palette, [
-                    Text(
-                      '换手机，带上收藏和进度',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: palette.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存的阅读/播放进度，以及已看剧集。'),
-                    const SizedBox(height: 8),
-                    Text(
-                      '不含本地 TXT/EPUB 书籍及其进度、下载缓存、阅读时长、划线和应用设置。'
-                      '本地书籍请另行保留原文件。',
-                      style: TextStyle(color: palette.muted),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '导出前请先退出阅读或暂停播放，让当前进度保存。文件保存在你选择的位置。',
-                      style: TextStyle(color: palette.muted),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '请保留备份文件：应用日常保存仍会在历史超过 100 条时清理较早记录，仅保留最近约 50 条。',
-                      style: TextStyle(color: palette.muted),
-                    ),
-                  ]),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: enabled ? _export : null,
-                    icon: const Icon(Icons.save_alt),
-                    label: const Text('导出备份文件'),
+                  const DataTransferHeader(
+                    icon: LucideIcons.database,
+                    title: '书架随你走',
+                    subtitle: '备份本机收藏与进度，或从番茄带回书架。',
                   ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: enabled ? _pick : null,
-                    icon: const Icon(Icons.file_open_outlined),
-                    label: Text(preview == null ? '选择备份文件导入' : '选择其他备份文件'),
+                  _label('本机数据'),
+                  DataTransferCard(
+                    children: [
+                      DataTransferRow(
+                        icon: LucideIcons.download,
+                        title: '导出备份',
+                        subtitle: '保存收藏、阅读进度与已看剧集',
+                        onTap: enabled ? _export : null,
+                      ),
+                      Divider(height: 1, indent: 68, color: palette.line),
+                      DataTransferRow(
+                        icon: LucideIcons.file_input,
+                        title: '从备份文件恢复',
+                        subtitle: preview == null
+                            ? '选择 FQApp 备份文件，预览后再合并'
+                            : '重新选择其他 FQApp 备份',
+                        onTap: enabled ? _pick : null,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  _label('其他来源'),
+                  DataTransferCard(
+                    children: [
+                      DataTransferRow(
+                        icon: LucideIcons.book_open,
+                        title: '导入番茄书架',
+                        subtitle: '网页登录、最近采集和旧版历史文件',
+                        onTap: enabled
+                            ? () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      const FanqieHistoryImportPage(),
+                                ),
+                              )
+                            : null,
+                      ),
+                    ],
                   ),
                   if (preview != null) ...[
-                    const SizedBox(height: 16),
-                    _section(palette, [
-                      Text(
-                        '导入预览',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: palette.ink,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text('备份时间：$exportedAt'),
-                      const SizedBox(height: 8),
-                      Text(_counts(preview)),
-                      if (preview.excludedLocalRecords > 0) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          '原备份已排除 ${preview.excludedLocalRecords} 条本地书籍相关记录。',
+                    const SizedBox(height: 24),
+                    _label('恢复预览', key: _previewKey),
+                    DataTransferCard(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '备份于 $exportedAt',
+                                style: TextStyle(
+                                  color: palette.muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              DataTransferStats(
+                                values: {
+                                  '收藏': preview.shelf.length,
+                                  '进度': preview.history.length,
+                                  '已看剧集': preview.episodeCount,
+                                },
+                              ),
+                              const SizedBox(height: 14),
+                              Text(
+                                '只补充缺失的收藏与进度，保留本机已有记录。已看剧集会合并，可重复导入。',
+                                style: TextStyle(
+                                  color: palette.ink,
+                                  fontSize: 13,
+                                  height: 1.6,
+                                ),
+                              ),
+                              if (preview.excludedLocalRecords > 0) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  '此备份不含 ${preview.excludedLocalRecords} 条本地书籍记录。',
+                                  style: TextStyle(
+                                    color: palette.muted,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ],
-                      const SizedBox(height: 12),
-                      const Text('同一作品已有收藏或进度时保留本机记录，只补缺失项；已看剧集会合并。可重复导入。'),
-                      const SizedBox(height: 16),
-                      FilledButton(
-                        onPressed: enabled ? _restore : null,
-                        child: const Text('确认合并到本机'),
-                      ),
-                    ]),
-                  ],
-                  if (_busy case final label?) ...[
-                    const SizedBox(height: 16),
-                    Semantics(liveRegion: true, child: Text(label)),
+                    ),
                   ],
                   if (_message case final message?) ...[
                     const SizedBox(height: 16),
-                    _section(palette, [
-                      Semantics(liveRegion: true, child: Text(message)),
-                    ]),
+                    DataTransferNotice(
+                      key: _messageKey,
+                      message: message,
+                      error: _error,
+                    ),
                   ],
+                  const SizedBox(height: 24),
+                  DataTransferCard(
+                    children: [
+                      ExpansionTile(
+                        title: Text(
+                          '备份包含哪些内容？',
+                          style: TextStyle(color: palette.ink, fontSize: 14),
+                        ),
+                        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+                        childrenPadding: const EdgeInsets.fromLTRB(
+                          16,
+                          0,
+                          16,
+                          16,
+                        ),
+                        children: [
+                          Text(
+                            '包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存进度，以及已看剧集。\n\n'
+                            '本地 TXT / EPUB 原文件、下载缓存、阅读时长、划线和应用设置需另行保留。\n\n'
+                            '导出前请退出阅读或暂停播放，让当前进度保存；换手机时传输备份文件，再在这里恢复。',
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 13,
+                              height: 1.7,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
         ),
+        bottomNavigationBar: _busy != null || preview != null
+            ? SafeArea(
+                top: false,
+                child: Container(
+                  color: palette.canvas,
+                  padding: const EdgeInsets.all(16),
+                  child: _busy != null
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const LinearProgressIndicator(),
+                            const SizedBox(height: 10),
+                            Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                _busy!,
+                                style: TextStyle(
+                                  color: palette.ink,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : DataTransferAction(
+                          label: '确认恢复到本机',
+                          onPressed: _restore,
+                        ),
+                ),
+              )
+            : null,
       ),
     );
   }
 
-  Widget _section(HomePalette palette, List<Widget> children) => Container(
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: palette.surface,
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: palette.line),
-    ),
-    child: DefaultTextStyle.merge(
-      style: TextStyle(color: palette.ink, height: 1.5),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
+  Widget _label(String text, {Key? key}) => Padding(
+    key: key,
+    padding: const EdgeInsets.only(left: 4, bottom: 10),
+    child: Text(
+      text,
+      style: TextStyle(
+        color: HomePalette.of(context).muted,
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
       ),
     ),
   );

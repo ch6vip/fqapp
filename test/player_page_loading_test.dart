@@ -6,9 +6,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/pages/player_page.dart';
+import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/player_load_diagnostics.dart';
+import 'package:fqapp/services/quality_memory.dart';
+import 'package:fqapp/widgets/player/playlet_danmaku_loader.dart';
 import 'package:fqapp/widgets/player/player_cover.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
@@ -16,6 +20,7 @@ import 'support/controlled_player.dart';
 
 void main() {
   setUp(() {
+    QualityMemory.clearForTesting();
     SharedPreferences.setMockInitialValues({'player_playback_rate': 1.25});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -466,6 +471,117 @@ void main() {
     expect(session.requests, ['5']);
     expect(session.players, hasLength(1));
   });
+
+  testWidgets('quality choice carries to the next episode by name (#60)', (
+    tester,
+  ) async {
+    Map<String, dynamic> variantsSource(String id, {bool only720 = false}) => {
+      'video_url': 'https://example.invalid/$id-720.mp4',
+      'key_hex': '',
+      'variants': [
+        if (!only720)
+          {
+            'name': '1080P',
+            'url': 'https://example.invalid/$id-1080.mp4',
+            'key_hex': '',
+            'height': 1080,
+          },
+        {
+          'name': '720P',
+          'url': 'https://example.invalid/$id-720.mp4',
+          'key_hex': '',
+          'height': 720,
+        },
+      ],
+    };
+    final session = _Session(
+      shortSeries: true,
+      danmakuFetcher: (_) async => const PlayletCommentPage(),
+      loader: (chapter) => Future.value(
+        variantsSource(chapter.itemId, only720: chapter.itemId == '3'),
+      ),
+    );
+    await _mount(tester, session);
+    session.players.single.emitFirstFrame();
+    await _flush(tester);
+    expect(
+      session.players.single.calls.first,
+      'create:https://example.invalid/1-720.mp4',
+    );
+
+    // Switch to 1080P on episode 1 via the chrome callback.
+    _chrome(tester).onQualitySelected!(
+      const EpisodeVariant(
+        name: '1080P',
+        url: 'https://example.invalid/1-1080.mp4',
+        keyHex: '',
+        height: 1080,
+      ),
+    );
+    await _flush(tester);
+    await _flush(tester);
+    expect(
+      session.players.last.calls.first,
+      'create:https://example.invalid/1-1080.mp4',
+    );
+    // The choice is shared with the feed via QualityMemory.
+    expect(QualityMemory.nameFor('loading-book'), '1080P');
+
+    // Next episode keeps 1080P by NAME — its own URL, not episode 1's.
+    await _choose(tester, 1);
+    await _flush(tester);
+    expect(
+      session.players.last.calls.first,
+      'create:https://example.invalid/2-1080.mp4',
+    );
+
+    // Episode 3 has no 1080P: falls back to the default rendition.
+    await _choose(tester, 2);
+    await _flush(tester);
+    expect(
+      session.players.last.calls.first,
+      'create:https://example.invalid/3-720.mp4',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a choice remembered in the feed is honored on first load', (
+    tester,
+  ) async {
+    // Simulates the feed remembering 360P for this series before the
+    // full-page player opens: the player must NOT fall back to 720P.
+    QualityMemory.remember('loading-book', '360P');
+    final session = _Session(
+      shortSeries: true,
+      danmakuFetcher: (_) async => const PlayletCommentPage(),
+      loader: (chapter) => Future.value({
+        'video_url': 'https://example.invalid/${chapter.itemId}-720.mp4',
+        'key_hex': '',
+        'variants': [
+          {
+            'name': '720P',
+            'url': 'https://example.invalid/${chapter.itemId}-720.mp4',
+            'key_hex': '',
+            'height': 720,
+          },
+          {
+            'name': '360P',
+            'url': 'https://example.invalid/${chapter.itemId}-360.mp4',
+            'key_hex': '',
+            'height': 360,
+          },
+        ],
+      }),
+    );
+    await _mount(tester, session);
+    session.players.single.emitFirstFrame();
+    await _flush(tester);
+    expect(
+      session.players.single.calls.first,
+      'create:https://example.invalid/1-360.mp4',
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Map<String, dynamic> _source(String id) => {
@@ -505,6 +621,9 @@ class _Session {
   final Future<Map<String, dynamic>> Function(Chapter)? loader;
   final ControlledNativePlayer Function()? factory;
   final int startIndex;
+  final bool shortSeries;
+  final Future<PlayletCommentPage> Function(DanmakuFetchRequest)?
+  danmakuFetcher;
   final players = <ControlledNativePlayer>[];
   final requests = <String>[];
   final samples = <PlayerLoadSample>[];
@@ -515,6 +634,8 @@ class _Session {
     this.loader,
     this.factory,
     this.startIndex = 0,
+    this.shortSeries = false,
+    this.danmakuFetcher,
   }) : store = store ?? ControlledReaderStore();
 
   Widget app() => MaterialApp(
@@ -527,6 +648,8 @@ class _Session {
       ],
       startIndex: startIndex,
       historyStore: store,
+      danmakuFetcher: danmakuFetcher,
+      shortSeries: shortSeries,
       loadDiagnostics: PlayerLoadDiagnostics(
         now: () => elapsed,
         report: samples.add,

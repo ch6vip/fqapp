@@ -295,7 +295,12 @@ fn recover_argus551_field3(argus_b64: &str) -> i32 {
 fn reverse_hex_matches_go_vectors() {
     let v = device_vectors();
     for (id, want) in v["reversehex"].as_object().unwrap() {
-        assert_eq!(&reverse_hex(id), want.as_str().unwrap(), "reverseHex({id})");
+        // Fixture ids are numeric, so a well-formed vector unwraps.
+        assert_eq!(
+            &reverse_hex(id).expect("fixture id is numeric"),
+            want.as_str().unwrap(),
+            "reverseHex({id})"
+        );
     }
 }
 

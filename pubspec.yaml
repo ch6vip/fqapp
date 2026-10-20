@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.113+118
+version: 1.0.122+127
 
 environment:
   sdk: ^3.12.2
@@ -30,16 +30,20 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # 中文 Material 文案（复制/粘贴/全选等系统文本菜单）：没有 delegates 时
+  # Flutter 一律回退英文，即使系统语言是中文（issue #79）。
+  flutter_localizations:
+    sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
   http: ^1.6.0
   path_provider: ^2.1.0
   shared_preferences: ^2.3.0
   url_launcher: ^6.3.0
-  hive: ^2.2.3
-  hive_flutter: ^1.1.0
+  # hive_ce is the maintained Hive fork; all boxes open encrypted via
+  # EncryptedHive (P1-3). Keys live in flutter_secure_storage (Keystore).
+  hive_ce: ^2.0.0
+  hive_ce_flutter: ^2.0.0
+  flutter_secure_storage: ^9.0.0
   cached_network_image: ^4.0.0
   flutter_cache_manager: ^3.4.2
   flutter_riverpod: ^3.4.3

@@ -3,12 +3,15 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use base64::Engine;
 use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha512};
+use tokio::io::AsyncWriteExt;
 
 use crate::endpoints::base::{
     dragon_read_json_headers, phoenix_player_headers, phoenix_player_url, Upstream, UpstreamMode,
@@ -79,6 +82,25 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 fetch_shortplay_video_model(ctx, &video_id),
                 fetch_phoenix_video_model(ctx, &video_id),
             );
+            // 凤凰那条失败原先被 `.ok()` 静默吃掉，而 1080P 只可能来自它那条
+            // 列表（短剧专用接口自带列表与其 `fallback_api` 都只到 720P）——
+            // 失败即面板少一档且毫无痕迹。**HTTP 成功不等于业务成功**：实测
+            // 2026-10-14 三集全部回火山错误封包
+            // `{BaseResp, Code:110001, Message:未知异常}`（无 `data`），上游只给
+            // 通用码、不给原因，所以这里把外壳与剧集 id 一起留在核心日志里。
+            // Note: 为什么静默会丢一整档、以及日志里刻意不记什么 —
+            // 见 .agents/notes/implemented/bug-fix/2026-10-14-phoenix-reject-silent-quality-loss.md
+            match &phoenix {
+                Ok(body) if phoenix_model_usable(body) => {}
+                Ok(body) => log::warn!(
+                    "video {video_id}: phoenix body unusable (quality tiers lost): {}",
+                    envelope_of_body(body)
+                ),
+                Err(error) => log::warn!(
+                    "video {video_id}: phoenix request failed (quality tiers lost): {}",
+                    error.message()
+                ),
+            }
             (shortplay?, phoenix.ok())
         } else {
             (fetch_phoenix_video_model(ctx, &video_id).await?, None)
@@ -370,6 +392,8 @@ fn variant_display_name(height: i64) -> String {
 /// the client then hides the quality row entirely (official `oi3/k.P()` gate).
 async fn extract_stream_variants(ctx: &Ctx, raw: &[u8], extra: Option<&[u8]>) -> Vec<Value> {
     let mut scored = Vec::new();
+    // 读不动的 body 直接跳过、不报错：`extra`（凤凰）是不是可用由调用点判并告警，
+    // 那里才有剧集 id 可以把日志和一次播放对起来。
     for body in std::iter::once(raw).chain(extra) {
         let Ok(resp) = serde_json::from_slice::<Value>(body) else {
             continue;
@@ -401,9 +425,12 @@ async fn extract_stream_variants(ctx: &Ctx, raw: &[u8], extra: Option<&[u8]>) ->
 async fn fallback_variant_rows(ctx: &Ctx, model: &Map<String, Value>) -> Vec<(i64, Value)> {
     let fallback_url = fallback_api_url(model);
     if fallback_url.is_empty() {
+        // 多数模型本来就没有这一条，不是异常。
         return Vec::new();
     }
     let Some(fallback_data) = fetch_fallback_video_info(ctx, &fallback_url).await else {
+        // 有地址却拉不到，是这一档列表整片消失的另一种静默路径。
+        log::warn!("fallback_api fetch failed (quality tiers lost)");
         return Vec::new();
     };
     let list = fallback_data
@@ -444,6 +471,84 @@ fn merge_variant_rows(scored: Vec<(i64, Value)>) -> Vec<Value> {
     out.into_iter().map(|(_, row)| row).collect()
 }
 
+/// 凤凰那条响应是否可用：`data` 必须是个对象。
+///
+/// HTTP 成功不等于业务成功——上游业务失败时回的是火山错误封包
+/// `{BaseResp, Code, Message}`（无 `data`），状态码仍是 200。看状态码判不出来，
+/// 只能看外壳，所以这里单独判一次由调用点告警。
+fn phoenix_model_usable(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|resp| resp.get("data").map(Value::is_object))
+        .unwrap_or(false)
+}
+
+/// 把一份响应的**外壳**压成一行：顶层键名、`data` 的类型、`code`/`Code`、
+/// `message`/`Message` 与 `BaseResp`。
+///
+/// 只记键名、类型、状态码与上游消息（截断），**不记 `data` 里的值**：值里可能是带签名的
+/// URL 与令牌，而这份日志会被导出给人看。上游拒绝时只给 `110001` 这类通用码，把外壳与
+/// 它给的原话留在日志里，是下一次"某一档无声消失"唯一能查的线索。
+fn body_envelope(resp: &Value) -> String {
+    let keys = resp
+        .as_object()
+        .map(|map| map.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let mut line = format!(
+        "keys={keys:?} data={} code={} message={}",
+        json_type_of(resp.get("data")),
+        envelope_scalar(resp, &["code", "Code"]),
+        envelope_scalar(resp, &["message", "Message"]),
+    );
+    if let Some(base) = resp.get("BaseResp") {
+        line.push_str(&format!(" BaseResp={}", truncated(base, 240)));
+    }
+    line
+}
+
+/// 一份响应字节流的外壳；不是 JSON 就报长度。
+fn envelope_of_body(body: &[u8]) -> String {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(resp) => body_envelope(&resp),
+        Err(_) => format!("not json len={}", body.len()),
+    }
+}
+
+/// 按候选键名取一个标量并渲染成短字符串，都取不到给 `-`。
+fn envelope_scalar(resp: &Value, names: &[&str]) -> String {
+    for name in names {
+        match resp.get(*name) {
+            Some(Value::String(text)) => return text.chars().take(120).collect(),
+            Some(Value::Null) | None => continue,
+            Some(other) => return other.to_string(),
+        }
+    }
+    "-".to_string()
+}
+
+/// 把一段 JSON 压成一行并截断，避免错误包里的长文案把日志撑爆。
+fn truncated(value: &Value, limit: usize) -> String {
+    let text = value.to_string();
+    if text.chars().count() <= limit {
+        text
+    } else {
+        format!("{}…", text.chars().take(limit).collect::<String>())
+    }
+}
+
+/// JSON 值的类型标签，`absent` 表示键根本不在。
+fn json_type_of(value: Option<&Value>) -> &'static str {
+    match value {
+        None => "absent",
+        Some(Value::Null) => "null",
+        Some(Value::Bool(_)) => "bool",
+        Some(Value::Number(_)) => "number",
+        Some(Value::String(_)) => "string",
+        Some(Value::Array(_)) => "array",
+        Some(Value::Object(_)) => "object",
+    }
+}
+
 /// Builds the variant rows from one `video_list` object, keeping the quality
 /// score so callers can merge several upstream lists before ranking them.
 fn variant_rows_scored(
@@ -454,20 +559,27 @@ fn variant_rows_scored(
         return Vec::new();
     };
     let mut rows: Vec<(i64, Value)> = video_list
-        .values()
-        .filter_map(|v| v.as_object())
-        .filter_map(|info| {
-            let score = video_quality_score(info)?;
-            let (url, key) = decrypt_variant_entry(info, key_seed.as_deref())?;
+        .iter()
+        .filter_map(|(slot, value)| {
+            let info = value.as_object()?;
             let w = int64_from_any(info.get("vwidth").unwrap_or(&Value::Null));
             let h = int64_from_any(info.get("vheight").unwrap_or(&Value::Null));
             // 档位语义按**短边**：竖屏剧 1280×720 是 720P 而非 2K
             // （官方 Resolution 枚举同样以短边为准）。
             let short_edge = if w > 0 && h > 0 { w.min(h) } else { w.max(h) };
+            let name = variant_display_name(short_edge);
+            // 编码门丢 bytevc2 是**预期行为**（`CRIT-004`：该编码没有解码器），不打点。
+            let score = video_quality_score(info)?;
+            let Some((url, key)) = decrypt_variant_entry(info, key_seed.as_deref()) else {
+                // 地址解不出来是静默丢**整档**的一类——`4e85437` 修过同款缺陷，且
+                // 实测夹具的 `main_url` 形态一向比线上少，缺陷容易被盖住，所以留告警。
+                log::warn!("variant {slot} dropped, url undecodable ({w}x{h} {name})");
+                return None;
+            };
             Some((
                 score,
                 json!({
-                    "name": variant_display_name(short_edge),
+                    "name": name,
                     "width": w,
                     "height": h,
                     "url": url,
@@ -1053,6 +1165,96 @@ async fn unsigned_get(ctx: &Ctx, url: &str, user_agent: &str) -> Option<Vec<u8>>
     }
 }
 
+/// Hard per-file bound for a single downloaded / cached video. A short-drama
+/// episode is far below this; the cap only stops a lying `Content-Length`
+/// or an endless body from filling the disk or memory.
+const MAX_VIDEO_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Total timeout for one video download, matching the 15 s the shared
+/// upstream transport applies to the old whole-body download.
+const VIDEO_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// A plain reqwest client for streaming video downloads. The shared upstream
+/// transport (`upstream/http.rs`) only exposes a whole-body API, so the
+/// download path keeps its own client; it sends the same unsigned GET with
+/// the same User-Agent as `unsigned_get` (no signing, no device headers).
+/// Built lazily so a missing TLS provider (e.g. in a unit-test embedding,
+/// where the transport never installed one) degrades to the whole-body
+/// fallback instead of failing the download.
+static STREAMING_CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+
+fn streaming_client() -> Option<&'static reqwest::Client> {
+    STREAMING_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(VIDEO_DOWNLOAD_TIMEOUT)
+                .build()
+                .ok()
+        })
+        .as_ref()
+}
+
+/// Streams a video body to `part_path` chunk by chunk, never holding the
+/// whole file in memory. Enforces the per-file cap from `Content-Length`
+/// when present and from the running byte count while streaming. Leaves a
+/// partial file behind on error; the caller deletes it.
+async fn stream_download_to_file(
+    url: &str,
+    user_agent: &str,
+    part_path: &Path,
+) -> Result<u64, String> {
+    stream_download_to_file_with_cap(url, user_agent, part_path, MAX_VIDEO_DOWNLOAD_BYTES).await
+}
+
+async fn stream_download_to_file_with_cap(
+    url: &str,
+    user_agent: &str,
+    part_path: &Path,
+    cap_bytes: u64,
+) -> Result<u64, String> {
+    let client = streaming_client().ok_or_else(|| "streaming client unavailable".to_string())?;
+    let mut resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, user_agent)
+        .send()
+        .await
+        .map_err(|e| format!("download video: {e}"))?;
+    // The whole-body path rejects anything but 200; keep that contract.
+    if resp.status() != reqwest::StatusCode::OK {
+        return Err(format!("download video: HTTP {}", resp.status()));
+    }
+    if let Some(len) = resp.content_length() {
+        if len > cap_bytes {
+            return Err(format!(
+                "download video: content-length {len} exceeds cap {cap_bytes}"
+            ));
+        }
+    }
+    let mut file = tokio::fs::File::create(part_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut total: u64 = 0;
+    loop {
+        match resp.chunk().await {
+            Ok(Some(bytes)) => {
+                total = total
+                    .checked_add(bytes.len() as u64)
+                    .ok_or_else(|| "download video: size overflow".to_string())?;
+                if total > cap_bytes {
+                    return Err(format!(
+                        "download video: streamed {total} bytes exceeds cap {cap_bytes}"
+                    ));
+                }
+                file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+            }
+            Ok(None) => break,
+            Err(e) => return Err(format!("download video: {e}")),
+        }
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    Ok(total)
+}
+
 /// Downloads the MP4, saves it to src/, and returns the served path.
 async fn download_and_save(
     ctx: &Ctx,
@@ -1099,10 +1301,38 @@ async fn download_and_save(
     let part_path = PathBuf::from(format!("{}.part", fp.display()));
     let _ = std::fs::remove_file(&part_path);
 
-    let data = unsigned_get(ctx, video_url, UA_WINDOWS_BROWSER)
-        .await
-        .ok_or_else(|| "download video: request failed".to_string())?;
-    std::fs::write(&part_path, &data).map_err(|e| e.to_string())?;
+    if streaming_client().is_some() {
+        // Streaming download: the body is written chunk by chunk and never
+        // held whole in memory (P1-9). `VIDEO_CACHE_LOCK` above still
+        // serializes downloads; the lock is kept because the cache file,
+        // the decrypt step, and the prune pass below are not safe to run
+        // concurrently for the same video.
+        // The streaming client bypasses `UpstreamClient::do_request`, so
+        // apply the mock-origin rewrite here; without it the download
+        // would go to the real upstream instead of the mock server and
+        // the codec-gate download tests would never see the request.
+        let download_url = ctx.up.effective_url(video_url);
+        if let Err(err) =
+            stream_download_to_file(&download_url, UA_WINDOWS_BROWSER, &part_path).await
+        {
+            let _ = std::fs::remove_file(&part_path);
+            return Err(err);
+        }
+    } else {
+        // No TLS provider installed in this process (unit-test embedding
+        // without the upstream transport): fall back to the shared
+        // whole-body download instead of failing outright.
+        let data = unsigned_get(ctx, video_url, UA_WINDOWS_BROWSER)
+            .await
+            .ok_or_else(|| "download video: request failed".to_string())?;
+        if data.len() as u64 > MAX_VIDEO_DOWNLOAD_BYTES {
+            return Err(format!(
+                "download video: {} bytes exceeds cap {MAX_VIDEO_DOWNLOAD_BYTES}",
+                data.len()
+            ));
+        }
+        std::fs::write(&part_path, &data).map_err(|e| e.to_string())?;
+    }
 
     if !content_key.is_empty() {
         if let Err(err) = decrypt_cached_video_if_needed(&part_path, content_key) {
@@ -1114,7 +1344,7 @@ async fn download_and_save(
         let _ = std::fs::remove_file(&part_path);
         return Err(err.to_string());
     }
-    prune_video_cache(&src_dir, &fp);
+    prune_src_cache(&src_dir, &fp);
 
     Ok(format!("/src/{filename}"))
 }
@@ -1127,8 +1357,16 @@ struct CacheEntry {
     when: std::time::SystemTime,
 }
 
-/// Removes the oldest completed video files once the cache exceeds the limit.
-fn prune_video_cache(src_dir: &str, keep: &Path) {
+/// Removes the oldest completed cached files once the cache exceeds the
+/// limit. Videos and manga images share `src_dir`, so both count toward the
+/// same budget: manga images are the content-addressed `img_<sha256>.<ext>`
+/// files, and they are evictable like videos (re-downloadable on demand).
+/// In-flight downloads (`.part` / `.tmp`) are never counted or deleted.
+pub(crate) fn prune_src_cache(src_dir: &str, keep: &Path) {
+    prune_src_cache_with_budget(src_dir, keep, MAX_VIDEO_CACHE_BYTES);
+}
+
+fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
     let Ok(entries) = std::fs::read_dir(src_dir) else {
         return;
     };
@@ -1143,7 +1381,12 @@ fn prune_video_cache(src_dir: &str, keep: &Path) {
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
-        if ext != "mp4" && ext != "m4s" && ext != "ts" {
+        let is_video = ext == "mp4" || ext == "m4s" || ext == "ts";
+        // Manga images are written as `img_<sha256>.<jpg|png|gif|webp>`; the
+        // `img_` prefix keeps unrelated files out of the eviction set.
+        let is_manga_image = name.starts_with("img_")
+            && (ext == "jpg" || ext == "png" || ext == "gif" || ext == "webp");
+        if !is_video && !is_manga_image {
             continue;
         }
         let Ok(meta) = entry.metadata() else {
@@ -1160,12 +1403,12 @@ fn prune_video_cache(src_dir: &str, keep: &Path) {
             when,
         });
     }
-    if total <= MAX_VIDEO_CACHE_BYTES {
+    if total <= max_bytes {
         return;
     }
     items.sort_by_key(|a| a.when);
     for item in items {
-        if total <= MAX_VIDEO_CACHE_BYTES {
+        if total <= max_bytes {
             continue;
         }
         if item.path.as_path() == keep {
@@ -1178,14 +1421,26 @@ fn prune_video_cache(src_dir: &str, keep: &Path) {
 }
 
 fn decrypt_cached_video_if_needed(fp: &Path, content_key: &[u8]) -> Result<(), String> {
-    let data = std::fs::read(fp).map_err(|e| e.to_string())?;
+    // Bound the read: a cached file above the per-file cap is rejected
+    // instead of being slurped into memory.
+    let meta = std::fs::metadata(fp).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_VIDEO_DOWNLOAD_BYTES {
+        return Err(format!(
+            "cached video {} bytes exceeds cap {MAX_VIDEO_DOWNLOAD_BYTES}",
+            meta.len()
+        ));
+    }
+    let mut data = std::fs::read(fp).map_err(|e| e.to_string())?;
     if !mp4_needs_cenc_decrypt(&data) {
         return Ok(());
     }
-    let mut buf = data.clone();
-    decrypt_cenc_mp4(&mut buf, content_key)?;
+    // Decrypt in place on the single buffer: the old code cloned it first,
+    // doubling peak memory for the largest files. Full streaming decrypt
+    // would need the CENC box walk (`decrypt_cenc_mp4`) restructured around
+    // a partial `moov`, so the whole-file decrypt stays, minus the copy.
+    decrypt_cenc_mp4(&mut data, content_key)?;
     let tmp = PathBuf::from(format!("{}.tmp", fp.display()));
-    std::fs::write(&tmp, &buf).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, &data).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, fp).map_err(|e| e.to_string())
 }
 
@@ -1417,6 +1672,13 @@ fn rewrite_encrypted_sample_entries(data: &mut [u8], boxes: &HashMap<[u8; 4], Ve
     }
 }
 
+/// Upper bound for the number of samples a single `stsz` box may declare.
+/// A real track stays far below this (a 10-hour 60 fps video is ~2.2M
+/// samples). Without a cap, the fixed-size branch below allocates one
+/// `usize` per declared sample from just 8 header bytes, so a corrupt or
+/// hostile box with a huge `sample_count` can OOM the process.
+const MAX_STSZ_SAMPLES: usize = 10_000_000;
+
 fn parse_stsz(data: &[u8], b: Mp4Box) -> Vec<usize> {
     let mut p = b.off + 12;
     if p + 8 > data.len() {
@@ -1427,6 +1689,17 @@ fn parse_stsz(data: &[u8], b: Mp4Box) -> Vec<usize> {
     p += 8;
     let mut out = Vec::new();
     if sample_size != 0 {
+        // Fixed-size branch: the box carries no per-sample entries, so
+        // `sample_count` alone must be checked against the file. The
+        // declared samples must fit inside the file (they live in its
+        // `mdat`), and the count itself is capped.
+        if sample_count > MAX_STSZ_SAMPLES {
+            return Vec::new();
+        }
+        match sample_count.checked_mul(sample_size) {
+            Some(total) if total <= data.len() => {}
+            _ => return Vec::new(),
+        }
         for _ in 0..sample_count {
             out.push(sample_size);
         }
@@ -2038,6 +2311,201 @@ mod cenc_sample_fixture {
         decrypt_cached_video_if_needed(&path, &key).expect("second pass");
         let twice = std::fs::read(&path).expect("read twice");
         assert_eq!(once, twice, "the second pass must be a no-op");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P0-1: the fixed-size `stsz` branch used to allocate one `usize` per
+    /// declared sample with no bound, so a box claiming billions of samples
+    /// could OOM the process from 8 header bytes. It must reject counts
+    /// whose samples cannot fit in the file, while still accepting sane
+    /// fixed-size boxes.
+    #[test]
+    fn stsz_fixed_size_branch_rejects_absurd_sample_count() {
+        fn stsz_box(sample_size: u32, sample_count: u32, file_len: usize) -> (Vec<u8>, Mp4Box) {
+            let mut data = vec![0u8; file_len.max(20)];
+            data[12..16].copy_from_slice(&sample_size.to_be_bytes());
+            data[16..20].copy_from_slice(&sample_count.to_be_bytes());
+            (
+                data,
+                Mp4Box {
+                    off: 0,
+                    size: 20,
+                    header: 8,
+                    typ: *b"stsz",
+                },
+            )
+        }
+
+        // Absurd count: would previously allocate ~32 GiB of `usize`s.
+        let (data, b) = stsz_box(1024, u32::MAX, 20);
+        assert!(
+            parse_stsz(&data, b).is_empty(),
+            "sample_count whose samples cannot fit in the file must be rejected"
+        );
+        // Count above the absolute cap, even with 1-byte samples.
+        let (data, b) = stsz_box(1, MAX_STSZ_SAMPLES as u32 + 1, 20);
+        assert!(
+            parse_stsz(&data, b).is_empty(),
+            "sample_count above MAX_STSZ_SAMPLES must be rejected"
+        );
+        // Product overflow: 2 * u32::MAX samples of u32::MAX bytes.
+        let (data, b) = stsz_box(u32::MAX, 2, 20);
+        assert!(
+            parse_stsz(&data, b).is_empty(),
+            "overflowing sample_count * sample_size must be rejected"
+        );
+        // Sane fixed-size box still parses.
+        let (data, b) = stsz_box(100, 3, 320);
+        assert_eq!(parse_stsz(&data, b), vec![100, 100, 100]);
+    }
+
+    /// P1-6: manga images (`img_*`) must count toward the same `src_dir`
+    /// budget as videos and be evicted oldest-first; in-flight and
+    /// unrelated files must never be deleted.
+    #[test]
+    fn src_cache_prune_evicts_oldest_manga_images_too() {
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-prune-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let write_at = |name: &str, size: usize, secs: u64| {
+            let path = dir.join(name);
+            std::fs::write(&path, vec![b'x'; size]).expect("write cache file");
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open cache file")
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .expect("set mtime");
+            path
+        };
+        let old_video = write_at("old.mp4", 60, 50);
+        let old_image = write_at("img_old.png", 60, 100);
+        let new_image = write_at("img_new.png", 60, 200);
+        let in_flight = write_at("img_tmp.png.part", 60, 10);
+        let unrelated = write_at("notes.txt", 60, 10);
+
+        // Total counted = 180 (video + 2 images); budget 100 forces eviction
+        // of the oldest first: old video, then old image. The kept (newest)
+        // image, the in-flight part file, and the unrelated file survive.
+        prune_src_cache_with_budget(&dir.to_string_lossy(), &new_image, 100);
+
+        assert!(!old_video.exists(), "oldest video must be evicted");
+        assert!(!old_image.exists(), "oldest manga image must be evicted");
+        assert!(new_image.exists(), "kept image must survive");
+        assert!(in_flight.exists(), "in-flight .part must never be deleted");
+        assert!(unrelated.exists(), "unrelated files must never be deleted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P1-9: the download must stream chunk by chunk (never hold the whole
+    /// file in memory) and enforce the per-file cap, both from an
+    /// advertised `Content-Length` and from the running byte count.
+    /// A local TCP server stands in for the upstream host.
+    async fn serve_once(
+        body: Vec<u8>,
+        advertised: Option<u64>,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let port = listener.local_addr().expect("test server addr").port();
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let header = match advertised {
+                    Some(len) => format!(
+                        "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {len}\r\n\r\n"
+                    ),
+                    None => "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string(),
+                };
+                let _ = socket.write_all(header.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        (port, handle)
+    }
+
+    fn ensure_test_crypto_provider() {
+        // The streaming client is built with rustls-no-provider, so it
+        // needs the process-wide default provider the upstream transport
+        // normally installs at startup. Mirror `upstream/http.rs`.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    #[tokio::test]
+    async fn stream_download_writes_body_without_whole_file_buffer() {
+        ensure_test_crypto_provider();
+        let body: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let (port, server) = serve_once(body.clone(), Some(body.len() as u64)).await;
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-stream-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let part = dir.join("ep.mp4.part");
+        let url = format!("http://127.0.0.1:{port}/ep.mp4");
+        let total = stream_download_to_file(&url, UA_WINDOWS_BROWSER, &part)
+            .await
+            .expect("stream download");
+        assert_eq!(total, body.len() as u64);
+        assert_eq!(std::fs::read(&part).expect("read part"), body);
+        let _ = server.await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stream_download_rejects_lying_content_length() {
+        ensure_test_crypto_provider();
+        let body = vec![b'x'; 64];
+        let (port, server) = serve_once(body, Some(MAX_VIDEO_DOWNLOAD_BYTES + 1)).await;
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-stream-cap-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let part = dir.join("ep.mp4.part");
+        let url = format!("http://127.0.0.1:{port}/ep.mp4");
+        let err = stream_download_to_file(&url, UA_WINDOWS_BROWSER, &part)
+            .await
+            .expect_err("lying Content-Length must be rejected");
+        assert!(err.contains("content-length"), "unexpected error: {err}");
+        assert!(
+            !part.exists(),
+            "no file must be created on precheck failure"
+        );
+        let _ = server.await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stream_download_enforces_cap_from_running_total() {
+        ensure_test_crypto_provider();
+        // No advertised length: the running byte count must stop the
+        // download. A small cap keeps the test fast.
+        let body = vec![b'y'; 100];
+        let (port, server) = serve_once(body, None).await;
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-stream-total-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let part = dir.join("ep.mp4.part");
+        let url = format!("http://127.0.0.1:{port}/ep.mp4");
+        // Exercise the same loop with a small cap via the test-only seam.
+        let err = stream_download_to_file_with_cap(&url, UA_WINDOWS_BROWSER, &part, 10)
+            .await
+            .expect_err("stream past the cap must be rejected");
+        assert!(err.contains("exceeds cap"), "unexpected error: {err}");
+        let _ = server.await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -285,12 +285,23 @@ fn handle_play<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<
         };
 
         let mut v = Value::Null;
+        // 这里用 Signed 模式，根本不经过设备池，所以重试无法换设备（旧注释
+        // 写成 pooled devices 是失实的）。保留重试只是为了上游偶发抖动。
         for _ in 0..AUDIO_PLAY_ATTEMPTS {
             let raw = Upstream::new(ctx.up.clone()).raw(&spec).await?;
             v = raw_json(&raw)?;
             if !audio_play_device_rejected(&v) {
                 break;
             }
+        }
+        // 桥接封套恒为 code:0 是既定设计（上游封套嵌在 video_info 里，消费方
+        // 在那里自查），所以这里不改成错误，只补一条痕迹：全部尝试都被拒绝时
+        // 此前没有任何一行日志说明原因。
+        if audio_play_device_rejected(&v) {
+            log::warn!(
+                "audio_play: every attempt was rejected at the body level (401/403/429); \
+                 no stream will be available"
+            );
         }
         patch_encrypted_audio_keys(&mut v);
         Ok(json!({

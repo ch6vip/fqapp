@@ -9,6 +9,8 @@
 /// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
 library;
 
+import 'media_item.dart';
+
 /// One rank in the catalogue, e.g. 巅峰榜.
 class RankTab {
   const RankTab({
@@ -24,6 +26,12 @@ class RankTab {
   final List<RankCategory> subCategories;
 
   bool get isEmpty => name.isEmpty;
+
+  /// Drama boards (短剧榜 / 漫剧榜) arrive in the same catalogue, but the
+  /// catalogue carries no kind field, so this follows the upstream rank
+  /// naming. Their entries are series, not books, and the novel
+  /// sub-categories do not apply to them.
+  bool get isDrama => name.contains('短剧') || name.contains('漫剧');
 }
 
 /// A rank sub-category, e.g. 全部 / 穿越 / 系统.
@@ -49,6 +57,8 @@ class RankEntry {
     this.creationStatus = -1,
     this.wordNumber = 0,
     this.readCount = '',
+    this.kind = 'book',
+    this.seriesId = '',
   });
 
   /// 1-based place in the list.
@@ -62,6 +72,13 @@ class RankEntry {
   final int creationStatus;
   final int wordNumber;
   final String readCount;
+
+  /// 'book' | 'video' | 'manju' — mirrors MediaItem.kind. Drama-board
+  /// entries open the series detail instead of the book detail.
+  final String kind;
+
+  /// Series id for drama entries; the id DetailPage resolves content with.
+  final String seriesId;
 
   bool get isEmpty => id.isEmpty && title.isEmpty;
 
@@ -89,6 +106,8 @@ class RankEntry {
     'creationStatus': creationStatus,
     'wordNumber': wordNumber,
     'readCount': readCount,
+    'kind': kind,
+    'seriesId': seriesId,
   };
 
   static RankEntry fromJson(Map<String, dynamic> map) => RankEntry(
@@ -104,6 +123,8 @@ class RankEntry {
         : -1,
     wordNumber: map['wordNumber'] is int ? map['wordNumber'] as int : 0,
     readCount: map['readCount'] is String ? map['readCount'] as String : '',
+    kind: map['kind'] is String ? map['kind'] as String : 'book',
+    seriesId: map['seriesId'] is String ? map['seriesId'] as String : '',
   );
 }
 
@@ -299,20 +320,39 @@ class RankCatalog {
       entries.add(entry);
     }
 
+    void addVideo(Map<String, dynamic> videoCell) {
+      final entry = _videoEntry(videoCell, startAt + entries.length);
+      if (entry == null) return;
+      final key = entry.id.isEmpty ? 't:${entry.title}' : entry.id;
+      if (!seenIds.add(key)) return;
+      entries.add(entry);
+    }
+
     for (final cell in cells) {
       if (cell is! Map) continue;
       // The board's cells are GROUP cells (月榜 / 男生榜 / …) whose own
       // `cell_data` holds the ranked works one level down. A work may also
       // arrive directly under the group, so try both shapes for every cell.
       final book = _firstBook(cell);
-      if (book != null) addBook(book);
+      if (book != null) {
+        addBook(book);
+      } else {
+        // Drama-board entries arrive in video-shaped cells the book path
+        // cannot read; the feed's parser knows their field conventions.
+        final video = _firstVideo(cell);
+        if (video != null) addVideo(video);
+      }
       final nested = cell['cell_data'];
       if (nested is! List) continue;
       for (final sub in nested) {
         if (sub is! Map) continue;
         final subBook = _firstBook(sub);
-        if (subBook == null) continue;
-        addBook(subBook);
+        if (subBook != null) {
+          addBook(subBook);
+        } else {
+          final subVideo = _firstVideo(sub);
+          if (subVideo != null) addVideo(subVideo);
+        }
       }
     }
     return RankBoard(
@@ -354,6 +394,46 @@ class RankCatalog {
       creationStatus: _int(book['creation_status'], fallback: -1),
       wordNumber: _int(book['word_number']),
       readCount: _string(book['read_count']),
+    );
+  }
+
+  /// A drama-board cell: it carries `video_data`, or the series identifiers
+  /// inline. Book cells carry none of these keys, so a video candidate here
+  /// is never a misread book cell. The cell itself (not the unwrapped
+  /// `video_data` entry) is returned, because the feed parser reads the
+  /// series identity off the cell.
+  static Map<String, dynamic>? _firstVideo(Map<dynamic, dynamic> cell) {
+    final raw = cell['video_data'];
+    if (raw is List || raw is Map) {
+      return Map<String, dynamic>.from(cell);
+    }
+    for (final key in const ['series_id_str', 'pseries_id', 'video_id']) {
+      final value = cell[key];
+      if (value != null && '$value'.trim().isNotEmpty) {
+        return Map<String, dynamic>.from(cell);
+      }
+    }
+    return null;
+  }
+
+  /// Builds a drama-board entry from a video-shaped cell via the same parser
+  /// the feed uses, so drama cells follow the feed's verified field
+  /// conventions. Returns null when the cell carries no usable series
+  /// identity — a bare episode without its series is not openable.
+  static RankEntry? _videoEntry(Map<String, dynamic> cell, int position) {
+    final item = MediaItem.fromRaw(cell);
+    if (!isVideoKind(item.kind)) return null;
+    final seriesId = item.seriesId ?? '';
+    if (seriesId.isEmpty) return null;
+    return RankEntry(
+      position: position,
+      id: item.id,
+      title: item.title,
+      cover: item.cover,
+      author: item.author,
+      category: item.categories.isNotEmpty ? item.categories.first : '',
+      kind: item.kind,
+      seriesId: seriesId,
     );
   }
 

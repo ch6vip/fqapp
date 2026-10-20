@@ -348,7 +348,7 @@ class FloatingVideoService : Service() {
 
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(0x99000000)
+            setBackgroundColor(0x99000000.toInt())
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -369,7 +369,7 @@ class FloatingVideoService : Service() {
         playPauseButton = playPause
         val titleView = TextView(this).apply {
             text = currentEpisode.ifBlank { currentTitle }
-            setTextColor(0xFFFFFFFF)
+            setTextColor(0xFFFFFFFF.toInt())
             textSize = 12f
             maxLines = 1
             layoutParams = LinearLayout.LayoutParams(
@@ -409,7 +409,7 @@ class FloatingVideoService : Service() {
 
         val closeTop = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-            setBackgroundColor(0x66000000)
+            setBackgroundColor(0x66000000.toInt())
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,

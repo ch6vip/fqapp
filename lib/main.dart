@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
@@ -17,12 +18,15 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
+import 'services/audio_download_store.dart';
+import 'services/audio_downloader.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
 import 'services/drama_download_store.dart';
 import 'services/drama_downloader.dart';
+import 'services/fair_memory.dart';
 import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
@@ -64,54 +68,61 @@ void main() {
 
 Future<void> _initializeLocalData() async {
   await Hive.initFlutter();
-  await LibraryStore.instance.init();
-  // The 加入书架 collection is optional data: a failure here must not block
-  // startup, which is why it shares the retryable bootstrap with the history.
-  await ShelfStore.instance.init();
-  // 短剧 feed 的 点赞 也是可选本地数据，与书架同一处理：开箱失败不能让
-  // 启动失败，否则一个纯装饰性的集合会拖住短剧页之外的所有功能。
-  try {
-    await DiggStore.instance.init();
-  } catch (_) {
-    // DiggStore 自己把「不可用」当成「没有点赞」处理（见 _openBox）。
+  // 以下初始化互相独立（各开各的 box / 各读各的配置），串行等只会把
+  // 磁盘 I/O 叠加到冷启动里；并行发起，失败语义与串行时一致：必需项
+  // （书架/历史）失败仍使启动失败，可选项各自吞错退化。
+  Future<void> optional(Future<void> Function() run) async {
+    try {
+      await run();
+    } catch (_) {}
   }
-  // 「上滑查看更多视频」的一次性标记同样是可选数据：读不到就当没弹过，
-  // 弹一次的语义退化成「本次启动弹一次」也不能拖住启动。
-  try {
-    await SwipeGuideStore.instance.init();
-  } catch (_) {
-    // SwipeGuideStore 自己把「不可用」当成「未显示」处理。
-  }
-  // 首页 feed 的冷启动缓存也是可选数据：打不开就当没有缓存，
-  // 首页退化为先加载再显示，其余行为不变。
-  try {
-    HomeFeedCache.hiveReady = true;
-    await HomeFeedCache.instance.warmUp();
-  } catch (_) {
-    // HomeFeedCache 自己把「不可用」当成「没有缓存」处理。
-  }
-  // 榜单缓存同理：开箱失败只是退化为每次现拉。
-  try {
-    RankCache.hiveReady = true;
-    await RankCache.instance.warmUp();
-  } catch (_) {
-    // RankCache 自己把「不可用」当成「没有缓存」处理。
-  }
-  // 官方播放页开关（PlayerBottomStyleConfig / 清屏反转 / 横屏锁）随同一份
-  // 运行时配置读取；读不到就用默认值，不能拖住启动。
-  await PlayerStyleConfig.load();
-  // 官方播放页字号档（jk3/b 的 SP）同理：读失败回标准档，不拖启动。
-  await ShortSeriesFontScale.load();
+
+  await Future.wait<void>([
+    LibraryStore.instance.init(),
+    // The 加入书架 collection is optional data: a failure here must not block
+    // startup, which is why it shares the retryable bootstrap with the history.
+    ShelfStore.instance.init(),
+    // 短剧 feed 的 点赞 也是可选本地数据，与书架同一处理：开箱失败不能让
+    // 启动失败，否则一个纯装饰性的集合会拖住短剧页之外的所有功能。
+    optional(() async {
+      await DiggStore.instance.init();
+      // DiggStore 自己把「不可用」当成「没有点赞」处理（见 _openBox）。
+    }),
+    // 「上滑查看更多视频」的一次性标记同样是可选数据：读不到就当没弹过，
+    // 弹一次的语义退化成「本次启动弹一次」也不能拖住启动。
+    optional(() async {
+      await SwipeGuideStore.instance.init();
+      // SwipeGuideStore 自己把「不可用」当成「未显示」处理。
+    }),
+    // 首页 feed 的冷启动缓存也是可选数据：打不开就当没有缓存，
+    // 首页退化为先加载再显示，其余行为不变。
+    optional(() async {
+      HomeFeedCache.hiveReady = true;
+      await HomeFeedCache.instance.warmUp();
+      // HomeFeedCache 自己把「不可用」当成「没有缓存」处理。
+    }),
+    // 榜单缓存同理：开箱失败只是退化为每次现拉。
+    optional(() async {
+      RankCache.hiveReady = true;
+      await RankCache.instance.warmUp();
+      // RankCache 自己把「不可用」当成「没有缓存」处理。
+    }),
+    // 官方播放页开关（PlayerBottomStyleConfig / 清屏反转 / 横屏锁）随同一份
+    // 运行时配置读取；读不到就用默认值，不能拖住启动。
+    PlayerStyleConfig.load(),
+    // 官方播放页字号档（jk3/b 的 SP）同理：读失败回标准档，不拖启动。
+    ShortSeriesFontScale.load(),
+    // 离线缓存的记录箱启动即打开：播放器的离线命中只在 box 就绪时才查
+    // （避免运行中途首次 openBox 失败产生游离异步错误）。可选数据，失败
+    // 只退化为「本会话不查离线」。
+    optional(HiveDramaDownloadStore.instance.warmUp),
+    // 听书音频离线记录箱：与短剧箱分开，同样只在就绪时才查离线命中。
+    optional(HiveAudioDownloadStore.instance.warmUp),
+  ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
   // 短剧切后台悬浮窗开关（#24）：异步读取，失败退化为默认关闭。
   unawaited(PlayerPreferences.loadFloatingWindow());
-  // 离线缓存的记录箱启动即打开：播放器的离线命中只在 box 就绪时才查
-  // （避免运行中途首次 openBox 失败产生游离异步错误）。可选数据，失败
-  // 只退化为「本会话不查离线」。
-  try {
-    await HiveDramaDownloadStore.instance.warmUp();
-  } catch (_) {}
   // 离线缓存的网络门（官方 onNetChangeCheck）：断网/只剩计费链路时
   // 自动暂停下载队列，半成品保留。监听失败只退化为「无自动暂停」。
   try {
@@ -121,10 +132,17 @@ Future<void> _initializeLocalData() async {
         online: view.online,
         metered: view.metered,
       );
+      AudioDownloader.instance.updateConnectivity(
+        online: view.online,
+        metered: view.metered,
+      );
     });
   } catch (_) {}
   // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
   unawaited(PosterCache.instance.enforceBudget());
+  // 小米澎湃 OS 公平运行内存：注册 TRIM/KILL 通道回调。必须在启动时构造，
+  // 否则广播到达时 Dart 侧还没有处理函数，原生侧只能按“未处理”回。
+  FairMemoryService.instance.init();
   final sp = await SharedPreferences.getInstance();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
@@ -162,12 +180,20 @@ class _FqAppState extends State<FqApp> {
                 navigatorKey: _navigatorKey,
                 child: child ?? const SizedBox.shrink(),
               ),
-              title: '番茄小铺',
+              title: 'fqapp',
               debugShowCheckedModeBanner: false,
               theme: _theme(Brightness.light, eink: eink),
               darkTheme: _theme(Brightness.dark, eink: eink),
               themeMode: effectiveMode,
-              home: const AppBootstrap(child: RootShell()),
+              // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
+              // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
+              locale: const Locale('zh', 'CN'),
+              supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+              localizationsDelegates: GlobalMaterialLocalizations.delegates,
+              home: AppBootstrap(
+                backendStarter: BackendService.instance.start,
+                child: const RootShell(),
+              ),
             );
           },
         );
@@ -182,11 +208,24 @@ class _FqAppState extends State<FqApp> {
 /// Opens local data before any page can access LibraryStore's boxes. Failed
 /// initialization is retryable without clearing or replacing the user's data.
 /// See .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
+///
+/// When [backendStarter] is provided, the backend starts concurrently with
+/// local-data init instead of waiting for it (the two chains are independent:
+/// the backend only needs the asset bundle + app dir, never Hive/SharedPrefs
+/// stores). The backend future is deliberately NOT awaited here: RootShell
+/// awaits the same shared future (BackendService.start is idempotent) and
+/// owns backend-error UI. When null (widget tests), no backend starts here.
 class AppBootstrap extends StatefulWidget {
   final Widget child;
   final Future<void> Function()? initializer;
+  final Future<void> Function()? backendStarter;
 
-  const AppBootstrap({super.key, required this.child, this.initializer});
+  const AppBootstrap({
+    super.key,
+    required this.child,
+    this.initializer,
+    this.backendStarter,
+  });
 
   @override
   State<AppBootstrap> createState() => _AppBootstrapState();
@@ -196,6 +235,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
   bool _initializing = false;
   bool _ready = false;
   bool _failed = false;
+  Future<void>? _backendFuture;
 
   @override
   void initState() {
@@ -209,6 +249,14 @@ class _AppBootstrapState extends State<AppBootstrap> {
       _initializing = true;
       _failed = false;
     });
+    // Start the backend before awaiting local data (see class doc): the
+    // two chains run concurrently; a retry must not start it twice.
+    _backendFuture ??= widget.backendStarter?.call();
+    // Attach a no-op error handler so a backend failure is never reported
+    // as an unhandled async error if RootShell never mounts to await the
+    // same future (e.g. local-data init keeps failing). RootShell awaiting
+    // the original future still observes the error.
+    unawaited(_backendFuture?.then<void>((_) {}, onError: (_) {}));
     try {
       await (widget.initializer ?? _initializeLocalData)();
       if (mounted) setState(() => _ready = true);
@@ -436,6 +484,25 @@ class _RootShellState extends State<RootShell> {
       ),
     );
 
+    // 静态半透明底：与毛玻璃同色，供短剧 tab 复用（短剧 tab 背后是每帧
+    // 变化的视频流，BackdropFilter 每帧重算模糊，GPU 满负荷；该 tab 下
+    // 用静态底，外观几乎不变；切出短剧 tab 后恢复毛玻璃）。
+    final staticNavBar = Container(
+      decoration: BoxDecoration(
+        color: glassDark
+            ? const Color(0xFF161619).withValues(alpha: 0.72)
+            : Colors.white.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: glassDark
+              ? Colors.white.withValues(alpha: 0.16)
+              : Colors.white.withValues(alpha: 0.75),
+          width: 0.8,
+        ),
+      ),
+      child: navBar,
+    );
+
     return Scaffold(
       extendBody: true,
       // 状态栏图标亮度挂在壳层、按选中 tab 切换：短剧页是黑底视频流（官方
@@ -491,6 +558,9 @@ class _RootShellState extends State<RootShell> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(28),
                 // 墨水屏：BackdropFilter 毛玻璃会把底部栏变成一团灰，改实色。
+                // 短剧 tab：背后是每帧变化的视频流，BackdropFilter 每帧都要
+                // 重算模糊，GPU 一直满负荷；该 tab 下改用同色静态半透明底，
+                // 外观几乎不变，省掉每帧重栅格化。切出短剧 tab 后恢复毛玻璃。
                 child: eink
                     ? Container(
                         decoration: BoxDecoration(
@@ -503,24 +573,12 @@ class _RootShellState extends State<RootShell> {
                         ),
                         child: navBar,
                       )
-                    : BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: glassDark
-                                ? const Color(0xFF161619).withValues(alpha: 0.72)
-                                : Colors.white.withValues(alpha: 0.82),
-                            borderRadius: BorderRadius.circular(28),
-                            border: Border.all(
-                              color: glassDark
-                                  ? Colors.white.withValues(alpha: 0.16)
-                                  : Colors.white.withValues(alpha: 0.75),
-                              width: 0.8,
-                            ),
+                    : isDramaTab
+                        ? staticNavBar
+                        : BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                            child: staticNavBar,
                           ),
-                          child: navBar,
-                        ),
-                      ),
               ),
             ),
           ),

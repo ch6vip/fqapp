@@ -6,6 +6,8 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
+import '../../services/reader_tap_zones.dart';
+import 'reader_tap_zone_sheet.dart';
 import 'reader_theme.dart';
 
 /// The reader typesetting bottom sheet, laid out after the official panel
@@ -82,6 +84,33 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
     // reader page or the saved preference would trail the visible one.
     _flushNotify();
     super.dispose();
+  }
+
+  /// 点击区域行摘要：左列 / 中列 / 右列的动作（每列三格相同是常见配置，
+  /// 不同时只展示“已自定义”）。
+  String get _tapZonesSummary {
+    final zones = _value.tapZones;
+    String columnSummary(int column) {
+      final actions = <ReaderTapZoneAction>{
+        zones[column],
+        zones[3 + column],
+        zones[6 + column],
+      };
+      if (actions.length == 1) return actions.single.label;
+      return '已自定义';
+    }
+
+    return '左 ${columnSummary(0)} · 中 ${columnSummary(1)} · 右 ${columnSummary(2)}';
+  }
+
+  Future<void> _editTapZones() async {
+    final zones = await showReaderTapZoneEditor(
+      context: context,
+      initialZones: _value.tapZones,
+    );
+    if (zones != null && mounted) {
+      _update(_value.copyWith(tapZones: zones));
+    }
   }
 
   Future<void> _importFont() async {
@@ -326,6 +355,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                                       label: switch (style) {
                                         ReaderPageTurnStyle.cover => '覆盖',
                                         ReaderPageTurnStyle.slide => '平移',
+                                        ReaderPageTurnStyle.curl => '仿真',
                                         ReaderPageTurnStyle.none => '无',
                                       },
                                       selected: _value.pageTurnStyle == style,
@@ -334,6 +364,36 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                                       ),
                                     ),
                                   ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        _toggle(
+                          '滑动直翻（无过渡动画）',
+                          subtitle:
+                              '分页模式：滑动越过阈值直接翻页，不显示翻页过渡与动画；开启后翻页方式强制为“无”。适合墨水屏',
+                          value: _value.instantSwipeTurn,
+                          onChanged: (value) => _update(
+                            _value.copyWith(instantSwipeTurn: value),
+                          ),
+                        ),
+                        _row(
+                          label: '点击区域',
+                          child: Expanded(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    _tapZonesSummary,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton(
+                                  onPressed: _editTapZones,
+                                  child: const Text('设置'),
+                                ),
                               ],
                             ),
                           ),
@@ -449,6 +509,14 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                           ),
                         ),
                         _toggle(
+                          '朗读句高亮',
+                          subtitle: '朗读时给正在读的句子加背景色，与跟随翻页独立',
+                          value: _value.narrationHighlight,
+                          onChanged: (value) => _update(
+                            _value.copyWith(narrationHighlight: value),
+                          ),
+                        ),
+                        _toggle(
                           '音量键翻页',
                           subtitle: '音量下 = 下一页，音量上 = 上一页',
                           value: _value.volumeKeyTurn,
@@ -462,6 +530,14 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                           value: _value.continuousReading,
                           onChanged: (value) => _update(
                             _value.copyWith(continuousReading: value),
+                          ),
+                        ),
+                        _toggle(
+                          '段评气泡',
+                          subtitle: '段落末尾显示评论数气泡；关闭后仍可从段落菜单和章节末尾打开段评',
+                          value: _value.showParagraphBubbles,
+                          onChanged: (value) => _update(
+                            _value.copyWith(showParagraphBubbles: value),
                           ),
                         ),
                         _toggle(
@@ -533,14 +609,14 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                             title: Text(
                               '更多排版',
                               style: TextStyle(
-                                color: _value.themePreset.textColor,
+                                color: _displayPreset.textColor,
                                 fontSize: 13,
                               ),
                             ),
                             subtitle: Text(
                               '字距、标题字号与对齐',
                               style: TextStyle(
-                                color: _value.themePreset.mutedTextColor,
+                                color: _displayPreset.mutedTextColor,
                                 fontSize: 12,
                               ),
                             ),
@@ -599,13 +675,15 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                             ],
                           ),
                         ),
+                        // 墨水屏模式下才显示整屏刷新间隔：每翻 N 页全刷压残影。
+                        if (widget.einkOverride) _einkRefreshIntervalRow(),
                         // 恢复默认: official akh row — centred 28dp pill.
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                           child: Center(
                             child: TextButton(
                               style: TextButton.styleFrom(
-                                backgroundColor: _value.themePreset.fieldColor,
+                                backgroundColor: _displayPreset.fieldColor,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 16,
                                 ),
@@ -624,7 +702,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                               child: Text(
                                 '恢复默认排版',
                                 style: TextStyle(
-                                  color: _value.themePreset.textColor,
+                                  color: _displayPreset.textColor,
                                   fontSize: 12,
                                   height: 1.0,
                                 ),
@@ -960,6 +1038,95 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
           ],
         ),
       ],
+    );
+  }
+
+  /// 墨水屏整屏刷新间隔行：0 关闭，1-100 表示每翻这么多页全刷一次压残影。
+  /// 仅在全局墨水屏模式开启（[widget.einkOverride]）时由 build 渲染。
+  Widget _einkRefreshIntervalRow() {
+    final preset = _displayPreset;
+    final interval = _value.einkRefreshInterval.clamp(0, 100);
+    final label = interval == 0 ? '关闭' : '$interval 页';
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      constraints: const BoxConstraints(minHeight: 40),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 64,
+                child: Text(
+                  '整屏刷新',
+                  style: TextStyle(color: preset.textColor, fontSize: 13),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '每翻 $label 全刷一次',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: preset.textColor, fontSize: 13),
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  color: preset.accentColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              IconButton(
+                tooltip: '减小刷新间隔',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 44),
+                padding: EdgeInsets.zero,
+                onPressed: interval > 0
+                    ? () => _update(
+                        _value.copyWith(einkRefreshInterval: interval - 1),
+                      )
+                    : null,
+                icon: const Icon(LucideIcons.minus, size: 16),
+              ),
+              Expanded(
+                child: Slider(
+                  key: const ValueKey('einkRefreshInterval'),
+                  value: interval.toDouble(),
+                  min: 0,
+                  max: 100,
+                  divisions: 100,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  activeColor: preset.accentColor,
+                  onChanged: (value) => _update(
+                    _value.copyWith(einkRefreshInterval: value.round()),
+                  ),
+                  onChangeEnd: (_) => _flushNotify(),
+                  semanticFormatterCallback: (value) =>
+                      '每翻 ${value.round()} 页全刷',
+                ),
+              ),
+              IconButton(
+                tooltip: '增大刷新间隔',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 44),
+                padding: EdgeInsets.zero,
+                onPressed: interval < 100
+                    ? () => _update(
+                        _value.copyWith(einkRefreshInterval: interval + 1),
+                      )
+                    : null,
+                icon: const Icon(LucideIcons.plus, size: 16),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

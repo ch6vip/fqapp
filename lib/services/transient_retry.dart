@@ -10,6 +10,7 @@ Future<T> retryTransient<T>(
   Future<T> Function() task, {
   int attempts = 3,
   Duration baseDelay = const Duration(milliseconds: 200),
+  bool Function(Object error)? shouldRetry,
 }) async {
   if (attempts < 1) {
     throw ArgumentError.value(attempts, 'attempts', 'must be at least 1');
@@ -20,6 +21,10 @@ Future<T> retryTransient<T>(
       return await task();
     } catch (error) {
       lastError = error;
+      // Deterministic failures (a business code that will answer the same way
+      // every time) must not burn the remaining attempts and their backoff;
+      // callers that can tell them apart pass [shouldRetry].
+      if (shouldRetry != null && !shouldRetry(error)) break;
       if (attempt + 1 < attempts) {
         await Future<void>.delayed(baseDelay * (attempt + 1));
       }

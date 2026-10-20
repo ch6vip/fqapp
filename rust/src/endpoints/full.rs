@@ -76,7 +76,7 @@ pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiR
             for (id, item) in item_map {
                 match item {
                     Value::Object(mut obj) => {
-                        decrypt_full_item_content(&mut obj, &cm, &zwsm, &processor);
+                        decrypt_full_item_content(&id, &mut obj, &cm, &zwsm, &processor);
                         out.insert(id, Value::Object(obj));
                     }
                     other => {
@@ -91,7 +91,7 @@ pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiR
             for item in item_arr {
                 match item {
                     Value::Object(mut obj) => {
-                        decrypt_full_item_content(&mut obj, &cm, &zwsm, &processor);
+                        decrypt_full_item_content("", &mut obj, &cm, &zwsm, &processor);
                         out.push(Value::Object(obj));
                     }
                     other => out.push(other),
@@ -111,6 +111,7 @@ pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiR
 }
 
 fn decrypt_full_item_content(
+    label: &str,
     item_obj: &mut Map<String, Value>,
     cm: &CM,
     zwsm: &str,
@@ -129,13 +130,29 @@ fn decrypt_full_item_content(
     if key.is_empty() || content.is_empty() {
         return;
     }
-    if let Ok(plain) = cm.decrypt(&key, &content) {
-        let text = format!(
-            "{}{}",
-            processor.process(&String::from_utf8_lossy(&plain)),
-            zwsm
-        );
-        item_obj.insert("content".to_string(), Value::from(text));
+    match cm.decrypt(&key, &content) {
+        Ok(plain) => {
+            let text = format!(
+                "{}{}",
+                processor.process(&String::from_utf8_lossy(&plain)),
+                zwsm
+            );
+            item_obj.insert("content".to_string(), Value::from(text));
+        }
+        Err(error) => {
+            // A failed decrypt is not "no content": leaving the upstream base64
+            // in place means it gets served as the chapter text, because
+            // `content.rs` only checks that `content` is non-empty. Drop the
+            // field so the caller's fallback can take over, and say so - this
+            // used to fail with no log at all.
+            log::warn!(
+                "full content {label}: decrypt failed ({error}); dropping ciphertext \
+                 (content_len={}, key_len={})",
+                content.len(),
+                key.len()
+            );
+            item_obj.remove("content");
+        }
     }
 }
 
@@ -164,4 +181,34 @@ fn handle<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value
 
 pub fn register(s: &mut Server) {
     s.add_route("full", handle);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failed decrypt must not leave the upstream base64 in place: `content.rs`
+    /// only checks that `content` is non-empty, so it used to be served as the
+    /// chapter text. Dropping the field lets the caller's fallback take over.
+    #[test]
+    fn a_failed_decrypt_drops_the_ciphertext_instead_of_serving_it() {
+        let cm = CM::new().expect("cm");
+        let mut item = Map::new();
+        // Short content / degenerate key: `CM::decrypt` returns an error for both.
+        item.insert("key".to_string(), Value::from("AQ=="));
+        item.insert("content".to_string(), Value::from("AAAA"));
+
+        decrypt_full_item_content(
+            "chapter-1",
+            &mut item,
+            &cm,
+            "",
+            &FullContentProcessor::new(),
+        );
+
+        assert!(
+            !item.contains_key("content"),
+            "failed ciphertext must not survive as the chapter body: {item:?}"
+        );
+    }
 }

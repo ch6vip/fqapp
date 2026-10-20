@@ -427,6 +427,53 @@ void main() {
       expect(requests, [0, 37]);
     });
 
+    testWidgets('drama ranks hide categories and always ask with 全部', (
+      tester,
+    ) async {
+      final requests = <({int algo, int categoryId})>[];
+      await pump(
+        tester,
+        catalogLoader:
+            () async => const RankCatalog(
+              rankId: '7098235271900037133',
+              tabs: [
+                RankTab(name: '巅峰榜', algo: 200),
+                RankTab(name: '短剧榜', algo: 502),
+              ],
+              categories: [
+                RankCategory(name: '全部', id: 0),
+                RankCategory(name: '穿越', id: 37),
+              ],
+            ),
+        pageLoader:
+            ({
+              required rankId,
+              required algo,
+              required categoryId,
+              required offset,
+              required startAt,
+            }) async {
+              requests.add((algo: algo, categoryId: categoryId));
+              return _board();
+            },
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('rank_category_37')), findsOneWidget);
+      expect(requests, [(algo: 200, categoryId: 0)]);
+
+      // Pick a novel category, then switch to the drama rank.
+      await tester.tap(find.byKey(const ValueKey('rank_category_37')));
+      await tester.pumpAndSettle();
+      expect(requests.last, (algo: 200, categoryId: 37));
+
+      await tester.tap(find.byKey(const ValueKey('rank_tab_502')));
+      await tester.pumpAndSettle();
+      // The novel genres mean nothing for drama boards: the chips hide and
+      // the request is forced back to 全部 (0).
+      expect(find.byKey(const ValueKey('rank_category_37')), findsNothing);
+      expect(requests.last, (algo: 502, categoryId: 0));
+    });
+
     testWidgets('a later page continues the numbering', (tester) async {
       final starts = <int>[];
       await pump(

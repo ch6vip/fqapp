@@ -66,12 +66,21 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        // The bundled Go JNI backend is currently built for arm64 only. An
-        // explicit filter prevents installing an APK on an ABI where the
-        // native backend cannot start and Process.start is blocked by SELinux.
-        ndk {
-            abiFilters += setOf("arm64-v8a")
-        }
+        // No ndk.abiFilters here on purpose: `flutter build apk
+        // --split-per-abi` makes the Flutter Gradle plugin configure AGP
+        // splits, and AGP rejects abiFilters whenever splits are set
+        // ("abiFilters cannot be present when splits abi filters are set").
+        // The split APKs therefore contain exactly the ABIs Flutter was
+        // asked to build (--target-platform android-arm,android-arm64).
+        // The guards against a backend-less slice are the packaging check
+        // below (both libfqapi_core.so files must exist and match their
+        // ABI) and scripts/verify_android_apk.py --abi, which rejects any
+        // unexpected ABI in the APK. Always build with the documented
+        // split command; a plain fat `flutter build apk` would include an
+        // x86_64 slice with no Rust backend.
+        //
+        // NOTE: do not re-add abiFilters to "restrict" the build. It breaks
+        // every split build at configuration time.
         externalNativeBuild {
             cmake {
                 targets += "shortplay_crypto"
@@ -103,6 +112,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Opt-in local runs may coexist with an installed release whose
+            // signing certificate cannot be replaced by the debug key.
+            val debugSuffix = providers.gradleProperty("fqappDebugApplicationIdSuffix")
+                .orElse(providers.environmentVariable("FQAPP_DEBUG_APPLICATION_ID_SUFFIX"))
+                .orNull
+            if (debugSuffix == ".debug") {
+                applicationIdSuffix = ".debug"
+            }
+        }
         release {
             // The release APK carries its own signing identity. Debug builds
             // keep the debug key so `flutter run` and overwrite-installing a
@@ -158,29 +177,40 @@ flutter {
 // (scripts/build_rust_backend.ps1 / .sh produce it).
 val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibraries") {
     group = "verification"
-    description = "Checks the external Android ARM64 Rust core library before packaging."
-    val nativeFiles = listOf("libfqapi_core.so").map { name ->
-        layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/$name").asFile
+    description = "Checks the external Android Rust core libraries (ARM64 + ARMv7) before packaging."
+    // ABI directory -> (ELF class byte, e_machine). arm64-v8a is ELF64/AArch64
+    // (class 2, machine 183); armeabi-v7a is ELF32/ARM (class 1, machine 40).
+    val nativeLibraries = listOf(
+        Triple("arm64-v8a", 2, 183),
+        Triple("armeabi-v7a", 1, 40),
+    )
+    val nativeFiles = nativeLibraries.map { (abi, _, _) ->
+        layout.projectDirectory.file("src/main/jniLibs/$abi/libfqapi_core.so").asFile
     }
     // Optional inputs let the task report missing files with setup guidance,
     // instead of Gradle failing input validation before our check can run.
     inputs.files(nativeFiles).withPropertyName("requiredNativeLibraries").optional()
     doLast {
-        val legacyCrypto = layout.projectDirectory.file(
-            "src/main/jniLibs/arm64-v8a/libshortplay_crypto.so"
-        ).asFile
-        if (legacyCrypto.exists()) {
-            throw GradleException(
-                "Remove the legacy prebuilt crypto library from jniLibs before packaging: " +
-                    legacyCrypto.path +
-                    ". Keep a backup outside jniLibs; native/ now builds this library automatically."
-            )
+        // The legacy prebuilt crypto library must not come back in either ABI
+        // directory: native/ now builds it automatically for every ABI.
+        for ((abi, _, _) in nativeLibraries) {
+            val legacyCrypto = layout.projectDirectory.file(
+                "src/main/jniLibs/$abi/libshortplay_crypto.so"
+            ).asFile
+            if (legacyCrypto.exists()) {
+                throw GradleException(
+                    "Remove the legacy prebuilt crypto library from jniLibs before packaging: " +
+                        legacyCrypto.path +
+                        ". Keep a backup outside jniLibs; native/ now builds this library automatically."
+                )
+            }
         }
-        val failures = nativeFiles.mapNotNull { library ->
+        val failures = nativeLibraries.mapIndexedNotNull { index, (abi, elfClass, machine) ->
+            val library = nativeFiles[index]
             when {
-                !library.isFile -> "${library.name}: missing (${library.path})"
-                library.length() == 0L -> "${library.name}: empty file"
-                library.length() < 64L -> "${library.name}: truncated ELF64 header"
+                !library.isFile -> "${library.name} ($abi): missing (${library.path})"
+                library.length() == 0L -> "${library.name} ($abi): empty file"
+                library.length() < 64L -> "${library.name} ($abi): truncated ELF header"
                 else -> {
                     try {
                         val header = ByteArray(64)
@@ -189,12 +219,14 @@ val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibrarie
                         fun shortAt(index: Int) = byteAt(index) or (byteAt(index + 1) shl 8)
                         val compatible = byteAt(0) == 0x7f &&
                             byteAt(1) == 'E'.code && byteAt(2) == 'L'.code && byteAt(3) == 'F'.code &&
-                            byteAt(4) == 2 && byteAt(5) == 1 && byteAt(6) == 1 &&
-                            shortAt(16) == 3 && shortAt(18) == 183
+                            byteAt(4) == elfClass && byteAt(5) == 1 && byteAt(6) == 1 &&
+                            shortAt(16) == 3 && shortAt(18) == machine
                         if (compatible) null else
-                            "${library.name}: expected an ELF64 little-endian AArch64 shared object"
+                            "${library.name} ($abi): expected an " +
+                                (if (elfClass == 2) "ELF64 little-endian AArch64" else "ELF32 little-endian ARM") +
+                                " shared object"
                     } catch (error: IOException) {
-                        "${library.name}: cannot read ELF header (${error.message})"
+                        "${library.name} ($abi): cannot read ELF header (${error.message})"
                     }
                 }
             }

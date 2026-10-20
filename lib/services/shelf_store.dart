@@ -1,7 +1,8 @@
 import 'package:flutter/foundation.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
+import 'encrypted_hive.dart';
 
 /// One 加入书架 record.
 class ShelfRecord {
@@ -55,7 +56,7 @@ class ShelfStore {
 
   Future<void> init() async {
     if (_openBox != null) return;
-    _box = await Hive.openBox<dynamic>(boxName);
+    _box = await EncryptedHive.openBox<dynamic>(Hive, boxName);
     _revision.value++;
   }
 
@@ -164,6 +165,35 @@ class ShelfStore {
       _revision.value++;
     }
     return missing.length;
+  }
+
+  /// Reuses the same shelf keys and card model. Enrich existing cards while
+  /// preserving the user's local shelf ordering and collection membership.
+  Future<int> mergeFanqie(Iterable<ShelfRecord> records) async {
+    final box = _openBox;
+    if (box == null) throw StateError('书架尚未初始化');
+    var changed = 0;
+    try {
+      for (final record in records) {
+        final key = keyOf(record.item);
+        final old = box.get(key);
+        final next = _recordOf(record.item, record.addedAt);
+        if (old is Map) {
+          next['addedAt'] = old['addedAt'];
+          for (final field in ['title', 'cover', 'author', 'badge', 'ep']) {
+            if (next[field] == '' && old[field] is String) {
+              next[field] = old[field];
+            }
+          }
+        }
+        await box.put(key, next);
+        changed++;
+      }
+      await box.flush();
+    } finally {
+      _revision.value++;
+    }
+    return changed;
   }
 
   static Map<String, dynamic> _recordOf(MediaItem item, DateTime addedAt) => {

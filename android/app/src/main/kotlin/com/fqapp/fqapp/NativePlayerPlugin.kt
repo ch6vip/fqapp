@@ -2,6 +2,7 @@ package com.fqapp.fqapp
 
 import android.Manifest
 import android.app.Activity
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -37,6 +38,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.example.shortplay.CryptoNative
+import com.example.shortplay.HttpBridge
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -142,6 +144,9 @@ class NativePlayerPlugin internal constructor(
         attachedToEngine = true
         instance = this
         flutterBinding = binding
+        // The offline-file bridge only serves file:// URLs inside the app's
+        // download/cache trees; configure it before any playback can occur.
+        HttpBridge.configure(binding.applicationContext)
         textureRegistry = binding.textureRegistry
         methodChannel = MethodChannel(binding.binaryMessenger, "fqapp/native_player")
         methodChannel.setMethodCallHandler(this)
@@ -256,43 +261,55 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
+    /**
+     * Required method-call argument. A missing/null argument reports
+     * INVALID_ARGUMENT to Dart instead of crashing the plugin on `!!`.
+     */
+    private fun <T> MethodCall.requiredArgument(name: String, result: MethodChannel.Result): T? {
+        val value = argument<T>(name)
+        if (value == null) {
+            result.error("INVALID_ARGUMENT", "Missing required argument: $name", null)
+        }
+        return value
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "create" -> {
-                val cdnUrl = call.argument<String>("cdnUrl")!!
-                val keyHex = call.argument<String>("keyHex")!!
+                val cdnUrl = call.requiredArgument<String>("cdnUrl", result) ?: return
+                val keyHex = call.requiredArgument<String>("keyHex", result) ?: return
                 handleCreate(cdnUrl, keyHex, result)
             }
             "play" -> {
-                val id = call.argument<Int>("id")!!
+                val id = call.requiredArgument<Int>("id", result) ?: return
                 players[id]?.player?.play()
                 result.success(null)
             }
             "pause" -> {
-                val id = call.argument<Int>("id")!!
+                val id = call.requiredArgument<Int>("id", result) ?: return
                 players[id]?.player?.pause()
                 result.success(null)
             }
             "seek" -> {
-                val id = call.argument<Int>("id")!!
-                val positionMs = call.argument<Number>("positionMs")!!.toLong()
+                val id = call.requiredArgument<Int>("id", result) ?: return
+                val positionMs = call.requiredArgument<Number>("positionMs", result)?.toLong() ?: return
                 players[id]?.player?.seekTo(positionMs)
                 result.success(null)
             }
             "setVolume" -> {
-                val id = call.argument<Int>("id")!!
-                val volume = call.argument<Number>("volume")!!.toFloat()
+                val id = call.requiredArgument<Int>("id", result) ?: return
+                val volume = call.requiredArgument<Number>("volume", result)?.toFloat() ?: return
                 players[id]?.player?.volume = volume
                 result.success(null)
             }
             "setRate" -> {
-                val id = call.argument<Int>("id")!!
-                val rate = call.argument<Number>("rate")!!.toFloat()
+                val id = call.requiredArgument<Int>("id", result) ?: return
+                val rate = call.requiredArgument<Number>("rate", result)?.toFloat() ?: return
                 players[id]?.player?.playbackParameters = PlaybackParameters(rate)
                 result.success(null)
             }
             "dispose" -> {
-                val id = call.argument<Int>("id")!!
+                val id = call.requiredArgument<Int>("id", result) ?: return
                 disposePlayer(id)
                 result.success(null)
             }
@@ -339,7 +356,26 @@ class NativePlayerPlugin internal constructor(
                     result.success(null)
                 } catch (error: Throwable) {
                     Log.w(TAG, "listen foreground start failed", error)
-                    result.success(null)
+                    // A swallowed failure used to report success, leaving
+                    // Dart believing the keep-alive notification was up while
+                    // playback could be frozen by the OEM. Distinguish the
+                    // common failure modes so the caller can tell a
+                    // background-start ban apart from a permission/state error.
+                    // (Dart treats this call as best-effort and catches the
+                    // error; see NativePlayer.startListenForeground.)
+                    val code = when {
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                            error is ForegroundServiceStartNotAllowedException ->
+                            "FOREGROUND_SERVICE_NOT_ALLOWED"
+                        error is SecurityException -> "FOREGROUND_SERVICE_SECURITY"
+                        error is IllegalStateException -> "FOREGROUND_SERVICE_STATE"
+                        else -> "FOREGROUND_SERVICE_FAILED"
+                    }
+                    result.error(
+                        code,
+                        "Failed to start listen foreground service: ${error.javaClass.simpleName}",
+                        null,
+                    )
                 }
             }
             "stopListenForeground" -> {
@@ -615,6 +651,9 @@ class NativePlayerPlugin internal constructor(
                 initializationDurationMs: Long
             ) {
                 sendEvent(playerId, "decoderInitialized", mapOf("name" to decoderName))
+                if (isSoftwareDecoder(decoderName)) {
+                    maybeSwapToSurfaceTexture(playerId)
+                }
             }
         })
 
@@ -754,6 +793,22 @@ class NativePlayerPlugin internal constructor(
         }
         instance.positionUpdater = updater
         handler.post(updater)
+    }
+
+    private fun maybeSwapToSurfaceTexture(playerId: Int) {
+        val instance = players[playerId] ?: return
+        handler.post {
+            if (!attachedToEngine || players[playerId] !== instance) return@post
+            try {
+                val newTextureId =
+                    instance.videoOutput.swapToSurfaceTexture(textureRegistry)
+                if (newTextureId != null) {
+                    sendEvent(playerId, "textureChanged", newTextureId)
+                }
+            } catch (error: Throwable) {
+                Log.w(TAG, "surface texture swap failed for player $playerId", error)
+            }
+        }
     }
 
     private fun sendEvent(playerId: Int, type: String, value: Any) {
@@ -1029,6 +1084,15 @@ class NativePlayerPlugin internal constructor(
         }
     }
 }
+
+/**
+ * AOSP software decoders (OMX.google.* / c2.android.*) report stride-padded
+ * buffers whose padding Flutter's ImageReader texture path draws as a green
+ * bar (issue #2). Hardware decoders keep their vendor prefixes
+ * (OMX.qcom.* / OMX.Exynos.* / OMX.MTK.* / c2.qti.* / OMX.hisi.* …).
+ */
+internal fun isSoftwareDecoder(decoderName: String): Boolean =
+    decoderName.startsWith("OMX.google.") || decoderName.startsWith("c2.android.")
 
 /** Injectable JNI boundary for creation and DataSource range/error checks on the JVM. */
 internal interface CryptoStream {

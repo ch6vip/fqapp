@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/services/library_store.dart';
@@ -193,6 +193,28 @@ void main() {
       expect(history.length, 50);
       expect(store.historySnapshot(), hasLength(50));
       expect(store.historySnapshot().first['id'], 'new');
+    },
+  );
+
+  test(
+    'imported history is capped instead of growing unbounded',
+    () async {
+      await store.init();
+      final history = Hive.box('history');
+      await history.putAll({
+        for (var index = 0; index < 10001; index++)
+          'imported-$index': {
+            'id': 'imported-$index',
+            'time': index,
+            'fanqieImported': true,
+          },
+      });
+      await store.addHistory({'id': 'new', 'title': 'Newest', 'time': 20000});
+      // 10000 imported (oldest trimmed) + the record just written.
+      expect(history.length, 10001);
+      expect(await store.historyEntry('imported-0'), isNull);
+      expect(await store.historyEntry('imported-10000'), isNotNull);
+      expect(await store.historyEntry('new'), isNotNull);
     },
   );
 

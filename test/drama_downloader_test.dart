@@ -245,6 +245,44 @@ void main() {
     );
   });
 
+  test('下载中暂停后「继续」会真的下完，而不是立刻又回到暂停', () async {
+    // 中止标志过去是只置位、从不清除的，于是「下载中暂停」过的任务永远无法
+    // 恢复：下一轮 _runOnce 一进 339 行的判空就直接返回，状态又被写回 paused。
+    final gate = Completer<void>();
+    var resolveCalls = 0;
+    final downloader = buildDownloader(
+      concurrency: 1,
+      resolve: (episode) async {
+        resolveCalls++;
+        if (resolveCalls == 1) await gate.future;
+        return EpisodeSource(cdn.url, 'abcd', const []);
+      },
+    );
+    await downloader.enqueue(drama: drama(1), episodes: drama(1).episodes);
+    await _waitFor(
+      () => downloader.value.single.status == DramaDownloadStatus.downloading,
+    );
+
+    downloader.pause('ep0');
+    expect(downloader.value.single.status, DramaDownloadStatus.paused);
+
+    // 放行被卡住的那次 resolve，让暂停的那一轮收敛。
+    gate.complete();
+    await _waitFor(
+      () => downloader.value.single.status == DramaDownloadStatus.paused,
+    );
+
+    downloader.resume('ep0');
+    await _waitFor(
+      () => downloader.value.single.status == DramaDownloadStatus.completed,
+    );
+    expect(
+      await store.isDownloaded('ep0'),
+      isTrue,
+      reason: '继续之后必须真的把这一集下完',
+    );
+  });
+
   test('断网/计费链路自动暂停全部任务', () async {
     final barrier = Completer<void>();
     final downloader = buildDownloader(

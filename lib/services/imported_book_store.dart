@@ -492,13 +492,18 @@ ParsedImportedBook _parseTxt(String fileTitle, String source) {
           : lines.length;
       final content = lines.sublist(start, end).join('\n').trim();
       if (content.isEmpty) continue;
-      chapters.add(
-        ParsedBookChapter(title: lines[start].trim(), text: content),
-      );
+      final title = lines[start].trim();
+      // 只有标题、没有正文的章节（如文件开头的目录页条目）会让阅读器
+      // 报“正文为空”，直接丢弃，保留后面带正文的同名真章节。
+      if (content == title) continue;
+      chapters.add(ParsedBookChapter(title: title, text: content));
     }
   } else {
     final chapterTitle = headings.isEmpty ? '正文' : lines[headings.first].trim();
-    chapters.add(ParsedBookChapter(title: chapterTitle, text: normalized));
+    // 整本只有标题一行时，没有可读正文，交给下面的空检查报错。
+    if (normalized != chapterTitle) {
+      chapters.add(ParsedBookChapter(title: chapterTitle, text: normalized));
+    }
   }
   if (chapters.isEmpty) throw const FormatException('TXT 中没有可导入的正文');
   final (cleanedTitle, cleanedAuthor) = splitTitleAndAuthor(fileTitle, '');
@@ -624,6 +629,13 @@ ParsedImportedBook _parseEpub(String fileTitle, Uint8List bytes) {
         body.querySelector('h1, h2, h3, h4, h5, h6')?.text.trim() ?? '';
     final text = _normalizeHtmlText(_htmlNodeText(body));
     if (text.isEmpty) continue;
+    // 只有标题、没有正文的文档（如 spine 里的 nav 目录页、只有标题的
+    // 前言页）会让阅读器报“正文为空”，直接丢弃。
+    if (chapterTitle.isNotEmpty &&
+        text.replaceAll(RegExp(r'\s+'), '') ==
+            chapterTitle.replaceAll(RegExp(r'\s+'), '')) {
+      continue;
+    }
     chapters.add(
       ParsedBookChapter(
         title: chapterTitle.isEmpty ? '第${chapters.length + 1}章' : chapterTitle,

@@ -350,8 +350,12 @@ void main() {
       ChapterIdeas? ideas,
       ReaderPageMode mode = ReaderPageMode.paged,
       TextScaler scaler = TextScaler.noScaling,
+      bool showBubbles = true,
     }) async {
-      SharedPreferences.setMockInitialValues({'reader_page_mode': '$mode'});
+      SharedPreferences.setMockInitialValues({
+        'reader_page_mode': '$mode',
+        'reader_show_paragraph_bubbles': showBubbles,
+      });
       await tester.binding.setSurfaceSize(const Size(400, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
@@ -392,6 +396,62 @@ void main() {
     testWidgets('draws no bubble without ideas', (tester) async {
       await pumpReader(tester);
       expect(find.byType(ReaderParagraphBubble), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('hides bubbles when the paragraph-bubble switch is off', (
+      tester,
+    ) async {
+      // Ideas still load (段评 stays reachable from the paragraph menu and
+      // the chapter end); only the in-text bubbles go away, with no empty
+      // gap left where the bubble placeholder was.
+      await pumpReader(tester, ideas: _ideas(), showBubbles: false);
+      expect(find.byType(ReaderParagraphBubble), findsNothing);
+      for (final text in ['第一段话。', '第二段话。', '第三段话。']) {
+        expect(find.textContaining(text, findRichText: true), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('flipping the switch in the appearance sheet re-measures', (
+      tester,
+    ) async {
+      await pumpReader(tester, ideas: _ideas());
+      expect(find.byType(ReaderParagraphBubble), findsNWidgets(2));
+
+      // Open the appearance sheet: centre tap → controls → 设置 → 排版.
+      await tester.tapAt(
+        tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reader-settings')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('排版'));
+      await tester.tap(find.text('排版'));
+      await tester.pumpAndSettle();
+      expect(find.text('排版设置'), findsOneWidget);
+
+      final toggleRow = find
+          .ancestor(of: find.text('段评气泡'), matching: find.byType(Row))
+          .first;
+      final bubbleSwitch = find.descendant(
+        of: toggleRow,
+        matching: find.byType(Switch),
+      );
+      await tester.ensureVisible(bubbleSwitch);
+      await tester.tap(bubbleSwitch);
+      await tester.pumpAndSettle();
+      // The cached layout is not reused across the toggle: bubbles leave
+      // without a stale placeholder gap.
+      expect(find.byType(ReaderParagraphBubble), findsNothing);
+
+      await tester.tap(bubbleSwitch);
+      await tester.pumpAndSettle();
+      expect(find.byType(ReaderParagraphBubble), findsNWidgets(2));
+
+      await tester.tap(find.byTooltip('关闭排版设置'));
+      await tester.pumpAndSettle();
+      expect((await ReaderPreferences.load()).showParagraphBubbles, isTrue);
       expect(tester.takeException(), isNull);
     });
 
