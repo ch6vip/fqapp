@@ -31,6 +31,7 @@ import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
 import 'services/player_style_config.dart';
+import 'services/player_preferences.dart';
 import 'services/short_series_font_scale.dart';
 import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
@@ -111,6 +112,9 @@ Future<void> _initializeLocalData() async {
     PlayerStyleConfig.load(),
     // 官方播放页字号档（jk3/b 的 SP）同理：读失败回标准档，不拖启动。
     ShortSeriesFontScale.load(),
+    // 解码器偏好必须先进内存：`NativePlayer.create` 在起播路径上直接读它，
+    // 不能在那里再 await 读盘（见 DecoderPreferenceCache 的说明）。
+    optional(DecoderPreferenceCache.load),
     // 离线缓存的记录箱启动即打开：播放器的离线命中只在 box 就绪时才查
     // （避免运行中途首次 openBox 失败产生游离异步错误）。可选数据，失败
     // 只退化为「本会话不查离线」。

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'app_log.dart';
+import 'player_preferences.dart';
 
 // Codec metadata only: never log the whole platform payload or exception text.
 final _decoderToken = RegExp(r'^[A-Za-z0-9_.+/-]{1,160}$');
@@ -270,6 +271,11 @@ class NativePlayer {
           .invokeMapMethod<String, dynamic>('create', {
             'cdnUrl': cdnUrl,
             'keyHex': keyHex,
+            // 解码器偏好必须是**已解析的值**，不能在这里 await 读盘：create 位于
+            // 起播的关键路径上，等 SharedPreferences 会让没有初始化插件的测试
+            // （以及冷启动）一直挂住。偏好由 `DecoderPreferenceCache` 在启动和
+            // 设置变更时维护。
+            'videoDecoder': DecoderPreferenceCache.current.name,
           })
           .then((result) async {
             final rawPlayerId = result?['playerId'];

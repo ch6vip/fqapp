@@ -32,6 +32,8 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.example.shortplay.CryptoNative
@@ -57,10 +59,21 @@ import java.util.concurrent.atomic.AtomicInteger
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerPlugin internal constructor(
     private val cryptoStream: CryptoStream = JniCryptoStream,
-    private val playerFactory: (Context) -> ExoPlayer = { context ->
+    private val playerFactory: (Context, VideoDecoderPreference) -> ExoPlayer = { context, decoder ->
         // Note: decoder init fallback and 206 diagnostics — see
         // .agents/notes/implemented/bug-fix/2026-10-15-issue2-decoder-initialization-fallback.md.
-        val renderers = DefaultRenderersFactory(context).setEnableDecoderFallback(true)
+        val renderers = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            // 用户选的解码器策略（issue #92）。自动 = 不干预，MediaTek 部分芯片
+            // 在 Android 15 + HEVC + DRM 上硬解静默黑屏（androidx/media#2711），
+            // 没有错误回调，只能让用户手动切软解。
+            .setMediaCodecSelector(
+                when (decoder) {
+                    VideoDecoderPreference.SOFTWARE -> SoftwareOnlyCodecSelector
+                    VideoDecoderPreference.HARDWARE -> HardwareFirstCodecSelector
+                    VideoDecoderPreference.AUTOMATIC -> MediaCodecSelector.DEFAULT
+                }
+            )
         ExoPlayer.Builder(context, renderers).build()
     }
 ) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
@@ -264,7 +277,11 @@ class NativePlayerPlugin internal constructor(
             "create" -> {
                 val cdnUrl = call.requiredArgument<String>("cdnUrl", result) ?: return
                 val keyHex = call.requiredArgument<String>("keyHex", result) ?: return
-                handleCreate(cdnUrl, keyHex, result)
+                // 缺省/未知取值都退化为自动，保持老客户端的默认行为。
+                val decoder = VideoDecoderPreference.fromName(
+                    call.argument<String>("videoDecoder")
+                )
+                handleCreate(cdnUrl, keyHex, decoder, result)
             }
             "play" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
@@ -378,7 +395,12 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    private fun handleCreate(cdnUrl: String, keyHex: String, result: MethodChannel.Result) {
+    private fun handleCreate(
+        cdnUrl: String,
+        keyHex: String,
+        decoder: VideoDecoderPreference,
+        result: MethodChannel.Result
+    ) {
         // Note: deferred CDN I/O — see .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
         val playerId = nextId.getAndIncrement()
         pendingPlayerIds.add(playerId)
@@ -386,7 +408,7 @@ class NativePlayerPlugin internal constructor(
 
         if (keyHex.isEmpty()) {
             handler.post {
-                createPlayerWithUri(playerId, cdnUrl)
+                createPlayerWithUri(playerId, cdnUrl, decoder)
             }
         } else {
             try {
@@ -395,7 +417,7 @@ class NativePlayerPlugin internal constructor(
                 // A separate probe repeats all metadata I/O and cannot be
                 // cancelled while the native open is still obtaining a handle.
                 handler.post {
-                    createPlayerWithCrypto(playerId, cdnUrl, keyHex)
+                    createPlayerWithCrypto(playerId, cdnUrl, keyHex, decoder)
                 }
             } catch (_: Throwable) {
                 failCreation(playerId)
@@ -409,15 +431,24 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    private fun createPlayerWithUri(playerId: Int, uri: String) {
-        createPlayer(playerId) { player ->
+    private fun createPlayerWithUri(
+        playerId: Int,
+        uri: String,
+        decoder: VideoDecoderPreference
+    ) {
+        createPlayer(playerId, decoder) { player ->
             player.setMediaItem(MediaItem.fromUri(uri))
         }
     }
 
-    private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String) {
+    private fun createPlayerWithCrypto(
+        playerId: Int,
+        cdnUrl: String,
+        keyHex: String,
+        decoder: VideoDecoderPreference
+    ) {
         cryptoStream.clearHttpStatus(cdnUrl)
-        createPlayer(playerId, cdnUrl) { player ->
+        createPlayer(playerId, decoder, cdnUrl) { player ->
             val dataSourceFactory = DataSource.Factory {
                 CryptoDataSource(cdnUrl, keyHex, cryptoStream)
             }
@@ -429,6 +460,7 @@ class NativePlayerPlugin internal constructor(
 
     private fun createPlayer(
         playerId: Int,
+        decoder: VideoDecoderPreference,
         diagnosticUrl: String? = null,
         configure: (ExoPlayer) -> Unit
     ) {
@@ -443,7 +475,7 @@ class NativePlayerPlugin internal constructor(
             // MediaCodec supplies the buffer dimensions; don't resize the
             // producer to match the description panel's Flutter rectangle.
             producer = textureRegistry.createSurfaceProducer()
-            player = playerFactory(flutterBinding.applicationContext)
+            player = playerFactory(flutterBinding.applicationContext, decoder)
             output = NativeVideoOutput(player, producer)
             players[playerId] = PlayerInstance(playerId, player, output, diagnosticUrl)
             output.attach()
@@ -791,6 +823,57 @@ class NativePlayerPlugin internal constructor(
 internal fun isSoftwareDecoder(decoderName: String): Boolean =
     decoderName.startsWith("OMX.google.") || decoderName.startsWith("c2.android.")
 
+/** 用户选择的视频解码器策略（与 Dart 侧 `VideoDecoderPreference` 同名）。 */
+internal enum class VideoDecoderPreference {
+    AUTOMATIC, HARDWARE, SOFTWARE;
+
+    companion object {
+        fun fromName(value: String?): VideoDecoderPreference =
+            entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: AUTOMATIC
+    }
+}
+
+/**
+ * 只保留 AOSP 软解码器，用于 [VideoDecoderPreference.SOFTWARE]。
+ *
+ * 部分 MediaTek 芯片在 Android 15 上播 HEVC + 加密内容时硬解静默黑屏或卡帧，
+ * 且不抛任何错误（androidx/media#2711、Google issue 437738589），
+ * `setEnableDecoderFallback` 因此永远不会被触发。用户手动选软解时走这里。
+ *
+ * 过滤规则与 [isSoftwareDecoder] 一致，避免两处判断漂移。过滤后为空时退回默认
+ * 列表，让 ExoPlayer 自己报无可用解码器，而不是静默不给候选。
+ */
+internal object SoftwareOnlyCodecSelector : MediaCodecSelector {
+    override fun getDecoderInfos(
+        mimeType: String,
+        requiresSecureDecoder: Boolean,
+        requiresTunnelingDecoder: Boolean
+    ): List<MediaCodecInfo> {
+        val all = MediaCodecSelector.DEFAULT
+            .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+        val software = all.filter { isSoftwareDecoder(it.name) }
+        return software.ifEmpty { all }
+    }
+}
+
+/**
+ * 硬解优先：把系统软解码器排到后面，用于 [VideoDecoderPreference.HARDWARE]。
+ *
+ * 与 [MediaCodecSelector.DEFAULT] 的唯一差别是排序，不删除任何候选——硬解真的
+ * 不可用时仍能回落到软解。
+ */
+internal object HardwareFirstCodecSelector : MediaCodecSelector {
+    override fun getDecoderInfos(
+        mimeType: String,
+        requiresSecureDecoder: Boolean,
+        requiresTunnelingDecoder: Boolean
+    ): List<MediaCodecInfo> {
+        val all = MediaCodecSelector.DEFAULT
+            .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+        return all.filterNot { isSoftwareDecoder(it.name) } +
+            all.filter { isSoftwareDecoder(it.name) }
+    }
+}
 /** Injectable JNI boundary for creation and DataSource range/error checks on the JVM. */
 internal interface CryptoStream {
     fun ensureInitialized()

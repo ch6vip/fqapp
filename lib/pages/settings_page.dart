@@ -12,6 +12,7 @@ import '../services/backend_service.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
+import '../services/player_preferences.dart';
 import '../widgets/home/home_design.dart';
 import 'about_page.dart';
 import 'cached_books_page.dart';
@@ -65,7 +66,7 @@ class SettingsPage extends StatelessWidget {
         icon: LucideIcons.film,
         title: '短剧',
         subtitle: '播放',
-        items: [_muteWhenColdStartItem()],
+        items: [_muteWhenColdStartItem(), _videoDecoderItem()],
       ),
       SettingsCategory(
         icon: LucideIcons.database,
@@ -401,6 +402,78 @@ class SettingsPage extends StatelessWidget {
       unawaited(DramaMutePreferences.instance.set(!current));
     },
   );
+
+  /// 视频解码器（issue #92）：硬解异常的机型可以手动切软解。
+  ///
+  /// 只有**新起的播放器**会采用新设置——ExoPlayer 的 renderer 在 build 时
+  /// 定型，所以行内说明写明需重新进入播放页。
+  SettingsItem _videoDecoderItem() => SettingsItem(
+    icon: LucideIcons.monitor_play,
+    title: '视频解码器',
+    subtitle: '画面异常（黑屏、卡住、绿屏）时改用软解，重新进入播放页生效',
+    trailingBuilder: (context) => FutureBuilder<VideoDecoderPreference>(
+      future: PlayerPreferences.loadVideoDecoder(),
+      builder: (context, snapshot) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            (snapshot.data ?? VideoDecoderPreference.automatic).label,
+            style: TextStyle(color: Theme.of(context).colorScheme.outline),
+          ),
+          const SizedBox(width: 4),
+          const Icon(LucideIcons.chevron_right, size: 18),
+        ],
+      ),
+    ),
+    onTap: (context, setState) => _showVideoDecoderDialog(context, setState),
+  );
+
+  Future<void> _showVideoDecoderDialog(
+    BuildContext context,
+    StateSetter refresh,
+  ) async {
+    final current = await PlayerPreferences.loadVideoDecoder();
+    if (!context.mounted) return;
+    final selected = await showDialog<VideoDecoderPreference>(
+      context: context,
+      builder: (c) => SimpleDialog(
+        title: const Text('视频解码器'),
+        children: [
+          RadioGroup<VideoDecoderPreference>(
+            groupValue: current,
+            onChanged: (v) {
+              if (v != null) Navigator.pop(c, v);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final value in VideoDecoderPreference.values)
+                  RadioListTile<VideoDecoderPreference>(
+                    value: value,
+                    title: Text(value.label),
+                    subtitle: value == VideoDecoderPreference.software
+                        ? const Text('更耗电，但能绕开部分芯片的硬解缺陷')
+                        : null,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    try {
+      await DecoderPreferenceCache.set(selected);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('解码器设置未能保存')));
+      }
+      return;
+    }
+    refresh(() {});
+  }
 
   // ── 数据 ──────────────────────────────────────────────────────────────
 
