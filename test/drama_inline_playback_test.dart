@@ -309,6 +309,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('尺寸晚到也要点亮横屏钮（真机时序：创建时 0×0）', (tester) async {
+    // 真机上 `create()` 那一刻播放器还是 0×0，真实尺寸随后才由
+    // `videoSizeStream` 送来。此前只在 `_adoptVideoSize`（创建/复用当下读
+    // 尺寸）里判横竖，于是 `landscapeSource` 永远是 null、钮不出现——用户
+    // 在 CI 产物上实测到的就是这个回归。
+    final session = _Session(width: 0, height: 0);
+    await _mount(tester, session);
+    // 尺寸未知：不渲染（官方此时也无从知道横竖）。
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsNothing);
+
+    session.players.single.emitVideoSize(1920, 1080);
+    await _flush(tester);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+
+    // 竖版片源尺寸晚到：仍然不给入口（官方 `!isVertical()` 才显示）。
+    session.players.single.emitVideoSize(1080, 1920);
+    await _flush(tester);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('滑回复用池内解码器后，横屏钮仍在（复用路径也要恢复判据）', (tester) async {
+    // 播放器那条路。如果这条路不重算横竖，滑回来时钮就没了。
+    final session = _Session(width: 1920, height: 1080);
+    await _mount(tester, session);
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+
+    await _swipeUp(tester);
+    await _flush(tester);
+    expect(session.players, hasLength(2));
+
+    await tester.drag(
+      find.byKey(const Key('drama_feed')),
+      const Offset(0, 600),
+    );
+    await tester.pumpAndSettle();
+    await _flush(tester);
+    expect(session.players, hasLength(2));
+    expect(find.byKey(const Key('drama_fullscreen_button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('点横屏钮进播放页且一进去就是全屏（官方独立横屏页）', (tester) async {
     // 官方那颗钮走 `zf3.c.w` → `transformToLandActivity` →
     // `startActivity(ShortSeriesLandActivity)`（`jq3/x.java:4499`），页面一起来

@@ -905,6 +905,12 @@ class InlineVideoPlayback {
         // applied to auto-advance (`_appliedVideoSize`).
         if (size.width <= 0 || size.height <= 0) return;
         videoSize.value = size;
+        // 横竖判据必须跟着真实尺寸走。新建/复用播放器那两处
+        // `_adoptVideoSize` 读的是创建当下的大小，此时通常还是 0×0，
+        // 真正尺寸只在这里到达——漏了这一步 `landscapeSource` 会一直是
+        // null，feed 的横屏钮就永远不出现（用户实测回归）。
+        landscapeSource.value =
+            size.width / size.height >= PlayerVideoLayout.landscapeRatio;
       }),
       player.textureIdStream.listen((id) {
         if (_current(generation, player)) textureId.value = id;
