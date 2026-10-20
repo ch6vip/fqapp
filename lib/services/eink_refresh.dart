@@ -1,10 +1,17 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// 海信墨水屏整屏刷新桥。封装原生通道 `fqapp/eink-refresh`，反射调用厂商
-/// 私有 EPD 接口 `com.hmct.epd.EpdManager.forceClear()` 压残影。
+/// 墨水屏整屏刷新。
 ///
-/// 只在海信墨水屏设备（提供该隐藏接口）上真正生效；其它平台/设备
-/// [supported] 返回 false，[refreshIfSupported] 直接跳过，不会抛错。
+/// 首选厂商接口：封装原生通道 `fqapp/eink-refresh`，反射调用海信私有 EPD
+/// 接口 `com.hmct.epd.EpdManager.forceClear()` 压残影，只在海信设备上生效。
+///
+/// Android 没有通用的 EPD 全刷公开 API（文石 Boox 的刷新由系统 E INK 控制
+/// 中心按应用管理，不向第三方应用提供调用接口），所以非海信设备走软件
+/// 回退：[flashRequest] +1，阅读页监听到后盖一张全屏白帧再撤掉——整帧
+/// 变化会迫使绝大多数 EPD 控制器做一次全量（GC16）刷新，清掉残影。
+/// 白闪是墨水屏阅读器的常见做法（KOReader 的全刷也是这个原理），代价是一
+/// 次可见闪烁，只在厂商接口不可用时用。
 class EinkRefreshService {
   static final EinkRefreshService instance = EinkRefreshService();
 
@@ -36,5 +43,19 @@ class EinkRefreshService {
     } on PlatformException {
       return false;
     }
+  }
+
+  /// 软件白闪请求计数：每次 +1，阅读页监听到变化就盖一次全屏白帧。
+  /// 只在厂商接口不可用时由 [requestRefresh] 触发。
+  final ValueNotifier<int> flashRequest = ValueNotifier(0);
+
+  /// 请求一次整屏刷新。海信设备走原生接口；其它设备走软件白闪回退。
+  /// 任何异常都不抛，阅读流程不受影响。
+  Future<void> requestRefresh() async {
+    if (await supported) {
+      await refreshIfSupported();
+      return;
+    }
+    flashRequest.value++;
   }
 }
