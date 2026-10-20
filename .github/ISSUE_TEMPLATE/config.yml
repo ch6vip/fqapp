@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 查找已有问题
+    url: https://github.com/ch6vip/fqapp/issues?q=is%3Aissue
+    about: 安装、升级、找不到功能这类问题可能已有答案，先搜一下再开新 issue。
+  - name: 先读贡献指南
+    url: https://github.com/ch6vip/fqapp/blob/master/CONTRIBUTING.md
+    about: 提交问题或代码前请先看这里，含产品边界与提交前必须通过的检查。
+  - name: 开发文档
+    url: https://github.com/ch6vip/fqapp/blob/master/DEVELOPMENT.md
+    about: 架构、构建环境、API 对接与调试技巧。

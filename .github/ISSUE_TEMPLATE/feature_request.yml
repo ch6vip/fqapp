@@ -1,0 +1,72 @@
+name: 功能建议
+description: 希望增加或改进的能力
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        建议前请先读 [CONTRIBUTING.md 的产品边界](https://github.com/ch6vip/fqapp/blob/master/CONTRIBUTING.md#二产品边界)——
+        登录、云同步、追剧、上游写操作等是明确的"不做"项。
+
+        另外有些功能可能**已经在最新版本里**了，请先更新到[最新版本](https://github.com/ch6vip/fqapp/releases/latest)确认。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你现在的困扰
+      description: 描述你实际遇到的场景。比如"每次搜索都要重新选评分门槛"，比"希望加评分记忆功能"更有帮助。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你希望的结果
+      description: 说清楚想要什么效果即可，不必给出实现方案——具体怎么做留给维护者权衡。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及方向
+      options:
+        - 搜索 / 发现
+        - 阅读体验
+        - 短剧 / 漫剧播放
+        - 听书
+        - 漫画
+        - 书架 / 历史
+        - 缓存 / 离线
+        - 外观 / 墨水屏 / 无障碍
+        - 性能 / 耗电
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你现在怎么解决的
+      description: 比如"用别的阅读器"，或"手动每次选一遍评分"。这能帮判断需求强度。
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: 参考（可选）
+      description: 别的应用怎么做的，截图或描述都可以。
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我已在最新版本上确认该功能不存在
+          required: true
+        - label: 我读过产品边界，这条不在明确"不做"的范围内
+          required: true
