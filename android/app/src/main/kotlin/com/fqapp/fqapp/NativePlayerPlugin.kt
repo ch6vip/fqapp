@@ -878,7 +878,9 @@ class NativePlayerPlugin internal constructor(
      */
     private fun requestFloatingFocus(): Boolean {
         val context = flutterBinding.applicationContext
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val audioManager =
+            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return false
         val listener = AudioManager.OnAudioFocusChangeListener { change ->
             val id = floatingPlayerId ?: return@OnAudioFocusChangeListener
             val instance = players[id] ?: return@OnAudioFocusChangeListener
@@ -944,7 +946,10 @@ class NativePlayerPlugin internal constructor(
         floatingFocusListener = null
         floatingVolumeBeforeDuck = null
         val context = flutterBinding.applicationContext
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        // 单元测试的 mock Context 不提供系统服务；缺 AudioManager 时只是没有
+        // 焦点可放弃，不能让 detach 抛异常。
+        val audioManager =
+            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
         val request = floatingFocusRequest
         floatingFocusRequest = null
         if (request != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
