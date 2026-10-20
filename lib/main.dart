@@ -17,6 +17,8 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
+import 'services/audio_download_store.dart';
+import 'services/audio_downloader.dart';
 import 'services/audio_preferences.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
@@ -109,12 +111,20 @@ Future<void> _initializeLocalData() async {
   try {
     await HiveDramaDownloadStore.instance.warmUp();
   } catch (_) {}
+  // 听书音频离线记录箱：与短剧箱分开，同样只在就绪时才查离线命中。
+  try {
+    await HiveAudioDownloadStore.instance.warmUp();
+  } catch (_) {}
   // 离线缓存的网络门（官方 onNetChangeCheck）：断网/只剩计费链路时
   // 自动暂停下载队列，半成品保留。监听失败只退化为「无自动暂停」。
   try {
     Connectivity().onConnectivityChanged.listen((results) {
       final view = foldConnectivity(results);
       DramaDownloader.instance.updateConnectivity(
+        online: view.online,
+        metered: view.metered,
+      );
+      AudioDownloader.instance.updateConnectivity(
         online: view.online,
         metered: view.metered,
       );
