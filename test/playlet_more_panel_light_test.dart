@@ -161,6 +161,35 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('rate pills follow the official playrate list', (tester) async {
+    // 用户设备官方实测档位：含 2x/3x，**没有 1.75x**；药丸文案就是 `1x`
+    // （「（默认）」只出现在横屏沉浸面板的大字号子列表里）。
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: PlayletMorePanelLight(rate: 1)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final label in ['0.75x', '1x', '1.25x', '1.5x', '2x', '3x']) {
+      expect(find.text(label), findsOneWidget, reason: '缺少档位 $label');
+    }
+    expect(find.text('1.75x'), findsNothing, reason: '官方档位表里没有 1.75x');
+    expect(find.text('1x（默认）'), findsNothing, reason: '药丸不带（默认）');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the fill-screen row is not part of this panel', (tester) async {
+    // 官方横屏截图的面板里没有这一行；浅色竖屏面板同样不放（保持一致）。
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: PlayletMorePanelLight(rate: 1)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('画面撑满'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 void _noop() {}

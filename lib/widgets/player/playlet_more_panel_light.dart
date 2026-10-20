@@ -73,6 +73,7 @@ class PlayletMorePanelLight extends StatelessWidget {
   /// 「暂未支持」占位（feed 长按面板未接下载）。
   final VoidCallback? onOpenOfflineCache;
 
+
   static Color _foreground(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
       ? const Color(0xCCFFFFFF)
@@ -185,8 +186,11 @@ class PlayletMorePanelLight extends StatelessWidget {
                         },
                       ),
                     if (onToggleDanmaku != null)
-                      _DanmakuSwitchRow(
-                        enabled: danmakuEnabled,
+                      _SwitchRow(
+                        rowKey: 'player-more-light-danmaku',
+                        icon: 'more_danmaku',
+                        label: '弹幕',
+                        toggled: danmakuEnabled,
                         onToggle: onToggleDanmaku!,
                         foreground: _foreground(context),
                         labelStyle: _labelStyle(context),
@@ -248,7 +252,11 @@ class PlayletMorePanelLight extends StatelessWidget {
     ),
   );
 
-  /// 倍速行：图标 + 标签 + 药丸档位（浅色支档位与深色 V2 不同，无 1.75x）。
+  /// 倍速行：图标 + 标签 + 药丸档位。
+  ///
+  /// 档位来自 `PlayerPreferences.playbackRates`（用户设备官方实测：含
+  /// 2x/3x、无 1.75x）。药丸文案就是 `1x`；「（默认）」只出现在横屏沉浸面板
+  /// 的大字号子列表里（官方 `strings/ec5`）。
   Widget _rateRow(BuildContext context) => Padding(
     key: const ValueKey('player-more-light-rate-row'),
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -265,7 +273,7 @@ class PlayletMorePanelLight extends StatelessWidget {
               context,
               Row(
                 children: [
-                  for (final rate in PlayerPreferences.lightPanelPlaybackRates)
+                  for (final rate in PlayerPreferences.playbackRates)
                     _OptionPill(
                       key: ValueKey('player-more-light-rate-$rate'),
                       label:
@@ -396,40 +404,47 @@ class PlayletMorePanelLight extends StatelessWidget {
 /// 点完会停在旧状态、重开面板才刷新；本地 state 让开关动画立刻跟随。
 /// 面板其余行都随面板关闭（清屏/字号/下钻行）或随关闭回传（倍速/
 /// 清晰度），不受此问题影响。
-class _DanmakuSwitchRow extends StatefulWidget {
-  const _DanmakuSwitchRow({
-    required this.enabled,
+class _SwitchRow extends StatefulWidget {
+  const _SwitchRow({
+    required this.rowKey,
+    required this.icon,
+    required this.label,
+    required this.toggled,
     required this.onToggle,
     required this.foreground,
     required this.labelStyle,
   });
 
-  final bool enabled;
+  /// 行 key 前缀；渲染出的行 key 是 `<rowKey>-row`（与既有弹幕行保持一致）。
+  final String rowKey;
+  final String icon;
+  final String label;
+  final bool toggled;
   final VoidCallback onToggle;
   final Color foreground;
   final TextStyle labelStyle;
 
   @override
-  State<_DanmakuSwitchRow> createState() => _DanmakuSwitchRowState();
+  State<_SwitchRow> createState() => _SwitchRowState();
 }
 
-class _DanmakuSwitchRowState extends State<_DanmakuSwitchRow> {
-  late bool _enabled = widget.enabled;
+class _SwitchRowState extends State<_SwitchRow> {
+  late bool _enabled = widget.toggled;
 
   @override
-  void didUpdateWidget(_DanmakuSwitchRow oldWidget) {
+  void didUpdateWidget(_SwitchRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 面板打开期间父级已翻转 danmakuEnabled 且 sheet 子树原地重建时，
-    // 旧 State 仍持旧值会导致之后每次点击与父级持续反向；跟随父级同步。
-    if (oldWidget.enabled != widget.enabled) {
-      _enabled = widget.enabled;
+    // 面板打开期间父级已翻转该开关且 sheet 子树原地重建时，旧 State 仍持旧值
+    // 会导致之后每次点击与父级持续反向；跟随父级同步。
+    if (oldWidget.toggled != widget.toggled) {
+      _enabled = widget.toggled;
     }
   }
 
   @override
   Widget build(BuildContext context) => Semantics(
-        key: const ValueKey('player-more-light-danmaku-row'),
-        label: '弹幕',
+        key: ValueKey('${widget.rowKey}-row'),
+        label: widget.label,
         toggled: _enabled,
         onTap: _toggle,
         excludeSemantics: true,
@@ -442,12 +457,9 @@ class _DanmakuSwitchRowState extends State<_DanmakuSwitchRow> {
               height: 48,
               child: Row(
                 children: [
-                  _PanelIconLight(
-                    name: 'more_danmaku',
-                    color: widget.foreground,
-                  ),
+                  _PanelIconLight(name: widget.icon, color: widget.foreground),
                   const SizedBox(width: 8),
-                  Expanded(child: Text('弹幕', style: widget.labelStyle)),
+                  Expanded(child: Text(widget.label, style: widget.labelStyle)),
                   const SizedBox(width: 12),
                   _LightSwitch(value: _enabled),
                 ],

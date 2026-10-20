@@ -127,13 +127,13 @@ void main() {
       );
       expect(await PlayerPanelPreferences.loadFillScreen(), isTrue);
       expect(PlayerPanelPreferences.defaultMute, isFalse);
-      await tester.tap(find.byKey(const ValueKey('player-more-rate-1.75')));
+      await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
       await tester.pumpAndSettle();
-      expect(player.calls, ['volume:1.0', 'rate:1.75']);
+      expect(player.calls, ['volume:1.0', 'rate:2.0']);
       expect(player.isPlaying, isFalse);
       expect(player.position, const Duration(seconds: 35));
       expect(find.text('恢复'), findsOneWidget);
-      expect(await PlayerPreferences.loadPlaybackRate(), 1.75);
+      expect(await PlayerPreferences.loadPlaybackRate(), 2);
       await tester.tap(find.byKey(const ValueKey('player-rate-text')));
       await tester.pumpAndSettle();
       expect(
