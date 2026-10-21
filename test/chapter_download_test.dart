@@ -60,6 +60,9 @@ class _FakeChapterCache implements ChapterCache {
 
   @override
   Future<CachedBook?> cachedBook(String bookId) async => null;
+
+  @override
+  Future<CachedBook?> savedCatalogue(String bookId) async => null;
 }
 
 CachedBook _book(int chapterCount) => CachedBook(

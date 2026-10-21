@@ -30,6 +30,13 @@ abstract interface class ChapterCache {
   /// 书架点书与详情页兜底只关心一本书，用它比 [books] 便宜。
   Future<CachedBook?> cachedBook(String bookId);
 
+  /// [bookId] 保存过的目录，**不要求正文还在**。
+  ///
+  /// 漫画没有正文缓存（图片带 per-launch 能力值，不能落盘），所以它只能靠
+  /// 目录判断能否跳过详情页续读。[cachedBook] 按「有没有可离线正文」回答，
+  /// 对漫画恒为 null，因此单独开这个入口。未保存过目录时返回 null。
+  Future<CachedBook?> savedCatalogue(String bookId);
+
   /// Chapters the automatic cache keeps before evicting the least recently read
   /// ones. Chapters written with `pinned: true` are outside this budget.
   int get chapterCapacity;
@@ -304,6 +311,12 @@ class ChapterCacheStore implements ChapterCache {
     if (bookId.isEmpty) return null;
     final summaries = _summaries(box, onlyBookId: bookId);
     return summaries.isEmpty ? null : summaries.first.book;
+  });
+
+  @override
+  Future<CachedBook?> savedCatalogue(String bookId) => _serialize((box) async {
+    if (bookId.isEmpty) return null;
+    return CachedBook.fromMap(box.get('book:$bookId'));
   });
 
   /// 把章节记录按书聚合成摘要；[onlyBookId] 只统计一本书。

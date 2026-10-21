@@ -12,6 +12,7 @@ import '../services/backend_transport.dart';
 import '../services/comic_page_layout.dart';
 import '../services/fair_memory.dart';
 import '../services/library_store.dart';
+import '../services/chapter_cache_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
@@ -54,6 +55,12 @@ class ComicReaderPage extends StatefulWidget {
   final ComicChapterLoader? chapterLoader;
   final ComicImageProviderFactory? imageProviderFactory;
 
+  /// 目录缓存，供「最近阅读/书架」下次直接续读漫画用。
+  ///
+  /// 漫画没有正文缓存（图片带 per-launch 能力值，不能落盘），所以这里只存
+  /// 目录本身；空表示用默认的 ChapterCacheStore。
+  final ChapterCache? cache;
+
   /// 加入书架时用的条目（issue #103）。详情页传入原 `MediaItem`，书架卡片因此
   /// 保留作者/徽标；其他入口省略，按 [bookId]/[title]/[cover] 兜底成漫画条目。
   final MediaItem? shelfItem;
@@ -68,6 +75,7 @@ class ComicReaderPage extends StatefulWidget {
     this.readerStore,
     this.chapterLoader,
     this.imageProviderFactory,
+    this.cache,
     this.shelfItem,
   });
 
@@ -146,6 +154,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
       _loading = false;
       _error = '暂无可阅读章节';
     } else {
+      unawaited(_rememberCatalogue());
       unawaited(_loadChapter());
     }
   }
@@ -162,6 +171,25 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     unawaited(_saveProgress());
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// 记住目录，让「最近阅读/书架」下次能跳过详情页直接进漫画。
+  ///
+  /// 写入失败不影响阅读：拿不到目录最多是下次仍走详情页。
+  Future<void> _rememberCatalogue() async {
+    try {
+      final store = widget.cache ?? ChapterCacheStore.instance;
+      await store.saveBook(
+        CachedBook(
+          id: widget.bookId,
+          title: widget.title,
+          cover: widget.cover,
+          chapters: widget.chapters,
+        ),
+      );
+    } catch (_) {
+      // 缓存不可写时保持原有入口。
+    }
   }
 
   @override
