@@ -71,6 +71,8 @@ void main() {
     required Size size,
     String synopsis = '',
     ValueChanged<int>? onWheelNavigate,
+    int episodeCount = 10,
+    int currentIndex = 0,
   }) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     tester.view.physicalSize = size;
@@ -92,10 +94,10 @@ void main() {
           synopsis: synopsis,
           onWheelNavigate: onWheelNavigate,
           episodes: [
-            for (var i = 0; i < 10; i++)
+            for (var i = 0; i < episodeCount; i++)
               Chapter(itemId: '$i', title: '第 $i 集', volumeName: ''),
           ],
-          currentIndex: 0,
+          currentIndex: currentIndex,
           duration: const Duration(minutes: 2),
           playing: false,
           enabled: false,
@@ -209,6 +211,62 @@ void main() {
     await tester.sendEventToBinding(pointer.scroll(const Offset(0, 240)));
     await tester.pump();
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('catalog grid packs six per row and doubles a screenful', (
+    tester,
+  ) async {
+    await pumpChrome(tester, size: const Size(1280, 600), episodeCount: 120);
+    // 六列：1 与 6 同行、7 换行（旧版四列时 5 就已经换行）。
+    final first = tester.getRect(find.text('1'));
+    final sixth = tester.getRect(find.text('6'));
+    final seventh = tester.getRect(find.text('7'));
+    expect(sixth.center.dy, closeTo(first.center.dy, 1));
+    expect(seventh.center.dy, greaterThan(first.center.dy + 20));
+    // 一屏可见集数：中心落在网格视口内的集号按钮。旧密度（四列大
+    // 按钮）在同尺寸窗口只有 36 上下，新密度至少翻倍。
+    final gridRect = tester.getRect(find.byType(GridView));
+    var visible = 0;
+    for (var i = 1; i <= 120; i++) {
+      final finder = find.text('$i');
+      if (finder.evaluate().isEmpty) continue;
+      if (gridRect.contains(tester.getCenter(finder))) visible++;
+    }
+    expect(visible, greaterThanOrEqualTo(72));
+    await tester.pumpWidget(const SizedBox.shrink());
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('catalog opens at current episode; segment chips jump', (
+    tester,
+  ) async {
+    await pumpChrome(
+      tester,
+      size: const Size(1366, 640),
+      episodeCount: 130,
+      currentIndex: 120,
+    );
+    final gridRect = tester.getRect(find.byType(GridView));
+    bool inGrid(String label) {
+      final finder = find.text(label);
+      return finder.evaluate().isNotEmpty &&
+          gridRect.contains(tester.getCenter(finder));
+    }
+
+    // 打开即定位到当前集（索引 120 = 第 121 集，在网格末段），不用手动翻。
+    expect(find.text('1-50'), findsOneWidget);
+    expect(inGrid('121'), isTrue);
+    // 区间跳集：点 1-50 段，网格滚回开头，当前集离开视野。
+    await tester.tap(find.text('1-50'));
+    await tester.pumpAndSettle();
+    expect(inGrid('1'), isTrue);
+    expect(inGrid('121'), isFalse);
+    // 「当前集」chip 随时把网格带回当前集。
+    await tester.tap(find.text('当前集'));
+    await tester.pumpAndSettle();
+    expect(inGrid('121'), isTrue);
     await tester.pumpWidget(const SizedBox.shrink());
     debugDefaultTargetPlatformOverride = null;
   });

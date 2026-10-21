@@ -259,6 +259,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
   static const _stripHeight = 38.0;
   static const _pullRefreshTrigger = 64.0;
 
+  /// 顶栏在本页内容上方占的高度：移动端是搜索行 + 频道条两行；桌面端
+  /// 不渲染搜索行——分区搜索入口收敛到频道条右端的搜索图标（壳层全局
+  /// 搜索在短剧分区也隐藏），只占频道条一行，把垂直空间还给视频/网格。
+  double get _topChromeHeight =>
+      (isWindowsDesktop ? 0.0 : _searchRowHeight) + _stripHeight;
+
   double _effectiveBottomInset(BuildContext context) {
     if (widget.bottomInset != null) return widget.bottomInset!;
     // Scaffold(extendBody: true) 已将底栏高度自动合入 MediaQuery.padding.bottom，
@@ -1272,11 +1278,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             ),
             if (_pullDistance > 0)
               Positioned(
-                top:
-                    MediaQuery.paddingOf(context).top +
-                    _searchRowHeight +
-                    _stripHeight +
-                    8,
+                top: MediaQuery.paddingOf(context).top + _topChromeHeight + 8,
                 left: 0,
                 right: 0,
                 child: _PullRefreshHint(
@@ -1296,8 +1298,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   child: SizedBox(
                     height:
                         MediaQuery.paddingOf(context).top +
-                        _searchRowHeight +
-                        _stripHeight +
+                        _topChromeHeight +
                         56,
                     child: const DecoratedBox(
                       decoration: BoxDecoration(
@@ -1385,10 +1386,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
         key: Key(gridKey),
         padding: EdgeInsets.fromLTRB(
           12,
-          MediaQuery.paddingOf(context).top +
-              _searchRowHeight +
-              _stripHeight +
-              12,
+          MediaQuery.paddingOf(context).top + _topChromeHeight + 12,
           12,
           bottomInset + 20,
         ),
@@ -1627,9 +1625,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
         },
         child: Padding(
           padding: EdgeInsets.only(
-            top: DesktopPlatform.fullscreen.value
-                ? 0
-                : _searchRowHeight + _stripHeight,
+            top: DesktopPlatform.fullscreen.value ? 0 : _topChromeHeight,
           ),
           child: Column(
             children: [
@@ -1954,15 +1950,18 @@ class _TopBar extends StatelessWidget {
           // Official compressed header `ap4.xml`: search row is 38dp,
           // `marginStart/End` 16dp, no `paddingTop` (that 6dp belongs to
           // uncompressed `ap3.xml`).
-          SizedBox(
-            height: _DramaPageState._searchRowHeight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              // 官方 `ap4.xml` 的搜索行 38dp、框体 36dp（`c5e.xml` `@dimen/zl`），
-              // 垂直居中。
-              child: Center(child: _searchField(context, light: light)),
+          // 桌面端不渲染这一行：分区搜索只留频道条右端的搜索图标一处
+          // 入口（与 _DramaPageState._topChromeHeight 的桌面高度一致）。
+          if (!isWindowsDesktop)
+            SizedBox(
+              height: _DramaPageState._searchRowHeight,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                // 官方 `ap4.xml` 的搜索行 38dp、框体 36dp（`c5e.xml` `@dimen/zl`），
+                // 垂直居中。
+                child: Center(child: _searchField(context, light: light)),
+              ),
             ),
-          ),
 
           SizedBox(
             height: _DramaPageState._stripHeight,
