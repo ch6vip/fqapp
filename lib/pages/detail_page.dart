@@ -1227,22 +1227,27 @@ class _ChapterExcerpt extends StatelessWidget {
   }
 }
 
-/// 点书卡片的统一入口：默认进详情页；用户开了设置 → 阅读 →「点击书籍
-/// 直接进入阅读」时，详情页加载完目录后自动按上次进度进阅读器（小说/漫画），
-/// 返回时回到点书的页面。听书/短剧与加载失败时仍停留在详情页。
+/// 点书卡片的统一入口：默认进详情页；用户开了设置 → 阅读 →「点书直达阅读器」
+/// 时，详情页加载完目录后自动按上次进度进阅读器（小说/漫画），返回时回到点书
+/// 的页面。听书/短剧与加载失败时仍停留在详情页。
 ///
-/// 调用方不要再直接 `Navigator.push(DetailPage(...))`，否则新开关对那
-/// 个入口不生效。
-Future<void> openBookDetail(BuildContext context, MediaItem item) async {
-  await BookOpenPreferences.instance.load();
+/// [entry] 决定用哪条偏好（issue #103）：书架、阅读历史这类「我的书」入口要显式
+/// 传 [BookOpenEntry.shelf]，发现入口用默认值即可。调用方不要再直接
+/// `Navigator.push(DetailPage(...))`，否则开关对那个入口不生效。
+Future<void> openBookDetail(
+  BuildContext context,
+  MediaItem item, {
+  BookOpenEntry entry = BookOpenEntry.discover,
+}) async {
+  final preferences = BookOpenPreferences.instance;
+  await preferences.load();
   if (!context.mounted) return;
   await Navigator.push(
     context,
     MaterialPageRoute<void>(
       builder: (_) => DetailPage(
         item: item,
-        autoOpenReader:
-            BookOpenPreferences.instance.directReader.value,
+        autoOpenReader: preferences.directReaderFor(entry),
       ),
     ),
   );

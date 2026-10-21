@@ -5,6 +5,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../models/media_item.dart';
+import '../services/book_open_preferences.dart';
 import '../services/library_store.dart';
 import '../services/poster_cache.dart';
 import '../services/media_history_store.dart';
@@ -253,6 +254,7 @@ class _StatsPageState extends State<StatsPage> {
         seriesId: entry['seriesId']?.toString(),
         episodeId: entry['episodeId']?.toString(),
       ),
+      entry: BookOpenEntry.shelf,
     );
   }
 

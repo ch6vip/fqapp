@@ -14,6 +14,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/media_item.dart';
+import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/connectivity_status.dart';
 import '../services/imported_book_store.dart';
@@ -320,7 +321,7 @@ class _LibraryPageState extends State<LibraryPage> {
   ///
   /// 官方客户端书架点书就是直接起阅读器（`ReaderBundleBuilder`），中间没有
   /// 那个要联网取目录的页面。这里只在「无网 + 有缓存」时抄这条捷径：联网时
-  /// 仍走详情页（或按设置 → 阅读 →「点击书籍直接进入阅读」自动进阅读器），
+  /// 仍走详情页（或按设置 → 阅读 →「书架点书直接进入阅读」自动进阅读器），
   /// 段评、章节目录预览这些联网能力不会被悄悄降级。
   Future<void> _open(MediaItem item, {bool importedResume = false}) async {
     if (ImportedBookStore.isLocalBookId(item.id)) {
@@ -345,7 +346,7 @@ class _LibraryPageState extends State<LibraryPage> {
       );
       return;
     }
-    await openBookDetail(context, item);
+    await openBookDetail(context, item, entry: BookOpenEntry.shelf);
   }
 
   Future<void> _openLocalBook(MediaItem item) async {
