@@ -1564,6 +1564,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       hotComments: _hotComments,
       onHotCommentTap: widget.shortSeries ? _openHotComment : null,
       seriesTitle: _seriesTitle,
+      synopsis: _seriesDetail?.intro ?? '',
       // 官方播放页标题行「剧名 >」（ql3/v0 `a1()`）与选集面板头部箭头
       // 都进剧集详情页（`series_detail`）。
       onOpenSeriesDetail: widget.shortSeries ? _openSeriesDetail : null,

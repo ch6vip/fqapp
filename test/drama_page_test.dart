@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +20,7 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/series_detail_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/services/desktop_platform.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/services/shelf_store.dart';
@@ -1274,5 +1277,128 @@ void main() {
     final playerPage = tester.widget<PlayerPage>(find.byType(PlayerPage));
     expect(playerPage.startIndex, 1);
     expect(playerPage.initialSeriesDetail?.title, '2-0 作品');
+  });
+
+  testWidgets('桌面宽屏 feed：停靠面板带选集与简介，标题栏剧名让位', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _scope(
+        perTab: 3,
+        intro: '桌面简介甲',
+        child: MaterialApp(home: _Seams().page()),
+      ),
+    );
+    await _flush(tester);
+
+    // 停靠面板：选集段头 + 简介（来自卡片 intro）；计数条是桌面 feed 底栏。
+    expect(find.text('选集'), findsOneWidget);
+    expect(find.text('桌面简介甲'), findsOneWidget);
+    expect(find.text('1 / 3'), findsOneWidget);
+    // 剧名只在面板头部出现一份（标题栏在停靠时不再重复）。
+    expect(find.text('16-0 作品'), findsOneWidget);
+    expect(find.byTooltip('收起面板'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('桌面 feed 滚轮切剧：一次一集，600ms 冷却内不重复触发', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _scope(perTab: 3, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    expect(find.text('1 / 3'), findsOneWidget);
+
+    final pointer = TestPointer(1, PointerDeviceKind.mouse);
+    final center = tester.getCenter(
+      find.byKey(const ValueKey('desktop-feed-player')),
+    );
+    await tester.sendEventToBinding(pointer.hover(center));
+    await tester.sendEventToBinding(pointer.scroll(const Offset(0, 240)));
+    await _flush(tester);
+    expect(find.text('2 / 3'), findsOneWidget);
+    expect(find.text('16-1 作品'), findsOneWidget);
+
+    // 紧接着的第二格滚轮落在冷却内：不切。
+    await tester.sendEventToBinding(pointer.scroll(const Offset(0, 240)));
+    await _flush(tester);
+    expect(find.text('2 / 3'), findsOneWidget);
+
+    // 冷却按真实时钟计（DateTime.now），用真实等待越过 600ms。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 700)),
+    );
+    await tester.sendEventToBinding(pointer.scroll(const Offset(0, 240)));
+    await _flush(tester);
+    expect(find.text('3 / 3'), findsOneWidget);
+
+    // PageUp 仍可回一条（原有键盘通路保留）。
+    await tester.sendKeyEvent(LogicalKeyboardKey.pageUp);
+    await _flush(tester);
+    expect(find.text('2 / 3'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('桌面窄窗 feed：不停靠面板，剧名回标题栏', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _scope(perTab: 2, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    expect(find.text('选集'), findsNothing);
+    expect(find.byTooltip('收起面板'), findsNothing);
+    expect(find.text('1 / 2'), findsOneWidget);
+    expect(find.text('16-0 作品'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('桌面全屏 feed：面板、顶栏与计数条都不出现', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    DesktopPlatform.fullscreen.value = true;
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _scope(perTab: 2, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    expect(find.text('选集'), findsNothing);
+    expect(find.byKey(const Key('drama_search_button')), findsNothing);
+    expect(find.text('1 / 2'), findsNothing);
+    // 先退全屏再拆树，避免 dispose 走 window_manager 通道。
+    DesktopPlatform.fullscreen.value = false;
+    await tester.pumpWidget(const SizedBox.shrink());
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('非桌面 feed 仍是竖向 PageView，无桌面计数条', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _scope(perTab: 2, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
+    expect(find.byKey(const ValueKey('desktop-feed-player')), findsNothing);
+    expect(find.text('1 / 2'), findsNothing);
   });
 }

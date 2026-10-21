@@ -289,6 +289,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// True between the feed's scroll start and end notifications.
   bool _paging = false;
 
+  /// 上次滚轮切剧的时刻（桌面 feed）：一格滚轮常连发多个信号事件，
+  /// 冷却内的都丢弃，保证一次滚动只切一条。
+  DateTime? _lastWheelSwitchAt;
+
   /// Whether the containing route still shows this page (TickerMode). The bottom
   /// bar mutes a hidden destination instead of unmounting it.
   bool _tickerEnabled = true;
@@ -1553,6 +1557,20 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _syncInline();
   }
 
+  /// 桌面滚轮切剧：600ms 冷却，一次滚动只切一条；推了路由（详情/播放页）
+  /// 时不响应，滚轮留给上层页面。
+  void _desktopWheelDrama(List<MediaItem> items, int delta) {
+    if (_modalOpen) return;
+    final now = DateTime.now();
+    final last = _lastWheelSwitchAt;
+    if (last != null &&
+        now.difference(last) < const Duration(milliseconds: 600)) {
+      return;
+    }
+    _lastWheelSwitchAt = now;
+    _desktopNextDrama(items, delta);
+  }
+
   Widget _desktopFeed(List<MediaItem> items) {
     final item = items[_screenIndex.clamp(0, items.length - 1)];
     return ListenableBuilder(
@@ -1592,6 +1610,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   player: _inline.player,
                   title: item.title,
                   seriesTitle: item.title,
+                  synopsis: item.intro,
+                  onWheelNavigate: (delta) =>
+                      _desktopWheelDrama(items, delta),
                   episodes: _inline.episodes,
                   currentIndex: _inline.activeEpisodeIndex ?? 0,
                   duration: _inline.duration.value,

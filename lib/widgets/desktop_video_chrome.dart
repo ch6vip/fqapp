@@ -1,6 +1,7 @@
 import '../services/player_preferences.dart';
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/desktop_platform.dart';
@@ -25,6 +26,7 @@ class DesktopVideoChrome extends StatefulWidget {
 class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
   VideoPlayerChrome get c => widget.configuration;
   bool _visible = true;
+  bool _dockCollapsed = false;
   double _volume = 1;
   double _rate = 1;
   double? _scrub;
@@ -110,6 +112,17 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
 
   Future<void> _full() =>
       DesktopPlatform.instance.setFullscreen(!DesktopPlatform.fullscreen.value);
+
+  /// 画面区滚轮：宿主接了切剧回调才响应，纵向滚动转 ±1（下滚下一条）。
+  /// 监听层只盖画面区，停靠面板的选集网格不在其命中路径内，照常自滚。
+  void _onPointerSignal(PointerEvent event) {
+    final navigate = c.onWheelNavigate;
+    if (navigate == null || event is! PointerScrollEvent) return;
+    final dy = event.scrollDelta.dy;
+    if (dy == 0) return;
+    navigate(dy > 0 ? 1 : -1);
+  }
+
   KeyEventResult _key(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent || c.interactionBlocked) {
       return KeyEventResult.ignored;
@@ -187,6 +200,19 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                   '共 ${c.episodes.length} 集 · ${c.episodeLabel}',
                   style: const TextStyle(color: Colors.white60),
                 ),
+                if (c.synopsis.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    c.synopsis,
+                    maxLines: 5,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -292,7 +318,8 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
             backgroundColor: Colors.black,
             body: LayoutBuilder(
               builder: (context, constraints) {
-                final docked = !full && constraints.maxWidth >= 1000;
+                final canDock = !full && constraints.maxWidth >= 1000;
+                final docked = canDock && !_dockCollapsed;
                 return Row(
                   children: [
                     Expanded(
@@ -313,13 +340,28 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                       icon: const Icon(Icons.arrow_back),
                                     ),
                                     Expanded(
-                                      child: Text(
-                                        c.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
+                                      child: docked
+                                          ? const SizedBox.shrink()
+                                          : Text(
+                                              c.title,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
                                     ),
-                                    if (!docked)
+                                    if (canDock)
+                                      IconButton(
+                                        tooltip: docked ? '收起面板' : '展开面板',
+                                        onPressed: () => setState(
+                                          () =>
+                                              _dockCollapsed = !_dockCollapsed,
+                                        ),
+                                        icon: Icon(
+                                          docked
+                                              ? Icons.view_sidebar
+                                              : Icons.view_sidebar_outlined,
+                                        ),
+                                      ),
+                                    if (!canDock)
                                       IconButton(
                                         tooltip: '选集与作品信息',
                                         onPressed: _showCatalog,
@@ -349,6 +391,13 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                                       c.player!.videoHeight
                                                 : 16 / 9,
                                             child: c.child,
+                                          ),
+                                        ),
+                                        Positioned.fill(
+                                          child: Listener(
+                                            behavior:
+                                                HitTestBehavior.translucent,
+                                            onPointerSignal: _onPointerSignal,
                                           ),
                                         ),
                                         if (c.danmakuEnabled)

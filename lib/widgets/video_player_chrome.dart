@@ -48,6 +48,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final Widget child;
   final String coverUrl;
   final ValueChanged<bool>? onPagingChanged;
+
+  /// 桌面 feed 的滚轮翻剧：宿主（如短剧推荐流）传入时，桌面 chrome 在视频
+  /// 区把滚轮上下滚转成 ±1 的切剧请求；节流与边界由宿主负责。null 时
+  /// 滚轮在视频区无动作（播放页不切剧）。
+  final ValueChanged<int>? onWheelNavigate;
   final Future<void> Function(int) onSelectEpisode;
   final void Function(Object) onError;
 
@@ -109,6 +114,9 @@ class VideoPlayerChrome extends StatefulWidget {
 
   /// 选集面板头部的剧信息（官方 \`aa8.xml:7-15\`）。
   final String seriesTitle;
+
+  /// 作品简介。桌面宽屏停靠面板在剧名/集数下展示；空串时不出现该段。
+  final String synopsis;
 
   /// 标题行「剧名 >」点击 → 官方进剧集详情页（`series_detail`，ql3/v0
   /// `a1()` 的默认分支）。null 时不响应（非短剧形态）。
@@ -180,6 +188,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.coverUrl = '',
     this.watchedEpisodes = const <int>{},
     this.onPagingChanged,
+    this.onWheelNavigate,
     required this.onSelectEpisode,
     required this.onError,
     this.shortSeries = false,
@@ -200,6 +209,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.hotComments = const [],
     this.onHotCommentTap,
     this.seriesTitle = '',
+    this.synopsis = '',
     this.onOpenSeriesDetail,
     this.onOpenRelatedSeries,
     this.seriesCover = '',
