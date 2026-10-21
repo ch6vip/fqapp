@@ -37,7 +37,7 @@ class DetailHero extends StatelessWidget {
     // phone, so the masthead stacks instead of squeezing both into one row.
     final stacked = MediaQuery.textScalerOf(context).scale(16) > 26;
 
-    final cover = _CoverTile(item: item, detail: detail);
+    final cover = _CoverTile(item: item, detail: detail, desktop: desktop);
     final info = Column(
       crossAxisAlignment: desktop
           ? CrossAxisAlignment.center
@@ -144,7 +144,10 @@ class _CoverTile extends StatelessWidget {
   final MediaItem item;
   final BookDetail? detail;
 
-  const _CoverTile({required this.item, this.detail});
+  /// 桌面两栏布局：封面放大到 168×224。
+  final bool desktop;
+
+  const _CoverTile({required this.item, this.detail, this.desktop = false});
 
   @override
   Widget build(BuildContext context) {
