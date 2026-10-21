@@ -110,6 +110,9 @@ Future<void> main() async {
   final errors = <String>[];
   final subscription = player.stream.error.listen(errors.add);
   try {
+    // Hosted Windows runners may have no WASAPI endpoint. Keep real decoding
+    // and playback timing, without requiring a physical audio device.
+    await (player.platform as NativePlayer).setProperty('ao', 'null');
     await player.setVolume(0);
     await player.open(Media(media.url), play: false);
     await until(() => player.state.duration.inSeconds >= 7, 'duration');
@@ -190,12 +193,22 @@ Future<void> main() async {
       'width': decodedWidth,
       'height': decodedHeight,
       'note':
-          'Native engine test with null video output; GPU/window rendering is a separate acceptance check.',
+          'Native engine test with null audio/video outputs; physical audio and GPU/window rendering are separate acceptance checks.',
     };
     await File(
       '${output.path}/report.json',
     ).writeAsString(const JsonEncoder.withIndent('  ').convert(report));
     stdout.writeln(jsonEncode(report));
+  } catch (_) {
+    stderr.writeln(
+      jsonEncode({
+        'playing': player.state.playing,
+        'positionMs': player.state.position.inMilliseconds,
+        'durationMs': player.state.duration.inMilliseconds,
+        'fixtureErrors': errors,
+      }),
+    );
+    rethrow;
   } finally {
     await subscription.cancel();
     await player.dispose();

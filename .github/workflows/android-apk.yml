@@ -476,6 +476,7 @@ jobs:
           compression-level: 0
           path: |
             app/build/ci-artifacts/app-arm64-v8a-release.apk
+            app/build/ci-artifacts/android-media-boundary.json
             app/build/ci-artifacts/build-info.txt
             app/build/ci-artifacts/rust-core-symbols-arm64-v8a.txt
             app/build/ci-artifacts/rust-core-program-headers-arm64-v8a.txt
@@ -496,6 +497,7 @@ jobs:
           compression-level: 0
           path: |
             app/build/ci-artifacts/app-armeabi-v7a-release.apk
+            app/build/ci-artifacts/android-media-boundary.json
             app/build/ci-artifacts/build-info.txt
             app/build/ci-artifacts/rust-core-symbols-armeabi-v7a.txt
             app/build/ci-artifacts/rust-core-program-headers-armeabi-v7a.txt
