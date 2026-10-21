@@ -69,7 +69,7 @@ class AudioDownloadTask {
 ///  * 取流走 [ApiClient.audioSource]（音色是 URL 的一部分，同一章不同音色是
 ///    两份独立资源）；
 ///  * 文件按 `<itemId>__<toneId>.m4a` 命名，因此记录也按音色区分；
-///  * 落盘的同样是**原始加密字节**，keyHex 只登记进加密箱，磁盘永无明文。
+///  * 落盘的同样是**原始加密字节**，keyHex 只登记进本地箱，磁盘永无明文媒体。
 ///
 /// 不直接复用 [DramaDownloader] 的原因：两者的取流模型（EpisodeSource 多变体
 /// vs 单条 cenc 音源）、文件归属（整剧目录 vs 按音色的章）和记录形状都不同，

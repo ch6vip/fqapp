@@ -5,7 +5,6 @@ import 'package:hive_ce/hive.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/audio_download_store.dart';
-import 'package:fqapp/services/secure_key_provider.dart';
 
 void main() {
   late Directory temp;
@@ -18,7 +17,6 @@ void main() {
     audioDir = Directory('${temp.path}${Platform.pathSeparator}offline-audio')
       ..createSync();
     store = HiveAudioDownloadStore(
-      keys: SecureKeyProvider(storage: InMemorySecureKeyStorage()),
       directoryResolver: () async => temp,
     );
     await store.warmUp();
@@ -27,7 +25,7 @@ void main() {
   tearDown(() async {
     await Hive.close();
     try {
-      await Hive.deleteBoxFromDisk('audio_download_v1_enc');
+      await Hive.deleteBoxFromDisk('audio_download_v1');
     } catch (_) {}
     try {
       await temp.delete(recursive: true);
@@ -76,7 +74,7 @@ void main() {
 
   test('the chapter record itself never carries keyHex', () async {
     await store.saveChapter(chapter());
-    final box = Hive.box<dynamic>('audio_download_v1_enc');
+    final box = Hive.box<dynamic>('audio_download_v1');
     final raw = box.get('chapter:ch1|toneA');
     expect(raw, isA<Map>());
     expect((raw as Map).containsKey('keyHex'), isFalse);
@@ -108,7 +106,7 @@ void main() {
     await store.removeChapter('ch1', toneId: 'toneA');
     expect(File(cached.filePath).existsSync(), isFalse);
     expect(await store.chapter('ch1', toneId: 'toneA'), isNull);
-    final box = Hive.box<dynamic>('audio_download_v1_enc');
+    final box = Hive.box<dynamic>('audio_download_v1');
     expect(box.get('key:ch1|toneA'), isNull);
   });
 
@@ -159,7 +157,7 @@ void main() {
         ],
       ),
     );
-    final box = Hive.box<dynamic>('audio_download_v1_enc');
+    final box = Hive.box<dynamic>('audio_download_v1');
     final raw = box.get('book:book1|toneA');
     expect(raw, isA<Map>());
     expect((raw as Map)['title'], '测试书');

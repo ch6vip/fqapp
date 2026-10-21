@@ -22,6 +22,7 @@ import 'pages/drama_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
+import 'services/encrypted_box_migration.dart';
 import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_preferences.dart';
@@ -87,6 +88,10 @@ Future<void> main() async {
 
 Future<void> _initializeLocalData() async {
   await Hive.initFlutter();
+  // 加密存储撤销后的一次性迁移：把老版本落盘的 `<name>_enc` 加密箱搬回
+  // 明文箱。迁移器内部逐箱吞错（取不到密钥/解不开就保留原文件跳过），
+  // 绝不让本地数据迁移把启动锁死。
+  await EncryptedBoxMigration.migrateAll(Hive);
   // 以下初始化互相独立（各开各的 box / 各读各的配置），串行等只会把
   // 磁盘 I/O 叠加到冷启动里；并行发起，失败语义与串行时一致：必需项
   // （书架/历史）失败仍使启动失败，可选项各自吞错退化。

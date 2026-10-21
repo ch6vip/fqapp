@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
-import 'encrypted_hive.dart';
 
 import '../models/media_item.dart';
 
@@ -62,8 +61,7 @@ class HomeFeedCache {
     final box = _box;
     if (box != null) return box;
     try {
-      return _box =
-          await (_opening ??= EncryptedHive.openBox(_hive, _boxName));
+      return _box = await (_opening ??= _hive.openBox(_boxName));
     } on Object {
       _opening = null;
       rethrow;

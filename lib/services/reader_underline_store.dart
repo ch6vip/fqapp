@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:hive_ce/hive.dart';
 
-import 'encrypted_hive.dart';
 
 /// One locally saved 划线: a paragraph the reader marked, kept on the device.
 @immutable
@@ -232,8 +231,7 @@ class ReaderUnderlineStore {
     try {
       // Hive throws synchronously when it has no directory yet, so the call
       // itself has to sit inside the guard, not only its await.
-      final pending =
-          _opening ??= EncryptedHive.openBox<dynamic>(_hive, _boxName);
+      final pending = _opening ??= _hive.openBox<dynamic>(_boxName);
       final box = await pending;
       if (box.isOpen) return box;
       _opening = null;

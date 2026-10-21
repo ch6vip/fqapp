@@ -13,7 +13,6 @@ import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/series_detail_page.dart';
 import 'package:fqapp/services/player_style_config.dart';
-import 'package:fqapp/services/secure_key_provider.dart';
 
 import 'support/controlled_player.dart';
 
@@ -22,11 +21,6 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    // 详情页走真实 ChapterCacheStore（加密盒）。密钥加载在 widget 测试的
-    // fake-async 里会挂起、留一个未完成的超时 Timer（teardown 报错）；
-    // 在真实异步的 setUp 里先触发一次，让 provider 缓存这次失败，
-    // widget 阶段的查找直接返回 cached null，不再新建 Timer。
-    await SecureKeyProvider.instance.getOrCreateKey();
     // 书详情页走真实 ChapterCacheStore，需要 Hive。
     directory = await Directory.systemTemp.createTemp('fqapp-nav-pause-');
     Hive.init(directory.path);

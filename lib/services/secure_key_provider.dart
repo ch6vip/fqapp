@@ -46,20 +46,20 @@ class InMemorySecureKeyStorage implements SecureKeyStorage {
 /// Owns the random 256-bit keys that encrypt local data at rest.
 ///
 /// One key per purpose, all base64-encoded in secure storage:
-/// - [hiveBoxKeyName]: the Hive `HiveAesCipher` key for every encrypted box
-///   (see `EncryptedHive`);
 /// - [devicePoolKeyName]: the Rust device-pool file key, handed to the core
-///   via the `set_device_pool_key` FRB call at startup (P1-2). Sharing the
-///   infrastructure but not the key material: compromising one store must not
-///   open the other.
+///   via the `set_device_pool_key` FRB call at startup (P1-2).
+/// - [hiveBoxKeyName]: the retired Hive box key (P1-3). Hive boxes are
+///   plaintext again — the Keystore chain hard-locked startup on devices
+///   whose secure storage misbehaved — and nothing creates this key any
+///   more; [readExistingKey] only reads a pre-existing entry so the
+///   one-time encrypted-box migration can move old encrypted boxes back
+///   to plaintext.
 ///
 /// A missing entry is created once (random 256-bit via
-/// `Hive.generateSecureKey`) and persisted; a present-but-malformed entry is
-/// treated as a lost key and replaced, which makes the boxes encrypted under
-/// the old key unreadable — `EncryptedHive` then treats those boxes as empty
-/// rather than falling back to plaintext. When secure storage itself throws
-/// (no platform channel, Keystore failure), `null` is returned and callers
-/// degrade per their own policy instead of failing startup.
+/// `Hive.generateSecureKey`) and persisted; a present-but-malformed entry
+/// is treated as a lost key and replaced. When secure storage itself
+/// throws (no platform channel, Keystore failure), `null` is returned
+/// and callers degrade per their own policy instead of failing startup.
 class SecureKeyProvider {
   SecureKeyProvider({
     SecureKeyStorage? storage,
@@ -68,7 +68,9 @@ class SecureKeyProvider {
 
   static final SecureKeyProvider instance = SecureKeyProvider();
 
-  /// Hive box encryption key (base64 of 32 random bytes).
+  /// Hive box encryption key (base64 of 32 random bytes). Retired with the
+  /// encrypted boxes; kept so the one-time plaintext migration can find
+  /// the entry written by pre-revert versions.
   static const hiveBoxKeyName = 'fqapp_hive_encryption_key_v1';
 
   /// Rust device-pool file encryption key (base64 of 32 random bytes).
@@ -138,8 +140,27 @@ class SecureKeyProvider {
     }
   }
 
+  /// Read-only lookup used by the one-time encrypted-box migration:
+  /// returns the stored key when a present, well-formed entry exists and
+  /// `null` otherwise. Never creates a key and never writes, so a device
+  /// whose secure storage is unavailable simply skips the migration and
+  /// keeps its encrypted boxes untouched for a later launch.
+  Future<Uint8List?> readExistingKey({
+    String name = hiveBoxKeyName,
+  }) async {
+    try {
+      final stored = await _storage.read(name).timeout(storageTimeout);
+      if (stored == null) return null;
+      final decoded = base64Decode(stored);
+      if (decoded.length != 32) return null;
+      return Uint8List.fromList(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Device-pool file key for the P1-2 FRB handoff. Same infrastructure as
-  /// the Hive key, separate key material.
+  /// the retired Hive key, separate key material.
   Future<Uint8List?> devicePoolKey() =>
       getOrCreateKey(name: devicePoolKeyName);
 

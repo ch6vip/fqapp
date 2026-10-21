@@ -4,17 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
-import 'package:fqapp/services/secure_key_provider.dart';
 
 void main() {
   late Directory directory;
-  late SecureKeyProvider keys;
   setUp(() async {
     directory = await Directory.systemTemp.createTemp(
       'fqapp-chapter-cache-test-',
     );
     Hive.init(directory.path);
-    keys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
   });
   tearDown(() async {
     await Hive.close();
@@ -24,14 +21,14 @@ void main() {
   test(
     'catalog and text survive reopening, including colliding chapter IDs',
     () async {
-      final store = ChapterCacheStore(keys: keys, );
+      final store = ChapterCacheStore();
       await store.saveBook(_book('a'));
       await store.saveBook(_book('b'));
       await _write(store, 'a', 'same', '第一本正文');
       await _write(store, 'b', 'same', '第二本正文');
       await Hive.close();
 
-      final reopened = ChapterCacheStore(keys: keys, );
+      final reopened = ChapterCacheStore();
       expect(await reopened.read(bookId: 'a', chapterId: 'same'), '第一本正文');
       expect(await reopened.read(bookId: 'b', chapterId: 'same'), '第二本正文');
       final books = await reopened.books();
@@ -42,7 +39,7 @@ void main() {
   );
 
   test('evicts least recently read text and enforces the byte limit', () async {
-    final store = ChapterCacheStore(keys: keys, maxEntries: 2, maxBytes: 12);
+    final store = ChapterCacheStore(maxEntries: 2, maxBytes: 12);
     await _write(store, 'a', '1', 'aaaa');
     await _write(store, 'a', '2', 'bbbb');
     await store.read(bookId: 'a', chapterId: '1');
@@ -59,7 +56,7 @@ void main() {
   test(
     'a catalogue saved before its first chapter survives other evictions',
     () async {
-      final store = ChapterCacheStore(keys: keys, maxEntries: 2);
+      final store = ChapterCacheStore(maxEntries: 2);
       // The download sheet saves the catalogues before any chapter lands.
       await store.saveBook(_book('a'));
       await store.saveBook(_book('x'));
@@ -67,7 +64,7 @@ void main() {
       await _write(store, 'x', '2', '正文二');
       // Another book's write evicts a chapter while 'x' still has text cached.
       await _write(store, 'x', '3', '正文三');
-      final box = Hive.box('chapter_cache_v1_enc');
+      final box = Hive.box('chapter_cache_v1');
       // A catalogue survives while any of its chapters is still cached.
       expect(box.containsKey('book:x'), isTrue);
       // The interrupted download of 'a' resumes and fills its chapters.
@@ -92,7 +89,7 @@ void main() {
   test(
     'clear is ordered after pending writes and preserves reading history',
     () async {
-      final store = ChapterCacheStore(keys: keys, );
+      final store = ChapterCacheStore();
       final history = await Hive.openBox('history');
       await history.put('a', {'position': 35});
       final operations = [
@@ -114,9 +111,9 @@ void main() {
   test(
     'damaged metadata cannot block cache reads or defeat capacity limits',
     () async {
-      final store = ChapterCacheStore(keys: keys, maxBytes: 8);
+      final store = ChapterCacheStore(maxBytes: 8);
       await store.saveBook(_book('a'));
-      final box = Hive.box('chapter_cache_v1_enc');
+      final box = Hive.box('chapter_cache_v1');
       await box.put('chapter:["a","same"]', {
         'bookId': 'a',
         'chapterId': 'same',
@@ -137,11 +134,11 @@ void main() {
   test(
     'clearing a book removes damaged chapter records without touching others',
     () async {
-      final store = ChapterCacheStore(keys: keys, );
+      final store = ChapterCacheStore();
       await store.saveBook(_book('a'));
       await store.saveBook(_book('ab'));
       await _write(store, 'ab', 'same', 'Unrelated content');
-      final box = Hive.box('chapter_cache_v1_enc');
+      final box = Hive.box('chapter_cache_v1');
       await box.put('chapter:["a","same"]', {'text': 42});
       await box.put('chapter:["a","truncated"]', 'truncated data');
       await store.clear(bookId: 'a');
@@ -157,7 +154,7 @@ void main() {
   test(
     'an access-time write failure does not hide readable offline text',
     () async {
-      final store = ChapterCacheStore(keys: keys, hive: _ReadOnlyHive());
+      final store = ChapterCacheStore(hive: _ReadOnlyHive());
       expect(
         await store.read(bookId: 'a', chapterId: 'same'),
         'Readable content',
@@ -171,7 +168,7 @@ void main() {
       // Why a download has to be pinned: under the automatic budget, an uncapped
       // "download everything" deletes the chapters the reader is standing on and
       // leaves only the tail of the catalogue.
-      final store = ChapterCacheStore(keys: keys, maxEntries: 3);
+      final store = ChapterCacheStore(maxEntries: 3);
       for (var index = 1; index <= 6; index++) {
         await _write(store, 'a', '$index', '正文$index');
       }
@@ -180,7 +177,7 @@ void main() {
   );
 
   test('a pinned download runs past the cap intact', () async {
-    final store = ChapterCacheStore(keys: keys, maxEntries: 3);
+    final store = ChapterCacheStore(maxEntries: 3);
     for (var index = 1; index <= 6; index++) {
       await _write(store, 'a', '$index', '正文$index', pinned: true);
     }
@@ -188,7 +185,7 @@ void main() {
   });
 
   test('pinned downloads do not spend the automatic budget', () async {
-    final store = ChapterCacheStore(keys: keys, maxEntries: 2);
+    final store = ChapterCacheStore(maxEntries: 2);
     for (final id in ['p1', 'p2', 'p3']) {
       await _write(store, 'a', id, '下载$id', pinned: true);
     }

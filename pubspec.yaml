@@ -39,8 +39,10 @@ dependencies:
   path_provider: ^2.1.0
   shared_preferences: ^2.3.0
   url_launcher: ^6.3.0
-  # hive_ce is the maintained Hive fork; all boxes open encrypted via
-  # EncryptedHive (P1-3). Keys live in flutter_secure_storage (Keystore).
+  # hive_ce is the maintained Hive fork; boxes are plaintext (the P1-3
+  # encrypted boxes were reverted — the Keystore key chain hard-locked
+  # startup on some devices; old `_enc` boxes migrate back on launch).
+  # flutter_secure_storage remains for the Rust device-pool key (P1-2).
   hive_ce: ^2.0.0
   hive_ce_flutter: ^2.0.0
   flutter_secure_storage: ^9.0.0

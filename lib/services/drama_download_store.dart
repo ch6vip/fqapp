@@ -5,16 +5,14 @@ import 'package:hive_ce/hive.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/media_item.dart';
-import 'encrypted_hive.dart';
 import 'episode_source_cache.dart';
-import 'secure_key_provider.dart';
 
 /// 一集的离线缓存记录。文件是**原始 CENC 加密字节**（与官方加密落盘同
 /// 姿态），keyHex 是该集确定性派生的内容密钥——回放时把 `file://` 路径
 /// 和 key 一起交给原生播放器，解密仍发生在 C 核心流层，磁盘上永远没有
 /// 明文。
 ///
-/// P1-4：keyHex 不进集记录本身。它只存在同一个**加密**箱里的独立条目
+/// P1-4：keyHex 不进集记录本身。它只存在同一个箱里的独立条目
 /// `key:<itemId>` 下（见 [HiveDramaDownloadStore]），集记录里永远不带
 /// keyHex；播放时由 store 把两者拼回 [CachedEpisode]。
 @immutable
@@ -197,7 +195,6 @@ abstract interface class DramaDownloadStore {
 class HiveDramaDownloadStore implements DramaDownloadStore {
   HiveDramaDownloadStore({
     HiveInterface? hive,
-    this._keys,
     Future<Directory> Function()? directoryResolver,
   }) : _hive = hive ?? Hive,
        _dirResolver = directoryResolver;
@@ -206,22 +203,17 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   static const _boxName = 'drama_download_v1';
 
   /// Key entry for one episode: `key:<itemId>` -> keyHex, in the same
-  /// encrypted box as the episode record. P1-4 keeps the content key out
+  /// box as the episode record. P1-4 keeps the content key out
   /// of the episode record itself.
   static String _keyKey(String itemId) => 'key:$itemId';
 
   /// One-time marker: embedded-key migration (below) has run on this box.
   static const _keySplitMarker = '__key_split_v1';
 
-  /// Encryption-key source. Production uses the shared secure-storage
-  /// provider; tests inject an in-memory one. The box holds content keys,
-  /// so it opens with `requireEncryption`: no key, no plaintext fallback.
-  final SecureKeyProvider? _keys;
-
   /// box 是否已打开。播放器的离线命中读路径用它做前置门：Hive 未初始化
   /// 时触碰 openBox 会产生无法被 try/catch 完全拦住的异步错误（openBox
   /// 内部 completer 的孪生错误），生产环境由 main 的 [warmUp] 打开。
-  bool get isReady => EncryptedHive.isBoxOpen(_hive, _boxName);
+  bool get isReady => _hive.isBoxOpen(_boxName);
 
   /// 启动时打开 box；失败不拖启动（离线命中退化为每次都走在线）。
   Future<void> warmUp() async {
@@ -245,8 +237,8 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     // Hive.close()（全量关箱，测试 tearDown 的常态）之后 openBox 仍会把
     // 注册表里的已关闭实例交回来——按「已开直接取、未开才开」收口，
     // 不做「拿到关闭箱就重试」的递归（那会无限循环）。
-    if (EncryptedHive.isBoxOpen(_hive, _boxName)) {
-      final box = EncryptedHive.box<dynamic>(_hive, _boxName);
+    if (_hive.isBoxOpen(_boxName)) {
+      final box = _hive.box<dynamic>(_boxName);
       await _migrateEmbeddedKeys(box);
       return box;
     }
@@ -259,12 +251,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   }
 
   Future<Box<dynamic>> _openBox() async {
-    final box = await EncryptedHive.openBox<dynamic>(
-      _hive,
-      _boxName,
-      keys: _keys,
-      requireEncryption: true,
-    );
+    final box = await _hive.openBox<dynamic>(_boxName);
     await _migrateEmbeddedKeys(box);
     return box;
   }

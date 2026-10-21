@@ -6,8 +6,6 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
-import 'encrypted_hive.dart';
-import 'secure_key_provider.dart';
 
 /// 一章真人讲书/智能朗读音频的离线缓存记录。
 ///
@@ -15,7 +13,7 @@ import 'secure_key_provider.dart';
 /// `file://` 路径和内容密钥一起交给原生播放器，解密仍发生在 C 核心流层，
 /// 磁盘上永远没有明文音频。
 ///
-/// 与短剧一样，keyHex **不进章节记录本身**：它只存在同一个加密箱里的
+/// 与短剧一样，keyHex **不进章节记录本身**：它只存在同一个箱里的
 /// `key:<itemId>|<toneId>` 条目下，读取时由 [AudioDownloadStore] 拼回
 /// [CachedAudioChapter]。
 @immutable
@@ -203,7 +201,6 @@ abstract interface class AudioDownloadStore {
 class HiveAudioDownloadStore implements AudioDownloadStore {
   HiveAudioDownloadStore({
     HiveInterface? hive,
-    this._keys,
     Future<Directory> Function()? directoryResolver,
   }) : _hive = hive ?? Hive,
        _dirResolver = directoryResolver;
@@ -221,7 +218,6 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
       'book:$bookId|$toneId';
 
   final HiveInterface _hive;
-  final SecureKeyProvider? _keys;
   final Future<Directory> Function()? _dirResolver;
   Directory? _dir;
 
@@ -232,7 +228,7 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
   Future<void> _writes = Future<void>.value();
 
   @override
-  bool get isReady => EncryptedHive.isBoxOpen(_hive, _boxName);
+  bool get isReady => _hive.isBoxOpen(_boxName);
 
   @override
   Future<void> warmUp() async {
@@ -245,8 +241,8 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
   }
 
   Future<Box<dynamic>> _box() async {
-    if (EncryptedHive.isBoxOpen(_hive, _boxName)) {
-      return EncryptedHive.box<dynamic>(_hive, _boxName);
+    if (_hive.isBoxOpen(_boxName)) {
+      return _hive.box<dynamic>(_boxName);
     }
     final opening = _opening ??= _openBox();
     try {
@@ -256,12 +252,7 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
     }
   }
 
-  Future<Box<dynamic>> _openBox() => EncryptedHive.openBox<dynamic>(
-    _hive,
-    _boxName,
-    keys: _keys,
-    requireEncryption: true,
-  );
+  Future<Box<dynamic>> _openBox() => _hive.openBox<dynamic>(_boxName);
 
   Future<T> _serialize<T>(Future<T> Function(Box<dynamic>) action) {
     final operation = _writes.then((_) async => action(await _box()));

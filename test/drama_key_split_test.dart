@@ -4,8 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 
 import 'package:fqapp/services/drama_download_store.dart';
-import 'package:fqapp/services/encrypted_hive.dart';
-import 'package:fqapp/services/secure_key_provider.dart';
 
 /// P1-4: keyHex never persists inside the episode record; it lives in a
 /// dedicated `key:<itemId>` entry in the same encrypted box, and playback
@@ -13,7 +11,6 @@ import 'package:fqapp/services/secure_key_provider.dart';
 void main() {
   late Directory temp;
   late Directory videoDir;
-  late SecureKeyProvider keys;
   late HiveDramaDownloadStore store;
 
   CachedEpisode episode({
@@ -42,9 +39,7 @@ void main() {
     Hive.init(temp.path);
     videoDir = Directory('${temp.path}${Platform.pathSeparator}offline-video')
       ..createSync();
-    keys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
     store = HiveDramaDownloadStore(
-      keys: keys,
       directoryResolver: () async => videoDir,
     );
   });
@@ -56,7 +51,7 @@ void main() {
 
   test('keyHex is stored apart from the episode record', () async {
     await store.saveEpisode(episode());
-    final box = Hive.box<dynamic>('drama_download_v1_enc');
+    final box = Hive.box<dynamic>('drama_download_v1');
     final raw = box.get('episode:ep1') as Map;
     expect(raw.containsKey('keyHex'), isFalse);
     expect(box.get('key:ep1'), '0102030405060708090a0b0c0d0e0f10');
@@ -70,12 +65,7 @@ void main() {
 
   test('legacy record with an embedded key migrates on open', () async {
     // Simulate a pre-P1-4 record: keyHex embedded in the episode map.
-    final box = await EncryptedHive.openBox<dynamic>(
-      Hive,
-      'drama_download_v1',
-      keys: keys,
-      requireEncryption: true,
-    );
+    final box = await Hive.openBox<dynamic>('drama_download_v1');
     await box.put('episode:ep1', {
       'seriesId': 'series1',
       'itemId': 'ep1',
@@ -93,7 +83,7 @@ void main() {
     final back = await store.episode('ep1');
     expect(back, isNotNull);
     expect(back!.keyHex, 'aabbccddeeff00112233445566778899');
-    final reopened = Hive.box<dynamic>('drama_download_v1_enc');
+    final reopened = Hive.box<dynamic>('drama_download_v1');
     expect(
       (reopened.get('episode:ep1') as Map).containsKey('keyHex'),
       isFalse,
@@ -111,7 +101,7 @@ void main() {
     await store.saveEpisode(episode());
     await store.saveEpisode(episode(itemId: 'ep2'));
     await store.removeEpisode('ep1');
-    final box = Hive.box<dynamic>('drama_download_v1_enc');
+    final box = Hive.box<dynamic>('drama_download_v1');
     expect(box.containsKey('episode:ep1'), isFalse);
     expect(box.containsKey('key:ep1'), isFalse);
     expect(box.containsKey('key:ep2'), isTrue);
