@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -21,7 +22,7 @@ import 'package:flutter/services.dart';
 class FairMemoryService {
   static final FairMemoryService instance = FairMemoryService._();
 
-  static const _channel = MethodChannel('fqapp/fair_memory');
+  static const _channel = AppMethodChannel('fqapp/fair_memory');
 
   /// KILL 到达时需要刷盘的回调。注册返回注销函数，页面 dispose / 控制器
   /// 关闭时调用。回调内部错误会被隔离（记为未处理），不影响其他回调。
@@ -77,23 +78,20 @@ class FairMemoryService {
     cache.clearLiveImages();
   }
 
+  Future<bool> flushForExit() => _flushState();
+
   Future<bool> _flushState() async {
     if (_flushHandlers.isEmpty) return true;
     final results = await Future.wait(
-      _flushHandlers.map(
-        (handler) async {
-          try {
-            await handler();
-            return true;
-          } catch (_) {
-            return false;
-          }
-        },
-      ),
-    ).timeout(
-      _flushTimeout,
-      onTimeout: () => <bool>[false],
-    );
+      _flushHandlers.map((handler) async {
+        try {
+          await handler();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }),
+    ).timeout(_flushTimeout, onTimeout: () => <bool>[false]);
     return results.every((handled) => handled);
   }
 }

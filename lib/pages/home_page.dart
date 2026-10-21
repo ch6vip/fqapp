@@ -1,3 +1,4 @@
+import '../services/desktop_platform.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -129,7 +130,9 @@ class _HomePageState extends ConsumerState<HomePage> {
           Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 840),
+              constraints: BoxConstraints(
+                maxWidth: isWindowsDesktop ? 1440 : 840,
+              ),
               child: SafeArea(
                 bottom: false,
                 child: state.error != null && state.items.isEmpty
@@ -234,11 +237,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       ),
       if (state.tabIndex == 0)
-        SliverToBoxAdapter(
-          child: HomeResumeCard(
-            onOpen: _openItem,
-          ),
-        ),
+        SliverToBoxAdapter(child: HomeResumeCard(onOpen: _openItem)),
       if (rest.isNotEmpty) ...[
         SliverToBoxAdapter(
           child: HomeSectionHeader(
@@ -355,4 +354,3 @@ class _HomePageState extends ConsumerState<HomePage> {
     openBookDetail(context, item);
   }
 }
-

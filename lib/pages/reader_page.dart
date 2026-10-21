@@ -1,3 +1,6 @@
+import 'package:flutter/gestures.dart';
+import '../services/desktop_platform.dart';
+import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/material.dart';
@@ -444,8 +447,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     ListeningSession.instance.addListener(_onListeningTick);
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次阅读进度，避免被杀丢进度。
-    _unregisterFairMemoryFlush =
-        FairMemoryService.instance.registerFlushHandler(_persistProgress);
+    _unregisterFairMemoryFlush = FairMemoryService.instance
+        .registerFlushHandler(_persistProgress);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -874,8 +877,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final chapterId = _chapter.itemId;
     final loadGeneration = _loadGeneration;
     final existing = _rangeUnderlines
-        .where((underline) => underline.coversExactly(selection.start,
-            selection.end))
+        .where(
+          (underline) =>
+              underline.coversExactly(selection.start, selection.end),
+        )
         .toList();
     if (!add && existing.isEmpty) return;
     final record = ReaderRangeUnderline(
@@ -983,9 +988,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     List<ReaderRangeUnderline> ranges;
     try {
       final saved = await store.load(widget.bookId, chapterId);
-      ids = {
-        for (final entry in saved.values) entry.id,
-      };
+      ids = {for (final entry in saved.values) entry.id};
       ranges = await store.loadRanges(widget.bookId, chapterId);
     } catch (_) {
       ids = const {};
@@ -2167,10 +2170,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           paragraphAnchored &&
           !_chapterContent.timelineChecked) {
         _showMessage('正在获取本段音频…');
-        await _refreshCachedChapter(chapter).timeout(
-          const Duration(seconds: 12),
-          onTimeout: () {},
-        );
+        await _refreshCachedChapter(
+          chapter,
+        ).timeout(const Duration(seconds: 12), onTimeout: () {});
         // The user may have turned the page while the timeline was in flight.
         // Serving another chapter's paragraph position would start playback at
         // a place nobody asked for.
@@ -2269,7 +2271,97 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     );
   }
 
+  DateTime _desktopWheelAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _desktopScroll(PointerSignalEvent signal) {
+    if (!_paged || signal is! PointerScrollEvent || signal.scrollDelta.dy == 0) {
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(signal, (_) {
+      final now = DateTime.now();
+      if (now.difference(_desktopWheelAt).inMilliseconds < 180) return;
+      _desktopWheelAt = now;
+      unawaited(_turnPage(signal.scrollDelta.dy > 0 ? 1 : -1));
+    });
+  }
+
   Widget _buildReader(BuildContext context) {
+    if (!isWindowsDesktop) return _buildReaderSurface(context);
+    return LayoutBuilder(
+      builder: (context, bounds) => ColoredBox(
+        color: _effectivePreset.backgroundColor,
+        child: Row(
+          children: [
+            if (bounds.maxWidth >= 1000)
+              DesktopChapterSidebar(
+                chapters: widget.chapters,
+                currentIndex: _index,
+                onSelected: (index) => unawaited(_jumpToChapter(index)),
+              ),
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 880),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Focus(
+                        autofocus: true,
+                        onKeyEvent: (node, event) {
+                          if (event is! KeyDownEvent ||
+                              FocusManager.instance.primaryFocus?.context
+                                      ?.findAncestorWidgetOfExactType<
+                                        EditableText
+                                      >() !=
+                                  null) {
+                            return KeyEventResult.ignored;
+                          }
+                          final key = event.logicalKey;
+                          if ([
+                            LogicalKeyboardKey.arrowRight,
+                            LogicalKeyboardKey.pageDown,
+                          ].contains(key)) {
+                            unawaited(_turnPage(1));
+                            return KeyEventResult.handled;
+                          }
+                          if ([
+                            LogicalKeyboardKey.arrowLeft,
+                            LogicalKeyboardKey.pageUp,
+                          ].contains(key)) {
+                            unawaited(_turnPage(-1));
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        child: Listener(
+                          onPointerSignal: _desktopScroll,
+                          child: _buildReaderSurface(context),
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: ValueListenableBuilder<double>(
+                            valueListenable: DesktopPlatform.readerBrightness,
+                            builder: (_, brightness, _) => ColoredBox(
+                              color: Colors.black.withValues(
+                                alpha: 1 - brightness,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReaderSurface(BuildContext context) {
     final preset = _effectivePreset;
     final windowPadding = MediaQuery.paddingOf(context);
     final overlayStyle = preset.isDark
@@ -2365,9 +2457,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 _menuEdge(top: false, child: _buildReaderControls(preset)),
                 // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
                 if (_einkFlashVisible)
-                  const Positioned.fill(
-                    child: ColoredBox(color: Colors.white),
-                  ),
+                  const Positioned.fill(child: ColoredBox(color: Colors.white)),
               ],
             ),
           ),
@@ -2466,10 +2556,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             IconButton(
               tooltip: '收起阅读菜单',
               onPressed: _toggleControls,
-              icon: Icon(
-                LucideIcons.chevron_up,
-                color: preset.textColor,
-              ),
+              icon: Icon(LucideIcons.chevron_up, color: preset.textColor),
             ),
           ],
         ),
@@ -2668,7 +2755,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final origin = overlayBox.globalToLocal(
       entry.box.localToGlobal(Offset(caret.x, caret.top)),
     );
-    return (x: origin.dx, top: origin.dy, bottom: origin.dy + caret.bottom - caret.top);
+    return (
+      x: origin.dx,
+      top: origin.dy,
+      bottom: origin.dy + caret.bottom - caret.top,
+    );
   }
 
   /// [offset] (chapter space) resolved into [block]'s text space, snapping a
@@ -2720,9 +2811,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // A drag can land a bound on the '\n' separator between two blocks; such
     // a range paints nothing, so grow it onto the next real character — the
     // finger must never hold an invisible selection.
-    if (next.isValid &&
-        next.end < range.$2 &&
-        _selectionPaintsNothing(next)) {
+    if (next.isValid && next.end < range.$2 && _selectionPaintsNothing(next)) {
       next = next.copyWith(end: next.end + 1);
     }
     if (next == selection) return;
@@ -3222,13 +3311,13 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
                             if (widget.cachedIds.contains(chapter.itemId))
                               const Tooltip(
                                 message: '已缓存',
-                                child: Icon(
-                                  LucideIcons.circle_check,
-                                  size: 18,
-                                ),
+                                child: Icon(LucideIcons.circle_check, size: 18),
                               ),
                             if (current)
-                              Icon(LucideIcons.locate_fixed, color: scheme.primary),
+                              Icon(
+                                LucideIcons.locate_fixed,
+                                color: scheme.primary,
+                              ),
                           ],
                         ),
                       ),

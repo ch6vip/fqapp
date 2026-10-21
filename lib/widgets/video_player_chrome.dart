@@ -1,3 +1,5 @@
+import '../services/desktop_platform.dart';
+import 'desktop_video_chrome.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -143,6 +145,8 @@ class VideoPlayerChrome extends StatefulWidget {
   final List<EpisodeVariant> qualityVariants;
   final String? currentQualityUrl;
   final ValueChanged<EpisodeVariant>? onQualitySelected;
+  final Future<void> Function(double)? onPlaybackRateChanged;
+  final Future<void> Function(double)? onPlaybackVolumeChanged;
 
   /// 最终确定的 seek 目标（进度条拖动收尾、横滑收尾、±10s 快进/回拖、
   /// 播完重播回零）。拖动过程中的实时 seek 不上报，只报收尾值，
@@ -211,6 +215,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.qualityVariants = const [],
     this.currentQualityUrl,
     this.onQualitySelected,
+    this.onPlaybackRateChanged,
+    this.onPlaybackVolumeChanged,
   });
 
   @override
@@ -342,9 +348,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _panel.addListener(_panelChanged);
     _listenToPosition();
     WidgetsBinding.instance.addObserver(this);
-    _appActive =
-        WidgetsBinding.instance.lifecycleState == null ||
-        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _appActive = playbackAppIsActive(WidgetsBinding.instance.lifecycleState);
     _lockController =
         AnimationController(
           vsync: this,
@@ -507,8 +511,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // `inactive` 只是瞬态打断（下拉通知栏/控制中心/分屏呼出）：应用仍在
     // 前台可见，播放继续；只有 hidden/paused/detached 才表示真正离场。
-    if (state == AppLifecycleState.inactive) return;
-    final active = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.inactive && !isWindowsDesktop) return;
+    final active = playbackAppIsActive(state);
     if (!active && _appActive) {
       _appActive = false;
       ++_interaction;
@@ -1476,7 +1480,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   @override
-  Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
+  Widget build(BuildContext context) => isWindowsDesktop
+      ? DesktopVideoChrome(configuration: widget, onRateSelected: (rate) async {
+          ++_rateGeneration;
+          setState(() => _rate = rate);
+          await PlayerPreferences.savePlaybackRate(rate);
+          if (widget.onPlaybackRateChanged case final changed?) { await changed(rate); }
+          else { await _control((player) => player.setRate(rate)); }
+        }, onVolumeSelected: widget.onPlaybackVolumeChanged)
+      : AnnotatedRegion<SystemUiOverlayStyle>(
     value: const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
@@ -1602,7 +1614,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     _refreshLockVisibility();
                   } else if (portraitSeries) {
                     // 保留吞单击窗口，避免双击尾部的触摸误切播放状态。
-                    if (_ready && !_clearScreen) _guardDoubleTap();
+                    if (_ready && !_clearScreen) { _guardDoubleTap(); }
                   } else if (!widget.shortSeries) {
                     _togglePlayback();
                   } else {

@@ -1,3 +1,5 @@
+import '../services/desktop_platform.dart';
+import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -110,8 +112,8 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次漫画进度，避免被杀丢进度。
-    _unregisterFairMemoryFlush =
-        FairMemoryService.instance.registerFlushHandler(_saveProgress);
+    _unregisterFairMemoryFlush = FairMemoryService.instance
+        .registerFlushHandler(_saveProgress);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -430,6 +432,30 @@ class _ComicReaderPageState extends State<ComicReaderPage>
 
   @override
   Widget build(BuildContext context) {
+    if (!isWindowsDesktop) return _buildSurface(context);
+    return LayoutBuilder(
+      builder: (context, bounds) => Row(
+        children: [
+          if (bounds.maxWidth >= 1000)
+            DesktopChapterSidebar(
+              chapters: widget.chapters,
+              currentIndex: _chapterIndex,
+              onSelected: (index) => _changeChapter(index),
+            ),
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1000),
+                child: _buildSurface(context),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSurface(BuildContext context) {
     final empty = widget.chapters.isEmpty;
     return Scaffold(
       appBar: AppBar(
@@ -443,7 +469,9 @@ class _ComicReaderPageState extends State<ComicReaderPage>
             : [
                 IconButton(
                   tooltip: _pagedMode ? '切换为条漫模式' : '切换为翻页模式',
-                  onPressed: _loading ? null : () => setState(() => _pagedMode = !_pagedMode),
+                  onPressed: _loading
+                      ? null
+                      : () => setState(() => _pagedMode = !_pagedMode),
                   icon: Icon(_pagedMode ? Icons.view_day : Icons.auto_stories),
                 ),
                 IconButton(
@@ -526,7 +554,8 @@ class _ComicReaderPageState extends State<ComicReaderPage>
                     return PageView.builder(
                       key: const ValueKey('comic-reader-paged-view'),
                       itemCount: _images.length,
-                      onPageChanged: (page) => setState(() => _visiblePage = page),
+                      onPageChanged: (page) =>
+                          setState(() => _visiblePage = page),
                       itemBuilder: (context, index) => Center(
                         child: SizedBox(
                           width: width,

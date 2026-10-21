@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -7,8 +8,8 @@ import 'api_client.dart';
 import 'backend_transport.dart';
 
 class FanqieLibraryCaptureService {
-  static const _account = MethodChannel('fqapp/fanqie_account');
-  static const _files = MethodChannel('fqapp/library_backup');
+  static const _account = AppMethodChannel('fqapp/fanqie_account');
+  static const _files = AppMethodChannel('fqapp/library_backup');
 
   Future<FanqieLibraryCapture?> collect(
     BackendRequest request,
@@ -237,7 +238,7 @@ class _Collection {
   Future<void> _flush() async {
     if (pending.isEmpty) return;
     try {
-      final name = await const MethodChannel('fqapp/library_backup')
+      final name = await const AppMethodChannel('fqapp/library_backup')
           .invokeMethod<String>('storeFanqieCapturePart', {
             'bytes': Uint8List.fromList(
               utf8.encode(

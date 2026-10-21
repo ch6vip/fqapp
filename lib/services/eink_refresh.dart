@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -15,7 +16,7 @@ import 'package:flutter/services.dart';
 class EinkRefreshService {
   static final EinkRefreshService instance = EinkRefreshService();
 
-  static const _channel = MethodChannel('fqapp/eink-refresh');
+  static const _channel = AppMethodChannel('fqapp/eink-refresh');
 
   /// 设备是否提供海信 EPD 全刷接口。首次查询后缓存，避免每页翻页都过通道。
   bool? _supported;

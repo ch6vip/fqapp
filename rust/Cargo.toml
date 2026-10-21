@@ -15,7 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs", "io-util"] }
 tokio-util = { version = "0.7", features = ["io"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "http2", "rustls-no-provider", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "http2", "rustls-no-provider", "stream", "blocking"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1"
 aes = "0.8"
@@ -40,6 +40,9 @@ tower-http = { version = "0.6", default-features = false, features = ["fs", "set
 http-body-util = "0.1"
 futures = "0.3"
 log = "0.4"
+
+[build-dependencies]
+cc = "1"
 
 # The shipping app runs the core in-process on Android; `adb logcat` is the
 # only observability surface it has. Desktop/test builds keep log macros as

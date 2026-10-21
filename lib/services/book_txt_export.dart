@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -49,7 +50,7 @@ abstract class TxtSink {
 class PlatformTxtSink implements TxtSink {
   const PlatformTxtSink();
 
-  static const _channel = MethodChannel('fqapp/downloads');
+  static const _channel = AppMethodChannel('fqapp/downloads');
 
   @override
   Future<ExportTarget> saveText({

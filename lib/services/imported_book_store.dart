@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -5,7 +6,6 @@ import 'dart:math';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:image/image.dart' as img;
@@ -149,7 +149,7 @@ class ImportedBookStore {
           rootDirectoryProvider ?? getApplicationSupportDirectory;
 
   static final ImportedBookStore instance = ImportedBookStore();
-  static const _picker = MethodChannel('fqapp/local_books');
+  static const _picker = AppMethodChannel('fqapp/local_books');
   static bool isLocalBookId(String id) => RegExp(_bookIdPattern).hasMatch(id);
 
   final Future<Directory> Function() _rootDirectoryProvider;

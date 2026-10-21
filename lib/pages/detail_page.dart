@@ -1,3 +1,4 @@
+import '../services/desktop_platform.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -193,9 +194,9 @@ class _DetailPageState extends State<DetailPage> {
 
   Future<void> _toggleShelf() async {
     if (!ShelfStore.instance.isReady) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('本地书架暂不可用，请重试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('本地书架暂不可用，请重试')));
       return;
     }
     final added = await ShelfStore.instance.toggle(widget.item);
@@ -537,7 +538,9 @@ class _DetailPageState extends State<DetailPage> {
                   disabledForegroundColor: palette.muted,
                 ),
                 icon: Icon(
-                  _inShelf ? LucideIcons.bookmark_check : LucideIcons.bookmark_plus,
+                  _inShelf
+                      ? LucideIcons.bookmark_check
+                      : LucideIcons.bookmark_plus,
                   size: 20,
                 ),
               ),
@@ -557,59 +560,104 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ],
         ),
-        body: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: RefreshIndicator(
-              onRefresh: _load,
-              color: HomePalette.accent,
-              backgroundColor: palette.surface,
-              child: CustomScrollView(
-                key: const Key('detail_scroll'),
-                controller: _scroll,
-                physics: const BouncingScrollPhysics(
-                  parent: AlwaysScrollableScrollPhysics(),
-                ),
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: DetailHero(
-                      item: widget.item,
-                      scroll: _scroll,
-                      detail: _bookDetail,
+        body: isWindowsDesktop && MediaQuery.sizeOf(context).width >= 1000
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: 340,
+                    child: SingleChildScrollView(
+                      child: DetailHero(
+                        item: widget.item,
+                        scroll: _scroll,
+                        detail: _bookDetail,
+                      ),
                     ),
                   ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-                    sliver: SliverToBoxAdapter(
-                      child: !_supported
-                          ? _stateCard(
-                              icon: LucideIcons.file_question_mark,
-                              title: '暂不支持此内容类型',
-                              message: '可以返回继续发现其他故事。',
-                            )
-                          : _loading
-                          ? _loadingView(palette)
-                          : _error != null
-                          ? _stateCard(
-                              icon: LucideIcons.wifi_off,
-                              title: '暂时没能加载章节',
-                              message: _cachedBook == null
-                                  ? '请检查网络连接，再试一次。'
-                                  : '网络不可用。这本书已经下载到本地，可以直接离线阅读。',
-                              retry: true,
-                              onReadCached: _cachedBook == null
-                                  ? null
-                                  : _readCached,
-                            )
-                          : _content(palette),
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: _load,
+                      child: SingleChildScrollView(
+                        controller: _scroll,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(24),
+                        child: !_supported
+                            ? _stateCard(
+                                icon: LucideIcons.file_question_mark,
+                                title: '暂不支持此内容类型',
+                                message: '可以返回继续发现其他故事。',
+                              )
+                            : _loading
+                            ? _loadingView(palette)
+                            : _error != null
+                            ? _stateCard(
+                                icon: LucideIcons.wifi_off,
+                                title: '暂时没能加载章节',
+                                message: '请检查网络连接后重试，已缓存内容可离线打开。',
+                                retry: true,
+                                onReadCached: _cachedBook == null
+                                    ? null
+                                    : _readCached,
+                              )
+                            : _content(palette),
+                      ),
                     ),
                   ),
                 ],
+              )
+            : Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 840),
+                  child: RefreshIndicator(
+                    onRefresh: _load,
+                    color: HomePalette.accent,
+                    backgroundColor: palette.surface,
+                    child: CustomScrollView(
+                      key: const Key('detail_scroll'),
+                      controller: _scroll,
+                      physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: DetailHero(
+                            item: widget.item,
+                            scroll: _scroll,
+                            detail: _bookDetail,
+                          ),
+                        ),
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+                          sliver: SliverToBoxAdapter(
+                            child: !_supported
+                                ? _stateCard(
+                                    icon: LucideIcons.file_question_mark,
+                                    title: '暂不支持此内容类型',
+                                    message: '可以返回继续发现其他故事。',
+                                  )
+                                : _loading
+                                ? _loadingView(palette)
+                                : _error != null
+                                ? _stateCard(
+                                    icon: LucideIcons.wifi_off,
+                                    title: '暂时没能加载章节',
+                                    message: _cachedBook == null
+                                        ? '请检查网络连接，再试一次。'
+                                        : '网络不可用。这本书已经下载到本地，可以直接离线阅读。',
+                                    retry: true,
+                                    onReadCached: _cachedBook == null
+                                        ? null
+                                        : _readCached,
+                                  )
+                                : _content(palette),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
         bottomNavigationBar: _supported && _allChapters.isNotEmpty
             ? DetailReadBar(
                 label: _readLabel,
@@ -1241,8 +1289,7 @@ Future<void> openBookDetail(BuildContext context, MediaItem item) async {
     MaterialPageRoute<void>(
       builder: (_) => DetailPage(
         item: item,
-        autoOpenReader:
-            BookOpenPreferences.instance.directReader.value,
+        autoOpenReader: BookOpenPreferences.instance.directReader.value,
       ),
     ),
   );
