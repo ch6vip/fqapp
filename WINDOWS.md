@@ -55,7 +55,10 @@ Android 保留 ExoPlayer；只引用 `media_kit_libs_windows_video`，不打包 
 libmpv/FFmpeg 原生库。执行 Flutter 测试后构建 Android release 时，须保留 pub
 步骤（不要给 `flutter build apk` 加 `--no-pub`），以清除 dev-only 集成测试注册项。
 `.github/workflows/windows-preview.yml` 会在相关 PR 中使用未修改的 SDK 构建并验证
-桌面布局、原生媒体接口和 libmpv；程序包仅作为 Actions artifact 保存。
+桌面布局与原生媒体解密接口；程序包仅作为 Actions artifact 保存。
+额外的无界面 libmpv 诊断由手动参数 `verify_headless_media` 显式启用：
+目前托管 Windows Server 2025 在释放播放器时持续出现 `0xC0000005`，尚未解决，
+不计为通过。本机交互桌面的播放/销毁及窗口集成检查通过，服务端诊断结果单独记录。
 
 ## 第三方组件
 

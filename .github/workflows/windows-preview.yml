@@ -2,6 +2,11 @@ name: Windows build and regression
 
 on:
   workflow_dispatch:
+    inputs:
+      verify_headless_media:
+        description: 'Extra libmpv teardown diagnostic (known hosted Windows Server crash)'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'lib/**'
@@ -78,7 +83,7 @@ jobs:
             build/windows/x64/runner/Release
             rust/target/release/fqapi_core.dll
           key: ${{ steps.bundle-cache.outputs.cache-primary-key }}
-      - name: Verify real native media and libmpv
+      - name: Verify native decryption and access control
         shell: pwsh
         run: |
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -88,6 +93,10 @@ jobs:
           }
           python scripts/verify_windows_media.py
           if ($LASTEXITCODE -ne 0) { throw 'Native media verification failed' }
+      - name: Diagnose headless libmpv playback and teardown (manual)
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_headless_media
+        shell: pwsh
+        run: |
           dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe
           if ($LASTEXITCODE -ne 0) { throw 'AOT player verification compilation failed' }
           & ./build/verify_windows_player.exe
