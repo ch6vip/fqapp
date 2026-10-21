@@ -36,14 +36,15 @@ Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutte
 核对视频和音频逐帧哈希、在线/离线随机 Range、访问限制和会话关闭。
 这些离线测试不代表上游在线内容或用户账号导入已通过真实验收。
 
-`dart run scripts/verify_windows_player.dart` 使用随包 libmpv，核对加密媒体的 H264 解码尺寸、
+`dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe`
+后运行 `build/verify_windows_player.exe`，使用与产品一致的 AOT 模式和随包 libmpv，核对加密媒体的 H264 解码尺寸、
 播放/暂停/拖动/续播、倍速和静音；该测试不显示视频窗口，窗口及 GPU 呈现需另行实机验收。
 
 `flutter test integration_test/windows_playback_test.dart -d windows --no-pub --dart-define=FQAPP_TEST_MEDIA=<encrypted.mp4 绝对路径>`
 会运行真实 Windows 播放页，验证无键盘焦点时的自动起播、连续推进、暂停、进度条拖动与续播。
 夹具由上一条原生播放器校验脚本生成；测试不会读取用户的书架进度作为测试数据。
 
-1.1.1 修复 Windows 可见但未聚焦的窗口被误判为后台、导致只显示首帧的问题，
+Windows 适配修复可见但未聚焦的窗口被误判为后台、导致只显示首帧的问题，
 并保护窗口销毁时的原生回调，避免退出时再次访问已销毁的 Flutter 视图。
 `scripts/verify_windows_shutdown.dart` 是独立的退出回归入口，可用
 `flutter build windows --debug --target scripts/verify_windows_shutdown.dart --no-pub`
@@ -54,7 +55,10 @@ Android 保留 ExoPlayer；只引用 `media_kit_libs_windows_video`，不打包 
 libmpv/FFmpeg 原生库。执行 Flutter 测试后构建 Android release 时，须保留 pub
 步骤（不要给 `flutter build apk` 加 `--no-pub`），以清除 dev-only 集成测试注册项。
 `.github/workflows/windows.yml` 会在相关 PR 中使用未修改的 SDK 构建并验证
-桌面布局、原生媒体接口和 libmpv；程序包仅作为 Actions artifact 保存。
+桌面布局与原生媒体解密接口；程序包仅作为 Actions artifact 保存。
+额外的无界面 libmpv 诊断由手动参数 `verify_player` 显式启用：
+目前托管 Windows Server 2025 在释放播放器时持续出现 `0xC0000005`，尚未解决，
+不计为通过。本机交互桌面的播放/销毁及窗口集成检查通过，服务端诊断结果单独记录。
 
 ## 第三方组件
 

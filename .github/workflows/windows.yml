@@ -83,7 +83,7 @@ jobs:
             build/windows/x64/runner/Release
             rust/target/release/fqapi_core.dll
           key: ${{ steps.bundle-cache.outputs.cache-primary-key }}
-      - name: Verify real native media
+      - name: Verify native decryption and access control
         shell: pwsh
         run: |
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -93,12 +93,13 @@ jobs:
           }
           python scripts/verify_windows_media.py
           if ($LASTEXITCODE -ne 0) { throw 'Native media verification failed' }
-      - name: Verify libmpv playback (dispatch only)
-        # 播放验证需要真实桌面会话与音频设备，托管 runner 上会崩；脚本保留给本地验收。
-        if: ${{ inputs.verify_player == true }}
+      - name: Diagnose headless libmpv playback and teardown (manual)
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_player
         shell: pwsh
         run: |
-          dart run scripts/verify_windows_player.dart
+          dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe
+          if ($LASTEXITCODE -ne 0) { throw 'AOT player verification compilation failed' }
+          & ./build/verify_windows_player.exe
           if ($LASTEXITCODE -ne 0) { throw 'libmpv verification failed' }
       - name: Collect licenses and package portable preview
         shell: pwsh
@@ -120,7 +121,7 @@ jobs:
             fqapp-windows-x64-preview.zip
             build/validation/windows-media/*.json
             build/validation/windows-player/*.json
-          if-no-files-found: warn
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -38,7 +38,8 @@ try {
     }
     Invoke-Checked $flutter @('build', 'windows', '--release', '--no-pub')
     Invoke-Checked 'python' @('scripts/verify_windows_media.py')
-    Invoke-Checked (Join-Path $FlutterRoot 'bin\dart.bat') @('run', 'scripts/verify_windows_player.dart')
+    Invoke-Checked (Join-Path $FlutterRoot 'bin\dart.bat') @('compile', 'exe', 'scripts/verify_windows_player.dart', '-o', 'build/verify_windows_player.exe')
+    Invoke-Checked (Join-Path $buildRoot 'build/verify_windows_player.exe') @()
     if (-not $SkipTests) {
         $fixture = Join-Path $buildRoot 'build\validation\windows-player\encrypted.mp4'
         Invoke-Checked $flutter @('test', 'integration_test/windows_playback_test.dart', '-d', 'windows', '--no-pub', "--dart-define=FQAPP_TEST_MEDIA=$fixture")
