@@ -88,7 +88,7 @@ void main() {
         baseUrl: 'http://localhost:9000',
       );
       await expectLater(
-        api.resolve(''),
+        api.detail('1'),
         throwsA(
           isA<ApiException>()
               .having((error) => error.message, 'message', '需要 url')
@@ -105,7 +105,7 @@ void main() {
         baseUrl: 'http://localhost:9000',
       );
       await expectLater(
-        api.resolve('x'),
+        api.detail('1'),
         throwsA(
           isA<ApiException>().having(
             (error) => error.message,

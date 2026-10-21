@@ -40,7 +40,7 @@ void main() {
           final requests = <Uri>[];
           final transport = MockClient((request) async {
             requests.add(request.url);
-            final payload = request.url.path == '/api/directory'
+            final payload = request.url.path.endsWith('/directory')
                 ? {
                     'code': 200,
                     'data': {
@@ -128,7 +128,7 @@ void main() {
           ),
           throwsA(isA<ApiException>()),
         );
-        expect(requests.single.path, '/api/directory');
+        expect(requests.single.path, contains('/directory'));
       },
     );
 
@@ -255,9 +255,9 @@ void main() {
 
     await api.search(special, page: 2);
     expect(sent.queryParameters, {
-      'source': '番茄',
       'query': special,
-      'page': '2',
+      'offset': '10',
+      'count': '10',
     });
     await api.searchTabs(special, page: 3);
     expect(sent.queryParameters['query'], special);
@@ -280,30 +280,37 @@ void main() {
       'count': '10',
     });
 
-    for (final action in [api.detail, api.directory, api.directoryChapters]) {
+    // Detail and directory are addressed through the v1 routes that replaced
+    // the removed Web bridge; the id travels in the path, so the query carries
+    // nothing and the encoded id must survive intact.
+    await api.detail(special);
+    expect(sent.path, contains('/api/v1/books/'));
+    expect(sent.pathSegments.last, 'detail');
+    expect(sent.pathSegments[3], special);
+    expect(sent.queryParameters, isEmpty);
+    expect(sent.fragment, isEmpty);
+
+    for (final action in [api.directory, api.directoryChapters]) {
       await action(special, tab: special);
-      expect(sent.queryParameters, {
-        'source': '番茄',
-        'book_id': special,
-        'tab': special,
-      });
+      expect(sent.pathSegments[3], special);
+      expect(sent.pathSegments.last, 'directory');
       expect(sent.fragment, isEmpty);
     }
 
-    await api.content(special, tab: special, toneId: special, mode: special);
-    expect(sent.queryParameters, {
-      'source': '番茄',
-      'item_id': special,
-      'tab': special,
-      'tone_id': special,
-      'mode': special,
-    });
-    await api.contentText(special, tab: special);
-    expect(sent.queryParameters['item_id'], special);
+    // Novel content goes to the chapter route.
+    await api.content(special, tab: '小说', toneId: special, mode: special);
+    expect(sent.pathSegments[3], special);
+    expect(sent.queryParameters['tone_id'], special);
+    await api.contentText(special, tab: '小说');
+    expect(sent.pathSegments[3], special);
     expect(sent.fragment, isEmpty);
 
-    await api.resolve(special);
-    expect(sent.queryParameters, {'url': special});
+    // Each tab is a distinct route, not a query parameter.
+    await api.content(special, tab: '漫画');
+    expect(sent.path, contains('/api/v1/manga/'));
+    await api.content(special, tab: '短剧', mode: special);
+    expect(sent.path, contains('/api/v1/videos/'));
+    expect(sent.queryParameters['mode'], special);
     await api.homepageRecommend(tabType: 8, offset: 2, sessionId: special);
     expect(sent.queryParameters, {
       'tab_type': '8',
@@ -414,7 +421,7 @@ class _AbortAwareClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
-    if (request.url.path != '/api/detail') {
+    if (!request.url.path.endsWith('/detail')) {
       return Future.value(
         http.StreamedResponse(Stream.value(utf8.encode('{"code":200}')), 200),
       );

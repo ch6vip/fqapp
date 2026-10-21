@@ -105,12 +105,11 @@ void main() {
         client: transport,
         baseUrl: base,
       ).audioVoices(special);
-      expect(sent.path, '/api/detail');
-      expect(sent.queryParameters, {
-        'source': '番茄',
-        'book_id': special,
-        'tab': '小说',
-      });
+      expect(sent.path, endsWith('/detail'));
+      // The v1 route carries the book id in the path, so the query is empty.
+      expect(sent.pathSegments.sublist(sent.pathSegments.length - 3),
+          ['books', special, 'detail']);
+      expect(sent.queryParameters, isEmpty);
       expect(voices.map((voice) => voice.id), ['0', '2', '3', '1']);
     },
   );
@@ -162,12 +161,11 @@ void main() {
         client: transport,
         baseUrl: base,
       ).comicImages(special);
-      expect(sent.path, '/api/content');
-      expect(sent.queryParameters, {
-        'source': '番茄',
-        'item_id': special,
-        'tab': '漫画',
-      });
+      // Comics are their own v1 route; the id travels in the path, so the
+      // encoded id must arrive as the last segment.
+      expect(sent.pathSegments.sublist(sent.pathSegments.length - 3),
+          ['v1', 'manga', special]);
+      expect(sent.queryParameters, isEmpty);
       expect(images.map((image) => image.url), [
         '$base/src/b.jpg',
         'https://cdn.example/a.jpg',
@@ -292,7 +290,9 @@ class _AbortAwareMediaClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
-    if (request.url.queryParameters['item_id'] != 'stalled') {
+    // The v1 routes carry the item id in the path, not as a query parameter.
+    final segments = request.url.pathSegments;
+    if (segments.isEmpty || segments.last != 'stalled') {
       return Future.value(
         http.StreamedResponse(Stream.value(utf8.encode('{"code":200}')), 200),
       );
