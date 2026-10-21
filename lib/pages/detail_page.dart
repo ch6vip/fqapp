@@ -1120,6 +1120,8 @@ class _DetailPageState extends State<DetailPage> {
         readerStore: widget.readerStore,
         chapters: _allChapters,
         startIndex: startIndex,
+        // 阅读器内「加入书架」沿用它：书架 key 需要 seriesId/kind 一致（#103）。
+        shelfItem: widget.item,
       ),
       _ => ReaderPage(
         bookId: _contentId,
@@ -1128,6 +1130,7 @@ class _DetailPageState extends State<DetailPage> {
         readerStore: widget.readerStore,
         chapters: _allChapters,
         startIndex: startIndex,
+        shelfItem: widget.item,
         // 详情页注入的缓存（离线下载/测试用内存缓存）即阅读器的缓存；
         // 生产调用方不传时为 null，阅读器沿用默认的 ChapterCacheStore。
         chapterCache: widget.chapterCache,

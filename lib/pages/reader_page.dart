@@ -23,6 +23,8 @@ import '../services/reader_history.dart';
 import '../services/reader_preferences.dart';
 import '../services/reader_tap_zones.dart';
 import '../services/reader_underline_store.dart';
+import '../services/shelf_toggle.dart';
+import '../services/shelf_store.dart';
 import '../services/system_tts.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
@@ -79,6 +81,10 @@ class ReaderPage extends StatefulWidget {
   /// Resolves one paragraph's comment bodies. See [ParagraphCommentResolver].
   final ParagraphCommentResolver? commentResolver;
 
+  /// 加入书架时用的条目（issue #103）。详情页传入原 `MediaItem`，书架卡片因此
+  /// 保留作者/徽标等字段；其他入口省略，按 [bookId]/[title]/[cover] 兜底成小说。
+  final MediaItem? shelfItem;
+
   const ReaderPage({
     super.key,
     required this.bookId,
@@ -94,6 +100,7 @@ class ReaderPage extends StatefulWidget {
     this.imageProviderFactory,
     this.ideasLoader,
     this.commentResolver,
+    this.shelfItem,
     this.underlineStore,
   });
 
@@ -138,6 +145,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   Timer? _autoTurnTimer;
 
   bool get _paged => _preferences.pageMode == ReaderPageMode.paged;
+
+  /// 阅读器自己的书架条目（issue #103）：详情页传了原 item 就用它，否则按本页
+  /// 已有的书籍字段兜底。书架 key 是 `kind:id`，这里固定 'book'——漫画走自己的
+  /// 阅读器（kind 'manga'），两者在书架上本就是两条。
+  MediaItem get _shelfEntry =>
+      widget.shelfItem ??
+      MediaItem(
+        id: widget.bookId,
+        title: widget.title,
+        cover: widget.cover,
+        author: '',
+        badge: '',
+        ep: '',
+        kind: 'book',
+      );
 
   /// 全局墨水屏模式覆盖阅读器显示预设（#15/#9）：开启时阅读器强制纯黑白，
   /// 不改用户保存的预设，关闭后恢复原预设。夜间切换等仍写保存的预设。
@@ -2463,6 +2485,24 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ),
                 icon: Icon(LucideIcons.message_circle, color: preset.textColor),
               ),
+            ValueListenableBuilder<int>(
+              valueListenable: ShelfStore.instance.listenable,
+              builder: (context, _, _) {
+                final inShelfNow = inShelf(_shelfEntry);
+                return IconButton(
+                  key: const ValueKey('reader-shelf-button'),
+                  tooltip: inShelfNow ? '已在书架' : '加入书架',
+                  onPressed: () =>
+                      unawaited(toggleShelf(context, _shelfEntry)),
+                  icon: Icon(
+                    inShelfNow
+                        ? LucideIcons.bookmark_check
+                        : LucideIcons.bookmark_plus,
+                    color: preset.textColor,
+                  ),
+                );
+              },
+            ),
             IconButton(
               tooltip: '收起阅读菜单',
               onPressed: _toggleControls,

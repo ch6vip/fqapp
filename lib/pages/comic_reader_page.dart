@@ -12,6 +12,8 @@ import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
+import '../services/shelf_store.dart';
+import '../services/shelf_toggle.dart';
 import '../services/user_facing_error.dart';
 
 typedef ComicChapterLoader = Future<List<ComicImage>> Function(Chapter chapter);
@@ -50,6 +52,10 @@ class ComicReaderPage extends StatefulWidget {
   final ComicChapterLoader? chapterLoader;
   final ComicImageProviderFactory? imageProviderFactory;
 
+  /// 加入书架时用的条目（issue #103）。详情页传入原 `MediaItem`，书架卡片因此
+  /// 保留作者/徽标；其他入口省略，按 [bookId]/[title]/[cover] 兜底成漫画条目。
+  final MediaItem? shelfItem;
+
   const ComicReaderPage({
     super.key,
     required this.bookId,
@@ -60,6 +66,7 @@ class ComicReaderPage extends StatefulWidget {
     this.readerStore,
     this.chapterLoader,
     this.imageProviderFactory,
+    this.shelfItem,
   });
 
   @override
@@ -74,6 +81,20 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     'manga',
   );
   late final _history = ReaderHistory(_readerStore);
+
+  /// 漫画阅读器自己的书架条目（issue #103）：详情页传了原 item 就用它，否则按
+  /// 本页已有的书籍字段兜底。书架 key 是 `kind:id`，漫画固定 'manga'。
+  MediaItem get _shelfEntry =>
+      widget.shelfItem ??
+      MediaItem(
+        id: widget.bookId,
+        title: widget.title,
+        cover: widget.cover,
+        author: '',
+        badge: '',
+        ep: '',
+        kind: 'manga',
+      );
   late int _chapterIndex;
   List<ComicImage> _images = const [];
   List<double> _ratios = const [];
@@ -450,6 +471,23 @@ class _ComicReaderPageState extends State<ComicReaderPage>
                   tooltip: '刷新章节',
                   onPressed: _loading ? null : _reloadChapter,
                   icon: const Icon(Icons.refresh),
+                ),
+                ValueListenableBuilder<int>(
+                  valueListenable: ShelfStore.instance.listenable,
+                  builder: (context, _, _) {
+                    final inShelfNow = inShelf(_shelfEntry);
+                    return IconButton(
+                      key: const Key('comic_reader_shelf_button'),
+                      tooltip: inShelfNow ? '已在书架' : '加入书架',
+                      onPressed: () =>
+                          unawaited(toggleShelf(context, _shelfEntry)),
+                      icon: Icon(
+                        inShelfNow
+                            ? Icons.bookmark_added
+                            : Icons.bookmark_add_outlined,
+                      ),
+                    );
+                  },
                 ),
                 IconButton(
                   tooltip: '目录',
