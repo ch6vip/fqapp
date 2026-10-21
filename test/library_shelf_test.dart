@@ -132,6 +132,41 @@ void main() {
       expect(find.text('第4章 · 50%'), findsWidgets);
     });
 
+    testWidgets('有总章数时显示「第 N/M 章」，读完整本显示「共 M 章·已读完」（issue #110）',
+        (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('mid-book', title: '读了一半'));
+        await ShelfStore.instance.add(_item('done-book', title: '读完了'));
+        await LibraryStore.instance.addHistory({
+          'id': 'mid-book',
+          'kind': 'book',
+          'title': '读了一半',
+          'episode': 99,
+          'chapterCount': 380,
+          'progress': 0.26,
+          'time': DateTime.now().millisecondsSinceEpoch,
+        });
+        await LibraryStore.instance.addHistory({
+          'id': 'done-book',
+          'kind': 'book',
+          'title': '读完了',
+          'episode': 379,
+          'chapterCount': 380,
+          'progress': 1.0,
+          'time': DateTime.now().millisecondsSinceEpoch,
+        });
+      });
+
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+
+      // 总章数多、剩余章数少时，纯百分比会显示 26%/100% 无法区分；
+      // 章序号能直接看出还剩多少。
+      expect(find.text('第100章 · 共380章'), findsWidgets);
+      expect(find.text('共380章·已读完'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('书架按最近阅读排序，没有阅读记录的按加入时间', (tester) async {
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('old', title: '先加入的'));

@@ -1812,6 +1812,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       'bookId': widget.bookId,
       'chapterId': chapterId,
       'episode': index,
+      // 总章数：书架靠「第 N/M 章」区分「读到末尾」与「全书读完」
+      // （issue #110 第 3 条）。官方存的是 itemCounts，见 ChaseUpdateModel。
+      'chapterCount': widget.chapters.length,
       'position': position,
       'maxScroll': max,
       'positionVersion': 2,
@@ -1846,6 +1849,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         widget.chapters.length;
   }
 
+  /// Goes to the previous chapter.
+  ///
+  /// [startAtEnd] exists for the *continuous reading* paths only: paging past
+  /// the first page of a chapter, overscrolling at the top, or a tap zone that
+  /// means "back one chapter while scrolling". Those land on the previous
+  /// chapter's end so reading continues where it left off.
+  ///
+  /// An explicit「上一章」controls (toolbar button, chapter slider arrow, menu
+  /// row) must NOT pass it: the official client addresses chapters as
+  /// `Y(chapterId, 0, …)` — always the chapter start — and landing on the last
+  /// page while「下一章」lands on the first made the pair feel broken
+  /// (issue #110).
   Future<void> _prev({bool startAtEnd = false}) async {
     if (_index <= 0 || _changingChapter) return;
     _changingChapter = true;
@@ -1980,7 +1995,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _pauseListenFollow();
         unawaited(_turnPage(1));
       case ReaderTapZoneAction.prevChapter:
-        unawaited(_prev(startAtEnd: true));
+        unawaited(_prev());
       case ReaderTapZoneAction.nextChapter:
         unawaited(_next());
       case ReaderTapZoneAction.toc:
@@ -3049,9 +3064,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 14, height: 1.4),
                     ),
-                    onPressed: _index > 0
-                        ? () => _prev(startAtEnd: true)
-                        : null,
+                    onPressed: _index > 0 ? _prev : null,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -3110,7 +3123,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       seekValue: seekValue,
       deviceAvailable: _deviceAvailable,
       systemBrightness: _deviceStatus.systemBrightness,
-      onPrevious: _index > 0 ? () => _prev(startAtEnd: true) : null,
+      onPrevious: _index > 0 ? _prev : null,
       onNext: _index < widget.chapters.length - 1 ? _next : null,
       onSeek: (value) => setState(() => _chapterSeekValue = value),
       onSeekEnd: (value) {

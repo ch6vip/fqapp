@@ -35,6 +35,71 @@ void main() {
     PaintingBinding.instance.imageCache.clearLiveImages();
   });
 
+  testWidgets('「上一章」固定落在章首，「下一章」也落章首（issue #110）', (
+    tester,
+  ) async {
+    await _size(tester);
+    final store = MemoryReaderStore();
+    final cache = MemoryChapterCache();
+    for (final chapter in [_chapter, _nextChapter]) {
+      await cache.write(
+        bookId: _bookId,
+        chapterId: chapter.itemId,
+        title: chapter.title,
+        text: ChapterContent.fromPlainText(
+          // 需要多页正文：单页时章首和章末的 textOffset 都是 0，测不出落点。
+          List.generate(
+            120,
+            (i) => '${chapter.title}第$i段正文内容，用于撑出多页。',
+          ).join('\n\n'),
+          illustrationsChecked: true,
+        ).toCacheText(),
+      );
+    }
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light),
+        home: ReaderPage(
+          bookId: _bookId,
+          title: _bookTitle,
+          // 从第二章起：`上一章` 按钮在首章是禁用的，从 0 开始点不到它。
+          startIndex: 1,
+          chapters: [_chapter, _nextChapter],
+          readerStore: store,
+          chapterCache: cache,
+          chapterLoader: (chapter) async => _content().toCacheText(),
+          readerDevice: _Device(),
+          imageProviderFactory: _providerFor(portrait),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(store.entry?['chapterId'], 'second');
+
+    // 前一章：官方 Y(chapterId, 0, …) 一律从章首进入，不落在上一章末尾。
+    await _openMenu(tester);
+    await _openSettings(tester);
+    await tester.tap(find.byTooltip('上一章'));
+    await tester.pumpAndSettle();
+    expect(store.entry?['chapterId'], 'first');
+    // 章首/末尾的判据是 textOffset：startAtEnd 会把它设成 pages.last.start。
+    expect(
+      store.entry?['textOffset'] ?? 0,
+      lessThan(50),
+      reason: '上一章应落在章首，而不是上一章末尾',
+    );
+
+    // 后一章同样从章首进入，两者对称。
+    await _openMenu(tester);
+    await _openSettings(tester);
+    await tester.tap(find.byTooltip('下一章'));
+    await tester.pumpAndSettle();
+    expect(store.entry?['chapterId'], 'second');
+    expect(store.entry?['textOffset'] ?? 0, lessThan(50));
+    expect(tester.takeException(), isNull);
+    await _leave(tester);
+  });
+
   testWidgets(
     'batch illustration upgrade replaces prefetched text in the reader',
     (tester) async {
