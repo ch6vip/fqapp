@@ -138,7 +138,8 @@ class _AudioBookCardState extends State<AudioBookCard> {
     }
     // 翻转的两面必须同尺寸：背面是填充式卡片，没有固有高度，所以由外层
     // 给出封面的确定尺寸，避免 AnimatedSwitcher 在无界高度下排版失败。
-    final height = width * 313 / 293;
+    // 高度必须与 [_cover] 的画幅一致，否则翻面时两面尺寸不等会跳。
+    final height = width * _coverAspect;
     return Center(
       child: SizedBox(
         width: width,
@@ -156,10 +157,18 @@ class _AudioBookCardState extends State<AudioBookCard> {
     );
   }
 
+  /// 封面画幅：书封本身就是竖版，框也用竖版，`BoxFit.cover` 才不裁图。
+  ///
+  /// 所有调用方传的都是同一张竖版 `MediaItem.cover`（仓库里没有单独的方形
+  /// 听书图），而详情页封面 3:4、信息流 5:7 用的也是这张图。原先的
+  /// 293/313 近正方形框把竖版图上下裁掉约两成，对应 issue #85
+  /// 「书籍封面显示不完整」。
+  static const double _coverAspect = 3 / 4;
+
   Widget _cover(HomePalette palette) {
     final real = widget.realAudio;
     return AspectRatio(
-      aspectRatio: 293 / 313,
+      aspectRatio: _coverAspect,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(real ? 12 : 10),
         child: LayoutBuilder(

@@ -52,6 +52,18 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('封面是明确的 220×308 竖版画幅，而不是无高度的正方形', (tester) async {
+    // Issue #85: series posters are portrait 5/7. The cover used to declare
+    // only a width (and a square error placeholder), leaving its frame to
+    // chance; it must now size to the explicit portrait frame.
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    await tester.pumpAndSettle();
+    final cover = find.byKey(const ValueKey('listen-cover'));
+    expect(tester.getSize(cover), const Size(220, 308));
+    expect(tester.widget<Image>(cover).fit, BoxFit.cover);
+  });
+
   testWidgets('播完自动连播下一集', (tester) async {
     final created = <FakeNativePlayer>[];
     final resolved = <String>[];

@@ -290,13 +290,19 @@ class _ListenModePageState extends State<ListenModePage>
               child: Center(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
-                  child: Image.network(
-                    ApiClient.instance.absoluteUrl(widget.coverUrl),
-                    key: const ValueKey('listen-cover'),
+                  // 系列海报全应用都是竖版：信息流卡与官方详情页封面
+                  // 都是 5/7。这里给出明确框，而不是只给宽度——只给宽度时
+                  // 高度由图片自身撑，受限时 BoxFit.cover 会裁掉海报；失败
+                  // 占位也从正方形改成同一比例（issue #85）。
+                  child: SizedBox(
                     width: 220,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
-                        const SizedBox(width: 220, height: 220),
+                    height: 308,
+                    child: Image.network(
+                      ApiClient.instance.absoluteUrl(widget.coverUrl),
+                      key: const ValueKey('listen-cover'),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const SizedBox.expand(),
+                    ),
                   ),
                 ),
               ),

@@ -68,6 +68,36 @@ void main() {
     expect(catalog, 2);
   });
 
+  testWidgets('the audio book card keeps the portrait 3:4 cover ratio', (
+    tester,
+  ) async {
+    // Issue #85: the card feeds the novel's portrait cover (same image the
+    // detail page shows at 3:4). A near-square frame made BoxFit.cover crop
+    // the top/bottom of the cover, so the frame itself must be 3:4.
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: AudioBookCard(bookTitle: '听书', chapterTitle: '第一章'),
+        ),
+      ),
+    );
+    final ratio = tester.widget<AspectRatio>(
+      find.descendant(
+        of: find.byType(AudioBookCard),
+        matching: find.byType(AspectRatio),
+      ),
+    );
+    expect(ratio.aspectRatio, 3 / 4);
+    final cardSize = tester.getSize(
+      find.descendant(
+        of: find.byType(AudioBookCard),
+        matching: find.byType(ClipRRect),
+      ),
+    );
+    expect(cardSize.width, 293);
+    expect(cardSize.height, 293 * 4 / 3);
+  });
+
   testWidgets('an open read-along sheet receives late subtitles', (
     tester,
   ) async {
