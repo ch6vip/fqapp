@@ -364,7 +364,9 @@ void main() {
     expect(await api.health(), isTrue);
 
     final search = await api.search('测试');
-    expect(search['code'], 200);
+    // `search()` now talks to /api/v1/search, which answers with the REST
+    // envelope (code=0) rather than the removed Web bridge's code=200.
+    expect(search['code'], 0);
     expect((search['data'] as Map)['search_tabs'], isA<List>());
     expect(mockRequests, isNotEmpty);
 
