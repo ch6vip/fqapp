@@ -59,8 +59,25 @@ jobs:
           test/desktop_detail_layout_test.dart test/desktop_platform_test.dart
           test/desktop_video_layout_test.dart test/player_page_test.dart
           test/book_open_entry_test.dart
+      - name: Restore matching release binaries
+        id: bundle-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            build/windows/x64/runner/Release
+            rust/target/release/fqapi_core.dll
+          key: windows-3.44.6-rust1.99.1-${{ runner.arch }}-v1-${{ hashFiles('lib/**', 'pubspec.*', 'rust/Cargo.*', 'rust/src/**', 'rust/assets/**', 'rust/build.rs', 'native/**', 'assets/**', 'windows/runner/**', 'windows/CMakeLists.txt', 'windows/flutter/CMakeLists.txt', 'third_party/**') }}
       - name: Build Windows release
+        if: steps.bundle-cache.outputs.cache-hit != 'true'
         run: flutter build windows --release --target lib/main.dart
+      - name: Save verified-source release binaries
+        if: steps.bundle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            build/windows/x64/runner/Release
+            rust/target/release/fqapi_core.dll
+          key: ${{ steps.bundle-cache.outputs.cache-primary-key }}
       - name: Verify real native media and libmpv
         shell: pwsh
         run: |
