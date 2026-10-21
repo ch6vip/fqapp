@@ -479,7 +479,7 @@ class _DetailPageState extends State<DetailPage> {
     final palette = HomePalette.of(context);
     final wide =
         isWindowsDesktop &&
-        MediaQuery.sizeOf(context).width >= 1000;
+        MediaQuery.sizeOf(context).width >= 900;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value:
           (palette.dark
@@ -570,7 +570,7 @@ class _DetailPageState extends State<DetailPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   SizedBox(
-                    width: 360,
+                    width: _sideCardWidth(context),
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
                       child: _desktopSideCard(palette),
@@ -601,7 +601,7 @@ class _DetailPageState extends State<DetailPage> {
                                     ? null
                                     : _readCached,
                               )
-                            : _content(palette),
+                            : _content(palette, desktop: true),
                       ),
                     ),
                   ),
@@ -776,7 +776,16 @@ class _DetailPageState extends State<DetailPage> {
 
   /// Masthead metadata, author, stats, summary, tags, catalog and reviews —
   /// the section order of the official detail page.
-  Widget _content(HomePalette palette) {
+  /// 右栏分节（PR #104 评审原型）：桌面宽屏下把「简介 / 目录 / 评论」拆成可切换
+  /// 的三节，避免两百多章的目录把详情页拉成一条长滚动；移动端仍按官方顺序整列
+  /// 铺开，行为不变。
+  int _desktopSection = 0;
+
+  /// 左栏卡片宽度：窗口越宽给得越多；900–1200 之间收到 320，保住右栏可用宽度。
+  double _sideCardWidth(BuildContext context) =>
+      MediaQuery.sizeOf(context).width >= 1200 ? 360 : 320;
+
+  Widget _content(HomePalette palette, {bool desktop = false}) {
     final detail = _bookDetail;
     final author = detail?.author;
     final score = detail?.scoreValue;
@@ -801,6 +810,34 @@ class _DetailPageState extends State<DetailPage> {
       if (detail?.statusLabel.isNotEmpty == true) detail!.statusLabel,
       '共 ${_allChapters.length} $_chapterUnit',
     ].join(' ');
+    final summarySection = <Widget>[
+      DetailDescription(text: extractMediaDescription(_detail)),
+      if (detail != null && detail.tags.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        DetailTagChips(tags: detail.tags),
+      ],
+      const SizedBox(height: 18),
+      // The id the page itself loads the work with, so it can be pasted into
+      // the `id:` search to reopen the same work.
+      DetailIdRow(id: _contentId),
+    ];
+    final directorySection = <Widget>[
+      DetailDirectoryRow(trailing: trailing, onTap: _openDirectory),
+      _directoryPreview(palette),
+    ];
+    final hasReviews =
+        _comments.comments.isNotEmpty || _comments.totalCount > 0;
+    final reviewsSection = <Widget>[
+      DetailReviews(
+        page: _comments,
+        detail: detail,
+        bookId: _contentId,
+        replyLoader: _replyLoader(_contentId),
+        onLoadMore: _comments.hasMore ? _loadMoreComments : null,
+        onOpenAll: _openAllReviews,
+        loadingMore: _commentsLoadingMore,
+      ),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -819,35 +856,76 @@ class _DetailPageState extends State<DetailPage> {
           DetailCastRow(cast: _series.cast),
           const SizedBox(height: 20),
         ],
-        DetailDescription(text: extractMediaDescription(_detail)),
-        if (detail != null && detail.tags.isNotEmpty) ...[
-          const SizedBox(height: 18),
-          DetailTagChips(tags: detail.tags),
-        ],
-        const SizedBox(height: 18),
-        // The id the page itself loads the work with, so it can be pasted into
-        // the `id:` search to reopen the same work.
-        DetailIdRow(id: _contentId),
-        const SizedBox(height: 6),
-        DetailDirectoryRow(trailing: trailing, onTap: _openDirectory),
-        _directoryPreview(palette),
-        if (_comments.comments.isNotEmpty || _comments.totalCount > 0) ...[
-          const SizedBox(height: 22),
-          Divider(height: 1, color: palette.line),
-          const SizedBox(height: 22),
-          DetailReviews(
-            page: _comments,
-            detail: detail,
-            bookId: _contentId,
-            replyLoader: _replyLoader(_contentId),
-            onLoadMore: _comments.hasMore ? _loadMoreComments : null,
-            onOpenAll: _openAllReviews,
-            loadingMore: _commentsLoadingMore,
-          ),
+        if (desktop) ...[
+          _desktopSectionTabs(palette),
+          const SizedBox(height: 20),
+          ...switch (_desktopSection) {
+            1 => directorySection,
+            2 => hasReviews
+                ? reviewsSection
+                : <Widget>[_emptyReviews(palette)],
+            _ => summarySection,
+          },
+        ] else ...[
+          ...summarySection,
+          const SizedBox(height: 6),
+          ...directorySection,
+          if (hasReviews) ...[
+            const SizedBox(height: 22),
+            Divider(height: 1, color: palette.line),
+            const SizedBox(height: 22),
+            ...reviewsSection,
+          ],
         ],
       ],
     );
   }
+
+  Widget _desktopSectionTabs(HomePalette palette) {
+    const labels = ['简介', '目录', '评论'];
+    return Row(
+      children: [
+        for (var i = 0; i < labels.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: InkWell(
+              key: Key('detail_section_$i'),
+              borderRadius: BorderRadius.circular(18),
+              onTap: () => setState(() => _desktopSection = i),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: _desktopSection == i ? palette.ink : palette.surface,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: _desktopSection == i ? palette.ink : palette.line,
+                  ),
+                ),
+                child: Text(
+                  labels[i],
+                  style: TextStyle(
+                    color: _desktopSection == i ? palette.canvas : palette.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _emptyReviews(HomePalette palette) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 24),
+    child: Text(
+      '还没有读者评论',
+      style: TextStyle(color: palette.muted, fontSize: 13),
+    ),
+  );
 
   Widget _loadingView(HomePalette palette) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 36),

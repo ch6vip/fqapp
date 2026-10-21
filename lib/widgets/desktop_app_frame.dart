@@ -40,7 +40,7 @@ class DesktopAppFrame extends StatelessWidget {
                 selectedIndex: index,
                 onDestinationSelected: _select,
                 backgroundColor: theme.colorScheme.surface,
-                minWidth: 88,
+                minWidth: 76,
                 labelType: NavigationRailLabelType.all,
                 leading: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 20),
