@@ -348,8 +348,9 @@ jobs:
           printf 'has_release_signing=true\n' >> "$GITHUB_OUTPUT"
           printf 'Verified release signing certificate: %s\n' "$actual_signer"
 
-      # Dependencies were resolved once, before the Rust gates; every step from
-      # there on runs with --no-pub against that resolved package config.
+      # Analysis/tests reuse the resolved package config. The release build
+      # resolves it again: flutter test registers the dev-only integration_test
+      # plugin, whose Android module must not leak into release registration.
       # --reporter compact prints progress ticks instead of one line per
       # passing test: passing tests whose names contain "failed"/"error"
       # (error-handling coverage) no longer look like failures in the log,
@@ -363,6 +364,7 @@ jobs:
         # --split-per-abi produces one APK per ABI (app-arm64-v8a-release.apk,
         # app-armeabi-v7a-release.apk) instead of a fat APK, so a 32-bit
         # device does not download the ARM64 native libraries and vice versa.
+        # Keep pub enabled to regenerate the release plugin registrant after tests.
         run: flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
 
       - name: Test Android runtime boundaries
@@ -442,6 +444,25 @@ jobs:
             java -version 2>&1
           } > build/ci-artifacts/build-info.txt
 
+      - name: Check APK size and Android media boundary
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import zipfile
+          rows = []
+          for abi in ('arm64-v8a', 'armeabi-v7a'):
+              apk = pathlib.Path(f'build/app/outputs/flutter-apk/app-{abi}-release.apk')
+              with zipfile.ZipFile(apk) as archive:
+                  native = [name for name in archive.namelist() if name.startswith('lib/') and name.endswith('.so')]
+              unexpected = [name for name in native if any(token in name.lower() for token in ('libmpv', 'libavcodec', 'libavformat', 'libavutil', 'libmediakitandroid'))]
+              if unexpected:
+                  raise SystemExit(f'Android must retain ExoPlayer without desktop media libraries: {unexpected}')
+              rows.append({'abi': abi, 'size_bytes': apk.stat().st_size, 'native_libraries': native})
+          print(json.dumps(rows, indent=2))
+          pathlib.Path('build/ci-artifacts/android-media-boundary.json').write_text(json.dumps(rows, indent=2))
+          PY
+
       - name: Upload ARM64 APK and verification reports
         id: artifact-arm64
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -455,6 +476,7 @@ jobs:
           compression-level: 0
           path: |
             app/build/ci-artifacts/app-arm64-v8a-release.apk
+            app/build/ci-artifacts/android-media-boundary.json
             app/build/ci-artifacts/build-info.txt
             app/build/ci-artifacts/rust-core-symbols-arm64-v8a.txt
             app/build/ci-artifacts/rust-core-program-headers-arm64-v8a.txt
@@ -475,6 +497,7 @@ jobs:
           compression-level: 0
           path: |
             app/build/ci-artifacts/app-armeabi-v7a-release.apk
+            app/build/ci-artifacts/android-media-boundary.json
             app/build/ci-artifacts/build-info.txt
             app/build/ci-artifacts/rust-core-symbols-armeabi-v7a.txt
             app/build/ci-artifacts/rust-core-program-headers-armeabi-v7a.txt

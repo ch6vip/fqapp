@@ -10,11 +10,17 @@ import '../home/home_design.dart';
 /// straight into the app's `id:` search to reopen the work.
 class DetailIdRow extends StatelessWidget {
   final String id;
+  final bool compact;
 
   /// Optional caption after the id, e.g. a sequence label.
   final String? note;
 
-  const DetailIdRow({super.key, required this.id, this.note});
+  const DetailIdRow({
+    super.key,
+    required this.id,
+    this.note,
+    this.compact = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -22,12 +28,16 @@ class DetailIdRow extends StatelessWidget {
     if (id.isEmpty) return const SizedBox.shrink();
     return Container(
       key: const Key('detail_id_row'),
-      padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: palette.line, width: 0.6),
-      ),
+      padding: compact
+          ? EdgeInsets.zero
+          : const EdgeInsets.fromLTRB(14, 8, 6, 8),
+      decoration: compact
+          ? null
+          : BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: palette.line, width: 0.6),
+            ),
       child: Row(
         children: [
           Icon(LucideIcons.hash, size: 14, color: palette.muted),
@@ -39,7 +49,7 @@ class DetailIdRow extends StatelessWidget {
               maxLines: 1,
               style: TextStyle(
                 color: palette.muted,
-                fontSize: 12,
+                fontSize: compact ? 13 : 12,
                 height: 1.4,
                 // Ids are strings of digits; a monospaced face keeps them
                 // readable when compared character by character.

@@ -24,9 +24,11 @@ Windows 10/11 x64：解压完整目录后运行 `fqapp.exe`，不要单独移动
 原生 DLL 由 Windows CMake 构建自动调用 Cargo 编译；C 解密核心由 Rust build.rs 编译。
 构建脚本对中文工作区使用临时英文目录联接，不移动源码。
 Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutter` 已使用仅限该工具副本的目录联接兼容处理。
-构建脚本会向专用 Flutter 3.44.6 SDK 应用仓库内的 Windows 无障碍树修复补丁，
-避免路由/提示层切换时的引擎崩溃；出处和回归用例见 `scripts/patches/README.md`。
-请为项目使用专用 SDK；补丁不会关闭无障碍功能。
+普通构建和 Windows CI 使用官方 Flutter SDK，不要求修改 SDK。
+若复现 Flutter 3.44.6 在路由/提示层切换时的 Windows 无障碍树崩溃，
+可对专用 SDK 显式使用 `-ApplySemanticsBackport`，或单独运行
+`scripts/prepare_flutter_windows.ps1`；出处和回归用例见 `scripts/patches/README.md`。
+该可选补丁不会关闭无障碍功能，也不会自动修改共享 SDK。
 需要安装版时，在 release 构建和许可证收集完成后执行
 `pwsh -File scripts/build_windows_installer.ps1 -IsccPath <Inno Setup 的 ISCC.exe 路径>`。
 
@@ -47,6 +49,12 @@ Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutte
 `flutter build windows --debug --target scripts/verify_windows_shutdown.dart --no-pub`
 构建后从工作区启动 Debug 程序；它会自动执行正常关闭回调并退出。
 退出检查完成后，交付版本须重新使用默认 `lib/main.dart` 入口构建 release。
+
+Android 保留 ExoPlayer；只引用 `media_kit_libs_windows_video`，不打包 Android
+libmpv/FFmpeg 原生库。执行 Flutter 测试后构建 Android release 时，须保留 pub
+步骤（不要给 `flutter build apk` 加 `--no-pub`），以清除 dev-only 集成测试注册项。
+`.github/workflows/windows-preview.yml` 会在相关 PR 中使用未修改的 SDK 构建并验证
+桌面布局、原生媒体接口和 libmpv；程序包仅作为 Actions artifact 保存。
 
 ## 第三方组件
 

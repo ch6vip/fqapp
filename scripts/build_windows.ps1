@@ -1,4 +1,4 @@
-param([string]$FlutterRoot = '', [switch]$SkipTests)
+param([string]$FlutterRoot = '', [switch]$SkipTests, [switch]$ApplySemanticsBackport)
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $FlutterRoot) {
@@ -25,11 +25,15 @@ if ($repoRoot -match '[^\x00-\x7f]') {
 $original = Get-Location
 try {
     Set-Location -LiteralPath $buildRoot
-    & (Join-Path $PSScriptRoot 'prepare_flutter_windows.ps1') -FlutterRoot $FlutterRoot
+    if ($ApplySemanticsBackport) {
+        & (Join-Path $PSScriptRoot 'prepare_flutter_windows.ps1') -FlutterRoot $FlutterRoot
+    }
     Invoke-Checked $flutter @('pub', 'get')
     Invoke-Checked $flutter @('analyze', '--no-pub')
     if (-not $SkipTests) {
-        Invoke-Checked $flutter @('test', '--no-pub', '--dart-define=FQAPP_FLUTTER_SEMANTICS_PATCH=true')
+        $testArgs = @('test', '--no-pub')
+        if ($ApplySemanticsBackport) { $testArgs += '--dart-define=FQAPP_FLUTTER_SEMANTICS_PATCH=true' }
+        Invoke-Checked $flutter $testArgs
         Invoke-Checked 'cargo' @('test', '--manifest-path', 'rust/Cargo.toml', '--locked', '--lib')
     }
     Invoke-Checked $flutter @('build', 'windows', '--release', '--no-pub')

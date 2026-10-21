@@ -10,13 +10,19 @@ import '../home/home_design.dart';
 /// Author row: avatar, pen name, level badge, tagline and follow action.
 class DetailAuthorRow extends StatelessWidget {
   final BookAuthor author;
+  final bool desktop;
 
   /// Opens the author's home. The backend exposes no follow endpoint, so this
   /// row offers a route to the author rather than a follow action that could
   /// not work.
   final VoidCallback? onOpenAuthor;
 
-  const DetailAuthorRow({super.key, required this.author, this.onOpenAuthor});
+  const DetailAuthorRow({
+    super.key,
+    required this.author,
+    this.onOpenAuthor,
+    this.desktop = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -57,7 +63,7 @@ class DetailAuthorRow extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: palette.ink,
-                  fontSize: 14.5,
+                  fontSize: desktop ? 16 : 14.5,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -73,24 +79,30 @@ class DetailAuthorRow extends StatelessWidget {
           onOpenAuthor == null ? '关注我，掌握书籍最新动态' : '查看作者主页和全部作品',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: palette.muted, fontSize: 11.5, height: 1.3),
+          style: TextStyle(
+            color: palette.muted,
+            fontSize: desktop ? 13 : 11.5,
+            height: desktop ? 1.6 : 1.3,
+          ),
         ),
       ],
     );
 
     final card = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: desktop
+          ? const EdgeInsets.all(16)
+          : const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: palette.line, width: 0.6),
+        borderRadius: BorderRadius.circular(desktop ? 12 : 16),
+        border: Border.all(color: palette.line, width: desktop ? 1 : 0.6),
       ),
       child: Row(
         children: [
           avatar,
           const SizedBox(width: 12),
           Expanded(child: identity),
-          if (onOpenAuthor != null) ...[
+          if (onOpenAuthor != null && !desktop) ...[
             const SizedBox(width: 10),
             _AuthorLinkChip(),
           ],
@@ -155,7 +167,9 @@ class _AuthorLinkChip extends StatelessWidget {
         color: HomePalette.accent.withValues(alpha: palette.dark ? 0.16 : 0.08),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: HomePalette.accent.withValues(alpha: palette.dark ? 0.35 : 0.22),
+          color: HomePalette.accent.withValues(
+            alpha: palette.dark ? 0.35 : 0.22,
+          ),
           width: 0.6,
         ),
       ),
@@ -202,8 +216,15 @@ class DetailStat {
 /// Rank / readers / rating, separated by hairline dividers.
 class DetailStatsRow extends StatelessWidget {
   final List<DetailStat> stats;
+  final bool desktop;
+  final bool vertical;
 
-  const DetailStatsRow({super.key, required this.stats});
+  const DetailStatsRow({
+    super.key,
+    required this.stats,
+    this.desktop = false,
+    this.vertical = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -224,17 +245,36 @@ class DetailStatsRow extends StatelessWidget {
           ),
         );
       }
-      children.add(Expanded(child: _StatCell(stat: visible[index])));
+      children.add(
+        Expanded(
+          child: _StatCell(stat: visible[index], desktop: desktop),
+        ),
+      );
     }
     return Container(
       key: const Key('detail_stats_row'),
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+      padding: desktop
+          ? const EdgeInsets.all(16)
+          : const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: palette.line, width: 0.6),
+        borderRadius: BorderRadius.circular(desktop ? 12 : 16),
+        border: Border.all(color: palette.line, width: desktop ? 1 : 0.6),
       ),
-      child: Row(children: children),
+      child: vertical
+          ? Column(
+              children: [
+                for (var i = 0; i < visible.length; i++) ...[
+                  if (i > 0)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(color: palette.line, height: 1),
+                    ),
+                  _StatCell(stat: visible[i], desktop: desktop),
+                ],
+              ],
+            )
+          : Row(children: children),
     );
   }
 }
@@ -242,7 +282,8 @@ class DetailStatsRow extends StatelessWidget {
 class _StatCell extends StatelessWidget {
   final DetailStat stat;
 
-  const _StatCell({required this.stat});
+  final bool desktop;
+  const _StatCell({required this.stat, this.desktop = false});
 
   @override
   Widget build(BuildContext context) {
@@ -268,7 +309,7 @@ class _StatCell extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: valueColor,
-              fontSize: 15.5,
+              fontSize: desktop ? 17 : 15.5,
               fontWeight: FontWeight.w700,
               letterSpacing: -0.2,
             ),
@@ -283,7 +324,11 @@ class _StatCell extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: palette.muted, fontSize: 11, height: 1.3),
+            style: TextStyle(
+              color: palette.muted,
+              fontSize: desktop ? 13 : 11,
+              height: desktop ? 1.6 : 1.3,
+            ),
           ),
         ],
       ),
@@ -308,10 +353,10 @@ class _StarRow extends StatelessWidget {
         for (var index = 1; index <= 5; index++)
           Icon(
             stars >= index
-                ? LucideIcons.star
+                ? Icons.star_rounded
                 : (stars >= index - 0.5
-                      ? LucideIcons.star_half
-                      : LucideIcons.star),
+                      ? Icons.star_half_rounded
+                      : Icons.star_outline_rounded),
             size: size,
             color: stars >= index - 0.5 ? HomePalette.accent : palette.line,
           ),
@@ -334,8 +379,9 @@ class DetailStarRow extends StatelessWidget {
 /// Genre tags as rounded chips.
 class DetailTagChips extends StatelessWidget {
   final List<String> tags;
+  final bool desktop;
 
-  const DetailTagChips({super.key, required this.tags});
+  const DetailTagChips({super.key, required this.tags, this.desktop = false});
 
   @override
   Widget build(BuildContext context) {
@@ -358,7 +404,7 @@ class DetailTagChips extends StatelessWidget {
               tag,
               style: TextStyle(
                 color: palette.muted,
-                fontSize: 12,
+                fontSize: desktop ? 13 : 12,
                 fontWeight: FontWeight.w500,
                 height: 1.35,
               ),

@@ -5,9 +5,9 @@ import 'dart:isolate';
 import 'package:media_kit/media_kit.dart';
 import 'package:fqapp/services/desktop_media.dart';
 
-Future<void> until(bool Function() condition, String stage) async {
+Future<void> until(FutureOr<bool> Function() condition, String stage) async {
   final deadline = DateTime.now().add(const Duration(seconds: 15));
-  while (!condition()) {
+  while (!(await condition())) {
     if (DateTime.now().isAfter(deadline)) {
       throw StateError('Player verification timed out: $stage');
     }
@@ -42,6 +42,8 @@ Future<void> main() async {
   final root = Directory.current;
   final output = Directory('${root.path}/build/validation/windows-player');
   await output.create(recursive: true);
+  final reportFile = File('${output.path}/report.json');
+  if (await reportFile.exists()) await reportFile.delete();
   final reference = File('${output.path}/reference.mp4');
   final encrypted = File('${output.path}/encrypted.mp4');
   Future<void> ffmpeg(List<String> args) async {
@@ -109,7 +111,11 @@ Future<void> main() async {
   final media = await DesktopMedia.open(encrypted.uri.toString(), key);
   final errors = <String>[];
   final subscription = player.stream.error.listen(errors.add);
+  late Map<String, Object?> report;
   try {
+    // Hosted Windows runners may have no WASAPI endpoint. Keep real decoding
+    // and playback timing, without requiring a physical audio device.
+    await (player.platform as NativePlayer).setProperty('ao', 'null');
     await player.setVolume(0);
     await player.open(Media(media.url), play: false);
     await until(() => player.state.duration.inSeconds >= 7, 'duration');
@@ -139,6 +145,7 @@ Future<void> main() async {
     }
     final decodedWidth = player.state.width;
     final decodedHeight = player.state.height;
+    final decodedDuration = player.state.duration;
     // Plain MP3 originates from a separate isolate and deliberately ignores Range.
     await player.stop();
     final plainAudio = File('${output.path}/plain.mp3');
@@ -168,9 +175,19 @@ Future<void> main() async {
         'plain HTTP 200 audio playback',
       );
     } finally {
+      // Unload the HTTP input before tearing down the isolate that serves it.
+      await player.stop();
+      await until(
+        () async =>
+            await (player.platform as NativePlayer).getProperty(
+              'idle-active',
+            ) ==
+            'yes',
+        'idle before origin shutdown',
+      );
       origin.$2.send(null);
     }
-    final report = {
+    report = {
       'passed': true,
       'engine': 'bundled libmpv via media_kit',
       'checks': [
@@ -184,21 +201,35 @@ Future<void> main() async {
         'resume',
         '1.5x rate',
         'mute',
+        'idle before origin shutdown',
+        'delayed native player destruction',
       ],
-      'durationMs': player.state.duration.inMilliseconds,
-      'positionMs': player.state.position.inMilliseconds,
+      'durationMs': decodedDuration.inMilliseconds,
       'width': decodedWidth,
       'height': decodedHeight,
       'note':
-          'Native engine test with null video output; GPU/window rendering is a separate acceptance check.',
+          'Native engine test with null audio/video outputs; physical audio and GPU/window rendering are separate acceptance checks.',
     };
-    await File(
-      '${output.path}/report.json',
-    ).writeAsString(const JsonEncoder.withIndent('  ').convert(report));
-    stdout.writeln(jsonEncode(report));
+  } catch (_) {
+    stderr.writeln(
+      jsonEncode({
+        'playing': player.state.playing,
+        'positionMs': player.state.position.inMilliseconds,
+        'durationMs': player.state.duration.inMilliseconds,
+        'fixtureErrors': errors,
+      }),
+    );
+    rethrow;
   } finally {
     await subscription.cancel();
     await player.dispose();
     media.close();
+    // media_kit 1.2.6 schedules mpv_terminate_destroy five seconds after dispose.
+    // A passing report must also mean that delayed teardown survived.
+    await Future<void>.delayed(const Duration(seconds: 6));
   }
+  await File(
+    '${output.path}/report.json',
+  ).writeAsString(const JsonEncoder.withIndent('  ').convert(report));
+  stdout.writeln(jsonEncode(report));
 }
