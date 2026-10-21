@@ -300,6 +300,14 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// True while a route we pushed is on top of the feed.
   bool _modalOpen = false;
 
+  /// 内联播放器当前这次暂停是不是生命周期可见性分支（hidden/paused）造成
+  /// 的，而不是用户手动暂停的。只有可见性暂停可以被随后的「回到 active」
+  /// 撤销；手动暂停是用户意图，焦点/生命周期噪声不许推翻——Windows 上点
+  /// 一下别的窗口只发 inactive，而桌面端把 inactive 算作 active，不分开
+  /// 记账的话用户一暂停、一切窗视频就自己播回来。仅 Windows 路径读写，
+  /// Android 的回前台续播语义不变。
+  bool _inlineVisibilityPaused = false;
+
   /// 长按中带打开的更多面板还在屏上（面板不销毁 inline 播放器，视频在
   /// 面板后面继续播，同官方 dialog；只挡掉手势与翻页）。
   bool _feedPanelOpen = false;
@@ -575,12 +583,28 @@ class _DramaPageState extends ConsumerState<DramaPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (playbackAppIsActive(state)) {
       if (_tickerEnabled && !_modalOpen) {
+        // Windows 上「切到别的窗口」只发 inactive，而 playbackAppIsActive
+        // 在桌面端把 inactive 算作 active：无条件续播会把用户手动暂停的
+        // 视频在焦点刚丢时就拉起来。所以桌面端只有可见性分支自己暂停过
+        // 的那一次才许在这里恢复，手动暂停不许被焦点变化推翻。Android
+        // 没有「可见但失焦」态，保持原有的回前台续播。
+        if (isWindowsDesktop && !_inlineVisibilityPaused) return;
         _resumeInline();
         _scheduleInlineSync();
       }
     } else if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      // 只在确实在播时把这次暂停记到可见性头上：用户已经手动暂停的，
+      // 回来时不许被当成可见性暂停恢复。「在播」现读播放器，不用会话的
+      // playing 通知器：桌面 chrome 是直接暂停播放器的，通知器靠
+      // playWhenReady 事件重算，可能还停在暂停前的值。
+      final player = _inline.player;
+      if (player != null &&
+          (player.playing ||
+              (player.playWhenReady && !player.completed))) {
+        _inlineVisibilityPaused = true;
+      }
       // `inactive` 只是瞬态打断（下拉通知栏/控制中心）：feed 继续播；
       // 只有 hidden/paused/detached 才暂停（视频绝不能从后台出声）。
       // A video must never keep playing from the background.
@@ -746,6 +770,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // A tap while the feed is still settling, a route is on top, or the full
     // page player is loading must not fight the state machine.
     if (_modalOpen || _paging || _openingId != null) return;
+    // 用户手动接管播放/暂停：可见性暂停的记账作废。
+    _inlineVisibilityPaused = false;
     if (_inline.activeId.value != item.id) {
       unawaited(_inline.activate(item));
       return;
@@ -761,6 +787,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// a route may still sit on top of it, a drag may still be in flight, or the
   /// full page player may be loading.
   void _resumeInline() {
+    // 走到这里的续播都不是生命周期可见性恢复（滚动落定、路由返回、tab
+    // 回到本页）：可见性记账就此作废，免得陈旧标记日后放行一次假恢复。
+    _inlineVisibilityPaused = false;
     if (_modalOpen || _paging || _openingId != null) return;
     if (_currentItem()?.id == _inline.activeId.value) {
       unawaited(_inline.resume());
