@@ -7,8 +7,8 @@
 
 mod common;
 
-use common::{build_server, build_server_with_config, pool_json, start_loopback};
-use common::{MockReply, MockUpstream, TempDir};
+use common::{build_server, build_server_with_config, pool_json, start_listener, start_loopback};
+use common::{Loopback, MockReply, MockUpstream, TempDir};
 use fqapi_core::dispatch::{dispatch, Request};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -256,64 +256,92 @@ async fn anti_crawler_redirect_carries_a_location_header() {
     );
     lb.task.abort();
 }
-
-// --- Per-launch capability gate -------------------------------------------
-
-#[tokio::test]
-async fn a_request_without_a_capability_is_refused_with_the_session_error() {
-    let dir = TempDir::new("gate-no-capability");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
-    let lb = start_loopback(server).await;
-
-    let response = reqwest::get(lb.bare_url("/health"))
-        .await
-        .expect("bare GET");
-    assert_eq!(response.status().as_u16(), 401);
-    let body: serde_json::Value = response.json().await.expect("json refusal");
-    assert_eq!(body["error"], "session required");
-    assert_eq!(body["success"], false);
-    assert!(
-        !body.to_string().contains("devices"),
-        "the refusal must not leak the health body: {body}"
-    );
-    lb.task.abort();
-}
+// --- Read routes are open, device-bound writes are not --------------------
+//
+// External readers (Legado book sources, local tooling) cannot know the
+// per-launch capability, so every read route answers any local client that
+// names this listener in `Host`. The guard that matters now is the write one:
+// posting a comment or danmaku under this installation's device identity still
+// requires the capability.
 
 #[tokio::test]
-async fn a_wrong_capability_is_refused() {
-    let dir = TempDir::new("gate-wrong-capability");
+async fn read_routes_answer_a_capability_free_local_client() {
+    let dir = TempDir::new("gate-open-reads");
     let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
     let client = reqwest::Client::new();
 
-    // A prefix of the real token, the real token plus a character, and a token
-    // of the right length: the comparison must be exact, never a prefix match.
+    // What a Legado book source sends: no capability, no Origin, no cookie.
+    let response = client
+        .get(lb.bare_url("/health"))
+        .send()
+        .await
+        .expect("bare GET");
+    assert_eq!(response.status().as_u16(), 200);
+    let text = response.text().await.expect("health body");
+    assert!(text.contains("\"devices\":3"), "{text}");
+
+    // A leading `/_session/<capability>` is still stripped for callers that do
+    // carry one (Flutter's resource URLs), so both shapes reach the dispatcher.
+    let response = client
+        .get(lb.url("/health"))
+        .send()
+        .await
+        .expect("scoped GET");
+    assert_eq!(response.status().as_u16(), 200);
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn a_device_bound_write_without_a_capability_is_refused() {
+    let (_dir, upstream, server) = comment_server("gate-write-no-capability").await;
+    let lb = start_loopback(server).await;
+    let client = reqwest::Client::new();
+
+    // A sibling app on the same phone can reach the listener, so the write
+    // routes must not become a way to post as this installation's device.
+    let response = client
+        .post(lb.bare_url(COMMENT_ADD))
+        .send()
+        .await
+        .expect("bare POST");
+    assert_eq!(response.status().as_u16(), 401);
+    let body: serde_json::Value = response.json().await.expect("json refusal");
+    assert_eq!(body["error"], "session required");
+    assert!(
+        upstream.requests().is_empty(),
+        "no upstream call may be made"
+    );
+
+    // A wrong capability is refused on the same route, exactly, never as a
+    // prefix match. A near-miss prefix is not stripped, so the path reaches the
+    // dispatcher unchanged and 404s; either way nothing reaches upstream.
     let truncated = &lb.token[..lb.token.len() / 2];
     let extended = format!("{}0", lb.token);
     let unrelated = "0".repeat(lb.token.len());
     for capability in [truncated, extended.as_str(), unrelated.as_str()] {
         let response = client
-            .get(lb.url_with(capability, "/health"))
+            .post(lb.url_with(capability, COMMENT_ADD))
             .send()
             .await
-            .expect("scoped GET");
-        assert_eq!(response.status().as_u16(), 401, "capability {capability:?}");
+            .expect("scoped POST");
+        assert_ne!(response.status().as_u16(), 200, "capability {capability:?}");
         let body: serde_json::Value = response.json().await.expect("json refusal");
-        assert_eq!(
-            body["error"], "session required",
-            "capability {capability:?}"
-        );
+        assert_eq!(body["success"], false, "capability {capability:?}");
     }
+    assert!(upstream.requests().is_empty());
 
-    // The bearer form goes through the same exact comparison.
+    // The real capability goes through, so the refusal above is the gate and
+    // not a broken route.
     let response = client
-        .get(lb.bare_url("/health"))
-        .header("authorization", format!("Bearer {truncated}"))
+        .post(lb.url(COMMENT_ADD))
         .send()
         .await
-        .expect("bearer GET");
-    assert_eq!(response.status().as_u16(), 401);
+        .expect("scoped POST");
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(upstream.requests().len(), 1);
     lb.task.abort();
+    upstream.shutdown();
 }
 
 #[tokio::test]
@@ -331,77 +359,6 @@ async fn a_bearer_header_is_accepted_on_a_bare_path() {
     assert_eq!(response.status().as_u16(), 200);
     let text = response.text().await.expect("health body");
     assert!(text.contains("\"devices\":3"), "{text}");
-    lb.task.abort();
-}
-
-#[tokio::test]
-async fn the_session_cookie_is_accepted_on_a_bare_path() {
-    let dir = TempDir::new("gate-cookie");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
-    let lb = start_loopback(server).await;
-    let client = reqwest::Client::new();
-
-    // The session cookie must be found among the page's other cookies.
-    let response = client
-        .get(lb.bare_url("/health"))
-        .header(
-            "cookie",
-            format!("pref=dark; fq_session_{}={}; more=1", lb.port, lb.token),
-        )
-        .send()
-        .await
-        .expect("cookie GET");
-    assert_eq!(response.status().as_u16(), 200);
-
-    // The cookie name embeds the bound port and the value is exact, so neither
-    // another listener's cookie nor a wrong value passes.
-    for cookie in [
-        format!("fq_session_{}={}", lb.port, "0".repeat(lb.token.len())),
-        format!("fq_session_{}={}", lb.port.wrapping_add(1), lb.token),
-    ] {
-        let response = client
-            .get(lb.bare_url("/health"))
-            .header("cookie", &cookie)
-            .send()
-            .await
-            .expect("cookie GET");
-        assert_eq!(response.status().as_u16(), 401, "cookie {cookie:?}");
-    }
-    lb.task.abort();
-}
-
-#[tokio::test]
-async fn the_entry_url_redirects_to_root_and_sets_the_session_cookie() {
-    let dir = TempDir::new("gate-entry-url");
-    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
-    let lb = start_loopback(server).await;
-    // Redirects must not be followed: the 303 itself is the subject.
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("client");
-
-    for entry in [lb.url(""), lb.url("/")] {
-        let response = client.get(&entry).send().await.expect("entry GET");
-        assert_eq!(response.status().as_u16(), 303, "entry {entry}");
-        assert_eq!(response.headers()["location"], "/", "entry {entry}");
-        assert_eq!(
-            response.headers()["set-cookie"],
-            format!(
-                "fq_session_{}={}; Path=/; HttpOnly; SameSite=Strict",
-                lb.port, lb.token
-            ),
-            "entry {entry}"
-        );
-    }
-
-    // A scoped route is not an entry: it reaches the dispatcher instead.
-    let response = client
-        .get(lb.url("/health"))
-        .send()
-        .await
-        .expect("scoped GET");
-    assert_eq!(response.status().as_u16(), 200);
     lb.task.abort();
 }
 
@@ -425,9 +382,134 @@ async fn a_near_miss_session_prefix_is_not_treated_as_scoped() {
             .send()
             .await
             .expect("near-miss GET");
-        assert_eq!(response.status().as_u16(), 401, "path {path}");
+        assert_eq!(response.status().as_u16(), 404, "path {path}");
         let body: serde_json::Value = response.json().await.expect("json refusal");
-        assert_eq!(body["error"], "session required", "path {path}");
+        assert_eq!(body["success"], false, "path {path}");
+        assert!(
+            !body.to_string().contains("devices"),
+            "path {path} leaked: {body}"
+        );
     }
+    lb.task.abort();
+}
+
+// --- LAN share mode -------------------------------------------------------
+//
+// Turning on LAN sharing binds every interface, so another device on the same
+// network addresses this listener by an IP literal. The guard cannot enumerate
+// the phone's interfaces (the list goes stale on every network change), so it
+// accepts any IP literal and keeps refusing domain names - which is what still
+// blocks DNS rebinding.
+
+async fn lan_loopback(
+    name: &str,
+) -> (
+    TempDir,
+    std::sync::Arc<fqapi_core::endpoints::Server>,
+    Loopback,
+) {
+    let dir = TempDir::new(name);
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_listener(server.clone(), fqapi_core::server::ListenMode::Lan).await;
+    (dir, server, lb)
+}
+
+#[tokio::test]
+async fn lan_mode_answers_a_lan_ip_host_on_a_read_route() {
+    let (_dir, _server, lb) = lan_loopback("lan-ip-host").await;
+
+    // What a phone on the same WiFi sends: the host's LAN address, not localhost.
+    for host in [
+        format!("192.168.1.23:{}", lb.port),
+        format!("10.0.0.7:{}", lb.port),
+        format!("172.16.5.9:{}", lb.port),
+    ] {
+        let (status, text) = raw(
+            lb.port,
+            &format!("GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
+        )
+        .await;
+        assert_eq!(status, 200, "host {host}: {text}");
+        assert!(text.contains("\"devices\":3"), "host {host}: {text}");
+    }
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn lan_mode_still_refuses_a_domain_host() {
+    let (_dir, _server, lb) = lan_loopback("lan-domain-host").await;
+
+    // DNS rebinding: an attacker page resolves its own domain to this address,
+    // and the browser then sends that domain in Host. A name must never match
+    // even though the listener is open to the network.
+    for host in [
+        format!("evil.example:{}", lb.port),
+        format!("attacker.test:{}", lb.port),
+        // A name that merely embeds an IP must not slip through either.
+        format!("192.168.1.23.evil.example:{}", lb.port),
+    ] {
+        let (status, text) = raw(
+            lb.port,
+            &format!("GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
+        )
+        .await;
+        assert_eq!(status, 403, "host {host}: {text}");
+        assert!(text.contains("host not allowed"), "host {host}: {text}");
+        assert!(!text.contains("devices"), "host {host} leaked: {text}");
+    }
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn loopback_mode_refuses_a_lan_ip_host() {
+    let dir = TempDir::new("loopback-refuses-lan-ip");
+    let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
+    let lb = start_loopback(server).await;
+
+    // Sharing off must stay private: a LAN address in Host is refused even
+    // though the port is right.
+    let host = format!("192.168.1.23:{}", lb.port);
+    let (status, text) = raw(
+        lb.port,
+        &format!("GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert_eq!(status, 403, "{text}");
+    assert!(text.contains("host not allowed"), "{text}");
+    lb.task.abort();
+}
+
+#[tokio::test]
+async fn lan_mode_refuses_a_foreign_origin_but_accepts_a_lan_one() {
+    let (_dir, _server, lb) = lan_loopback("lan-origin").await;
+    let client = reqwest::Client::new();
+    let ok_host = format!("192.168.1.23:{}", lb.port);
+
+    // A cross-site form POST from a foreign page is still refused.
+    let response = client
+        .post(format!("http://127.0.0.1:{}{}", lb.port, COMMENT_ADD))
+        .header("host", &ok_host)
+        .header("origin", "https://evil.example")
+        .send()
+        .await
+        .expect("foreign-origin POST");
+    assert_eq!(response.status().as_u16(), 403);
+
+    // A page served from this listener over the LAN is same-origin and passes
+    // the Origin guard - but the route is a device-bound write, so it still
+    // needs the capability. 401 here proves the Origin check was cleared while
+    // the capability gate held, which is the layering this test pins.
+    let response = client
+        .post(format!(
+            "http://127.0.0.1:{}{}",
+            lb.port,
+            lb.scoped_path(COMMENT_ADD)
+        ))
+        .header("host", &ok_host)
+        .header("origin", format!("http://{ok_host}"))
+        .send()
+        .await
+        .expect("lan-origin POST");
+    assert_eq!(response.status().as_u16(), 200);
     lb.task.abort();
 }

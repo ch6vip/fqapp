@@ -299,16 +299,28 @@ class ApiClient {
   String _url(String path, Map<String, String> query) =>
       Uri.parse(_base).resolve(path).replace(queryParameters: query).toString();
 
-  String _searchUrl(String query, int page) =>
-      _url('/api/search', {'source': '番茄', 'query': query, 'page': '$page'});
+  /// Directory route for [bookId].
+  ///
+  /// The old `/api/directory` Web bridge is gone; `/api/v1/books/<id>/directory`
+  /// reaches the same `directory` endpoint. It returns the upstream payload, so
+  /// the chapter list arrives as `data.item_data_list` instead of the bridge's
+  /// pre-flattened `data.data.chapterListWithVolume` - [parseDirectory] accepts
+  /// both.
+  String _directoryUrl(String bookId, String tab) => _url(
+    '/api/v1/books/${Uri.encodeComponent(bookId)}/directory',
+    const {},
+  );
 
-  String _directoryUrl(String bookId, String tab) =>
-      _url('/api/directory', {'source': '番茄', 'book_id': bookId, 'tab': tab});
-
-  /// Search across content types.
-  /// Returns normalized {tabs: [{title, data:[...]}], ...} structure.
+  /// Search across content types (raw envelope).
   Future<Map<String, dynamic>> search(String query, {int page = 1}) async {
-    final r = await _get(_searchUrl(query, page));
+    final offset = (page > 1 ? page - 1 : 0) * 10;
+    final r = await _get(
+      _url('/api/v1/search', {
+        'query': query,
+        'offset': '$offset',
+        'count': '10',
+      }),
+    );
     return _decodeAsync(r);
   }
 
@@ -322,14 +334,12 @@ class ApiClient {
     int? offset,
   }) async {
     final searchOffset = offset ?? (page > 1 ? page - 1 : 0) * 10;
-    final url = tabType == null
-        ? _searchUrl(query, page)
-        : _url('/api/v1/search', {
-            'query': query,
-            'tab_type': '$tabType',
-            'offset': '${searchOffset < 0 ? 0 : searchOffset}',
-            'count': '10',
-          });
+    final url = _url('/api/v1/search', {
+      'query': query,
+      if (tabType != null) 'tab_type': '$tabType',
+      'offset': '${searchOffset < 0 ? 0 : searchOffset}',
+      'count': '10',
+    });
     final r = await _get(url);
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
@@ -374,13 +384,16 @@ class ApiClient {
     return null;
   }
 
-  /// Book detail.
+  /// Book detail, addressed through the v1 route.
+  ///
+  /// Kept as a plain envelope accessor (unlike [bookDetail], which parses a
+  /// model) for callers and tests that only need the raw payload.
   Future<Map<String, dynamic>> detail(
     String bookId, {
     String tab = '小说',
   }) async {
     final r = await _get(
-      _url('/api/detail', {'source': '番茄', 'book_id': bookId, 'tab': tab}),
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/detail', const {}),
     );
     return _decodeAsync(r);
   }
@@ -408,19 +421,25 @@ class ApiClient {
     );
   }
 
-  /// Chapter content (decrypted by backend).
+  /// Chapter content route, by content type.
+  ///
+  /// The old `/api/content?tab=` Web bridge dispatched to a different endpoint
+  /// per tab; the v1 routes are addressed directly instead.
   String _contentUrl(
     String itemId, {
     required String tab,
     String? toneId,
     String? mode,
-  }) => _url('/api/content', {
-    'source': '番茄',
-    'item_id': itemId,
-    'tab': tab,
-    'tone_id': ?toneId,
-    'mode': ?mode,
-  });
+  }) {
+    final id = Uri.encodeComponent(itemId);
+    return switch (tab) {
+      '漫画' => _url('/api/v1/manga/$id', const {}),
+      '短剧' || '漫剧' => _url('/api/v1/videos/$id', {
+        'mode': ?mode,
+      }),
+      _ => _url('/api/v1/chapters/$id', {'tone_id': ?toneId}),
+    };
+  }
 
   Future<Map<String, dynamic>> content(
     String itemId, {
@@ -1235,12 +1254,6 @@ class ApiClient {
       if (text.trim().isEmpty) throw const ApiException('正文为空');
       return ChapterContent.fromPlainText(text);
     }
-  }
-
-  /// Resolve a share URL to a book id.
-  Future<Map<String, dynamic>> resolve(String url) async {
-    final r = await _get(_url('/api/resolve', {'url': url}));
-    return _decodeAsync(r);
   }
 
   /// Real homepage recommendations (the Flutter home page previously used a

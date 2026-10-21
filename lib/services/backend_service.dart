@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -6,14 +7,15 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'backend_transport.dart';
+import 'lan_share_preferences.dart';
 
 /// Manages the local backend core.
 ///
 /// The backend is the Rust native core (`rust/`, packaged as
 /// `libfqapi_core.so`). Flutter calls it over flutter_rust_bridge; the same
-/// Rust core also serves the built-in Web UI and `/src/*` resources over a
-/// loopback HTTP adapter, which is why [baseUrl] still exists for resource
-/// resolution in `ApiClient.absoluteUrl`.
+/// Rust core also serves `/api/v1/*` and `/src/*` resources over a loopback
+/// HTTP adapter for external readers, which is why [baseUrl] still exists for
+/// resource resolution in `ApiClient.absoluteUrl`.
 ///
 /// There is no process to launch and no JNI bridge: `start` deploys the
 /// runtime files and initializes the core in-process.
@@ -22,7 +24,7 @@ class BackendService {
     AssetBundle? assets,
     Future<Directory> Function()? supportDirectory,
     BackendTransport? transport,
-    this.fallbackBaseUrl = 'http://127.0.0.1:8080',
+    this.fallbackBaseUrl = 'http://127.0.0.1:${RustBackendTransport.defaultPort}',
     this.startupTimeout = const Duration(seconds: 15),
     this.shutdownTimeout = const Duration(seconds: 3),
   }) : _assets = assets ?? rootBundle,
@@ -58,13 +60,6 @@ class BackendService {
   /// Base URL used to resolve backend-relative resources.
   String get baseUrl =>
       _transport.baseUrl.isNotEmpty ? _transport.baseUrl : fallbackBaseUrl;
-
-  /// Entry URL of the built-in Web UI, capability included.
-  ///
-  /// The loopback adapter only answers a request carrying the per-launch
-  /// capability, and this is the URL that hands it to a browser as a session
-  /// cookie before redirecting to `/`.
-  String get webUiEntryUrl => backendResourceBase(baseUrl, _transport.capability);
 
   /// Whether the Rust FFI transport is in use (as opposed to the HTTP adapter).
   bool get usesRustTransport => _transport is RustBackendTransport;
@@ -131,7 +126,7 @@ class BackendService {
     return Isolate.run(() => _bytesEqual(existing, bundled));
   }
 
-  /// Deploys the runtime files the Rust core reads (config + Web/静态资源)。
+  /// Deploys the runtime files the Rust core reads (config + filters + plugins).
   Future<void> _deploy() async {
     final dir = await _backendDir();
 
@@ -159,7 +154,7 @@ class BackendService {
 
     // Use the bundle manifest so nested CSS/fonts and plugin files are
     // deployed along with the top-level HTML and filters.
-    const runtimeRoots = ['assets/filters/', 'assets/web/', 'assets/plugins/'];
+    const runtimeRoots = ['assets/filters/', 'assets/plugins/'];
     final manifest = await AssetManifest.loadFromAssetBundle(_assets);
     for (final asset in manifest.listAssets()) {
       if (runtimeRoots.any(asset.startsWith)) {
@@ -221,6 +216,8 @@ class BackendService {
           poolPath: '${dir.path}/config/device_pool.json',
           filterPath: '${dir.path}/config/filter.json',
           runtimeDir: dir.path,
+          listenPort: await _configPort(dir),
+          lanShare: LanSharePreferences.instance.enabled.value,
         );
         _log('Rust core init returned: $result');
         if (result != 'running') {
@@ -243,6 +240,37 @@ class BackendService {
       _log('start error: $e');
       rethrow;
     }
+  }
+
+  /// Listener port declared by the deployed `config.json`.
+  ///
+  /// That file is the single source of truth for the port. A missing or
+  /// unparsable file falls back to [RustBackendTransport.defaultPort] so a
+  /// damaged config cannot leave the app unable to start.
+  Future<int?> _configPort(Directory dir) async {
+    try {
+      final raw = await File('${dir.path}/config/config.json').readAsString();
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final port = decoded['port'];
+        if (port is int && port > 0) return port;
+      }
+    } catch (_) {
+      // Fall through: the Rust core applies its own default.
+    }
+    return null;
+  }
+
+  /// Rebuilds the listener so a new listen mode takes effect.
+  ///
+  /// The core binds its socket at init, so the only way to change the bind
+  /// address is to retire the core and start a fresh one. Requests in flight
+  /// are cancelled by that shutdown - the UI asks for confirmation before
+  /// calling this. The caller owns the persisted preference; this method only
+  /// acts on whatever [LanSharePreferences] currently says.
+  Future<void> restartForListenMode() async {
+    await stop();
+    await start();
   }
 
   /// Polls `/health` until the backend responds or [timeout] elapses.

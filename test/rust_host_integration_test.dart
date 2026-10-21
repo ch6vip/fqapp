@@ -122,6 +122,7 @@ void main() {
     filterPath: '${root.path}/config/filter.json',
     runtimeDir: root.path,
     port: port,
+    lanShare: false,
     mockUpstreamOrigin: origin ?? mockOrigin,
   );
 
@@ -363,7 +364,9 @@ void main() {
     expect(await api.health(), isTrue);
 
     final search = await api.search('测试');
-    expect(search['code'], 200);
+    // `search()` now talks to /api/v1/search, which answers with the REST
+    // envelope (code=0) rather than the removed Web bridge's code=200.
+    expect(search['code'], 0);
     expect((search['data'] as Map)['search_tabs'], isA<List>());
     expect(mockRequests, isNotEmpty);
 
@@ -407,7 +410,6 @@ class _HostAssets extends CachingAssetBundle {
         '{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}',
     'assets/config/device_pool.example.json': poolJson,
     'assets/config/filter.json': '{"routes":{}}',
-    'assets/web/index.html': '<html></html>',
   };
 
   @override

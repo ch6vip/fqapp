@@ -13,17 +13,7 @@ const MARKER: &str = "OFFLINE_TEST_MARKER_OUTSIDE_SRC";
 
 async fn fixture() -> (TempDir, std::sync::Arc<fqapi_core::endpoints::Server>) {
     let dir = TempDir::new("static");
-    let server = build_server(
-        &dir,
-        None,
-        &[
-            ("index.html", "<html>index</html>"),
-            ("assets/css/all.min.css", "body{}"),
-        ],
-        &[("ok.txt", "0123456789")],
-        &pool_json(5),
-    )
-    .await;
+    let server = build_server(&dir, None, &[], &[("ok.txt", "0123456789")], &pool_json(5)).await;
     // A sibling of src/ that must never be reachable through /src/.
     dir.write("outside.txt", MARKER);
     (dir, server)
@@ -84,6 +74,8 @@ async fn refuses_to_escape_the_resource_root() {
 #[tokio::test]
 async fn refuses_encoded_and_absolute_components() {
     let (_dir, server) = fixture().await;
+    // `/assets/` and page routes no longer exist; they stay in the list so a
+    // future re-introduction cannot silently serve outside the resource root.
     for path in [
         "/src/%2e%2e%2foutside.txt",
         "/assets/../../outside.txt",
@@ -101,18 +93,6 @@ async fn directory_without_an_index_is_not_listed() {
     let (_dir, server) = fixture().await;
     let (status, _, _) = body_string(&server, &get("/src", &[])).await;
     assert_eq!(status, 404);
-}
-
-#[tokio::test]
-async fn serves_the_web_root_and_index() {
-    let (_dir, server) = fixture().await;
-    let (status, body, _) = body_string(&server, &get("/", &[])).await;
-    assert_eq!(status, 200);
-    assert_eq!(body, "<html>index</html>");
-
-    let (status, body, _) = body_string(&server, &get("/index.html", &[])).await;
-    assert_eq!(status, 200);
-    assert_eq!(body, "<html>index</html>");
 }
 
 #[tokio::test]

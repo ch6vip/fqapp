@@ -135,7 +135,6 @@ pub async fn build_server_with_config(
         pool,
         cfg: Arc::new(cfg),
         src_dir: root.join("src").to_string_lossy().into_owned(),
-        web_dir: root.join("web").to_string_lossy().into_owned(),
         filters,
     })))
 }
@@ -162,8 +161,8 @@ pub fn pool_json(count: usize) -> String {
 
 /// A running loopback adapter plus the per-launch capability it was started
 /// with. The token is random per launch and cannot be recovered from the port,
-/// so every test that wants a positive answer has to keep it: the adapter
-/// answers 401 to anything that carries no capability.
+/// so every test that wants to exercise a device-bound write route has to keep
+/// it: those routes answer 401 to anything that carries no capability.
 pub struct Loopback {
     pub port: u16,
     pub token: String,
@@ -191,7 +190,8 @@ impl Loopback {
         format!("{}/_session/{capability}{path}", self.origin())
     }
 
-    /// A URL with no capability at all: only the refusal cases want this.
+    /// A URL with no capability at all: what an external reader such as a
+    /// Legado book source sends.
     pub fn bare_url(&self, path: &str) -> String {
         format!("{}{path}", self.origin())
     }
@@ -199,7 +199,12 @@ impl Loopback {
 
 /// Starts the real loopback adapter on an ephemeral port.
 pub async fn start_loopback(server: Arc<Server>) -> Loopback {
-    let handle = fqapi_core::server::serve(server, 0)
+    start_listener(server, fqapi_core::server::ListenMode::Loopback).await
+}
+
+/// Starts the adapter with an explicit listen mode, for the LAN tests.
+pub async fn start_listener(server: Arc<Server>, mode: fqapi_core::server::ListenMode) -> Loopback {
+    let handle = fqapi_core::server::serve(server, 0, mode)
         .await
         .expect("loopback adapter");
     Loopback {

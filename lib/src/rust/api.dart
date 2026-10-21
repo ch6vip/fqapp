@@ -33,6 +33,7 @@ Future<String> init({
   required String filterPath,
   required String runtimeDir,
   required int port,
+  required bool lanShare,
   required String mockUpstreamOrigin,
 }) => RustLib.instance.api.crateApiInit(
   configPath: configPath,
@@ -40,6 +41,7 @@ Future<String> init({
   filterPath: filterPath,
   runtimeDir: runtimeDir,
   port: port,
+  lanShare: lanShare,
   mockUpstreamOrigin: mockUpstreamOrigin,
 );
 

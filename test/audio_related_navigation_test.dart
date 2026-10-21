@@ -28,7 +28,7 @@ void main() {
     final api = http.runWithClient(
       () => ApiClient.instance,
       () => MockClient((request) async {
-        final data = request.url.path == '/api/directory'
+        final data = request.url.path.endsWith('/directory')
             ? {
                 'chapterListWithVolume': [
                   [

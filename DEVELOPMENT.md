@@ -2,7 +2,7 @@
 
 面向构建、修改和调试本项目的开发者。用户使用说明见 [README.md](README.md)。
 
-> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:8080`），继续服务内置 Web UI、`/api/*` 桥和 `/src/*` 漫画图。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
+> **核心设计**：Rust 原生核心在 Flutter 进程内运行，UI 通过 flutter_rust_bridge 直接调用；同一分发器另开 loopback HTTP 适配器（`127.0.0.1:18921`），把 `/api/v1/*` 只读路由和 `/src/*` 漫画图开放给外部阅读软件（如 Legado 书源）和本机工具。不需要自建服务器，不需要 root；签名、解密和本地缓存由手机完成，但在线内容仍需访问上游。
 
 ---
 
@@ -57,14 +57,14 @@ Android WebView 由用户本人完成官方手机号登录和人机验证。Cook
               └──────┬─────────────┬──────┘
                      │             │
       loopback HTTP  │             │ HTTPS (reqwest)
-      127.0.0.1:8080 │             ▼
+      127.0.0.1:18921 │             ▼
                      ▼      上游 API
-          内置 Web UI / /src/* 漫画图
+          外部客户端 / /src/* 漫画图
 ```
 
 ### 数据流
 
-1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、Web 页面及其 CSS/字体、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
+1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
 2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；Web/测试用 loopback HTTP）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
@@ -84,7 +84,7 @@ fqapp/
 ├── rust/                            # fqapi_core 源码、协议夹具和 Rust 测试
 ├── android/                         # Android 工程、原生插件与 JVM 测试
 ├── native/                          # CENC 流式 C 解密库、JNI 与 CMake
-├── assets/                          # 配置示例、Web UI、插件、图片和动画
+├── assets/                          # 配置示例、插件、图片和动画
 ├── test/                            # Flutter 测试及 Node 主机回归
 ├── scripts/                         # 构建、验证和资源生成；见 scripts/README.md
 ├── .github/workflows/               # Android APK 与原生库 CI
@@ -282,7 +282,7 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 
 1. 将 `config.json`、`filter.json`、`device_pool.example.json` 部署到应用私有目录 `files/backend/config/`。
 2. 首次启动时用示例初始化 `device_pool.json`；以后保留后端注册并保存的实际设备池。
-3. 从 Flutter 资源清单枚举并部署全部 `filters/`、`web/`、`plugins/` 文件，包含 CSS 和字体。内容变更时替换旧资源。
+3. 从 Flutter 资源清单枚举并部署全部 `filters/`、`plugins/` 文件。内容变更时替换旧资源。
 4. 运行时资源不含任何可执行后端二进制；Rust 核心以 `libfqapi_core.so` 随 APK 打包，在进程内加载。
 
 ### 启动流程（`BackendService.start`）
@@ -290,9 +290,9 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 ```dart
 // 默认：flutter_rust_bridge 直调 Rust 核心（进程内，无独立进程）
 await rust.init(
-  configPath: ..., poolPath: ..., filterPath: ..., runtimeDir: ..., port: 8080,
+  configPath: ..., poolPath: ..., filterPath: ..., runtimeDir: ..., port: 18921,
 );
-// Web / 测试：同一分发器另开 loopback HTTP 适配器，供浏览器入口与 /src/* 资源
+// 端口来自部署后的 config.json；外部客户端（Legado 书源等）按该端口访问 /api/v1/*
 ```
 
 - 并发 `start()` 等待同一次完整启动，`stop()` 会等待进行中的部署与启动结束再清理。
@@ -318,15 +318,16 @@ await rust.init(
 .\scripts\build_rust_backend.ps1
 ```
 
-Rust 核心会使用配置文件推导运行目录，静态页面、过滤器和 `src/` 均按绝对路径加载；
-loopback HTTP 适配器只绑定 `127.0.0.1`，`/health`、`/api/*`、`/src/*` 与 Web 入口共用同一分发器。
+Rust 核心会使用配置文件推导运行目录，过滤器和 `src/` 均按绝对路径加载；
+loopback HTTP 适配器只绑定 `127.0.0.1`，`/health`、`/api/v1/*` 与 `/src/*` 共用同一分发器。
+读路由对任何本机客户端开放（供阅读软件等外部工具调用），写路由仍要求每次启动的能力值。
 加密播放所需的 `libshortplay_crypto.so` 由 APK 构建自动从 `native/` 生成。
 
 ---
 
 ## API 对接说明
 
-App 主要通过 `ApiClient` 调用后端 **`/api/*` 桥接层**（Rust 核心 `rust/src/endpoints/webui.rs`），首页推荐使用
+App 通过 `ApiClient` 调用后端 **`/api/v1/*` 业务路由**（Rust 核心 `rust/src/endpoints/`），首页推荐使用
 `/api/v1/recommend/homepage`。漫剧首页使用 `tab_type=24`；听书使用现有音频播放接口，漫画首页使用真实漫画分类搜索。
 客户端模型同时兼容归一化结果及部分旧版响应结构：
 
@@ -565,7 +566,7 @@ adb shell run-as com.fqapp.fqapp cat files/backend/backend.log
 adb shell run-as com.fqapp.fqapp ls -la files/backend/
 
 # 端口转发测试（后端起来后）
-adb forward tcp:18080 tcp:8080
+adb forward tcp:18080 tcp:18921
 curl http://127.0.0.1:18080/health
 
 # Flutter 日志

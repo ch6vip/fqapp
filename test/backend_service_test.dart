@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -154,15 +155,13 @@ void main() {
     // The pool holds real device credentials: a restart must not overwrite it.
     final pool = File('${directory.path}/backend/config/device_pool.json');
     await pool.writeAsString('registered-device');
-    final stylesheet = File(
-      '${directory.path}/backend/web/assets/css/all.min.css',
-    );
-    await stylesheet.writeAsString('old stylesheet');
+    final pluginPage = File('${directory.path}/backend/plugins/player.html');
+    await pluginPage.writeAsString('old plugin page');
     await backend.stop();
 
     await backend.start();
     expect(await pool.readAsString(), 'registered-device');
-    expect(await stylesheet.readAsString(), '{}');
+    expect(await pluginPage.readAsString(), '{}');
     await backend.stop();
   });
 
@@ -175,6 +174,27 @@ void main() {
     expect(transport.poolPath, endsWith('/backend/config/device_pool.json'));
     expect(transport.filterPath, endsWith('/backend/config/filter.json'));
     expect(transport.runtimeDir, endsWith('/backend'));
+    await backend.stop();
+  });
+
+  test('the listener port comes from the deployed config.json', () async {
+    final transport = _FakeRustTransport();
+    final backend = createBackend(transport: transport);
+    await backend.start();
+
+    // config.json is the single source of truth, so the deployed copy decides
+    // what the core binds rather than the transport constructor default.
+    expect(transport.listenPort, 18921);
+    await backend.stop();
+  });
+
+  test('a config.json without a usable port leaves the core default', () async {
+    final transport = _FakeRustTransport();
+    final assets = _BackendAssets(configPort: null);
+    final backend = createBackend(assets: assets, transport: transport);
+    await backend.start();
+
+    expect(transport.listenPort, isNull);
     await backend.stop();
   });
 }
@@ -199,12 +219,14 @@ class _FakeRustTransport extends RustBackendTransport {
   String? poolPath;
   String? filterPath;
   String? runtimeDir;
+  int? listenPort;
+  bool lanShare = false;
 
   final stopEntered = Completer<void>();
   final allowStop = Completer<void>();
 
   @override
-  String get baseUrl => 'http://127.0.0.1:8080';
+  String get baseUrl => 'http://127.0.0.1:18921';
 
   @override
   Future<String> start({
@@ -212,12 +234,16 @@ class _FakeRustTransport extends RustBackendTransport {
     required String poolPath,
     required String filterPath,
     required String runtimeDir,
+    int? listenPort,
+    bool lanShare = false,
   }) async {
     initCalls += 1;
     this.configPath = configPath;
     this.poolPath = poolPath;
     this.filterPath = filterPath;
     this.runtimeDir = runtimeDir;
+    this.listenPort = listenPort;
+    this.lanShare = lanShare;
     return initResult;
   }
 
@@ -251,16 +277,15 @@ class _FakeRustTransport extends RustBackendTransport {
 }
 
 class _BackendAssets extends CachingAssetBundle {
-  _BackendAssets({this.blockFirstLoad = false});
+  _BackendAssets({this.blockFirstLoad = false, this.configPort = 18921});
 
   final bool blockFirstLoad;
+  /// Port written into the deployed `config.json`; null omits the key.
+  final int? configPort;
   final loadEntered = Completer<void>();
   final allowLoad = Completer<void>();
   static const runtimeAssets = [
     'assets/filters/book.js',
-    'assets/web/index.html',
-    'assets/web/assets/css/all.min.css',
-    'assets/web/assets/webfonts/fa-solid-900.woff2',
     'assets/plugins/player.html',
   ];
 
@@ -277,6 +302,11 @@ class _BackendAssets extends CachingAssetBundle {
             {'asset': path},
           ],
       })!;
+    }
+    if (key == 'assets/config/config.json') {
+      final port = configPort;
+      final body = port == null ? '{}' : '{"port":$port}';
+      return ByteData.sublistView(Uint8List.fromList(utf8.encode(body)));
     }
     return ByteData.sublistView(Uint8List.fromList([123, 125]));
   }

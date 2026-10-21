@@ -260,7 +260,7 @@ void main() {
           }),
         );
         final content = await api.chapterContent('chapter');
-        expect(paths, ['/api/v1/chapters/chapter/novel', '/api/content']);
+        expect(paths, ['/api/v1/chapters/chapter/novel', '/api/v1/chapters/chapter']);
         expect(_sequence(content), ['<b>正文</b>']);
         expect(content.illustrationsChecked, isFalse);
       },

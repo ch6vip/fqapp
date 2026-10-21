@@ -1160,13 +1160,34 @@ List<MediaItem> parseMediaItems(Map<String, dynamic> payload, {String? kind}) {
   return out;
 }
 
+/// Picks the map/list that holds the chapter list.
+///
+/// Two shapes reach this function:
+///
+/// * The removed Web bridge nested the normalized list under `data.data`
+///   (`chapterListWithVolume`).
+/// * `/api/v1/books/<id>/directory` returns the upstream payload, where the
+///   chapter list sits **beside** `data.data` as `item_data_list` / `lists` /
+///   `item_list`.
+///
+/// Descending unconditionally broke the second shape: the inner `data` has no
+/// chapter list, so the directory came back empty and the reader reported a
+/// network error. Only descend when the inner map really is the directory.
 dynamic _directoryInner(Map<String, dynamic> payload) {
-  dynamic data = payload['data'] ?? payload;
-  if (data is Map && (data['data'] is Map || data['data'] is List)) {
-    data = data['data'];
-  }
+  final dynamic data = payload['data'] ?? payload;
+  if (data is! Map) return data;
+  final dynamic nested = data['data'];
+  if (nested is Map && _looksLikeDirectory(nested)) return nested;
+  if (nested is List) return nested;
   return data;
 }
+
+/// Whether [value] carries a chapter list this parser can consume.
+bool _looksLikeDirectory(dynamic value) =>
+    _findDirectoryEntries(value) != null ||
+    (value is Map &&
+        (value['chapterListWithVolume'] is List ||
+            value['chapterList'] is List));
 
 List<Map<String, dynamic>>? _chapterListFromVolume(dynamic volume) {
   if (volume is List) return _asMapList(volume);

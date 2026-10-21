@@ -2,7 +2,7 @@
 /// base URL.
 ///
 /// The loopback adapter demands a per-launch capability on every request, and
-/// the capability travels inside the path (`http://127.0.0.1:8080/_session/<cap>/`).
+/// the capability travels inside the path (`http://127.0.0.1:18921/_session/<cap>/`).
 /// Backend-relative resources arrive as root-relative paths (`/src/...`), and
 /// `Uri.resolve` reads a leading `/` as "root-relative", which would replace the
 /// whole base path and drop the `/_session/<cap>` segment - leaving every cover,

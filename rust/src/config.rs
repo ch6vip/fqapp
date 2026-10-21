@@ -38,7 +38,7 @@ impl Config {
         let mut c: Config =
             serde_json::from_slice(&data).map_err(|e| format!("parse config {path}: {e}"))?;
         if c.port == 0 {
-            c.port = 8080;
+            c.port = 18921;
         }
         Ok(c)
     }

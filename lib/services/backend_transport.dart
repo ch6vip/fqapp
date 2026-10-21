@@ -122,7 +122,7 @@ abstract class BackendTransport {
 /// flutter_rust_bridge transport. The Rust core owns the HTTP client, the
 /// device pool and the signing keys; Dart only passes method/path/query/body.
 class RustBackendTransport implements BackendTransport {
-  RustBackendTransport({this.port = 8080, this.mockUpstreamOrigin = ''})
+  RustBackendTransport({this.port = defaultPort, this.mockUpstreamOrigin = ''})
     : _baseUrl = 'http://127.0.0.1:$port',
       // Created eagerly so it captures the ambient `http.Client` of the Zone
       // that built this transport. That is what keeps `ApiClient` injectable:
@@ -131,6 +131,14 @@ class RustBackendTransport implements BackendTransport {
       _httpFallback = HttpBackendTransport(
         baseUrl: 'http://127.0.0.1:$port',
       );
+
+  /// Listener port used when the caller does not supply one.
+  ///
+  /// `assets/config/config.json` is the single source of truth: the shipping
+  /// app reads it after deploying and passes the value to [start]. This
+  /// constant only covers callers that construct the transport directly (the
+  /// host integration test, ad-hoc tooling) and must match that file.
+  static const defaultPort = 18921;
 
   final int port;
 
@@ -180,11 +188,17 @@ class RustBackendTransport implements BackendTransport {
 
   /// Initializes the Rust runtime and the backend core. Idempotent: concurrent
   /// and repeated calls converge on the same core.
+  ///
+  /// [listenPort] overrides [port] so the caller can drive the listener from
+  /// `config.json` (the single source of truth) instead of the constructor.
+  /// [lanShare] widens the listener from loopback to every interface.
   Future<String> start({
     required String configPath,
     required String poolPath,
     required String filterPath,
     required String runtimeDir,
+    int? listenPort,
+    bool lanShare = false,
   }) async {
     await ensureRuntime();
     // P1-2: provision the device-pool encryption key before init, so the
@@ -204,7 +218,8 @@ class RustBackendTransport implements BackendTransport {
       poolPath: poolPath,
       filterPath: filterPath,
       runtimeDir: runtimeDir,
-      port: port,
+      port: listenPort ?? port,
+      lanShare: lanShare,
       mockUpstreamOrigin: mockUpstreamOrigin,
     );
     _baseUrl = await rust.baseUrl();
