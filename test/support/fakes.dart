@@ -108,6 +108,9 @@ class MemoryChapterCache implements ChapterCache {
       content[bookId]?.keys.toSet() ?? {};
 
   @override
+  Future<CachedBook?> savedCatalogue(String bookId) async => catalogs[bookId];
+
+  @override
   Future<CachedBook?> cachedBook(String bookId) async {
     final chapters = content[bookId];
     if (chapters == null || chapters.isEmpty) return null;
