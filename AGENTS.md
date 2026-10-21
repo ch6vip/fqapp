@@ -14,6 +14,7 @@
 - 提供只读的番茄账号导入（网页登录后读取书架/历史/进度，不回写账号）；除此之外不提供登录或上游账号写操作。已裁撤的追剧、点赞、分享等入口不作为待办恢复。已有本机书架与详情页收藏按现有产品范围保留；没有真实能力时不放占位控件。
 - 基线：Flutter **3.44.6 stable**、Dart **^3.12.2**、Rust stable；FRB 的 Rust crate、Dart 包和 codegen **统一固定 2.13.0**。
 - Android：SDK 36、NDK **28.2.13676358**、JDK 17、Gradle **9.1.0**；构建 `arm64-v8a` + `armeabi-v7a` 两个 ABI，`--split-per-abi` 分包出两个 APK。原生 C CENC 库由 CMake 生成 `libshortplay_crypto.so`，原生库须满足 **16 KiB** 对齐。
+- Windows 桌面端（可选）：`windows/` 与 `lib/**` 的桌面分支构成 Windows 10/11 x64 客户端，复用同一套 Flutter/Rust/C 逻辑与内容 API，本机书架与 JSON 备份格式与 Android 一致；桌面专属设置与版式不影响 Android，反之亦然。构建需要 Visual Studio 2022「使用 C++ 的桌面开发」工作负载与系统「开发人员模式」，流程见 `WINDOWS.md`；CI 是 `.github/workflows/windows.yml`，其中 libmpv 播放验证只在 dispatch 传 `verify_player=true` 时运行。
 - 状态存储使用 Hive（`LibraryStore`）与 SharedPreferences。依赖、工具链或架构调整须服务于当前任务，不顺手升级。
 
 | 路径 | 职责 |

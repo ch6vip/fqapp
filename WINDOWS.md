@@ -53,7 +53,7 @@ Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutte
 Android 保留 ExoPlayer；只引用 `media_kit_libs_windows_video`，不打包 Android
 libmpv/FFmpeg 原生库。执行 Flutter 测试后构建 Android release 时，须保留 pub
 步骤（不要给 `flutter build apk` 加 `--no-pub`），以清除 dev-only 集成测试注册项。
-`.github/workflows/windows-preview.yml` 会在相关 PR 中使用未修改的 SDK 构建并验证
+`.github/workflows/windows.yml` 会在相关 PR 中使用未修改的 SDK 构建并验证
 桌面布局、原生媒体接口和 libmpv；程序包仅作为 Actions artifact 保存。
 
 ## 第三方组件

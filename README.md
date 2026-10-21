@@ -62,6 +62,8 @@
 | 🕘 历史与书架 | 阅读/播放进度自动记录，续读续看；离线缓存管理 |
 | ⬇️ 下载 | 整本缓存、批量缓存后续章节，下载内容不受自动清理影响 |
 
+> 另有 **Windows 10/11 桌面端（预览）**：同一套内容、API 与本机书架，桌面版布局与键盘/鼠标操作，见下文「Windows 桌面版」。
+
 ## ⬇️ 下载与安装
 
 ### 设备要求
@@ -92,6 +94,29 @@
 3. 之后即可随时离线打开 App，阅读已缓存的内容。
 
 > ⚠️ **签名与升级**：正式签名与调试签名的包**不能互相覆盖安装**。Releases 与 Actions 产出的 release 包使用正式签名；从旧签名版本（v1.0.17 及更早）升级需要**先卸载**再安装，卸载会同时清除阅读历史与缓存。同签名版本可直接覆盖升级。
+
+## 🖥️ Windows 桌面版（预览）
+
+Windows 10/11 x64 上可运行同一套 Flutter + Rust 核心：小说、听书、短剧、漫剧、漫画的内容与 API 与
+Android 一致，本机书架与 JSON 备份格式相同。界面换成左侧导航 + 桌面自适应版式，普通窗口下播放区域
+横向铺开、竖片保持原始比例，支持全屏与键盘鼠标操作；WebView2 只读导入番茄书架，账号其余操作仍然
+不含。
+
+获取方式：打开 [Actions → Windows build and regression](https://github.com/ch6vip/fqapp/actions/workflows/windows.yml)，
+点击 **Run workflow** 运行一次，在 **Artifacts** 下载 `fqapp-windows-x64-preview.zip`，解压后运行
+`fqapp.exe`。exe **未签名**，首次运行请在 Windows 的 SmartScreen 提示里选择「更多信息 → 仍要运行」。
+
+本地构建（可选）：
+
+```powershell
+# 需要 Visual Studio 2022 的「使用 C++ 的桌面开发」工作负载，以及系统「开发人员模式」
+pwsh -File scripts\build_windows.ps1 -FlutterRoot <专用 Flutter SDK 路径>
+```
+
+该脚本会先给 SDK 打语义补丁（`scripts/patches/flutter-3.44.6-semantics.patch`），因此请用一份
+**专用 SDK**，不要改动日常构建 Android 的那份。产物在 `build\windows\x64\runner\Release\`，
+其中的 `fqapp.exe`、`fqapi_core.dll`、`libmpv-2.dll` 与 `data\` 需整体拷贝运行。
+构建、验证与已知限制见 [WINDOWS.md](WINDOWS.md)。
 
 ## 🚀 快速上手
 

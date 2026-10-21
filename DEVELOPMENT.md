@@ -116,8 +116,14 @@ fqapp/
 | JDK | 17 | Android Gradle 构建 |
 | Android NDK | 28.2.13676358 | 交叉编译 Rust ARM64 核心与 C 流式解密库 |
 | CMake | 3.22.1 | Android 构建自动编译 C 库 |
+| Visual Studio | 2022（「使用 C++ 的桌面开发」工作负载） | 仅构建 Windows 桌面端（可选） |
 
 > Windows 下构建注意：Kotlin 增量编译在部分环境会报 `Could not close incremental caches`，已在 `android/gradle.properties` 中关闭（`kotlin.incremental=false`）。
+
+> **桌面插件与「开发人员模式」**：仓库已包含 Windows 桌面端插件，`flutter pub get` / `flutter test` /
+> `flutter run` 需要系统开启「开发人员模式」（插件通过符号链接注册），否则报
+> `Building with plugins requires symlink support`。只跑 `dart pub get` 或 `flutter analyze` 不受影响；
+> 不打算本地跑测试时，用 GitHub Actions 的 CI 即可。桌面端构建与验证见 [WINDOWS.md](WINDOWS.md)。
 
 ### 1. 编译 Rust 原生核心
 
@@ -174,6 +180,11 @@ flutter build apk --release --target-platform android-arm64
 
 生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
 对应 ABI 交叉编译并打包 `libfqapi_core.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
+
+> **release 构建不要加 `--no-pub`**：`integration_test` 在 `dev_dependencies` 里，`flutter test` 会把
+> 它写进 Android 插件注册表；随后用 `--no-pub` 构建 release，Gradle 会报
+> `package dev.flutter.plugins.integration_test does not exist`。先跑测试再构建时保留 pub 步骤即可
+> （CI 正是这样构建的）。
 
 ### GitHub Actions 云端编译
 
