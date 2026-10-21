@@ -1511,4 +1511,34 @@ void main() {
     expect(find.byKey(const ValueKey('desktop-feed-player')), findsNothing);
     expect(find.text('1 / 2'), findsNothing);
   });
+
+  testWidgets('桌面 feed 顶栏只剩频道条一行，搜索入口收敛到频道条图标', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _scope(perTab: 2, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    // 搜索行不渲染；分区搜索只剩频道条右端的图标一处。
+    expect(find.byKey(const Key('drama_search_button')), findsNothing);
+    expect(
+      find.byKey(const Key('drama_strip_search_button')),
+      findsOneWidget,
+    );
+    // 播放器顶端只让出频道条一行（38），不再是搜索行 + 频道条的 76。
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('desktop-feed-player'))).dy,
+      closeTo(38, 0.5),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+    debugDefaultTargetPlatformOverride = null;
+  });
 }

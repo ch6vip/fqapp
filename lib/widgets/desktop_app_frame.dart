@@ -100,7 +100,7 @@ class DesktopAppFrame extends StatelessWidget {
                 child: Column(
                   children: [
                     Container(
-                      height: 60,
+                      height: 48,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.surface,
@@ -122,7 +122,7 @@ class DesktopAppFrame extends StatelessWidget {
                           ),
                           const SizedBox(width: 8),
                           const Text(
-                            '番茄小铺',
+                            'fqapp',
                             style: TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 17,
@@ -130,30 +130,43 @@ class DesktopAppFrame extends StatelessWidget {
                           ),
                           const SizedBox(width: 24),
                           Expanded(
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: SizedBox(
-                                width: 440,
-                                child: TextField(
-                                  key: const Key('desktop-search'),
-                                  onSubmitted: _search,
-                                  textInputAction: TextInputAction.search,
-                                  decoration: InputDecoration(
-                                    hintText: '搜索小说、短剧、漫画、听书 / 作品 ID',
-                                    isDense: true,
-                                    prefixIcon: const Icon(
-                                      LucideIcons.search,
-                                      size: 18,
+                            // 短剧分区自带搜索入口（频道条的搜索图标，按
+                            // 短剧名或主演名搜），壳层全局搜索在该分区
+                            // 隐藏，避免两个搜索框上下叠排挤占视频空间；
+                            // 其它分区没有自己的搜索行，仍用全局搜索。
+                            child: ValueListenableBuilder<int>(
+                              valueListenable: desktopTab,
+                              builder: (context, tab, _) => tab == 1
+                                  ? const SizedBox.shrink()
+                                  : Align(
+                                      alignment: Alignment.centerRight,
+                                      child: SizedBox(
+                                        width: 440,
+                                        child: TextField(
+                                          key: const Key('desktop-search'),
+                                          onSubmitted: _search,
+                                          textInputAction:
+                                              TextInputAction.search,
+                                          decoration: InputDecoration(
+                                            hintText:
+                                                '搜索小说、短剧、漫画、听书 / 作品 ID',
+                                            isDense: true,
+                                            prefixIcon: const Icon(
+                                              LucideIcons.search,
+                                              size: 18,
+                                            ),
+                                            filled: true,
+                                            fillColor:
+                                                theme.scaffoldBackgroundColor,
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(24),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                     ),
-                                    filled: true,
-                                    fillColor: theme.scaffoldBackgroundColor,
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(24),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                  ),
-                                ),
-                              ),
                             ),
                           ),
                         ],

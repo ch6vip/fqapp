@@ -74,7 +74,7 @@ class DesktopPlatform with WindowListener {
           min(440, available.height),
         ),
         center: true,
-        title: '番茄小铺 · 电脑版',
+        title: 'fqapp',
       ),
       () async {
         await windowManager.show();

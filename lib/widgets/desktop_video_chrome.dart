@@ -33,10 +33,33 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
   Timer? _hide;
   final _position = ValueNotifier<Duration>(Duration.zero);
   StreamSubscription<Duration>? _positionSub;
+  final _catalogController = ScrollController();
+
+  // 选集网格几何：面板宽固定 304，桌面鼠标操作按 6 列小按钮排（旧版
+  // 4 列大按钮一屏约 24 集，这个密度一屏两倍以上，长剧翻集不再逐屏
+  // 滚）。行距由这些常量反推，区间跳集与「回到当前集」靠它算滚动
+  // 偏移，改几何必须同步这里。
+  static const _catalogWidth = 304.0;
+  static const _catalogColumns = 6;
+  static const _catalogSpacing = 6.0;
+  static const _catalogGridPadding = 12.0;
+  static const _catalogAspectRatio = 1.45;
+  static const _catalogSegmentSize = 50;
+
+  double get _catalogRowPitch {
+    final cellWidth =
+        (_catalogWidth -
+            _catalogGridPadding * 2 -
+            _catalogSpacing * (_catalogColumns - 1)) /
+        _catalogColumns;
+    return cellWidth / _catalogAspectRatio + _catalogSpacing;
+  }
+
   @override
   void initState() {
     super.initState();
     _bindPosition();
+    _scrollCatalogTo(c.currentIndex, animate: false);
     unawaited(
       PlayerPreferences.loadPlaybackRate().then((value) {
         if (mounted) setState(() => _rate = value);
@@ -57,6 +80,9 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
   void didUpdateWidget(covariant DesktopVideoChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.configuration.player != c.player) _bindPosition();
+    if (oldWidget.configuration.currentIndex != c.currentIndex) {
+      _ensureCatalogCurrentVisible();
+    }
   }
 
   bool get _ready => c.enabled && c.player?.isCreated == true;
@@ -64,6 +90,7 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
   void dispose() {
     _hide?.cancel();
     _positionSub?.cancel();
+    _catalogController.dispose();
     _position.dispose();
     if (DesktopPlatform.fullscreen.value) {
       unawaited(DesktopPlatform.instance.setFullscreen(false));
@@ -174,15 +201,60 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
     return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
   }
 
+  /// 把选集网格滚到 [index] 所在行（行顶对齐，钳制在可滚范围内）。
+  /// 网格可能还没挂载（弹窗刚打开、面板刚展开），统一推到帧后执行，
+  /// 没挂上时再等一帧。
+  void _scrollCatalogTo(int index, {required bool animate, int retries = 1}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_catalogController.hasClients) {
+        if (retries > 0) {
+          _scrollCatalogTo(index, animate: animate, retries: retries - 1);
+        }
+        return;
+      }
+      final position = _catalogController.position;
+      final target = ((index ~/ _catalogColumns) * _catalogRowPitch).clamp(
+        0.0,
+        position.maxScrollExtent,
+      );
+      if (animate) {
+        unawaited(
+          _catalogController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          ),
+        );
+      } else {
+        _catalogController.jumpTo(target);
+      }
+    });
+  }
+
+  /// 切集后把当前集滚进视野；在视野内就不动，免得用户正翻网格时被拽走。
+  void _ensureCatalogCurrentVisible() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_catalogController.hasClients) return;
+      final position = _catalogController.position;
+      final rowTop = (c.currentIndex ~/ _catalogColumns) * _catalogRowPitch;
+      final rowBottom = rowTop + _catalogRowPitch - _catalogSpacing;
+      if (rowTop < position.pixels ||
+          rowBottom > position.pixels + position.viewportDimension) {
+        _scrollCatalogTo(c.currentIndex, animate: true);
+      }
+    });
+  }
+
   Widget _catalog() => SizedBox(
-    width: 304,
+    width: _catalogWidth,
     child: ColoredBox(
       color: const Color(0xff1c1c1f),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -248,17 +320,64 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
             ],
           ),
           const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Text('选集', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
+          // 长剧（如 600+ 集）逐行翻太慢：给一段 50 集的区间跳集，
+          // 外加一枚随时回到当前集的定位 chip。
+          if (c.episodes.length > _catalogSegmentSize)
+            SizedBox(
+              height: 38,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ActionChip(
+                      avatar: const Icon(Icons.my_location, size: 14),
+                      label: const Text('当前集'),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () =>
+                          _scrollCatalogTo(c.currentIndex, animate: true),
+                    ),
+                  ),
+                  for (
+                    var start = 0;
+                    start < c.episodes.length;
+                    start += _catalogSegmentSize
+                  )
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(
+                          '${start + 1}-${math.min(start + _catalogSegmentSize, c.episodes.length)}',
+                        ),
+                        selected:
+                            c.currentIndex >= start &&
+                            c.currentIndex < start + _catalogSegmentSize,
+                        visualDensity: VisualDensity.compact,
+                        onSelected: (_) =>
+                            _scrollCatalogTo(start, animate: true),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           Expanded(
             child: GridView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              controller: _catalogController,
+              padding: const EdgeInsets.fromLTRB(
+                _catalogGridPadding,
+                0,
+                _catalogGridPadding,
+                16,
+              ),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 1.5,
+                crossAxisCount: _catalogColumns,
+                mainAxisSpacing: _catalogSpacing,
+                crossAxisSpacing: _catalogSpacing,
+                childAspectRatio: _catalogAspectRatio,
               ),
               itemCount: c.episodes.length,
               itemBuilder: (context, index) => FilledButton.tonal(
@@ -282,20 +401,24 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
       ),
     ),
   );
-  Future<void> _showCatalog() => showDialog<void>(
-    context: context,
-    builder: (context) => Theme(
-      data: ThemeData.dark(useMaterial3: true),
-      child: Dialog(
-        alignment: Alignment.centerRight,
-        insetPadding: const EdgeInsets.all(12),
-        child: SizedBox(
-          height: MediaQuery.sizeOf(context).height - 24,
-          child: _catalog(),
+  Future<void> _showCatalog() {
+    // 弹窗打开后把网格定位到当前集（帧后执行，等网格挂载）。
+    _scrollCatalogTo(c.currentIndex, animate: false);
+    return showDialog<void>(
+      context: context,
+      builder: (context) => Theme(
+        data: ThemeData.dark(useMaterial3: true),
+        child: Dialog(
+          alignment: Alignment.centerRight,
+          insetPadding: const EdgeInsets.all(12),
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height - 24,
+            child: _catalog(),
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
   @override
   Widget build(BuildContext context) => Theme(
     data: ThemeData.dark(useMaterial3: true).copyWith(
@@ -333,12 +456,10 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                 height: 48,
                                 child: Row(
                                   children: [
-                                    IconButton(
-                                      tooltip: '返回',
-                                      onPressed: () =>
-                                          Navigator.maybePop(context),
-                                      icon: const Icon(Icons.arrow_back),
-                                    ),
+                                    // 返回只留壳层顶栏一处：这里再放一枚
+                                    // 与它重复（同一 Navigator 的 maybePop），
+                                    // 只白占视频上方的高度。
+                                    const SizedBox(width: 16),
                                     Expanded(
                                       child: docked
                                           ? const SizedBox.shrink()
@@ -351,10 +472,20 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                     if (canDock)
                                       IconButton(
                                         tooltip: docked ? '收起面板' : '展开面板',
-                                        onPressed: () => setState(
-                                          () =>
-                                              _dockCollapsed = !_dockCollapsed,
-                                        ),
+                                        onPressed: () {
+                                          setState(
+                                            () => _dockCollapsed =
+                                                !_dockCollapsed,
+                                          );
+                                          // 面板重挂载后滚动位置会丢，
+                                          // 展开时重新定位到当前集。
+                                          if (!_dockCollapsed) {
+                                            _scrollCatalogTo(
+                                              c.currentIndex,
+                                              animate: false,
+                                            );
+                                          }
+                                        },
                                         icon: Icon(
                                           docked
                                               ? Icons.view_sidebar
