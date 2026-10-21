@@ -1,0 +1,74 @@
+name: Windows preview build
+
+# 一次性预览构建（手动触发）：把 PR #104 的 Windows 客户端编出可运行的便携包，
+# 供维护者在本地评估。只存在于临时分支 pr104-windows-build，不进 master。
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          flutter --version
+          cargo --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          }
+
+      - name: Apply the Flutter Windows semantics backport
+        shell: pwsh
+        run: |
+          $flutter = (Get-Command flutter).Source
+          $root = Split-Path (Split-Path $flutter)
+          Write-Host "Flutter root: $root"
+          pwsh -File scripts/prepare_flutter_windows.ps1 -FlutterRoot $root
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze --no-pub
+        run: flutter analyze --no-pub
+
+      - name: flutter build windows --release
+        shell: pwsh
+        run: flutter build windows --release --no-pub
+
+      - name: Package the portable bundle
+        shell: pwsh
+        run: |
+          $src = 'build/windows/x64/runner/Release'
+          if (-not (Test-Path $src)) { throw "missing bundle directory: $src" }
+          Get-ChildItem -Recurse $src -File | Select-Object FullName, Length | Format-Table -AutoSize
+          Compress-Archive -Path "$src/*" -DestinationPath 'fqapp-windows-x64-preview.zip' -Force
+          Get-Item 'fqapp-windows-x64-preview.zip' | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fqapp-windows-x64-preview
+          path: fqapp-windows-x64-preview.zip
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: windows-build-logs
+          path: |
+            build/windows/**/*.log
+            **/CMakeOutput.log
+            **/CMakeError.log
+          if-no-files-found: ignore
