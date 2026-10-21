@@ -1,6 +1,6 @@
 {
   "algorithm_type": "8404",
-  "port": 8080,
+  "port": 18921,
   "anti_crawler": {
     "enabled": false,
     "redirect_url": "https://www.example.com"

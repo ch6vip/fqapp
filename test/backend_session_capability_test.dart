@@ -40,26 +40,26 @@ void main() {
   // travel inside the path, so these guard the composition and the resolution
   // that keeps it from being dropped.
   group('resolveBackendResource', () {
-    const base = 'http://127.0.0.1:8080/_session/abc/';
+    const base = 'http://127.0.0.1:18921/_session/abc/';
 
     test('keeps the capability when re-anchoring a root-relative path', () {
       expect(
         resolveBackendResource(base, '/src/chapter.webp'),
-        'http://127.0.0.1:8080/_session/abc/src/chapter.webp',
+        'http://127.0.0.1:18921/_session/abc/src/chapter.webp',
       );
     });
 
     test('keeps the capability for a relative path', () {
       expect(
         resolveBackendResource(base, 'src/chapter.webp'),
-        'http://127.0.0.1:8080/_session/abc/src/chapter.webp',
+        'http://127.0.0.1:18921/_session/abc/src/chapter.webp',
       );
     });
 
     test('preserves a query on a backend-relative path', () {
       expect(
         resolveBackendResource(base, '/src/x.mp4?token=abc123'),
-        'http://127.0.0.1:8080/_session/abc/src/x.mp4?token=abc123',
+        'http://127.0.0.1:18921/_session/abc/src/x.mp4?token=abc123',
       );
     });
 
@@ -70,8 +70,8 @@ void main() {
 
     test('still resolves against a capability-free base', () {
       expect(
-        resolveBackendResource('http://127.0.0.1:8080/', '/src/x.webp'),
-        'http://127.0.0.1:8080/src/x.webp',
+        resolveBackendResource('http://127.0.0.1:18921/', '/src/x.webp'),
+        'http://127.0.0.1:18921/src/x.webp',
       );
     });
 
@@ -86,15 +86,15 @@ void main() {
   group('backendResourceBase', () {
     test('appends the capability as a path segment', () {
       expect(
-        backendResourceBase('http://127.0.0.1:8080', 'abc'),
-        'http://127.0.0.1:8080/_session/abc/',
+        backendResourceBase('http://127.0.0.1:18921', 'abc'),
+        'http://127.0.0.1:18921/_session/abc/',
       );
     });
 
     test('stays capability-free when none is known', () {
       expect(
-        backendResourceBase('http://127.0.0.1:8080', ''),
-        'http://127.0.0.1:8080/',
+        backendResourceBase('http://127.0.0.1:18921', ''),
+        'http://127.0.0.1:18921/',
       );
     });
   });
@@ -103,13 +103,13 @@ void main() {
     test('absoluteUrl carries the capability', () {
       final api = ApiClient(
         transport: _CapabilityTransport(
-          baseUrl: 'http://127.0.0.1:8080',
+          baseUrl: 'http://127.0.0.1:18921',
           capability: 'abc',
         ),
       );
       expect(
         api.absoluteUrl('/src/x.webp'),
-        'http://127.0.0.1:8080/_session/abc/src/x.webp',
+        'http://127.0.0.1:18921/_session/abc/src/x.webp',
       );
       expect(
         api.absoluteUrl('https://cdn.example/x.webp'),
@@ -125,10 +125,10 @@ void main() {
           seen = request.headers['authorization'];
           return http.Response('{}', 200);
         }),
-        baseUrl: 'http://127.0.0.1:8080',
+        baseUrl: 'http://127.0.0.1:18921',
         capability: 'abc',
       );
-      await transport.send('GET', Uri.parse('http://127.0.0.1:8080/health'));
+      await transport.send('GET', Uri.parse('http://127.0.0.1:18921/health'));
       expect(seen, 'Bearer abc');
     });
 
@@ -139,9 +139,9 @@ void main() {
           seen = request.headers['authorization'];
           return http.Response('{}', 200);
         }),
-        baseUrl: 'http://127.0.0.1:8080',
+        baseUrl: 'http://127.0.0.1:18921',
       );
-      await transport.send('GET', Uri.parse('http://127.0.0.1:8080/health'));
+      await transport.send('GET', Uri.parse('http://127.0.0.1:18921/health'));
       expect(seen, isNull);
     });
   });

@@ -4,7 +4,7 @@ import 'package:fqapp/models/chapter_media.dart';
 import 'support/audio_play_fixture.dart';
 
 void main() {
-  const base = 'http://127.0.0.1:8080';
+  const base = 'http://127.0.0.1:18921';
 
   test('playinfo video_model yields the url, derived key and tone', () {
     final source = parsePlayinfoSource(

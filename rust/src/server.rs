@@ -1,8 +1,9 @@
 //! Loopback HTTP adapter.
 //!
-//! Serves the built-in Web UI, `/src/*` decrypted manga images and the
-//! `/api/*` Web bridge to the same dispatcher the FFI bridge uses, so there is
-//! exactly one business implementation.
+//! Serves `/src/*` decrypted manga images and the `/api/v1/*` business routes to
+//! the same dispatcher the FFI bridge uses, so there is exactly one business
+//! implementation. External readers (Legado book sources, local tooling) use
+//! this adapter; there is no built-in Web UI.
 //!
 //! Static file bodies are streamed from disk (with Range support) instead of
 //! being read into memory, so serving a large media file costs a bounded
@@ -13,8 +14,10 @@
 //! let a foreign page read responses) and, when it carries an `Origin`, come
 //! from this listener too (defeats cross-site form POSTs to the device-bound
 //! write routes, which read their arguments from the query string and so need
-//! no CORS preflight). A fresh capability protects every route from other
-//! local apps. See .agents/notes/implemented/bug-fix/2026-10-07-loopback-session.md.
+//! no CORS preflight). Read routes answer any local client without a
+//! capability so external readers (Legado book sources, local tooling) can use
+//! them; device-bound writes still require the per-launch capability. See
+//! .agents/notes/implemented/bug-fix/2026-10-07-loopback-session.md.
 
 use std::sync::Arc;
 
@@ -40,18 +43,40 @@ pub struct LoopbackHandle {
     pub task: tokio::task::JoinHandle<()>,
 }
 
+/// Which address family the listener accepts connections on.
+///
+/// `Loopback` is the default and keeps the API private to this device.
+/// `Lan` binds every interface so another machine on the same network can
+/// reach the read routes; the Host/Origin guard widens with it (see
+/// [`is_own_authority`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListenMode {
+    #[default]
+    Loopback,
+    Lan,
+}
+
 #[derive(Clone)]
 struct AppState {
     server: Arc<Server>,
-    /// The bound port, not the requested one: `serve(_, 0)` picks it at bind.
+    /// The bound port, not the requested one: `serve(_, 0, _)` picks it at bind.
     port: u16,
     token: String,
+    mode: ListenMode,
 }
 
-pub async fn serve(server: Arc<Server>, port: u16) -> Result<LoopbackHandle, String> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+pub async fn serve(
+    server: Arc<Server>,
+    port: u16,
+    mode: ListenMode,
+) -> Result<LoopbackHandle, String> {
+    let addr = match mode {
+        ListenMode::Loopback => "127.0.0.1",
+        ListenMode::Lan => "0.0.0.0",
+    };
+    let listener = tokio::net::TcpListener::bind((addr, port))
         .await
-        .map_err(|e| format!("listen 127.0.0.1:{port}: {e}"))?;
+        .map_err(|e| format!("listen {addr}:{port}: {e}"))?;
     let local = listener
         .local_addr()
         .map_err(|e| format!("local addr: {e}"))?;
@@ -64,6 +89,7 @@ pub async fn serve(server: Arc<Server>, port: u16) -> Result<LoopbackHandle, Str
         server,
         port: local.port(),
         token: token.clone(),
+        mode,
     };
     let app = Router::new().fallback(handler).with_state(state);
     let task = tokio::spawn(async move {
@@ -76,35 +102,51 @@ pub async fn serve(server: Arc<Server>, port: u16) -> Result<LoopbackHandle, Str
     })
 }
 
+fn is_loopback_name(host: &str) -> bool {
+    host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost")
+}
+
 /// `authority` (a `Host` value or the part of an `Origin` after the scheme)
 /// names this listener. Hosts compare case-insensitively; the port must be
 /// explicit because the listener never runs on 80.
-fn is_own_authority(authority: &str, port: u16) -> bool {
+///
+/// In `Lan` mode another device addresses this listener by one of the phone's
+/// interface addresses, which the core cannot enumerate without holding the
+/// list stale across a network change. It therefore accepts any **IP
+/// literal** and still refuses every domain name - which is what keeps DNS
+/// rebinding out: an attacker page resolves its own domain to this address, but
+/// the browser then sends that domain in `Host`, and a name never matches.
+fn is_own_authority(authority: &str, port: u16, mode: ListenMode) -> bool {
     let Some((host, p)) = authority.rsplit_once(':') else {
         return false;
     };
-    p.parse::<u16>().ok() == Some(port)
-        && (host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost"))
+    if p.parse::<u16>().ok() != Some(port) {
+        return false;
+    }
+    if is_loopback_name(host) {
+        return true;
+    }
+    mode == ListenMode::Lan && host.parse::<std::net::IpAddr>().is_ok()
 }
 
-fn is_own_origin(origin: &str, port: u16) -> bool {
+fn is_own_origin(origin: &str, port: u16, mode: ListenMode) -> bool {
     origin
         .get(..7)
         .filter(|scheme| scheme.eq_ignore_ascii_case("http://"))
-        .is_some_and(|_| is_own_authority(&origin[7..], port))
+        .is_some_and(|_| is_own_authority(&origin[7..], port, mode))
 }
 
 /// Refusal reason, or `None` when the request may be dispatched. A missing
 /// `Host` is refused (HTTP/1.1 requires it; every real client sends it). A
 /// missing `Origin` is allowed: native clients and same-origin GETs omit it.
 /// `Origin: null` (sandboxed frames, file pages) is foreign.
-fn refusal(headers: &HeaderMap, port: u16) -> Option<&'static str> {
+fn refusal(headers: &HeaderMap, port: u16, mode: ListenMode) -> Option<&'static str> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if !host.is_some_and(|h| is_own_authority(h, port)) {
+    if !host.is_some_and(|h| is_own_authority(h, port, mode)) {
         return Some("host not allowed");
     }
     if let Some(origin) = headers.get(header::ORIGIN) {
-        if !origin.to_str().is_ok_and(|o| is_own_origin(o, port)) {
+        if !origin.to_str().is_ok_and(|o| is_own_origin(o, port, mode)) {
             return Some("origin not allowed");
         }
     }
@@ -126,7 +168,7 @@ fn refuse(status: StatusCode, message: &str) -> Response {
 
 async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> Response {
     // Refuse before touching the body so a foreign page cannot make us read it.
-    if let Some(reason) = refusal(req.headers(), state.port) {
+    if let Some(reason) = refusal(req.headers(), state.port, state.mode) {
         return refuse(StatusCode::FORBIDDEN, reason);
     }
     let prefix = format!("/_session/{}", state.token);
@@ -147,26 +189,14 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
         .flat_map(|h| h.split(';'))
         .filter_map(|part| part.trim().split_once('='))
         .any(|(name, value)| name == cookie_name && value == state.token);
-    if scoped.is_none() && bearer != Some(format!("Bearer {}", state.token).as_str()) && !cookie_ok
-    {
-        return refuse(StatusCode::UNAUTHORIZED, "session required");
-    }
     let request_path = scoped.unwrap_or(path).to_string();
-    let session_cookie = format!(
-        "{cookie_name}={}; Path=/; HttpOnly; SameSite=Strict",
-        state.token
-    );
-    // Clean the entry URL before HTML resolves root-relative links or loads
-    // remote media. The capability is never embedded in Web UI source.
-    if scoped.is_some() && (request_path.is_empty() || request_path == "/") {
-        return Response::builder()
-            .status(StatusCode::SEE_OTHER)
-            .header(header::LOCATION, "/")
-            .header(header::SET_COOKIE, session_cookie)
-            .header(header::REFERRER_POLICY, "no-referrer")
-            .header(header::CACHE_CONTROL, "no-store")
-            .body(Body::empty())
-            .unwrap();
+    // Reads answer any local client: external readers (Legado book sources,
+    // local tooling) cannot know the per-launch capability. Device-bound
+    // writes still need it.
+    let capability_ok =
+        scoped.is_some() || bearer == Some(format!("Bearer {}", state.token).as_str()) || cookie_ok;
+    if !capability_ok && crate::dispatch::requires_capability(&request_path) {
+        return refuse(StatusCode::UNAUTHORIZED, "session required");
     }
     let declared = req
         .headers()

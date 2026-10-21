@@ -56,7 +56,7 @@ void main() {
   });
 
   test('a missing section keeps every switch off', () {
-    final config = PlayerStyleConfig.fromJson({'port': 8080});
+    final config = PlayerStyleConfig.fromJson({'port': 18921});
     expect(config.useNewPlayerBottomStyle, isFalse);
     expect(config.reverseClearScreen, isFalse);
     expect(config.landscapeLockEnabled, isFalse);
@@ -65,7 +65,7 @@ void main() {
   test('play_control_panel_style_v681 未下发或 style=0 走浅色面板', () {
     // 官方 MorePanelV681.d()：style 为 null（键缺失/空配置/未下发）或 0
     // 都是浅色支（用户设备命中的形态）；d() 只看 style，enable 不参与。
-    expect(PlayerStyleConfig.fromJson({'port': 8080}).morePanelDarkStyle,
+    expect(PlayerStyleConfig.fromJson({'port': 18921}).morePanelDarkStyle,
         isFalse);
     expect(
       PlayerStyleConfig.fromJson({

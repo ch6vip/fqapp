@@ -43,7 +43,7 @@ void main() {
     (
       http.ClientException(
         'private-token',
-        Uri.parse('http://127.0.0.1:8080/api/content'),
+        Uri.parse('http://127.0.0.1:18921/api/content'),
       ),
       '播放服务暂时不可用',
     ),

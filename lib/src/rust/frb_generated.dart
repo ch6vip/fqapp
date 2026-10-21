@@ -86,6 +86,7 @@ abstract class RustLibApi extends BaseApi {
     required String filterPath,
     required String runtimeDir,
     required int port,
+    required bool lanShare,
     required String mockUpstreamOrigin,
   });
 
@@ -179,6 +180,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String filterPath,
     required String runtimeDir,
     required int port,
+    required bool lanShare,
     required String mockUpstreamOrigin,
   }) {
     return handler.executeNormal(
@@ -190,6 +192,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(filterPath, serializer);
           sse_encode_String(runtimeDir, serializer);
           sse_encode_u_16(port, serializer);
+          sse_encode_bool(lanShare, serializer);
           sse_encode_String(mockUpstreamOrigin, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -209,6 +212,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           filterPath,
           runtimeDir,
           port,
+          lanShare,
           mockUpstreamOrigin,
         ],
         apiImpl: this,
@@ -224,6 +228,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       "filterPath",
       "runtimeDir",
       "port",
+      "lanShare",
       "mockUpstreamOrigin",
     ],
   );

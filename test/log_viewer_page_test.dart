@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fqapp/pages/api_service_page.dart';
 import 'package:fqapp/pages/log_viewer_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_log.dart';
@@ -72,6 +73,15 @@ void main() {
     await tester.tap(find.text('服务'));
     await tester.pumpAndSettle();
 
+    // The service category opens the local API console; the log entry lives at
+    // the bottom of that page, so it has to be scrolled into view first.
+    expect(find.byType(ApiServicePage), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('日志'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     expect(find.text('日志'), findsOneWidget);
 
     await tester.tap(find.text('日志'));

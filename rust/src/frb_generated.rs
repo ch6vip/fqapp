@@ -75,9 +75,10 @@ let api_pool_path = <String>::sse_decode(&mut deserializer);
 let api_filter_path = <String>::sse_decode(&mut deserializer);
 let api_runtime_dir = <String>::sse_decode(&mut deserializer);
 let api_port = <u16>::sse_decode(&mut deserializer);
+let api_lan_share = <bool>::sse_decode(&mut deserializer);
 let api_mock_upstream_origin = <String>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
                     transform_result_sse::<_, String>((move || async move {
-                         let output_ok = crate::api::init(api_config_path, api_pool_path, api_filter_path, api_runtime_dir, api_port, api_mock_upstream_origin).await?;   std::result::Result::Ok(output_ok)
+                         let output_ok = crate::api::init(api_config_path, api_pool_path, api_filter_path, api_runtime_dir, api_port, api_lan_share, api_mock_upstream_origin).await?;   std::result::Result::Ok(output_ok)
                     })().await)
                 } })
             }fn wire__crate__api__request_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {

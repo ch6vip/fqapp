@@ -5,7 +5,8 @@
 //! .agents/notes/implemented/architecture/2026-09-23-rust-native-core-migration.md
 //!
 //! There is exactly one business implementation: Flutter reaches it over
-//! flutter_rust_bridge and the built-in Web UI reaches it over loopback HTTP.
+//! flutter_rust_bridge and external HTTP clients (Legado book sources, local
+//! tooling) reach it over the loopback adapter.
 
 use std::path::{Path, PathBuf};
 
@@ -131,6 +132,21 @@ const DEVICE_BOUND_WRITE_APIS: &[&str] = &[
     "playlet_comment_reply",
 ];
 
+/// Whether `path` addresses a device-bound write route.
+///
+/// Read routes answer any local client without the capability, so that external
+/// readers (Legado book sources, local tooling) can consume them. These routes
+/// stay behind the capability: they submit actions as this installation's
+/// device identity, and a sibling app on the same phone must not be able to
+/// post comments or danmaku on the user's behalf.
+pub fn requires_capability(path: &str) -> bool {
+    let params = Params::parse("");
+    match router::match_rest_path(path, &params) {
+        Some(m) => DEVICE_BOUND_WRITE_APIS.contains(&m.api),
+        None => false,
+    }
+}
+
 pub async fn dispatch(server: &Server, req: &Request) -> Response {
     let path = req.path.as_str();
     let ctx = &server.ctx;
@@ -142,21 +158,6 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
     }
     if path == "/api/v1/account/fanqie/library" {
         return crate::endpoints::account_library::handle(ctx, req).await;
-    }
-
-    // --- Web UI static files and API bridge ---
-    if path.starts_with("/api/") && !path.starts_with("/api/v1/") {
-        return crate::endpoints::webui::handle(server, path, &Params::parse(&req.query)).await;
-    }
-
-    if let Some(rest) = path.strip_prefix("/assets/") {
-        let root = Path::new(&ctx.web_dir).join("assets");
-        return crate::static_files::serve(&root, rest, req).await;
-    }
-
-    if path == "/" || path.ends_with(".html") || path.ends_with(".ico") {
-        let rel = path.trim_start_matches('/');
-        return crate::static_files::serve(Path::new(&ctx.web_dir), rel, req).await;
     }
 
     if path == "/health" {

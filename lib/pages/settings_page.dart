@@ -5,23 +5,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
-import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/audio_preferences.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
-import '../services/backend_service.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/home/home_design.dart';
 import 'about_page.dart';
+import 'api_service_page.dart';
 import 'cached_books_page.dart';
 import 'cached_dramas_page.dart';
 import 'library_backup_page.dart';
-import 'log_viewer_page.dart';
 import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
 
@@ -113,8 +110,9 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: LucideIcons.cpu,
         title: '服务',
-        subtitle: '本地后端状态',
-        items: [_backendItem(), _statusItem(), _logItem()],
+        subtitle: '本地接口地址与可用端点',
+        pageBuilder: (_) => const ApiServicePage(),
+        items: const [],
       ),
       SettingsCategory(
         icon: LucideIcons.info,
@@ -600,108 +598,7 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  // ── 服务 ──────────────────────────────────────────────────────────────
-
-  SettingsItem _backendItem() => SettingsItem(
-    icon: LucideIcons.cpu,
-    title: '本地后端',
-    subtitle: BackendService.instance.baseUrl,
-    // The adapter only answers a request that carries the per-launch
-    // capability, and the entry URL is what hands it to a browser as a session
-    // cookie. Opening the bare base URL would just land on a 401.
-    onTap: (context, setState) => _openWebUi(context),
-  );
-
-  /// Opens the built-in Web UI in a browser.
-  ///
-  /// The transport's `resourceBase` carries the loopback capability in its
-  /// path; the adapter answers that entry with a redirect to `/` plus the
-  /// session cookie, so the capability never lingers in the address bar.
-  Future<void> _openWebUi(BuildContext context) async {
-    final entry = BackendService.instance.webUiEntryUrl;
-    if (entry.isEmpty) return;
-    var launched = false;
-    try {
-      // Android package visibility may hide a browser from canLaunchUrl even
-      // though it can handle the actual ACTION_VIEW intent.
-      launched = await launchUrl(
-        Uri.parse(entry),
-        mode: LaunchMode.externalApplication,
-      );
-    } catch (_) {
-      // Report launch failures through the same visible fallback.
-    }
-    if (!launched && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('无法打开 Web UI')));
-    }
-  }
-
-  SettingsItem _logItem() => SettingsItem(
-    icon: LucideIcons.terminal,
-    title: '日志',
-    subtitle: '查看应用运行日志',
-    onTap: (context, setState) => Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const LogViewerPage()),
-    ),
-  );
-
-  SettingsItem _statusItem() => SettingsItem(
-    icon: LucideIcons.circle_check,
-    title: '服务状态',
-    rowBuilder: (context) => const _ServiceStatusRow(),
-  );
-
   // ── 关于 ──────────────────────────────────────────────────────────────
   // The About category opens the About page directly via its pageBuilder;
   // no category-page items are needed.
-}
-
-/// Self-refreshing service status row (health check + refresh button).
-class _ServiceStatusRow extends StatefulWidget {
-  const _ServiceStatusRow();
-
-  @override
-  State<_ServiceStatusRow> createState() => _ServiceStatusRowState();
-}
-
-class _ServiceStatusRowState extends State<_ServiceStatusRow> {
-  String _status = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  Future<void> _refresh() async {
-    final ok = await ApiClient.instance.health();
-    if (!mounted) return;
-    setState(() => _status = ok ? '运行中' : '已停止');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final healthy = _status == '运行中';
-    return ListTile(
-      leading: Icon(
-        healthy ? LucideIcons.circle_check : LucideIcons.circle_alert,
-        color: healthy ? Colors.green : Colors.red,
-      ),
-      title: Text('服务状态', style: theme.textTheme.titleMedium),
-      subtitle: Text(
-        _status,
-        style: theme.textTheme.labelMedium?.copyWith(
-          color: theme.colorScheme.outline,
-        ),
-      ),
-      trailing: IconButton(
-        icon: const Icon(LucideIcons.rotate_ccw, size: 18),
-        onPressed: _refresh,
-      ),
-    );
-  }
 }
