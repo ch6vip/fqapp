@@ -11,6 +11,72 @@ import 'support/fakes.dart';
 
 /// 离线直读：官方从书架/下载列表点书直接进阅读器，这条路径必须不碰网络。
 void main() {
+  group('openRecentBook', () {
+    final item = MediaItem(
+      id: 'recent',
+      title: '最近阅读',
+      cover: '',
+      author: '',
+      badge: '',
+      ep: '',
+      kind: 'book',
+    );
+    for (final scenario in <String, Map<String, dynamic>?>{
+      '没有阅读记录': null,
+      '记录属于听书': {'kind': 'audio', 'chapterId': '1'},
+      '原章节正文已清除': {'chapterId': '2', 'episode': 0},
+      '目录不含原章节': {'chapterId': 'gone', 'episode': 0, 'fanqieImported': true},
+      '旧下标无效': {'episode': -1},
+      '缓存不可读': {'chapterId': '1'},
+    }.entries) {
+      testWidgets('${scenario.key}时回退，不替换为其他缓存章节', (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final cache = scenario.key == '缓存不可读'
+            ? _UnreadableChapterCache()
+            : MemoryChapterCache();
+        await cache.saveBook(
+          CachedBook(
+            id: 'recent',
+            title: '最近阅读',
+            chapters: [
+              Chapter(itemId: '1', title: '第一章', volumeName: ''),
+              Chapter(itemId: '2', title: '第二章', volumeName: ''),
+            ],
+          ),
+        );
+        await cache.write(
+          bookId: 'recent',
+          chapterId: '1',
+          title: '第一章',
+          text: '缓存正文',
+        );
+        bool? opened;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async {
+                  opened = await openRecentBook(
+                    context,
+                    item,
+                    cache: cache,
+                    readerStore: MemoryReaderStore(entry: scenario.value),
+                  );
+                },
+                child: const Text('续读'),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('续读'));
+        await tester.pumpAndSettle();
+        expect(opened, isFalse);
+        expect(find.byType(ReaderPage, skipOffstage: false), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
+
   group('cachedStartIndex', () {
     final book = CachedBook(
       id: 'b',
@@ -45,11 +111,9 @@ void main() {
 
     test('空目录返回 -1 而不是崩在 clamp 上', () {
       expect(
-        cachedStartIndex(
-          CachedBook(id: 'b', title: '书', chapters: const []),
-          {'1'},
-          null,
-        ),
+        cachedStartIndex(CachedBook(id: 'b', title: '书', chapters: const []), {
+          '1',
+        }, null),
         -1,
       );
     });
@@ -221,4 +285,10 @@ void main() {
     expect(opened, isFalse);
     expect(find.byType(ReaderPage, skipOffstage: false), findsNothing);
   });
+}
+
+class _UnreadableChapterCache extends MemoryChapterCache {
+  @override
+  Future<CachedBook?> cachedBook(String bookId) async =>
+      throw StateError('cache unavailable');
 }

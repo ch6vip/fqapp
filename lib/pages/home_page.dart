@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/media_item.dart';
+import '../services/book_open_preferences.dart';
+import '../services/chapter_cache_store.dart';
+import '../services/library_store.dart';
 import '../widgets/home/ambient_backdrop.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
@@ -14,12 +17,16 @@ import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
 import 'detail_page.dart';
+import 'cached_book_reader.dart';
 import 'rank_page.dart';
 import 'search_page.dart';
 import 'home_provider.dart';
 
 class HomePage extends ConsumerStatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.cacheStore, this.readerStore});
+
+  final ChapterCache? cacheStore;
+  final ReaderStore? readerStore;
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
@@ -237,7 +244,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       ),
       if (state.tabIndex == 0)
-        SliverToBoxAdapter(child: HomeResumeCard(onOpen: _openItem)),
+        SliverToBoxAdapter(child: HomeResumeCard(onOpen: _resumeItem)),
       if (rest.isNotEmpty) ...[
         SliverToBoxAdapter(
           child: HomeSectionHeader(
@@ -352,5 +359,18 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _openItem(MediaItem item) {
     openBookDetail(context, item);
+  }
+
+  Future<void> _resumeItem(MediaItem item) async {
+    if (await openRecentBook(
+      context,
+      item,
+      cache: widget.cacheStore,
+      readerStore: widget.readerStore,
+    )) {
+      return;
+    }
+    if (!mounted) return;
+    await openBookDetail(context, item, entry: BookOpenEntry.shelf);
   }
 }
