@@ -246,7 +246,10 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
     });
   }
 
-  Widget _catalog() => SizedBox(
+  /// 选集目录：停靠面板与弹窗共用。[docked] 为真时是停靠态——头部更
+  /// 紧凑（剧名 2 行、简介 3 行），且剧名行右端带收起按钮；弹窗没有收起
+  /// 概念（按钮不在这里出现），保持剧名 3 行、简介 5 行。
+  Widget _catalog({bool docked = false}) => SizedBox(
     width: _catalogWidth,
     child: ColoredBox(
       color: const Color(0xff1c1c1f),
@@ -258,14 +261,29 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  c.seriesTitle.isEmpty ? c.title : c.seriesTitle,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        c.seriesTitle.isEmpty ? c.title : c.seriesTitle,
+                        maxLines: docked ? 2 : 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    if (docked)
+                      IconButton(
+                        tooltip: '收起面板',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () =>
+                            setState(() => _dockCollapsed = true),
+                        icon: const Icon(Icons.view_sidebar),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -276,7 +294,7 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                   const SizedBox(height: 10),
                   Text(
                     c.synopsis,
-                    maxLines: 5,
+                    maxLines: docked ? 3 : 5,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white70,
@@ -324,42 +342,43 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
             child: Text('选集', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
           // 长剧（如 600+ 集）逐行翻太慢：给一段 50 集的区间跳集，
-          // 外加一枚随时回到当前集的定位 chip。
+          // 外加一枚随时回到当前集的定位 chip。排布用流式换行：旧版横向
+          // 滚动列表在 304 宽面板里只露得出前两三枚，第 4 段起被切且没有
+          // 任何可横滑的提示（滚轮在这一行还是竖向、滑不动），等于不存
+          // 在；换行后全部段一目了然，长剧多占几行是已知取舍。
           if (c.episodes.length > _catalogSegmentSize)
-            SizedBox(
-              height: 38,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ActionChip(
-                      avatar: const Icon(Icons.my_location, size: 14),
-                      label: const Text('当前集'),
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () =>
-                          _scrollCatalogTo(c.currentIndex, animate: true),
-                    ),
+                  ActionChip(
+                    avatar: const Icon(Icons.my_location, size: 14),
+                    label: const Text('当前集'),
+                    labelStyle: const TextStyle(fontSize: 12),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    onPressed: () =>
+                        _scrollCatalogTo(c.currentIndex, animate: true),
                   ),
                   for (
                     var start = 0;
                     start < c.episodes.length;
                     start += _catalogSegmentSize
                   )
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ChoiceChip(
-                        label: Text(
-                          '${start + 1}-${math.min(start + _catalogSegmentSize, c.episodes.length)}',
-                        ),
-                        selected:
-                            c.currentIndex >= start &&
-                            c.currentIndex < start + _catalogSegmentSize,
-                        visualDensity: VisualDensity.compact,
-                        onSelected: (_) =>
-                            _scrollCatalogTo(start, animate: true),
+                    ChoiceChip(
+                      label: Text(
+                        '${start + 1}-${math.min(start + _catalogSegmentSize, c.episodes.length)}',
                       ),
+                      labelStyle: const TextStyle(fontSize: 12),
+                      selected:
+                          c.currentIndex >= start &&
+                          c.currentIndex < start + _catalogSegmentSize,
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onSelected: (_) =>
+                          _scrollCatalogTo(start, animate: true),
                     ),
                 ],
               ),
@@ -469,27 +488,25 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                     ),
-                                    if (canDock)
+                                    // 收起按钮在面板头部里（见 _catalog），
+                                    // 标题行只在收起态留一枚展开按钮，保证
+                                    // 收起后还能从原位置把面板叫回来。
+                                    if (canDock && !docked)
                                       IconButton(
-                                        tooltip: docked ? '收起面板' : '展开面板',
+                                        tooltip: '展开面板',
                                         onPressed: () {
                                           setState(
-                                            () => _dockCollapsed =
-                                                !_dockCollapsed,
+                                            () => _dockCollapsed = false,
                                           );
                                           // 面板重挂载后滚动位置会丢，
                                           // 展开时重新定位到当前集。
-                                          if (!_dockCollapsed) {
-                                            _scrollCatalogTo(
-                                              c.currentIndex,
-                                              animate: false,
-                                            );
-                                          }
+                                          _scrollCatalogTo(
+                                            c.currentIndex,
+                                            animate: false,
+                                          );
                                         },
-                                        icon: Icon(
-                                          docked
-                                              ? Icons.view_sidebar
-                                              : Icons.view_sidebar_outlined,
+                                        icon: const Icon(
+                                          Icons.view_sidebar_outlined,
                                         ),
                                       ),
                                     if (!canDock)
@@ -829,7 +846,7 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                         ),
                       ),
                     ),
-                    if (docked) _catalog(),
+                    if (docked) _catalog(docked: true),
                   ],
                 );
               },
