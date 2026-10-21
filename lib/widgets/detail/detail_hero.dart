@@ -17,11 +17,15 @@ class DetailHero extends StatelessWidget {
   final BookDetail? detail;
   final ScrollController scroll;
 
+  /// 桌面两栏布局：去掉顶部色块，封面放大并整体居中。
+  final bool desktop;
+
   const DetailHero({
     super.key,
     required this.item,
     required this.scroll,
     this.detail,
+    this.desktop = false,
   });
 
   @override
@@ -35,13 +39,15 @@ class DetailHero extends StatelessWidget {
 
     final cover = _CoverTile(item: item, detail: detail);
     final info = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: desktop
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
       children: [
         _BookTitle(
           text: title,
           style: TextStyle(
             color: palette.ink,
-            fontSize: 20,
+            fontSize: desktop ? 22 : 20,
             fontWeight: FontWeight.w700,
             height: 1.35,
             letterSpacing: -0.4,
@@ -67,6 +73,7 @@ class DetailHero extends StatelessWidget {
         children: [
           // Tinted masthead wash. Kept to its own layer so scrolling repaints
           // only this gradient.
+          if (!desktop)
           Positioned.fill(
             child: ExcludeSemantics(
               child: RepaintBoundary(
@@ -83,6 +90,7 @@ class DetailHero extends StatelessWidget {
             ),
           ),
           // Smooth bottom blend gradient fading seamlessly to canvas
+          if (!desktop)
           Positioned(
             left: 0,
             right: 0,
@@ -104,8 +112,10 @@ class DetailHero extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 6, 20, 22),
-            child: stacked
+            padding: desktop
+                ? const EdgeInsets.fromLTRB(0, 16, 0, 0)
+                : const EdgeInsets.fromLTRB(20, 6, 20, 22),
+            child: (stacked || desktop)
                 ? Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -142,7 +152,8 @@ class _CoverTile extends StatelessWidget {
     final scaler = MediaQuery.textScalerOf(context);
     // The cover keeps its 3:4 ratio; it only grows a little with text scale so
     // the text column is never starved of width.
-    final width = 104.0 + (scaler.scale(16) - 16).clamp(0.0, 10.0) * 1.2;
+    final width = (desktop ? 168.0 : 104.0) +
+        (scaler.scale(16) - 16).clamp(0.0, 10.0) * 1.2;
     return SizedBox(
       width: width,
       child: HomePressable(
