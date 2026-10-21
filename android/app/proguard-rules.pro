@@ -48,6 +48,15 @@
 -keep class io.flutter.util.** { *; }
 -keep class io.flutter.view.** { *; }
 
+# shared_preferences and package:jni resolve Kotlin coroutine types by name.
+-keep interface kotlin.coroutines.Continuation { *; }
+-keep class kotlin.coroutines.intrinsics.CoroutineSingletons { *; }
+-keep class kotlin.coroutines.intrinsics.IntrinsicsKt* { *; }
+-keep class kotlin.Result { *; }
+-keep class kotlin.Result$Failure { *; }
+-keep class kotlin.Unit { *; }
+-keep class kotlin.jvm.internal.DefaultConstructorMarker { *; }
+
 # --- optional Play Core integration -------------------------------------
 # Flutter's PlayStoreDeferredComponentManager references the Play Core split
 # install API, which is only on the classpath when the app opts into deferred
