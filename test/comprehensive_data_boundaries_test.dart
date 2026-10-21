@@ -64,6 +64,10 @@ void main() {
           await Hive.openBox<dynamic>('watched_episodes');
           // 短剧离线缓存的记录箱随 bootstrap 预热（F08），同样要预开。
           await Hive.openBox<dynamic>('drama_download_v1');
+          // 听书离线记录箱随 bootstrap 预热，同样要预开：加密存储撤销后
+          // 它直接开明文箱（不再在密钥环节 fail-closed 快速失败），开箱
+          // 的文件 I/O 同样不能落在 fake-async 路径上。
+          await Hive.openBox<dynamic>('audio_download_v1');
           // 预热同时跑完 P1-4 的 keyHex 迁移：首次开盒会写迁移 marker，
           // 写盘 I/O 同样不能落在 widget 测试的 fake-async 路径上。
           await HiveDramaDownloadStore.instance.warmUp();

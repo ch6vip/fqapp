@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:hive_ce/hive.dart';
 
 import 'app_log.dart';
@@ -59,7 +61,7 @@ class EncryptedBoxMigration {
   ) async {
     final encName = '${name}_enc';
     try {
-      if (!await hive.boxExists(encName)) return;
+      if (!_encryptedBoxOnDisk(hive, encName)) return;
 
       final key = await keys.readExistingKey();
       if (key == null) {
@@ -108,5 +110,27 @@ class EncryptedBoxMigration {
       // 单箱失败只跳过该箱：加密箱还在，下次启动重试。
       AppLog.e('enc-migration', '迁移 $name 失败，跳过该箱', error: e, stack: st);
     }
+  }
+
+  /// Whether the encrypted box is already on disk.
+  ///
+  /// Mirrors hive's own layout (`<homePath>/<lowercased name>.hive`, or its
+  /// `.hivec`/`.lock` siblings) but is **synchronous on purpose**: this runs
+  /// inside bootstrap, and widget tests drive that inside a fake-async zone,
+  /// where a real async file probe (e.g. `boxExists`) never completes
+  /// (CRIT-014 in docs/规范/踩坑判据.md). With no encrypted box on disk —
+  /// every fresh install and every test — the whole migration is a sync
+  /// no-op and never touches secure storage either.
+  static bool _encryptedBoxOnDisk(HiveInterface hive, String encName) {
+    if (hive.isBoxOpen(encName)) return true;
+    // `HiveInterface` exposes no path accessor; the concrete
+    // implementation carries `homePath`.
+    final home = (hive as dynamic).homePath as String?;
+    if (home == null || home.isEmpty) return false;
+    final delimiter = Platform.isWindows ? '\\' : '/';
+    final base = '$home$delimiter${encName.toLowerCase()}';
+    return File('$base.hive').existsSync() ||
+        File('$base.hivec').existsSync() ||
+        File('$base.lock').existsSync();
   }
 }
