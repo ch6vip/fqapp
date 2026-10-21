@@ -1,7 +1,6 @@
 name: Android APK
 
 on:
-  workflow_dispatch:
   push:
     branches: [master]
     # 打 tag 也出包：tag 推送不走 paths 过滤（native-crypto 在
