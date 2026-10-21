@@ -29,19 +29,6 @@
 - **🕘 记住进度** —— 看到哪自动记，下次接着看
 - **⬇️ 下载离线** —— 整本下载后彻底离线，不会被自动清掉
 
-## 怎么安装
-
-需要**安卓 7.0 以上**，不用 root。
-
-1. 打开 [**最新发布页**](https://github.com/ch6vip/fqapp/releases/latest)，在 **Assets** 里下载 APK
-   - 现在的手机基本都是 **64 位**，选 arm64
-   - 老款电子书、旧手机选 **32 位** armv7
-2. 点击安装；提示「未知来源」时在设置里允许一次
-3. 打开 App，**第一次请保持联网**，它会自动完成初始化
-
-> [!IMPORTANT]
-> 装过 v1.0.17 及更早老版本的要**先卸载再装**，卸载会清掉阅读记录和缓存。新版本之间可直接覆盖升级。
-
 ## 怎么用
 
 **找内容** —— 首页推荐各类内容，下拉刷新换一批。想找特定的就点搜索，输关键词或作品编号。
@@ -93,7 +80,15 @@
 
 如果对你有用，欢迎请我喝杯咖啡，或给项目点个 ⭐ Star。
 
-<a href="https://afdian.com/a/ch6vip"><img alt="Afdian" src="https://img.shields.io/badge/Afdian-Sponsor-946ce6?style=social&logo=afdian"></a> <img src=".github/wechat.png" width="200" alt="微信赞助">
+<p>
+  <a href="https://afdian.com/a/ch6vip">
+    <img alt="Afdian" src="https://img.shields.io/badge/Afdian-Sponsor-946ce6?style=social&logo=afdian">
+  </a>
+</p>
+
+**微信赞助**
+
+<img src=".github/wechat.png" width="260" alt="微信赞助">
 
 App 里也有入口：「设置 → 关于 → 支持作者」。
 
