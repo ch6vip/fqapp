@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +25,37 @@ void main() {
           null,
         );
   });
+
+  testWidgets(
+    'visible Windows window autoplays while it has no keyboard focus',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      final player = ControlledNativePlayer();
+      try {
+        await tester.pumpWidget(
+          _app(store: ControlledReaderStore(), player: player),
+        );
+        await _flush(tester);
+        expect(player.isPlaying, isTrue);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        await _flush(tester);
+        expect(player.isPlaying, isFalse);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        await _flush(tester);
+        expect(player.isPlaying, isTrue);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _flush(tester);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
 
   testWidgets('playback statistics reject restore and seek jumps', (
     tester,

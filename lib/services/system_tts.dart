@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -20,8 +21,8 @@ class SystemTtsEngine {
 }
 
 class SystemTts {
-  static const _channel = MethodChannel('fqapp/system_tts');
-  static const _events = EventChannel('fqapp/system_tts_events');
+  static const _channel = AppMethodChannel('fqapp/system_tts');
+  static const _events = AppEventChannel('fqapp/system_tts_events');
   static final events = _events.receiveBroadcastStream();
 
   static Future<T?> _call<T>(String method, [Object? arguments]) => _channel

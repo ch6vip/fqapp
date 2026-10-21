@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -24,7 +25,7 @@ class FanqieImportPreview {
 }
 
 class FanqieLibraryImportService {
-  static const _files = MethodChannel('fqapp/library_backup');
+  static const _files = AppMethodChannel('fqapp/library_backup');
 
   Future<FanqieImportPreview> prepare(
     FanqieLibraryCapture capture,

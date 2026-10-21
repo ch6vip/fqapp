@@ -169,12 +169,15 @@ Color? bookshelfKindColor(String kind) => _kindColors[kind];
 // ---------------------------------------------------------------------------
 
 /// The width of one 宫格 cell, including nothing of the page padding.
-double shelfGridCellWidth(double availableWidth) => math.max(
+double shelfGridCellWidth(
+  double availableWidth, {
+  int columns = ShelfTokens.gridColumns,
+}) => math.max(
   1.0,
   (availableWidth -
           ShelfTokens.screenPadding * 2 -
-          ShelfTokens.gridSpacing * (ShelfTokens.gridColumns - 1)) /
-      ShelfTokens.gridColumns,
+          ShelfTokens.gridSpacing * (columns - 1)) /
+      columns,
 );
 
 /// Cell height that keeps the 3-column cover at its ratio while the title
@@ -182,9 +185,10 @@ double shelfGridCellWidth(double availableWidth) => math.max(
 double shelfGridChildAspectRatio(
   BuildContext context, {
   required double availableWidth,
+  int columns = ShelfTokens.gridColumns,
 }) {
   final scaler = MediaQuery.textScalerOf(context);
-  final cellWidth = shelfGridCellWidth(availableWidth);
+  final cellWidth = shelfGridCellWidth(availableWidth, columns: columns);
   final cellHeight =
       cellWidth * ShelfTokens.gridCoverRatio +
       2 +

@@ -32,6 +32,8 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+/.tools/
+/dist/
 
 # Local APK checkpoints survive flutter clean and are kept outside source control.
 /release-archives/

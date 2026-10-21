@@ -1,3 +1,4 @@
+import '../../services/desktop_platform.dart';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -29,6 +30,9 @@ IconData homeKindIcon(String kind) => switch (kind) {
 int _homeColumns(BuildContext context, double width) {
   final scaler = MediaQuery.textScalerOf(context);
   final largeType = scaler.scale(14) > 21;
+  if (isWindowsDesktop) {
+    return (width / (largeType ? 220 : 170)).floor().clamp(2, 9);
+  }
   return largeType && width < 560
       ? 2
       : width < 300
@@ -345,11 +349,7 @@ class HomeSectionHeader extends StatelessWidget {
                   ),
                 ),
               ),
-              Icon(
-                LucideIcons.compass,
-                size: 19,
-                color: palette.muted,
-              ),
+              Icon(LucideIcons.compass, size: 19, color: palette.muted),
             ],
           ),
           const SizedBox(height: 6),

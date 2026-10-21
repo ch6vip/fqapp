@@ -1,3 +1,8 @@
+import 'services/audio_downloader.dart';
+import 'widgets/desktop_app_frame.dart';
+import 'services/native_player.dart';
+import 'services/desktop_platform.dart';
+import 'services/platform_channel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
@@ -19,7 +24,6 @@ import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
-import 'services/audio_downloader.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/backend_service.dart';
@@ -40,8 +44,9 @@ import 'services/swipe_guide_store.dart';
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/home/home_design.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await DesktopPlatform.instance.initialize();
   // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
   // runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
   AppLog.instance.install();
@@ -52,7 +57,7 @@ void main() {
   // 插件回 false 表示没能调起选择器（没有可分享的应用），必须原样返回：
   // 「调不起来」与「已分享」是两件事。
   SharePlusLite.handler = ({required title, required text}) async {
-    final launched = await const MethodChannel(
+    final launched = await const AppMethodChannel(
       'fqapp/share',
     ).invokeMethod<bool>('shareText', {'title': title, 'text': text});
     return launched ?? false;
@@ -60,6 +65,18 @@ void main() {
   // Rust 核心日志的读取入口：日志页「Rust」视图读 runtime_dir/rust.log。
   // 核心只在 Android 落盘（桌面/测试构建不装 logger），读不到时页面给空态。
   RustLogSource.reader = BackendService.instance.readRustLog;
+  DesktopPlatform.instance.beforeClose = () async {
+    DramaDownloader.instance.pauseAll();
+    AudioDownloader.instance.pauseAll();
+    await FairMemoryService.instance.flushForExit();
+    try {
+      await NativePlayer.pauseOthers();
+    } catch (_) {}
+    try {
+      await BackendService.instance.stop();
+    } catch (_) {}
+    await Hive.close();
+  };
   runZonedGuarded(
     () => runApp(const ProviderScope(child: FqApp())),
     (error, stack) => AppLog.e('zone', '未捕获异步异常', error: error, stack: stack),
@@ -165,7 +182,9 @@ class FqApp extends StatefulWidget {
 }
 
 class _FqAppState extends State<FqApp> {
-  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _navigatorKey = isWindowsDesktop
+      ? DesktopPlatform.navigatorKey
+      : GlobalKey<NavigatorState>();
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +200,9 @@ class _FqAppState extends State<FqApp> {
               navigatorKey: _navigatorKey,
               builder: (context, child) => AudioPlaybackScope(
                 navigatorKey: _navigatorKey,
-                child: child ?? const SizedBox.shrink(),
+                child: isWindowsDesktop
+                    ? DesktopAppFrame(child: child ?? const SizedBox.shrink())
+                    : child ?? const SizedBox.shrink(),
               ),
               title: 'fqapp',
               debugShowCheckedModeBanner: false,
@@ -399,6 +420,20 @@ class _RootShellState extends State<RootShell> {
         ),
       );
     }
+    if (isWindowsDesktop) {
+      return ValueListenableBuilder<int>(
+        valueListenable: desktopTab,
+        builder: (context, index, _) => LazyIndexedStack(
+          index: index,
+          children: [
+            const HomePage(),
+            const DramaPage(),
+            LibraryPage(onBrowse: () => desktopTab.value = 0),
+            const MinePage(),
+          ],
+        ),
+      );
+    }
     final palette = HomePalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isDramaTab = _index == 1;
@@ -415,9 +450,7 @@ class _RootShellState extends State<RootShell> {
         shadowColor: Colors.transparent,
         indicatorColor: eink
             ? Colors.black
-            : HomePalette.accent.withValues(
-                alpha: glassDark ? 0.20 : 0.12,
-              ),
+            : HomePalette.accent.withValues(alpha: glassDark ? 0.20 : 0.12),
         indicatorShape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -425,9 +458,7 @@ class _RootShellState extends State<RootShell> {
           (states) => IconThemeData(
             size: 22,
             color: states.contains(WidgetState.selected)
-                ? (eink
-                      ? Colors.white
-                      : HomePalette.accent)
+                ? (eink ? Colors.white : HomePalette.accent)
                 : (eink
                       ? Colors.black
                       : (glassDark
@@ -444,9 +475,7 @@ class _RootShellState extends State<RootShell> {
             color: states.contains(WidgetState.selected)
                 ? (eink
                       ? Colors.black
-                      : (glassDark
-                            ? HomePalette.accent
-                            : palette.accentText))
+                      : (glassDark ? HomePalette.accent : palette.accentText))
                 : (eink
                       ? Colors.black
                       : (glassDark
@@ -569,19 +598,16 @@ class _RootShellState extends State<RootShell> {
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(28),
-                          border: Border.all(
-                            color: Colors.black,
-                            width: 0.8,
-                          ),
+                          border: Border.all(color: Colors.black, width: 0.8),
                         ),
                         child: navBar,
                       )
                     : isDramaTab
-                        ? staticNavBar
-                        : BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                            child: staticNavBar,
-                          ),
+                    ? staticNavBar
+                    : BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                        child: staticNavBar,
+                      ),
               ),
             ),
           ),

@@ -1,3 +1,4 @@
+import '../services/desktop_platform.dart';
 // 书架页：官方免费小说书架形态的本地重设计（双 tab + 页头分层 +
 // 三档版式 + 编辑态）。设计 token、版式/排序枚举集中在
 // lib/widgets/shelf/shelf_design.dart（docs/system_design.md）。
@@ -874,12 +875,17 @@ class _LibraryPageState extends State<LibraryPage> {
           ShelfTokens.contentBottomInset,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: ShelfTokens.gridColumns,
+          crossAxisCount: isWindowsDesktop
+              ? (constraints.maxWidth / 170).floor().clamp(3, 10)
+              : ShelfTokens.gridColumns,
           crossAxisSpacing: ShelfTokens.gridSpacing,
           mainAxisSpacing: ShelfTokens.gridRunSpacing,
           childAspectRatio: shelfGridChildAspectRatio(
             context,
             availableWidth: constraints.maxWidth,
+            columns: isWindowsDesktop
+                ? (constraints.maxWidth / 170).floor().clamp(3, 10)
+                : ShelfTokens.gridColumns,
           ),
         ),
         itemCount: entries.length,

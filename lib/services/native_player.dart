@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -57,8 +58,8 @@ class NativePlaybackException implements Exception {
 
 /// Flutter-side wrapper of the native ExoPlayer host.
 class NativePlayer {
-  static const _channel = MethodChannel('fqapp/native_player');
-  static const _events = EventChannel('fqapp/native_player/events');
+  static const _channel = AppMethodChannel('fqapp/native_player');
+  static const _events = AppEventChannel('fqapp/native_player/events');
   static const _methodTimeout = Duration(seconds: 10);
   static const _createTimeout = Duration(seconds: 25);
 

@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'package:flutter/services.dart';
 
 import '../models/fanqie_history.dart';
@@ -6,8 +7,8 @@ import 'backend_transport.dart';
 import 'fanqie_library_import_service.dart';
 
 class FanqieHistoryImportService {
-  static const _account = MethodChannel('fqapp/fanqie_account');
-  static const _files = MethodChannel('fqapp/library_backup');
+  static const _account = AppMethodChannel('fqapp/fanqie_account');
+  static const _files = AppMethodChannel('fqapp/library_backup');
 
   Future<FanqieHistoryPreview?> loginAndFetch(BackendRequest request) async {
     final cookie = await _account.invokeMethod<String>('login');

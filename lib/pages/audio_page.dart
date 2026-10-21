@@ -1,3 +1,5 @@
+import '../services/desktop_platform.dart';
+import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -391,6 +393,7 @@ class _AudioPageState extends State<AudioPage> {
     }
     final chapter = c._chapters[c._index];
     final tones = c._mode == 'narrator' ? c._narratorTones : c._ttsTones;
+    if (isWindowsDesktop) return _desktopAudio(palette, chapter, tones);
     return Scaffold(
       key: ValueKey('audio_session_${c._bookId}'),
       backgroundColor: palette.canvas,
@@ -515,6 +518,162 @@ class _AudioPageState extends State<AudioPage> {
       ),
     );
   }
+
+  Widget _desktopAudio(
+    HomePalette palette,
+    Chapter chapter,
+    List<AudioTone> tones,
+  ) => Scaffold(
+    backgroundColor: palette.canvas,
+    body: Column(
+      children: [
+        AudioTopBar(
+          onCollapse: () => Navigator.maybePop(context),
+          onMore: _showMore,
+        ),
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 600),
+                      child: Column(
+                        children: [
+                          AudioBookCard(
+                            cover: c._cover,
+                            bookTitle: c._title,
+                            chapterTitle: chapter.title,
+                            onSwitch: _showVoices,
+                            onOpenBook: _showCatalog,
+                          ),
+                          const SizedBox(height: 20),
+                          _statusLine(palette),
+                          if (c._excerpt.isNotEmpty)
+                            AudioExcerpt(text: c._excerpt, onTap: _showExcerpt),
+                          const SizedBox(height: 12),
+                          AudioActionRow(actions: _actions),
+                          const SizedBox(height: 24),
+                          AudioToneSection(
+                            title: c._mode == 'narrator' ? '真人讲书' : '智能朗读',
+                            tones: tones,
+                            selectedId: c._extras.tones.hasFixedTone
+                                ? c._bookId
+                                : c._toneId,
+                            currentChapterTitle: chapter.title,
+                            onSelect: _onToneSelected,
+                            onReadAlong: _showReadAlong,
+                            onShowVoices: c._switchingVersion
+                                ? null
+                                : _showVoices,
+                          ),
+                          if (c._extras.related.isNotEmpty)
+                            AudioRelatedRow(
+                              works: c._extras.related,
+                              onTap: _openRelated,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: MediaQuery.sizeOf(context).width >= 1200 ? 360 : 280,
+                child: DefaultTabController(
+                  length: 2,
+                  child: Column(
+                    children: [
+                      const TabBar(
+                        tabs: [
+                          Tab(text: '章节目录'),
+                          Tab(text: '同步字幕'),
+                        ],
+                      ),
+                      Expanded(
+                        child: TabBarView(
+                          children: [
+                            DesktopChapterSidebar(
+                              chapters: c._chapters,
+                              currentIndex: c._index,
+                              onSelected: (index) =>
+                                  unawaited(c._openChapter(index)),
+                            ),
+                            ValueListenableBuilder<Duration>(
+                              valueListenable: c._position,
+                              builder: (context, position, _) {
+                                final track = c._subtitles;
+                                final active = track.indexAt(position);
+                                if (track.isEmpty) {
+                                  return const Center(
+                                    child: Text('当前章节暂无同步字幕'),
+                                  );
+                                }
+                                return ListView.builder(
+                                  itemCount: track.cues.length,
+                                  itemBuilder: (context, index) => ListTile(
+                                    selected: index == active,
+                                    title: Text(track.cues[index].text),
+                                    onTap: c._ready
+                                        ? () => c._seekTo(
+                                            Duration(
+                                              milliseconds:
+                                                  track.cues[index].startMs,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Material(
+          color: palette.surface,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(32, 8, 32, 12),
+            child: Column(
+              children: [
+                ValueListenableBuilder<Duration>(
+                  valueListenable: c._position,
+                  builder: (context, position, _) => AudioProgressRow(
+                    position: position,
+                    duration: c._duration,
+                    preview: c._seekPreview.value,
+                    enabled: c._ready,
+                    onChanged: (value) => c._seekPreview.value = value,
+                    onChangeEnd: (value) =>
+                        c._seekTo(Duration(milliseconds: value.round())),
+                    onBack15: c._ready
+                        ? () => c._seekTo(
+                            c._position.value - const Duration(seconds: 15),
+                          )
+                        : null,
+                    onForward15: c._ready
+                        ? () => c._seekTo(
+                            c._position.value + const Duration(seconds: 15),
+                          )
+                        : null,
+                  ),
+                ),
+                _transport(),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _showExcerpt() async {
     if (c._excerpt.isEmpty) return;

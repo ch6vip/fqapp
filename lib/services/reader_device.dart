@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -46,8 +47,8 @@ class ReaderFont {
 // Note: 阅读亮度按会话恢复，系统广播更新时间、电量；见
 // .agents/notes/implemented/feature/2026-09-10-reader-interface.md
 class ReaderDevice {
-  static const _channel = MethodChannel('fqapp/reader');
-  static const _events = EventChannel('fqapp/reader/events');
+  static const _channel = AppMethodChannel('fqapp/reader');
+  static const _events = AppEventChannel('fqapp/reader/events');
   static final _eventStream = _events.receiveBroadcastStream();
   static int _nextSession = 0;
   final String _session =

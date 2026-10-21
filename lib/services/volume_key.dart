@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'package:flutter/services.dart';
 
 /// 音量键翻页桥。封装原生通道 `fqapp/volume-key`：
@@ -12,7 +13,7 @@ import 'package:flutter/services.dart';
 class VolumeKeyService {
   static final VolumeKeyService instance = VolumeKeyService();
 
-  static const _channel = MethodChannel('fqapp/volume-key');
+  static const _channel = AppMethodChannel('fqapp/volume-key');
 
   /// 原生拦截到音量键时回调，参数为翻页方向。由阅读页注册。
   void Function(int direction)? _onVolumeKey;

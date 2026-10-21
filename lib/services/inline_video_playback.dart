@@ -181,6 +181,9 @@ class InlineVideoPlayback {
   /// True while a player instance exists (playing or paused).
   bool get hasPlayer => _player != null;
 
+  /// Shared desktop transport; ownership remains with this session.
+  NativePlayer? get player => _player;
+
   /// The drama this session targets, null before the first activation. The
   /// title/cover follow the feed item that started it（听书页与下载弹窗的
   /// 头部信息同源）。
@@ -635,6 +638,17 @@ class InlineVideoPlayback {
   /// 官方的静音会话态是**全局单例**（`tm3.b`），feed 药丸写 `a()/m()` 后
   /// 全屏播放页经广播跟随；这里同步到 [PlayerPanelPreferences] 单例，
   /// 让同一会话内打开的全屏播放页与 feed 保持一致（官方广播语义的等价物）。
+  Future<void> setVolume(double value) async {
+    value = value.clamp(0, 1);
+    _muted = value == 0;
+    muted.value = _muted;
+    PlayerPanelPreferences.setDefaultMute(_muted);
+    final player = _player;
+    if (player != null && player.isCreated) {
+      await player.setVolume(value);
+    }
+  }
+
   Future<void> toggleMute() async {
     _muted = !_muted;
     muted.value = _muted;

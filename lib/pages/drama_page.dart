@@ -1,3 +1,5 @@
+import '../widgets/video_player_chrome.dart';
+import '../services/desktop_platform.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -372,6 +374,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
   @override
   void initState() {
     super.initState();
+    if (isWindowsDesktop) {
+      DesktopPlatform.fullscreen.addListener(_desktopFullscreenChanged);
+    }
     WidgetsBinding.instance.addObserver(this);
     _inline = InlineVideoPlayback(
       directoryLoader: widget.directoryLoader,
@@ -425,6 +430,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   @override
   void dispose() {
+    if (isWindowsDesktop) {
+      DesktopPlatform.fullscreen.removeListener(_desktopFullscreenChanged);
+    }
     WidgetsBinding.instance.removeObserver(this);
     _inline.activeVid.removeListener(_onFeedVidChanged);
     _inline.seeked.removeListener(_onFeedSeeked);
@@ -561,7 +569,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (playbackAppIsActive(state)) {
       if (_tickerEnabled && !_modalOpen) {
         _resumeInline();
         _scheduleInlineSync();
@@ -824,8 +832,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
               danmakuEnabled: _feedDanmakuEnabled,
               onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
               // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
-              onOpenDanmakuSettings: () =>
-                  _pendingFeedDanmakuSettings = true,
+              onOpenDanmakuSettings: () => _pendingFeedDanmakuSettings = true,
               // 官方 `jm3.t0`：行尾当前档 + 点击级联打开字号弹层。
               fontScaleLabel: ShortSeriesFontScale.label,
               onOpenFontSettings: () => _pendingFeedFontScale = true,
@@ -849,8 +856,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             danmakuEnabled: _feedDanmakuEnabled,
             onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
             // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
-            onOpenDanmakuSettings: () =>
-                _pendingFeedDanmakuSettings = true,
+            onOpenDanmakuSettings: () => _pendingFeedDanmakuSettings = true,
             clearScreen: _feedClearScreen,
             onToggleClearScreen: () =>
                 setState(() => _feedClearScreen = !_feedClearScreen),
@@ -920,12 +926,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
       await showModalBottomSheet<void>(
         context: context,
         useSafeArea: true,
-        backgroundColor: landscape ? Colors.transparent : const Color(0xFF1C1C1C),
+        backgroundColor: landscape
+            ? Colors.transparent
+            : const Color(0xFF1C1C1C),
         shape: landscape
             ? null
-            : RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+            : RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         builder: (sheetContext) {
           final panel = PlayletDanmakuSettingsPanel(
             settings: _feedDanmakuSettings,
@@ -934,9 +940,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
               setState(() => _feedDanmakuSettings = settings);
               unawaited(DanmakuSettings.save(settings));
             },
-            onReset: () => messenger.showSnackBar(
-              const SnackBar(content: Text('设置成功')),
-            ),
+            onReset: () =>
+                messenger.showSnackBar(const SnackBar(content: Text('设置成功'))),
           );
           if (!landscape) return panel;
           return Container(
@@ -1278,7 +1283,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   ),
                 ),
               ),
-            if (!_recentEditing)
+            if (!_recentEditing &&
+                !(isWindowsDesktop && DesktopPlatform.fullscreen.value))
               Positioned(
                 top: 0,
                 left: 0,
@@ -1297,7 +1303,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             // 底部 tab（50dp）是**悬浮压在 feed 上的**，所以 94dp 从 tab 底边算，
             // 提示悬在 tab 栏上方约 44dp。本页 feed 止步于 NavigationBar 顶边，
             // 同一视觉位置 = 94 - 官方 tab 高 50 = **44dp**。
-            if (_guideMounted)
+            if (_guideMounted && !isWindowsDesktop)
               Positioned(
                 left: 16,
                 right: 16,
@@ -1336,6 +1342,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
+    if (isWindowsDesktop) {
+      columns = (MediaQuery.sizeOf(context).width / 190).floor().clamp(3, 9);
+    }
     final bottomInset = _effectiveBottomInset(context);
     return NotificationListener<ScrollNotification>(
       onNotification: _onGridScroll,
@@ -1355,7 +1364,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
           crossAxisSpacing: 8,
           mainAxisSpacing: 16,
           // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
-          childAspectRatio: columns == 2 ? 0.56 : 0.52,
+          childAspectRatio: isWindowsDesktop
+              ? .58
+              : columns == 2
+              ? 0.56
+              : 0.52,
         ),
         itemCount: items.length,
         itemBuilder: (context, index) => _BrowseCard(
@@ -1412,6 +1425,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   Widget _feed(HomeState state, List<MediaItem> items) {
+    if (isWindowsDesktop && state.error == null && items.isNotEmpty) {
+      return _desktopFeed(items);
+    }
     if (state.error != null) {
       return _FeedMessage(
         key: const Key('drama_error'),
@@ -1522,6 +1538,142 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
   }
 
+  void _desktopFullscreenChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _desktopNextDrama(List<MediaItem> items, int delta) {
+    final index = (_screenIndex + delta).clamp(0, items.length - 1);
+    if (index == _screenIndex) return;
+    setState(() => _screenIndex = index);
+    ref.read(dramaProvider.notifier).noteCurrentVid(items[index].id);
+    if (index >= items.length - 2) {
+      unawaited(ref.read(dramaProvider.notifier).loadMore());
+    }
+    _syncInline();
+  }
+
+  Widget _desktopFeed(List<MediaItem> items) {
+    final item = items[_screenIndex.clamp(0, items.length - 1)];
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _inline.textureId,
+        _inline.playing,
+        _inline.duration,
+        _inline.videoSize,
+        _inline.firstFrame,
+        _inline.error,
+        _inline.activeVid,
+      ]),
+      builder: (context, _) => Focus(
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event.logicalKey == LogicalKeyboardKey.pageDown) {
+            _desktopNextDrama(items, 1);
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.pageUp) {
+            _desktopNextDrama(items, -1);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Padding(
+          padding: EdgeInsets.only(
+            top: DesktopPlatform.fullscreen.value
+                ? 0
+                : _searchRowHeight + _stripHeight,
+          ),
+          child: Column(
+            children: [
+              Expanded(
+                child: VideoPlayerChrome(
+                  key: const ValueKey('desktop-feed-player'),
+                  player: _inline.player,
+                  title: item.title,
+                  seriesTitle: item.title,
+                  episodes: _inline.episodes,
+                  currentIndex: _inline.activeEpisodeIndex ?? 0,
+                  duration: _inline.duration.value,
+                  playing: _inline.playing.value,
+                  enabled: _inline.player?.isCreated ?? false,
+                  shortSeries: true,
+                  onSelectEpisode: (index) =>
+                      _inline.activate(item, startEpisodeIndex: index),
+                  onError: (_) => _inline.error.value = '播放失败，请重试',
+                  onOpenSeriesDetail: () => _openSeriesDetail(item),
+                  onComments: () =>
+                      PlayletCommentPanel.show(context, seriesId: item.id),
+                  onOpenOfflineCache: _inline.episodes.isEmpty
+                      ? null
+                      : () => unawaited(_openFeedDownloadSheet()),
+                  onOpenListenMode: _inline.episodes.isEmpty
+                      ? null
+                      : () => unawaited(_openFeedListenMode()),
+                  onPlaybackRateChanged: _inline.selectRate,
+                  onPlaybackVolumeChanged: _inline.setVolume,
+                  defaultMute: _inline.muted.value,
+                  qualityVariants: _inline.variants,
+                  currentQualityUrl: _inline.currentVariant?.url,
+                  onQualitySelected: (variant) =>
+                      unawaited(_inline.switchVariant(variant)),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _InlineVideoLayer(item: item, playback: _inline),
+                      _FeedDanmakuOverlay(
+                        item: item,
+                        playback: _inline,
+                        entries: _feedDanmaku.entries,
+                        enabled: _feedDanmakuEnabled,
+                        clearScreen: false,
+                        settings: _feedDanmakuSettings,
+                      ),
+                      _InlineVideoError(
+                        item: item,
+                        playback: _inline,
+                        onRetry: () => unawaited(_inline.activate(item)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (!DesktopPlatform.fullscreen.value)
+                SizedBox(
+                  height: 44,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _screenIndex > 0
+                            ? () => _desktopNextDrama(items, -1)
+                            : null,
+                        icon: const Icon(Icons.keyboard_arrow_up),
+                        label: const Text('上一条（Page Up）'),
+                      ),
+                      const SizedBox(width: 24),
+                      Text(
+                        '${_screenIndex + 1} / ${items.length}',
+                        style: const TextStyle(color: Colors.white60),
+                      ),
+                      const SizedBox(width: 24),
+                      TextButton.icon(
+                        onPressed: _screenIndex + 1 < items.length
+                            ? () => _desktopNextDrama(items, 1)
+                            : null,
+                        icon: const Icon(Icons.keyboard_arrow_down),
+                        label: const Text('下一条（Page Down）'),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// The official card opens the play page directly
   /// (`VideoInfiniteHolderV3` → `ShortSeriesLaunchArgs`), so the directory is
   /// fetched here and the player is pushed with the resume episode selected.
@@ -1624,9 +1776,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   void _openDetail(MediaItem item) {
-    unawaited(
-      _pushOverFeed(() => openBookDetail(context, item)),
-    );
+    unawaited(_pushOverFeed(() => openBookDetail(context, item)));
   }
 
   /// feed 卡片标题行「剧名 >」→ 剧集详情页（官方 `ql3/v0.a1()` 默认分支，
@@ -3337,7 +3487,7 @@ class _InlineVideoLayer extends StatelessWidget {
               // Official display mode for a feed card: fill the frame unless
               // the source is wide enough to be pinned to its width. The
               // overflow is clipped by the ClipRRect above this layer.
-              fit: VideoFit.fillFrame,
+              fit: isWindowsDesktop ? VideoFit.contain : VideoFit.fillFrame,
             );
             return Stack(
               fit: StackFit.expand,
@@ -3349,12 +3499,17 @@ class _InlineVideoLayer extends StatelessWidget {
                     rect: layout.video,
                     child: RotatedBox(
                       quarterTurns: playback.rotation.value,
-                      child: Texture(
-                        key: ValueKey(
-                          'drama_inline_texture_${item.kind}_${item.id}',
-                        ),
-                        textureId: textureId,
-                      ),
+                      child: isWindowsDesktop
+                          ? DesktopPlatform.instance.videoSurface(
+                              textureId,
+                              key: ValueKey('drama_inline_${item.id}'),
+                            )
+                          : Texture(
+                              key: ValueKey(
+                                'drama_inline_texture_${item.kind}_${item.id}',
+                              ),
+                              textureId: textureId,
+                            ),
                     ),
                   ),
                 // A first-frame event may beat the size event. Never expose a

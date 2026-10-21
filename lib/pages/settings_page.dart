@@ -1,3 +1,5 @@
+import '../services/desktop_platform.dart';
+import '../widgets/desktop_settings_body.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -69,8 +71,8 @@ class SettingsPage extends StatelessWidget {
         subtitle: '播放',
         items: [
           _muteWhenColdStartItem(),
-          _floatingWindowItem(),
-          _videoDecoderItem(),
+          if (!isWindowsDesktop) _floatingWindowItem(),
+          if (!isWindowsDesktop) _videoDecoderItem(),
         ],
       ),
       SettingsCategory(
@@ -142,97 +144,93 @@ class SettingsPage extends StatelessWidget {
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        children: [
-          Material(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(20),
-            clipBehavior: Clip.antiAlias,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: palette.line,
-                  width: 0.6,
-                ),
-              ),
-              child: Column(
+      body: isWindowsDesktop
+          ? DesktopSettingsBody(categories: categories)
+          : ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               children: [
-                for (var i = 0; i < categories.length; i++) ...[
-                  if (i > 0)
-                    Divider(
-                      height: 1,
-                      indent: 68,
-                      color: palette.line,
+                Material(
+                  color: palette.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  clipBehavior: Clip.antiAlias,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: palette.line, width: 0.6),
                     ),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
-                    ),
-                    leading: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: (i < categoryColors.length
-                                ? categoryColors[i]
-                                : HomePalette.accent)
-                            .withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        categories[i].icon,
-                        size: 20,
-                        color: i < categoryColors.length
-                            ? categoryColors[i]
-                            : HomePalette.accent,
-                      ),
-                    ),
-                    title: Text(
-                      categories[i].title,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                        color: palette.ink,
-                      ),
-                    ),
-                    subtitle: Text(
-                      categories[i].subtitle,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: palette.muted,
-                      ),
-                    ),
-                    trailing: Icon(
-                      LucideIcons.chevron_right,
-                      size: 18,
-                      color: palette.muted,
-                    ),
-                    onTap: () {
-                      final cat = categories[i];
-                      final pageBuilder = cat.pageBuilder;
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder:
-                              pageBuilder ??
-                              (_) => SettingsCategoryPage(
-                                title: cat.title,
-                                items: cat.items,
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < categories.length; i++) ...[
+                          if (i > 0)
+                            Divider(height: 1, indent: 68, color: palette.line),
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            leading: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color:
+                                    (i < categoryColors.length
+                                            ? categoryColors[i]
+                                            : HomePalette.accent)
+                                        .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                        ),
-                      );
-                    },
+                              child: Icon(
+                                categories[i].icon,
+                                size: 20,
+                                color: i < categoryColors.length
+                                    ? categoryColors[i]
+                                    : HomePalette.accent,
+                              ),
+                            ),
+                            title: Text(
+                              categories[i].title,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                                color: palette.ink,
+                              ),
+                            ),
+                            subtitle: Text(
+                              categories[i].subtitle,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: palette.muted,
+                              ),
+                            ),
+                            trailing: Icon(
+                              LucideIcons.chevron_right,
+                              size: 18,
+                              color: palette.muted,
+                            ),
+                            onTap: () {
+                              final cat = categories[i];
+                              final pageBuilder = cat.pageBuilder;
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder:
+                                      pageBuilder ??
+                                      (_) => SettingsCategoryPage(
+                                        title: cat.title,
+                                        items: cat.items,
+                                      ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                ],
+                ),
               ],
             ),
-          ),
-        ),
-      ],
-    ),
-  );
+    );
   }
 
   // ── 外观 ──────────────────────────────────────────────────────────────
@@ -444,7 +442,8 @@ class SettingsPage extends StatelessWidget {
       valueListenable: AudioPreferences.instance.backgroundPlayback,
       builder: (context, value, _) => Switch(
         value: value,
-        onChanged: (v) => unawaited(AudioPreferences.instance.setBackgroundPlayback(v)),
+        onChanged: (v) =>
+            unawaited(AudioPreferences.instance.setBackgroundPlayback(v)),
       ),
     ),
     onTap: (context, setState) {
