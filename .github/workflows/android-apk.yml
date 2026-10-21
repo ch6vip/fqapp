@@ -1,6 +1,7 @@
 name: Android APK
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
     # 打 tag 也出包：tag 推送不走 paths 过滤（native-crypto 在
@@ -152,7 +153,7 @@ jobs:
 
       - name: Install flutter_rust_bridge_codegen
         if: steps.frb-cache.outputs.cache-hit != 'true'
-        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked
+        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked --force
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
