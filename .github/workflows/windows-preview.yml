@@ -3,8 +3,8 @@ name: Windows build and regression
 on:
   workflow_dispatch:
     inputs:
-      verify_headless_media:
-        description: 'Extra libmpv teardown diagnostic (known hosted Windows Server crash)'
+      verify_player:
+        description: 也跑 libmpv 播放验证（需要桌面会话，托管 runner 上不稳定）
         type: boolean
         default: false
   pull_request:
@@ -94,7 +94,7 @@ jobs:
           python scripts/verify_windows_media.py
           if ($LASTEXITCODE -ne 0) { throw 'Native media verification failed' }
       - name: Diagnose headless libmpv playback and teardown (manual)
-        if: github.event_name == 'workflow_dispatch' && inputs.verify_headless_media
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_player
         shell: pwsh
         run: |
           dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe
