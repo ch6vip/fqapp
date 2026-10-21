@@ -1474,11 +1474,7 @@ Future<void> openBookDetail(
     MaterialPageRoute<void>(
       builder: (_) => DetailPage(
         item: item,
-<<<<<<< HEAD
-        autoOpenReader: BookOpenPreferences.instance.directReader.value,
-=======
         autoOpenReader: preferences.directReaderFor(entry),
->>>>>>> upstream/master
       ),
     ),
   );
