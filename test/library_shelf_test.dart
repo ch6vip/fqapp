@@ -1,15 +1,19 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/detail_page.dart';
+import 'package:fqapp/pages/home_page.dart';
+import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/pages/library_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/book_open_preferences.dart';
+import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/connectivity_status.dart';
 import 'package:fqapp/services/library_store.dart';
@@ -577,6 +581,145 @@ void main() {
       // 搜索入口仍然指向搜索页。
       expect(find.byKey(const Key('library-search-button')), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('最近阅读缓存直达', () {
+    for (final entry in ['首页', '书架']) {
+      testWidgets('$entry 缓存续读不经过详情或网络探测，并恢复原章节位置', (tester) async {
+        addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+        SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+        BookOpenPreferences.instance.resetForTest();
+        final saved = <String, dynamic>{
+          'id': 'recent-book',
+          'title': '最近读过的书',
+          'kind': 'book',
+          'chapterId': '2',
+          'episode': 0, // 稳定章节 ID 优先于旧下标。
+          'position': 300.0,
+          'maxScroll': 900.0,
+          'progress': 1 / 9,
+          'time': DateTime.now().millisecondsSinceEpoch,
+        };
+        await tester.runAsync(() async {
+          await ShelfStore.instance.add(_item('recent-book', title: '最近读过的书'));
+          await LibraryStore.instance.addHistory(saved);
+        });
+        final cache = MemoryChapterCache();
+        await cache.saveBook(
+          CachedBook(
+            id: 'recent-book',
+            title: '缓存书名',
+            chapters: [
+              Chapter(itemId: '1', title: '第一章', volumeName: ''),
+              Chapter(itemId: '2', title: '第二章', volumeName: ''),
+            ],
+          ),
+        );
+        for (final id in ['1', '2']) {
+          await cache.write(
+            bookId: 'recent-book',
+            chapterId: id,
+            title: '章节$id',
+            text: List.filled(80, '这是第$id 章缓存正文，用于验证恢复阅读位置。').join('\n\n'),
+          );
+        }
+        final readerStore = MemoryReaderStore(entry: saved);
+        var connectivityChecks = 0;
+        await tester.pumpWidget(
+          entry == '书架'
+              ? _app(
+                  cache: cache,
+                  readerStore: readerStore,
+                  connectivity: () async {
+                    connectivityChecks++;
+                    return (online: true, metered: false);
+                  },
+                )
+              : ProviderScope(
+                  overrides: [
+                    homeProvider.overrideWith(
+                      () => HomeNotifier(
+                        homepageLoader:
+                            ({
+                              int tabType = 2,
+                              int offset = 0,
+                              String? sessionId,
+                            }) async => HomepagePage(
+                              items: [_item('recommendation', title: '推荐书')],
+                              nextOffset: null,
+                              sessionId: null,
+                            ),
+                        searchLoader: (query, {int page = 1}) async => [],
+                      ),
+                    ),
+                  ],
+                  child: MaterialApp(
+                    home: HomePage(cacheStore: cache, readerStore: readerStore),
+                  ),
+                ),
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('最近读过的书'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('最近读过的书'));
+        await tester.pumpAndSettle();
+        final reader = tester.widget<ReaderPage>(find.byType(ReaderPage));
+        expect(reader.startIndex, 1);
+        expect(reader.title, '最近读过的书');
+        expect(reader.localOnly, isFalse);
+        expect(find.byType(DetailPage, skipOffstage: false), findsNothing);
+        expect(connectivityChecks, 0);
+        final controller = tester
+            .widget<ListView>(
+              find.descendant(
+                of: find.byType(ReaderPage),
+                matching: find.byType(ListView),
+              ),
+            )
+            .controller!;
+        expect(controller.offset, greaterThan(0));
+        expect(readerStore.entry?['chapterId'], '2');
+        expect(readerStore.entry?['position'], controller.offset);
+        expect(
+          controller.offset / controller.position.maxScrollExtent,
+          closeTo(1 / 3, .01),
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+
+    testWidgets('关闭书架直读时即使有最近章节缓存也先看详情', (tester) async {
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      BookOpenPreferences.instance.resetForTest();
+      await BookOpenPreferences.instance.setShelfDirectReader(false);
+      await tester.runAsync(
+        () => ShelfStore.instance.add(_item('cached', title: '有缓存的书')),
+      );
+      final cache = MemoryChapterCache();
+      await cache.write(
+        bookId: 'cached',
+        chapterId: '1',
+        title: '第一章',
+        text: '缓存正文',
+      );
+      await tester.pumpWidget(
+        _app(
+          cache: cache,
+          readerStore: MemoryReaderStore(entry: {'chapterId': '1'}),
+          connectivity: () async => (online: true, metered: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('有缓存的书'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(ReaderPage, skipOffstage: false), findsNothing);
+      expect(
+        tester.widget<DetailPage>(find.byType(DetailPage)).autoOpenReader,
+        isFalse,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
     });
   });
 

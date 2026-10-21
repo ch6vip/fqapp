@@ -318,22 +318,27 @@ class _LibraryPageState extends State<LibraryPage> {
     );
   }
 
-  /// 点书：离线且本地有缓存时直接进阅读器，否则走详情页。
-  ///
-  /// 官方客户端书架点书就是直接起阅读器（`ReaderBundleBuilder`），中间没有
-  /// 那个要联网取目录的页面。这里只在「无网 + 有缓存」时抄这条捷径：联网时
-  /// 仍走详情页（或按设置 → 阅读 →「书架点书直接进入阅读」自动进阅读器），
-  /// 段评、章节目录预览这些联网能力不会被悄悄降级。
+  /// 优先用缓存续读；未命中时保留离线阅读与详情页加载入口。
   Future<void> _open(MediaItem item, {bool importedResume = false}) async {
     if (ImportedBookStore.isLocalBookId(item.id)) {
       await _openLocalBook(item);
       return;
     }
+    final preferences = BookOpenPreferences.instance;
+    await preferences.load();
+    if (!mounted) return;
+    if ((importedResume || preferences.shelfDirectReader.value) &&
+        await openRecentBook(
+          context,
+          item,
+          cache: widget.cacheStore,
+          readerStore: widget.readerStore,
+        )) {
+      return;
+    }
+    if (!mounted) return;
     if (await _openCached(item)) return;
     if (!mounted) return;
-    // The shelf snapshot already knows which entries carry imported anchors.
-    // Ordinary books must keep the original navigation timing; DetailPage
-    // awaits pending reader writes when it actually resolves a resume target.
     if (importedResume) {
       await Navigator.push(
         context,

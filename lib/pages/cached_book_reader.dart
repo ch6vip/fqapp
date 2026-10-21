@@ -4,8 +4,65 @@ import '../models/media_item.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/connectivity_status.dart';
 import '../services/library_store.dart';
+import '../services/player_history.dart';
 import '../services/reader_history.dart';
 import 'reader_page.dart';
+
+/// 最近读过且原章节仍有缓存时直接续读，不等待详情、目录或网络探测。
+Future<bool> openRecentBook(
+  BuildContext context,
+  MediaItem item, {
+  ChapterCache? cache,
+  ReaderStore? readerStore,
+}) async {
+  if (item.kind != 'book' || item.id.isEmpty) return false;
+  final store = cache ?? ChapterCacheStore.instance;
+  final historyStore = readerStore ?? LibraryStore.instance;
+  CachedBook? book;
+  int? index;
+  try {
+    final saved = await ReaderHistory(historyStore).load(item.id);
+    if (saved == null || (saved['kind'] != null && saved['kind'] != 'book')) {
+      return false;
+    }
+    book = await store.cachedBook(item.id);
+    if (book == null) return false;
+    index = resumeEpisodeIndex({
+      ...saved,
+      if (saved['chapterId'] != null)
+        'chapterId': saved['chapterId'].toString(),
+    }, book.chapters);
+    if (index == null ||
+        !(await store.cachedChapterIds(
+          item.id,
+        )).contains(book.chapters[index].itemId)) {
+      return false;
+    }
+  } catch (_) {
+    // 缓存或历史不可用时，交给原有加载和重试入口。
+    return false;
+  }
+  if (!context.mounted) return false;
+  final cachedBook = book;
+  final startIndex = index;
+  await Navigator.push<void>(
+    context,
+    MaterialPageRoute(
+      builder: (_) => ReaderPage(
+        bookId: item.id,
+        title: item.title.isNotEmpty ? item.title : cachedBook.title,
+        cover: item.cover.isNotEmpty ? item.cover : cachedBook.cover,
+        chapters: cachedBook.chapters,
+        startIndex: startIndex,
+        // 默认缓存由阅读器自行读取，保留在线段评、预取和正文刷新。
+        chapterCache: cache,
+        readerStore: historyStore,
+        shelfItem: item,
+      ),
+    ),
+  );
+  return true;
+}
 
 /// 用本地缓存直接起阅读器，全程不碰网络。
 ///
