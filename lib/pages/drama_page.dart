@@ -574,7 +574,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
         _resumeInline();
         _scheduleInlineSync();
       }
-    } else if (state != AppLifecycleState.inactive) {
+    } else if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
       // `inactive` 只是瞬态打断（下拉通知栏/控制中心）：feed 继续播；
       // 只有 hidden/paused/detached 才暂停（视频绝不能从后台出声）。
       // A video must never keep playing from the background.
@@ -1513,8 +1515,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
                     onRetry: () => unawaited(_inline.activate(item)),
                   )
                 : null,
-            // 全屏观看 = 唯一进全页播放器的入口；单击画面只切播放/暂停。
+            // 「观看全集·N集」药丸 = 进全页播放器（官方 `nk3.c.e` →
+            // `zf3.c.s` goToSingleFeed）。
             onFullscreen: () => _openPlayer(item),
+            // 右侧横屏钮是另一条路：官方 `nk3.c.g` → `zf3.c.w` →
+            // `transformToLandActivity`，起独立横屏页。
+            onLandscape: () => _openPlayer(item, openFullScreen: true),
             onQuickCatalog: () => _openQuickCatalog(item),
             // 标题行「剧名 >」= 官方进剧集详情页的入口（ql3/v0.a1）。
             onOpenSeriesDetail: () => _openSeriesDetail(item),
@@ -1678,6 +1684,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
     int? startEpisodeIndex,
     List<Chapter>? loadedEpisodes,
     SeriesDetail? initialDetail,
+
+    /// 进页即横屏全屏（feed 卡片右侧的横屏钮）。官方那颗钮不是「观看全集」
+    /// 的同一条路，它 `transformToLandActivity` 起独立
+    /// `ShortSeriesLandActivity`（`jq3/x.java:4499-4538`）。
+    bool openFullScreen = false,
   }) async {
     if (_openingId != null) return;
     setState(() => _openingId = item.id);
@@ -1742,6 +1753,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             // 进度不需要显式传——上面的 `disposePlayer()` 已把 feed 的
             // 当前集与播放进度写进历史，PlayerPage 从同一条历史续播。
             shortSeries: true,
+            openFullScreen: openFullScreen,
             aiGenerated: item.aiGenerated,
           ),
         ),
@@ -2099,6 +2111,10 @@ class _DramaFeedCard extends StatelessWidget {
   final Widget? errorOverlay;
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
+
+  /// 右侧横屏钮（官方 `nk3.c.g` → `transformToLandActivity`），与
+  /// [onFullscreen] 是两条路：那颗钮起独立的横屏页，不是「观看全集」。
+  final VoidCallback? onLandscape;
   final VoidCallback? onQuickCatalog;
   final VoidCallback onTogglePlay;
   final VoidCallback onOpenMorePanel;
@@ -2121,6 +2137,7 @@ class _DramaFeedCard extends StatelessWidget {
     this.errorOverlay,
     this.playback,
     this.onFullscreen,
+    this.onLandscape,
     this.onQuickCatalog,
     required this.onTogglePlay,
     required this.onOpenMorePanel,
@@ -2274,6 +2291,7 @@ class _DramaFeedCard extends StatelessWidget {
               playback: playback,
               onOpenSeriesDetail: onOpenSeriesDetail,
               onFullscreen: onFullscreen,
+              onLandscape: onLandscape,
               onQuickCatalog: onQuickCatalog,
               hotComments: hotComments,
               onHotCommentTap: onHotCommentTap,
@@ -2916,6 +2934,9 @@ class _InfoPanel extends StatefulWidget {
   final MediaItem item;
   final InlineVideoPlayback? playback;
   final VoidCallback? onFullscreen;
+
+  /// 右侧横屏钮（官方 `nk3.c.g`）。null 时该钮不渲染。
+  final VoidCallback? onLandscape;
   final VoidCallback? onQuickCatalog;
 
   /// 标题行「剧名 >」点击 → 剧集详情页。
@@ -2928,6 +2949,7 @@ class _InfoPanel extends StatefulWidget {
     required this.item,
     required this.playback,
     required this.onFullscreen,
+    this.onLandscape,
     this.onQuickCatalog,
     required this.onOpenSeriesDetail,
     this.hotComments = const [],
@@ -2959,11 +2981,11 @@ class _InfoPanelState extends State<_InfoPanel> {
                   const SizedBox(width: 8),
                   _QuickCatalogButton(onTap: widget.onQuickCatalog!),
                 ],
-                if (widget.playback != null) ...[
+                if (widget.playback != null && widget.onLandscape != null) ...[
                   const SizedBox(width: 8),
                   _FullscreenRoundButton(
                     playback: widget.playback!,
-                    onTap: widget.onFullscreen!,
+                    onTap: widget.onLandscape!,
                   ),
                 ],
               ],
@@ -3200,9 +3222,13 @@ class _QuickCatalogButton extends StatelessWidget {
   }
 }
 
-/// 官方 30×30dp 圆形全屏钮（`ad9.xml` 的 `@id/dgu`）。官方只在横版片源上
-/// 显示（`vk3.a.a`：非 vertical 才可见），这里用解码尺寸比例（≥1.666，
-/// 同 `VideoFit.landscapeRatio`）作代理；解码前不显示。
+/// 官方 30×30dp 圆形全屏钮（`ad9.xml` 的 `@id/dgu`），进入横屏播放页。
+///
+/// 显隐照官方 `vk3.a.a(saasVideoData, false)`：判据是横版片源，而不是「解码
+/// 尺寸此刻是否已知」。官方读的是数据层 `isVertical()`，换集立刻成立；本地
+/// 源数据没有该字段，只能等解码器报尺寸，但结论一旦拿到就由
+/// [InlineVideoPlayback.landscapeSource] 记住，不随 `videoSize` 换集重置而
+/// 退回未知——那正是「上划一集后钮再也不出现」的成因。
 class _FullscreenRoundButton extends StatelessWidget {
   final InlineVideoPlayback playback;
   final VoidCallback onTap;
@@ -3210,14 +3236,11 @@ class _FullscreenRoundButton extends StatelessWidget {
   const _FullscreenRoundButton({required this.playback, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<Size>(
-    valueListenable: playback.videoSize,
-    builder: (context, size, _) {
-      final landscape =
-          size.width > 0 &&
-          size.height > 0 &&
-          size.width / size.height >= PlayerVideoLayout.landscapeRatio;
-      if (!landscape) return const SizedBox.shrink();
+  Widget build(BuildContext context) => ValueListenableBuilder<bool?>(
+    valueListenable: playback.landscapeSource,
+    builder: (context, landscape, _) {
+      // `null`（还没解出尺寸）与竖版同样不渲染，避免闪出又消失。
+      if (landscape != true) return const SizedBox.shrink();
       return GestureDetector(
         key: const Key('drama_fullscreen_button'),
         onTap: onTap,

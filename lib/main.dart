@@ -25,6 +25,7 @@ import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_preferences.dart';
+import 'services/player_preferences.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
 import 'services/drama_download_store.dart';
@@ -128,6 +129,9 @@ Future<void> _initializeLocalData() async {
     PlayerStyleConfig.load(),
     // 官方播放页字号档（jk3/b 的 SP）同理：读失败回标准档，不拖启动。
     ShortSeriesFontScale.load(),
+    // 解码器偏好必须先进内存：`NativePlayer.create` 在起播路径上直接读它，
+    // 不能在那里再 await 读盘（见 DecoderPreferenceCache 的说明）。
+    optional(DecoderPreferenceCache.load),
     // 离线缓存的记录箱启动即打开：播放器的离线命中只在 box 就绪时才查
     // （避免运行中途首次 openBox 失败产生游离异步错误）。可选数据，失败
     // 只退化为「本会话不查离线」。
@@ -137,6 +141,8 @@ Future<void> _initializeLocalData() async {
   ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
+  // 短剧切后台悬浮窗开关（#24）：异步读取，失败退化为默认关闭。
+  unawaited(PlayerPreferences.loadFloatingWindow());
   // 离线缓存的网络门（官方 onNetChangeCheck）：断网/只剩计费链路时
   // 自动暂停下载队列，半成品保留。监听失败只退化为「无自动暂停」。
   try {

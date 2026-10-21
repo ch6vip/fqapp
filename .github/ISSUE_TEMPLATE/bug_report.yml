@@ -1,0 +1,98 @@
+name: 缺陷报告
+description: 应用崩溃、显示异常、功能不工作
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        报告前请先确认：已更新到[最新版本](https://github.com/ch6vip/fqapp/releases/latest)，并在已有 issue 里搜过同样的问题。
+
+        产品边界与不做的功能见 [CONTRIBUTING.md](https://github.com/ch6vip/fqapp/blob/master/CONTRIBUTING.md)。
+
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      description: 设置 → 关于，形如 1.0.123
+      placeholder: "1.0.123"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统
+      description: 机型 + Android 版本
+      placeholder: "Redmi K60 Ultra / Android 15"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从哪个页面进入、点了什么。能稳定复现最好，偶发也请说明概率。
+      placeholder: |
+        1. 打开搜索页
+        2. 输入「修仙」
+        3. 切换到列表视图
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 崩溃请附堆栈；显示异常请附截图。
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: 截图或录屏
+      description: 直接把图片拖进这个输入框即可。界面问题一张截图胜过一段描述。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: content-kind
+    attributes:
+      label: 涉及内容类型
+      multiple: true
+      options:
+        - 小说
+        - 短剧
+        - 漫剧
+        - 漫画
+        - 听书
+        - 与内容无关（界面/设置）
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志（可选）
+      description: 拿不到可以留空，不必卡在这里。取法见 CONTRIBUTING.md 的「调试信息」。
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我已更新到最新版本后仍能复现
+          required: true
+        - label: 我已搜索过已有 issue，没有重复
+          required: true

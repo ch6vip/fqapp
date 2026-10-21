@@ -151,6 +151,77 @@ void main() {
     expect(find.byTooltip('切换为封面视图'), findsOneWidget);
   });
 
+  testWidgets('the rating threshold survives reopening the page', (
+    tester,
+  ) async {
+    Future<List<SearchTab>> loader(
+      String query, {
+      required int tabType,
+      required int offset,
+    }) async => [
+      SearchTab(
+        title: '综合',
+        items: [_item('low', '低分作品', score: 8.2)],
+        hasMore: false,
+      ),
+    ];
+
+    await tester.pumpWidget(_app(loader));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('search-minimum-score')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('9 分及以上').last);
+    await tester.pumpAndSettle();
+    expect(
+      (await SharedPreferences.getInstance()).getDouble('search_minimum_score'),
+      9,
+    );
+
+    // Reopening is the reported symptom: the dropdown used to snap back to
+    // 「评分不限」 and the filter the viewer picked was silently dropped.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(_app(loader));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<DropdownButton<double>>(
+            find.byKey(const Key('search-minimum-score')),
+          )
+          .value,
+      9,
+    );
+    await tester.enterText(find.byType(TextField), '评分');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    // 8.2 is below the restored 9-point threshold, so it stays filtered out.
+    expect(find.byType(MediaCard), findsNothing);
+  });
+
+  testWidgets('list and grid captions show the work length', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        (query, {required int tabType, required int offset}) async => [
+          SearchTab(
+            title: '综合',
+            items: [
+              _item('novel', '长篇小说', wordNumber: 2000000, score: 9.1),
+              _item('drama', '短剧作品', kind: 'video', ep: '103'),
+            ],
+            hasMore: false,
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('200万字'), findsWidgets);
+    expect(find.textContaining('共103集'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('search-layout-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('小说 · 200万字 · 9.1分'), findsOneWidget);
+    expect(find.text('短剧 · 共103集 · 暂无评分'), findsOneWidget);
+  });
+
   testWidgets(
     'fixed categories request their own source and filter copied hits',
     (tester) async {
@@ -764,14 +835,17 @@ MediaItem _item(
   String title, {
   String kind = 'book',
   double? score,
+  String ep = '',
+  int wordNumber = 0,
 }) => MediaItem(
   id: id,
   title: title,
   cover: '',
   author: '',
   badge: '',
-  ep: '',
+  ep: ep,
   kind: kind,
+  wordNumber: wordNumber,
   score: score,
 );
 

@@ -69,6 +69,13 @@ class PlayerPage extends StatefulWidget {
   /// 播放页信息层的 AI 声明行。
   final bool aiGenerated;
 
+  /// 进页即全屏（并请求横屏）。官方 feed 卡片右侧的横屏钮不是「观看全集」
+  /// 的同一条路：它 `transformToLandActivity` → 起独立
+  /// `ShortSeriesLandActivity`（`jq3/x.java:4499-4538`，manifest 锁
+  /// `userLandscape`），页面一起来就是横屏全屏。本地用同一个播放页承载，
+  /// 靠这个参数在进页时置全屏态。
+  final bool openFullScreen;
+
   const PlayerPage({
     super.key,
     required this.bookId,
@@ -86,6 +93,7 @@ class PlayerPage extends StatefulWidget {
     this.danmakuFetcher,
     this.shortSeries = false,
     this.aiGenerated = false,
+    this.openFullScreen = false,
   });
 
   @override
@@ -103,6 +111,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   VoidCallback? _unregisterFairMemoryFlush;
   bool _initVideo = false;
   bool _paging = false;
+
+  /// 悬浮窗播放中（#24）：应用切后台后画面搬进系统悬浮窗继续播。
+  /// 服务在 inactive（仍属前台过渡态）时启动，hidden 确认切后台后显示；
+  /// 回前台 / 页面销毁 / 打开听视频时停掉并恢复 Flutter 纹理。
+  bool _floating = false;
+
+  /// 最近一次生命周期状态：悬浮窗启动是异步的，启动完成时要按当前
+  /// 状态收尾（已回前台就立刻停，已切后台就立即显示）。
+  AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
   Completer<void>? _pagingSettled;
   int? _pendingCompletion;
   NativePlayer? _pendingAutoplay;
@@ -173,6 +190,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _unregisterFairMemoryFlush = FairMemoryService.instance
         .registerFlushHandler(_persistProgress);
     unawaited(NativePlayer.setKeepScreenOn(true).catchError((Object _) {}));
+    unawaited(PlayerPreferences.loadFloatingWindow());
     _index = widget.eps.isEmpty
         ? 0
         : widget.startIndex.clamp(0, widget.eps.length - 1);
@@ -717,6 +735,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _unregisterFairMemoryFlush?.call();
     _unregisterFairMemoryFlush = null;
     unawaited(NativePlayer.setKeepScreenOn(false).catchError((Object _) {}));
+    if (_floating) unawaited(_stopFloating());
+    NativePlayer.clearRemoteCommandHandler();
     _progressTimer?.cancel();
     _prefetchTimer?.cancel();
     _danmakuProgressTimer?.cancel();
@@ -736,14 +756,134 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lastLifecycleState = state;
     _loadTrace?.setAppActive(playbackAppIsActive(state));
     _syncWatchClock();
     if (playbackAppIsActive(state)) {
       _resumePendingAutoplay();
+      if (_floating) unawaited(_stopFloating());
     } else {
       unawaited(_persistProgress());
+      if (state == AppLifecycleState.inactive) {
+        // 悬浮窗在仍属前台的过渡态启动服务（后台启动前台服务会被系统拒绝），
+        // 等 hidden 确认切后台后再显示悬浮窗；只是下拉通知栏时 resumed 会
+        // 跟着来，服务随即停掉，悬浮窗全程不出现。
+        if (_canFloat()) unawaited(_startFloating());
+      } else if (state == AppLifecycleState.hidden ||
+          state == AppLifecycleState.paused) {
+        if (_floating) unawaited(NativePlayer.showFloating());
+      }
     }
     _updatePrefetch();
+  }
+
+  /// 是否满足进悬浮窗的条件：开关开 + 正在播 + 播放器就绪。
+  bool _canFloat() =>
+      !isWindowsDesktop &&
+      !_floating &&
+      PlayerPreferences.floatingWindow.value &&
+      _player != null &&
+      _playing &&
+      _error == null;
+
+  String _episodeTitle() =>
+      widget.eps.isEmpty ? '' : widget.eps[_index].title;
+
+  /// 启动悬浮窗：原生侧起服务并在 surface 就绪后把画面换到悬浮窗。
+  /// 只有原生侧成功返回才置 `_floating`：焦点被占 / 服务启动失败时
+  /// 不进悬浮，交给 chrome 的切后台暂停。
+  Future<void> _startFloating() async {
+    final player = _player;
+    final playerId = player?.playerId;
+    if (player == null || playerId == null || _floating) return;
+    // 权限可能在设置里开启后又被系统收回，这里再查一次。
+    if (!await NativePlayer.canDrawOverlays()) return;
+    try {
+      await NativePlayer.startFloating(
+        playerId: playerId,
+        title: _seriesTitle.isNotEmpty ? _seriesTitle : widget.title,
+        episode: _episodeTitle(),
+        playing: _playing,
+        hasPrev: _index > 0,
+        hasNext: _index + 1 < widget.eps.length,
+        positionMs: player.position.inMilliseconds,
+        durationMs: player.duration.inMilliseconds,
+        videoWidth: player.videoWidth,
+        videoHeight: player.videoHeight,
+      );
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    if (_lastLifecycleState == AppLifecycleState.resumed) {
+      // 启动过程中已回前台（只是下拉通知栏）：不进悬浮，立刻停服务。
+      await NativePlayer.stopFloating();
+      return;
+    }
+    _floating = true;
+    NativePlayer.setRemoteCommandHandler(onAction: _handleFloatingRemoteAction);
+    if (_lastLifecycleState == AppLifecycleState.hidden ||
+        _lastLifecycleState == AppLifecycleState.paused) {
+      // 启动过程中已切后台：hidden 分支已跑过（那时 _floating 还是 false），
+      // 这里补一次显示。
+      await NativePlayer.showFloating();
+    }
+  }
+
+  /// 停悬浮窗：画面回 Flutter 纹理，停服务，清远程控制。
+  Future<void> _stopFloating() async {
+    if (!_floating) return;
+    _floating = false;
+    NativePlayer.clearRemoteCommandHandler();
+    await NativePlayer.stopFloating();
+  }
+
+  /// 后台自动切集：新播放器接手悬浮窗（服务不重启，避免后台启动限制）。
+  /// 接手失败悬浮窗黑屏，无法恢复，只能等用户关闭 / 回前台。
+  Future<void> _swapFloatingPlayer(NativePlayer player) async {
+    final playerId = player.playerId;
+    if (!_floating || playerId == null) return;
+    try {
+      await NativePlayer.swapFloatingPlayer(playerId: playerId);
+    } catch (_) {
+      return;
+    }
+    await NativePlayer.updateFloating(
+      episode: _episodeTitle(),
+      playing: _playing,
+      hasPrev: _index > 0,
+      hasNext: _index + 1 < widget.eps.length,
+      positionMs: player.position.inMilliseconds,
+      durationMs: player.duration.inMilliseconds,
+    );
+  }
+
+  /// 悬浮窗 / 通知的远程控制：播放暂停、上下集、关闭、回应用。
+  void _handleFloatingRemoteAction(String action) {
+    if (!mounted) return;
+    final player = _player;
+    switch (action) {
+      case 'playPause':
+        if (player == null) return;
+        if (_playing) {
+          unawaited(player.pause());
+        } else {
+          unawaited(player.play());
+        }
+      case 'prev':
+        if (_index > 0) unawaited(_selectEpisode(_index - 1));
+      case 'next':
+        if (_index + 1 < widget.eps.length) {
+          unawaited(_selectEpisode(_index + 1));
+        }
+      case 'stop':
+        // 悬浮窗关闭：暂停并收起悬浮窗。
+        if (player != null) unawaited(player.pause());
+        unawaited(_stopFloating());
+      case 'fullscreen':
+        // 服务已拉起应用并藏起悬浮窗；这里收起服务并恢复纹理。
+        unawaited(_stopFloating());
+    }
   }
 
   void _onPagingChanged(bool paging) {
@@ -810,14 +950,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     if (player == null ||
         !_current(generation, player) ||
-        !_appActive ||
+        (!_appActive && !_floating) ||
         _paging) {
       return;
     }
     _pendingAutoplay = null;
     _loadTrace?.playRequested();
     await player.play();
-    if (_current(generation, player) && !_appActive) {
+    if (_current(generation, player) && !_appActive && !_floating) {
       // The lifecycle can change while the platform acknowledges play.
       _pendingAutoplay = player;
       await player.pause();
@@ -1099,6 +1239,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _pendingAutoplay = autoplay ? player : null;
       await _tryAutoplay(generation);
       if (!_current(generation, player)) return;
+      // 后台自动切集：新播放器接手悬浮窗，旧的已在 _teardownPlayer 里销毁。
+      if (_floating) await _swapFloatingPlayer(player);
       _onFirstFrame(player, generation);
       _updatePrefetch();
       _syncWatchClock();
@@ -1132,6 +1274,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _watchTime.stop();
     unawaited(_persistProgress());
     unawaited(_teardownPlayer());
+    // 悬浮窗里播失败：通知状态改成暂停，用户可用悬浮窗 / 通知的关闭收起。
+    if (_floating) {
+      unawaited(NativePlayer.updateFloating(playing: false));
+    }
     setState(() {
       _error = PlaybackIssue.fromError(error);
       _initVideo = false;
@@ -1258,6 +1404,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (_playing != playing) setState(() => _playing = playing);
         _syncWatchClock();
         _updatePrefetch();
+        // 悬浮窗通知里的播放状态跟着变（系统按最后同步的位置 + 倍速外推）。
+        if (_floating) {
+          unawaited(
+            NativePlayer.updateFloating(
+              playing: playing,
+              positionMs: player.position.inMilliseconds,
+              durationMs: player.duration.inMilliseconds,
+            ),
+          );
+        }
       }),
       player.completedStream.listen((completed) {
         if (!_current(generation, player) || _activeIndex != _index) {
@@ -1380,6 +1536,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       duration: _duration,
       playing: _playing,
       shortSeries: widget.shortSeries,
+      openFullScreen: widget.openFullScreen,
       watchedEpisodes: watchedIndexes(_watchedIds, widget.eps),
       interactionBlocked: _externalPanelOpen || _switchingSeries,
       aiGenerated: widget.aiGenerated,
@@ -1502,6 +1659,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final player = _player;
     final wasPlaying = _playing;
     if (player != null) await player.pause();
+    // 听视频接手播放：先收起悬浮窗，避免两个播放面同时占着播放器。
+    if (_floating) await _stopFloating();
     if (!mounted) return;
     final result = await Navigator.of(context).push<(int, Duration)>(
       MaterialPageRoute<(int, Duration)>(

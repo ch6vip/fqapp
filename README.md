@@ -203,3 +203,5 @@ Thanks to the [LINUX DO](https://linux.do/) community for its support and feedba
 ## 开发者
 
 架构、构建、API 对接、调试与开发计划等开发向文档见 **[DEVELOPMENT.md](DEVELOPMENT.md)**；构建与维护脚本说明见 [scripts/README.md](scripts/README.md)。
+
+想参与改进请先读 **[CONTRIBUTING.md](CONTRIBUTING.md)**：报告缺陷该给哪些信息、功能建议的产品边界、提交代码前必须通过的检查，都在那里。

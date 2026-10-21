@@ -10,6 +10,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/audio_preferences.dart';
+import '../services/native_player.dart';
+import '../services/player_preferences.dart';
 import '../services/backend_service.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
@@ -67,7 +69,11 @@ class SettingsPage extends StatelessWidget {
         icon: LucideIcons.film,
         title: '短剧',
         subtitle: '播放',
-        items: [_muteWhenColdStartItem()],
+        items: [
+          _muteWhenColdStartItem(),
+          if (!isWindowsDesktop) _floatingWindowItem(),
+          if (!isWindowsDesktop) _videoDecoderItem(),
+        ],
       ),
       SettingsCategory(
         icon: LucideIcons.database,
@@ -342,6 +348,46 @@ class SettingsPage extends StatelessWidget {
   // ── 阅读 ──────────────────────────────────────────────────────────────
 
   /// issue #19 第 3 条：点书跳过详情页，直接按上次进度进阅读器（小说/漫画）。
+  /// 切后台悬浮窗播放（#24，默认关）：开启且已授予悬浮窗权限时，切到
+  /// 后台或锁屏用悬浮小窗继续播；关闭则切后台暂停（现有行为）。
+  /// 开启时若无权限，先打开系统设置让用户授予，授予后回来再点一次。
+  SettingsItem _floatingWindowItem() => SettingsItem(
+    icon: LucideIcons.video,
+    title: '切后台悬浮窗播放',
+    subtitle: '切到后台或锁屏时用悬浮小窗继续播放，需要悬浮窗权限',
+    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: PlayerPreferences.floatingWindow,
+      builder: (context, value, _) => Switch(
+        value: value,
+        onChanged: (enabled) =>
+            unawaited(_setFloatingWindow(context, enabled)),
+      ),
+    ),
+    onTap: (context, setState) {
+      final current = PlayerPreferences.floatingWindow.value;
+      unawaited(_setFloatingWindow(context, !current));
+    },
+  );
+
+  Future<void> _setFloatingWindow(BuildContext context, bool enabled) async {
+    if (!enabled) {
+      await PlayerPreferences.setFloatingWindow(false);
+      return;
+    }
+    if (await NativePlayer.canDrawOverlays()) {
+      await PlayerPreferences.setFloatingWindow(true);
+      return;
+    }
+    await NativePlayer.requestOverlayPermission();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('请在系统设置中允许“显示在其他应用的上层”，然后回来再开启'),
+        ),
+      );
+    }
+  }
+
   /// 默认关＝现有行为（先进详情页）。听书/短剧与加载失败时仍停留在详情页。
   SettingsItem _directReaderItem() => SettingsItem(
     icon: LucideIcons.book_open,
@@ -400,6 +446,78 @@ class SettingsPage extends StatelessWidget {
       unawaited(DramaMutePreferences.instance.set(!current));
     },
   );
+
+  /// 视频解码器（issue #92）：硬解异常的机型可以手动切软解。
+  ///
+  /// 只有**新起的播放器**会采用新设置——ExoPlayer 的 renderer 在 build 时
+  /// 定型，所以行内说明写明需重新进入播放页。
+  SettingsItem _videoDecoderItem() => SettingsItem(
+    icon: LucideIcons.monitor_play,
+    title: '视频解码器',
+    subtitle: '画面异常（黑屏、卡住、绿屏）时改用软解，重新进入播放页生效',
+    trailingBuilder: (context) => FutureBuilder<VideoDecoderPreference>(
+      future: PlayerPreferences.loadVideoDecoder(),
+      builder: (context, snapshot) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            (snapshot.data ?? VideoDecoderPreference.automatic).label,
+            style: TextStyle(color: Theme.of(context).colorScheme.outline),
+          ),
+          const SizedBox(width: 4),
+          const Icon(LucideIcons.chevron_right, size: 18),
+        ],
+      ),
+    ),
+    onTap: (context, setState) => _showVideoDecoderDialog(context, setState),
+  );
+
+  Future<void> _showVideoDecoderDialog(
+    BuildContext context,
+    StateSetter refresh,
+  ) async {
+    final current = await PlayerPreferences.loadVideoDecoder();
+    if (!context.mounted) return;
+    final selected = await showDialog<VideoDecoderPreference>(
+      context: context,
+      builder: (c) => SimpleDialog(
+        title: const Text('视频解码器'),
+        children: [
+          RadioGroup<VideoDecoderPreference>(
+            groupValue: current,
+            onChanged: (v) {
+              if (v != null) Navigator.pop(c, v);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final value in VideoDecoderPreference.values)
+                  RadioListTile<VideoDecoderPreference>(
+                    value: value,
+                    title: Text(value.label),
+                    subtitle: value == VideoDecoderPreference.software
+                        ? const Text('更耗电，但能绕开部分芯片的硬解缺陷')
+                        : null,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    try {
+      await DecoderPreferenceCache.set(selected);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('解码器设置未能保存')));
+      }
+      return;
+    }
+    refresh(() {});
+  }
 
   // ── 数据 ──────────────────────────────────────────────────────────────
 
