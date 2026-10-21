@@ -36,7 +36,8 @@ Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutte
 核对视频和音频逐帧哈希、在线/离线随机 Range、访问限制和会话关闭。
 这些离线测试不代表上游在线内容或用户账号导入已通过真实验收。
 
-`dart run scripts/verify_windows_player.dart` 使用随包 libmpv，核对加密媒体的 H264 解码尺寸、
+`dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe`
+后运行 `build/verify_windows_player.exe`，使用与产品一致的 AOT 模式和随包 libmpv，核对加密媒体的 H264 解码尺寸、
 播放/暂停/拖动/续播、倍速和静音；该测试不显示视频窗口，窗口及 GPU 呈现需另行实机验收。
 
 `flutter test integration_test/windows_playback_test.dart -d windows --no-pub --dart-define=FQAPP_TEST_MEDIA=<encrypted.mp4 绝对路径>`

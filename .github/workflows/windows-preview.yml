@@ -88,7 +88,9 @@ jobs:
           }
           python scripts/verify_windows_media.py
           if ($LASTEXITCODE -ne 0) { throw 'Native media verification failed' }
-          dart run scripts/verify_windows_player.dart
+          dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe
+          if ($LASTEXITCODE -ne 0) { throw 'AOT player verification compilation failed' }
+          & ./build/verify_windows_player.exe
           if ($LASTEXITCODE -ne 0) { throw 'libmpv verification failed' }
       - name: Collect licenses and package portable preview
         shell: pwsh
