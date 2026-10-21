@@ -18,11 +18,14 @@ for package in packages:
                     else (config_file.parent / urllib.parse.unquote(package['rootUri'])).resolve())
     if not package_root.is_dir():
         continue
+    if package['name'] == 'flutter':
+        sdk_license = package_root.parents[1] / 'LICENSE'
+        if sdk_license.is_file():
+            shutil.copy2(sdk_license, destination / 'Flutter-LICENSE.txt')
     for file in package_root.iterdir():
         if file.is_file() and re.match(r'^(LICENSE|COPYING|COPYRIGHT)([._-].*)?$', file.name, re.I):
             shutil.copy2(file, destination / f"{package['name']}-{file.name}.txt")
 for source, name in [(root / 'LICENSE', 'fqapp-GPL-3.0.txt'),
-                     (root / '.tools/flutter/LICENSE', 'Flutter-LICENSE.txt'),
                      (root / 'build/windows/x64/packages/Microsoft.Web.WebView2/LICENSE.txt', 'WebView2-LICENSE.txt')]:
     if source.is_file():
         shutil.copy2(source, destination / name)

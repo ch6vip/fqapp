@@ -7,7 +7,11 @@ class DesktopChapterSidebar extends StatefulWidget {
     required this.chapters,
     required this.currentIndex,
     required this.onSelected,
+    this.width = 248,
+    this.chapterUnit = '章',
   });
+  final double width;
+  final String chapterUnit;
   final List<Chapter> chapters;
   final int currentIndex;
   final ValueChanged<int> onSelected;
@@ -24,7 +28,7 @@ class _DesktopChapterSidebarState extends State<DesktopChapterSidebar> {
         if (_query.isEmpty || widget.chapters[i].title.contains(_query)) i,
     ];
     return SizedBox(
-      width: 248,
+      width: widget.width,
       child: Material(
         color: Theme.of(context).colorScheme.surface,
         child: Column(
@@ -42,7 +46,7 @@ class _DesktopChapterSidebarState extends State<DesktopChapterSidebar> {
             ),
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: Text('共 ${widget.chapters.length} 章'),
+              child: Text('共 ${widget.chapters.length} ${widget.chapterUnit}'),
             ),
             Expanded(
               child: ListView.builder(

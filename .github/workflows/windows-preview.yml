@@ -1,68 +1,99 @@
-name: Windows preview build
+name: Windows build and regression
 
-# 一次性预览构建（手动触发）：把 PR #104 的 Windows 客户端编出可运行的便携包，
-# 供维护者在本地评估。只存在于临时分支 pr104-windows-build，不进 master。
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'rust/**'
+      - 'native/**'
+      - 'windows/**'
+      - 'third_party/**'
+      - 'pubspec.*'
+      - 'scripts/*windows*'
+      - '.github/workflows/windows-preview.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'rust/**'
+      - 'native/**'
+      - 'windows/**'
+      - 'third_party/**'
+      - 'pubspec.*'
+      - 'scripts/*windows*'
+      - '.github/workflows/windows-preview.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          flutter-version: 3.44.6
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: '1.99.1'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.44.6'
           channel: stable
           cache: true
-
-      - name: Show toolchain
-        shell: pwsh
-        run: |
-          flutter --version
-          cargo --version
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          }
-
-      - name: Apply the Flutter Windows semantics backport
-        shell: pwsh
-        run: |
-          $flutter = (Get-Command flutter).Source
-          $root = Split-Path (Split-Path $flutter)
-          Write-Host "Flutter root: $root"
-          pwsh -File scripts/prepare_flutter_windows.ps1 -FlutterRoot $root
-
-      - name: flutter pub get
+      - name: Resolve dependencies on the official unmodified SDK
         run: flutter pub get
-
-      - name: flutter analyze --no-pub
+      - name: Analyze application
         run: flutter analyze --no-pub
-
-      - name: flutter build windows --release
-        shell: pwsh
-        run: flutter build windows --release --no-pub
-
-      - name: Package the portable bundle
+      - name: Test layout and playback lifecycle
+        run: >-
+          flutter test --no-pub
+          test/desktop_detail_layout_test.dart test/desktop_platform_test.dart
+          test/desktop_video_layout_test.dart test/player_page_test.dart
+          test/book_open_entry_test.dart
+      - name: Build Windows release
+        run: flutter build windows --release --target lib/main.dart
+      - name: Verify real native media and libmpv
         shell: pwsh
         run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed' }
+            $env:PATH += ';C:\ProgramData\chocolatey\bin'
+          }
+          python scripts/verify_windows_media.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native media verification failed' }
+          dart run scripts/verify_windows_player.dart
+          if ($LASTEXITCODE -ne 0) { throw 'libmpv verification failed' }
+      - name: Collect licenses and package portable preview
+        shell: pwsh
+        run: |
+          python scripts/collect_windows_licenses.py
+          if ($LASTEXITCODE -ne 0) { throw 'License collection failed' }
           $src = 'build/windows/x64/runner/Release'
-          if (-not (Test-Path $src)) { throw "missing bundle directory: $src" }
-          Get-ChildItem -Recurse $src -File | Select-Object FullName, Length | Format-Table -AutoSize
-          Compress-Archive -Path "$src/*" -DestinationPath 'fqapp-windows-x64-preview.zip' -Force
-          Get-Item 'fqapp-windows-x64-preview.zip' | Select-Object Name, Length
-
+          foreach ($file in @('fqapp.exe','fqapi_core.dll','libmpv-2.dll','data/app.so')) {
+            if (-not (Test-Path "$src/$file")) { throw "Missing $file" }
+          }
+          Copy-Item LICENSE "$src/LICENSE.txt"
+          Copy-Item WINDOWS.md "$src/使用说明.md"
+          Compress-Archive -Path "$src/*" -DestinationPath 'fqapp-windows-x64-preview.zip'
+          Get-FileHash fqapp-windows-x64-preview.zip -Algorithm SHA256 | Format-List
       - uses: actions/upload-artifact@v4
         with:
           name: fqapp-windows-x64-preview
-          path: fqapp-windows-x64-preview.zip
+          path: |
+            fqapp-windows-x64-preview.zip
+            build/validation/windows-media/*.json
+            build/validation/windows-player/*.json
           if-no-files-found: error
-
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

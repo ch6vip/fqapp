@@ -13,8 +13,10 @@ fixes from Flutter's BSD-3-Clause source, adapted to the 3.44.6 method structure
 - The source also contains the preceding traversal-parent dirty notification
   fix associated with <https://github.com/flutter/flutter/issues/182444>.
 
-Run `scripts/prepare_flutter_windows.ps1 -FlutterRoot <SDK>` before compiling.
-The Windows build script does this automatically. It checks the complete patch
+This is optional. Normal builds and CI use an unmodified official SDK.
+If the accessibility crash is reproduced, explicitly run
+`scripts/prepare_flutter_windows.ps1 -FlutterRoot <dedicated SDK>` or pass
+`-ApplySemanticsBackport` to the Windows build script. It checks the complete patch
 before applying it, recognizes an already applied patch, and refuses a different
 SDK. It does not disable accessibility. Use a dedicated project SDK because this
 patch modifies that SDK's framework source. When upgrading Flutter, remove this
@@ -27,4 +29,4 @@ portable application's `licenses` directory.
 These framework-specific cases are opt-in so ordinary Android/Linux CI does not
 require a Windows SDK patch. On the prepared SDK run:
 `flutter test test/desktop_semantics_update_test.dart --no-pub --dart-define=FQAPP_FLUTTER_SEMANTICS_PATCH=true`.
-The Windows build script enables them automatically.
+The Windows build script enables them only with `-ApplySemanticsBackport`.

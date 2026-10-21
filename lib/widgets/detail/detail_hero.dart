@@ -19,6 +19,7 @@ class DetailHero extends StatelessWidget {
 
   /// 桌面两栏布局：去掉顶部色块，封面放大并整体居中。
   final bool desktop;
+  final bool compactDesktop;
 
   const DetailHero({
     super.key,
@@ -26,6 +27,7 @@ class DetailHero extends StatelessWidget {
     required this.scroll,
     this.detail,
     this.desktop = false,
+    this.compactDesktop = false,
   });
 
   @override
@@ -37,9 +39,14 @@ class DetailHero extends StatelessWidget {
     // phone, so the masthead stacks instead of squeezing both into one row.
     final stacked = MediaQuery.textScalerOf(context).scale(16) > 26;
 
-    final cover = _CoverTile(item: item, detail: detail, desktop: desktop);
+    final cover = _CoverTile(
+      item: item,
+      detail: detail,
+      desktop: desktop,
+      compact: compactDesktop,
+    );
     final info = Column(
-      crossAxisAlignment: desktop
+      crossAxisAlignment: desktop && !compactDesktop
           ? CrossAxisAlignment.center
           : CrossAxisAlignment.start,
       children: [
@@ -58,7 +65,11 @@ class DetailHero extends StatelessWidget {
           Text(
             meta.join(' · '),
             key: const Key('detail_meta_line'),
-            style: TextStyle(color: palette.muted, fontSize: 12.5, height: 1.4),
+            style: TextStyle(
+              color: palette.muted,
+              fontSize: desktop ? 13 : 12.5,
+              height: desktop ? 1.6 : 1.4,
+            ),
           ),
         ],
         if (detail?.original == true) ...[
@@ -74,48 +85,48 @@ class DetailHero extends StatelessWidget {
           // Tinted masthead wash. Kept to its own layer so scrolling repaints
           // only this gradient.
           if (!desktop)
-          Positioned.fill(
-            child: ExcludeSemantics(
-              child: RepaintBoundary(
-                child: AnimatedBuilder(
-                  animation: scroll,
-                  builder: (context, _) => CustomPaint(
-                    painter: _MastheadWash(
-                      palette: palette,
-                      shift: scroll.hasClients ? scroll.offset : 0,
+            Positioned.fill(
+              child: ExcludeSemantics(
+                child: RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: scroll,
+                    builder: (context, _) => CustomPaint(
+                      painter: _MastheadWash(
+                        palette: palette,
+                        shift: scroll.hasClients ? scroll.offset : 0,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
           // Smooth bottom blend gradient fading seamlessly to canvas
           if (!desktop)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 56,
-            child: ExcludeSemantics(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      palette.canvas.withValues(alpha: 0),
-                      palette.canvas,
-                    ],
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 56,
+              child: ExcludeSemantics(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        palette.canvas.withValues(alpha: 0),
+                        palette.canvas,
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
           Padding(
             padding: desktop
                 ? const EdgeInsets.fromLTRB(0, 16, 0, 0)
                 : const EdgeInsets.fromLTRB(20, 6, 20, 22),
-            child: (stacked || desktop)
+            child: (stacked || (desktop && !compactDesktop))
                 ? Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -147,7 +158,13 @@ class _CoverTile extends StatelessWidget {
   /// 桌面两栏布局：封面放大到 168×224。
   final bool desktop;
 
-  const _CoverTile({required this.item, this.detail, this.desktop = false});
+  final bool compact;
+  const _CoverTile({
+    required this.item,
+    this.detail,
+    this.desktop = false,
+    this.compact = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -155,7 +172,8 @@ class _CoverTile extends StatelessWidget {
     final scaler = MediaQuery.textScalerOf(context);
     // The cover keeps its 3:4 ratio; it only grows a little with text scale so
     // the text column is never starved of width.
-    final width = (desktop ? 168.0 : 104.0) +
+    final width =
+        (desktop ? (compact ? 112.0 : 168.0) : 104.0) +
         (scaler.scale(16) - 16).clamp(0.0, 10.0) * 1.2;
     return SizedBox(
       width: width,
@@ -249,18 +267,16 @@ class _OriginBadge extends StatelessWidget {
         color: HomePalette.accent.withValues(alpha: palette.dark ? 0.18 : 0.10),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: HomePalette.accent.withValues(alpha: palette.dark ? 0.32 : 0.22),
+          color: HomePalette.accent.withValues(
+            alpha: palette.dark ? 0.32 : 0.22,
+          ),
           width: 0.6,
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            LucideIcons.sparkles,
-            size: 11,
-            color: palette.accentText,
-          ),
+          Icon(LucideIcons.sparkles, size: 11, color: palette.accentText),
           const SizedBox(width: 4),
           Text(
             '原创',

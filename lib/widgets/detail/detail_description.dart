@@ -7,8 +7,13 @@ import '../home/home_design.dart';
 /// expand/collapse control, matching the official detail page.
 class DetailDescription extends StatefulWidget {
   final String text;
+  final bool desktop;
 
-  const DetailDescription({super.key, required this.text});
+  const DetailDescription({
+    super.key,
+    required this.text,
+    this.desktop = false,
+  });
 
   @override
   State<DetailDescription> createState() => _DetailDescriptionState();
@@ -27,7 +32,11 @@ class _DetailDescriptionState extends State<DetailDescription> {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final reducedMotion = MediaQuery.disableAnimationsOf(context);
-    final style = TextStyle(color: palette.ink, fontSize: 13.5, height: 1.85);
+    final style = TextStyle(
+      color: palette.ink,
+      fontSize: widget.desktop ? 15 : 13.5,
+      height: widget.desktop ? 1.6 : 1.85,
+    );
     final defaultTextStyle = DefaultTextStyle.of(context);
     final effectiveStyle = MediaQuery.boldTextOf(context)
         ? defaultTextStyle.style
