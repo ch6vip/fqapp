@@ -477,6 +477,9 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final wide =
+        isWindowsDesktop &&
+        MediaQuery.sizeOf(context).width >= 1000;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value:
           (palette.dark
@@ -488,7 +491,9 @@ class _DetailPageState extends State<DetailPage> {
               ),
       child: Scaffold(
         backgroundColor: palette.canvas,
-        appBar: AppBar(
+        appBar: wide
+            ? null
+            : AppBar(
           backgroundColor: palette.canvas,
           surfaceTintColor: Colors.transparent,
           scrolledUnderElevation: 0,
@@ -560,18 +565,15 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ],
         ),
-        body: isWindowsDesktop && MediaQuery.sizeOf(context).width >= 1000
+        body: wide
             ? Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   SizedBox(
-                    width: 340,
+                    width: 360,
                     child: SingleChildScrollView(
-                      child: DetailHero(
-                        item: widget.item,
-                        scroll: _scroll,
-                        detail: _bookDetail,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
+                      child: _desktopSideCard(palette),
                     ),
                   ),
                   Expanded(
@@ -580,7 +582,7 @@ class _DetailPageState extends State<DetailPage> {
                       child: SingleChildScrollView(
                         controller: _scroll,
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(24),
+                        padding: const EdgeInsets.fromLTRB(24, 24, 32, 32),
                         child: !_supported
                             ? _stateCard(
                                 icon: LucideIcons.file_question_mark,
@@ -658,7 +660,9 @@ class _DetailPageState extends State<DetailPage> {
                   ),
                 ),
               ),
-        bottomNavigationBar: _supported && _allChapters.isNotEmpty
+        bottomNavigationBar: wide
+            ? null
+            : _supported && _allChapters.isNotEmpty
             ? DetailReadBar(
                 label: _readLabel,
                 icon: homeKindIcon(widget.item.kind),
@@ -672,6 +676,100 @@ class _DetailPageState extends State<DetailPage> {
                 download: _isBook ? _downloadProgress : null,
               )
             : null,
+      ),
+    );
+  }
+
+  /// 桌面两栏布局的左栏卡片（PR #104 评审原型）：封面、书名、元信息、书架/刷新
+  /// 和主操作全部收进一张白卡，主按钮不再横跨整个窗口底部。
+  Widget _desktopSideCard(HomePalette palette) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              ValueListenableBuilder<int>(
+                valueListenable: ShelfStore.instance.listenable,
+                builder: (context, _, _) => IconButton(
+                  key: const Key('detail_shelf_button_desktop'),
+                  tooltip: _inShelf ? '已在书架' : '加入书架',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _loading || !_supported ? null : _toggleShelf,
+                  icon: Icon(
+                    _inShelf
+                        ? LucideIcons.bookmark_check
+                        : LucideIcons.bookmark_plus,
+                    size: 18,
+                    color: _inShelf ? HomePalette.accent : palette.ink,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const Key('detail_refresh_button_desktop'),
+                tooltip: '刷新详情',
+                visualDensity: VisualDensity.compact,
+                onPressed: _loading || !_supported ? null : _load,
+                icon: Icon(
+                  LucideIcons.refresh_cw,
+                  size: 18,
+                  color: palette.ink,
+                ),
+              ),
+            ],
+          ),
+          DetailHero(
+            item: widget.item,
+            scroll: _scroll,
+            detail: _bookDetail,
+            desktop: true,
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            key: const Key('detail_read_button_desktop'),
+            onPressed: _opening || _allChapters.isEmpty
+                ? null
+                : () => unawaited(_openLastPosition()),
+            style: FilledButton.styleFrom(
+              backgroundColor: HomePalette.accent,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(44),
+            ),
+            icon: Icon(homeKindIcon(widget.item.kind), size: 18),
+            label: Text(_opening ? '正在打开…' : _readLabel),
+          ),
+          if (_isBook) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('detail_listen_button_desktop'),
+                    onPressed: _openListening,
+                    icon: const Icon(LucideIcons.headphones, size: 16),
+                    label: const Text('听书'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('detail_download_button_desktop'),
+                    onPressed: _toggleDownload,
+                    icon: const Icon(LucideIcons.download, size: 16),
+                    label: Text(_downloadProgress == null ? '下载' : '下载中'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }

@@ -360,7 +360,7 @@ jobs:
         # --split-per-abi produces one APK per ABI (app-arm64-v8a-release.apk,
         # app-armeabi-v7a-release.apk) instead of a fat APK, so a 32-bit
         # device does not download the ARM64 native libraries and vice versa.
-        run: flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi --no-pub
+        run: flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
 
       - name: Test Android runtime boundaries
         working-directory: app/android
