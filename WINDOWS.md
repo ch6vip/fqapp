@@ -44,7 +44,7 @@ Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutte
 会运行真实 Windows 播放页，验证无键盘焦点时的自动起播、连续推进、暂停、进度条拖动与续播。
 夹具由上一条原生播放器校验脚本生成；测试不会读取用户的书架进度作为测试数据。
 
-1.1.1 修复 Windows 可见但未聚焦的窗口被误判为后台、导致只显示首帧的问题，
+Windows 适配修复可见但未聚焦的窗口被误判为后台、导致只显示首帧的问题，
 并保护窗口销毁时的原生回调，避免退出时再次访问已销毁的 Flutter 视图。
 `scripts/verify_windows_shutdown.dart` 是独立的退出回归入口，可用
 `flutter build windows --debug --target scripts/verify_windows_shutdown.dart --no-pub`
