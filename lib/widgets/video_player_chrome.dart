@@ -544,8 +544,18 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (!active && _appActive) {
       _appActive = false;
       ++_interaction;
+      // 「刚才想播吗」现读播放器，不用 [VideoPlayerChrome.playing] 属性：
+      // 桌面 chrome 直接暂停播放器、不经宿主会话，该属性（会话的 playing
+      // 通知器，靠 playWhenReady 事件重算）可能还停在暂停前的值，拿它
+      // 记账会在回到前台时把用户的手动暂停误恢复。移动端的暂停都经会话
+      // 中介，现读结果与旧记账一致。
+      final resumePlayer = widget.player;
       _resumeOnForeground =
-          _ready && (_playbackRequested || (_seeking && _resumeAfterSeek));
+          _ready &&
+          ((resumePlayer?.playing ?? false) ||
+              ((resumePlayer?.playWhenReady ?? false) &&
+                  !(resumePlayer?.completed ?? false)) ||
+              (_seeking && _resumeAfterSeek));
       _cancelSeek(resume: false);
       _endBoost();
       _doubleTapGuard?.cancel();

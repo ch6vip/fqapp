@@ -1348,6 +1348,116 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('桌面 feed：手动暂停后切窗口/最小化再回来都不许自动恢复', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+
+    final seams = _Seams(failContent: false);
+    await tester.pumpWidget(
+      _scope(
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集')],
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final player = seams.players.single;
+    expect(player.isPlaying, true);
+
+    // 用户手动暂停：桌面 chrome 的暂停钮就是直接对播放器下 pause，
+    // 会话的 playing 随播放器事件跟随到 false。
+    await player.pause();
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    final playsAfterManualPause = player.calls
+        .where((call) => call == 'play')
+        .length;
+
+    // 切到别的窗口：桌面端只发 inactive（失焦，窗口仍可见）。不许恢复。
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    expect(
+      player.calls.where((call) => call == 'play').length,
+      playsAfterManualPause,
+    );
+
+    // 最小化（hidden）再切回来（resumed）：手动暂停同样不许被恢复。
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    expect(
+      player.calls.where((call) => call == 'play').length,
+      playsAfterManualPause,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('桌面 feed：播放中被最小化是可见性暂停，切回自动恢复', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+
+    final seams = _Seams(failContent: false);
+    await tester.pumpWidget(
+      _scope(
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集')],
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final player = seams.players.single;
+    expect(player.isPlaying, true);
+
+    // 播放中最小化：可见性逻辑暂停；切回来（hidden → inactive → resumed）
+    // 应恢复播放——自动恢复只对可见性暂停生效，这里不能被误伤。
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await _flush(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(player.isPlaying, true);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('桌面窄窗 feed：不停靠面板，剧名回标题栏', (tester) async {
     SharedPreferences.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
