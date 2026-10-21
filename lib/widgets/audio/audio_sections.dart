@@ -71,12 +71,29 @@ class AudioTopBar extends StatelessWidget {
 /// Large cover card mirroring the official listening page: the chapter title
 /// and the book title sit on the cover, the whole card opens the catalog, and
 /// the top-right button switches the voice.
-class AudioBookCard extends StatelessWidget {
+///
+/// 真人讲书 uses the official 7.0.9.32 header instead of that plain cover:
+/// `layout/bio.xml` is 72% of the screen wide, its gradient footer carries the
+/// episode title, the book title and a `真人讲书・{主播}` row, and the card
+/// flips over to the book intro card (`layout/bhi.xml`). All of it is opt-in —
+/// a caller that passes neither [realAudio] nor [intro] keeps the original
+/// single-sided card.
+class AudioBookCard extends StatefulWidget {
   final String cover;
   final String bookTitle;
   final String chapterTitle;
   final VoidCallback? onSwitch;
   final VoidCallback? onOpenBook;
+
+  /// Official 真人讲书 proportions: 72% of the screen, 12dip corners and a
+  /// three-line gradient footer.
+  final bool realAudio;
+
+  /// Third footer line, e.g. `真人讲书・第 3 集`. Tapping it flips the card.
+  final String? modeLabel;
+
+  /// Flip side. Supplying it makes the card two-sided.
+  final Widget? intro;
 
   const AudioBookCard({
     super.key,
@@ -85,46 +102,98 @@ class AudioBookCard extends StatelessWidget {
     required this.chapterTitle,
     this.onSwitch,
     this.onOpenBook,
+    this.realAudio = false,
+    this.modeLabel,
+    this.intro,
   });
+
+  @override
+  State<AudioBookCard> createState() => _AudioBookCardState();
+}
+
+class _AudioBookCardState extends State<AudioBookCard> {
+  bool _showIntro = false;
+
+  void _flip() => setState(() => _showIntro = !_showIntro);
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    if (!widget.realAudio) {
+      // Original single-sided card; the width stays capped so narrow screens
+      // still shrink it instead of overflowing.
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 293),
+          child: _cover(palette),
+        ),
+      );
+    }
+    final width = (MediaQuery.sizeOf(context).width * 0.72).clamp(220.0, 420.0);
+    final intro = widget.intro;
+    if (intro == null) {
+      return Center(
+        child: SizedBox(width: width, child: _cover(palette)),
+      );
+    }
+    // 翻转的两面必须同尺寸：背面是填充式卡片，没有固有高度，所以由外层
+    // 给出封面的确定尺寸，避免 AnimatedSwitcher 在无界高度下排版失败。
+    final height = width * 313 / 293;
     return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 293),
-        child: AspectRatio(
-          aspectRatio: 293 / 313,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _CoverImage(url: cover, palette: palette),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: 150,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.72),
-                        ],
-                      ),
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          child: KeyedSubtree(
+            key: ValueKey<bool>(_showIntro),
+            child: _showIntro
+                ? _IntroSide(onBack: _flip, child: intro)
+                : _cover(palette),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cover(HomePalette palette) {
+    final real = widget.realAudio;
+    return AspectRatio(
+      aspectRatio: 293 / 313,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(real ? 12 : 10),
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            fit: StackFit.expand,
+            children: [
+              _CoverImage(url: widget.cover, palette: palette),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: real ? math.max(96, constraints.maxWidth * 0.37) : 150,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.72),
+                      ],
                     ),
                   ),
                 ),
+              ),
+              if (real)
+                Positioned(left: 0, right: 0, bottom: 0, child: _realFooter())
+              else ...[
                 Positioned(
                   left: 14,
                   right: 14,
                   bottom: 58,
                   child: Text(
-                    chapterTitle,
+                    widget.chapterTitle,
                     key: const Key('audio_chapter_title'),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -141,7 +210,7 @@ class AudioBookCard extends StatelessWidget {
                 Positioned.fill(
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
-                    onTap: onOpenBook,
+                    onTap: widget.onOpenBook,
                   ),
                 ),
                 Positioned(
@@ -152,7 +221,7 @@ class AudioBookCard extends StatelessWidget {
                   child: HomePressable(
                     key: const Key('audio_book_bar'),
                     semanticLabel: '查看目录',
-                    onTap: onOpenBook ?? () {},
+                    onTap: widget.onOpenBook ?? () {},
                     borderRadius: BorderRadius.zero,
                     child: Container(
                       color: Colors.black.withValues(alpha: 0.3),
@@ -161,7 +230,7 @@ class AudioBookCard extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              bookTitle,
+                              widget.bookTitle,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -181,34 +250,159 @@ class AudioBookCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: HomePressable(
-                    key: const Key('audio_cover_switch'),
-                    semanticLabel: '切换音色',
-                    onTap: onSwitch ?? () {},
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      width: 24,
-                      height: 24,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.28),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        LucideIcons.repeat,
-                        size: 13,
-                        color: Colors.white,
-                      ),
+              ],
+              Positioned(
+                top: 8,
+                right: 8,
+                child: HomePressable(
+                  key: const Key('audio_cover_switch'),
+                  semanticLabel: '切换音色',
+                  onTap: widget.onSwitch ?? () {},
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      LucideIcons.repeat,
+                      size: 13,
+                      color: Colors.white,
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// `bio.xml` footer: 集标题 (18sp) / 书名 (18sp bold) / 副行 (14sp + chevron).
+  /// The rows sit above the catalog tap target so each keeps its own action.
+  Widget _realFooter() {
+    final label = widget.modeLabel;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            widget.chapterTitle,
+            key: const Key('audio_chapter_title'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 2),
+          HomePressable(
+            key: const Key('audio_book_bar'),
+            semanticLabel: '查看目录',
+            onTap: widget.onOpenBook ?? () {},
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              width: double.infinity,
+              child: Text(
+                widget.bookTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ),
+          if (label != null && label.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            HomePressable(
+              key: const Key('audio_mode_row'),
+              semanticLabel: label,
+              onTap: widget.intro == null ? () {} : _flip,
+              borderRadius: BorderRadius.circular(6),
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xB3FFFFFF),
+                        fontSize: 14,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    LucideIcons.chevron_right,
+                    size: 13,
+                    color: Color(0xB3FFFFFF),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Back side of the cover card: the intro plus the way back.
+class _IntroSide extends StatelessWidget {
+  final VoidCallback onBack;
+  final Widget child;
+
+  const _IntroSide({required this.onBack, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          child,
+          Positioned(
+            top: 6,
+            right: 6,
+            child: HomePressable(
+              key: const Key('audio_cover_back'),
+              semanticLabel: '返回封面',
+              onTap: onBack,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 24,
+                height: 24,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: palette.soft,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  LucideIcons.chevron_down,
+                  size: 13,
+                  color: palette.muted,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -515,7 +709,10 @@ class AudioActionRow extends StatelessWidget {
   }
 }
 
-/// `-15s  ──●──  08:40/09:01  +15s` row.
+/// `layout/bjg.xml`: 24dp 后退/前进图标夹一条 2dip 细轨。
+///
+/// 官方默认不在这行放时间文字——带左右时间的那套（`fud`）在 7.0.9.32 里是
+/// `visibility="gone"` 的备用变体，时长信息由页头与拖动标签承担。
 class AudioProgressRow extends StatelessWidget {
   final Duration position;
   final Duration duration;
@@ -549,62 +746,50 @@ class AudioProgressRow extends StatelessWidget {
       maximum > 0 ? maximum : 1.0,
     );
     final active = enabled && maximum > 0;
-    return Column(
+    return Row(
       children: [
-        Row(
-          children: [
-            _SkipLabel(label: '-15s', tooltip: '后退15秒', onTap: onBack15),
-            Expanded(
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 3,
-                  activeTrackColor: palette.accentText,
-                  inactiveTrackColor: palette.line,
-                  thumbColor: palette.accentText,
-                  overlayShape: const RoundSliderOverlayShape(
-                    overlayRadius: 14,
-                  ),
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 7,
-                  ),
-                ),
-                child: Slider(
-                  key: const ValueKey('audio-seek'),
-                  value: value,
-                  max: maximum > 0 ? maximum : 1,
-                  label: time(Duration(milliseconds: value.round())),
-                  onChanged: active ? onChanged : null,
-                  onChangeEnd: active ? onChangeEnd : null,
-                ),
-              ),
-            ),
-            _SkipLabel(label: '+15s', tooltip: '前进15秒', onTap: onForward15),
-          ],
+        _SkipIcon(
+          icon: LucideIcons.rotate_ccw,
+          tooltip: '后退15秒',
+          onTap: onBack15,
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text(
-            '${time(Duration(milliseconds: value.round()))}/${time(duration)}',
-            key: const ValueKey('audio-position-label'),
-            style: TextStyle(
-              color: palette.muted,
-              fontSize: 12,
-              fontFeatures: const [FontFeature.tabularFigures()],
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 2,
+              activeTrackColor: palette.accentText,
+              inactiveTrackColor: palette.line,
+              thumbColor: palette.accentText,
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4.5),
+            ),
+            child: Slider(
+              key: const ValueKey('audio-seek'),
+              value: value,
+              max: maximum > 0 ? maximum : 1,
+              label: time(Duration(milliseconds: value.round())),
+              onChanged: active ? onChanged : null,
+              onChangeEnd: active ? onChangeEnd : null,
             ),
           ),
+        ),
+        _SkipIcon(
+          icon: LucideIcons.rotate_cw,
+          tooltip: '前进15秒',
+          onTap: onForward15,
         ),
       ],
     );
   }
 }
 
-class _SkipLabel extends StatelessWidget {
-  final String label;
+class _SkipIcon extends StatelessWidget {
+  final IconData icon;
   final String tooltip;
   final VoidCallback? onTap;
 
-  const _SkipLabel({
-    required this.label,
+  const _SkipIcon({
+    required this.icon,
     required this.tooltip,
     required this.onTap,
   });
@@ -612,23 +797,16 @@ class _SkipLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: onTap == null ? palette.line : palette.muted,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onTap,
+      visualDensity: VisualDensity.compact,
+      iconSize: 24,
+      style: IconButton.styleFrom(
+        foregroundColor: palette.muted,
+        disabledForegroundColor: palette.line,
       ),
+      icon: Icon(icon),
     );
   }
 }
@@ -907,6 +1085,425 @@ class _AudioToneChip extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: palette.muted, fontSize: 11),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Official 真人讲书 keeps the spoken line on the page itself (`bio.xml` fs6:
+/// `AudioPlaySubtitleView`, 52dip, two lines with a fading edge). The sheet
+/// behind [onTap] stays the way to see the whole track.
+class AudioInlineSubtitle extends StatelessWidget {
+  final SubtitleTrack track;
+  final Duration position;
+  final VoidCallback onTap;
+
+  const AudioInlineSubtitle({
+    super.key,
+    required this.track,
+    required this.position,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (track.isEmpty) return const SizedBox.shrink();
+    final palette = HomePalette.of(context);
+    final (current, next) = track.windowAt(position);
+    final line = current ?? next;
+    final following = current == null ? null : next;
+    if (line == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: HomePressable(
+        key: const Key('audio_read_along'),
+        semanticLabel: '边听边读',
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: SizedBox(
+          height: 52,
+          width: double.infinity,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                line.text,
+                key: const Key('audio-inline-subtitle-current'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: palette.ink,
+                  fontSize: 14.5,
+                  height: 1.4,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (following != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  following.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.muted,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// `layout/hy.xml`: the `AI朗读 │ 真人讲书` header switch. Only meaningful when
+/// the book really offers both families, so the page decides when to show it.
+class AudioModeSwitch extends StatelessWidget {
+  final bool realSelected;
+  final VoidCallback onSelectTts;
+  final VoidCallback onSelectNarrator;
+
+  const AudioModeSwitch({
+    super.key,
+    required this.realSelected,
+    required this.onSelectTts,
+    required this.onSelectNarrator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _tab(
+              key: const Key('audio_mode_tts'),
+              label: 'AI朗读',
+              selected: !realSelected,
+              palette: palette,
+              onTap: onSelectTts,
+            ),
+            Container(
+              width: 0.5,
+              height: 8,
+              margin: const EdgeInsets.symmetric(horizontal: 9),
+              color: palette.line,
+            ),
+            _tab(
+              key: const Key('audio_mode_narrator'),
+              label: '真人讲书',
+              selected: realSelected,
+              palette: palette,
+              onTap: onSelectNarrator,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tab({
+    required Key key,
+    required String label,
+    required bool selected,
+    required HomePalette palette,
+    required VoidCallback onTap,
+  }) {
+    return HomePressable(
+      key: key,
+      semanticLabel: label,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? palette.accentText : palette.muted,
+            fontSize: 16,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact replacement for the voice card in 真人讲书 mode.
+///
+/// The official page hides the 智能朗读 tone card for a recording
+/// (`bj1.xml` `a5h` is `gone`); narrators are switched elsewhere. One row is
+/// enough here and still opens the voice sheet that carries every version.
+class AudioRealVersionRow extends StatelessWidget {
+  /// Upstream narrator label, already in `主播：…` form.
+  final String narrator;
+  final VoidCallback? onTap;
+
+  const AudioRealVersionRow({super.key, this.narrator = '', this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: HomePressable(
+        key: const Key('audio-voice'),
+        semanticLabel: '选择音色',
+        onTap: onTap ?? () {},
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          height: 54,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: palette.soft,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Text(
+                '真人讲书',
+                style: TextStyle(
+                  color: palette.accentText,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  narrator.isEmpty ? '暂无可选音色' : narrator,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: narrator.isEmpty ? palette.muted : palette.ink,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text('换版本', style: TextStyle(color: palette.muted, fontSize: 12)),
+              const SizedBox(width: 2),
+              Icon(LucideIcons.chevron_right, size: 14, color: palette.muted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Back side of the 真人讲书 cover card: the official `layout/bhi.xml`
+/// (`layout_audio_book_detail_info_0`) — thumbnail, title, author, meta row,
+/// expandable 简介 and one related work.
+class AudioIntroCard extends StatefulWidget {
+  final String cover;
+  final String title;
+  final String author;
+  final List<String> meta;
+  final String summary;
+  final RelatedWork? related;
+  final void Function(RelatedWork work)? onOpenRelated;
+
+  const AudioIntroCard({
+    super.key,
+    this.cover = '',
+    required this.title,
+    this.author = '',
+    this.meta = const [],
+    this.summary = '',
+    this.related,
+    this.onOpenRelated,
+  });
+
+  @override
+  State<AudioIntroCard> createState() => _AudioIntroCardState();
+}
+
+class _AudioIntroCardState extends State<AudioIntroCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final related = widget.related;
+    final summary = widget.summary.isEmpty ? '暂无简介' : widget.summary;
+    return ColoredBox(
+      color: palette.surface,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: SizedBox(
+                    width: 36,
+                    height: 54,
+                    child: _CoverImage(url: widget.cover, palette: palette),
+                  ),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.title,
+                        key: const Key('audio_intro_title'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.ink,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          height: 1.3,
+                        ),
+                      ),
+                      if (widget.author.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          widget.author,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: palette.muted, fontSize: 12),
+                        ),
+                      ],
+                      if (widget.meta.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          widget.meta.join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: palette.muted, fontSize: 11),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(height: 1, color: palette.line.withValues(alpha: 0.7)),
+            const SizedBox(height: 10),
+            Text(
+              '简介',
+              style: TextStyle(
+                color: palette.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              summary,
+              key: const Key('audio_intro_summary'),
+              maxLines: _expanded ? 40 : 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: palette.ink, fontSize: 13, height: 1.6),
+            ),
+            if (summary.length > 60)
+              GestureDetector(
+                key: const Key('audio_intro_more'),
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    _expanded ? '收起' : '展开',
+                    style: TextStyle(
+                      color: palette.accentText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            if (related != null) ...[
+              const SizedBox(height: 10),
+              HomePressable(
+                key: const Key('audio_intro_related'),
+                semanticLabel: '${related.label}：${related.title}',
+                onTap: () => widget.onOpenRelated?.call(related),
+                borderRadius: BorderRadius.circular(8),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: SizedBox(
+                        width: 28,
+                        height: 40,
+                        child: related.cover.isEmpty
+                            ? ColoredBox(
+                                color: palette.soft,
+                                child: Icon(
+                                  related.kind == 'video'
+                                      ? LucideIcons.clapperboard
+                                      : LucideIcons.book,
+                                  size: 14,
+                                  color: palette.muted,
+                                ),
+                              )
+                            : Image.network(
+                                related.cover,
+                                fit: BoxFit.cover,
+                                cacheWidth: 64,
+                                errorBuilder: (context, _, _) => ColoredBox(
+                                  color: palette.soft,
+                                  child: Icon(
+                                    LucideIcons.book,
+                                    size: 14,
+                                    color: palette.muted,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            related.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.ink,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            related.label,
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      LucideIcons.chevron_right,
+                      size: 14,
+                      color: palette.muted,
+                    ),
+                  ],
+                ),
               ),
             ],
           ],
