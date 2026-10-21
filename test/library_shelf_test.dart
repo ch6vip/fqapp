@@ -9,6 +9,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/library_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/book_open_preferences.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/connectivity_status.dart';
 import 'package:fqapp/services/library_store.dart';
@@ -611,6 +612,56 @@ void main() {
       expect(
         (await LibraryStore.instance.historyEntry('101'))?['chapterId'],
         '202',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('普通书籍默认直达阅读器，关掉书架开关后停在详情页', (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('plain', title: '普通小说'));
+      });
+      // 页面与偏好都是进程级单例：先回到默认值再走一遍设置。
+      BookOpenPreferences.instance.resetForTest();
+      Future<void> openPlainBook() async {
+        await tester.pumpWidget(
+          _app(
+            cache: MemoryChapterCache(),
+            connectivity: () async => (online: false, metered: false),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('普通小说'));
+        // 详情页停在加载态（转圈动画不会停），所以等 DetailPage 建出来而不是
+        // pumpAndSettle；openBookDetail 先 await 偏好加载，需要真实事件循环的回合。
+        for (
+          var attempt = 0;
+          attempt < 20 &&
+              find.byType(DetailPage, skipOffstage: false).evaluate().isEmpty;
+          attempt++
+        ) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump();
+        }
+      }
+
+      await openPlainBook();
+      expect(
+        tester
+            .widget<DetailPage>(find.byType(DetailPage, skipOffstage: false))
+            .autoOpenReader,
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      await BookOpenPreferences.instance.setShelfDirectReader(false);
+      await openPlainBook();
+      expect(
+        tester
+            .widget<DetailPage>(find.byType(DetailPage, skipOffstage: false))
+            .autoOpenReader,
+        isFalse,
       );
       await tester.pumpWidget(const SizedBox.shrink());
     });

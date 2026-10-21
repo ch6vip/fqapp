@@ -12,7 +12,11 @@ class AboutPage extends StatelessWidget {
   /// `version`. Without a package_info dependency the value is
   /// static, so test/about_version_test.dart parses the pubspec and fails the
   /// build check when the two drift apart after a version bump.
+<<<<<<< HEAD
   static const versionText = '1.1.1 (129)';
+=======
+  static const versionText = '1.0.125 (130)';
+>>>>>>> upstream/master
 
   /// Pixel width of the bundled logo (assets/images/app_logo.webp). The logo
   /// is displayed at 96dp, so it only needs re-decoding above 4× DPI; clamping

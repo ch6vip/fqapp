@@ -45,8 +45,8 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: LucideIcons.book_open,
         title: '阅读',
-        subtitle: '点书直达阅读器',
-        items: [_directReaderItem()],
+        subtitle: '点书直达阅读器（书架 / 发现入口）',
+        items: [_shelfDirectReaderItem(), _discoverDirectReaderItem()],
       ),
       SettingsCategory(
         icon: LucideIcons.headphones,
@@ -389,20 +389,47 @@ class SettingsPage extends StatelessWidget {
   }
 
   /// 默认关＝现有行为（先进详情页）。听书/短剧与加载失败时仍停留在详情页。
-  SettingsItem _directReaderItem() => SettingsItem(
+  ///
+  /// 书架的「我的书」和发现入口分成两条（issue #103）：书架里的书点开多半是
+  /// 接着读，首页/搜索里的书往往还要先看简介，一条全局开关会让两边互相干扰。
+  SettingsItem _shelfDirectReaderItem() => SettingsItem(
     icon: LucideIcons.book_open,
-    title: '点击书籍直接进入阅读',
-    subtitle: '点书架、首页、搜索里的书时，跳过详情页直接开始阅读',
+    title: '书架点书直接进入阅读',
+    subtitle: '在书架、阅读历史里点书时跳过详情页，接着上次进度读',
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
-      valueListenable: BookOpenPreferences.instance.directReader,
+      valueListenable: BookOpenPreferences.instance.shelfDirectReader,
       builder: (context, value, _) => Switch(
         value: value,
-        onChanged: (v) => unawaited(BookOpenPreferences.instance.set(v)),
+        onChanged: (v) => unawaited(
+          BookOpenPreferences.instance.setShelfDirectReader(v),
+        ),
       ),
     ),
     onTap: (context, setState) {
-      final current = BookOpenPreferences.instance.directReader.value;
-      unawaited(BookOpenPreferences.instance.set(!current));
+      final current = BookOpenPreferences.instance.shelfDirectReader.value;
+      unawaited(BookOpenPreferences.instance.setShelfDirectReader(!current));
+    },
+  );
+
+  SettingsItem _discoverDirectReaderItem() => SettingsItem(
+    icon: LucideIcons.search,
+    title: '首页与搜索点书直接进入阅读',
+    subtitle: '在首页、搜索、榜单、作者页等入口点书时跳过详情页',
+    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: BookOpenPreferences.instance.discoverDirectReader,
+      builder: (context, value, _) => Switch(
+        value: value,
+        onChanged: (v) => unawaited(
+          BookOpenPreferences.instance.setDiscoverDirectReader(v),
+        ),
+      ),
+    ),
+    onTap: (context, setState) {
+      final current =
+          BookOpenPreferences.instance.discoverDirectReader.value;
+      unawaited(
+        BookOpenPreferences.instance.setDiscoverDirectReader(!current),
+      );
     },
   );
   // ── 听书 ──────────────────────────────────────────────────────────────

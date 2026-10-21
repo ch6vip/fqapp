@@ -152,7 +152,10 @@ jobs:
 
       - name: Install flutter_rust_bridge_codegen
         if: steps.frb-cache.outputs.cache-hit != 'true'
-        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked
+        # Swatinem/rust-cache also restores ~/.cargo/bin, so a codegen-cache key
+        # miss (any change to rust/Cargo.lock) can still find an older binary
+        # there; --force keeps the install working either way.
+        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked --force
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
