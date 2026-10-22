@@ -14,6 +14,7 @@ import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/drama_mute_preferences.dart';
 import 'package:fqapp/services/player_preferences.dart';
@@ -66,6 +67,9 @@ class _Session {
   /// 条目简介文案（官方信息槽的「第1集丨…」回落行）。
   String itemIntro = '';
 
+  /// 应用主题（深色适配用例显式传入；缺省走 MaterialApp 默认浅色）。
+  ThemeData? theme;
+
   /// 内容回包附带的多档流名（官方清晰度行的数据源；空 = 单流，行隐藏）。
   List<String> variantNames = [];
 
@@ -100,6 +104,7 @@ class _Session {
       dramaProvider.overrideWith(() => drama),
     ],
     child: MaterialApp(
+      theme: theme,
       home: TickerMode(
         enabled: tickerEnabled,
         child: DramaPage(
@@ -631,10 +636,13 @@ void main() {
   });
 
   testWidgets('看剧海报格不在背后起播，切回推荐才重新播放', (tester) async {
+    addTearDown(() => dramaLightPageNotifier.value = false);
     final session = _Session();
     await _mount(tester, session);
     final feedPlayer = session.players.single;
     expect(feedPlayer.isPlaying, isTrue);
+    // 推荐是视频流：壳层 dock 保持深色玻璃。
+    expect(dramaLightPageNotifier.value, isFalse);
 
     final historyWrite = Completer<void>();
     session.store.writeGate = historyWrite;
@@ -642,6 +650,8 @@ void main() {
     await _flush(tester);
     await _flush(tester);
 
+    // 看剧是浅色页：壳层 dock / 系统导航栏要跟着换回浅色。
+    expect(dramaLightPageNotifier.value, isTrue);
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
     expect(find.byType(Texture), findsNothing);
     expect(feedPlayer.isPlaying, isFalse);
@@ -652,6 +662,7 @@ void main() {
     await _flush(tester);
     await tester.tap(find.text('推荐'));
     await _flush(tester);
+    expect(dramaLightPageNotifier.value, isFalse);
     expect(session.players, hasLength(2));
     expect(session.players.last.isPlaying, isTrue);
     expect(tester.takeException(), isNull);
@@ -789,6 +800,31 @@ void main() {
     await _flush(tester);
     expect(session.players.single.calls, contains('rate:1.25'));
     expect(find.byKey(const Key('drama_rate_hint')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('深色主题下 feed 更多面板底跟着翻深', (tester) async {
+    // 浅色支面板的内容按 Theme 亮度翻白（PlayletMorePanelLight），弹层底
+    // 不跟着翻就是 #FAFAFA 底配白字。
+    SharedPreferences.setMockInitialValues({});
+    final session = _Session(hasFirstFrame: true)
+      ..theme = AppTheme.createTheme(Brightness.dark);
+    await _mount(tester, session);
+    session.players.single.emitDuration(const Duration(minutes: 2));
+    await _flush(tester);
+    await tester.longPress(find.byKey(const Key('drama_card_gestures')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    expect(
+      find.byKey(const ValueKey('player-more-light-panel')),
+      findsOneWidget,
+    );
+    final sheet = tester.widget<BottomSheet>(find.byType(BottomSheet));
+    expect(sheet.backgroundColor, const Color(0xFF1C1C1C));
+    expect(
+      tester.widget<Text>(find.text('倍速')).style?.color,
+      const Color(0xCCFFFFFF),
+    );
     expect(tester.takeException(), isNull);
   });
 

@@ -52,12 +52,20 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   final double extent;
   final bool dark;
 
+  /// 墨水屏与 OLED 两档会换掉画布、线条和柔色，但都不改变 [dark]：OLED
+  /// 只在深色下生效（深色仍是深色），墨水屏本身也是浅色外观。所以它们
+  /// 必须各自单列进 [shouldRebuild]，否则切换后吸顶条会保留旧色板。
+  final bool eink;
+  final bool oled;
+
   HomeTabBarDelegate({
     required this.selectedIndex,
     required this.onSelect,
     this.categories = homeCategories,
     this.extent = barHeight + bottomPadding,
     this.dark = false,
+    this.eink = false,
+    this.oled = false,
   });
 
   @override
@@ -147,5 +155,7 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
       extent != oldDelegate.extent ||
       onSelect != oldDelegate.onSelect ||
       categories != oldDelegate.categories ||
-      dark != oldDelegate.dark;
+      dark != oldDelegate.dark ||
+      eink != oldDelegate.eink ||
+      oled != oldDelegate.oled;
 }

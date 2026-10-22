@@ -48,6 +48,7 @@ class _DesktopSettingsBodyState extends State<DesktopSettingsBody> {
                     (_) => SettingsCategoryPage(
                       title: category.title,
                       items: category.items,
+                      itemsBuilder: category.itemsBuilder,
                     ),
               ),
             ),

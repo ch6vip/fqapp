@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../models/comment_reply.dart';
 import '../../models/playlet_comment.dart';
 import '../../services/api_client.dart';
+import '../home/home_design.dart';
 import 'playlet_discussion_tile.dart';
 
 typedef PlayletReplyPageLoader =
@@ -146,79 +147,84 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Row(
-        children: [
-          IconButton(
-            key: const ValueKey('playlet-replies-back'),
-            tooltip: '返回剧评',
-            onPressed: widget.onBack,
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-          ),
-          Expanded(
-            child: Text(
-              _total > 0 ? '回复（$_total）' : '回复',
-              key: const ValueKey('playlet-replies-title'),
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1B1B1B),
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Column(
+      children: [
+        Row(
+          children: [
+            IconButton(
+              key: const ValueKey('playlet-replies-back'),
+              tooltip: '返回剧评',
+              onPressed: widget.onBack,
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+            ),
+            Expanded(
+              child: Text(
+                _total > 0 ? '回复（$_total）' : '回复',
+                key: const ValueKey('playlet-replies-title'),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: palette.ink,
+                ),
               ),
             ),
-          ),
-          IconButton(
-            tooltip: '关闭',
-            key: const ValueKey('playlet-replies-close'),
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close_rounded, color: Color(0xFF9499A0)),
-          ),
-        ],
-      ),
-      const Divider(height: 1),
-      Expanded(
-        child: ListView.builder(
-          key: const ValueKey('playlet-reply-list'),
-          controller: _scroll,
-          itemCount: _replies.length + 2,
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              final parent = widget.comment;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  PlayletDiscussionTile(
-                    key: const ValueKey('playlet-reply-parent'),
-                    text: parent.text,
-                    userName: parent.userName,
-                    userAvatar: parent.userAvatar,
-                    published: parent.relativeTime(),
-                    diggCount: parent.diggCount,
-                  ),
-                  const Divider(
-                    height: 16,
-                    thickness: 6,
-                    color: Color(0xFFF5F5F7),
-                  ),
-                ],
-              );
-            }
-            if (index > _replies.length) return _footer();
-            final reply = _replies[index - 1];
-            return PlayletDiscussionTile(
-              key: ValueKey('playlet-reply-${reply.id}'),
-              text: reply.text,
-              imageUrls: reply.imageUrls,
-              userName: reply.userName,
-              userAvatar: reply.userAvatar,
-              published: reply.relativeTime(),
-              diggCount: reply.diggCount,
-            );
-          },
+            IconButton(
+              tooltip: '关闭',
+              key: const ValueKey('playlet-replies-close'),
+              onPressed: () => Navigator.pop(context),
+              icon: Icon(Icons.close_rounded, color: palette.muted),
+            ),
+          ],
         ),
-      ),
-    ],
-  );
+        const Divider(height: 1),
+        Expanded(
+          child: ListView.builder(
+            key: const ValueKey('playlet-reply-list'),
+            controller: _scroll,
+            itemCount: _replies.length + 2,
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                final parent = widget.comment;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    PlayletDiscussionTile(
+                      key: const ValueKey('playlet-reply-parent'),
+                      text: parent.text,
+                      userName: parent.userName,
+                      userAvatar: parent.userAvatar,
+                      published: parent.relativeTime(),
+                      diggCount: parent.diggCount,
+                    ),
+                    Divider(
+                      height: 16,
+                      thickness: 6,
+                      color: palette.dark
+                          ? palette.soft
+                          : const Color(0xFFF5F5F7),
+                    ),
+                  ],
+                );
+              }
+              if (index > _replies.length) return _footer();
+              final reply = _replies[index - 1];
+              return PlayletDiscussionTile(
+                key: ValueKey('playlet-reply-${reply.id}'),
+                text: reply.text,
+                imageUrls: reply.imageUrls,
+                userName: reply.userName,
+                userAvatar: reply.userAvatar,
+                published: reply.relativeTime(),
+                diggCount: reply.diggCount,
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _footer() => Padding(
     padding: const EdgeInsets.all(16),
@@ -242,7 +248,10 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
               child: const Text('加载更多回复'),
             )
           : _replies.isEmpty
-          ? const Text('暂无回复', style: TextStyle(color: Color(0xFF9499A0)))
+          ? Text(
+              '暂无回复',
+              style: TextStyle(color: HomePalette.of(context).muted),
+            )
           : const SizedBox.shrink(),
     ),
   );

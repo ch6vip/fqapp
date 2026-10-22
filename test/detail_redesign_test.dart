@@ -13,6 +13,78 @@ import 'package:fqapp/widgets/home/home_design.dart';
 import 'support/fakes.dart';
 
 void main() {
+  testWidgets('the masthead wash runs behind the title bar', (tester) async {
+    await _pumpBook(tester);
+    await tester.pumpAndSettle();
+
+    final wash = find.byKey(const Key('detail_masthead_wash'));
+    expect(wash, findsOneWidget);
+    final appBar = find.byType(AppBar);
+    expect(appBar, findsOneWidget);
+
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(scaffold.extendBodyBehindAppBar, isTrue);
+    expect(tester.widget<AppBar>(appBar).backgroundColor, Colors.transparent);
+    // 暖光从屏幕顶端开始，一直盖过标题栏下沿：标题栏不再截断它。
+    expect(tester.getTopLeft(wash).dy, 0);
+    expect(
+      tester.getBottomLeft(wash).dy,
+      greaterThan(tester.getBottomLeft(appBar).dy),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the dark detail page keeps the wash behind the title bar', (
+    tester,
+  ) async {
+    await _pumpBook(tester, dark: true);
+    await tester.pumpAndSettle();
+    // 深色的红色渐变同样从屏幕顶端穿过标题栏，不能被切成一条硬边。
+    final wash = find.byKey(const Key('detail_masthead_wash'));
+    expect(wash, findsOneWidget);
+    expect(tester.getTopLeft(wash).dy, 0);
+    expect(
+      tester.getBottomLeft(wash).dy,
+      greaterThan(tester.getBottomLeft(find.byType(AppBar)).dy),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the masthead wash is painted once, then only translated', (
+    tester,
+  ) async {
+    await _pumpBook(tester);
+    final wash = find.byKey(const Key('detail_masthead_wash'));
+    final paint = find.descendant(of: wash, matching: find.byType(CustomPaint));
+    final before = tester.widget<CustomPaint>(paint).painter;
+
+    final position = tester
+        .state<ScrollableState>(
+          find
+              .descendant(
+                of: find.byKey(const Key('detail_scroll')),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        )
+        .position;
+    await tester.drag(
+      find.byKey(const Key('detail_scroll')),
+      const Offset(0, -240),
+    );
+    await tester.pump();
+
+    // 滚动只平移已经画好的那一层。把滚动量塞进 painter 的话，每帧都要重建
+    // 渐变 shader 并整条重绘，和首页暖光的约定相反。
+    expect(position.pixels, greaterThan(0));
+    expect(
+      identical(tester.widget<CustomPaint>(paint).painter, before),
+      isTrue,
+      reason: '暖光 painter 不应随滚动重建',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('long descriptions expand and collapse without losing text', (
     tester,
   ) async {

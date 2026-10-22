@@ -197,7 +197,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     final notifier = ref.read(homeProvider.notifier);
     final palette = HomePalette.of(context);
     final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
-
     return Scaffold(
       backgroundColor: palette.canvas,
       body: Align(
@@ -251,6 +250,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   HomeTabBarDelegate.bottomPadding +
                                   (textScale - 1).clamp(0, 2) * 16,
                               dark: palette.dark,
+                              eink: palette.eink,
+                              oled: palette.oled,
                             ),
                           ),
                           ..._contentSlivers(

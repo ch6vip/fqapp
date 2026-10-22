@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/drama_download_sheet.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/drama_downloader.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
@@ -23,9 +24,11 @@ void main() {
   Future<void> pumpSheet(
     WidgetTester tester, {
     int episodeCount = 3,
+    ThemeData? theme,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        theme: theme,
         home: Scaffold(
           body: DramaDownloadSheet(
             seriesId: 'series1',
@@ -71,6 +74,27 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('download-select-all')));
     await tester.pumpAndSettle();
     expect(find.text('下载 (2)'), findsOneWidget);
+  });
+
+  testWidgets('深色下集数格用浅色字与浮层底', (tester) async {
+    await pumpSheet(tester, theme: AppTheme.createTheme(Brightness.dark));
+
+    // 弹层标题和未选中的集数格以前硬编码为纯黑字/6% 黑底，深色下看不见。
+    expect(
+      tester.widget<Text>(find.text('离线缓存 · 测试剧')).style?.color,
+      const Color(0xFFF5F1EB),
+    );
+    expect(
+      tester.widget<Text>(find.text('第 1 集')).style?.color,
+      const Color(0xFFF5F1EB),
+    );
+    final cell = tester.widget<Container>(
+      find.descendant(
+        of: find.byKey(const ValueKey('download-cell-ep0')),
+        matching: find.byType(Container),
+      ),
+    );
+    expect((cell.decoration! as BoxDecoration).color, const Color(0xFF202023));
   });
 
   testWidgets('点选集 → 下载按钮入队，任务态实时显示', (tester) async {

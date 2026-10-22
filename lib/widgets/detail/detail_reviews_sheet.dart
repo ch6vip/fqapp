@@ -20,12 +20,12 @@ Future<void> showDetailReviewsSheet(
   context: context,
   isScrollControlled: true,
   useSafeArea: true,
-  backgroundColor: HomePalette.of(context).canvas,
+  // 深色 / OLED 弹层取 surface + 发丝边：barrier 在纯黑画布上叠不出
+  // 变暗，弹层会和详情页连成一片。
+  backgroundColor: homeSheetColor(HomePalette.of(context)),
   barrierColor: Colors.black.withValues(alpha: 0.45),
   clipBehavior: Clip.antiAlias,
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-  ),
+  shape: homeSheetShape(HomePalette.of(context), top: 24),
   sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
       ? AnimationStyle.noAnimation
       : const AnimationStyle(

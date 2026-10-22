@@ -9,11 +9,7 @@ import 'home_media_card.dart';
 class HomeSpotlight extends StatefulWidget {
   final List<MediaItem> items;
   final ValueChanged<MediaItem> onOpen;
-  const HomeSpotlight({
-    super.key,
-    required this.items,
-    required this.onOpen,
-  });
+  const HomeSpotlight({super.key, required this.items, required this.onOpen});
 
   @override
   State<HomeSpotlight> createState() => _HomeSpotlightState();
@@ -105,7 +101,10 @@ class _HomeSpotlightState extends State<HomeSpotlight> {
                     if (scale < 1.5) ...[
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: HomePalette.accent.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(6),

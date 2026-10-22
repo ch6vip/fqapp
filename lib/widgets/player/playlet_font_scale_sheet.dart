@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/short_series_font_scale.dart';
+import '../home/home_design.dart';
 
 /// 字号弹层（官方 `nm3.e`）：标准/大号/超大号三档药丸 + 选中档的预览
 /// 文本（官方是 `ShortSeriesScaleTextView` 样张）。选中即生效并持久化
@@ -26,12 +27,12 @@ Future<void> showPlayletFontScaleSheet(
         reverseDuration: Duration(milliseconds: 200),
       ),
       barrierColor: Colors.transparent,
-      backgroundColor: const Color(0xFFFAFAFA),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+      // 深色 / OLED 弹层取 surface + 发丝边：与听书/评论弹层同一规则。
+      backgroundColor: homeSheetColor(HomePalette.of(context)),
+      shape: homeSheetShape(HomePalette.of(context), top: 16),
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, setSheetState) {
+          final palette = HomePalette.of(sheetContext);
           final current = ShortSeriesFontScale.instance.clamp(0, 2);
           return SafeArea(
             top: false,
@@ -47,7 +48,7 @@ Future<void> showPlayletFontScaleSheet(
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFF000000),
+                      color: palette.ink,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -78,13 +79,18 @@ Future<void> showPlayletFontScaleSheet(
                                 ),
                                 alignment: Alignment.center,
                                 decoration: BoxDecoration(
+                                  // 选中档在深色下用 line 抬高一层，浅色仍是白药丸。
                                   color: index == current
-                                      ? Colors.white
+                                      ? (palette.dark
+                                            ? palette.line
+                                            : Colors.white)
                                       : Colors.transparent,
                                   borderRadius: BorderRadius.circular(15),
                                   border: Border.all(
                                     color: index == current
-                                        ? const Color(0x1F000000)
+                                        ? (palette.dark
+                                              ? palette.line
+                                              : const Color(0x1F000000))
                                         : Colors.transparent,
                                   ),
                                 ),
@@ -96,8 +102,8 @@ Future<void> showPlayletFontScaleSheet(
                                         ? FontWeight.bold
                                         : FontWeight.normal,
                                     color: index == current
-                                        ? const Color(0xFF000000)
-                                        : const Color(0x66000000),
+                                        ? palette.ink
+                                        : palette.muted,
                                   ),
                                 ),
                               ),
@@ -112,7 +118,7 @@ Future<void> showPlayletFontScaleSheet(
                     '播放页文字大小预览',
                     key: const ValueKey('player-font-scale-preview'),
                     textScaler: TextScaler.linear(ShortSeriesFontScale.scale),
-                    style: TextStyle(fontSize: 14, color: const Color(0xFF000000)),
+                    style: TextStyle(fontSize: 14, color: palette.ink),
                   ),
                 ],
               ),

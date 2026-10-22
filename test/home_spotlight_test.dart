@@ -160,7 +160,7 @@ void main() {
     semantics.dispose();
   });
 
-  test('the pinned tab bar rebuilds when brightness changes', () {
+  test('the pinned tab bar rebuilds when the palette changes', () {
     void ignore(int _) {}
     final light = HomeTabBarDelegate(
       selectedIndex: 0,
@@ -178,6 +178,26 @@ void main() {
         HomeTabBarDelegate(selectedIndex: 0, onSelect: ignore),
       ),
       isFalse,
+    );
+
+    // OLED 只在深色下生效，墨水屏本身也是浅色外观：两者都不翻 dark，
+    // 漏进 shouldRebuild 的话切完仍画旧画布，吸顶处会露出一条色差。
+    expect(
+      HomeTabBarDelegate(
+        selectedIndex: 0,
+        onSelect: ignore,
+        dark: true,
+        oled: true,
+      ).shouldRebuild(dark),
+      isTrue,
+    );
+    expect(
+      HomeTabBarDelegate(
+        selectedIndex: 0,
+        onSelect: ignore,
+        eink: true,
+      ).shouldRebuild(light),
+      isTrue,
     );
   });
 
