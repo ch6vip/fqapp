@@ -9,6 +9,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
+import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
@@ -1280,6 +1281,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 cursor,
               );
             },
+            // 回复按需展开（issue #95）。与段评正文同一套「注入即离线」
+            // 约定：调用方自己提供数据时不接网络，也就不给可点的回复入口。
+            replyLoader: _ideasReplyLoader(),
           ),
         ),
       );
@@ -1323,6 +1327,25 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       itemVersion: chapter.version.isNotEmpty ? chapter.version : ideaVersion,
       paraIndex: paragraph.paraIndex,
       cursor: cursor,
+    );
+  }
+
+  /// Loads one comment's replies for the paragraph sheet.
+  ///
+  /// Null when the caller injected its own comment data or when a chapter
+  /// cache was injected (both mark an offline caller), which keeps the reply
+  /// counter a plain read-only number for them.
+  Future<CommentReplyPage> Function(String commentId)? _ideasReplyLoader() {
+    if (widget.commentResolver != null ||
+        widget.ideasLoader != null ||
+        widget.chapterCache != null) {
+      return null;
+    }
+    if (widget.bookId.isEmpty) return null;
+    return (commentId) => ApiClient.instance.commentReplies(
+      widget.bookId,
+      commentId,
+      groupId: widget.bookId,
     );
   }
 

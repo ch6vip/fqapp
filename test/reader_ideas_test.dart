@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/models/chapter_ideas.dart';
+import 'package:fqapp/models/comment_reply.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
@@ -99,6 +100,7 @@ void main() {
     Future<void> pumpSheet(
       WidgetTester tester, {
       required Future<BookCommentPage> Function(ParagraphIdeas, String?) load,
+      Future<CommentReplyPage> Function(String commentId)? replyLoader,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -107,6 +109,7 @@ void main() {
               ideas: _ideas(),
               preset: ReaderThemePreset.light,
               loadComments: load,
+              replyLoader: replyLoader,
             ),
           ),
         ),
@@ -200,6 +203,83 @@ void main() {
         tester.getTopLeft(find.text('2024-02-29')).dy,
         tester.getTopLeft(find.text('回复')).dy,
       );
+    });
+
+    testWidgets('点「回复 N」就地展开回复，再点收起（issue #95）', (tester) async {
+      var loads = 0;
+      final page = CommentReplyPage(
+        totalCount: 2,
+        replies: [
+          CommentReply(
+            id: 'r1',
+            text: '同感',
+            userName: '读者乙',
+            createdAt: DateTime(2024, 3, 1),
+          ),
+          CommentReply(
+            id: 'r2',
+            text: '我也这么想',
+            userName: '读者丙',
+            createdAt: DateTime(2024, 3, 2),
+          ),
+        ],
+      );
+      await pumpSheet(
+        tester,
+        load: (_, _) async => BookCommentPage(
+          comments: [
+            BookComment(
+              id: 'a1',
+              text: '这段太真实了',
+              userName: '读者甲',
+              replyCount: 2,
+              createdAt: DateTime(2024, 2, 29),
+            ),
+          ],
+        ),
+        replyLoader: (_) async {
+          loads++;
+          return page;
+        },
+      );
+
+      // 展开前只有计数，没有正文。
+      expect(find.text('回复 2'), findsOneWidget);
+      expect(find.text('同感'), findsNothing);
+
+      await tester.tap(find.text('回复 2'));
+      await tester.pumpAndSettle();
+      expect(loads, 1);
+      expect(find.textContaining('同感', findRichText: true), findsOneWidget);
+      expect(find.textContaining('我也这么想', findRichText: true), findsOneWidget);
+
+      // 再点收起，不重复请求。
+      await tester.tap(find.text('回复 2'));
+      await tester.pumpAndSettle();
+      expect(loads, 1);
+      expect(find.textContaining('同感', findRichText: true), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('没有 replyLoader 时回复计数只读，不出现可点控件', (tester) async {
+      await pumpSheet(
+        tester,
+        load: (_, _) async => BookCommentPage(
+          comments: [
+            BookComment(
+              id: 'a1',
+              text: '只读',
+              userName: '读者甲',
+              replyCount: 2,
+              createdAt: DateTime(2024, 2, 29),
+            ),
+          ],
+        ),
+      );
+      expect(find.text('回复 2'), findsOneWidget);
+      // 离线调用方拿不到只有失败可能的控件。
+      expect(find.byKey(const ValueKey('reader_reply_toggle_a1')), findsNothing);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('opens on the tapped paragraph', (tester) async {
