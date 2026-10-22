@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/home_cell.dart';
 import '../../models/media_item.dart';
+import 'home_cell_blocks.dart';
 
 /// Renders one bookstore block.
 ///
@@ -12,6 +13,7 @@ typedef HomeCellBuilder =
       BuildContext context,
       HomeCell cell, {
       required Widget fallback,
+      required ValueChanged<MediaItem> onOpen,
     });
 
 /// Registry mapping upstream `show_type` values to block widgets.
@@ -54,25 +56,67 @@ class HomeCellRenderers {
     BuildContext context,
     HomeCell cell, {
     required Widget Function() fallback,
+    required ValueChanged<MediaItem> onOpen,
   }) {
     final builder = _builders[cell.showType];
     if (builder == null) return null;
-    return builder(context, cell, fallback: fallback());
+    return builder(
+      context,
+      cell,
+      fallback: fallback(),
+      onOpen: onOpen,
+    );
   }
 }
 
-/// Adopts the block types this build knows how to draw.
+/// `RankCellV3` — the rank board preview strip.
+const int kHomeCellRank = 511;
+
+/// `MultiTabMixedUnlimitedV2` — a container block that wraps the card stream.
+const int kHomeCellMixedFeed = 384;
+
+/// `DoubleRowMixedUnlimitedWithFilter` — the card stream itself, one level
+/// inside [kHomeCellMixedFeed].
+const int kHomeCellDoubleRowFeed = 385;
+
+/// `MixedDataInUnlimited` — one card inside the stream.
+const int kHomeCellMixedItem = 339;
+
+/// Which block owns the visible cards.
 ///
-/// Intentionally empty for now. The feed's first tab returns two block types —
-/// `RankCellV3`(511)「排行榜」 and `MultiTabMixedUnlimitedV2`(384)「猜你喜欢」 —
-/// and neither has a widget yet, so every block keeps the generic grid and the
-/// homepage looks exactly as before. The framework lands first so that adopting
-/// a type is a one-line change here plus its widget, not another data-layer
-/// migration.
+/// 511 draws its own strip; 384/385 wrap the grid; 339 sits inside a grid and
+/// must not draw a section of its own.
+const Set<int> kHomeGridBlocks = {kHomeCellMixedFeed, kHomeCellDoubleRowFeed};
+
+/// Whether [cell] renders as a card grid on the homepage.
+bool isHomeGridBlock(HomeCell cell) =>
+    kHomeGridBlocks.contains(cell.showType) && cell.flatten().isNotEmpty;
+
+/// Adopts the block types this feed actually returns.
 ///
-/// Idempotent: calling it twice replaces nothing that was not already set.
-void registerDefaultHomeCells() {
-  // Populated as block types are adopted; see home_cell_renderers notes.
+/// The first tab (`tab_type=2`) ships exactly two blocks — `RankCellV3`(511)
+/// 「排行榜」 and `MultiTabMixedUnlimitedV2`(384)「猜你喜欢」 — so those are the
+/// ones adopted. Everything else keeps the generic grid; see the fallback path
+/// in [HomeCellRenderers.build].
+///
+/// Needs the grid width for the card layout, which the caller knows and this
+/// registry does not. Cards inside a grid block are therefore rendered by the
+/// homepage itself via [isHomeGridBlock]; only self-contained blocks are
+/// registered here.
+///
+/// Idempotent and cheap enough to call from `build`: the previous entry is
+/// replaced in place, and the 「更多」 callback is captured per call so it always
+/// points at the current page rather than a disposed one.
+void registerDefaultHomeCells({VoidCallback? onOpenRankBoard}) {
+  HomeCellRenderers.register(
+    kHomeCellRank,
+    (context, cell, {required fallback, required onOpen}) => buildRankCell(
+      context,
+      cell,
+      onOpen: onOpen,
+      onMore: onOpenRankBoard ?? () {},
+    ),
+  );
 }
 
 /// Cards a block should show, using its own cards and then its children's.

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
@@ -35,62 +36,6 @@ void main() {
       expect(container.read(provider).hasMore, isFalse);
     },
   );
-
-  for (final failedOffset in [0, 17]) {
-    test(
-      'combined feed retries manga at $failedOffset and resets exhaustion on refresh',
-      () async {
-        final offsets = <int>[];
-        var failed = false;
-        final provider = NotifierProvider<HomeNotifier, HomeState>(
-          () => HomeNotifier(
-            homepageLoader:
-                ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                    HomepagePage(
-                      items: [_item('book-$offset')],
-                      nextOffset: offset + 1,
-                      sessionId: null,
-                    ),
-            searchLoader: (query, {int page = 1}) async => [],
-            mangaSearchLoader: ({int offset = 0}) async {
-              offsets.add(offset);
-              if (offset == failedOffset && !failed) {
-                failed = true;
-                throw StateError('temporary outage');
-              }
-              return [
-                SearchTab(
-                  title: '漫画',
-                  items: [_item('manga-$offset', kind: 'manga')],
-                  hasMore: offset == 0,
-                  nextOffset: 17,
-                ),
-              ];
-            },
-          ),
-        );
-        final container = ProviderContainer();
-        addTearDown(container.dispose);
-        final notifier = container.read(provider.notifier);
-        await notifier.load();
-        for (var i = 0; i < 4; i++) {
-          await notifier.loadMore();
-        }
-        expect(offsets, failedOffset == 0 ? [0, 0, 17] : [0, 17, 17]);
-        expect(
-          container
-              .read(provider)
-              .items
-              .where((item) => item.kind == 'manga')
-              .map((item) => item.id),
-          ['manga-0', 'manga-17'],
-        );
-        await notifier.load();
-        await notifier.loadMore();
-        expect(offsets.sublist(offsets.length - 2), [0, 17]);
-      },
-    );
-  }
 
   for (final tabIndex in [0, HomeNotifier.tabs.indexOf('漫画')]) {
     for (final middlePage in ['duplicate', 'empty', 'filtered']) {
@@ -266,73 +211,6 @@ void main() {
       expect(offsets, [0, 17, 23]);
       expect(homepageOffsets, [0]);
     });
-  }
-
-  for (final failedOffset in [0, 17]) {
-    test(
-      'combined feed retries manju cursor $failedOffset and remembers exhaustion',
-      () async {
-        final offsets = <int>[];
-        var failed = false;
-        final provider = NotifierProvider<HomeNotifier, HomeState>(
-          () => HomeNotifier(
-            homepageLoader:
-                ({int tabType = 2, int offset = 0, String? sessionId}) async {
-                  // Manju prefers its own stream; return nothing for it so this
-                  // test keeps exercising the search fallback and its cursor.
-                  if (tabType == 24) {
-                    return const HomepagePage(
-                      items: [],
-                      nextOffset: null,
-                      sessionId: null,
-                    );
-                  }
-                  return HomepagePage(
-                    items: [_item('book-$offset')],
-                    nextOffset: offset + 1,
-                    sessionId: null,
-                  );
-                },
-            searchLoader: (query, {int page = 1}) async => [],
-            manjuSearchLoader: ({int offset = 0}) async {
-              offsets.add(offset);
-              if (offset == failedOffset && !failed) {
-                failed = true;
-                throw StateError('temporary failure');
-              }
-              return [
-                SearchTab(
-                  title: '短剧',
-                  items: [_item('manju-$offset', kind: 'manju')],
-                  hasMore: offset == 0,
-                  nextOffset: 17,
-                ),
-              ];
-            },
-          ),
-        );
-        final container = ProviderContainer();
-        addTearDown(container.dispose);
-        final notifier = container.read(provider.notifier);
-        await notifier.load();
-        for (var page = 0; page < 4; page++) {
-          await notifier.loadMore();
-        }
-        expect(offsets, failedOffset == 0 ? [0, 0, 17] : [0, 17, 17]);
-        expect(
-          container
-              .read(provider)
-              .items
-              .where((item) => item.kind == 'manju')
-              .map((item) => item.id),
-          ['manju-0', 'manju-17'],
-        );
-        expect(container.read(provider).hasMore, isTrue);
-        await notifier.load();
-        await notifier.loadMore();
-        expect(offsets.sublist(offsets.length - 2), [0, 17]);
-      },
-    );
   }
 
   test('manju stops when an empty search page repeats its cursor', () async {
@@ -548,47 +426,6 @@ void main() {
   }
 
   test(
-    'a failed category does not skip its page in the combined feed',
-    () async {
-      final videoRequests = <int>[];
-      final provider = NotifierProvider<HomeNotifier, HomeState>(
-        () => HomeNotifier(
-          homepageLoader:
-              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                  HomepagePage(
-                    items: [_item('novel-$offset')],
-                    nextOffset: offset + 1,
-                    sessionId: null,
-                  ),
-          searchLoader: (query, {int page = 1}) async {
-            if (query != '短剧') return [];
-            videoRequests.add(page);
-            if (videoRequests.length == 1) {
-              throw StateError('temporary failure');
-            }
-            return [
-              SearchTab(
-                title: '短剧',
-                items: [_item('video-$page', kind: 'video')],
-              ),
-            ];
-          },
-        ),
-      );
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-      final notifier = container.read(provider.notifier);
-      await notifier.load();
-      await notifier.loadMore();
-      expect(videoRequests, [1, 1]);
-      expect(
-        container.read(provider).items.map((item) => item.id),
-        contains('video-1'),
-      );
-    },
-  );
-
-  test(
     'an initial request can finish after its provider is disposed',
     () async {
       final response = Completer<HomepagePage>();
@@ -630,6 +467,48 @@ void main() {
     container.read(provider.notifier).selectTab(1);
     await _flushMicrotasks();
     expect(container.read(provider).items.map((item) => item.id), ['novel']);
+  });
+
+  test('推荐流可用时首页只显示它自己的区块，不再混排其他来源', () async {
+    // 官方书城 tab 只渲染自己的 block，不把短剧/漫画/听书交错进来。
+    var searchCalls = 0;
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                HomepagePage(
+                  items: [_item('rec-1'), _item('rec-2')],
+                  cells: const [
+                    HomeCell(
+                      showType: 384,
+                      name: '猜你喜欢',
+                      id: '',
+                      style: {},
+                      items: [],
+                      children: [],
+                    ),
+                  ],
+                  nextOffset: null,
+                  sessionId: null,
+                ),
+        searchLoader: (query, {int page = 1}) async {
+          searchCalls++;
+          return [
+            SearchTab(title: '综合', items: [_item('search-$query')]),
+          ];
+        },
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(provider.notifier).load();
+    final state = container.read(provider);
+
+    // 只有推荐流的卡片，短剧/漫画/听书都不该被拉进来。
+    expect(state.items.map((i) => i.id), ['rec-1', 'rec-2']);
+    expect(state.cells, hasLength(1));
+    expect(state.cells.single.name, '猜你喜欢');
+    expect(searchCalls, 0, reason: '不再为混排去搜其他来源');
   });
 
   test('the combined feed keeps novels when recommendations fail', () async {
@@ -756,46 +635,6 @@ void main() {
     expect(tag!.text, '上新');
     expect(tag.lightColors, ['#00B876', '#15D791']);
     expect(tag.darkColors, ['#009962', '#11B279']);
-  });
-
-  test('the combined feed keeps badges from every source', () async {
-    final provider = NotifierProvider<HomeNotifier, HomeState>(
-      () => HomeNotifier(
-        homepageLoader:
-            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                HomepagePage(
-                  // Tag per stream so a drop in either group is visible.
-                  items: [_item('stream-$tabType', tag: _newTag)],
-                  nextOffset: null,
-                  sessionId: null,
-                ),
-        searchLoader: (query, {int page = 1}) async => [
-          SearchTab(
-            title: query,
-            items: [_item('$query-1', kind: 'video', tag: _newTag)],
-          ),
-        ],
-        mangaSearchLoader: ({int offset = 0}) async => [],
-        manjuSearchLoader: ({int offset = 0}) async => [],
-      ),
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(provider.notifier);
-    await _loadTab(notifier, 0);
-
-    final items = container.read(provider).items;
-    expect(items, isNotEmpty);
-    // Both recommendation streams feed the combined feed, so both ids must be
-    // present and neither may lose its badge.
-    expect(items.map((i) => i.id), containsAll(['stream-2', 'stream-24']));
-    for (final item in items) {
-      expect(
-        item.tag?.text,
-        '上新',
-        reason: '${item.id} (${item.kind}) lost its badge',
-      );
-    }
   });
 
   test(

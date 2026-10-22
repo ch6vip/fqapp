@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/backend_transport.dart';
@@ -17,6 +18,14 @@ typedef CategorySearchLoader = Future<List<SearchTab>> Function({int offset});
 /// Immutable view-model of the home recommendation feed.
 class HomeState {
   final List<MediaItem> items;
+
+  /// The same page keeping upstream block boundaries (see [HomeCell]).
+  ///
+  /// Empty when the payload had no recognisable blocks, or when the page came
+  /// from the disk cache. Callers that render blocks must fall back to [items]
+  /// rather than showing nothing.
+  final List<HomeCell> cells;
+
   final int tabIndex;
   final bool isLoading;
   final bool isLoadMore;
@@ -25,6 +34,7 @@ class HomeState {
 
   const HomeState({
     this.items = const [],
+    this.cells = const [],
     this.tabIndex = 0,
     this.isLoading = false,
     this.isLoadMore = false,
@@ -34,6 +44,7 @@ class HomeState {
 
   HomeState copyWith({
     List<MediaItem>? items,
+    List<HomeCell>? cells,
     int? tabIndex,
     bool? isLoading,
     bool? isLoadMore,
@@ -43,6 +54,7 @@ class HomeState {
   }) {
     return HomeState(
       items: items ?? this.items,
+      cells: cells ?? this.cells,
       tabIndex: tabIndex ?? this.tabIndex,
       isLoading: isLoading ?? this.isLoading,
       isLoadMore: isLoadMore ?? this.isLoadMore,
@@ -55,6 +67,9 @@ class HomeState {
 /// Mutable pagination state owned by exactly one tab.
 class _TabFeed {
   List<MediaItem> items = [];
+
+  /// Upstream blocks for the current page; empty when none were recognised.
+  List<HomeCell> cells = [];
   int offset = 0;
   String? sessionId;
   int searchPage = 0;
@@ -99,6 +114,10 @@ class _TabFeed {
 
 class _FetchedFeed {
   final List<MediaItem> items;
+
+  /// Upstream blocks, when this page came from the bookstore tab feed.
+  /// Empty for search/other sources, which have no block structure.
+  final List<HomeCell> cells;
   final int? nextOffset;
   final String? sessionId;
   final int searchPage;
@@ -112,6 +131,7 @@ class _FetchedFeed {
 
   const _FetchedFeed({
     required this.items,
+    this.cells = const [],
     required this.nextOffset,
     required this.sessionId,
     required this.searchPage,
@@ -293,6 +313,7 @@ class HomeNotifier extends Notifier<HomeState> {
     }
     state = state.copyWith(
       items: feed.items,
+      cells: feed.cells,
       isLoading: true,
       isLoadMore: false,
       hasMore: true,
@@ -317,6 +338,7 @@ class HomeNotifier extends Notifier<HomeState> {
       _applyFetched(feed, fetched, replace: !resume);
       state = state.copyWith(
         items: feed.items,
+        cells: feed.cells,
         isLoading: false,
         isLoadMore: false,
         hasMore: feed.hasMore,
@@ -440,6 +462,7 @@ class HomeNotifier extends Notifier<HomeState> {
         if (items.isNotEmpty || canAdvance) {
           return _FetchedFeed(
             items: items,
+            cells: page.cells,
             nextOffset: canAdvance ? nextOffset : null,
             sessionId: page.sessionId,
             searchPage: 0,
@@ -473,14 +496,45 @@ class HomeNotifier extends Notifier<HomeState> {
 
   /// "全部" combines the novel recommendation stream with first pages for
   /// the other supported categories.
+  /// Loads the "全部" tab.
+  ///
+  /// The official bookstore tab (`tab_type=2`) shows its own blocks and nothing
+  /// else, so once the recommendation stream answers we stop there: the former
+  /// cross-media interleave — mixing short drama, manju, manga and audio search
+  /// results into the same card list — is gone. Those sources keep their own
+  /// tabs.
+  ///
+  /// The interleave survives as a degraded path only: when the recommendation
+  /// stream fails outright, mixing the other sources keeps the tab usable
+  /// instead of blanking it.
   Future<_FetchedFeed> _loadAllInitial() async {
-    final recommendationFuture = _attempt(_loadInitial(1));
+    final recommendation = await _attempt(_loadInitial(1));
+    final page = recommendation.value;
+    if (page != null && (page.items.isNotEmpty || page.cells.isNotEmpty)) {
+      return _FetchedFeed(
+        items: page.items,
+        cells: page.cells,
+        nextOffset: page.nextOffset,
+        sessionId: page.sessionId,
+        searchPage: page.searchPage,
+        searchPages: {'小说': page.searchPage},
+        recommendExhausted: page.recommendExhausted,
+        hasMore: page.items.isNotEmpty || page.nextOffset != null,
+      );
+    }
+    return _loadAllInterleaved(recommendation);
+  }
+
+  /// Degraded path for [loadAll]: the recommendation stream is unavailable, so
+  /// mix whatever the other sources returned.
+  Future<_FetchedFeed> _loadAllInterleaved(
+    _Attempt<_FetchedFeed> recommendation,
+  ) async {
     final videoFuture = _attempt(_searchLoader('短剧'));
     final manjuFuture = _attempt(_loadAllManju());
     final mangaFuture = _attempt(_mangaSearchLoader());
     final audioFuture = _attempt(_searchLoader('听书'));
 
-    final recommendation = await recommendationFuture;
     final video = await videoFuture;
     final manju = await manjuFuture;
     final manga = await mangaFuture;
@@ -755,6 +809,9 @@ class HomeNotifier extends Notifier<HomeState> {
     }
     feed
       ..items = replace ? fresh : [...feed.items, ...fresh]
+      // 区块只在整页替换时跟着换：追加一页时上游给的是同一批块的续页，
+      // 把新块接在后面会让标题重复出现。
+      ..cells = replace ? fetched.cells : feed.cells
       ..offset = fetched.nextOffset ?? feed.offset
       ..sessionId = fetched.sessionId ?? feed.sessionId
       ..searchPage = fetched.searchPage

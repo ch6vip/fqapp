@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
@@ -122,6 +123,105 @@ void main() {
     controller.jumpTo(controller.position.minScrollExtent);
     await tester.pumpAndSettle();
     expect(controller.position.pixels, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('首页按上游区块渲染：排行榜条 + 猜你喜欢网格', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    MediaItem book(String id, String title) => MediaItem(
+      id: id,
+      title: title,
+      cover: '',
+      author: '',
+      badge: '',
+      ep: '',
+      kind: 'book',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                      HomepagePage(
+                        items: [
+                          book('r1', '榜单书一'),
+                          book('r2', '榜单书二'),
+                          book('c1', '猜你喜欢一'),
+                          book('c2', '猜你喜欢二'),
+                        ],
+                        cells: [
+                          HomeCell(
+                            showType: 511,
+                            name: '排行榜',
+                            id: '',
+                            style: const {},
+                            items: const [],
+                            children: [
+                              HomeCell(
+                                showType: 512,
+                                name: '',
+                                id: '',
+                                style: const {},
+                                items: [book('r1', '榜单书一')],
+                                children: const [],
+                              ),
+                              HomeCell(
+                                showType: 512,
+                                name: '',
+                                id: '',
+                                style: const {},
+                                items: [book('r2', '榜单书二')],
+                                children: const [],
+                              ),
+                            ],
+                          ),
+                          HomeCell(
+                            showType: 384,
+                            name: '猜你喜欢',
+                            id: '',
+                            style: const {},
+                            items: const [],
+                            children: [
+                              HomeCell(
+                                showType: 385,
+                                name: '',
+                                id: '',
+                                style: const {},
+                                items: [
+                                  book('c1', '猜你喜欢一'),
+                                  book('c2', '猜你喜欢二'),
+                                ],
+                                children: const [],
+                              ),
+                            ],
+                          ),
+                        ],
+                        nextOffset: null,
+                        sessionId: null,
+                      ),
+              searchLoader: (query, {int page = 1}) async => [],
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: HomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 两个区块标题都在。
+    expect(find.text('排行榜'), findsWidgets);
+    expect(find.text('猜你喜欢'), findsWidgets);
+    // 排行榜自带横向条。
+    expect(find.byKey(const ValueKey('home_rank_strip')), findsOneWidget);
+    // 卡片都在（榜单书 + 猜你喜欢）。
+    expect(find.text('榜单书一'), findsWidgets);
+    expect(find.text('猜你喜欢一'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

@@ -4,11 +4,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
 import '../widgets/home/ambient_backdrop.dart';
+import '../widgets/home/home_cell_blocks.dart';
+import '../widgets/home/home_cell_renderers.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 import '../widgets/home/home_hero.dart';
@@ -218,7 +221,89 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// Renders the page as upstream blocks, or null to keep the flat grid.
+  ///
+  /// Only the "全部" tab carries blocks (`tab_type=2`), and only when at least
+  /// one block type has a widget. Returning null leaves the previous pipeline —
+  /// and therefore the previous look — completely untouched.
+  ///
+  /// This replaces the cross-media interleave that used to mix recommendations
+  /// with drama/comic/audio search results: the official bookstore tab shows
+  /// its own blocks and nothing else, so those other sources stay in their own
+  /// tabs.
+  List<Widget>? _blockSlivers(HomeState state, double gridWidth) {
+    if (state.tabIndex != 0) return null;
+    final cells = state.cells;
+    if (cells.isEmpty) return null;
+    registerDefaultHomeCells(onOpenRankBoard: _openRanks);
+
+    final slivers = <Widget>[];
+    var rendered = false;
+    for (final cell in cells) {
+      if (HomeCellRenderers.handles(cell.showType)) {
+        final widget = HomeCellRenderers.build(
+          context,
+          cell,
+          fallback: () => _gridFallbackFor(cell, gridWidth),
+          onOpen: _openItem,
+        );
+        if (widget != null) {
+          slivers.add(SliverToBoxAdapter(child: widget));
+          rendered = true;
+        }
+        continue;
+      }
+      if (isHomeGridBlock(cell)) {
+        slivers.add(
+          SliverToBoxAdapter(
+            child: buildCardSection(
+              context,
+              cell,
+              onOpen: _openItem,
+              gridWidth: gridWidth,
+            ),
+          ),
+        );
+        rendered = true;
+      }
+    }
+    if (!rendered) return null;
+
+    if (state.isLoadMore) {
+      slivers.add(
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: HomePalette.accent,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 84)));
+    return slivers;
+  }
+
+  /// Generic card grid for a block whose type has no widget.
+  Widget _gridFallbackFor(HomeCell cell, double gridWidth) =>
+      buildCardSection(
+        context,
+        cell,
+        onOpen: _openItem,
+        gridWidth: gridWidth,
+      );
+
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
+    final blocks = _blockSlivers(state, gridWidth);
+    if (blocks != null) return blocks;
     final items = _visibleItems(state);
     if (items.isEmpty) {
       if (state.isLoading || state.hasMore) {

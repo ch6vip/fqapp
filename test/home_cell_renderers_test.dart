@@ -41,6 +41,7 @@ void main() {
           ctx,
           cellWith(type),
           fallback: () => const Text('fallback'),
+          onOpen: (_) {},
         ),
         isNull,
         reason: 'type $type 未注册时调用方应沿用原渲染',
@@ -67,7 +68,7 @@ void main() {
     var fallbackUsed = false;
     HomeCellRenderers.register(
       511,
-      (context, cell, {required fallback}) {
+      (context, cell, {required fallback, required onOpen}) {
         seen = cell;
         fallbackUsed = true;
         return const Text('排行榜');
@@ -78,6 +79,7 @@ void main() {
       ctx,
       cellWith(511, name: '排行榜'),
       fallback: () => const Text('fallback'),
+      onOpen: (_) {},
     );
 
     expect(HomeCellRenderers.handles(511), isTrue);
@@ -91,21 +93,56 @@ void main() {
 
   test('re-registering a type replaces it instead of adding a second one', () {
     var calls = 0;
-    HomeCellRenderers.register(511, (c, cell, {required fallback}) {
-      calls = 1;
-      return const SizedBox();
-    });
-    HomeCellRenderers.register(511, (c, cell, {required fallback}) {
-      calls = 2;
-      return const SizedBox();
-    });
+    HomeCellRenderers.register(
+      511,
+      (c, cell, {required fallback, required onOpen}) {
+        calls = 1;
+        return const SizedBox();
+      },
+    );
+    HomeCellRenderers.register(
+      511,
+      (c, cell, {required fallback, required onOpen}) {
+        calls = 2;
+        return const SizedBox();
+      },
+    );
     expect(HomeCellRenderers.count, 1);
     expect(calls, 0, reason: '注册本身不渲染');
   });
 
-  test('the production table adopts nothing yet', () {
+  test('the production table adopts the rank strip only', () {
     registerDefaultHomeCells();
-    // 这张表是「已采用」的清单；PR1 里它必须是空的，否则首页观感会变。
-    expect(HomeCellRenderers.count, 0);
+    expect(HomeCellRenderers.count, 1);
+    // 511 自带一块完整布局（标题 + 横向条），所以在这里注册；
+    // 384/385 是卡片流，宽度由首页传进 buildCardSection，不在这张表里。
+    expect(HomeCellRenderers.handles(kHomeCellRank), isTrue);
+    expect(HomeCellRenderers.handles(kHomeCellMixedFeed), isFalse);
+    expect(HomeCellRenderers.handles(kHomeCellDoubleRowFeed), isFalse);
+    // 339 是流里的一张卡，不该单独画成一个区块。
+    expect(HomeCellRenderers.handles(kHomeCellMixedItem), isFalse);
+  });
+
+  test('grid blocks are recognised for the homepage grid path', () {
+    expect(isHomeGridBlock(cellWith(kHomeCellMixedFeed)), isFalse,
+        reason: '没有卡片时不算可渲染区块');
+    final withCards = HomeCell(
+      showType: kHomeCellMixedFeed,
+      name: '猜你喜欢',
+      id: '',
+      style: const {},
+      items: const [],
+      children: const [
+        HomeCell(
+          showType: kHomeCellDoubleRowFeed,
+          name: '',
+          id: '',
+          style: {},
+          items: [],
+          children: [],
+        ),
+      ],
+    );
+    expect(isHomeGridBlock(withCards), isFalse, reason: '子块也没有卡片');
   });
 }
