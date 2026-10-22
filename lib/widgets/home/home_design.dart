@@ -20,9 +20,11 @@ class HomePalette {
     eink: einkModeNotifier.value,
   );
 
+  /// 官方书城底色 `skin_color_F6F6F6_light`（#F6F6F6），见 res/layout/alx.xml
+  /// 根 FrameLayout。此前是暖纸色 #FCFAF7，与官方不一致。
   Color get canvas => eink
       ? Colors.white
-      : (dark ? const Color(0xFF151517) : const Color(0xFFFCFAF7));
+      : (dark ? const Color(0xFF151517) : const Color(0xFFF6F6F6));
   Color get surface =>
       eink ? Colors.white : (dark ? const Color(0xFF242427) : Colors.white);
   Color get ink =>
@@ -34,6 +36,17 @@ class HomePalette {
       eink ? Colors.white : (dark ? const Color(0xFF202023) : const Color(0xFFF1EEE9));
   Color get line =>
       eink ? Colors.black : (dark ? const Color(0xFF333336) : const Color(0xFFE8E4DE));
+
+  /// 官方搜索框底色 `skin_color_search_bar_bg_v2_light` = #FFFFFF
+  /// （res/values/colors.xml），暗色下用 surface。
+  Color get searchBar => eink
+      ? Colors.white
+      : (dark ? const Color(0xFF2A2A2E) : const Color(0xFFFFFFFF));
+
+  /// 官方搜索框提示字色 `skin_color_search_bar_text_v3_light` = #66000000。
+  Color get searchBarText => eink
+      ? Colors.black
+      : (dark ? const Color(0xFF8E8A85) : const Color(0x66000000));
 }
 
 /// Pointer, keyboard and accessibility activation share the same action.

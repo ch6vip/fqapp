@@ -3,8 +3,23 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'home_design.dart';
 
-/// A compact masthead leaves the first screen to the actual stories.
+/// 官方书城顶栏（`res/layout/alx.xml` 的 `fua` / `Toolbar h7` 区域）。
+///
+/// 官方在这一层只有两样东西：一条 36dp 的白色圆角搜索框（`c5e.xml`），
+/// 以及右侧两个默认 gone 的图标位（`h4f` 收缩搜索、`gpe` 分类）。
+/// 没有品牌 logo、没有 slogan、没有「每日发现」角标 —— 上一版自制的
+/// 品牌头是整页最不像官方的地方，这里按官方收掉。
+///
+/// 尺寸取自反编译布局：
+/// * 搜索框行 `fua`：height 51dp，paddingTop 6dp / paddingBottom 9dp；
+/// * 搜索框本体 `c5e.xml`：height `@dimen/zl` = 36dp，左右 margin 16dp，
+///   底色 `skin_color_search_bar_bg_v2_light` = #FFFFFF，
+///   圆角 `skin_shape_search_bar_light` = 6dp；
+/// * 放大镜 `c8`：11×11dp，marginStart 16dp。
 class HomeHero extends StatelessWidget {
+  static const double searchBarHeight = 36;
+  static const double searchBarRadius = 6;
+
   final VoidCallback onSearch;
   final VoidCallback onRanks;
   final Future<void> Function() onRefresh;
@@ -21,207 +36,117 @@ class HomeHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final scale = MediaQuery.textScalerOf(context).scale(14);
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+      // 官方 fua：paddingTop 6dp / paddingBottom 9dp，左右 16dp。
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 9),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
+          Expanded(
+            child: HomePressable(
+              key: const Key('home_search_button'),
+              onTap: onSearch,
+              borderRadius: BorderRadius.circular(searchBarRadius),
+              semanticLabel: '搜索书名、作者',
+              child: Container(
+                height: searchBarHeight,
+                padding: const EdgeInsets.only(left: 16, right: 12),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFF6954), HomePalette.accent],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(11),
-                  boxShadow: [
-                    BoxShadow(
-                      color: HomePalette.accent.withValues(alpha: 0.28),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
+                  color: palette.searchBar,
+                  borderRadius: BorderRadius.circular(searchBarRadius),
                 ),
-                child: const Icon(
-                  LucideIcons.book_open,
-                  color: Colors.white,
-                  size: 19,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+                child: Row(
                   children: [
-                    Text(
-                      'fqapp',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.ink,
-                        fontSize: 19,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.6,
-                        height: 1.15,
-                      ),
+                    // 官方 c8：11×11dp 放大镜。
+                    Icon(
+                      LucideIcons.search,
+                      size: 11,
+                      color: palette.searchBarText,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '好故事，不止一种',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: palette.muted,
-                        letterSpacing: 0.3,
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        '搜索书名、作者',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: palette.searchBarText,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-              if (scale <= 20)
-                ExcludeSemantics(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: HomePalette.accent.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          LucideIcons.sparkles,
-                          color: HomePalette.accent,
-                          size: 13,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '每日发现',
-                          style: TextStyle(
-                            color: HomePalette.accent,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
+            ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: HomePressable(
-                  key: const Key('home_search_button'),
-                  onTap: onSearch,
-                  semanticLabel: '搜索小说、短剧、漫剧、漫画和听书',
-                  child: Container(
-                    height: 44,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                      color: palette.soft,
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                        color: palette.line.withValues(alpha: 0.5),
-                        width: 0.6,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          LucideIcons.search,
-                          size: 17,
-                          color: palette.muted,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '搜索你想看的故事',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: palette.muted,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: '排行榜',
-                child: IconButton(
-                  key: const Key('home_ranks_button'),
-                  onPressed: onRanks,
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(44, 44),
-                    fixedSize: const Size(44, 44),
-                    foregroundColor: palette.ink,
-                    backgroundColor: palette.surface,
-                    side: BorderSide(
-                      color: palette.line.withValues(alpha: 0.7),
-                      width: 0.8,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                  icon: const Icon(LucideIcons.trophy, size: 18),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: '刷新推荐',
-                child: IconButton(
-                  key: const Key('home_refresh_button'),
-                  onPressed: refreshing ? null : onRefresh,
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(44, 44),
-                    fixedSize: const Size(44, 44),
-                    foregroundColor: palette.ink,
-                    backgroundColor: palette.surface,
-                    side: BorderSide(
-                      color: palette.line.withValues(alpha: 0.7),
-                      width: 0.8,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                  icon: refreshing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: HomePalette.accent,
-                          ),
-                        )
-                      : const Icon(LucideIcons.refresh_ccw, size: 18),
-                ),
-              ),
-            ],
+          const SizedBox(width: 8),
+          // 官方这两个位置（h4f / gpe）是默认 gone 的图标位，这里承载
+          // 排行榜与刷新两个入口，尺寸与搜索框同高，避免破坏官方顶栏比例。
+          _HeroIconButton(
+            buttonKey: const Key('home_ranks_button'),
+            tooltip: '排行榜',
+            icon: LucideIcons.trophy,
+            onTap: onRanks,
+          ),
+          const SizedBox(width: 6),
+          _HeroIconButton(
+            buttonKey: const Key('home_refresh_button'),
+            tooltip: '刷新推荐',
+            icon: LucideIcons.refresh_ccw,
+            onTap: refreshing ? null : () => onRefresh(),
+            busy: refreshing,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HeroIconButton extends StatelessWidget {
+  final Key buttonKey;
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool busy;
+
+  const _HeroIconButton({
+    required this.buttonKey,
+    required this.tooltip,
+    required this.icon,
+    required this.onTap,
+    this.busy = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: HomePressable(
+        key: buttonKey,
+        onTap: onTap ?? () {},
+        borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
+        semanticLabel: tooltip,
+        child: Container(
+          width: HomeHero.searchBarHeight,
+          height: HomeHero.searchBarHeight,
+          decoration: BoxDecoration(
+            color: palette.searchBar,
+            borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
+          ),
+          child: Center(
+            child: busy
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: HomePalette.accent,
+                    ),
+                  )
+                : Icon(icon, size: 17, color: palette.searchBarText),
+          ),
+        ),
       ),
     );
   }

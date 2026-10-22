@@ -27,6 +27,11 @@ class HomeState {
   final List<HomeCell> cells;
 
   final int tabIndex;
+
+  /// 服务端下发的顶栏分类（`data.tab_item`）。空时调用方用 [HomeNotifier.tabs]
+  /// 的本地兜底表。
+  final List<HomeTabItem> tabs;
+
   final bool isLoading;
   final bool isLoadMore;
   final bool hasMore;
@@ -35,6 +40,7 @@ class HomeState {
   const HomeState({
     this.items = const [],
     this.cells = const [],
+    this.tabs = const [],
     this.tabIndex = 0,
     this.isLoading = false,
     this.isLoadMore = false,
@@ -45,6 +51,7 @@ class HomeState {
   HomeState copyWith({
     List<MediaItem>? items,
     List<HomeCell>? cells,
+    List<HomeTabItem>? tabs,
     int? tabIndex,
     bool? isLoading,
     bool? isLoadMore,
@@ -55,6 +62,7 @@ class HomeState {
     return HomeState(
       items: items ?? this.items,
       cells: cells ?? this.cells,
+      tabs: tabs ?? this.tabs,
       tabIndex: tabIndex ?? this.tabIndex,
       isLoading: isLoading ?? this.isLoading,
       isLoadMore: isLoadMore ?? this.isLoadMore,
@@ -70,6 +78,10 @@ class _TabFeed {
 
   /// Upstream blocks for the current page; empty when none were recognised.
   List<HomeCell> cells = [];
+
+  /// 服务端下发的顶栏分类，跟区块一起按整页替换（分页响应里只有第一页
+  /// 带 `tab_item`，跟其他光标字段一样不能在追加时被空值冲掉）。
+  List<HomeTabItem> tabs = [];
   int offset = 0;
   String? sessionId;
   int searchPage = 0;
@@ -118,6 +130,9 @@ class _FetchedFeed {
   /// Upstream blocks, when this page came from the bookstore tab feed.
   /// Empty for search/other sources, which have no block structure.
   final List<HomeCell> cells;
+
+  /// 服务端下发的顶栏分类；空表示这页没带 `tab_item`。
+  final List<HomeTabItem> tabs;
   final int? nextOffset;
   final String? sessionId;
   final int searchPage;
@@ -132,6 +147,7 @@ class _FetchedFeed {
   const _FetchedFeed({
     required this.items,
     this.cells = const [],
+    this.tabs = const [],
     required this.nextOffset,
     required this.sessionId,
     required this.searchPage,
@@ -339,6 +355,7 @@ class HomeNotifier extends Notifier<HomeState> {
       state = state.copyWith(
         items: feed.items,
         cells: feed.cells,
+        tabs: feed.tabs,
         isLoading: false,
         isLoadMore: false,
         hasMore: feed.hasMore,
@@ -376,13 +393,20 @@ class HomeNotifier extends Notifier<HomeState> {
   /// Restores a cached tab immediately. Incrementing the generation happens
   /// even on a cache hit, which invalidates requests started by the old tab.
   void selectTab(int index) {
-    if (index == state.tabIndex || index < 0 || index >= tabs.length) return;
+    // 上限用服务端下发的分类数（有就 11 个），没下发时退回本地兜底表。
+    final limit = state.tabs.isNotEmpty ? state.tabs.length : tabs.length;
+    if (index == state.tabIndex || index < 0 || index >= limit) return;
     ++_generation;
     _activeRequest?.cancel();
     final cached = _feeds[index];
     state = state.copyWith(
       tabIndex: index,
       items: cached?.items ?? const [],
+      // cells / tabs 必须跟着换：切到新 tab 时沿用上一个 tab 的区块会让
+      // 首页显示别的 tab 的内容；而回到首页时旧的 cells 已随 feed 重建，
+      // 不显式清空就会渲染出上一页的块。
+      cells: cached?.cells ?? const [],
+      tabs: state.tabs,
       isLoading: false,
       isLoadMore: false,
       hasMore: cached?.hasMore ?? true,
@@ -459,10 +483,15 @@ class HomeNotifier extends Notifier<HomeState> {
         final items = _forceKind(page.items, kind);
         final nextOffset = page.nextOffset;
         final canAdvance = nextOffset != null && nextOffset > 0;
-        if (items.isNotEmpty || canAdvance) {
+        // 准入条件必须包含 cells：官方书城区块（`tab_type=2`）的书全嵌在
+        // `cell_data` 里，`parseMediaItems` 不一定能拉平出 items。只看 items
+        // 会把一整页区块当成「空响应」丢掉，然后退回搜索路径，cells 全丢——
+        // 这正是真机上区块一个都不出现、首页退回旧网格的原因。
+        if (items.isNotEmpty || page.cells.isNotEmpty || canAdvance) {
           return _FetchedFeed(
             items: items,
             cells: page.cells,
+            tabs: page.tabs,
             nextOffset: canAdvance ? nextOffset : null,
             sessionId: page.sessionId,
             searchPage: 0,
@@ -514,6 +543,7 @@ class HomeNotifier extends Notifier<HomeState> {
       return _FetchedFeed(
         items: page.items,
         cells: page.cells,
+        tabs: page.tabs,
         nextOffset: page.nextOffset,
         sessionId: page.sessionId,
         searchPage: page.searchPage,
@@ -811,7 +841,13 @@ class HomeNotifier extends Notifier<HomeState> {
       ..items = replace ? fresh : [...feed.items, ...fresh]
       // 区块只在整页替换时跟着换：追加一页时上游给的是同一批块的续页，
       // 把新块接在后面会让标题重复出现。
-      ..cells = replace ? fetched.cells : feed.cells
+      //
+      // 但「续播」路径（replace=false）不一样：它保的是 items 不清空，区块
+      // 本来就没有旧值可保——从落地缓存恢复时 feed.cells 是空的，若也跳过
+      // 赋值，首页就永远拿不到区块，只能退回旧网格。真机冷启动必命中落地
+      // 缓存，所以这条路径就是「真机上区块一个都不出现」的根因。
+      ..cells = (replace || feed.cells.isEmpty) ? fetched.cells : feed.cells
+      ..tabs = fetched.tabs.isNotEmpty ? fetched.tabs : feed.tabs
       ..offset = fetched.nextOffset ?? feed.offset
       ..sessionId = fetched.sessionId ?? feed.sessionId
       ..searchPage = fetched.searchPage

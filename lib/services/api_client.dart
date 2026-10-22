@@ -47,12 +47,43 @@ class HomepagePage {
   final int? nextOffset;
   final String? sessionId;
 
+  /// 服务端本次下发的一级分类（`data.tab_item` 逐条的 `tab_type` / `title`）。
+  ///
+  /// 官方书城顶部的 tab 条不是写死的：`tab_item` 里每一条就是一个 tab，
+  /// 名字取服务端的 `title`、身份取 `tab_type`（官方 `BaseBookMallFragment`
+  /// 的 `f()` 返回 `getTabType()`，`n()` 返回 `getTabName()`）。本地此前硬编码
+  /// 了 6 个跨媒介分类，既缺官方实际下发的「经典/知识/短篇/新书/商城」，
+  /// 又编了一个服务端根本没有的「漫剧」，所以顶栏怎么调都不像官方。
+  ///
+  /// 空表示这次响应没带 `tab_item`（老后端或非首页接口），调用方应退回
+  /// 本地兜底表。
+  final List<HomeTabItem> tabs;
+
   const HomepagePage({
     required this.items,
     required this.nextOffset,
     required this.sessionId,
     this.cells = const [],
+    this.tabs = const [],
   });
+}
+
+/// 服务端下发的一个一级分类（`data.tab_item` 的一项）。
+class HomeTabItem {
+  final int type;
+  final String title;
+
+  const HomeTabItem({required this.type, required this.title});
+
+  @override
+  bool operator ==(Object other) =>
+      other is HomeTabItem && other.type == type && other.title == title;
+
+  @override
+  int get hashCode => Object.hash(type, title);
+
+  @override
+  String toString() => 'HomeTabItem($type, $title)';
 }
 
 /// API client talking to the local Rust core.
@@ -1320,13 +1351,23 @@ class ApiClient {
       int? nextOffset;
       String? nextSessionId;
       var selectedPayload = payload;
+      final tabs = <HomeTabItem>[];
       final data = payload['data'];
       if (data is Map) {
         final tabItems = data['tab_item'];
         if (tabItems is List) {
           selectedPayload = <String, dynamic>{};
           for (final raw in tabItems) {
-            if (raw is! Map || raw['tab_type']?.toString() != '$tabType') {
+            if (raw is! Map) continue;
+            // 顶栏分类：官方用服务端 title 当名字、tab_type 当身份，这里照抄。
+            final rawType = raw['tab_type'];
+            final rawTitle = raw['title'];
+            if (rawType is num && rawTitle is String && rawTitle.isNotEmpty) {
+              tabs.add(
+                HomeTabItem(type: rawType.toInt(), title: rawTitle),
+              );
+            }
+            if (raw['tab_type']?.toString() != '$tabType') {
               continue;
             }
             selectedPayload = Map<String, dynamic>.from(raw);
@@ -1352,6 +1393,7 @@ class ApiClient {
         page: HomepagePage(
           items: items,
           cells: cells,
+          tabs: tabs,
           nextOffset: nextOffset,
           sessionId: nextSessionId,
         ),

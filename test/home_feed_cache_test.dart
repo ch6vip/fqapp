@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
@@ -327,6 +328,52 @@ void main() {
       container.read(provider).items.map((item) => item.id),
       ['fresh-1'],
     );
+  });
+
+  // 真机冷启动必命中落地缓存，走的是 replace=false 的续播分支。区块此前只在
+  // replace=true 时赋值，于是真机上 feed.cells 永远是空的，首页永远退回旧网格。
+  // 本用例锁死：续播路径也必须拿到这一页的区块。
+  test('a resumed cold start still receives the page blocks', () async {
+    HomeFeedCache.hiveReady = true;
+    final cache = HomeFeedCache();
+    await cache.save(
+      0,
+      [_item('old-1'), _item('last')],
+      hasMore: true,
+      lastVid: 'last',
+    );
+
+    const rankCell = HomeCell(
+      showType: 511,
+      name: '排行榜',
+      id: '',
+      style: {},
+      items: [],
+      children: [],
+    );
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        feedCache: cache,
+        initialTabIndex: 0,
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                const HomepagePage(
+                  items: [],
+                  cells: [rankCell],
+                  nextOffset: null,
+                  sessionId: null,
+                ),
+        searchLoader: (query, {int page = 1}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(provider.notifier).load();
+    expect(
+      container.read(provider).cells.map((cell) => cell.showType),
+      [511],
+    );
+    await cache.close();
   });
 
   test('the position reported by the page is persisted as the resume point',

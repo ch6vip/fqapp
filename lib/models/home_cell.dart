@@ -89,6 +89,9 @@ List<HomeCell> parseHomeCells(Map<String, dynamic> payload) {
       }
     }
   }
+  // A single tab object — what the client passes after picking the tab whose
+  // `tab_type` the caller asked for — carries `cell_data` at its own top level,
+  // with no wrapping `data`/`tab_item`.
   blocks ??= data['cell_data'];
   if (blocks == null) {
     final cellView = data['cell_view'];

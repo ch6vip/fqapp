@@ -49,6 +49,8 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
+  /// 旧编辑式布局的副标题（已不再用于首屏：官方书城区块自带 `bqe.xml`
+  /// 头部，没有这种一句文案）。保留是因为 fallback 网格仍会用到。
   static const _captions = [
     '换个故事，换一种心情',
     '翻开之后，就舍不得合上',
@@ -137,8 +139,23 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   List<MediaItem> _visibleItems(HomeState state) {
     if (state.tabIndex == 0) return state.items;
-    final kind = HomeNotifier.tabKinds[homeCategories[state.tabIndex].label];
+    final categories = _categoriesOf(state);
+    if (state.tabIndex >= categories.length) return state.items;
+    final kind = HomeNotifier.tabKinds[categories[state.tabIndex].label];
+    if (kind == null) return state.items;
     return state.items.where((item) => item.kind == kind).toList();
+  }
+
+  /// 顶栏分类：服务端下发了就用服务端的，否则退回本地兜底表。
+  ///
+  /// 官方书城的顶栏由 `data.tab_item` 决定（名字取 `title`、身份取
+  /// `tab_type`），本地写死的 6 个跨媒介分类既缺「经典/知识/短篇/新书/
+  /// 商城」，又多一个服务端没有的「漫剧」，所以优先用服务端的。
+  List<HomeCategory> _categoriesOf(HomeState state) {
+    if (state.tabs.isEmpty) return homeCategories;
+    return [
+      for (final tab in state.tabs) HomeCategory(tab.title, Icons.circle),
+    ];
   }
 
   @override
@@ -201,7 +218,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 delegate: HomeTabBarDelegate(
                                   selectedIndex: state.tabIndex,
                                   onSelect: notifier.selectTab,
-                                  extent: 54 + (textScale - 1).clamp(0, 2) * 20,
+                                  categories: _categoriesOf(state),
+                                  extent:
+                                      HomeTabBarDelegate.barHeight +
+                                      HomeTabBarDelegate.bottomPadding +
+                                      (textScale - 1).clamp(0, 2) * 16,
                                   dark: palette.dark,
                                 ),
                               ),
@@ -240,17 +261,20 @@ class _HomePageState extends ConsumerState<HomePage> {
     final slivers = <Widget>[];
     var rendered = false;
     for (final cell in cells) {
-      if (HomeCellRenderers.handles(cell.showType)) {
-        final widget = HomeCellRenderers.build(
-          context,
-          cell,
-          fallback: () => _gridFallbackFor(cell, gridWidth),
-          onOpen: _openItem,
-        );
-        if (widget != null) {
-          slivers.add(SliverToBoxAdapter(child: widget));
-          rendered = true;
-        }
+      // 只有真拿到 widget 才算处理过。handles() 为真但 build() 返回 null 时
+      // 要落到下面的 grid 分支，否则这个块会被静默跳过——首页曾因此只显示
+      // 排行榜、整段「猜你喜欢」消失。
+      final custom = HomeCellRenderers.handles(cell.showType)
+          ? HomeCellRenderers.build(
+              context,
+              cell,
+              fallback: () => _gridFallbackFor(cell, gridWidth),
+              onOpen: _openItem,
+            )
+          : null;
+      if (custom != null) {
+        slivers.add(SliverToBoxAdapter(child: custom));
+        rendered = true;
         continue;
       }
       if (isHomeGridBlock(cell)) {
@@ -349,10 +373,8 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (rest.isNotEmpty) ...[
         SliverToBoxAdapter(
           child: HomeSectionHeader(
-            title: state.tabIndex == 0
-                ? '发现更多好故事'
-                : '值得一看的${homeCategories[state.tabIndex].label}',
-            subtitle: _captions[state.tabIndex],
+            title: '值得一看',
+            subtitle: _captions[state.tabIndex % _captions.length],
           ),
         ),
         _gridSliverFor(state, rest, gridWidth),

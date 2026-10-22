@@ -118,6 +118,41 @@ void main() {
       expect(cells.single.flatten().map((i) => i.id), ['v1']);
     });
 
+    test('accepts a single tab object, which is what the client passes', () {
+      // api_client 挑出 tab_type 匹配的那一项后，把「单个 tab 对象」交给解析
+      // 器——没有外层 data / tab_item。真机上首页曾经因此拿到 0 个区块，
+      // 退回混排，区块标题一个都不出现。
+      final tab = {
+        'tab_type': 2,
+        'title': '推荐',
+        'cell_data': [
+          {
+            'show_type': 511,
+            'cell_name': '排行榜',
+            'cell_data': [
+              {
+                'show_type': 512,
+                'cell_data': [book('t1', '书一')],
+              },
+            ],
+          },
+          {
+            'show_type': 384,
+            'cell_name': '猜你喜欢',
+            'cell_data': [
+              {
+                'show_type': 385,
+                'cell_data': [book('t2', '书二')],
+              },
+            ],
+          },
+        ],
+      };
+      final cells = parseHomeCells(tab);
+      expect(cells.map((c) => c.name), ['排行榜', '猜你喜欢']);
+      expect(cells.map((c) => c.flatten().length), [1, 1]);
+    });
+
     test('returns nothing for a payload without blocks', () {
       expect(parseHomeCells(const {'code': 0, 'data': {}}), isEmpty);
       // 老后端只有扁平列表时不能让页面变空：调用方退回 items。

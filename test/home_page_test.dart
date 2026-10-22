@@ -127,7 +127,9 @@ void main() {
   });
 
   testWidgets('首页按上游区块渲染：排行榜条 + 猜你喜欢网格', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(400, 900));
+    // 视口要高：排行榜是 16 行竖列表（官方 b7d.xml），矮屏会把后面的区块
+    // 挤出视口，find 默认只看可见节点。
+    await tester.binding.setSurfaceSize(const Size(400, 2600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 
@@ -217,8 +219,9 @@ void main() {
     // 两个区块标题都在。
     expect(find.text('排行榜'), findsWidgets);
     expect(find.text('猜你喜欢'), findsWidgets);
-    // 排行榜自带横向条。
-    expect(find.byKey(const ValueKey('home_rank_strip')), findsOneWidget);
+    // 排行榜是竖列表（官方 b7d.xml），不是横向条：序号 1、2 都渲染出来。
+    expect(find.text('1'), findsWidgets);
+    expect(find.text('2'), findsWidgets);
     // 卡片都在（榜单书 + 猜你喜欢）。
     expect(find.text('榜单书一'), findsWidgets);
     expect(find.text('猜你喜欢一'), findsWidgets);
@@ -263,7 +266,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final hint = find.text('搜索你想看的故事');
+      final hint = find.text('搜索书名、作者');
       expect(hint, findsOneWidget);
       expect(
         tester.getRect(hint).right,
