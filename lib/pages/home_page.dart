@@ -144,6 +144,13 @@ class _HomePageState extends ConsumerState<HomePage> {
     final notifier = ref.read(homeProvider.notifier);
     final palette = HomePalette.of(context);
     final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+    // 吸顶条要用这段高度换算到屏幕坐标；它自己在 SafeArea 里面，读不到。
+    final topInset = MediaQuery.paddingOf(context).top;
+    // 暖光是按**整个页面宽度**画的（圆心贴着右上角），而吸顶条坐在居中的
+    // 内容列里：平板横屏 / 桌面窗口下列宽小于页面宽，两层的圆心和半径就
+    // 对不上，吸顶边上会重新露出一条淡横线。宽度也一并带下去，吸顶条才能
+    // 把这一列的左边距减掉，画出同一张渐变的下半段。
+    final viewportWidth = MediaQuery.sizeOf(context).width;
 
     return Scaffold(
       backgroundColor: palette.canvas,
@@ -200,6 +207,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   onSelect: notifier.selectTab,
                                   extent: 54 + (textScale - 1).clamp(0, 2) * 20,
                                   dark: palette.dark,
+                                  eink: palette.eink,
+                                  oled: palette.oled,
+                                  scroll: _scroll,
+                                  topInset: topInset,
+                                  viewportWidth: viewportWidth,
                                 ),
                               ),
                               ..._contentSlivers(

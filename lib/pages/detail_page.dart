@@ -479,6 +479,9 @@ class _DetailPageState extends State<DetailPage> {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final desktop = isWindowsDesktop && MediaQuery.sizeOf(context).width >= 700;
+    // AppBar 60 + 状态栏。浅色下暖光要盖到标题栏后面，所以 body 反向上移
+    // 同样的高度，正文视口保持不变。
+    final appBarHeight = MediaQuery.paddingOf(context).top + 60;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value:
           (palette.dark
@@ -490,10 +493,12 @@ class _DetailPageState extends State<DetailPage> {
               ),
       child: Scaffold(
         backgroundColor: palette.canvas,
+        extendBodyBehindAppBar: !desktop,
         appBar: desktop
             ? null
             : AppBar(
-                backgroundColor: palette.canvas,
+                // 透明标题栏让页面顶部的暖光穿过去，不再从标题栏下沿开始。
+                backgroundColor: Colors.transparent,
                 surfaceTintColor: Colors.transparent,
                 scrolledUnderElevation: 0,
                 elevation: 0,
@@ -568,58 +573,78 @@ class _DetailPageState extends State<DetailPage> {
               ),
         body: desktop
             ? _desktopBody(palette)
-            : Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 840),
-                  child: RefreshIndicator(
-                    onRefresh: _load,
-                    color: HomePalette.accent,
-                    backgroundColor: palette.surface,
-                    child: CustomScrollView(
-                      key: const Key('detail_scroll'),
-                      controller: _scroll,
-                      physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
+            : Stack(
+                children: [
+                  // 暖光从屏幕最顶端铺到 hero 下方；标题栏透明后，它不会再
+                  // 被切成一条横边。
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: appBarHeight + 260,
+                    child: DetailMastheadWash(scroll: _scroll),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.only(top: appBarHeight),
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 840),
+                        child: RefreshIndicator(
+                          onRefresh: _load,
+                          color: HomePalette.accent,
+                          backgroundColor: palette.surface,
+                          child: CustomScrollView(
+                            key: const Key('detail_scroll'),
+                            controller: _scroll,
+                            physics: const BouncingScrollPhysics(
+                              parent: AlwaysScrollableScrollPhysics(),
+                            ),
+                            slivers: [
+                              SliverToBoxAdapter(
+                                child: DetailHero(
+                                  item: widget.item,
+                                  detail: _bookDetail,
+                                ),
+                              ),
+                              SliverPadding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  0,
+                                  20,
+                                  28,
+                                ),
+                                sliver: SliverToBoxAdapter(
+                                  child: !_supported
+                                      ? _stateCard(
+                                          icon: LucideIcons.file_question_mark,
+                                          title: '暂不支持此内容类型',
+                                          message: '可以返回继续发现其他故事。',
+                                        )
+                                      : _loading
+                                      ? _loadingView(palette)
+                                      : _error != null
+                                      ? _stateCard(
+                                          icon: LucideIcons.wifi_off,
+                                          title: '暂时没能加载章节',
+                                          message: _cachedBook == null
+                                              ? '请检查网络连接，再试一次。'
+                                              : '网络不可用。这本书已经下载到本地，可以直接离线阅读。',
+                                          retry: true,
+                                          onReadCached: _cachedBook == null
+                                              ? null
+                                              : _readCached,
+                                        )
+                                      : _content(palette),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                      slivers: [
-                        SliverToBoxAdapter(
-                          child: DetailHero(
-                            item: widget.item,
-                            scroll: _scroll,
-                            detail: _bookDetail,
-                          ),
-                        ),
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-                          sliver: SliverToBoxAdapter(
-                            child: !_supported
-                                ? _stateCard(
-                                    icon: LucideIcons.file_question_mark,
-                                    title: '暂不支持此内容类型',
-                                    message: '可以返回继续发现其他故事。',
-                                  )
-                                : _loading
-                                ? _loadingView(palette)
-                                : _error != null
-                                ? _stateCard(
-                                    icon: LucideIcons.wifi_off,
-                                    title: '暂时没能加载章节',
-                                    message: _cachedBook == null
-                                        ? '请检查网络连接，再试一次。'
-                                        : '网络不可用。这本书已经下载到本地，可以直接离线阅读。',
-                                    retry: true,
-                                    onReadCached: _cachedBook == null
-                                        ? null
-                                        : _readCached,
-                                  )
-                                : _content(palette),
-                          ),
-                        ),
-                      ],
                     ),
                   ),
-                ),
+                ],
               ),
         bottomNavigationBar: desktop
             ? null
@@ -688,7 +713,6 @@ class _DetailPageState extends State<DetailPage> {
           ),
           DetailHero(
             item: widget.item,
-            scroll: _scroll,
             detail: _bookDetail,
             desktop: true,
             compactDesktop: compact,

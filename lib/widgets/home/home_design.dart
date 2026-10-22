@@ -13,28 +13,77 @@ class HomePalette {
   /// 仍为品牌橙（93 处直接引用），本轮不全量替换，见收尾未验项。
   final bool eink;
 
-  const HomePalette(this.dark, {this.eink = false});
+  /// OLED 纯黑：画布用纯黑省电，卡片 / 弹层保持近黑，靠描边维持层次。
+  /// 只在深色外观下生效（见 [oledActive]），这里的 `&& dark` 是二重保险。
+  final bool oled;
+
+  const HomePalette(this.dark, {this.eink = false, this.oled = false});
 
   factory HomePalette.of(BuildContext context) => HomePalette(
     Theme.of(context).brightness == Brightness.dark,
     eink: einkModeNotifier.value,
+    oled: oledActive(),
   );
 
-  Color get canvas => eink
-      ? Colors.white
-      : (dark ? const Color(0xFF151517) : const Color(0xFFFCFAF7));
-  Color get surface =>
-      eink ? Colors.white : (dark ? const Color(0xFF242427) : Colors.white);
-  Color get ink =>
-      eink ? Colors.black : (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522));
-  Color get muted =>
-      eink ? Colors.black : (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66));
+  // 四层颜色都有三个候选：OLED 纯黑只在深色下多出一档，写成三支的
+  // 逐层嵌套比嵌套三元表达式好读。
+  Color get canvas {
+    if (eink) return Colors.white;
+    if (oled && dark) return Colors.black;
+    return dark ? const Color(0xFF151517) : const Color(0xFFFCFAF7);
+  }
+
+  Color get surface {
+    if (eink) return Colors.white;
+    if (oled && dark) return const Color(0xFF0C0C0E);
+    return dark ? const Color(0xFF242427) : Colors.white;
+  }
+
+  Color get ink => eink
+      ? Colors.black
+      : (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522));
+  Color get muted => eink
+      ? Colors.black
+      : (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66));
   Color get accentText => eink ? Colors.black : (dark ? accent : accentStrong);
-  Color get soft =>
-      eink ? Colors.white : (dark ? const Color(0xFF202023) : const Color(0xFFF1EEE9));
-  Color get line =>
-      eink ? Colors.black : (dark ? const Color(0xFF333336) : const Color(0xFFE8E4DE));
+
+  Color get soft {
+    if (eink) return Colors.white;
+    if (oled && dark) return const Color(0xFF141417);
+    return dark ? const Color(0xFF202023) : const Color(0xFFF1EEE9);
+  }
+
+  Color get line {
+    if (eink) return Colors.black;
+    if (oled && dark) return const Color(0xFF2E2E34);
+    return dark ? const Color(0xFF333336) : const Color(0xFFE8E4DE);
+  }
 }
+
+/// 底部弹层（bottom sheet）的底色。
+///
+/// 深色 / OLED 下换成比画布高一档的 surface：barrier 的黑色叠在纯黑画布
+/// 上不会让页面变暗，弹层若仍取 canvas 就和页面连成一片，看不出上缘；
+/// 浅色仍用原来的画布色，弹层靠 barrier 变暗区分。
+Color homeSheetColor(HomePalette palette) =>
+    palette.dark ? palette.surface : palette.canvas;
+
+/// 弹层里成组的卡片：深色下比 [homeSheetColor] 再错一档（字段色），
+/// 浅色仍是白卡。
+Color homeSheetCardColor(HomePalette palette) =>
+    palette.dark ? palette.soft : palette.surface;
+
+/// 弹层上缘的一圈发丝线：OLED 下画布与浮层都是近黑，没有它边界仍不明显。
+///
+/// 只给深色 / OLED：浅色弹层与奶白画布本来就靠 barrier 区分，多一圈线反而
+/// 突兀；墨水屏 `line` 是纯黑，下发了就会在弹层四周描出一圈黑边。
+RoundedRectangleBorder homeSheetShape(HomePalette palette, {double top = 24}) =>
+    RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(top)),
+      side: palette.dark
+          ? BorderSide(color: palette.line.withValues(alpha: 0.8), width: 0.8)
+          : BorderSide.none,
+    );
 
 /// Pointer, keyboard and accessibility activation share the same action.
 /// The spring settles after interaction; no idle animation is scheduled.

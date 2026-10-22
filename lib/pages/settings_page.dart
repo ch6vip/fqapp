@@ -36,8 +36,16 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: LucideIcons.palette,
         title: '外观',
-        subtitle: '深色模式、墨水屏模式',
-        items: [_themeModeItem(), _einkModeItem()],
+        subtitle: '主题模式、OLED 纯黑',
+        // 用 builder 而不是固定 items：切到深色 / 切回浅色后，分类页重建
+        // 时会重新判定，OLED 行不必退出重进就能出现或消失。
+        itemsBuilder: (context) => [
+          _themeModeItem(),
+          if (isDarkAppearance(
+            systemBrightness: MediaQuery.platformBrightnessOf(context),
+          ))
+            _oledModeItem(),
+        ],
       ),
       SettingsCategory(
         icon: LucideIcons.book_open,
@@ -216,6 +224,7 @@ class SettingsPage extends StatelessWidget {
                                       (_) => SettingsCategoryPage(
                                         title: cat.title,
                                         items: cat.items,
+                                        itemsBuilder: cat.itemsBuilder,
                                       ),
                                 ),
                               );
@@ -233,16 +242,18 @@ class SettingsPage extends StatelessWidget {
 
   // ── 外观 ──────────────────────────────────────────────────────────────
 
+  /// 主题模式（参考 legado 的 themeMode）：跟随系统 / 浅色 / 深色 / 墨水屏
+  /// 四选一，墨水屏既然也是一种外观就并进这个入口，不再单列一个开关。
   SettingsItem _themeModeItem() => SettingsItem(
     icon: LucideIcons.sun_moon,
-    title: '深色模式',
-    trailingBuilder: (context) => ValueListenableBuilder<ThemeMode>(
-      valueListenable: themeModeNotifier,
-      builder: (context, mode, _) => Row(
+    title: '主题模式',
+    trailingBuilder: (context) => ListenableBuilder(
+      listenable: Listenable.merge([themeModeNotifier, einkModeNotifier]),
+      builder: (context, _) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            _modeLabel(mode),
+            _appearance.label,
             style: TextStyle(color: Theme.of(context).colorScheme.outline),
           ),
           const SizedBox(width: 4),
@@ -253,39 +264,41 @@ class SettingsPage extends StatelessWidget {
     onTap: (context, setState) => _showThemeModeDialog(context),
   );
 
-  String _modeLabel(ThemeMode mode) {
-    switch (mode) {
+  /// 当前外观：墨水屏优先级最高（深色反白在墨水屏上残影最重），
+  /// 没有开墨水屏时再按深色模式取值。
+  _AppearanceChoice get _appearance {
+    if (einkModeNotifier.value) return _AppearanceChoice.eink;
+    switch (themeModeNotifier.value) {
       case ThemeMode.light:
-        return '浅色';
+        return _AppearanceChoice.light;
       case ThemeMode.dark:
-        return '深色';
+        return _AppearanceChoice.dark;
       case ThemeMode.system:
-        return '跟随系统';
+        return _AppearanceChoice.system;
     }
   }
 
   Future<void> _showThemeModeDialog(BuildContext context) async {
-    final selected = await showDialog<ThemeMode>(
+    final selected = await showDialog<_AppearanceChoice>(
       context: context,
       builder: (c) => SimpleDialog(
-        title: const Text('深色模式'),
+        title: const Text('主题模式'),
         children: [
-          RadioGroup<ThemeMode>(
-            groupValue: themeModeNotifier.value,
+          RadioGroup<_AppearanceChoice>(
+            groupValue: _appearance,
             onChanged: (v) {
               if (v != null) Navigator.pop(c, v);
             },
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                for (final m in const [
-                  ThemeMode.system,
-                  ThemeMode.light,
-                  ThemeMode.dark,
-                ])
-                  RadioListTile<ThemeMode>(
-                    value: m,
-                    title: Text(_modeLabel(m)),
+                for (final choice in _AppearanceChoice.values)
+                  RadioListTile<_AppearanceChoice>(
+                    value: choice,
+                    title: Text(choice.label),
+                    subtitle: choice == _AppearanceChoice.eink
+                        ? const Text('纯黑白、无毛玻璃、无过渡动画，适合墨水屏设备')
+                        : null,
                   ),
               ],
             ),
@@ -294,11 +307,34 @@ class SettingsPage extends StatelessWidget {
       ),
     );
     if (selected == null || !context.mounted) return;
-    themeModeNotifier.value = selected;
+    await _setAppearance(context, selected);
+  }
+
+  /// 主题模式落盘：浅色 / 深色 / 跟随系统写 theme_mode，墨水屏另存
+  /// eink_mode。选墨水屏时保留原先的浅色 / 深色值，退出墨水屏能回到它。
+  Future<void> _setAppearance(
+    BuildContext context,
+    _AppearanceChoice choice,
+  ) async {
+    final eink = choice == _AppearanceChoice.eink;
+    final mode = switch (choice) {
+      _AppearanceChoice.system => ThemeMode.system,
+      _AppearanceChoice.light => ThemeMode.light,
+      _AppearanceChoice.dark => ThemeMode.dark,
+      _AppearanceChoice.eink => themeModeNotifier.value,
+    };
+    einkModeNotifier.value = eink;
+    themeModeNotifier.value = mode;
+    // 墨水屏恒为浅色外观，OLED 纯黑无从生效：一并关掉，否则以后切回深色
+    // 会被上一次的纯黑默默接管。
+    if (eink) oledModeNotifier.value = false;
     try {
       final sp = await SharedPreferences.getInstance();
-      if (!await sp.setString(themeModeKey, selected.name)) {
-        throw StateError('Theme preference was not saved');
+      final modeSaved = await sp.setString(themeModeKey, mode.name);
+      final einkSaved = await sp.setBool(einkModeKey, eink);
+      final oledSaved = eink ? await sp.setBool(oledModeKey, false) : true;
+      if (!modeSaved || !einkSaved || !oledSaved) {
+        throw StateError('Appearance preference was not saved');
       }
     } catch (_) {
       if (context.mounted) {
@@ -309,36 +345,36 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  /// #15/#9 墨水屏模式：纯黑白、无毛玻璃、无过渡动画。开启时强制浅色，
-  /// 深色模式恢复后仍按原设置生效。
-  SettingsItem _einkModeItem() => SettingsItem(
-    icon: LucideIcons.book_open,
-    title: '墨水屏模式',
-    subtitle: '纯黑白、无毛玻璃、无过渡动画，适合墨水屏设备',
+  /// OLED 纯黑：画布纯黑省电，卡片 / 弹层保持近黑，靠描边撑住层次。
+  /// 只在深色外观下显示（浅色 / 墨水屏没有可省的黑）。
+  SettingsItem _oledModeItem() => SettingsItem(
+    icon: LucideIcons.smartphone,
+    title: 'OLED 纯黑',
+    subtitle: '大面积纯黑省电，仅在深色外观下生效',
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
-      valueListenable: einkModeNotifier,
+      valueListenable: oledModeNotifier,
       builder: (context, value, _) => Switch(
         value: value,
-        onChanged: (v) => unawaited(_setEinkMode(context, v)),
+        onChanged: (v) => unawaited(_setOledMode(context, v)),
       ),
     ),
     onTap: (context, setState) {
-      unawaited(_setEinkMode(context, !einkModeNotifier.value));
+      unawaited(_setOledMode(context, !oledModeNotifier.value));
     },
   );
 
-  Future<void> _setEinkMode(BuildContext context, bool value) async {
-    einkModeNotifier.value = value;
+  Future<void> _setOledMode(BuildContext context, bool value) async {
+    oledModeNotifier.value = value;
     try {
       final sp = await SharedPreferences.getInstance();
-      if (!await sp.setBool(einkModeKey, value)) {
-        throw StateError('E-ink preference was not saved');
+      if (!await sp.setBool(oledModeKey, value)) {
+        throw StateError('OLED preference was not saved');
       }
     } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('墨水屏模式已更新，但未能保存')));
+        ).showSnackBar(const SnackBar(content: Text('OLED 纯黑已更新，但未能保存')));
       }
     }
   }
@@ -601,4 +637,17 @@ class SettingsPage extends StatelessWidget {
   // ── 关于 ──────────────────────────────────────────────────────────────
   // The About category opens the About page directly via its pageBuilder;
   // no category-page items are needed.
+}
+
+/// 主题模式的可选项：三种深浅色模式 + 墨水屏。墨水屏本不是 ThemeMode，
+/// 但用户眼里它就是第四种外观，所以放进同一个选择器（同 legado）。
+enum _AppearanceChoice {
+  system('跟随系统'),
+  light('浅色'),
+  dark('深色'),
+  eink('墨水屏');
+
+  const _AppearanceChoice(this.label);
+
+  final String label;
 }

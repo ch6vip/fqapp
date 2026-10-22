@@ -25,12 +25,16 @@ class ReaderAppearanceSheet extends StatefulWidget {
   /// 此时面板显示墨水屏为选中，色块点按禁用，避免点 夜间/米白 却毫无变化。
   final bool einkOverride;
 
+  /// 全局 OLED 纯黑已开启：阅读背景强制夜间 + 纯黑画布，同样禁用色块。
+  final bool oledOverride;
+
   const ReaderAppearanceSheet({
     super.key,
     required this.initialValue,
     required this.onChanged,
     required this.onPickFont,
     this.einkOverride = false,
+    this.oledOverride = false,
   });
 
   @override
@@ -40,10 +44,16 @@ class ReaderAppearanceSheet extends StatefulWidget {
 class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
   late ReaderPreferences _value = widget.initialValue;
 
-  /// 面板显示用的预设：全局墨水屏开启时强制墨水屏，与保存的预设分开，
-  /// 其它排版改动仍写保存的预设，关闭全局模式后恢复。
-  ReaderThemePreset get _displayPreset =>
-      widget.einkOverride ? ReaderThemePreset.eink : _value.themePreset;
+  /// 面板显示用的预设：全局墨水屏 / OLED 纯黑开启时强制到对应预设，
+  /// 与保存的预设分开，其它排版改动仍写保存的预设，关闭全局模式后恢复。
+  ReaderThemePreset get _displayPreset {
+    if (widget.einkOverride) return ReaderThemePreset.eink;
+    if (widget.oledOverride) return ReaderThemePreset.dark;
+    return _value.themePreset;
+  }
+
+  /// 背景被全局模式接管时色块不可用（点了也不会有变化）。
+  bool get _backgroundLocked => widget.einkOverride || widget.oledOverride;
   bool _importing = false;
   String? _fontError;
 
@@ -208,8 +218,8 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // 全局墨水屏开启时背景跟随全局，色块仅作展示。
-                        if (widget.einkOverride)
+                        // 全局墨水屏 / OLED 开启时背景跟随全局，色块仅作展示。
+                        if (_backgroundLocked)
                           Padding(
                             padding: const EdgeInsets.fromLTRB(
                               16,
@@ -218,7 +228,9 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                               12,
                             ),
                             child: Text(
-                              '全局墨水屏模式已开启，背景跟随全局设置',
+                              widget.einkOverride
+                                  ? '全局墨水屏模式已开启，背景跟随全局设置'
+                                  : '全局 OLED 纯黑已开启，背景跟随全局设置',
                               style: TextStyle(
                                 color: preset.mutedTextColor,
                                 fontSize: 12,
@@ -766,7 +778,7 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
       label: '${choice.label}阅读背景',
       child: InkWell(
         key: ValueKey('reader-theme-${choice.name}'),
-        onTap: widget.einkOverride
+        onTap: _backgroundLocked
             ? null
             : () => _update(_value.copyWith(themePreset: choice)),
         borderRadius: BorderRadius.circular(diameter / 2),

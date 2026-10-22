@@ -131,7 +131,8 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
     await tester.tap(find.text('外观'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('深色模式'));
+    // 深色是「主题模式」里的一个选项，不再是独立的「深色模式」开关。
+    await tester.tap(find.text('主题模式'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();

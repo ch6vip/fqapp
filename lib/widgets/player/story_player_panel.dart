@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lottie/lottie.dart';
 
 import '../../models/media_item.dart';
+import '../home/home_design.dart';
 
 /// 官方选集格子（`bbw.xml` + `hj3/r0.java` + colors.xml）：
 /// 当前集 文字 `@color/aok`=#FFFA6725、底 `@color/aom`=#1AFA6725、粗体；
@@ -20,9 +21,10 @@ const _watchedText = Color(0x66000000);
 /// = @color/skin_color_black_light = #FF000000。
 ///
 /// 注意别拿成深色皮肤的 `…_normal_dark` = #CCFFFFFF（白字）——那是配官方
-/// 深色面板的。本面板固定浅色（白底，见 `_panelSheet` 的 Colors.white），
-/// 错用深肤变体就是「浅灰格上白字」，数字几乎不可见（2026-09-27 真机截图
-/// 复盘；官方取值见 apktool `res/values/colors.xml:37,3293`）。
+/// 深色面板的。浅色下本面板仍是白底，错用深肤变体就是「浅灰格上白字」，
+/// 数字几乎不可见（2026-09-27 真机截图复盘；官方取值见 apktool
+/// `res/values/colors.xml:37,3293`）。深色 / OLED 由 [_episodeTextColor]
+/// 换成色板色，不再经过这个常量。
 const _normalText = Color(0xFF000000);
 
 /// 官方不可播格文字 `..._text_disable_light` = #33000000。
@@ -39,8 +41,12 @@ const _tileBg = Color(0x08000000);
 /// - 不可播：字 `..._text_disable_light`=#33000000，点击 Toast「该选集暂时无法播放」
 /// - 已看：字 `..._text_played_light`=#66000000
 /// - 普通：字 `..._text_normal_light`=@color/skin_color_black_light=#FF000000
-///   （深肤变体 `…_normal_dark`=#CCFFFFFF 配的是深色面板，本面板是浅色）
+///   （深肤变体 `…_normal_dark`=#CCFFFFFF 配的是深色面板；本仓库深色另走
+///   色板，见 [_episodeTextColor]）
 /// - 普通格底 `skin_color_gray_03_light`=#08000000
+///
+/// 取值只在浅色皮肤下直接生效；深色 / OLED 的格子字色与底色由
+/// [_episodeTextColor] 与 [_episodeTileBackground] 按色板换算。
 enum EpisodeTileState {
   normal,
   current,
@@ -58,6 +64,8 @@ enum EpisodeTileState {
     return EpisodeTileState.normal;
   }
 
+  /// 浅色皮肤下的格子字色（官方颜色，见上面的对照表）。深色 / OLED 由
+  /// [_episodeTextColor] 换成色板色。
   Color get textColor => switch (this) {
     EpisodeTileState.current => _currentText,
     EpisodeTileState.disabled => _disabledText,
@@ -65,12 +73,28 @@ enum EpisodeTileState {
     EpisodeTileState.normal => _normalText,
   };
 
+  /// 浅色皮肤下的格子底色。
   Color get backgroundColor =>
       this == EpisodeTileState.current ? _currentBg : _tileBg;
 
   FontWeight get weight =>
       this == EpisodeTileState.current ? FontWeight.bold : FontWeight.normal;
 }
+
+/// 深色主题下格子字色跟随色板；浅色保持官方浅肤取值。
+Color _episodeTextColor(EpisodeTileState state, HomePalette palette) {
+  if (!palette.dark) return state.textColor;
+  return switch (state) {
+    EpisodeTileState.current => _currentText,
+    EpisodeTileState.disabled => const Color(0x40FFFFFF),
+    EpisodeTileState.watched => palette.muted,
+    EpisodeTileState.normal => palette.ink,
+  };
+}
+
+/// 普通格底色 `#08000000` 在深色面板上不可见，换成一层亮 overlay。
+Color _episodeTileBackground(bool current, HomePalette palette) =>
+    current ? _currentBg : (palette.dark ? const Color(0x14FFFFFF) : _tileBg);
 
 /// 官方选集格子文案（`hj3/r0.java:413-419`）：预告 -> 「预告」（`epd`）、
 /// 推荐流插入项 -> 「高光」（`esr`），其余是纯序号。
@@ -115,15 +139,21 @@ class _HeaderCoverFallback extends StatelessWidget {
   const _HeaderCoverFallback();
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: 64,
-    height: 86,
-    decoration: BoxDecoration(
-      color: const Color(0xFFEDEDF0),
-      borderRadius: BorderRadius.circular(6),
-    ),
-    child: const Icon(Icons.movie_creation_outlined, color: Color(0xFF9499A0)),
-  );
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Container(
+      width: 64,
+      height: 86,
+      decoration: BoxDecoration(
+        color: palette.dark ? palette.soft : const Color(0xFFEDEDF0),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Icon(
+        Icons.movie_creation_outlined,
+        color: palette.dark ? palette.muted : const Color(0xFF9499A0),
+      ),
+    );
+  }
 }
 
 /// 官方头部集数/状态文案（`a1.java:554-568` 的 `A2()` 与 `:2034-2056` 的 `o1()`）。
@@ -277,7 +307,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
   /// 收藏 `ddg`。免费角标：文 `@string/c3q`「免费观看」、
   /// 字色 `skin_color_green_brand_light`=#FF00AE83、
   /// 底 `skin_color_green_brand_10_light`=#1A00AE83（`colors.xml`）。
-  Widget _seriesHeader() => Padding(
+  Widget _seriesHeader(HomePalette palette) => Padding(
     padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
     child: Row(
       children: [
@@ -311,20 +341,20 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                         widget.seriesTitle.isEmpty ? '短剧' : widget.seriesTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1B1B1B),
+                          color: palette.ink,
                         ),
                       ),
                     ),
                     if (widget.onOpenSeries != null)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 2),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 2),
                         child: Icon(
                           Icons.chevron_right_rounded,
                           size: 18,
-                          color: Color(0xFF9499A0),
+                          color: palette.muted,
                         ),
                       ),
                   ],
@@ -359,10 +389,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                       key: const ValueKey('story-panel-episode-label'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF9499A0),
-                      ),
+                      style: TextStyle(fontSize: 13, color: palette.muted),
                     ),
                 ],
               ),
@@ -479,6 +506,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
     final scale = MediaQuery.textScalerOf(context);
     final tabHeight = math.max(
       widget.onOpenRelatedSeries == null ? 40.0 : 48.0,
@@ -494,12 +522,17 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     // lazy list children; state/data/text-scale changes create a fresh build.
     Widget? contents;
     return Theme(
-      data: ThemeData.light(useMaterial3: true),
+      // 原来固定 light：深色主题下整块白底，和播放器/应用主题脱节。
+      data: ThemeData(
+        brightness: palette.dark ? Brightness.dark : Brightness.light,
+        useMaterial3: true,
+      ),
       child: Material(
         key: const ValueKey('story-panel'),
-        color: Colors.white,
-        // 官方 `skin_bg_short_series_episode_dialog`：顶部圆角 16dp。
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        // 官方 `skin_bg_short_series_episode_dialog`：顶部圆角 16dp；
+        // 深色 / OLED 取浮层色，和听书/评论弹层同一规则。
+        color: homeSheetColor(palette),
+        shape: homeSheetShape(palette, top: 16),
         clipBehavior: Clip.antiAlias,
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -536,7 +569,9 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                               width: 36,
                               height: 4,
                               decoration: BoxDecoration(
-                                color: const Color(0x1A000000),
+                                color: palette.dark
+                                    ? const Color(0x33FFFFFF)
+                                    : const Color(0x1A000000),
                                 borderRadius: BorderRadius.circular(2),
                               ),
                             ),
@@ -546,7 +581,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                           SizedBox(
                             key: const ValueKey('story-panel-series-header'),
                             height: _headerHeight,
-                            child: _seriesHeader(),
+                            child: _seriesHeader(palette),
                           ),
                         // 官方关联原著条（`aa8.xml:17` 的 `gnh`；左右各 16dp、
                         // 底 24dp 外边距）。配置默认关，宿主不给数据就不显示。
@@ -554,7 +589,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                           Padding(
                             key: const ValueKey('story-panel-relate-book'),
                             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                            child: _relateBookRow(widget.relateBook!),
+                            child: _relateBookRow(widget.relateBook!, palette),
                           ),
                         SizedBox(
                           height: tabHeight,
@@ -570,7 +605,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                                     fontSize: 14,
                                     height: 1.0,
                                     fontWeight: FontWeight.bold,
-                                    color: const Color(0xFF1B1B1B),
+                                    color: palette.ink,
                                     leadingDistribution:
                                         TextLeadingDistribution.even,
                                   ),
@@ -591,8 +626,8 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                       ],
                     ),
                   ),
-                  if (showPaging) _pagingStrip(),
-                  Expanded(child: _episodes()),
+                  if (showPaging) _pagingStrip(palette),
+                  Expanded(child: _episodes(palette)),
                 ],
               ),
             );
@@ -603,14 +638,17 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
   }
 
   /// 官方关联原著条：封面 + 书名，右侧箭头（`aa8.xml:17` 的 `gnh`）。
-  Widget _relateBookRow(EpisodeRelateBook book) => GestureDetector(
+  Widget _relateBookRow(
+    EpisodeRelateBook book,
+    HomePalette palette,
+  ) => GestureDetector(
     behavior: HitTestBehavior.opaque,
     onTap: widget.onOpenRelateBook,
     child: Container(
       height: 56,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: const Color(0x0A000000),
+        color: palette.dark ? const Color(0x14FFFFFF) : const Color(0x0A000000),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -625,15 +663,11 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
               book.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, color: Color(0xFF1B1B1B)),
+              style: TextStyle(fontSize: 14, color: palette.ink),
             ),
           ),
           if (widget.onOpenRelateBook != null)
-            const Icon(
-              Icons.chevron_right_rounded,
-              size: 18,
-              color: Color(0xFF9499A0),
-            ),
+            Icon(Icons.chevron_right_rounded, size: 18, color: palette.muted),
         ],
       ),
     ),
@@ -651,7 +685,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     );
   }
 
-  Widget _pagingStrip() => SizedBox(
+  Widget _pagingStrip(HomePalette palette) => SizedBox(
     key: const ValueKey('story-episode-pages'),
     height: 36,
     child: ListView(
@@ -673,9 +707,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                     fontWeight: page == _page
                         ? FontWeight.bold
                         : FontWeight.normal,
-                    color: page == _page
-                        ? const Color(0xFF1B1B1B)
-                        : const Color(0x66000000),
+                    color: page == _page ? palette.ink : palette.muted,
                   ),
                 ),
               ),
@@ -685,11 +717,11 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     ),
   );
 
-  Widget _episodes() {
+  Widget _episodes(HomePalette palette) {
     if (widget.episodes.isEmpty) {
-      return const Center(
-        key: ValueKey('story-episodes'),
-        child: Text('暂无剧集', style: TextStyle(color: Color(0xFF9499A0))),
+      return Center(
+        key: const ValueKey('story-episodes'),
+        child: Text('暂无剧集', style: TextStyle(color: palette.muted)),
       );
     }
     return CustomScrollView(
@@ -720,6 +752,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
   }
 
   Widget _episodeTile(int index) {
+    final palette = HomePalette.of(context);
     final episode = widget.episodes[index];
     final active = index == (widget.playingIndex ?? widget.currentIndex);
     final state = EpisodeTileState.of(
@@ -742,7 +775,10 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
       excludeSemantics: true,
       onTap: () => _select(index),
       child: Material(
-        color: state.backgroundColor,
+        color: _episodeTileBackground(
+          state == EpisodeTileState.current,
+          palette,
+        ),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(8)),
         ),
@@ -763,7 +799,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: state.weight,
-                    color: state.textColor,
+                    color: _episodeTextColor(state, palette),
                   ),
                 ),
               ),

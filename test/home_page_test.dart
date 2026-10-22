@@ -10,6 +10,7 @@ import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
+import 'package:fqapp/widgets/home/home_tab_bar.dart';
 
 void main() {
   testWidgets(
@@ -72,9 +73,7 @@ void main() {
     },
   );
 
-  testWidgets('外部 ScrollController 能驱动首页回顶部（底部栏重复点击的依据）', (
-    tester,
-  ) async {
+  testWidgets('外部 ScrollController 能驱动首页回顶部（底部栏重复点击的依据）', (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 850));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -87,23 +86,26 @@ void main() {
           homeProvider.overrideWith(
             () => HomeNotifier(
               homepageLoader:
-                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                      HomepagePage(
-                        items: [
-                          for (var i = 0; i < 40; i++)
-                            MediaItem(
-                              id: 'i$i',
-                              title: '作品 $i',
-                              cover: '',
-                              author: '',
-                              badge: '',
-                              ep: '',
-                              kind: 'book',
-                            ),
-                        ],
-                        nextOffset: null,
-                        sessionId: null,
-                      ),
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [
+                      for (var i = 0; i < 40; i++)
+                        MediaItem(
+                          id: 'i$i',
+                          title: '作品 $i',
+                          cover: '',
+                          author: '',
+                          badge: '',
+                          ep: '',
+                          kind: 'book',
+                        ),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
               searchLoader: (query, {int page = 1}) async => [],
             ),
           ),
@@ -122,6 +124,129 @@ void main() {
     controller.jumpTo(controller.position.minScrollExtent);
     await tester.pumpAndSettle();
     expect(controller.position.pixels, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('吸顶的频道条知道自己在屏幕上的位置（状态栏高度）', (tester) async {
+    // 首页的滚动视图在 SafeArea 里面，MediaQuery 的 padding 已经被抹成 0，
+    // 吸顶条自己量不到状态栏，必须由页面把这段高度传下来。传漏了，它的暖光
+    // 就会整体错位，在状态栏和 tag 之间露出一条黑边。
+    // 视图密度固定为 1：FakeViewPadding 给的是物理像素，不固定就和逻辑像素错 3 倍。
+    tester.view.physicalSize = const Size(320, 850);
+    tester.view.devicePixelRatio = 1;
+    const topInset = 120.0;
+    tester.view.padding = const FakeViewPadding(top: topInset);
+    addTearDown(tester.view.reset);
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [
+                      for (var i = 0; i < 40; i++)
+                        MediaItem(
+                          id: 'i$i',
+                          title: '作品 $i',
+                          cover: '',
+                          author: '',
+                          badge: '',
+                          ep: '',
+                          kind: 'book',
+                        ),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
+              searchLoader: (query, {int page = 1}) async => [],
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: HomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('home_pinned_wash')), findsNothing);
+
+    await tester.drag(
+      find.byKey(const Key('home_feed')),
+      const Offset(0, -600),
+    );
+    await tester.pumpAndSettle();
+
+    final wash = tester.widget<HomePinnedWash>(
+      find.byKey(const ValueKey('home_pinned_wash')),
+    );
+    expect(wash.top, topInset);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('宽屏下把整页宽度传给吸顶条（暖光才对得上背景层）', (tester) async {
+    // 平板横屏 / 桌面窗口里内容列是居中的（1024 的页面里 840），背景层却
+    // 铺满整页。页面必须把自己的宽度带下去，吸顶条才能减掉列左边距、接着
+    // 画同一张渐变；漏传时它会退回按栏宽推圆，半径小 18%，吸顶边上会重新
+    // 露出一条淡横线。
+    // 视图密度固定为 1：MediaQuery 的宽度取自 view 的物理像素，setSurfaceSize
+    // 只改测试画布，读不到。
+    tester.view.physicalSize = const Size(1024, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [
+                      for (var i = 0; i < 60; i++)
+                        MediaItem(
+                          id: 'i$i',
+                          title: '作品 $i',
+                          cover: '',
+                          author: '',
+                          badge: '',
+                          ep: '',
+                          kind: 'book',
+                        ),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
+              searchLoader: (query, {int page = 1}) async => [],
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: HomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.drag(
+      find.byKey(const Key('home_feed')),
+      const Offset(0, -600),
+    );
+    await tester.pumpAndSettle();
+
+    final pinned = find.byKey(const ValueKey('home_pinned_wash'));
+    expect(pinned, findsOneWidget);
+    expect(tester.widget<HomePinnedWash>(pinned).viewportWidth, 1024);
+    // 内容列受 840 限制，吸顶条自己量到的就窄一截：这正是要减掉 92 的原因。
+    expect(tester.getSize(pinned).width, 840);
+    expect(tester.getTopLeft(pinned).dx, 92);
     expect(tester.takeException(), isNull);
   });
 
@@ -409,15 +534,16 @@ void main() {
                       String? sessionId,
                     }) async => HomepagePage(
                       items: [
-                        MediaItem(
-                          id: '1',
-                          title: '小说 1',
-                          cover: '',
-                          author: '',
-                          badge: '',
-                          ep: '',
-                          kind: 'book',
-                        ),
+                        for (var index = 0; index < 12; index++)
+                          MediaItem(
+                            id: '$index',
+                            title: '小说 $index',
+                            cover: '',
+                            author: '',
+                            badge: '',
+                            ep: '',
+                            kind: 'book',
+                          ),
                       ],
                       nextOffset: null,
                       sessionId: null,
@@ -449,6 +575,12 @@ void main() {
       return (box.decoration as BoxDecoration).color!;
     }
 
+    // 频道条吸顶后才铺不透明画布；停在顶部时保持透明，让暖光穿过去。
+    await tester.drag(
+      find.byKey(const Key('home_feed')),
+      const Offset(0, -900),
+    );
+    await tester.pumpAndSettle();
     expect(canvasOf(), const HomePalette(false).canvas);
     mode.value = ThemeMode.dark;
     await tester.pumpAndSettle();
