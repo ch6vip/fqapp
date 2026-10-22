@@ -30,9 +30,12 @@ class HomeResumeCard extends StatelessWidget {
         final author = latest['author']?.toString() ?? '';
         final ep = latest['ep']?.toString() ?? '';
         final chapterTitle =
-            (latest['lastChapterTitle'] ?? latest['chapterTitle'])?.toString() ?? '';
+            (latest['lastChapterTitle'] ?? latest['chapterTitle'])
+                ?.toString() ??
+            '';
         final episode = (latest['episode'] as num?)?.toInt() ?? 0;
-        final progress = ((latest['progress'] as num?)?.toDouble() ?? 0.0).clamp(0.0, 1.0);
+        final progress = ((latest['progress'] as num?)?.toDouble() ?? 0.0)
+            .clamp(0.0, 1.0);
 
         final item = MediaItem(
           id: historyContentId(latest),
@@ -55,10 +58,8 @@ class HomeResumeCard extends StatelessWidget {
         };
 
         final progressText = switch (kind) {
-          'video' || 'manju' =>
-            episode > 0 ? '看到第 $episode 集' : '正在追看',
-          'audio' =>
-            episode > 0 ? '听至第 $episode 集' : '最近收听',
+          'video' || 'manju' => episode > 0 ? '看到第 $episode 集' : '正在追看',
+          'audio' => episode > 0 ? '听至第 $episode 集' : '最近收听',
           _ =>
             chapterTitle.isNotEmpty
                 ? '读至 $chapterTitle'
@@ -83,7 +84,9 @@ class HomeResumeCard extends StatelessWidget {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: palette.dark ? 0.22 : 0.04),
+                    color: Colors.black.withValues(
+                      alpha: palette.dark ? 0.22 : 0.04,
+                    ),
                     blurRadius: 14,
                     offset: const Offset(0, 4),
                   ),
@@ -99,10 +102,7 @@ class HomeResumeCard extends StatelessWidget {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          StoryCover(
-                            item: item,
-                            cacheWidth: 80,
-                          ),
+                          StoryCover(item: item, cacheWidth: 80),
                           Positioned(
                             right: 2,
                             bottom: 2,
@@ -137,7 +137,9 @@ class HomeResumeCard extends StatelessWidget {
                                 vertical: 2,
                               ),
                               decoration: BoxDecoration(
-                                color: HomePalette.accent.withValues(alpha: 0.12),
+                                color: HomePalette.accent.withValues(
+                                  alpha: 0.12,
+                                ),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
@@ -188,9 +190,10 @@ class HomeResumeCard extends StatelessWidget {
                                     value: progress,
                                     minHeight: 3,
                                     backgroundColor: palette.line,
-                                    valueColor: const AlwaysStoppedAnimation<Color>(
-                                      HomePalette.accent,
-                                    ),
+                                    valueColor:
+                                        const AlwaysStoppedAnimation<Color>(
+                                          HomePalette.accent,
+                                        ),
                                   ),
                                 ),
                               ),
@@ -208,11 +211,7 @@ class HomeResumeCard extends StatelessWidget {
                       color: palette.soft,
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(
-                      LucideIcons.play,
-                      size: 13,
-                      color: palette.ink,
-                    ),
+                    child: Icon(LucideIcons.play, size: 13, color: palette.ink),
                   ),
                 ],
               ),

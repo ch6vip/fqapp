@@ -4,6 +4,7 @@ import '../models/media_item.dart';
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
 import '../services/connectivity_status.dart';
+import '../widgets/home/home_design.dart';
 import 'cached_dramas_page.dart';
 
 /// 选集下载弹窗（官方 `lm3.q0`/ShortSeriesDownloadDialog 形态）：30 集一组
@@ -48,10 +49,10 @@ class DramaDownloadSheet extends StatefulWidget {
       duration: Duration(milliseconds: 200),
       reverseDuration: Duration(milliseconds: 200),
     ),
-    backgroundColor: const Color(0xFFFAFAFA),
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
+    // 与听书/详情弹层同一规则：深色 / OLED 取 surface + 发丝边，
+    // 否则纯黑画布上的弹层看不出上缘。
+    backgroundColor: homeSheetColor(HomePalette.of(context)),
+    shape: homeSheetShape(HomePalette.of(context), top: 16),
     builder: (_) => DramaDownloadSheet(
       seriesId: seriesId,
       title: title,
@@ -168,6 +169,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
   @override
   Widget build(BuildContext context) {
     final groupEpisodes = _groupEpisodes;
+    final palette = HomePalette.of(context);
     final pendingCount = widget.episodes
         .where((episode) => !_downloaded.contains(episode.itemId))
         .length;
@@ -191,10 +193,10 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
                       '离线缓存 · ${widget.title}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF000000),
+                        color: palette.ink,
                       ),
                     ),
                   ),
@@ -243,7 +245,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
                 childAspectRatio: 2.4,
                 children: [
                   for (final episode in groupEpisodes)
-                    _episodeCell(episode),
+                    _episodeCell(episode, palette),
                 ],
               ),
             ),
@@ -306,14 +308,16 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     return selectable.isNotEmpty && selectable.every(_selected.contains);
   }
 
-  Widget _episodeCell(Chapter episode) {
+  Widget _episodeCell(Chapter episode, HomePalette palette) {
     final itemId = episode.itemId;
+    // 未选中的格子：浅色是 6% 黑，深色 / OLED 换成字段色。
+    final idleBackground = palette.dark ? palette.soft : const Color(0x0F000000);
     if (_downloaded.contains(itemId)) {
       return _cellContainer(
         key: ValueKey('download-cell-$itemId'),
         label: '已缓存',
-        foreground: const Color(0x66000000),
-        background: const Color(0x0F000000),
+        foreground: palette.muted,
+        background: idleBackground,
         trailing: Icons.check,
         onTap: null,
       );
@@ -346,8 +350,8 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     return _cellContainer(
       key: ValueKey('download-cell-$itemId'),
       label: '第 ${_episodeNumber(episode)} 集',
-      foreground: selected ? const Color(0xFFFA6725) : const Color(0xFF000000),
-      background: selected ? const Color(0x14FA6725) : const Color(0x0F000000),
+      foreground: selected ? const Color(0xFFFA6725) : palette.ink,
+      background: selected ? const Color(0x14FA6725) : idleBackground,
       border: selected ? const Color(0xFFFA6725) : Colors.transparent,
       trailing: selected ? Icons.check : null,
       onTap: () => setState(() {

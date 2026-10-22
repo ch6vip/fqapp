@@ -1,15 +1,39 @@
-import 'dart:ui' show SemanticsAction;
+import 'dart:ui' show ImageByteFormat, SemanticsAction;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/widgets/home/ambient_backdrop.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 import 'package:fqapp/widgets/home/home_spotlight.dart';
 import 'package:fqapp/widgets/home/home_tab_bar.dart';
 
 void main() {
+  test('吸顶条的暖光按整页宽度推圆，再减掉居中的内容列左边距', () {
+    // 手机：吸顶条就是整页宽，几何必须和改动前完全一致。
+    final phone = homePinnedWash(viewportWidth: 393, barWidth: 393, top: 40);
+    expect(phone.radius, homeWashRadius(393));
+    expect(phone.center, homeWashCenter(393) - const Offset(0, 40));
+
+    // 平板横屏 / 桌面：1024 的页面里内容列 840 居中，左右各留 92。圆心
+    // 换算回页面坐标后必须和背景层重合，否则吸顶边上会错开一条淡横线。
+    final tablet = homePinnedWash(viewportWidth: 1024, barWidth: 840, top: 24);
+    expect(tablet.radius, homeWashRadius(1024));
+    expect(tablet.center.dx, homeWashCenter(1024).dx - 92);
+    expect(tablet.center.dx + 92, homeWashCenter(1024).dx);
+    expect(tablet.center.dy, homeWashCenter(1024).dy - 24);
+    // 半径也同源：按吸顶条自己的宽度算会小 18%，接缝处色阶对不上。
+    expect(tablet.radius, isNot(homeWashRadius(840)));
+
+    // 页面宽度未知（0）时退回吸顶条自己的宽度，即旧行为。
+    final unknown = homePinnedWash(viewportWidth: 0, barWidth: 840, top: 24);
+    expect(unknown.center, homeWashCenter(840) - const Offset(0, 24));
+    expect(unknown.radius, homeWashRadius(840));
+  });
+
   testWidgets('swiping and next open the visible recommendation', (
     tester,
   ) async {
@@ -160,7 +184,30 @@ void main() {
     semantics.dispose();
   });
 
-  test('the pinned tab bar rebuilds when brightness changes', () {
+  testWidgets('the selected category keeps room for its glow', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        CustomScrollView(
+          slivers: [
+            SliverPersistentHeader(
+              delegate: HomeTabBarDelegate(selectedIndex: 0, onSelect: (_) {}),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final list = tester.getSize(find.byType(ListView));
+    final chip = tester.getSize(find.byKey(const ValueKey('home_category_0')));
+    // 胶囊 38 高居中在 54 高的视口里，上下各留 8px 给红色光晕。
+    expect(list.height, 54);
+    expect(chip.height, 38);
+    expect(list.height - chip.height, greaterThanOrEqualTo(16));
+    expect(tester.takeException(), isNull);
+  });
+
+  test('the pinned tab bar rebuilds when the palette changes', () {
     void ignore(int _) {}
     final light = HomeTabBarDelegate(
       selectedIndex: 0,
@@ -179,6 +226,26 @@ void main() {
       ),
       isFalse,
     );
+
+    // OLED 只在深色下生效，墨水屏本身也是浅色外观：两者都不翻 dark，
+    // 漏进 shouldRebuild 的话切完仍画旧画布，吸顶处会露出一条色差。
+    expect(
+      HomeTabBarDelegate(
+        selectedIndex: 0,
+        onSelect: ignore,
+        dark: true,
+        oled: true,
+      ).shouldRebuild(dark),
+      isTrue,
+    );
+    expect(
+      HomeTabBarDelegate(
+        selectedIndex: 0,
+        onSelect: ignore,
+        eink: true,
+      ).shouldRebuild(light),
+      isTrue,
+    );
   });
 
   testWidgets('the pinned tab bar follows the theme without changing tabs', (
@@ -191,7 +258,9 @@ void main() {
       return MaterialApp(
         theme: ThemeData(brightness: brightness),
         home: CustomScrollView(
+          key: ValueKey(brightness),
           slivers: [
+            const SliverToBoxAdapter(child: SizedBox(height: 600)),
             SliverPersistentHeader(
               pinned: true,
               delegate: HomeTabBarDelegate(
@@ -200,6 +269,7 @@ void main() {
                 dark: brightness == Brightness.dark,
               ),
             ),
+            const SliverToBoxAdapter(child: SizedBox(height: 2000)),
           ],
         ),
       );
@@ -214,16 +284,122 @@ void main() {
             ),
           )
           .first;
-      return (box.decoration as BoxDecoration).color!;
+      final decoration = box.decoration as BoxDecoration;
+      return decoration.color!;
     }
 
-    await tester.pumpWidget(app(Brightness.light));
-    await tester.pumpAndSettle();
-    expect(canvasOf(), const HomePalette(false).canvas);
+    Future<void> check(Brightness brightness) async {
+      await tester.pumpWidget(app(brightness));
+      await tester.pumpAndSettle();
+      // 停在顶部时透明：首页顶部的暖光要能从频道条里穿过去。
+      expect(canvasOf(), Colors.transparent);
+      // 吸顶后要挡住下面滚过的卡片，换成当前画布色。
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -800));
+      await tester.pumpAndSettle();
+      expect(canvasOf(), HomePalette(brightness == Brightness.dark).canvas);
+    }
 
-    await tester.pumpWidget(app(Brightness.dark));
-    await tester.pumpAndSettle();
-    expect(canvasOf(), const HomePalette(true).canvas);
+    await check(Brightness.light);
+    await check(Brightness.dark);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the pinned tab bar carries the page wash across its top edge', (
+    tester,
+  ) async {
+    // 吸顶条铺满画布后，它的顶边（状态栏下沿）会跟上面那截暖光断开。
+    // 两种外观都要把同一段暖光接下去，不能出现一条硬横边。
+    //
+    // 状态栏故意取 120：吸顶条拿错这段高度时，暖光会整体错位 120px，
+    // 像素差才明显到能坐实这个回归（真机上 40 的错位只有 1/255 量级）。
+    const topInset = 120.0;
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: topInset);
+    addTearDown(tester.view.reset);
+
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final boundary = GlobalKey();
+
+    Future<Color> pixel(Offset fraction) async {
+      final color = await tester.runAsync(() async {
+        final object =
+            boundary.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+        final image = await object.toImage();
+        final data = await image.toByteData(format: ImageByteFormat.rawRgba);
+        final x = (fraction.dx * (image.width - 1)).round();
+        final y = (fraction.dy * (image.height - 1)).round();
+        final bytes = data!.buffer.asUint8List();
+        final offset = (y * image.width + x) * 4;
+        final pixel = Color.fromARGB(
+          bytes[offset + 3],
+          bytes[offset],
+          bytes[offset + 1],
+          bytes[offset + 2],
+        );
+        image.dispose();
+        return pixel;
+      });
+      return color!;
+    }
+
+    for (final brightness in [Brightness.light, Brightness.dark]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(brightness: brightness),
+          home: RepaintBoundary(
+            key: boundary,
+            child: Builder(
+              builder: (context) => Scaffold(
+                backgroundColor: HomePalette.of(context).canvas,
+                body: Stack(
+                  children: [
+                    Positioned.fill(child: AmbientBackdrop(scroll: controller)),
+                    SafeArea(
+                      bottom: false,
+                      child: CustomScrollView(
+                        controller: controller,
+                        slivers: [
+                          const SliverToBoxAdapter(
+                            child: SizedBox(height: 300),
+                          ),
+                          SliverPersistentHeader(
+                            pinned: true,
+                            delegate: HomeTabBarDelegate(
+                              selectedIndex: 0,
+                              onSelect: (_) {},
+                              dark: brightness == Brightness.dark,
+                              scroll: controller,
+                              topInset: topInset,
+                            ),
+                          ),
+                          const SliverToBoxAdapter(
+                            child: SizedBox(height: 2000),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
+      await tester.pumpAndSettle();
+
+      // 吸顶条顶边落在 y=topInset，两侧各取一个像素：跨过边界不该有台阶。
+      // 阈值卡在 1/255 量级；topInset 对不上时这里会差出 10/255 以上。
+      final above = await pixel(const Offset(0.95, (topInset - 1) / 800));
+      final below = await pixel(const Offset(0.95, (topInset + 3) / 800));
+      expect((above.r - below.r).abs(), lessThan(0.01), reason: '$brightness');
+      expect((above.g - below.g).abs(), lessThan(0.01), reason: '$brightness');
+    }
     expect(tester.takeException(), isNull);
   });
 

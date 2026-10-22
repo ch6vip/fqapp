@@ -20,6 +20,7 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/series_detail_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/desktop_platform.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/player_style_config.dart';
@@ -419,6 +420,11 @@ void main() {
     expect(find.text('请输入短剧名或主演名'), findsOneWidget);
     expect(find.text('推荐'), findsOneWidget);
     expect(find.text('漫剧'), findsOneWidget);
+    // 频道 tag 的按压反馈也走圆角，不再是一块方角高亮。
+    final channelInk = tester.widget<InkWell>(
+      find.ancestor(of: find.text('推荐'), matching: find.byType(InkWell)).first,
+    );
+    expect(channelInk.borderRadius, BorderRadius.circular(12));
     expect(find.byKey(const Key('drama_search_button')), findsOneWidget);
     // 官方 `ap3.xml` 的 `@id/h4f` 是 20dp **搜索**按钮（`Xh()` → `mh()`
     // 「点击新按钮 从书城进如搜索页」），不是刷新按钮。刷新在官方是下拉手势。
@@ -444,6 +450,19 @@ void main() {
     // 距底 94dp）。官方 `pp3.f` 是 300ms 淡入后 **8 次 1s 计数**才淡出
     // （第二轮笔记的「1s 后消失」是误读），且每台设备只弹一次。
     expect(find.text('上滑查看更多视频'), findsOneWidget);
+    // 提示条也是圆角（与 in-feed 的倍速提示一致），不是方角黑块。
+    final hintBox = tester.widget<DecoratedBox>(
+      find
+          .ancestor(
+            of: find.text('上滑查看更多视频'),
+            matching: find.byType(DecoratedBox),
+          )
+          .first,
+    );
+    expect(
+      (hintBox.decoration as BoxDecoration).borderRadius,
+      BorderRadius.circular(24),
+    );
     expect(find.text('16-1 作品'), findsNothing);
     // 8 秒内一直在。
     await tester.pump(const Duration(seconds: 5));
@@ -716,6 +735,7 @@ void main() {
   testWidgets('the bottom bar lists 短剧 right after 首页', (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => dramaLightPageNotifier.value = false);
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 
     await tester.pumpWidget(
@@ -747,6 +767,28 @@ void main() {
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
     // 用户已移除右侧追剧入口。
     expect(find.text('追剧'), findsNothing);
+
+    // 浅色外观下：推荐是视频流，dock 仍是深色玻璃；切到看剧（浅色页）后
+    // dock 跟着回浅色，不能页面是奶白、dock 还是一条黑的。
+    Color dockColor() {
+      final container = tester.widget<Container>(
+        find
+            .ancestor(
+              of: find.byType(NavigationBar),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      return (container.decoration! as BoxDecoration).color!;
+    }
+
+    expect(dockColor(), const Color(0xFF161619).withValues(alpha: 0.72));
+    await tester.tap(find.text('看剧'));
+    await tester.pumpAndSettle();
+    expect(dockColor(), Colors.white.withValues(alpha: 0.82));
+    await tester.tap(find.text('推荐'));
+    await tester.pumpAndSettle();
+    expect(dockColor(), const Color(0xFF161619).withValues(alpha: 0.72));
     // The shell mounts its own DramaPage without seams, so its inline session
     // starts a real directory request here. Advance past the client timeout to
     // drain that timer, which would otherwise outlive the test.
@@ -824,6 +866,32 @@ void main() {
       await _flush(tester);
       expect(find.text('全球杀机 作品'), findsOneWidget);
       expect(find.text('仙渊道尘 作品'), findsNothing);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('drama_recent_filter')),
+          matching: find.text('全部'),
+        ),
+      );
+      await _flush(tester);
+      expect(find.text('全球杀机 作品'), findsOneWidget);
+      expect(find.text('仙渊道尘 作品'), findsOneWidget);
+
+      // 「其他视频」没有数据源，恒为空：空结果时筛选行必须留着，
+      // 否则用户被锁在这一类里，回不到「全部」。
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const Key('drama_recent_filter')),
+          matching: find.text('其他视频'),
+        ),
+      );
+      await _flush(tester);
+      expect(find.byKey(const Key('drama_最近_grid')), findsNothing);
+      expect(find.text('暂无浏览历史'), findsOneWidget);
+      expect(find.byKey(const Key('drama_recent_filter')), findsOneWidget);
+      // 没有可编辑的记录就不给「编辑」：编辑头只在有记录时出现，
+      // 点进去就没有「完成」可按了。
+      expect(find.byKey(const Key('drama_recent_edit')), findsNothing);
+
       await tester.tap(
         find.descendant(
           of: find.byKey(const Key('drama_recent_filter')),
@@ -1130,6 +1198,42 @@ void main() {
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
     expect(find.byKey(const Key('drama_feed')), findsNothing);
     expect(find.text('8-0 作品'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('深色外观下看剧/漫剧的浅色页改成深色画布与浅色字', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          theme: AppTheme.createTheme(Brightness.dark),
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    await tester.tap(find.text('看剧'));
+    await _flush(tester);
+
+    // 海报格页以前恒为白底黑字，深色主题下整页会刺眼——现在跟随色板。
+    expect(
+      tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+      const Color(0xFF151517),
+    );
+    expect(
+      tester.widget<Text>(find.text('8-0 作品')).style?.color,
+      const Color(0xFFF5F1EB),
+    );
     expect(tester.takeException(), isNull);
   });
 

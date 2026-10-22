@@ -167,9 +167,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// 全局墨水屏模式覆盖阅读器显示预设（#15/#9）：开启时阅读器强制纯黑白，
   /// 不改用户保存的预设，关闭后恢复原预设。夜间切换等仍写保存的预设。
-  ReaderThemePreset get _effectivePreset => einkModeNotifier.value
-      ? ReaderThemePreset.eink
-      : _preferences.themePreset;
+  ///
+  /// 全局 OLED 纯黑同理：只在深色外观下生效，所以阅读背景强制到夜间预设
+  ///（颜色再由 [ReaderThemeColors.isOled] 降到 #000000），退出深色后回到
+  /// 原预设。
+  ReaderThemePreset get _effectivePreset {
+    if (einkModeNotifier.value) return ReaderThemePreset.eink;
+    if (oledActive()) return ReaderThemePreset.dark;
+    return _preferences.themePreset;
+  }
 
   /// 排版用的偏好：墨水屏模式下把预设换成 eink，正文/标题才是 #000000。
   ///
@@ -178,17 +184,25 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 两处直接传 [_preferences]，于是全局墨水屏开启后正文仍用用户保存预设的
   /// textColor（默认米白 #292724）——实测设备上正文主色 RGB(41,39,36)，
   /// 墨水屏把它量化成明显发灰的一档。保存的预设不动，关闭墨水屏即恢复。
-  ReaderPreferences get _displayPreferences => einkModeNotifier.value
-      ? _preferences.copyWith(
-          themePreset: ReaderThemePreset.eink,
-          // 墨水屏最低 500 字重：Flutter 没有关亚像素抗锯齿的 API，
-          // 加粗是唯一能用的笔画加深手段。
-          fontWeight: einkEffectiveFontWeight(
-            eink: true,
-            fontWeight: _preferences.fontWeight,
-          ),
-        )
-      : _preferences;
+  ReaderPreferences get _displayPreferences {
+    if (einkModeNotifier.value) {
+      return _preferences.copyWith(
+        themePreset: ReaderThemePreset.eink,
+        // 墨水屏最低 500 字重：Flutter 没有关亚像素抗锯齿的 API，
+        // 加粗是唯一能用的笔画加深手段。
+        fontWeight: einkEffectiveFontWeight(
+          eink: true,
+          fontWeight: _preferences.fontWeight,
+        ),
+      );
+    }
+    // OLED：正文 / 标题颜色同样要走夜间，否则排版层会继续用保存预设的浅色
+    // 纸面正文色，在纯黑底上既刺眼又和背景对不上。
+    if (oledActive()) {
+      return _preferences.copyWith(themePreset: ReaderThemePreset.dark);
+    }
+    return _preferences;
+  }
 
   /// 原生层（MainActivity.dispatchKeyEvent）拦截到音量键后回调：仅在阅读页
   /// 当前路由、未显示控制栏、已开启音量键翻页、且为分页模式时翻页。
@@ -2056,6 +2070,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       builder: (context) => ReaderAppearanceSheet(
         initialValue: _preferences,
         einkOverride: einkModeNotifier.value,
+        oledOverride: oledActive(),
         onChanged: _previewPreferences,
         onPickFont: _pickFont,
       ),
@@ -2068,7 +2083,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   void _toggleNightTheme() {
     // 全局墨水屏覆盖显示，点夜间不会有任何可见变化，先提示而非静默无响应。
     if (einkModeNotifier.value) {
-      _showMessage('全局墨水屏模式已开启，先在设置里关闭它再切换夜间');
+      _showMessage('全局墨水屏已开启，先在 设置 → 外观 换成其它主题');
+      return;
+    }
+    // OLED 同理：阅读背景被全局纯黑接管，点夜间看不出变化。
+    if (oledActive()) {
+      _showMessage('全局 OLED 纯黑已开启，先在 设置 → 外观 关闭它再切换背景');
       return;
     }
     final nextPreset = _preferences.themePreset == ReaderThemePreset.dark

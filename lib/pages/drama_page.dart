@@ -28,6 +28,7 @@ import '../services/short_series_font_scale.dart';
 import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/player/playlet_comment_panel.dart';
 import '../widgets/player/playlet_danmaku_layer.dart';
@@ -137,6 +138,13 @@ final dramaChannels = <DramaChannel>[
     serverType: kChannelFollow,
   ),
 ];
+
+/// 当前短剧频道是不是浅色页（看剧 / 漫剧 / 最近 / 收藏）。
+///
+/// 壳层的悬浮 dock 与系统导航栏跟着它换肤：推荐频道压在全屏视频流上，
+/// 保持深色玻璃；浅色页则回到主题画布，否则浅色外观下页面是奶白、
+/// dock 还是一条黑的。
+final ValueNotifier<bool> dramaLightPageNotifier = ValueNotifier<bool>(false);
 
 /// 服务端 `tab_type` -> 本地频道（F08：频道表由服务端下发）。
 ///
@@ -392,6 +400,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
   @override
   void initState() {
     super.initState();
+    // 重进页面时先把壳层的 dock 肤色对齐到当前频道（默认是推荐，黑）。
+    // 放到帧后：initState 发生在壳层 build 期间，直接改 notifier 会触发
+    // 壳层的 setState-in-build。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) dramaLightPageNotifier.value = !_current.playsInline;
+    });
     if (isWindowsDesktop) {
       DesktopPlatform.fullscreen.addListener(_desktopFullscreenChanged);
     }
@@ -539,6 +553,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // 下面的 feed 还是旧的，两边对不上。这里复用 `_selectChannel` 的同一条
     // 规则，不另开分支。
     final current = _channels[_channel];
+    dramaLightPageNotifier.value = !current.playsInline;
     if (current.isFeed) {
       ref.read(dramaProvider.notifier).selectTab(current.tabIndex);
     }
@@ -695,6 +710,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _channel = index;
       _screenIndex = 0;
     });
+    // 壳层的 dock / 系统导航栏跟着频道换肤（推荐＝深色，浅色页＝画布色）。
+    dramaLightPageNotifier.value = !channel.playsInline;
     // Local channels read this device's own data; switching the provider would
     // silently load a feed nobody asked for.
     if (channel.isFeed) {
@@ -839,12 +856,16 @@ class _DramaPageState extends ConsumerState<DramaPage>
     if (_feedPanelOpen || _openingId != null) return;
     _feedPanelOpen = true;
     final dark = PlayerStyleConfig.instance.morePanelDarkStyle;
+    // 浅色支面板的内容会随夜间皮肤翻白（`PlayletMorePanelLight`），底色也
+    // 得一起翻：否则深色主题下是 #FAFAFA 底配白字。
+    final darkSheet =
+        dark || Theme.of(context).brightness == Brightness.dark;
     try {
       final selected = await showModalBottomSheet<Object>(
         context: context,
         useSafeArea: true,
         isScrollControlled: true,
-        backgroundColor: dark
+        backgroundColor: darkSheet
             ? const Color(0xFF1C1C1C)
             : const Color(0xFFFAFAFA),
         barrierColor: Colors.transparent,
@@ -1221,6 +1242,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final state = ref.watch(dramaProvider);
     final channel = _current;
     final items = _visibleItems(state);
+    // 浅色页（看剧/漫剧/最近/收藏）跟随外观色板：深色 / OLED 下不能再用
+    // 白底深字，否则整页和主题完全脱节。视频流仍固定黑底。
+    final palette = HomePalette.of(context);
     _syncTickerMode();
     _scheduleInlineSync();
     // 官方看剧(8, CommonDoubleRow 两列)与漫剧(24, CommonThreeRow 三列)频道
@@ -1229,9 +1253,26 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final isVideoFlow = channel.playsInline;
     final lightPage = !isVideoFlow;
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: lightPage ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light,
+      // 深色外观下浅色页也是深色画布，状态栏图标要跟着换成浅色。
+      value:
+          (lightPage && !palette.dark
+                  ? SystemUiOverlayStyle.dark
+                  : SystemUiOverlayStyle.light)
+              .copyWith(
+                // 预设样式把导航栏写成纯黑：浅色页底部要跟画布同色，
+                // 否则壳层 dock 换成浅色了，最底下还压着一条黑带。
+                systemNavigationBarColor: lightPage
+                    ? palette.canvas
+                    : Colors.black,
+                systemNavigationBarDividerColor: lightPage
+                    ? palette.canvas
+                    : Colors.black,
+                systemNavigationBarIconBrightness: lightPage && !palette.dark
+                    ? Brightness.dark
+                    : Brightness.light,
+              ),
       child: Scaffold(
-        backgroundColor: lightPage ? Colors.white : Colors.black,
+        backgroundColor: lightPage ? palette.canvas : Colors.black,
         body: Stack(
           children: [
             Positioned.fill(
@@ -1283,6 +1324,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 right: 0,
                 child: _PullRefreshHint(
                   armed: _pullDistance >= _pullRefreshTrigger,
+                  color: lightPage ? palette.ink : Colors.white,
                 ),
               ),
             // 浅色页的顶栏背板：官方上滑时卡片从一条奶白渐变后面穿过，
@@ -1300,17 +1342,25 @@ class _DramaPageState extends ConsumerState<DramaPage>
                         MediaQuery.paddingOf(context).top +
                         _topChromeHeight +
                         56,
-                    child: const DecoratedBox(
+                    child: DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
+                          // 浅色支沿用官方奶白渐变；深色 / OLED 取当前画布色
+                          // 淡出，只负责把海报挡在顶栏后。
                           colors: [
-                            Color(0xFFFFF3E6),
-                            Color(0xFFFFFFFF),
-                            Color(0x00FFFFFF),
+                            palette.dark
+                                ? palette.canvas
+                                : const Color(0xFFFFF3E6),
+                            palette.dark
+                                ? palette.canvas
+                                : const Color(0xFFFFFFFF),
+                            palette.dark
+                                ? palette.canvas.withValues(alpha: 0)
+                                : const Color(0x00FFFFFF),
                           ],
-                          stops: [0.0, 0.5, 1.0],
+                          stops: const [0.0, 0.5, 1.0],
                         ),
                       ),
                     ),
@@ -1936,6 +1986,7 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
     // 官方 `ap4.xml` 根背景 `@color/ba9`=@null：整个顶栏**透明**，直接压在
     // 全屏视频流上（截图里频道条后面就是黑底画面）。xml 里的白色 ViewStub
     // `dad.xml` 不是渐变条，是 `BookstoreHeaderBgView`——书城频道的**每频道
@@ -1991,7 +2042,9 @@ class _TopBar extends StatelessWidget {
                   tooltip: '搜索短剧',
                   onPressed: onSearch,
                   iconSize: 20,
-                  color: light ? const Color(0xFF1B1B1B) : Colors.white,
+                  color: light
+                      ? (palette.dark ? Colors.white : const Color(0xFF1B1B1B))
+                      : Colors.white,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints.tightFor(
                     width: 20,
@@ -2009,6 +2062,12 @@ class _TopBar extends StatelessWidget {
   }
 
   Widget _searchField(BuildContext context, {required bool light}) {
+    final palette = HomePalette.of(context);
+    // 浅色页在外观为深色时，搜索框要改成白透底 + 浅字。
+    final dark = light && palette.dark;
+    final iconColor = light
+        ? (dark ? const Color(0x99FFFFFF) : const Color(0x99000000))
+        : const Color(0x99FFFFFF);
     return Semantics(
       button: true,
       label: '搜索短剧',
@@ -2019,10 +2078,14 @@ class _TopBar extends StatelessWidget {
         child: Container(
           height: 36,
           decoration: BoxDecoration(
-            color: light ? const Color(0x0F000000) : const Color(0x33000000),
+            color: light
+                ? (dark ? const Color(0x1AFFFFFF) : const Color(0x0F000000))
+                : const Color(0x33000000),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: light ? const Color(0x14000000) : const Color(0x2EFFFFFF),
+              color: light
+                  ? (dark ? const Color(0x1FFFFFFF) : const Color(0x14000000))
+                  : const Color(0x2EFFFFFF),
               width: 0.5,
             ),
           ),
@@ -2033,9 +2096,7 @@ class _TopBar extends StatelessWidget {
               Icon(
                 LucideIcons.search,
                 size: 14,
-                color: light
-                    ? const Color(0x99000000)
-                    : const Color(0x99FFFFFF),
+                color: iconColor,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -2045,7 +2106,7 @@ class _TopBar extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 13,
-                    color: light
+                    color: light && !dark
                         ? const Color(0x99000000)
                         : const Color(0x80FFFFFF),
                   ),
@@ -2082,6 +2143,14 @@ class _ChannelTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 浅色页在深色外观下换成白字；视频流本来就压在黑底上，保持白色。
+    final dark = light && HomePalette.of(context).dark;
+    final selectedColor = light
+        ? (dark ? Colors.white : const Color(0xFF1B1B1B))
+        : Colors.white;
+    final unselectedColor = light && !dark
+        ? const Color(0x99000000)
+        : const Color(0x99FFFFFF);
     return Semantics(
       selected: selected,
       button: true,
@@ -2091,6 +2160,8 @@ class _ChannelTab extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
+          // 点击水波也走圆角：方角高亮压在浅色页上像一块硬阴影。
+          borderRadius: BorderRadius.circular(12),
           // 官方 `ap3.xml`：tab 内边距 `app:avb` = 16dp（TabCompress 开）／20dp（关），
           // 文字 18sp（`app:avq`/`app:av5`）。这里取压缩态 16dp。
           child: Padding(
@@ -2104,11 +2175,7 @@ class _ChannelTab extends StatelessWidget {
                     fontSize: 18,
                     height: 1.1,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-                    color: selected
-                        ? (light ? const Color(0xFF1B1B1B) : Colors.white)
-                        : (light
-                              ? const Color(0x99000000)
-                              : const Color(0x99FFFFFF)),
+                    color: selected ? selectedColor : unselectedColor,
                   ),
                 ),
                 // 官方指示条：高 `app:arw` = 3dp、宽 `app:auw` = 16dp（`ap3.xml`），
@@ -2118,9 +2185,7 @@ class _ChannelTab extends StatelessWidget {
                   width: 16,
                   height: 3,
                   decoration: BoxDecoration(
-                    color: selected
-                        ? (light ? const Color(0xFF1B1B1B) : Colors.white)
-                        : Colors.transparent,
+                    color: selected ? selectedColor : Colors.transparent,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -3414,7 +3479,11 @@ class _SwipeUpHint extends StatelessWidget {
     opacity: visible ? 1 : 0,
     child: Center(
       child: DecoratedBox(
-        decoration: const BoxDecoration(color: Color(0xCC222222)),
+        decoration: BoxDecoration(
+          color: const Color(0xCC222222),
+          // 与 feed 内的倍速提示同一套圆角，不再是一整块方角黑条。
+          borderRadius: BorderRadius.circular(24),
+        ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -3442,11 +3511,14 @@ class _SwipeUpHint extends StatelessWidget {
   );
 }
 
-/// Official `aq0.xml` pull-to-refresh strip: 16sp white 「下拉刷新内容」.
+/// Official `aq0.xml` pull-to-refresh strip: 16sp 「下拉刷新内容」.
 class _PullRefreshHint extends StatelessWidget {
   final bool armed;
 
-  const _PullRefreshHint({required this.armed});
+  /// 浅色页用墨色（白字在白底上看不见），视频流仍用白字。
+  final Color color;
+
+  const _PullRefreshHint({required this.armed, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -3458,15 +3530,15 @@ class _PullRefreshHint extends StatelessWidget {
           children: [
             Text(
               armed ? '正在刷新内容' : '下拉刷新内容',
-              style: const TextStyle(fontSize: 16, color: Colors.white),
+              style: TextStyle(fontSize: 16, color: color),
             ),
             const SizedBox(width: 8),
-            const SizedBox(
+            SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(
                 strokeWidth: 1.5,
-                color: Colors.white,
+                color: color,
               ),
             ),
           ],
@@ -3667,34 +3739,37 @@ class _GridMessage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Colors.white,
-    child: SafeArea(
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (showSpinner) ...[
-              const SizedBox(
-                width: 26,
-                height: 26,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Color(0xFF1B1B1B),
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return ColoredBox(
+      color: palette.canvas,
+      child: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (showSpinner) ...[
+                SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: palette.ink,
+                  ),
                 ),
+                const SizedBox(height: 16),
+              ],
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, color: palette.muted),
               ),
-              const SizedBox(height: 16),
             ],
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15, color: Color(0x99000000)),
-            ),
-          ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// 最近/收藏列表卡（官方 `staggered/b` holder + `ay3.xml`）：整卡白底 8dp
@@ -3733,6 +3808,11 @@ class _HistoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final palette = HomePalette.of(context);
+    // 深色 / OLED 下卡片换浮层色，编辑态再错一档（原来编辑态是 #FAFAFA）。
+    final cardColor = palette.dark
+        ? (editing ? palette.soft : palette.surface)
+        : (editing ? const Color(0xFFFAFAFA) : Colors.white);
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -3741,7 +3821,7 @@ class _HistoryCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: editing ? const Color(0xFFFAFAFA) : Colors.white,
+            color: cardColor,
             borderRadius: BorderRadius.circular(12),
             boxShadow: const [
               BoxShadow(
@@ -3852,11 +3932,11 @@ class _HistoryCard extends StatelessWidget {
                       item.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
                         height: 1.25,
-                        color: Color(0xFF1B1B1B),
+                        color: palette.ink,
                       ),
                     ),
                     if (subtitle != null)
@@ -3866,10 +3946,10 @@ class _HistoryCard extends StatelessWidget {
                           subtitle!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
                             height: 1.2,
-                            color: Color(0x66000000),
+                            color: palette.muted,
                           ),
                         ),
                       ),
@@ -3917,6 +3997,7 @@ class _BrowseCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final subtitle = _subtitle;
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final palette = HomePalette.of(context);
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -3951,7 +4032,9 @@ class _BrowseCard extends StatelessWidget {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: const Color(0x0F000000),
+                          color: palette.dark
+                              ? palette.line
+                              : const Color(0x0F000000),
                           width: 0.5,
                         ),
                       ),
@@ -3966,11 +4049,11 @@ class _BrowseCard extends StatelessWidget {
             item.title,
             maxLines: titleMaxLines,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
               height: 1.25,
-              color: Color(0xFF1B1B1B),
+              color: palette.ink,
             ),
           ),
           if (subtitle != null)
@@ -3980,10 +4063,10 @@ class _BrowseCard extends StatelessWidget {
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   height: 1.2,
-                  color: Color(0x99000000),
+                  color: palette.muted,
                 ),
               ),
             ),
@@ -4010,58 +4093,64 @@ class _HistoryEmpty extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 88,
-          height: 88,
-          decoration: const BoxDecoration(
-            color: Color(0xFFFFF3E0),
-            shape: BoxShape.circle,
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              color: palette.dark ? palette.soft : const Color(0xFFFFF3E0),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              LucideIcons.clapperboard,
+              size: 38,
+              color: Color(0xFFFA6725),
+            ),
           ),
-          child: const Icon(
-            LucideIcons.clapperboard,
-            size: 38,
-            color: Color(0xFFFA6725),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(fontSize: 14, color: palette.muted),
           ),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          message,
-          style: const TextStyle(fontSize: 14, color: Color(0x99000000)),
-        ),
-        if (onFind != null) ...[
-          const SizedBox(height: 20),
-          GestureDetector(
-            key: const Key('drama_history_find'),
-            onTap: onFind,
-            behavior: HitTestBehavior.opaque,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xFFFA6725),
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 28, vertical: 12),
-                child: Text(
-                  // 最近页 = `Fe()`（DynamicComic 开启时「找短剧」）；
-                  // 收藏页官方硬编码「找视频」。
-                  buttonLabel,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
+          if (onFind != null) ...[
+            const SizedBox(height: 20),
+            GestureDetector(
+              key: const Key('drama_history_find'),
+              onTap: onFind,
+              behavior: HitTestBehavior.opaque,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFA6725),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 28,
+                    vertical: 12,
+                  ),
+                  child: Text(
+                    // 最近页 = `Fe()`（DynamicComic 开启时「找短剧」）；
+                    // 收藏页官方硬编码「找视频」。
+                    buttonLabel,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
 /// 官方最近列表页脚：`u4` 页脚件 `a()` 的「已显示全部内容」态
@@ -4075,7 +4164,7 @@ class _ListEndFooter extends StatelessWidget {
       padding: const EdgeInsets.only(top: 16, bottom: 24),
       child: Text(
         '已显示全部内容',
-        style: const TextStyle(fontSize: 12, color: Color(0x66000000)),
+        style: TextStyle(fontSize: 12, color: HomePalette.of(context).muted),
       ),
     ),
   );
@@ -4259,11 +4348,10 @@ class _LocalListState extends State<_LocalList> {
             children: [
               if (editingList)
                 _editHeader(filtered)
-              else if (filtered.isNotEmpty)
-                _normalHeader()
               else
-                // 空列表：只给悬浮顶栏让位。
-                SizedBox(height: MediaQuery.paddingOf(context).top + 76),
+                // 筛选行是常驻控件：切到没有记录的那一类（「其他视频」恒为空，
+                // 短剧/漫剧也可能还没有）时它必须留着，否则用户回不到「全部」。
+                _normalHeader(filtered),
               Expanded(child: body),
               if (editingList) _bottomBar(filtered),
             ],
@@ -4288,8 +4376,12 @@ class _LocalListState extends State<_LocalList> {
   /// （14h/7v、圆角 6dp）+ 右侧「编辑」（14sp 粗体；官方 chips 行
   /// marginEnd 52dp 给它让位）。悬浮顶栏（搜索 38 + 频道条 38）仍然压在
   /// 页面上方，chips 行要整体让到它下面。
-  Widget _normalHeader() {
+  ///
+  /// [filtered] 为空时（筛到没有记录的那一类）不给「编辑」：进编辑会把
+  /// 悬浮顶栏藏掉，而编辑头只在有记录时出现，用户就没有「完成」可按了。
+  Widget _normalHeader(List<MediaItem> filtered) {
     final top = MediaQuery.paddingOf(context).top;
+    final palette = HomePalette.of(context);
     return Container(
       padding: EdgeInsets.fromLTRB(12, top + 84, 12, 8),
       child: Row(
@@ -4313,19 +4405,20 @@ class _LocalListState extends State<_LocalList> {
             ),
           ),
           const SizedBox(width: 8),
-          GestureDetector(
-            key: const Key('drama_recent_edit'),
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _setEditing(true),
-            child: const Text(
-              '编辑',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1B1B1B),
+          if (filtered.isNotEmpty)
+            GestureDetector(
+              key: const Key('drama_recent_edit'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _setEditing(true),
+              child: Text(
+                '编辑',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: palette.ink,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -4338,9 +4431,10 @@ class _LocalListState extends State<_LocalList> {
   Widget _editHeader(List<MediaItem> filtered) {
     final allSelected = _selected.length == filtered.length;
     final top = MediaQuery.paddingOf(context).top;
+    final palette = HomePalette.of(context);
     return Container(
       key: const Key('drama_recent_edit_header'),
-      color: Colors.white,
+      color: palette.dark ? palette.canvas : Colors.white,
       padding: EdgeInsets.fromLTRB(22, top + 4, 22, 4),
       child: SizedBox(
         height: 56,
@@ -4362,9 +4456,9 @@ class _LocalListState extends State<_LocalList> {
                   }),
                   child: Text(
                     allSelected ? '取消全选' : '全选',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
-                      color: Color(0xFF1B1B1B),
+                      color: palette.ink,
                     ),
                   ),
                 ),
@@ -4372,9 +4466,9 @@ class _LocalListState extends State<_LocalList> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => _setEditing(false),
-                  child: const Text(
+                  child: Text(
                     '完成',
-                    style: TextStyle(fontSize: 16, color: Color(0xFF1B1B1B)),
+                    style: TextStyle(fontSize: 16, color: palette.ink),
                   ),
                 ),
               ],
@@ -4386,10 +4480,10 @@ class _LocalListState extends State<_LocalList> {
                   Text(
                     // 最近 `Ee()`：全部→「视频」；收藏 `ye()`：全部→「全部」。
                     fromShelfEdit ? _shelfFilterTitle : _filterTitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF1B1B1B),
+                      color: palette.ink,
                     ),
                   ),
                   if (_selected.isNotEmpty)
@@ -4397,9 +4491,9 @@ class _LocalListState extends State<_LocalList> {
                       padding: const EdgeInsets.only(top: 2),
                       child: Text(
                         '已选择 ${_selected.length} 个$_selectionSuffix',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: Color(0x66000000),
+                          color: palette.muted,
                         ),
                       ),
                     ),
@@ -4418,14 +4512,19 @@ class _LocalListState extends State<_LocalList> {
   /// 追剧动作）。
   Widget _bottomBar(List<MediaItem> filtered) {
     final enabled = _selected.isNotEmpty;
+    final palette = HomePalette.of(context);
     return DecoratedBox(
       key: Key(
         fromShelfEdit ? 'drama_shelf_bottom_bar' : 'drama_recent_bottom_bar',
       ),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.dark ? palette.canvas : Colors.white,
         border: Border(
-          top: BorderSide(color: const Color(0xFF1B1B1B).withAlpha(15)),
+          top: BorderSide(
+            color: palette.dark
+                ? palette.line
+                : const Color(0xFF1B1B1B).withAlpha(15),
+          ),
         ),
       ),
       child: SafeArea(
@@ -4439,7 +4538,7 @@ class _LocalListState extends State<_LocalList> {
                 _barAction(
                   key: const Key('drama_recent_follow'),
                   label: _filter == 'manju' ? '追漫' : '追剧',
-                  color: const Color(0xFF1B1B1B),
+                  color: palette.ink,
                   enabled: enabled,
                   onTap: enabled
                       ? () => unawaited(_followSelected(filtered))
@@ -4578,13 +4677,16 @@ class _LocalListState extends State<_LocalList> {
 
   Widget _filterChip(String? kind, String label) {
     final selected = _filter == kind;
+    final palette = HomePalette.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => setState(() => _filter = kind),
       child: DecoratedBox(
         // 官方 `c4e.xml` + `f.s()`：选中浅橙底橙字加粗，未选中浅灰底深字。
         decoration: BoxDecoration(
-          color: selected ? const Color(0x1AFA6725) : const Color(0x08000000),
+          color: selected
+              ? const Color(0x1AFA6725)
+              : (palette.dark ? palette.soft : const Color(0x08000000)),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Padding(
@@ -4596,7 +4698,7 @@ class _LocalListState extends State<_LocalList> {
               fontWeight: selected ? FontWeight.bold : FontWeight.normal,
               color: selected
                   ? const Color(0xFFFA6725)
-                  : const Color(0xFF1B1B1B),
+                  : palette.ink,
             ),
           ),
         ),

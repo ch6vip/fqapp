@@ -174,6 +174,8 @@ Future<void> _initializeLocalData() async {
   );
   // 墨水屏模式与深色模式同为可选偏好：读不到退化为关闭，不拖住启动。
   einkModeNotifier.value = sp.getBool(einkModeKey) ?? false;
+  // OLED 纯黑与墨水屏互斥；两个旧值同时为 true 时墨水屏优先。
+  oledModeNotifier.value = sp.getBool(oledModeKey) ?? false;
 }
 
 class FqApp extends StatefulWidget {
@@ -196,30 +198,39 @@ class _FqAppState extends State<FqApp> {
         return ValueListenableBuilder<bool>(
           valueListenable: einkModeNotifier,
           builder: (context, eink, _) {
-            // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
-            final effectiveMode = eink ? ThemeMode.light : mode;
-            return MaterialApp(
-              navigatorKey: _navigatorKey,
-              builder: (context, child) => AudioPlaybackScope(
-                navigatorKey: _navigatorKey,
-                child: isWindowsDesktop
-                    ? DesktopAppFrame(child: child ?? const SizedBox.shrink())
-                    : child ?? const SizedBox.shrink(),
-              ),
-              title: 'fqapp',
-              debugShowCheckedModeBanner: false,
-              theme: _theme(Brightness.light, eink: eink),
-              darkTheme: _theme(Brightness.dark, eink: eink),
-              themeMode: effectiveMode,
-              // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
-              // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
-              locale: const Locale('zh', 'CN'),
-              supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
-              localizationsDelegates: GlobalMaterialLocalizations.delegates,
-              home: AppBootstrap(
-                backendStarter: BackendService.instance.start,
-                child: const RootShell(),
-              ),
+            return ValueListenableBuilder<bool>(
+              valueListenable: oledModeNotifier,
+              builder: (context, oled, _) {
+                // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
+                // OLED 纯黑不再强制深色：它只在深色外观下生效（浅色时
+                // createTheme 直接忽略），跟随系统才能照常白天变浅。
+                final effectiveMode = eink ? ThemeMode.light : mode;
+                return MaterialApp(
+                  navigatorKey: _navigatorKey,
+                  builder: (context, child) => AudioPlaybackScope(
+                    navigatorKey: _navigatorKey,
+                    child: isWindowsDesktop
+                        ? DesktopAppFrame(
+                            child: child ?? const SizedBox.shrink(),
+                          )
+                        : child ?? const SizedBox.shrink(),
+                  ),
+                  title: 'fqapp',
+                  debugShowCheckedModeBanner: false,
+                  theme: _theme(Brightness.light, eink: eink, oled: oled),
+                  darkTheme: _theme(Brightness.dark, eink: eink, oled: oled),
+                  themeMode: effectiveMode,
+                  // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
+                  // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
+                  locale: const Locale('zh', 'CN'),
+                  supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+                  localizationsDelegates: GlobalMaterialLocalizations.delegates,
+                  home: AppBootstrap(
+                    backendStarter: BackendService.instance.start,
+                    child: const RootShell(),
+                  ),
+                );
+              },
             );
           },
         );
@@ -227,8 +238,11 @@ class _FqAppState extends State<FqApp> {
     );
   }
 
-  ThemeData _theme(Brightness brightness, {bool eink = false}) =>
-      AppTheme.createTheme(brightness, einkMode: eink);
+  ThemeData _theme(
+    Brightness brightness, {
+    bool eink = false,
+    bool oled = false,
+  }) => AppTheme.createTheme(brightness, einkMode: eink, oledMode: oled);
 }
 
 /// Opens local data before any page can access LibraryStore's boxes. Failed
@@ -378,7 +392,14 @@ class _RootShellState extends State<RootShell> {
   @override
   void initState() {
     super.initState();
+    // 短剧频道在推荐（视频流）与浅色页之间切换时，悬浮 dock 和系统导航栏
+    // 要跟着换肤，所以停在壳层的 build 里监听。
+    dramaLightPageNotifier.addListener(_onDramaChromeChanged);
     _startBackend();
+  }
+
+  void _onDramaChromeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _startBackend() async {
@@ -401,6 +422,7 @@ class _RootShellState extends State<RootShell> {
 
   @override
   void dispose() {
+    dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
     _homeScroll.dispose();
     super.dispose();
   }
@@ -475,10 +497,15 @@ class _RootShellState extends State<RootShell> {
     final palette = HomePalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isDramaTab = _index == 1;
-    final glassDark = isDark || isDramaTab;
+    // 短剧的推荐频道压在全屏视频流上，dock 用深色玻璃；看剧/漫剧/最近/收藏
+    // 是浅色页，dock 跟主题走，否则浅色外观下页面是奶白、dock 还是黑的。
+    final dramaOnVideo = isDramaTab && !dramaLightPageNotifier.value;
+    final glassDark = isDark || dramaOnVideo;
     // 墨水屏模式：本 build 由 Theme 变化触发重建（上面读了 Theme.of），
     // 这里直接读 notifier 当前值即可拿到最新开关，不另加监听。
     final eink = einkModeNotifier.value;
+    // OLED 纯黑只在深色外观下生效，浅色 / 墨水屏时该值为 false。
+    final oled = oledActive();
     final navBar = NavigationBarTheme(
       data: NavigationBarThemeData(
         height: 64,
@@ -554,12 +581,15 @@ class _RootShellState extends State<RootShell> {
 
     // 静态半透明底：与毛玻璃同色，供短剧 tab 复用（短剧 tab 背后是每帧
     // 变化的视频流，BackdropFilter 每帧重算模糊，GPU 满负荷；该 tab 下
-    // 用静态底，外观几乎不变；切出短剧 tab 后恢复毛玻璃）。
+    // 用静态底，外观几乎不变；切出短剧 tab 后恢复毛玻璃）。OLED 纯黑直接
+    // 用不透明的近黑底：纯黑画布上毛玻璃只会晕出一圈灰，还白白模糊每帧。
     final staticNavBar = Container(
       decoration: BoxDecoration(
-        color: glassDark
-            ? const Color(0xFF161619).withValues(alpha: 0.72)
-            : Colors.white.withValues(alpha: 0.82),
+        color: oled
+            ? const Color(0xFF0C0C0E)
+            : (glassDark
+                  ? const Color(0xFF161619).withValues(alpha: 0.72)
+                  : Colors.white.withValues(alpha: 0.82)),
         borderRadius: BorderRadius.circular(28),
         border: Border.all(
           color: glassDark
@@ -571,6 +601,10 @@ class _RootShellState extends State<RootShell> {
       child: navBar,
     );
 
+    // 系统导航栏（Android 底部系统自绘的那条）按当前画布取色。Flutter 的
+    // light / dark 两套预设都把它写成纯黑底 + 白图标，浅色页面下会在最底部
+    // 留一条突兀的黑带；短剧只有视频流（推荐）背后是视频，仍用黑。
+    final lightSystemIcons = dramaOnVideo || isDark;
     return Scaffold(
       extendBody: true,
       // 状态栏图标亮度挂在壳层、按选中 tab 切换：短剧页是黑底视频流（官方
@@ -579,9 +613,21 @@ class _RootShellState extends State<RootShell> {
       // 各页内部，是因为 IndexedStack 里未选中的页不参与绘制，页内
       // AnnotatedRegion 切走后会残留上一个页的样式。
       body: AnnotatedRegion<SystemUiOverlayStyle>(
-        value: _index == 1
-            ? SystemUiOverlayStyle.light
-            : (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark),
+        value:
+            (lightSystemIcons
+                    ? SystemUiOverlayStyle.light
+                    : SystemUiOverlayStyle.dark)
+                .copyWith(
+                  systemNavigationBarColor: dramaOnVideo
+                      ? Colors.black
+                      : palette.canvas,
+                  systemNavigationBarDividerColor: dramaOnVideo
+                      ? Colors.black
+                      : palette.canvas,
+                  systemNavigationBarIconBrightness: lightSystemIcons
+                      ? Brightness.light
+                      : Brightness.dark,
+                ),
         child: LazyIndexedStack(
           index: _index,
           children: [
@@ -638,7 +684,7 @@ class _RootShellState extends State<RootShell> {
                         ),
                         child: navBar,
                       )
-                    : isDramaTab
+                    : isDramaTab || oled
                     ? staticNavBar
                     : BackdropFilter(
                         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),

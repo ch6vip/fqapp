@@ -4,6 +4,7 @@ import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/fakes.dart';
@@ -149,6 +150,36 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('深色主题下面板与选集格子改用深色色板', (tester) async {
+    await _mount(
+      tester,
+      theme: AppTheme.createTheme(Brightness.dark),
+      watched: {1},
+    );
+    await openEpisodes(tester);
+    // 面板不再强制白底：取浮层色（深色非 OLED = surface）。
+    final panel = tester.widget<Material>(
+      find.byKey(const ValueKey('story-panel')),
+    );
+    expect(panel.color, const Color(0xFF242427));
+    Text tileText(int index) => tester.widget<Text>(
+      find.descendant(of: _episode(index), matching: find.byType(Text)).first,
+    );
+    // 当前集仍用品牌橙；普通集换色板 ink；已看集用 muted。
+    expect(tileText(0).style?.color, const Color(0xFFFA6725));
+    expect(tileText(10).style?.color, const Color(0xFFF5F1EB));
+    expect(tileText(1).style?.color, const Color(0xFFA7A39E));
+    // 普通格底在深色面板上换成亮 overlay（#08000000 会看不见）。
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Material && widget.color == const Color(0x14FFFFFF),
+      ),
+      findsWidgets,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   for (final size in [
     const Size(1080, 1920),
@@ -345,6 +376,7 @@ Future<_Fixture> _mount(
   int currentIndex = 0,
   Set<int>? watched,
   List<Chapter>? episodes,
+  ThemeData? theme,
 }) async {
   await tester.binding.setSurfaceSize(window);
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -359,6 +391,7 @@ Future<_Fixture> _mount(
   });
   await tester.pumpWidget(
     MaterialApp(
+      theme: theme,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(
           textScaler: scale,

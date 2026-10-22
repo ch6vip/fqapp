@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 import '../../models/book_comment.dart' show formatCount;
 import '../../models/playlet_comment.dart';
 import '../../services/api_client.dart';
+import '../home/home_design.dart';
 import 'playlet_discussion_tile.dart';
 import 'playlet_reply_panel.dart';
 
@@ -75,10 +76,9 @@ class PlayletCommentPanel extends StatefulWidget {
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
+    // 深色 / OLED 弹层取 surface + 发丝边：与听书/详情弹层同一规则。
+    backgroundColor: homeSheetColor(HomePalette.of(context)),
+    shape: homeSheetShape(HomePalette.of(context), top: 16),
     builder: (context) => PlayletCommentPanel(
       seriesId: seriesId,
       loader: loader,
@@ -277,40 +277,43 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
     );
   }
 
-  Widget _header() => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-    child: Row(
-      children: [
-        const Text(
-          '剧评',
-          key: ValueKey('playlet-comment-title'),
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1B1B1B),
-          ),
-        ),
-        const SizedBox(width: 8),
-        if (_total != null && _total! > 0)
+  Widget _header() {
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+      child: Row(
+        children: [
           Text(
-            formatCount(_total!),
-            key: const ValueKey('playlet-comment-total'),
-            style: const TextStyle(fontSize: 13, color: Color(0xFF9499A0)),
+            '剧评',
+            key: const ValueKey('playlet-comment-title'),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: palette.ink,
+            ),
           ),
-        const Spacer(),
-        IconButton(
-          key: const ValueKey('playlet-comment-close'),
-          tooltip: '关闭',
-          onPressed: () => Navigator.maybePop(context),
-          icon: const Icon(
-            Icons.close_rounded,
-            size: 20,
-            color: Color(0xFF9499A0),
+          const SizedBox(width: 8),
+          if (_total != null && _total! > 0)
+            Text(
+              formatCount(_total!),
+              key: const ValueKey('playlet-comment-total'),
+              style: TextStyle(fontSize: 13, color: palette.muted),
+            ),
+          const Spacer(),
+          IconButton(
+            key: const ValueKey('playlet-comment-close'),
+            tooltip: '关闭',
+            onPressed: () => Navigator.maybePop(context),
+            icon: Icon(
+              Icons.close_rounded,
+              size: 20,
+              color: palette.muted,
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 
   Widget _filters() => SizedBox(
     height: 40,
@@ -323,6 +326,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
 
   Widget _filterChip(_FilterOption option) {
     final selected = _sort == option.sort && _tag == option.tag;
+    final palette = HomePalette.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       child: GestureDetector(
@@ -334,7 +338,9 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             // 官方选中样式：橙字 #FFFA6725 + 浅橙底 #1AFA6725。
-            color: selected ? const Color(0x1AFA6725) : const Color(0xFFF5F5F7),
+            color: selected
+                ? const Color(0x1AFA6725)
+                : (palette.dark ? palette.soft : const Color(0xFFF5F5F7)),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Text(
@@ -342,9 +348,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
             style: TextStyle(
               fontSize: 13,
               fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              color: selected
-                  ? const Color(0xFFFA6725)
-                  : const Color(0xFF61656B),
+              color: selected ? const Color(0xFFFA6725) : palette.muted,
             ),
           ),
         ),
@@ -353,6 +357,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
   }
 
   Widget _body() {
+    final palette = HomePalette.of(context);
     if (_comments.isEmpty && _loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -361,7 +366,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('评论加载失败', style: TextStyle(color: Color(0xFF9499A0))),
+            Text('评论加载失败', style: TextStyle(color: palette.muted)),
             const SizedBox(height: 8),
             OutlinedButton(
               key: const ValueKey('playlet-comment-retry'),
@@ -377,7 +382,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
         child: Text(
           PlayletCommentPage(totalCount: _total ?? 0).emptyText,
           key: const ValueKey('playlet-comment-empty'),
-          style: const TextStyle(color: Color(0xFF9499A0)),
+          style: TextStyle(color: palette.muted),
         ),
       );
     }
