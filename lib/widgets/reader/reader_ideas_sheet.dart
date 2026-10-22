@@ -404,7 +404,16 @@ class _CommentRowState extends State<_CommentRow> {
     }
   }
 
-  /// Reply counter: tap to expand, chevron shows the state.
+  /// Reply counter: tap to expand, chevron rotates with the state.
+  ///
+  /// The three labels follow the official state machine
+  /// (`xt1/e0.java` `A2()`, driven by the holder's state):
+  ///
+  /// | 状态 | 文案 | 箭头 |
+  /// | --- | --- | --- |
+  /// | 可展开 | `展开%d条回复` (strings `b9g`) | 0° |
+  /// | 已展开 | `收起` (strings `b9i`) | 180° |
+  /// | 加载中 | `加载中` (strings `b9j`) | — |
   ///
   /// Without a loader it stays a plain count, exactly as before: an offline
   /// caller must not get a control that can only fail.
@@ -412,8 +421,18 @@ class _CommentRowState extends State<_CommentRow> {
     final canOpen = widget.replyLoader != null;
     final open = _replies != null;
     final label = _replies?.totalCount ?? comment.replyCount;
-    final text = label > 0 ? '回复 ${formatCount(label)}' : '回复';
-    if (!canOpen) return Text(text, style: metaStyle);
+    // 不可展开时保留原来的只读计数，不冒充「展开 N 条回复」。
+    if (!canOpen) {
+      return Text(
+        label > 0 ? '回复 ${formatCount(label)}' : '回复',
+        style: metaStyle,
+      );
+    }
+    final text = _loading
+        ? '加载中'
+        : open
+        ? '收起'
+        : '展开 ${formatCount(label)} 条回复';
     return GestureDetector(
       key: ValueKey('reader_reply_toggle_${comment.id}'),
       behavior: HitTestBehavior.opaque,
@@ -421,21 +440,17 @@ class _CommentRowState extends State<_CommentRow> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_loading)
-            SizedBox.square(
-              dimension: 12,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: mutedColor,
-              ),
-            )
-          else
-            Text(text, style: metaStyle),
+          Text(text, style: metaStyle),
           const SizedBox(width: 2),
-          Icon(
-            open ? LucideIcons.chevron_up : LucideIcons.chevron_down,
-            size: 13,
-            color: mutedColor,
+          // 官方是把同一个箭头旋转 0°/180°，这里用上下箭头等价表达。
+          AnimatedRotation(
+            turns: open ? 0.5 : 0,
+            duration: const Duration(milliseconds: 160),
+            child: Icon(
+              LucideIcons.chevron_down,
+              size: 13,
+              color: mutedColor,
+            ),
           ),
         ],
       ),

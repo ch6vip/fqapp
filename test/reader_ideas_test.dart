@@ -243,20 +243,24 @@ void main() {
         },
       );
 
-      // 展开前只有计数，没有正文。
-      expect(find.text('回复 2'), findsOneWidget);
+      // 展开前：官方 b9g「展开%d条回复」，只有计数没有正文。
+      expect(find.text('展开 2 条回复'), findsOneWidget);
       expect(find.text('同感'), findsNothing);
 
-      await tester.tap(find.text('回复 2'));
+      await tester.tap(find.text('展开 2 条回复'));
       await tester.pumpAndSettle();
       expect(loads, 1);
       expect(find.textContaining('同感', findRichText: true), findsOneWidget);
       expect(find.textContaining('我也这么想', findRichText: true), findsOneWidget);
+      // 展开后：官方 b9i「收起」。
+      expect(find.text('收起'), findsOneWidget);
+      expect(find.text('展开 2 条回复'), findsNothing);
 
-      // 再点收起，不重复请求。
-      await tester.tap(find.text('回复 2'));
+      // 再点收起，回到可展开态且不重复请求。
+      await tester.tap(find.text('收起'));
       await tester.pumpAndSettle();
       expect(loads, 1);
+      expect(find.text('展开 2 条回复'), findsOneWidget);
       expect(find.textContaining('同感', findRichText: true), findsNothing);
       expect(tester.takeException(), isNull);
     });
