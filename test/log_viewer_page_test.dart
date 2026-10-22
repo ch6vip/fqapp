@@ -77,14 +77,14 @@ void main() {
     // the bottom of that page, so it has to be scrolled into view first.
     expect(find.byType(ApiServicePage), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.text('日志'),
+      find.text('运行日志'),
       200,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    expect(find.text('日志'), findsOneWidget);
+    expect(find.text('运行日志'), findsOneWidget);
 
-    await tester.tap(find.text('日志'));
+    await tester.tap(find.text('运行日志'));
     await tester.pumpAndSettle();
     expect(find.byType(LogViewerPage), findsOneWidget);
   });
