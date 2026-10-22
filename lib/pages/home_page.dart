@@ -23,10 +23,23 @@ import 'search_page.dart';
 import 'home_provider.dart';
 
 class HomePage extends ConsumerStatefulWidget {
-  const HomePage({super.key, this.cacheStore, this.readerStore});
+  const HomePage({
+    super.key,
+    this.cacheStore,
+    this.readerStore,
+    this.scrollController,
+  });
 
   final ChapterCache? cacheStore;
   final ReaderStore? readerStore;
+
+  /// 首页 feed 的滚动控制器，由壳层持有。
+  ///
+  /// 官方「重复点击底部书城 tab 回顶部」发生在底部栏
+  /// （`onBottomTabRepeatClick` → `scrollToPosition(0)`），不在首页内部，
+  /// 所以控制器要能被外面拿到。为 null 时首页自建并自行释放，测试与独立
+  /// 使用不受影响。
+  final ScrollController? scrollController;
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
@@ -44,7 +57,9 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   static const _gridPadding = 20.0;
 
-  final ScrollController _scroll = ScrollController();
+  late final ScrollController _scroll =
+      widget.scrollController ?? ScrollController();
+  bool get _ownsScroll => widget.scrollController == null;
   Timer? _loadMoreTimer;
   bool _visible = false;
 
@@ -89,7 +104,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void dispose() {
     _loadMoreTimer?.cancel();
-    _scroll.dispose();
+    // 外部传入的控制器归壳层所有，这里不能释放。
+    if (_ownsScroll) _scroll.dispose();
     super.dispose();
   }
 

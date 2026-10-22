@@ -343,6 +343,36 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
   bool _backendReady = false;
+
+  /// 首页 feed 的滚动控制器，由壳层持有以便底部栏触发回顶部。
+  final ScrollController _homeScroll = ScrollController();
+
+  /// 上一次「重复点击底部首页 tab」的时间，用于 800ms 防抖。
+  ///
+  /// 官方对重复点击用 `throttleFirst(800L, MILLISECONDS)`
+  /// （BookshelfVideoMultiTabFragment.java:101）。
+  DateTime? _lastHomeTabRepeatAt;
+
+  /// 底部 tab 被选中。重复点当前 tab 时回到首页顶部。
+  ///
+  /// 官方把它放在底部栏而不是页内：`onBottomTabRepeatClick()` 转发到当前
+  /// fragment，最终是 `scrollToPosition(0)`（BookshelfVideoTabFragment.java:247）。
+  /// 首页头部是普通 sliver（不是折叠 AppBar），把 offset 归零即等价，吸顶的
+  /// 分类栏会自己重新吸住。
+  void _selectTab(int index) {
+    if (index != _index) {
+      setState(() => _index = index);
+      return;
+    }
+    if (index != 0) return; // 只有首页有 feed 需要回顶
+    final now = DateTime.now();
+    final last = _lastHomeTabRepeatAt;
+    if (last != null && now.difference(last).inMilliseconds < 800) return;
+    _lastHomeTabRepeatAt = now;
+    if (!_homeScroll.hasClients) return;
+    // 官方是瞬间跳转（scrollToPosition(0)），没有动画。
+    _homeScroll.jumpTo(_homeScroll.position.minScrollExtent);
+  }
   String? _backendError;
 
   @override
@@ -367,6 +397,12 @@ class _RootShellState extends State<RootShell> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _homeScroll.dispose();
+    super.dispose();
   }
 
   @override
@@ -488,9 +524,7 @@ class _RootShellState extends State<RootShell> {
       ),
       child: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) {
-          if (i != _index) setState(() => _index = i);
-        },
+        onDestinationSelected: _selectTab,
         backgroundColor: Colors.transparent,
         elevation: 0,
         destinations: const [
@@ -551,7 +585,7 @@ class _RootShellState extends State<RootShell> {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            const HomePage(),
+            HomePage(scrollController: _homeScroll),
             const DramaPage(),
             // 空书架上的「去书城找书」切回首页 tab。
             LibraryPage(onBrowse: () => setState(() => _index = 0)),

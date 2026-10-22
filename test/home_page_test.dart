@@ -72,6 +72,59 @@ void main() {
     },
   );
 
+  testWidgets('外部 ScrollController 能驱动首页回顶部（底部栏重复点击的依据）', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 850));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    // 壳层持有控制器：官方「重复点底部首页 tab 回顶部」发生在底部栏，
+    // 不在页内，所以首页必须能把控制器交出去（issue：首页回顶部）。
+    final controller = ScrollController();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                      HomepagePage(
+                        items: [
+                          for (var i = 0; i < 40; i++)
+                            MediaItem(
+                              id: 'i$i',
+                              title: '作品 $i',
+                              cover: '',
+                              author: '',
+                              badge: '',
+                              ep: '',
+                              kind: 'book',
+                            ),
+                        ],
+                        nextOffset: null,
+                        sessionId: null,
+                      ),
+              searchLoader: (query, {int page = 1}) async => [],
+            ),
+          ),
+        ],
+        child: MaterialApp(home: HomePage(scrollController: controller)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final feed = find.byKey(const Key('home_feed'));
+    await tester.drag(feed, const Offset(0, -600));
+    await tester.pumpAndSettle();
+    expect(controller.position.pixels, greaterThan(0));
+
+    // 壳层就是这样回顶部的（官方 scrollToPosition(0) 的等价动作）。
+    controller.jumpTo(controller.position.minScrollExtent);
+    await tester.pumpAndSettle();
+    expect(controller.position.pixels, 0);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final scale in [1.0, 1.8]) {
     testWidgets('search hint fits a narrow phone at text scale $scale', (
       tester,
