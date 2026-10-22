@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../models/audio_extra.dart';
+import '../models/home_cell.dart';
 import '../models/author_profile.dart';
 import '../models/backend_resource_url.dart';
 import '../models/book_comment.dart';
@@ -32,7 +33,17 @@ import 'request_gate.dart';
 /// callers update the feed atomically after checking that the request is
 /// still current.
 class HomepagePage {
+  /// Flat card list, in document order. Still the primary path: every caller
+  /// that just wants cards keeps using this.
   final List<MediaItem> items;
+
+  /// Same page, but keeping the upstream block boundaries.
+  ///
+  /// Empty when the payload had no recognisable blocks (or an older backend
+  /// answered), so a renderer that wants blocks can fall back to [items]
+  /// instead of showing nothing. See [HomeCell] for why the boundaries matter.
+  final List<HomeCell> cells;
+
   final int? nextOffset;
   final String? sessionId;
 
@@ -40,6 +51,7 @@ class HomepagePage {
     required this.items,
     required this.nextOffset,
     required this.sessionId,
+    this.cells = const [],
   });
 }
 
@@ -1335,9 +1347,11 @@ class ApiClient {
         selectedPayload,
         kind: tabType == 24 ? 'manju' : null,
       );
+      final cells = parseHomeCells(selectedPayload);
       return (
         page: HomepagePage(
           items: items,
+          cells: cells,
           nextOffset: nextOffset,
           sessionId: nextSessionId,
         ),
@@ -1390,6 +1404,7 @@ class ApiClient {
           kind: tabType == 24 ? 'manju' : 'video',
         );
         if (items.isEmpty) return null;
+        final cells = parseHomeCells(payload);
         int? nextOffset;
         String? nextSessionId;
         final data = payload['data'];
@@ -1405,6 +1420,7 @@ class ApiClient {
         }
         return HomepagePage(
           items: items,
+          cells: cells,
           nextOffset: nextOffset,
           sessionId: nextSessionId,
         );
