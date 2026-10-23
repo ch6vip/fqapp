@@ -136,7 +136,7 @@ void main() {
   });
 
   group('HomeBookCard', () {
-    testWidgets('writes the score after the title with its 分 suffix', (
+    testWidgets('writes the score as a white badge on the cover', (
       tester,
     ) async {
       await pump(
@@ -148,10 +148,15 @@ void main() {
       );
 
       final score = tester.widget<Text>(find.text('9.3分'));
-      // `j6.e`: 有分数时字号取 `aVar.c`，`InfiniteSingleBookHolder` 传 `.n(16)`
-      // 即 16sp；颜色 `skin_color_orange_brand_light`(#FFFA6725)。
-      expect(score.style!.fontSize, 16);
-      expect(score.style!.color, const Color(0xFFFA6725));
+      // 服务端模板 single_book_v0.0.2：评分是封面左下角的白色 12sp Medium
+      // 角标（带阴影），不是橙色横排。
+      expect(score.style!.fontSize, 12);
+      expect(score.style!.color, Colors.white);
+      // 角标左下 10/8：比封面底部高 8dp 以上。
+      expect(
+        tester.getBottomLeft(find.text('9.3分')).dy,
+        lessThan(tester.getBottomLeft(find.byType(HomeBookCard)).dy - 7),
+      );
     });
 
     testWidgets('drops the score when the payload has none', (tester) async {
@@ -189,6 +194,7 @@ void main() {
 
         // Vertical card (S0): the title gets two lines, not one.
         expect(tester.widget<Text>(find.text('一个小说的书名')).maxLines, 2);
+        // 模板：14sp Medium。
         expect(find.text('某作者'), findsNothing);
         expect(tester.widget<Text>(find.text('书摘内容，用来验证摘要占两行。')).maxLines, 2);
       },

@@ -94,49 +94,72 @@ const Color _rankTopIndexColor = Color(0xFFDCAD6D);
 
 // ── Book card ──────────────────────────────────────────────────────────────
 //
-// Vertical card (S0 verdict): cover across the full column, then score, title
-// and abstract stacked underneath. The official grid is Compose-rendered, so
-// only pixels were available — see `homeCardCoverAspect`.
+// The card's authoritative spec is the server template `single_book_v0.0.2`
+// (`data.tab_item[<bookstore>].static_configs`, filled into the KMP DSL
+// renderer — the APK ships only the interpreter). Values below mirror that
+// JSON, kept in `build/card_template.json` for reference:
+//
+//   root      vertical LinearLayout, fill×wrap, cornerRadius 8, bg #FFFFFFFF
+//   cover     fill×wrap, ratio 1.4 (height = width × 1.4), grey placeholder
+//   scrim     fill×32dp over the cover bottom, #00000000 → #00000026
+//   score     white 12sp Medium badge on the cover, margin{left:10,bottom:8},
+//             shadow radius 1 #000000CC, `#score_0`, 1 line
+//   text box  padding{left:10, top:8, right:10, bottom:12}
+//   title     `#title_0`, 2 lines, 14sp Medium, #FF000000, lineSpace 4
+//   abstract  margin-top 4, `#abstract_0`, 2 lines, 12sp, #00000066,
+//             lineSpace 3 + lineMultiply 1.6
+//   tags      margin-top 4 (`#tag_list_0` — not parsed yet, skipped)
 
-const double _cardTitleSize = 16;
+/// Cover height = column width × 1.4（模板 `imageConfig.ratio`）。
+const double _cardCoverHeightRatio = 1.4;
+
+const double _cardTitleSize = 14;
 const double _cardMetaSize = 12;
+const double _cardScoreSize = 12;
 
-/// Bottom padding of the card (`av1.xml` root `paddingBottom="22.0dip"`).
-const double _cardBottomPadding = 22;
+/// 文本区 padding（模板 root/1）。
+const EdgeInsets _cardTextPadding = EdgeInsets.fromLTRB(10, 8, 10, 12);
 
-/// `j6.e` renders the score as digits plus a「分」suffix in brand orange
-/// (#FFFA6725 = `skin_color_orange_brand_light`). `InfiniteSingleBookHolder`
-/// passes `.n(16)` — `aVar.c`, the size used when a score exists — so the line
-/// is 16sp; only the digits are bold (`aVar.k`'s `StyleSpan(1)`).
-const Color _scoreColor = Color(0xFFFA6725);
-const double _scoreSize = 16;
+/// 标题行高 = pointSize + lineSpace 4（模板 paragraphStyle）。
+const double _cardTitleLineExtra = 4;
+
+/// 简介行高 = pointSize × 1.6 + lineSpace 3（模板 paragraphStyle）。
+const double _cardAbstractLineMultiply = 1.6;
+const double _cardAbstractLineExtra = 3;
+
+/// 模板暗色值（darkHex）：卡底 #1C1C1C、标题 #FFFFFFCC、简介 #66FFFFFF。
+const Color _cardDarkBg = Color(0xFF1C1C1C);
 
 // ── Card grid ──────────────────────────────────────────────────────────────
 
 /// Column gutter, measured from the device.
 ///
 /// S0 dumped the two card columns at x36-598 and x622-1184 on a 1220px-wide
-/// screen: the gap is 24px = **8dp**, and the outer margin is 36px = 12dp.
-/// (`av1.xml`'s own 16dp margins belong to the single-column `av1` surface,
-/// not this grid.)
+/// screen: the gap is 24px = **8dp**, and the outer margin is 36px = 12dp —
+/// now source-confirmed (`DoubleRowMarginConfig` defaults item_spacing=8 /
+/// left_margin=12, `k1.java:1247`, `ta5/j.java`).
 const double _gridGap = 8;
 const double _gridRowGap = 8;
 
 /// Height of one card cell.
 ///
-/// Vertical card (S0 verdict): cover on top at the full column width, then
-/// score, title (2 lines) and the 2-line abstract.
-///
-/// The cover height depends on the column width, and the column width depends
-/// on the screen — so the caller passes [columnWidth]. Height still follows the
-/// text scale, otherwise a large-font device would clip the abstract.
+/// Cover (width × 1.4) + the text box; the score badge sits on the cover and
+/// adds no height. Follows the text scale so a large-font device clips
+/// nothing.
 double homeBookCardExtent(BuildContext context, {required double columnWidth}) {
   final scaler = MediaQuery.textScalerOf(context);
-  final cover = columnWidth / homeCardCoverAspect;
-  final score = scaler.scale(_scoreSize) * 1.25 + _cardTitleGap;
-  final title = scaler.scale(_cardTitleSize) * 1.25 * 2;
-  final abstract = _cardAbstractGap + scaler.scale(_cardMetaSize) * 1.45 * 2;
-  return cover + _cardTitleGap + score + title + abstract + _cardBottomPadding;
+  final cover = columnWidth * _cardCoverHeightRatio;
+  final title = (scaler.scale(_cardTitleSize) + _cardTitleLineExtra) * 2;
+  final abstract =
+      (scaler.scale(_cardMetaSize) * _cardAbstractLineMultiply +
+          _cardAbstractLineExtra) *
+      2;
+  return cover +
+      _cardTextPadding.top +
+      title +
+      4 +
+      abstract +
+      _cardTextPadding.bottom;
 }
 
 /// Column width for a card block, given the width available to the cards.
@@ -483,7 +506,7 @@ class HomeBookCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
 
-  /// Score formatting shared with [homeBookCardExtent].
+  /// Score formatting: `9.3分`（模板 `#score_0` 的服务端 formatter 同款）。
   static String _scoreText(double score) => score == score.roundToDouble()
       ? score.toStringAsFixed(0)
       : score.toStringAsFixed(1);
@@ -491,101 +514,146 @@ class HomeBookCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final dark = palette.dark;
     final abstract = item.intro;
     final score = item.score;
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Vertical card (S0 verdict): the cover fills the column width and
-          // the text stacks underneath. The official grid is rendered by
-          // Compose (`epx` = ComposeView), so `uiautomator` exposes only the
-          // text nodes — but pixel scanning of the card region shows the cover
-          // spanning the full column (562/562 px) from y1565 to y2285, with a
-          // pure text area below it. `av1`/`av2` (68x102 cover, text right) is
-          // a different surface, not this one.
-          final width = constraints.maxWidth;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _Cover(
-                url: item.cover,
-                width: width,
-                height: width / homeCardCoverAspect,
-                palette: palette,
-                radius: homeCardCoverRadius,
-              ),
-              const SizedBox(height: _cardTitleGap),
-              if (score != null)
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(
-                        text: _scoreText(score),
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const TextSpan(text: '分'),
-                    ],
+      child: DecoratedBox(
+        // 模板 root：白底（暗色 #1C1C1C）8dp 圆角卡，圆角裁住封面。
+        decoration: BoxDecoration(
+          color: dark ? _cardDarkBg : Colors.white,
+          borderRadius: BorderRadius.circular(_cardRadius),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(_cardRadius),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 封面：高 = 宽 × 1.4；评分角标与压暗渐变叠在其上。
+                  SizedBox(
+                    width: double.infinity,
+                    height: width * _cardCoverHeightRatio,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _Cover(
+                          url: item.cover,
+                          width: width,
+                          height: width * _cardCoverHeightRatio,
+                          palette: palette,
+                          radius: 0,
+                        ),
+                        // 模板 scrim：封面底部 32dp，透明 → 15% 黑。
+                        const Align(
+                          alignment: Alignment.bottomCenter,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Color(0x00000000),
+                                    Color(0x26000000),
+                                  ],
+                                ),
+                              ),
+                              child: SizedBox(
+                                width: double.infinity,
+                                height: _cardScrimHeight,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 模板评分角标：左下 10/8，白 12sp Medium + 阴影。
+                        if (score != null)
+                          Positioned(
+                            left: 10,
+                            bottom: 8,
+                            child: Text(
+                              '${_scoreText(score)}分',
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: _cardScoreSize,
+                                fontWeight: FontWeight.w500,
+                                color: dark
+                                    ? const Color(0xCCFFFFFF)
+                                    : Colors.white,
+                                shadows: const [
+                                  Shadow(
+                                    color: Color(0xCC000000),
+                                    blurRadius: 1,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                  maxLines: 1,
-                  style: const TextStyle(
-                    fontSize: _scoreSize,
-                    height: 1.25,
-                    color: _scoreColor,
+                  Padding(
+                    padding: _cardTextPadding,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: _cardTitleSize,
+                            // lineHeight = pointSize + lineSpace 4。
+                            height:
+                                (_cardTitleSize + _cardTitleLineExtra) /
+                                _cardTitleSize,
+                            fontWeight: FontWeight.w500,
+                            color: dark
+                                ? const Color(0xCCFFFFFF)
+                                : const Color(0xFF000000),
+                          ),
+                        ),
+                        if (abstract.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            abstract,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: _cardMetaSize,
+                              // lineHeight = pointSize × 1.6 + lineSpace 3。
+                              height:
+                                  (_cardMetaSize * _cardAbstractLineMultiply +
+                                      _cardAbstractLineExtra) /
+                                  _cardMetaSize,
+                              color: dark
+                                  ? const Color(0x66FFFFFF)
+                                  : const Color(0x66000000),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                ),
-              if (score != null) const SizedBox(height: _cardTitleGap),
-              Text(
-                item.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: _cardTitleSize,
-                  height: 1.25,
-                  // `skin_color_black_light` = #ff000000.
-                  color: palette.ink,
-                ),
-              ),
-              if (abstract.isNotEmpty) ...[
-                const SizedBox(height: _cardAbstractGap),
-                Text(
-                  abstract,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: _cardMetaSize,
-                    height: 1.45,
-                    // `skin_color_gray_40_light` = #66000000.
-                    color: palette.body,
-                  ),
-                ),
-              ],
-            ],
-          );
-        },
+                ],
+              );
+            },
+          ),
+        ),
       ),
     );
   }
 }
 
-/// Aspect ratio (width ÷ height) of the cover in the card stream.
-///
-/// Re-measured from the archived official screenshot: the cover spans the
-/// full 187dp column width and ~249dp in height (554×756px on the 1220px
-/// device), i.e. the standard portrait book cover at ~3:4. The S0 note that
-/// concluded 2.34:1 had mixed px with dp (240dp read as 240px); its own
-/// y-scan (color from y1565 to y2285) says 720px ≈ 240dp tall, not 80dp.
-const double homeCardCoverAspect = 0.75;
+/// 模板 root `layoutConfig.cornerRadius` = 8dp（`single_book_v0.0.2`）。
+const double _cardRadius = 8;
 
-/// `app:roundedCornerRadius="4.0dip"` on `ScaleBookCover` (`cgw.xml`).
-const double homeCardCoverRadius = 4;
-
-/// Gap between the cover and the first text line.
-const double _cardTitleGap = 8;
-
-/// Gap before the abstract (`av2.xml` `qg` `layout_marginTop="8.0dip"`).
-const double _cardAbstractGap = 8;
+/// 模板 scrim 高度（root/0/1 `height: 32`）。
+const double _cardScrimHeight = 32;
 
 class _Cover extends StatelessWidget {
   const _Cover({

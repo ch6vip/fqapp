@@ -288,13 +288,14 @@ class _HomePageState extends ConsumerState<HomePage> {
       }
       if (isHomeGridBlock(cell)) {
         // 官方的卡片流不装在白色区块卡里：卡片直接铺在 #F6F6F6 画布上，
-        // 外边距 12dp、列间距 8dp（S0 视图树证据 x36/x622 @1220px），流也
-        // 没有自己的标题和「更多书籍信息」条——那些属于别的白卡区块。
-        // 顶部再留 8dp，与排行榜区块底部的 14dp 合出官方的节间距。
+        // 外边距 12dp、列间距 8dp、行距 8dp（源码级：DoubleRowMarginConfig
+        // 默认 8/12 + ta5/j decoration + k1:1247 容器 padding），流也没有
+        // 自己的标题和「更多书籍信息」条。顶距 0——385 强制隐藏标题/筛选
+        // 时 feed 侧 top inset 就是 0（k1.java h3() → i(0)）。
         final entries = homeCellEntries(cell);
         slivers.add(
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
             sliver: SliverGrid(
               gridDelegate: homeBookGridDelegate(
                 context,
