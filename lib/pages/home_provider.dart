@@ -203,13 +203,7 @@ class HomeNotifier extends Notifier<HomeState> {
     // shows the same feed under 「推荐」 (用户截图与 ap3.xml 的兜底名都如此).
     '视频': 'video',
   };
-  static const tabTypes = {
-    '小说': 2,
-    '短剧': 8,
-    '漫剧': 24,
-    '听书': 5,
-    '视频': 16,
-  };
+  static const tabTypes = {'小说': 2, '短剧': 8, '漫剧': 24, '听书': 5, '视频': 16};
 
   /// 服务端 `tab_type`（官方 `BookstoreTabType`）→ 卡片种类。
   ///
@@ -390,6 +384,14 @@ class HomeNotifier extends Notifier<HomeState> {
           if (item.id.isNotEmpty) feed.seen.add('${item.kind}:${item.id}');
         }
       }
+      if (snapshot.cells.isNotEmpty) {
+        // Seed the block structure too, so the first frame renders the block
+        // layout. Without it the page falls back to the legacy spotlight+grid
+        // pipeline and flips to blocks only once the network answers — the
+        // flash of the old homepage on every cold start. Older snapshots have
+        // no cells and keep the previous behaviour.
+        feed.cells = snapshot.cells;
+      }
     }
     state = state.copyWith(
       items: feed.items,
@@ -413,7 +415,7 @@ class HomeNotifier extends Notifier<HomeState> {
           state.tabIndex != tabIndex) {
         return;
       }
-        final resume = feed.resumedVid != null;
+      final resume = feed.resumedVid != null;
       feed.resumedVid = null;
       _applyFetched(feed, fetched, replace: !resume);
       state = state.copyWith(
@@ -427,13 +429,15 @@ class HomeNotifier extends Notifier<HomeState> {
       // 上报只在翻页时发生：看第一张卡没滑动就没有 lastVid——兜底用
       // 当前列表首卡（它就是本次会话实际展示的第一张），让续接链在
       // 下一次冷启动成立。
-      final savedVid = feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
+      final savedVid =
+          feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
       unawaited(
         _feedCache?.save(
           tabIndex,
           feed.items,
           hasMore: feed.hasMore,
           lastVid: savedVid,
+          cells: feed.cells,
         ),
       );
     } catch (error) {
@@ -510,13 +514,15 @@ class HomeNotifier extends Notifier<HomeState> {
         isLoadMore: false,
         hasMore: feed.hasMore,
       );
-      final savedVid = feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
+      final savedVid =
+          feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
       unawaited(
         _feedCache?.save(
           tabIndex,
           feed.items,
           hasMore: feed.hasMore,
           lastVid: savedVid,
+          cells: feed.cells,
         ),
       );
     } catch (_) {

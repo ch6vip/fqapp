@@ -55,6 +55,65 @@ class HomeCell {
 
   bool get isEmpty => items.isEmpty && children.every((c) => c.isEmpty);
 
+  /// Serializes the block for the on-disk feed cache.
+  ///
+  /// Cards reuse [MediaItemJson.toJson] so a card survives a round trip with
+  /// the exact fields it renders; children recurse. `style`/`extra` are kept
+  /// as the raw maps they already are. Omitted when empty keys keep the
+  /// stored record small.
+  Map<String, dynamic> toMap() => {
+    'showType': showType,
+    'name': name,
+    'id': id,
+    if (url.isNotEmpty) 'url': url,
+    if (style.isNotEmpty) 'style': style,
+    if (extra.isNotEmpty) 'extra': extra,
+    'items': [for (final item in items) item.toJson()],
+    'children': [for (final child in children) child.toMap()],
+  };
+
+  /// Restores what [toMap] wrote.
+  ///
+  /// Missing or malformed keys fall back to the same defaults the payload
+  /// parser uses, so a partially unreadable cache entry still renders its
+  /// readable part instead of throwing; unreadable cards are skipped one by
+  /// one, like the flat item list of the feed cache.
+  factory HomeCell.fromMap(Map<String, dynamic> map) {
+    final items = <MediaItem>[];
+    final itemsRaw = map['items'];
+    if (itemsRaw is List) {
+      for (final entry in itemsRaw) {
+        if (entry is Map) {
+          final item = MediaItemJson.fromJson(Map<String, dynamic>.from(entry));
+          if (item != null) items.add(item);
+        }
+      }
+    }
+    final children = <HomeCell>[];
+    final childrenRaw = map['children'];
+    if (childrenRaw is List) {
+      for (final entry in childrenRaw) {
+        if (entry is Map) {
+          children.add(HomeCell.fromMap(Map<String, dynamic>.from(entry)));
+        }
+      }
+    }
+    return HomeCell(
+      showType: _intOf(map['showType']) ?? 0,
+      name: (map['name'] ?? '').toString(),
+      id: (map['id'] ?? '').toString(),
+      url: (map['url'] ?? '').toString(),
+      style: map['style'] is Map
+          ? Map<String, dynamic>.from(map['style'] as Map)
+          : const {},
+      extra: map['extra'] is Map
+          ? Map<String, dynamic>.from(map['extra'] as Map)
+          : const {},
+      items: items,
+      children: children,
+    );
+  }
+
   /// Every card under this block, in document order.
   ///
   /// Lets the untouched grid path keep working while blocks are adopted one
