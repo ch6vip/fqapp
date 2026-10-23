@@ -33,6 +33,10 @@ pub fn match_rest_path(path: &str, query: &Params) -> Option<RouteMatch> {
         "books" => match_books(tail, query),
         "novels" => match_novels(tail, query),
         "search" => match_search(tail, query),
+        "category" => Some(RouteMatch {
+            api: "category_front",
+            params: query.clone(),
+        }),
         "audio" => match_audio(tail, query),
         "authors" => match_authors(tail, query),
         "manga" => match_manga(tail, query),

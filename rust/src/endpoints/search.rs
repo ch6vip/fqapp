@@ -202,8 +202,41 @@ fn hot_search<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<V
     })
 }
 
+/// The category front page (`/reading/bookapi/new_category/front/v`).
+///
+/// One GET returns the whole page: `data.category_tab_config.tab_list[]`,
+/// each with `category_tab`/`tab_name` plus `cell_data[].atom_data[]
+/// .category_data{name, pic_url, category_id}` tiles. Request shape from
+/// `GetNewCategoryFrontPageRequest` (decompiled): `category_tab` is the
+/// NewCategoryTabType (1=男频 by default), the rest are scene bookkeeping.
+fn category_front<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let category_tab =
+            crate::endpoints::util::default_val(&params.get_str("category_tab"), "1");
+        let mut p = crate::endpoints::home::reading724_params();
+        p.set("category_tab", category_tab);
+        p.set("need_hot", "0");
+        p.set("last_chose_tab", "1");
+        p.set("source", "0");
+        p.set("distinct_style", "0");
+        p.set("new_category_tab", "1");
+        p.set("sub_category_tab", "0");
+        p.set("req_scene", "0");
+        let spec = UpstreamRequestSpec {
+            mode: UpstreamMode::DeviceSigned,
+            host: crate::endpoints::base::HOST_FQNOVEL.to_string(),
+            path: "/reading/bookapi/new_category/front/v".to_string(),
+            params: p.to_pairs(),
+            headers: dragon_read_headers(),
+            ..Default::default()
+        };
+        Upstream::new(ctx.up.clone()).json(&spec).await
+    })
+}
+
 pub fn register(s: &mut Server) {
     s.add_route("search", handle);
     s.add_route("search_cue", search_cue);
     s.add_route("hot_search", hot_search);
+    s.add_route("category_front", category_front);
 }

@@ -21,6 +21,7 @@ import '../widgets/home/home_skeleton.dart';
 import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
+import 'category_page.dart';
 import 'detail_page.dart';
 import 'cached_book_reader.dart';
 import 'rank_page.dart';
@@ -480,12 +481,13 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   /// 官方搜索行右上角的「分类」入口（`alx.xml` `i_y`）。官方点它走
-  /// `turnToCategoryTab` → `//category` 路由，打开的是完整的分类页；那个
-  /// 页面还没有建，先按官方位置摆入口，点击时说明状态。
+  /// `turnToCategoryTab` → `//category` 路由（`BookCategoryActivity` →
+  /// `KmpCategoryFragment`）；这里打开同结构的分类页。
   void _openCategory() {
-    ScaffoldMessenger.of(
+    Navigator.push(
       context,
-    ).showSnackBar(const SnackBar(content: Text('分类页还在接入中，敬请期待')));
+      MaterialPageRoute(builder: (_) => const CategoryPage()),
+    );
   }
 
   /// The rank board. Its catalogue (and the rank id the entries endpoint needs)

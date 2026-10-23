@@ -21,6 +21,7 @@ import '../models/media_id.dart';
 import '../models/playlet_comment.dart';
 import '../models/rank.dart';
 import '../models/related_series.dart';
+import '../models/category_front.dart';
 import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
 import 'app_log.dart';
@@ -790,6 +791,26 @@ class ApiClient {
       );
     } on Exception {
       return HotSearch.empty;
+    }
+  }
+
+  /// The category front page (left-rail channels + tiles).
+  ///
+  /// Returns [CategoryFront.empty] on failure: the category entry then shows
+  /// its error state instead of blocking the home page.
+  Future<CategoryFront> categoryFront({int tab = 1}) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/category', {'category_tab': '$tab'}),
+        timeout: const Duration(seconds: 15),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return await Isolate.run(
+        () => CategoryFront.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return CategoryFront.empty;
     }
   }
 
