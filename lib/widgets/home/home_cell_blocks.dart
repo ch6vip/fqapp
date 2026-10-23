@@ -569,13 +569,14 @@ class HomeBookCard extends StatelessWidget {
   }
 }
 
-/// Aspect ratio of the cover in the card stream.
+/// Aspect ratio (width ÷ height) of the cover in the card stream.
 ///
-/// Measured from the device, not from a layout file: the card is Compose in
-/// the official client, so only pixels are available. The cover occupied
-/// ~562 x 240 px at 187dp column width, i.e. roughly 2.34:1. Kept as a ratio
-/// so a different cover image cannot be cropped short.
-const double homeCardCoverAspect = 2.34;
+/// Re-measured from the archived official screenshot: the cover spans the
+/// full 187dp column width and ~249dp in height (554×756px on the 1220px
+/// device), i.e. the standard portrait book cover at ~3:4. The S0 note that
+/// concluded 2.34:1 had mixed px with dp (240dp read as 240px); its own
+/// y-scan (color from y1565 to y2285) says 720px ≈ 240dp tall, not 80dp.
+const double homeCardCoverAspect = 0.75;
 
 /// `app:roundedCornerRadius="4.0dip"` on `ScaleBookCover` (`cgw.xml`).
 const double homeCardCoverRadius = 4;
