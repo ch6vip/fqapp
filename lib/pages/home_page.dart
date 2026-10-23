@@ -157,17 +157,12 @@ class _HomePageState extends ConsumerState<HomePage> {
     return state.items.where((item) => item.kind == kind).toList();
   }
 
-  /// 顶栏分类：服务端下发了就用服务端的，否则退回本地兜底表。
+  /// 顶栏分类：固定用本地六分类（推荐/小说/短剧/漫剧/漫画/听书）。
   ///
-  /// 官方书城的顶栏由 `data.tab_item` 决定（名字取 `title`、身份取
-  /// `tab_type`），本地写死的 6 个跨媒介分类既缺「经典/知识/短篇/新书/
-  /// 商城」，又多一个服务端没有的「漫剧」，所以优先用服务端的。
-  List<HomeCategory> _categoriesOf(HomeState state) {
-    if (state.tabs.isEmpty) return homeCategories;
-    return [
-      for (final tab in state.tabs) HomeCategory(tab.title, Icons.circle),
-    ];
-  }
+  /// 2026-10-24 用户决定回退服务端 11 项方案——服务端表没有「短剧/漫剧」，
+  /// 跨媒介入口只能本地给；点击身份由 `homeProvider` 的 `usesLocalTabs`
+  /// 本地表驱动，与这里的下标一一对应。
+  List<HomeCategory> _categoriesOf(HomeState state) => homeCategories;
 
   @override
   Widget build(BuildContext context) {

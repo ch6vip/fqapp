@@ -1030,7 +1030,11 @@ class HomeNotifier extends Notifier<HomeState> {
 }
 
 final homeProvider = NotifierProvider<HomeNotifier, HomeState>(
-  HomeNotifier.new,
+  // 2026-10-24 用户决定：首页顶栏回到本地六分类（推荐/小说/短剧/漫剧/
+  // 漫画/听书），不用服务端下发的 11 项——服务端表里没有「短剧/漫剧」，
+  // 过滤不出这套组合，所以身份口径整条走本地表（同 dramaProvider 的
+  // usesLocalTabs 机制）。
+  () => HomeNotifier(usesLocalTabs: true),
 );
 
 // Note: 底部导航的短剧目的地用第二个 HomeNotifier 实例而不是复用 homeProvider，
