@@ -313,24 +313,22 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
     if (!rendered) return null;
 
+    // 官方流尾（aes.xml/u4，type 199）三态文案；错误但页面已有内容时给
+    // 重试（loadMore 失败只把 hasMore 置 false，items 还在）。
     if (state.isLoadMore) {
       slivers.add(
-        const SliverToBoxAdapter(
-          child: Padding(
-            padding: EdgeInsets.symmetric(vertical: 28),
-            child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: HomePalette.accent,
-                ),
-              ),
-            ),
-          ),
+        SliverToBoxAdapter(
+          child: HomeStreamFooter.loading(onRetry: _maybeLoadMore),
         ),
       );
+    } else if (state.error != null && state.items.isNotEmpty) {
+      slivers.add(
+        SliverToBoxAdapter(
+          child: HomeStreamFooter.retry(onRetry: _maybeLoadMore),
+        ),
+      );
+    } else if (!state.hasMore) {
+      slivers.add(const SliverToBoxAdapter(child: HomeStreamFooter.done()));
     }
     slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 84)));
     return slivers;

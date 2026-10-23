@@ -79,6 +79,11 @@ class _TabFeed {
   /// Upstream blocks for the current page; empty when none were recognised.
   List<HomeCell> cells = [];
 
+  /// 追加页的书：区块管线渲染 `cells`，而分页响应不再带区块结构，新拉的
+  /// 书若只进 [items] 就永远进不了网格。这里按去重顺序攒着，发布 state
+  /// 时拼进流区块（见 [_streamCellsFor]）。
+  final List<MediaItem> appendedStreamItems = [];
+
   /// 服务端下发的顶栏分类，跟区块一起按整页替换（分页响应里只有第一页
   /// 带 `tab_item`，跟其他光标字段一样不能在追加时被空值冲掉）。
   List<HomeTabItem> tabs = [];
@@ -107,6 +112,8 @@ class _TabFeed {
 
   void reset() {
     items = [];
+    cells = [];
+    appendedStreamItems.clear();
     offset = 0;
     sessionId = null;
     searchPage = 0;
@@ -121,6 +128,45 @@ class _TabFeed {
     // A cancelled load must not leave its resume intent behind; lastVid is
     // deliberately kept — it tracks the card on screen across refreshes.
     resumedVid = null;
+  }
+
+  /// 发布给 UI 的区块：流区块（384/385 家族）的卡片后面接上追加页的书。
+  ///
+  /// 只补「无限流」那一个区块——追加页的书本来就是它的续页；其他区块
+  /// （排行榜等）保持上游原样。快照缓存存的也是这份拼好的（恢复后网格
+  /// 与滚动位置所见一致）。
+  List<HomeCell> cellsForView() {
+    if (appendedStreamItems.isEmpty) return cells;
+    return [
+      for (final cell in cells)
+        switch (cell.showType) {
+          384 => HomeCell(
+            showType: cell.showType,
+            name: cell.name,
+            id: cell.id,
+            style: cell.style,
+            items: cell.items,
+            children: [
+              for (final child in cell.children)
+                child.showType == 385
+                    ? HomeCell(
+                        showType: child.showType,
+                        name: child.name,
+                        id: child.id,
+                        style: child.style,
+                        items: [...child.items, ...appendedStreamItems],
+                        children: child.children,
+                        url: child.url,
+                        extra: child.extra,
+                      )
+                    : child,
+            ],
+            url: cell.url,
+            extra: cell.extra,
+          ),
+          _ => cell,
+        },
+    ];
   }
 }
 
@@ -395,7 +441,7 @@ class HomeNotifier extends Notifier<HomeState> {
     }
     state = state.copyWith(
       items: feed.items,
-      cells: feed.cells,
+      cells: feed.cellsForView(),
       isLoading: true,
       isLoadMore: false,
       hasMore: true,
@@ -420,7 +466,7 @@ class HomeNotifier extends Notifier<HomeState> {
       _applyFetched(feed, fetched, replace: !resume);
       state = state.copyWith(
         items: feed.items,
-        cells: feed.cells,
+        cells: feed.cellsForView(),
         tabs: feed.tabs,
         isLoading: false,
         isLoadMore: false,
@@ -437,7 +483,7 @@ class HomeNotifier extends Notifier<HomeState> {
           feed.items,
           hasMore: feed.hasMore,
           lastVid: savedVid,
-          cells: feed.cells,
+          cells: feed.cellsForView(),
         ),
       );
     } catch (error) {
@@ -477,7 +523,7 @@ class HomeNotifier extends Notifier<HomeState> {
       // cells / tabs 必须跟着换：切到新 tab 时沿用上一个 tab 的区块会让
       // 首页显示别的 tab 的内容；而回到首页时旧的 cells 已随 feed 重建，
       // 不显式清空就会渲染出上一页的块。
-      cells: cached?.cells ?? const [],
+      cells: cached?.cellsForView() ?? const [],
       tabs: state.tabs,
       isLoading: false,
       isLoadMore: false,
@@ -511,6 +557,7 @@ class HomeNotifier extends Notifier<HomeState> {
       _applyFetched(feed, fetched, replace: false);
       state = state.copyWith(
         items: feed.items,
+        cells: feed.cellsForView(),
         isLoadMore: false,
         hasMore: feed.hasMore,
       );
@@ -522,7 +569,7 @@ class HomeNotifier extends Notifier<HomeState> {
           feed.items,
           hasMore: feed.hasMore,
           lastVid: savedVid,
-          cells: feed.cells,
+          cells: feed.cellsForView(),
         ),
       );
     } catch (_) {
@@ -927,6 +974,15 @@ class HomeNotifier extends Notifier<HomeState> {
       // 赋值，首页就永远拿不到区块，只能退回旧网格。真机冷启动必命中落地
       // 缓存，所以这条路径就是「真机上区块一个都不出现」的根因。
       ..cells = (replace || feed.cells.isEmpty) ? fetched.cells : feed.cells
+      // 追加页的书拼进流区块（见 cellsForView）——续播路径的第一页例外：
+      // 它本来就是整页区块，只是 items 保留了缓存，别把首页书重复拼一遍。
+      ..appendedStreamItems.addAll(
+        (!replace &&
+                feed.cells.where((c) => c.showType == 384).isNotEmpty &&
+                feed.resumedVid == null)
+            ? fresh
+            : const <MediaItem>[],
+      )
       ..tabs = fetched.tabs.isNotEmpty ? fetched.tabs : feed.tabs
       ..offset = fetched.nextOffset ?? feed.offset
       ..sessionId = fetched.sessionId ?? feed.sessionId

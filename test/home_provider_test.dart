@@ -587,6 +587,77 @@ void main() {
     await cache.close();
   });
 
+  test('追加页的书拼进流区块，网格真的无限', () async {
+    // 区块管线只渲染 cells；分页响应不带区块，若新书只进 items，网格永远
+    // 停在首页那批卡。追加页必须合入 385 流区块（cellsForView）。
+    var page = 0;
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async {
+              page += 1;
+              if (page == 1) {
+                return HomepagePage(
+                  items: [_item('first-1'), _item('first-2')],
+                  cells: const [
+                    HomeCell(
+                      showType: 384,
+                      name: '猜你喜欢',
+                      id: '',
+                      style: {},
+                      items: [],
+                      children: [
+                        HomeCell(
+                          showType: 385,
+                          name: '',
+                          id: '',
+                          style: {},
+                          items: [],
+                          children: [],
+                        ),
+                      ],
+                    ),
+                  ],
+                  nextOffset: 10,
+                  sessionId: null,
+                );
+              }
+              // 续页：只有 items，没有 cells。
+              return HomepagePage(
+                items: [_item('next-1'), _item('next-2')],
+                nextOffset: null,
+                sessionId: null,
+              );
+            },
+        searchLoader: (query, {int page = 1}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(provider.notifier).load();
+
+    final firstCells = container.read(provider).cells;
+    expect(firstCells.single.showType, 384);
+    expect(
+      firstCells.single.children.single.items.map((i) => i.id),
+      isEmpty,
+    );
+
+    await container.read(provider.notifier).loadMore();
+
+    // 追加页的书出现在流区块的渲染列表里。
+    final merged = container.read(provider).cells;
+    expect(
+      merged.single.children.single.items.map((i) => i.id),
+      ['next-1', 'next-2'],
+    );
+    // items 也照常追加（旧管线/去重语义不变）。
+    expect(
+      container.read(provider).items.map((i) => i.id),
+      ['first-1', 'first-2', 'next-1', 'next-2'],
+    );
+  });
+
   test('the combined feed keeps novels when recommendations fail', () async {
     final queries = <String>[];
     final provider = NotifierProvider<HomeNotifier, HomeState>(
