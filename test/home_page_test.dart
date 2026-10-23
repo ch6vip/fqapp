@@ -74,9 +74,7 @@ void main() {
     },
   );
 
-  testWidgets('外部 ScrollController 能驱动首页回顶部（底部栏重复点击的依据）', (
-    tester,
-  ) async {
+  testWidgets('外部 ScrollController 能驱动首页回顶部（底部栏重复点击的依据）', (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 850));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -89,23 +87,26 @@ void main() {
           homeProvider.overrideWith(
             () => HomeNotifier(
               homepageLoader:
-                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                      HomepagePage(
-                        items: [
-                          for (var i = 0; i < 40; i++)
-                            MediaItem(
-                              id: 'i$i',
-                              title: '作品 $i',
-                              cover: '',
-                              author: '',
-                              badge: '',
-                              ep: '',
-                              kind: 'book',
-                            ),
-                        ],
-                        nextOffset: null,
-                        sessionId: null,
-                      ),
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [
+                      for (var i = 0; i < 40; i++)
+                        MediaItem(
+                          id: 'i$i',
+                          title: '作品 $i',
+                          cover: '',
+                          author: '',
+                          badge: '',
+                          ep: '',
+                          kind: 'book',
+                        ),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
               searchLoader: (query, {int page = 1}) async => [],
             ),
           ),
@@ -150,64 +151,64 @@ void main() {
           homeProvider.overrideWith(
             () => HomeNotifier(
               homepageLoader:
-                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                      HomepagePage(
-                        items: [
-                          book('r1', '榜单书一'),
-                          book('r2', '榜单书二'),
-                          book('c1', '猜你喜欢一'),
-                          book('c2', '猜你喜欢二'),
-                        ],
-                        cells: [
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [
+                      book('r1', '榜单书一'),
+                      book('r2', '榜单书二'),
+                      book('c1', '猜你喜欢一'),
+                      book('c2', '猜你喜欢二'),
+                    ],
+                    cells: [
+                      HomeCell(
+                        showType: 511,
+                        name: '排行榜',
+                        id: '',
+                        style: const {},
+                        items: const [],
+                        children: [
                           HomeCell(
-                            showType: 511,
-                            name: '排行榜',
+                            showType: 512,
+                            name: '',
                             id: '',
                             style: const {},
-                            items: const [],
-                            children: [
-                              HomeCell(
-                                showType: 512,
-                                name: '',
-                                id: '',
-                                style: const {},
-                                items: [book('r1', '榜单书一')],
-                                children: const [],
-                              ),
-                              HomeCell(
-                                showType: 512,
-                                name: '',
-                                id: '',
-                                style: const {},
-                                items: [book('r2', '榜单书二')],
-                                children: const [],
-                              ),
-                            ],
+                            items: [book('r1', '榜单书一')],
+                            children: const [],
                           ),
                           HomeCell(
-                            showType: 384,
-                            name: '猜你喜欢',
+                            showType: 512,
+                            name: '',
                             id: '',
                             style: const {},
-                            items: const [],
-                            children: [
-                              HomeCell(
-                                showType: 385,
-                                name: '',
-                                id: '',
-                                style: const {},
-                                items: [
-                                  book('c1', '猜你喜欢一'),
-                                  book('c2', '猜你喜欢二'),
-                                ],
-                                children: const [],
-                              ),
-                            ],
+                            items: [book('r2', '榜单书二')],
+                            children: const [],
                           ),
                         ],
-                        nextOffset: null,
-                        sessionId: null,
                       ),
+                      HomeCell(
+                        showType: 384,
+                        name: '猜你喜欢',
+                        id: '',
+                        style: const {},
+                        items: const [],
+                        children: [
+                          HomeCell(
+                            showType: 385,
+                            name: '',
+                            id: '',
+                            style: const {},
+                            items: [book('c1', '猜你喜欢一'), book('c2', '猜你喜欢二')],
+                            children: const [],
+                          ),
+                        ],
+                      ),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
               searchLoader: (query, {int page = 1}) async => [],
             ),
           ),
@@ -217,15 +218,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 两个区块标题都在。
+    // 排行榜标题在；卡片流的标题按 m0.java case 82 强制隐藏。
     expect(find.text('排行榜'), findsWidgets);
-    expect(find.text('猜你喜欢'), findsWidgets);
+    expect(find.text('猜你喜欢'), findsNothing);
     // 排行榜预览：序号 1、2 都渲染出来（官方 b7d.xml 的序号列）。
     expect(find.text('1'), findsWidgets);
     expect(find.text('2'), findsWidgets);
-    // 卡片都在（榜单书 + 猜你喜欢）。
+    // 「推荐」tab 不渲染无限书卡流（用户决定 2026-10-24）。
     expect(find.text('榜单书一'), findsWidgets);
-    expect(find.text('猜你喜欢一'), findsWidgets);
+    expect(find.text('猜你喜欢一'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -253,38 +254,38 @@ void main() {
           homeProvider.overrideWith(
             () => HomeNotifier(
               homepageLoader:
-                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                      HomepagePage(
-                        items: [book('c1', '经典书一'), book('c2', '经典书二')],
-                        cells: [
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [book('c1', '经典书一'), book('c2', '经典书二')],
+                    cells: [
+                      HomeCell(
+                        showType: 384,
+                        name: '经典必读',
+                        id: '',
+                        style: const {},
+                        items: const [],
+                        children: [
                           HomeCell(
-                            showType: 384,
-                            name: '经典必读',
+                            showType: 385,
+                            name: '',
                             id: '',
                             style: const {},
-                            items: const [],
-                            children: [
-                              HomeCell(
-                                showType: 385,
-                                name: '',
-                                id: '',
-                                style: const {},
-                                items: [
-                                  book('c1', '经典书一'),
-                                  book('c2', '经典书二'),
-                                ],
-                                children: const [],
-                              ),
-                            ],
+                            items: [book('c1', '经典书一'), book('c2', '经典书二')],
+                            children: const [],
                           ),
                         ],
-                        tabs: const [
-                          HomeTabItem(type: 2, title: '推荐'),
-                          HomeTabItem(type: 11, title: '经典'),
-                        ],
-                        nextOffset: null,
-                        sessionId: null,
                       ),
+                    ],
+                    tabs: const [
+                      HomeTabItem(type: 2, title: '推荐'),
+                      HomeTabItem(type: 11, title: '经典'),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
               searchLoader: (query, {int page = 1}) async => [],
             ),
           ),
@@ -298,16 +299,18 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('home_category_1')));
     await tester.pumpAndSettle();
 
-    expect(find.text('经典必读'), findsWidgets);
+    // 无限流（384/385）不渲染自己的标题，只有卡片。
+    expect(find.text('经典必读'), findsNothing);
     expect(find.text('经典书一'), findsWidgets);
     // 旧管线的东西不该出现。
     expect(find.text('值得一看'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('385 网格里的书荒广场卡也渲染，且不打乱书卡', (tester) async {
-    // 真实 feed 的 385 有 11 张书卡 + 第 4 张「书荒广场」话题卡；那张卡没有
-    // book_data，以前会被解析层整个丢掉，网格就少一格。
+  testWidgets('推荐 tab 整个书卡流不渲染，其他分类照常', (tester) async {
+    // 推荐位只留搜索行 + 分类条 + 排行榜（用户决定 2026-10-24）：流里的
+    // 书卡、标题、话题卡都不出现；「非推荐分类也按自己的区块渲染」那个
+    // 用例锁住其他 tab 的行为不变。
     await tester.binding.setSurfaceSize(const Size(400, 2600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -328,59 +331,35 @@ void main() {
           homeProvider.overrideWith(
             () => HomeNotifier(
               homepageLoader:
-                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                      HomepagePage(
-                        items: [
-                          book('c1', '猜你喜欢一'),
-                          book('c2', '猜你喜欢二'),
-                        ],
-                        cells: [
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [book('c1', '猜你喜欢一'), book('c2', '猜你喜欢二')],
+                    cells: [
+                      HomeCell(
+                        showType: 384,
+                        name: '猜你喜欢',
+                        id: '',
+                        // 线上响应可能不带 hide_title——流类型必须无条件隐藏。
+                        style: const {},
+                        items: const [],
+                        children: [
                           HomeCell(
-                            showType: 384,
-                            name: '猜你喜欢',
+                            showType: 385,
+                            name: '',
                             id: '',
-                            style: const {'hide_title': true},
-                            items: const [],
-                            children: [
-                              HomeCell(
-                                showType: 385,
-                                name: '',
-                                id: '',
-                                style: const {},
-                                items: [
-                                  book('c1', '猜你喜欢一'),
-                                  book('c2', '猜你喜欢二'),
-                                ],
-                                children: [
-                                  HomeCell(
-                                    showType: 339,
-                                    name: '书荒广场',
-                                    id: '',
-                                    style: {
-                                      'dynamic_card_move_title_and_entry_to_bottom':
-                                          true,
-                                    },
-                                    items: [],
-                                    children: [],
-                                    url: 'dragon1967://lynxview?fallbackUrl=x',
-                                    topics: [
-                                      HomeTopic(
-                                        id: 't1',
-                                        title: '番茄十大颠峰小说',
-                                        tips: '拯救了30万人的书荒',
-                                        cover: '',
-                                        url: '',
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ],
+                            style: const {},
+                            items: [book('c1', '猜你喜欢一'), book('c2', '猜你喜欢二')],
+                            children: [],
                           ),
                         ],
-                        nextOffset: null,
-                        sessionId: null,
                       ),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
               searchLoader: (query, {int page = 1}) async => [],
             ),
           ),
@@ -390,13 +369,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 书卡还在。
-    expect(find.text('猜你喜欢一'), findsWidgets);
-    expect(find.text('猜你喜欢二'), findsWidgets);
-    // 话题卡的三行内容也渲染了：标题、tips、底部胶囊文案。
-    expect(find.text('番茄十大颠峰小说'), findsWidgets);
-    expect(find.text('拯救了30万人的书荒'), findsWidgets);
-    expect(find.text('书荒广场'), findsWidgets);
+    // 推荐位整个流不渲染：书卡、标题都不出现。
+    expect(find.text('猜你喜欢一'), findsNothing);
+    expect(find.text('猜你喜欢二'), findsNothing);
+    expect(find.text('猜你喜欢'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -445,7 +421,9 @@ void main() {
       expect(
         tester.getRect(hint).right,
         lessThanOrEqualTo(
-          tester.getRect(find.byKey(const Key('home_image_search_button'))).left,
+          tester
+              .getRect(find.byKey(const Key('home_image_search_button')))
+              .left,
         ),
       );
       expect(tester.takeException(), isNull);

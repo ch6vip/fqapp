@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/home/home_cell_blocks.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
@@ -194,107 +193,5 @@ void main() {
         expect(tester.widget<Text>(find.text('书摘内容，用来验证摘要占两行。')).maxLines, 2);
       },
     );
-  });
-
-  /// `axy.xml` + `bdr.xml` + `dap.xml`: the 书荒广场 card is a book-sized cell in
-  /// the same two-column grid, not a full-width banner. Upstream moves the title
-  /// and the entry to a bottom pill whenever `dynamic_card_move_title_and_entry_
-  /// to_bottom` is set, which is what the real feed sends.
-  group('HomeTopicCard', () {
-    HomeCell topicCell({Map<String, dynamic> style = const {}}) => HomeCell(
-      showType: 339,
-      name: '书荒广场',
-      id: '',
-      style: style,
-      items: const [],
-      children: const [],
-      url: 'dragon1967://webview?url=https%3A%2F%2Fexample.com%2Flist',
-      topics: const [
-        HomeTopic(
-          id: 't1',
-          title: '番茄十大颠峰小说',
-          tips: '拯救了30万人的书荒',
-          cover: '',
-          url: 'dragon1967://webview?url=https%3A%2F%2Fexample.com%2Ft1',
-        ),
-        HomeTopic(
-          id: 't2',
-          title: '番茄10.0的神作',
-          tips: '拯救了1729.7万人的书荒',
-          cover: '',
-          url: '',
-        ),
-      ],
-    );
-
-    testWidgets('keeps one title line and one tips line per topic', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        SizedBox(width: 180, child: HomeTopicCard(cell: topicCell())),
-      );
-
-      expect(tester.widget<Text>(find.text('番茄十大颠峰小说')).maxLines, 2);
-      expect(tester.widget<Text>(find.text('拯救了30万人的书荒')).maxLines, 1);
-      expect(find.text('番茄10.0的神作'), findsOneWidget);
-    });
-
-    testWidgets('moves the title into the bottom pill and drops the header', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        SizedBox(
-          width: 180,
-          child: HomeTopicCard(
-            cell: topicCell(
-              style: const {
-                'dynamic_card_move_title_and_entry_to_bottom': true,
-              },
-            ),
-          ),
-        ),
-      );
-
-      // 官方 `m4()` 把 `v`/`w`/`x`（图标 / 更多行 / 顶部标题）全部 gone，
-      // 只留底部 `dap.xml` 的胶囊，胶囊文案就是 `cell_name`。
-      expect(find.text('更多'), findsNothing);
-      expect(find.text('书荒广场'), findsOneWidget);
-    });
-
-    testWidgets('shows the header when the payload keeps the title on top', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        SizedBox(width: 180, child: HomeTopicCard(cell: topicCell())),
-      );
-
-      // 没有那个开关时走 `r4()`：顶部标题 + 「更多」都在，胶囊里是同一个名字。
-      expect(find.text('更多'), findsOneWidget);
-      expect(find.text('书荒广场'), findsNWidgets(2));
-    });
-
-    testWidgets('falls back to 书荒广场 when the cell has no name', (tester) async {
-      final cell = HomeCell(
-        showType: 339,
-        name: '',
-        id: '',
-        style: const {'dynamic_card_move_title_and_entry_to_bottom': true},
-        items: const [],
-        children: const [],
-        topics: const [
-          HomeTopic(id: 't1', title: '话题一', tips: '', cover: '', url: ''),
-        ],
-      );
-
-      await pump(
-        tester,
-        SizedBox(width: 180, child: HomeTopicCard(cell: cell)),
-      );
-
-      expect(find.text('书荒广场'), findsOneWidget);
-    });
   });
 }

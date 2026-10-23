@@ -141,6 +141,9 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (!mounted || !_visible || _loadMoreTimer != null) return;
     final state = ref.read(homeProvider);
     if (state.isLoading || state.isLoadMore || !state.hasMore) return;
+    // 「推荐」tab 的无限流不渲染（见 `_blockSlivers`），继续翻页只是白白
+    // 请求；短页面还会让滚动边缘判断反复触发翻页转圈。
+    if (state.tabIndex == 0 && state.cells.isNotEmpty) return;
     _loadMoreTimer = Timer(const Duration(milliseconds: 500), () {
       _loadMoreTimer = null;
       if (mounted) _onScroll();
@@ -293,20 +296,27 @@ class _HomePageState extends ConsumerState<HomePage> {
         rendered = true;
         continue;
       }
+      // 「推荐」tab（下标 0）不渲染无限书卡流——用户的产品决定
+      // （2026-10-24）：首屏只要搜索行 + 分类条 + 排行榜。跳过也算「已
+      // 处理」，不能让 `rendered` 保持 false 而回退到旧管线（聚光灯 +
+      // 平铺网格），那会把刚删掉的书卡又变回来。其他分类的流照常渲染。
       if (isHomeGridBlock(cell)) {
-        // A white rounded block card cannot wrap a sliver list, so grid blocks
-        // render as a box widget inside `HomeBlockCard` instead of a sliver.
-        slivers.add(
-          SliverToBoxAdapter(
-            child: buildCardSection(
-              context,
-              cell,
-              onOpen: _openItem,
-              gridWidth: gridWidth,
-              onMore: () => _openCellMore(cell),
+        if (state.tabIndex != 0) {
+          // A white rounded block card cannot wrap a sliver list, so grid
+          // blocks render as a box widget inside `HomeBlockCard` instead of
+          // a sliver.
+          slivers.add(
+            SliverToBoxAdapter(
+              child: buildCardSection(
+                context,
+                cell,
+                onOpen: _openItem,
+                gridWidth: gridWidth,
+                onMore: () => _openCellMore(cell),
+              ),
             ),
-          ),
-        );
+          );
+        }
         rendered = true;
       }
     }

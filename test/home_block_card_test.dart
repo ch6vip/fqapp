@@ -23,7 +23,8 @@ void main() {
   );
 
   HomeCell cell({String name = '猜你喜欢', int count = 4}) => HomeCell(
-    showType: 385,
+    // 通用区块（384/385 是无限流，标题按 m0.java case 82 强制隐藏）。
+    showType: 0,
     name: name,
     id: 'cell-test',
     style: const {},

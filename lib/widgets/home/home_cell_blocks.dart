@@ -5,7 +5,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/home_cell.dart';
 import '../../models/media_item.dart';
-import '../../services/app_links.dart';
+import 'home_cell_renderers.dart';
 import 'home_design.dart';
 
 /// Block widgets for the bookstore feed, following the official layouts.
@@ -122,39 +122,6 @@ const double _scoreSize = 16;
 const double _gridGap = 8;
 const double _gridRowGap = 8;
 
-// ── 书荒广场 topic card (`axy.xml` / `bdr.xml` / `dap.xml`) ────────────────
-
-/// Fallback title: `bv2.r3` writes 「书荒广场」 whenever `cell_name` is empty.
-const String _topicFallbackTitle = '书荒广场';
-
-/// `axy.xml` `icon` is 16×16dp; `b07` is 14sp with `maxLength="6"`.
-const double _topicIconSize = 16;
-const double _topicHeaderSize = 14;
-const double _topicMoreSize = 12;
-const double _topicTopPadding = 16;
-const double _topicBottomPadding = 16;
-
-/// `axy.xml` draws the rows edge to edge; `bdr.xml` keeps 10dp on each side.
-const double _topicCardInset = 10;
-
-/// `bdr.xml` row: 40×56 cover, `ibg` 12sp over two lines, `htk` 10sp tips.
-const double _topicCoverWidth = 40;
-const double _topicCoverHeight = 56;
-const double _topicTitleSize = 12;
-const double _topicTipsSize = 10;
-const double _topicTitleGap = 8;
-const double _topicTipsGap = 4;
-
-/// Row pitch between two topics: `drawable/aob.xml` is a 14dp transparent gap.
-const double _topicRowGap = 14;
-
-/// `dap.xml` pill: 12sp brand orange on a 10% tint, 6dp/12dp padding.
-const double _topicPillSize = 12;
-const double _topicPillInsetX = 12;
-const double _topicPillInsetY = 6;
-const Color _topicOrange = Color(0xFFFA6725);
-const Color _topicOrangeTint = Color(0x1AFA6725);
-
 /// Height of one card cell.
 ///
 /// Vertical card (S0 verdict): cover on top at the full column width, then
@@ -228,256 +195,6 @@ SliverGridDelegate homeBookGridDelegate(
     columnWidth: homeCardColumnWidth(context, available),
   ),
 );
-
-/// The 书荒广场 card (`axy.xml`, holder `bv2.r3`).
-///
-/// This is the one card in the feed that carries no `book_data`: `m0.java:1501`
-/// turns it into a `StaggeredUgcModel` whose rows are `topic_data[]`. It is a
-/// normal grid cell, not a full-width banner — the staggered span check
-/// (`c1.B4` → `gt3.f.a.f`) returns false for it, so upstream gives it one
-/// column, which is what [HomeTopicCard] assumes.
-///
-/// Two shapes exist, picked by `style.dynamic_card_move_title_and_entry_to_bottom`
-/// (`bv2.r3.n4()` → `m4`/`r4`). The real feed sets it, which hides the header
-/// row (icon + title + 「更多」) and moves the entry to a pill at the bottom of
-/// the card. The other shape is kept because the flag is upstream-controlled.
-class HomeTopicCard extends StatelessWidget {
-  const HomeTopicCard({super.key, required this.cell});
-
-  final HomeCell cell;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final moveToBottom = _flag(
-      cell.style,
-      'dynamic_card_move_title_and_entry_to_bottom',
-    );
-    final title = cell.name.isEmpty ? _topicFallbackTitle : cell.name;
-    final rowHeight = _topicRowHeight(context);
-
-    return GestureDetector(
-      // `bv2.r3.r3` opens the card target on the whole card, but only when the
-      // pill is configured at all (`ShuhuangMoreButtonPosition != None`).
-      onTap: () => openAppLink(context, cell.url),
-      behavior: HitTestBehavior.opaque,
-      child: ColoredBox(
-        color: palette.surface,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: _topicCardInset),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (!moveToBottom) _header(context, palette, title),
-              Padding(
-                padding: EdgeInsets.only(
-                  top: moveToBottom ? _topicTopPadding : 0,
-                ),
-                child: Column(
-                  children: [
-                    for (final topic in cell.topics)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: _topicRowGap),
-                        child: SizedBox(
-                          height: rowHeight,
-                          child: _TopicRow(
-                            topic: topic,
-                            palette: palette,
-                            rowHeight: rowHeight,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: _topicBottomPadding),
-                child: Center(child: _pill(context, title)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// `axy.xml` header: 16dp topic icon, 14sp title (`b07`) and 「更多」.
-  Widget _header(BuildContext context, HomePalette palette, String title) {
-    return Padding(
-      padding: const EdgeInsets.only(top: _topicTopPadding),
-      child: Row(
-        children: [
-          Icon(LucideIcons.hash, size: _topicIconSize, color: palette.muted),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: _topicHeaderSize,
-                height: 1.2,
-                color: palette.ink,
-              ),
-            ),
-          ),
-          GestureDetector(
-            onTap: () => openAppLink(context, cell.url),
-            behavior: HitTestBehavior.opaque,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '更多',
-                  style: TextStyle(
-                    fontSize: _topicMoreSize,
-                    color: palette.ink,
-                  ),
-                ),
-                Icon(LucideIcons.chevron_right, size: 12, color: palette.muted),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// The `dap.xml` pill: 12sp brand orange on a 10% orange capsule.
-  Widget _pill(BuildContext context, String label) {
-    return GestureDetector(
-      onTap: () => openAppLink(context, cell.url),
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: _topicPillInsetX,
-          vertical: _topicPillInsetY,
-        ),
-        decoration: BoxDecoration(
-          color: _topicOrangeTint,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: _topicPillSize,
-                // Explicit height: the extent computed in `homeTopicCardExtent`
-                // has to match what the text actually measures, and an inherited
-                // line height would silently add a pixel or two per line.
-                height: 1.2,
-                color: _topicOrange,
-              ),
-            ),
-            const SizedBox(width: 2),
-            const Icon(
-              LucideIcons.chevron_right,
-              size: 12,
-              color: _topicOrange,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// One row of the 书荒广场 card (`bdr.xml`): 40×56 cover, two title lines and
-/// the 10sp `card_tips` line, which upstream bottom-aligns to the cover.
-class _TopicRow extends StatelessWidget {
-  const _TopicRow({
-    required this.topic,
-    required this.palette,
-    required this.rowHeight,
-  });
-
-  final HomeTopic topic;
-  final HomePalette palette;
-  final double rowHeight;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => openAppLink(context, topic.url),
-      behavior: HitTestBehavior.opaque,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _Cover(
-            url: topic.cover,
-            width: _topicCoverWidth,
-            height: _topicCoverHeight,
-            palette: palette,
-          ),
-          const SizedBox(width: _topicTitleGap),
-          Expanded(
-            child: SizedBox(
-              height: rowHeight,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    topic.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: _topicTitleSize,
-                      // `ibg` carries `lineSpacingExtra="3dp"`.
-                      height: 1.45,
-                      color: palette.ink,
-                    ),
-                  ),
-                  if (topic.tips.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: _topicTipsGap),
-                      child: Text(
-                        topic.tips,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: _topicTipsSize,
-                          height: 1.2,
-                          color: palette.muted,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Height of the 书荒广场 card: rows, the pill and the two paddings.
-///
-/// The card is taller than a book card, which is why a block holding one is
-/// laid out row by row instead of with the fixed-extent [homeBookGridDelegate].
-double homeTopicCardExtent(BuildContext context, {int rows = 3}) {
-  final scaler = MediaQuery.textScalerOf(context);
-  final pill = scaler.scale(_topicPillSize) * 1.2 + _topicPillInsetY * 2;
-  final count = math.max(1, rows);
-  return _topicTopPadding +
-      count * _topicRowHeight(context) +
-      count * _topicRowGap +
-      pill +
-      _topicBottomPadding;
-}
-
-/// One row's height: the cover, or the two title lines plus the tips.
-double _topicRowHeight(BuildContext context) {
-  final scaler = MediaQuery.textScalerOf(context);
-  final text =
-      scaler.scale(_topicTitleSize) * 1.45 * 2 +
-      _topicTipsGap +
-      scaler.scale(_topicTipsSize) * 1.2;
-  return math.max(_topicCoverHeight, text);
-}
 
 /// 「更多」 on a block header: 14sp label plus the 4×7 arrow (`asb.xml`).
 class HomeBlockMore extends StatelessWidget {
@@ -941,9 +658,14 @@ bool _flag(Map<String, dynamic> style, String key) {
   return value == true || value == 1 || value == 'true';
 }
 
-/// `hide_title` — set by the upstream on the 384 wrapper, and forced on the
-/// 385 one inside `m0.java` (`case 82`).
+/// `hide_title` — set by the upstream on the 384 wrapper when it remembers
+/// to. `m0.java` case 82 forces the card stream's title off either way, so
+/// the two stream show types hide unconditionally here too; that is why
+/// 「猜你喜欢」 never renders a section title even when the live payload
+/// drops the flag.
 bool homeHidesTitle(HomeCell cell) =>
+    cell.showType == kHomeCellMixedFeed ||
+    cell.showType == kHomeCellDoubleRowFeed ||
     _flag(cell.style, 'hide_title') ||
     cell.children.any((child) => _flag(child.style, 'hide_title'));
 
@@ -1128,12 +850,8 @@ class _HomeRankCellState extends State<HomeRankCell> {
 
 /// A two-column card block as a sliver (`av1.xml` cards, spanCount 2).
 ///
-/// The block title is dropped when the block asks for it (`hide_title`), which
-/// is how 「猜你喜欢」 arrives and how `m0.java` forces the 385 wrapper.
-///
-/// Cards come from [homeCellEntries] rather than [HomeCell.flatten], because
-/// the 书荒广场 card in this stream is not a book at all — it has to keep its
-/// place in the grid instead of collapsing the cells after it.
+/// The block title is dropped when the block asks for it (`hide_title`) or is
+/// the card stream, which `m0.java` case 82 forces hidden either way.
 Widget buildCardSectionSliver(
   BuildContext context,
   HomeCell cell, {
@@ -1179,19 +897,21 @@ Widget buildCardSectionSliver(
 /// sliver list, and a nested `GridView(shrinkWrap: true)` has no bounded
 /// height to lay out against.
 ///
-/// Every card here is a book card. 书荒广场 / ad cells are out of scope by
-/// request, so there is no mixed-height case left to handle — the previous
-/// masonry path existed only for that UGC card and has been removed.
+/// Every card here is a book card: 书荒广场 / ad cells are skipped at the
+/// parser, so there is no mixed-height case left to handle.
 Widget _cardsBlock(
   BuildContext context,
-  List<HomeCardEntry> entries,
+  List<MediaItem> entries,
   ValueChanged<MediaItem> onOpen,
 ) {
   return _FixedGrid(
     columns: homeColumnCount(context),
     columnSpacing: _gridGap,
     rowSpacing: _gridRowGap,
-    children: [for (final entry in entries) _cardFor(entry, onOpen)],
+    children: [
+      for (final item in entries)
+        HomeBookCard(item: item, onTap: () => onOpen(item)),
+    ],
   );
 }
 
@@ -1297,15 +1017,6 @@ Widget buildCardSection(
       ),
     ),
   );
-}
-
-/// One cell of the grid: a book card, or the 书荒广场 card.
-Widget _cardFor(HomeCardEntry entry, ValueChanged<MediaItem> onOpen) {
-  final item = entry.item;
-  if (item != null) {
-    return HomeBookCard(item: item, onTap: () => onOpen(item));
-  }
-  return HomeTopicCard(cell: entry.cell!);
 }
 
 /// Block title (`as_.xml` node `b07`).
