@@ -224,9 +224,9 @@ void main() {
     // 排行榜预览：序号 1、2 都渲染出来（官方 b7d.xml 的序号列）。
     expect(find.text('1'), findsWidgets);
     expect(find.text('2'), findsWidgets);
-    // 「推荐」tab 不渲染无限书卡流（用户决定 2026-10-24）。
+    // 卡片都在（榜单书 + 书卡流，流无标题、无话题卡）。
     expect(find.text('榜单书一'), findsWidgets);
-    expect(find.text('猜你喜欢一'), findsNothing);
+    expect(find.text('猜你喜欢一'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -307,10 +307,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('推荐 tab 整个书卡流不渲染，其他分类照常', (tester) async {
-    // 推荐位只留搜索行 + 分类条 + 排行榜（用户决定 2026-10-24）：流里的
-    // 书卡、标题、话题卡都不出现；「非推荐分类也按自己的区块渲染」那个
-    // 用例锁住其他 tab 的行为不变。
+  testWidgets('推荐 tab 书卡流照常渲染：无标题、无话题卡', (tester) async {
+    // 书荒广场话题卡已在解析层删除；流的标题按 m0.java case 82 强制隐
+    // 藏。卡片本身照常渲染。
     await tester.binding.setSurfaceSize(const Size(400, 2600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -369,10 +368,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 推荐位整个流不渲染：书卡、标题都不出现。
-    expect(find.text('猜你喜欢一'), findsNothing);
-    expect(find.text('猜你喜欢二'), findsNothing);
+    // 书卡都在，标题与话题卡不出现。
+    expect(find.text('猜你喜欢一'), findsWidgets);
+    expect(find.text('猜你喜欢二'), findsWidgets);
     expect(find.text('猜你喜欢'), findsNothing);
+    expect(find.text('书荒广场'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
