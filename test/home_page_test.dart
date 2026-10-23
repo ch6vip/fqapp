@@ -416,16 +416,9 @@ void main() {
       await tester.pumpAndSettle();
       final hint = find.text(HomeHero.searchHint);
       expect(hint, findsOneWidget);
-      // 官方顶栏搜索框右侧没有常驻按钮（`h4f`/`gpe` 均 gone），提示文案要能
-      // 在窄屏上完整放下，且不能越过右侧的「识剧」入口。
-      expect(
-        tester.getRect(hint).right,
-        lessThanOrEqualTo(
-          tester
-              .getRect(find.byKey(const Key('home_image_search_button')))
-              .left,
-        ),
-      );
+      // 官方顶栏搜索框右侧没有常驻按钮（`h4f`/`gpe` 均 gone，「识剧」入口
+      // 也已删除），提示文案要能在窄屏上完整放下、不出溢出。
+      expect(tester.getRect(hint).right, lessThanOrEqualTo(320));
       expect(tester.takeException(), isNull);
     });
   }

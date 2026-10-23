@@ -14,9 +14,10 @@ import 'home_design.dart';
 /// 14sp「分类」，高 `zl`=36dp，左右 padding 10dp，圆角 8dp 的白色底
 /// （`skin_bg_top_right_holder_light` = `skin_color_search_bar_bg_v2_light`）。
 ///
-/// 搜索框本体（`c5e.xml`）：36dp 高、6dp 圆角、白底；左侧 11dp 放大镜，
-/// 右侧「识剧」图文入口。框内文案由 `search/cue/v` 的热搜词驱动
-/// （`SearchWordDisplayView` + `VerticalFlipper`，间隔取响应的
+/// 搜索框本体（`c5e.xml`）：36dp 高、6dp 圆角、白底；左侧 11dp 放大镜。
+/// 官方框内的「识剧」图文入口（`search_image_icon_container`）按用户决定
+/// 不做（2026-10-24，链路未接入），已删除。框内文案由 `search/cue/v` 的
+/// 热搜词驱动（`SearchWordDisplayView` + `VerticalFlipper`，间隔取响应的
 /// `rotate_interval_ms`）；没有词时回退静态提示语 `@string/duw`。
 class HomeHero extends StatefulWidget {
   static const double searchBarHeight = 36;
@@ -25,14 +26,10 @@ class HomeHero extends StatefulWidget {
   /// 官方 `@string/duw`：`SearchWordDisplayView` 的默认文案。
   static const String searchHint = '请输入书名或作者名';
 
-  /// 官方 `@string/dv8`。
-  static const String imageSearchLabel = '识剧';
-
   /// 官方 `@string/gl`。
   static const String categoryLabel = '分类';
 
   final VoidCallback onSearch;
-  final VoidCallback onImageSearch;
 
   /// 右上角「分类」入口。null 时不占位（与官方 `i_y` gone 一致）。
   final VoidCallback? onCategory;
@@ -44,7 +41,6 @@ class HomeHero extends StatefulWidget {
   const HomeHero({
     super.key,
     required this.onSearch,
-    required this.onImageSearch,
     this.onCategory,
     this.cueLoader,
   });
@@ -128,35 +124,6 @@ class _HomeHeroState extends State<HomeHero> {
                     ),
                     const SizedBox(width: 9),
                     Expanded(child: _cueText(palette, animate)),
-                    // 官方 search_image_icon_container：右贴 parent、marginEnd 12dp。
-                    GestureDetector(
-                      key: const Key('home_image_search_button'),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: widget.onImageSearch,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Row(
-                          children: [
-                            // 官方分隔图 16dp 高，marginEnd 12dp。
-                            Container(
-                              width: 0.5,
-                              height: 16,
-                              color: palette.searchBarText.withValues(
-                                alpha: 0.4,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              HomeHero.imageSearchLabel,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: palette.searchBarText,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),

@@ -7,7 +7,7 @@ import 'package:fqapp/widgets/home/home_hero.dart';
 /// 官方搜索框的热搜词位（`SearchWordDisplayView` + `VerticalFlipper`）与
 /// 右上角「分类」入口（`alx.xml` `i_y`）。这里钉住：轮换按
 /// `rotate_interval_ms` 走、无词回退静态提示语、loader 失败不冒泡、
-/// 分类入口按回调有无占位。
+/// 分类入口按回调有无占位。框内「识剧」入口已按用户决定删除（2026-10-24）。
 void main() {
   Future<void> pump(
     WidgetTester tester,
@@ -26,11 +26,8 @@ void main() {
         tester,
         HomeHero(
           onSearch: () {},
-          onImageSearch: () {},
-          cueLoader: () async => const SearchCue(
-            words: ['热搜词一', '热搜词二'],
-            rotateIntervalMs: 400,
-          ),
+          cueLoader: () async =>
+              const SearchCue(words: ['热搜词一', '热搜词二'], rotateIntervalMs: 400),
         ),
       );
 
@@ -54,11 +51,7 @@ void main() {
     testWidgets('keep the static hint when the cue is empty', (tester) async {
       await pump(
         tester,
-        HomeHero(
-          onSearch: () {},
-          onImageSearch: () {},
-          cueLoader: () async => SearchCue.empty,
-        ),
+        HomeHero(onSearch: () {}, cueLoader: () async => SearchCue.empty),
       );
       await tester.pumpAndSettle();
 
@@ -70,7 +63,6 @@ void main() {
         tester,
         HomeHero(
           onSearch: () {},
-          onImageSearch: () {},
           cueLoader: () async => throw StateError('offline'),
         ),
       );
@@ -83,7 +75,7 @@ void main() {
     testWidgets('no loader means no rotation at all', (tester) async {
       await pump(
         tester,
-        const HomeHero(onSearch: _Noop._, onImageSearch: _Noop._),
+        const HomeHero(onSearch: _Noop._),
       );
       await tester.pump(const Duration(seconds: 30));
 
@@ -96,14 +88,7 @@ void main() {
       tester,
     ) async {
       var taps = 0;
-      await pump(
-        tester,
-        HomeHero(
-          onSearch: () {},
-          onImageSearch: () {},
-          onCategory: () => taps++,
-        ),
-      );
+      await pump(tester, HomeHero(onSearch: () {}, onCategory: () => taps++));
 
       // 文案与图标在搜索行右侧（`i_y`：14dp 图标 + 14sp「分类」）。
       expect(find.text(HomeHero.categoryLabel), findsOneWidget);
@@ -122,7 +107,7 @@ void main() {
     testWidgets('takes no space without a callback (i_y gone)', (tester) async {
       await pump(
         tester,
-        const HomeHero(onSearch: _Noop._, onImageSearch: _Noop._),
+        const HomeHero(onSearch: _Noop._),
       );
 
       expect(find.text(HomeHero.categoryLabel), findsNothing);
@@ -154,8 +139,10 @@ void main() {
         isTrue,
       );
       expect(
-        SearchCue.fromPayload(const {'data_v1': [], 'rotate_interval_ms': 0})
-            .rotateIntervalMs,
+        SearchCue.fromPayload(const {
+          'data_v1': [],
+          'rotate_interval_ms': 0,
+        }).rotateIntervalMs,
         SearchCue.defaultIntervalMs,
       );
     });

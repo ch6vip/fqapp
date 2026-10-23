@@ -219,7 +219,6 @@ class _HomePageState extends ConsumerState<HomePage> {
                               SliverToBoxAdapter(
                                 child: HomeHero(
                                   onSearch: _openSearch,
-                                  onImageSearch: _openImageSearch,
                                   onCategory: _openCategory,
                                   cueLoader: widget.cueLoader,
                                 ),
@@ -480,15 +479,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       context,
       MaterialPageRoute(builder: (_) => const SearchPage()),
     );
-  }
-
-  /// 官方搜索框右侧的「识剧」入口（`c5e.xml` 的 `search_image_icon_container`，
-  /// 文案 `@string/dv8`）。官方点它是拍照识剧，走的是独立的图像检索接口；
-  /// 这条链路还没有接入，先把入口摆回官方位置，点击时说明状态。
-  void _openImageSearch() {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('识剧还在接入中，暂时只支持文字搜索')));
   }
 
   /// 官方搜索行右上角的「分类」入口（`alx.xml` `i_y`）。官方点它走
