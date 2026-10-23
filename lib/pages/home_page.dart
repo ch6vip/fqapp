@@ -11,7 +11,6 @@ import '../services/api_client.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
-import '../widgets/home/ambient_backdrop.dart';
 import '../widgets/home/home_cell_blocks.dart';
 import '../widgets/home/home_cell_renderers.dart';
 import '../widgets/home/home_design.dart';
@@ -174,7 +173,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       backgroundColor: palette.canvas,
       body: Stack(
         children: [
-          Positioned.fill(child: AmbientBackdrop(scroll: _scroll)),
           Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(

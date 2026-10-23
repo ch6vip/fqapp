@@ -6,7 +6,6 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
-import 'package:fqapp/widgets/home/ambient_backdrop.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 
@@ -205,50 +204,4 @@ void main() {
     expect(find.text('第一条'), findsOneWidget);
   });
 
-  testWidgets('the ambient wash is not rebuilt for every scroll frame', (
-    tester,
-  ) async {
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          backgroundColor: const Color(0xFFFCFAF7),
-          body: Stack(
-            children: [
-              Positioned.fill(child: AmbientBackdrop(scroll: controller)),
-              ListView(
-                controller: controller,
-                children: [
-                  for (var i = 0; i < 40; i++)
-                    SizedBox(height: 100, child: Text('$i')),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    CustomPaint wash() => tester.widget<CustomPaint>(
-      find.descendant(
-        of: find.byType(AmbientBackdrop),
-        matching: find.byType(CustomPaint),
-      ),
-    );
-
-    final before = wash().painter;
-    expect(before, isNotNull);
-
-    await tester.drag(find.byType(ListView), const Offset(0, -300));
-    await tester.pumpAndSettle();
-
-    expect(controller.offset, greaterThan(0));
-    expect(
-      identical(before, wash().painter),
-      isTrue,
-      reason: 'the wash should be translated, not repainted, while scrolling',
-    );
-  });
 }
