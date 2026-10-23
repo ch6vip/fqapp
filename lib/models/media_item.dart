@@ -72,6 +72,11 @@ class MediaItem {
   /// 的行内 TagLayout（`b8w.xml` `f5p`）渲染的就是它们；空表不渲染该行。
   final List<String> rankTags;
 
+  /// 书卡标签行（`book_data.recommend_reason_list`，服务端模板
+  /// `#tag_list_0`）：推荐理由 chips，文字与配色都来自服务端
+  /// （`rec_reason_style` 的番茄金是当前线上的统一样式）。
+  final List<MediaRecTag> recTags;
+
   /// 「作者声明：内容由AI生成」行（`video_detail.ai_usage_type > 0`，
   /// 官方播放页信息层按它渲染声明行）。
   final bool aiGenerated;
@@ -98,6 +103,7 @@ class MediaItem {
     this.followerCount = 0,
     this.categories = const [],
     this.rankTags = const [],
+    this.recTags = const [],
     this.episodeListText = '',
     this.aiGenerated = false,
   });
@@ -127,6 +133,7 @@ class MediaItem {
     int? followerCount,
     List<String>? categories,
     List<String>? rankTags,
+    List<MediaRecTag>? recTags,
     String? episodeListText,
     bool? aiGenerated,
   }) => MediaItem(
@@ -146,6 +153,7 @@ class MediaItem {
     followerCount: followerCount ?? this.followerCount,
     categories: categories ?? this.categories,
     rankTags: rankTags ?? this.rankTags,
+    recTags: recTags ?? this.recTags,
     episodeListText: episodeListText ?? this.episodeListText,
     aiGenerated: aiGenerated ?? this.aiGenerated,
   );
@@ -248,6 +256,9 @@ class MediaItem {
     final rankTags = parseRankTags(
       bd['secondary_info_list'] ?? item['secondary_info_list'],
     );
+    final recTags = parseRecTags(
+      bd['recommend_reason_list'] ?? item['recommend_reason_list'],
+    );
 
     return MediaItem(
       id:
@@ -328,6 +339,7 @@ class MediaItem {
       followerCount: followedCount,
       categories: categories,
       rankTags: rankTags,
+      recTags: recTags,
       episodeListText: episodeListText,
       aiGenerated: aiUsageType > 0,
     );
@@ -1306,6 +1318,77 @@ List<String> parseRankTags(dynamic value) {
   return List.unmodifiable([for (final line in lines) ...byLine[line]!]);
 }
 
+/// One chip of the card's tag row (`recommend_reason_list` entries).
+///
+/// Wire colours are server-authored `#RRGGBBAA` strings (`rec_reason_style`);
+/// kept as strings so this model stays free of Flutter types — the widget
+/// converts via [recTagColor] at render time.
+class MediaRecTag {
+  const MediaRecTag({
+    required this.text,
+    this.textColor = '',
+    this.bgColor = '',
+    this.darkTextColor = '',
+    this.darkBgColor = '',
+  });
+
+  final String text;
+  final String textColor;
+  final String bgColor;
+  final String darkTextColor;
+  final String darkBgColor;
+
+  Map<String, dynamic> toJson() => {
+    'text': text,
+    if (textColor.isNotEmpty) 'textColor': textColor,
+    if (bgColor.isNotEmpty) 'bgColor': bgColor,
+    if (darkTextColor.isNotEmpty) 'darkTextColor': darkTextColor,
+    if (darkBgColor.isNotEmpty) 'darkBgColor': darkBgColor,
+  };
+
+  static List<MediaRecTag> fromJson(Map<String, dynamic> map) => [
+    if ((map['text'] ?? '').toString().trim().isNotEmpty)
+      MediaRecTag(
+        text: map['text'].toString(),
+        textColor: (map['textColor'] ?? '').toString(),
+        bgColor: (map['bgColor'] ?? '').toString(),
+        darkTextColor: (map['darkTextColor'] ?? '').toString(),
+        darkBgColor: (map['darkBgColor'] ?? '').toString(),
+      ),
+  ];
+}
+
+/// Parses the wire `recommend_reason_list`（服务端模板 `#tag_list_0` 的值源）。
+List<MediaRecTag> parseRecTags(dynamic value) {
+  if (value is! List) return const [];
+  final out = <MediaRecTag>[];
+  for (final entry in value) {
+    if (entry is! Map) continue;
+    final text = (entry['content'] ?? '').toString().trim();
+    if (text.isEmpty) continue;
+    final style = entry['rec_reason_style'];
+    final s = style is Map ? style : const <String, dynamic>{};
+    String pick(List<String> keys) {
+      for (final k in keys) {
+        final v = s[k]?.toString() ?? '';
+        if (v.isNotEmpty) return v;
+      }
+      return '';
+    }
+
+    out.add(
+      MediaRecTag(
+        text: text,
+        textColor: pick(['rec_style_text_color']),
+        bgColor: pick(['rec_style_background_color']),
+        darkTextColor: pick(['rec_style_dark_text_color']),
+        darkBgColor: pick(['rec_style_dark_background_color']),
+      ),
+    );
+  }
+  return List.unmodifiable(out);
+}
+
 /// Category names for the info panel's chip row. The feed card's
 /// `video_detail.secondary_infos` marks categories with `data_type == 3`
 /// (other entries are actors and the like); `category_schema` — a JSON string
@@ -1350,6 +1433,8 @@ extension MediaItemJson on MediaItem {
     if (followerCount > 0) 'followerCount': followerCount,
     if (categories.isNotEmpty) 'categories': categories,
     if (rankTags.isNotEmpty) 'rankTags': rankTags,
+    if (recTags.isNotEmpty)
+      'recTags': [for (final t in recTags) t.toJson()],
     if (episodeListText.isNotEmpty) 'episodeListText': episodeListText,
     if (aiGenerated) 'aiGenerated': true,
     // The promotional badge must survive a round-trip; the keys reuse
@@ -1392,6 +1477,11 @@ extension MediaItemJson on MediaItem {
       rankTags: map['rankTags'] is List
           ? List.unmodifiable((map['rankTags'] as List).map((e) => '$e'))
           : const [],
+      recTags: [
+        if (map['recTags'] is List)
+          for (final e in map['recTags'] as List)
+            if (e is Map) ...MediaRecTag.fromJson(Map<String, dynamic>.from(e)),
+      ],
       episodeListText: field('episodeListText'),
       aiGenerated: map['aiGenerated'] == true,
     );

@@ -117,6 +117,10 @@ const double _cardTitleSize = 14;
 const double _cardMetaSize = 12;
 const double _cardScoreSize = 12;
 
+/// 标签行（模板 root/1/2 `#tag_list_0`）：chip 12sp、圆角 4dp、内边距
+/// 水平 4 / 垂直 1、chip 间距 4dp（KMP `TagListViewKt` smali 常量）。
+const double _cardTagSize = 12;
+
 /// 文本区 padding（模板 root/1）。
 const EdgeInsets _cardTextPadding = EdgeInsets.fromLTRB(10, 8, 10, 12);
 
@@ -154,11 +158,15 @@ double homeBookCardExtent(BuildContext context, {required double columnWidth}) {
       (scaler.scale(_cardMetaSize) * _cardAbstractLineMultiply +
           _cardAbstractLineExtra) *
       2;
+  // 标签行：chip 高 = 12sp×1.2 + 2dp 垂直 padding，上面 4dp 间距。网格是
+  // 统一高度而约半数卡无标签——按有标签取高，无标签卡多 ~21dp 底部留白。
+  final tags = scaler.scale(_cardTagSize) * 1.2 + 2 + 4;
   return cover +
       _cardTextPadding.top +
       title +
       4 +
       abstract +
+      tags +
       _cardTextPadding.bottom;
 }
 
@@ -634,6 +642,17 @@ class HomeBookCard extends StatelessWidget {
                                   ? const Color(0x66FFFFFF)
                                   : const Color(0x66000000),
                             ),
+                          ),
+                        ],
+                        if (item.recTags.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 4,
+                            runSpacing: 4,
+                            children: [
+                              for (final tag in item.recTags)
+                                _RecTagChip(tag: tag, dark: dark),
+                            ],
                           ),
                         ],
                       ],
@@ -1290,3 +1309,52 @@ class HomeStreamFooter extends StatelessWidget {
 }
 
 enum _StreamFooterState { loading, retry, done }
+
+/// One tag chip（KMP `TagListViewKt`：12sp、圆角 4dp、padding 4/1）。
+class _RecTagChip extends StatelessWidget {
+  const _RecTagChip({required this.tag, required this.dark});
+
+  final MediaRecTag tag;
+  final bool dark;
+
+  /// Wire `#RRGGBBAA` → Flutter `AARRGGBB`；解析失败回退 [fallback]。
+  static Color? _color(String hex, Color? fallback) {
+    final h = hex.trim();
+    if (h.length == 9 && h.startsWith('#')) {
+      final value = int.tryParse('FF${h.substring(1, 7)}', radix: 16);
+      final alpha = int.tryParse(h.substring(7, 9), radix: 16);
+      if (value != null) {
+        return Color(value).withValues(alpha: (alpha ?? 255) / 255);
+      }
+    }
+    if (h.length == 7 && h.startsWith('#')) {
+      final value = int.tryParse('FF${h.substring(1)}', radix: 16);
+      if (value != null) return Color(value);
+    }
+    return fallback;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = _color(
+      dark ? tag.darkTextColor : tag.textColor,
+      dark ? const Color(0xCCFFFFFF) : const Color(0x99000000),
+    )!;
+    final bg = _color(dark ? tag.darkBgColor : tag.bgColor, null);
+    final label = Text(
+      tag.text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: _cardTagSize, height: 1.2, color: text),
+    );
+    if (bg == null) return label;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: label,
+    );
+  }
+}

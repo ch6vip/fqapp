@@ -19,6 +19,7 @@ void main() {
     String intro = '',
     double? score,
     List<String> rankTags = const [],
+    List<MediaRecTag> recTags = const [],
   }) => MediaItem(
     id: id,
     title: title,
@@ -30,6 +31,7 @@ void main() {
     intro: intro,
     score: score,
     rankTags: rankTags,
+    recTags: recTags,
   );
 
   Future<void> pump(WidgetTester tester, Widget child) async {
@@ -135,6 +137,26 @@ void main() {
     });
   });
 
+  test('parseRecTags reads content and server colours', () {
+    final tags = parseRecTags([
+      {
+        'content': '16个老书虫在看',
+        'rec_reason_style': {
+          'rec_style_text_color': '#D7A461FF',
+          'rec_style_background_color': '#D7A4611A',
+          'rec_style_dark_text_color': '#A8804CFF',
+          'rec_style_dark_background_color': '#A8804C33',
+        },
+      },
+      {'content': ''},
+      'not-a-map',
+    ]);
+    expect(tags, hasLength(1));
+    expect(tags.first.text, '16个老书虫在看');
+    expect(tags.first.textColor, '#D7A461FF');
+    expect(tags.first.bgColor, '#D7A4611A');
+  });
+
   group('HomeBookCard', () {
     testWidgets('writes the score as a white badge on the cover', (
       tester,
@@ -156,6 +178,39 @@ void main() {
       expect(
         tester.getBottomLeft(find.text('9.3分')).dy,
         lessThan(tester.getBottomLeft(find.byType(HomeBookCard)).dy - 7),
+      );
+    });
+
+    testWidgets('renders the recommend-reason chips under the abstract', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 360,
+          child: HomeBookCard(
+            item: book(
+              intro: '简介',
+              recTags: const [
+                MediaRecTag(
+                  text: '16个老书虫在看',
+                  textColor: '#D7A461FF',
+                  bgColor: '#D7A4611A',
+                ),
+              ],
+            ),
+            onTap: () {},
+          ),
+        ),
+      );
+
+      final chip = tester.widget<Text>(find.text('16个老书虫在看'));
+      // 服务端配色：番茄金文字。
+      expect(chip.style!.color, const Color(0xFFD7A461));
+      // chip 在简介之下（y 更大）。
+      expect(
+        tester.getTopLeft(find.text('16个老书虫在看')).dy,
+        greaterThan(tester.getTopLeft(find.text('简介')).dy),
       );
     });
 
