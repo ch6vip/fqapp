@@ -8,7 +8,6 @@ import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
-import '../services/app_links.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
@@ -288,16 +287,23 @@ class _HomePageState extends ConsumerState<HomePage> {
         continue;
       }
       if (isHomeGridBlock(cell)) {
-        // A white rounded block card cannot wrap a sliver list, so grid blocks
-        // render as a box widget inside `HomeBlockCard` instead of a sliver.
+        // 官方的卡片流不装在白色区块卡里：卡片直接铺在 #F6F6F6 画布上，
+        // 外边距 12dp、列间距 8dp（S0 视图树证据 x36/x622 @1220px），流也
+        // 没有自己的标题和「更多书籍信息」条——那些属于别的白卡区块。
+        // 顶部再留 8dp，与排行榜区块底部的 14dp 合出官方的节间距。
+        final entries = homeCellEntries(cell);
         slivers.add(
-          SliverToBoxAdapter(
-            child: buildCardSection(
-              context,
-              cell,
-              onOpen: _openItem,
-              gridWidth: gridWidth,
-              onMore: () => _openCellMore(cell),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            sliver: SliverGrid(
+              gridDelegate: homeBookGridDelegate(
+                context,
+                available: gridWidth - 12 * 2 + _gridPadding * 2,
+              ),
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final item = entries[index];
+                return HomeBookCard(item: item, onTap: () => _openItem(item));
+              }, childCount: entries.length),
             ),
           ),
         );
@@ -515,22 +521,6 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _openItem(MediaItem item) {
     openBookDetail(context, item);
-  }
-
-  /// Opens a block's 「更多书籍信息」 target (`jd.xml` node `anr`).
-  ///
-  /// Upstream binds the strip to the cell's own `url`; when the cell carries
-  /// none the tap falls through to the generic more-books list.
-  void _openCellMore(HomeCell cell) {
-    final url = cell.url;
-    if (url.isNotEmpty) {
-      unawaited(openAppLink(context, url));
-      return;
-    }
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const RankPage()),
-    );
   }
 
   Future<void> _resumeItem(MediaItem item) async {
