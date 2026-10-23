@@ -25,9 +25,11 @@ const homeCategories = [
 /// * paddingStart 20dp / paddingEnd 13dp；
 /// * 选中字号 `av5` = 24sp，未选中字号 `avq` = 16sp；
 /// * 选中色 `aui` 与未选中色 `avn` 都是 `skin_color_black_light`(#000000)
-///   —— 官方不靠颜色区分，只靠字号和字重；
-/// * 指示器色 `avt` = `skin_color_1A000000_light`(#1A000000)，高 8dp；
-/// * tab 间距 `auw` = 16dp，tab 内左右 padding 20dp / 34dp。
+///   —— 官方不靠颜色区分，只靠字号、字重（两态都粗体）和未选中 0.4 透明度；
+/// * tab 间距 `avb` = 20dp（`SlidingTabLayout.O()` 里
+///   `setMargins(0, 0, this.K, 0)`，`this.K` 就是 `avb`），tab 高 `avc` = 34dp；
+/// * 指示器：`aup` = 0dp（高度 0）。`onDraw` 里 `if (this.s > 0.0f)` 才绘制，
+///   所以官方书城顶栏**没有下划线**。`auw` = 16dp 是宽度，高度为 0 时无效。
 ///
 /// 上一版是圆角胶囊 + 图标 + 橙色选中底，和官方完全不是一种东西。
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
@@ -35,8 +37,10 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   static const double bottomPadding = 10;
   static const double selectedSize = 24;
   static const double unselectedSize = 16;
-  static const double indicatorHeight = 8;
-  static const double tabSpacing = 16;
+  static const double tabSpacing = 20;
+
+  /// 未选中项的透明度 `avr`（`SlidingTabLayout.a6`，`L2048 getFloat(55, 0.4f)`）。
+  static const double unselectedAlpha = 0.4;
 
   final int selectedIndex;
   final ValueChanged<int> onSelect;
@@ -99,41 +103,29 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
                   key: ValueKey('home_category_$index'),
                   behavior: HitTestBehavior.opaque,
                   onTap: () => onSelect(index),
-                  // 官方 SlidingTabLayout 把指示器画在 tab 底部（overlay），
-                  // 不占布局高度；用 Stack 才能在不溢出的前提下让 24sp
-                  // 选中字与 38dp 行高共存。
+                  // 官方书城顶栏不画指示器：`alx.xml` 把 `aup`(指示器高度)
+                  // 设成 0，`SlidingTabLayout.onDraw` 只在 `s > 0` 时绘制。
+                  //
+                  // 选中态只差「字号 + 透明度」：`s0()` 对每一项都调
+                  // `setTypeface(a(1))`（`R5 = getInt(53, 2)` 让 `z` 恒为真），
+                  // 所以两态都是粗体；未选中项再叠加 `alpha = a6` = 0.4
+                  // （`avr`，`L2048 getFloat(55, 0.4f)`）。
                   child: SizedBox(
                     height: rowHeight,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        AnimatedDefaultTextStyle(
-                          duration: duration,
-                          curve: Curves.easeOutCubic,
-                          style: TextStyle(
-                            fontSize: selected ? selectedSize : unselectedSize,
-                            fontWeight:
-                                selected ? FontWeight.w700 : FontWeight.w500,
-                            color: palette.ink,
-                            height: 1,
+                    child: Center(
+                      child: AnimatedDefaultTextStyle(
+                        duration: duration,
+                        curve: Curves.easeOutCubic,
+                        style: TextStyle(
+                          fontSize: selected ? selectedSize : unselectedSize,
+                          fontWeight: FontWeight.w700,
+                          color: palette.ink.withValues(
+                            alpha: selected ? 1 : unselectedAlpha,
                           ),
-                          child: Text(category.label),
+                          height: 1,
                         ),
-                        Positioned(
-                          bottom: 0,
-                          child: AnimatedContainer(
-                            duration: duration,
-                            curve: Curves.easeOutCubic,
-                            height: 3,
-                            width: selected ? 22 : 0,
-                            decoration: BoxDecoration(
-                              // 官方指示器 #1A000000。
-                              color: palette.ink.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                      ],
+                        child: Text(category.label),
+                      ),
                     ),
                   ),
                 ),

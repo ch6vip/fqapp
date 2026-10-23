@@ -193,4 +193,115 @@ void main() {
       expect(style['hide_title'], isTrue);
     });
   });
+
+  /// The 385 grid mixes book cards with a 书荒广场 card that has no `book_data`
+  /// at all — only `topic_data` and a `cell_url`. Upstream turns it into a
+  /// `StaggeredUgcModel` (`m0.C1`) and gives it one column, so it has to survive
+  /// parsing and keep its slot in the grid instead of being dropped.
+  group('parseHomeCells 书荒广场卡', () {
+    Map<String, dynamic> topicCard() => {
+      'show_type': 339,
+      'cell_name': '书荒广场',
+      'dynamic_card_type': 3,
+      'cell_url': 'dragon1967://lynxview?fallbackUrl=dragon1967%3A%2F%2Fwebview',
+      'style': {'dynamic_card_move_title_and_entry_to_bottom': true},
+      'topic_data': [
+        {
+          'title': '番茄十大颠峰小说',
+          'url': 'dragon1967://webview?url=https%3A%2F%2Fexample.com%2Ft1',
+          'topic_data': {'topic_id': '7381334221975339547'},
+          'topic_desc': {
+            'card_tips': '拯救了30万人的书荒',
+            'topic_cover': 'https://example.com/c1.jpeg',
+          },
+        },
+        {
+          'title': '番茄10.0的神作',
+          'url': 'dragon1967://webview?url=https%3A%2F%2Fexample.com%2Ft2',
+          'topic_desc': {'card_tips': '拯救了1729.7万人的书荒'},
+        },
+      ],
+    };
+
+    test('keeps the card and its topics instead of dropping it', () {
+      final payload = {
+        'data': {
+          'cell_data': [
+            {
+              'show_type': 385,
+              'cell_data': [book('b1', '书一'), topicCard(), book('b2', '书二')],
+            },
+          ],
+        },
+      };
+
+      final grid = parseHomeCells(payload).single;
+      // 没有 book_data 的卡以前会被 `isEmpty` 丢掉，网格就少一格。
+      expect(grid.children.length, 3);
+      final card = grid.children[1];
+      expect(card.showType, 339);
+      expect(card.name, '书荒广场');
+      expect(card.topics.map((t) => t.title), ['番茄十大颠峰小说', '番茄10.0的神作']);
+      expect(card.url, startsWith('dragon1967://lynxview'));
+    });
+
+    test('reads the tips, the cover and the topic id from topic_desc', () {
+      final payload = {
+        'data': {
+          'cell_data': [
+            {
+              'show_type': 385,
+              'cell_data': [topicCard()],
+            },
+          ],
+        },
+      };
+
+      final topic = parseHomeCells(payload).single.children.single.topics.first;
+      expect(topic.id, '7381334221975339547');
+      expect(topic.tips, '拯救了30万人的书荒');
+      expect(topic.cover, 'https://example.com/c1.jpeg');
+      expect(topic.url, contains('example.com%2Ft1'));
+    });
+
+    test('a grid of only books still flattens the same way', () {
+      final payload = {
+        'data': {
+          'cell_data': [
+            {
+              'show_type': 385,
+              'cell_data': [book('b1', '书一'), book('b2', '书二')],
+            },
+          ],
+        },
+      };
+
+      final grid = parseHomeCells(payload).single;
+      expect(grid.flatten().map((i) => i.id), ['b1', 'b2']);
+      expect(homeCellEntries(grid).length, 2);
+      expect(homeCellEntries(grid).every((e) => e.isBook), isTrue);
+    });
+
+    test('homeCellEntries puts the topic card in the grid position', () {
+      final payload = {
+        'data': {
+          'cell_data': [
+            {
+              'show_type': 385,
+              'cell_data': [book('b1', '书一'), topicCard(), book('b2', '书二')],
+            },
+          ],
+        },
+      };
+
+      final entries = homeCellEntries(parseHomeCells(payload).single);
+      expect(entries.length, 3);
+      // 顺序就是网格顺序：第 4 张卡在官方流里就是这个位置。
+      expect(entries.map((e) => e.isBook), [true, false, true]);
+      expect(entries[1].topics.length, 2);
+      // 书卡仍然只走 `flatten()`，标签行/作者行等旧语义不受影响。
+      expect(entries[0].item!.id, 'b1');
+      expect(entries[2].item!.id, 'b2');
+    });
+  });
 }

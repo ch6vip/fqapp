@@ -27,12 +27,28 @@ class HomeCell {
   /// the few keys it understands and ignores the rest.
   final Map<String, dynamic> style;
 
+  /// Block-level payload that is not a card list, e.g. the rank board names in
+  /// `rank_with_category_data` (see [HomeCell.showType] 511). Same policy as
+  /// [style]: kept raw, read by the renderer that understands it.
+  final Map<String, dynamic> extra;
+
   /// Cards directly under this block.
   final List<MediaItem> items;
 
   /// Nested blocks, for containers such as `MultiTabMixedUnlimitedV2`, which
   /// wraps the actual cards one level down.
   final List<HomeCell> children;
+
+  /// Topic rows of a 书荒广场 card (`topic_data[]`). Empty for book cards.
+  ///
+  /// This card carries no `book_data` at all — `m0.java:1501` turns it into a
+  /// `StaggeredUgcModel` instead of a book model — so without this field the
+  /// card has no identity and would be dropped by [isEmpty].
+  final List<HomeTopic> topics;
+
+  /// Upstream jump target (`cell_url`). The 书荒广场 card is the only card in
+  /// this feed that uses it: it is the 「更多」/pill target.
+  final String url;
 
   const HomeCell({
     required this.showType,
@@ -41,14 +57,19 @@ class HomeCell {
     required this.style,
     required this.items,
     required this.children,
+    this.topics = const [],
+    this.url = '',
+    this.extra = const {},
   });
 
-  bool get isEmpty => items.isEmpty && children.every((c) => c.isEmpty);
+  bool get isEmpty =>
+      items.isEmpty && topics.isEmpty && children.every((c) => c.isEmpty);
 
   /// Every card under this block, in document order.
   ///
   /// Lets the untouched grid path keep working while blocks are adopted one
-  /// type at a time.
+  /// type at a time. Books only — see [homeCellEntries] for the stream that
+  /// also carries topic cards.
   List<MediaItem> flatten() {
     final out = <MediaItem>[...items];
     for (final child in children) {
@@ -56,6 +77,82 @@ class HomeCell {
     }
     return out;
   }
+}
+
+/// One topic row of a 书荒广场 card (`topic_data[]`, row layout `bdr.xml`).
+class HomeTopic {
+  const HomeTopic({
+    required this.id,
+    required this.title,
+    required this.tips,
+    required this.cover,
+    required this.url,
+  });
+
+  /// `topic_data.topic_id`, falling back to `topic_desc.topic_id`.
+  final String id;
+
+  /// Row title (12sp, up to two lines in `bdr.xml` `ibg`).
+  final String title;
+
+  /// `topic_desc.card_tips` — the grey 「拯救了30万人的书荒」 line (`htk`).
+  final String tips;
+
+  /// `topic_desc.topic_cover` — the 40×56 thumbnail.
+  final String cover;
+
+  /// Jump target; a `dragon1967://webview` link that wraps an https page.
+  final String url;
+
+  bool get isEmpty => title.isEmpty && cover.isEmpty && url.isEmpty;
+
+  static HomeTopic? fromRaw(dynamic value) {
+    if (value is! Map) return null;
+    final desc = value['topic_desc'];
+    final topicData = value['topic_data'];
+    final topic = HomeTopic(
+      id: (topicData is Map ? topicData['topic_id'] : null)?.toString() ??
+          (desc is Map ? desc['topic_id'] : null)?.toString() ??
+          '',
+      title: (value['title'] ?? '').toString(),
+      tips: desc is Map ? (desc['card_tips'] ?? '').toString() : '',
+      cover: desc is Map ? (desc['topic_cover'] ?? '').toString() : '',
+      url: (value['url'] ?? '').toString(),
+    );
+    return topic.isEmpty ? null : topic;
+  }
+}
+
+/// One card of a stream block, in document order.
+///
+/// [HomeCell.flatten] can only express books, so the 385 stream — which mixes
+/// book cards with one 书荒广场 topic card — needs this sequence: dropping the
+/// topic card would also shift every later book one slot to the left.
+class HomeCardEntry {
+  const HomeCardEntry.book(MediaItem this.item) : cell = null;
+  const HomeCardEntry.topics(HomeCell this.cell) : item = null;
+
+  final MediaItem? item;
+
+  /// The card owning [topics]; its [HomeCell.url] backs the 「更多」 target.
+  final HomeCell? cell;
+
+  bool get isBook => item != null;
+
+  List<HomeTopic> get topics => cell?.topics ?? const [];
+}
+
+/// Every card under [cell] in document order, books and topic cards alike.
+List<HomeCardEntry> homeCellEntries(HomeCell cell) {
+  final out = <HomeCardEntry>[];
+  for (final item in cell.items) {
+    out.add(HomeCardEntry.book(item));
+  }
+  if (cell.topics.isNotEmpty) out.add(HomeCardEntry.topics(cell));
+  for (final child in cell.children) {
+    out.addAll(homeCellEntries(child));
+  }
+  return out;
 }
 
 /// Parses the bookstore feed into blocks.
@@ -138,6 +235,30 @@ HomeCell _parseCell(Map<String, dynamic> raw, int depth) {
 
   final children = _parseCellList(raw['cell_data'], depth + 1);
 
+  // A 书荒广场 card (`dynamic_card_type=3`) ships `topic_data[]` instead of
+  // `book_data`; without it the card has no identity and is dropped.
+  final topics = <HomeTopic>[];
+  final rawTopics = raw['topic_data'];
+  if (rawTopics is List) {
+    for (final entry in rawTopics) {
+      final topic = HomeTopic.fromRaw(entry);
+      if (topic != null) topics.add(topic);
+    }
+  }
+
+  // Keys that describe the block rather than its cards. The rank block keeps
+  // its board list and categories here; the renderer that knows `show_type`
+  // 511 reads it, everything else ignores it.
+  Map<String, dynamic>? blockExtra;
+  for (final key in _extraKeys) {
+    final value = raw[key];
+    if (value is Map) {
+      (blockExtra ??= <String, dynamic>{})[key] = Map<String, dynamic>.from(
+        value,
+      );
+    }
+  }
+
   return HomeCell(
     showType: _intOf(raw['show_type']) ?? 0,
     name: (raw['cell_name'] ?? '').toString(),
@@ -147,8 +268,13 @@ HomeCell _parseCell(Map<String, dynamic> raw, int depth) {
         : const {},
     items: items,
     children: children,
+    topics: topics,
+    url: (raw['cell_url'] ?? '').toString(),
+    extra: blockExtra ?? const {},
   );
 }
+
+const _extraKeys = <String>['rank_with_category_data'];
 
 const _identityKeys = <String>[
   'book_id',

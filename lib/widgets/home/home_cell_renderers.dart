@@ -107,7 +107,13 @@ bool isHomeGridBlock(HomeCell cell) =>
 /// Idempotent and cheap enough to call from `build`: the previous entry is
 /// replaced in place, and the 「更多」 callback is captured per call so it always
 /// points at the current page rather than a disposed one.
-void registerDefaultHomeCells({VoidCallback? onOpenRankBoard}) {
+///
+/// [loadBoard] backs the rank-name strip: picking another board reloads the
+/// preview in place (`RankMixContentHolder.K7`) instead of leaving the page.
+void registerDefaultHomeCells({
+  VoidCallback? onOpenRankBoard,
+  HomeRankLoader? loadBoard,
+}) {
   HomeCellRenderers.register(
     kHomeCellRank,
     (context, cell, {required fallback, required onOpen}) => buildRankCell(
@@ -115,6 +121,7 @@ void registerDefaultHomeCells({VoidCallback? onOpenRankBoard}) {
       cell,
       onOpen: onOpen,
       onMore: onOpenRankBoard ?? () {},
+      loadBoard: loadBoard,
     ),
   );
 }

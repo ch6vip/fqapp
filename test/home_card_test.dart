@@ -1,0 +1,300 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:fqapp/models/home_cell.dart';
+import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/widgets/home/home_cell_blocks.dart';
+import 'package:fqapp/widgets/home/home_design.dart';
+
+/// `b8w.xml` and `av1.xml` measure a rank row and a feed card differently from
+/// the shapes fqapp shipped before: the rank row carries the `secondary_info_
+/// list` tags under its title (the TagLayout `o$g$a.b2` revives), the card has
+/// no author line and only one title line, and the card's score sits on the
+/// title row. These tests pin the parts a layout regression would silently
+/// undo.
+void main() {
+  MediaItem book({
+    String id = 'b1',
+    String title = '书一',
+    String author = '',
+    String intro = '',
+    double? score,
+    List<String> rankTags = const [],
+  }) => MediaItem(
+    id: id,
+    title: title,
+    cover: '',
+    author: author,
+    badge: '',
+    ep: '',
+    kind: 'book',
+    intro: intro,
+    score: score,
+    rankTags: rankTags,
+  );
+
+  Future<void> pump(WidgetTester tester, Widget child) async {
+    await tester.binding.setSurfaceSize(const Size(400, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: Center(child: child)),
+      ),
+    );
+  }
+
+  group('HomeRankRow', () {
+    testWidgets('keeps a title to one line and shows no author', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 360,
+          child: HomeRankRow(
+            item: book(title: '一个非常非常长的书名用来验证它只占一行', author: '某作者'),
+            index: 0,
+            onTap: () {},
+          ),
+        ),
+      );
+
+      final title = tester.widget<Text>(find.text('一个非常非常长的书名用来验证它只占一行'));
+      // `b8w.xml` 的 `ftb` 是 `android:lines="1"`。
+      expect(title.maxLines, 1);
+      // 作者不在行副标题的数据源里（那是 secondary_info_list），无处显示。
+      expect(find.text('某作者'), findsNothing);
+    });
+
+    testWidgets('renders the secondary info tags under the title', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 360,
+          child: HomeRankRow(
+            item: book(rankTags: const ['多人二刷', '9320万热度']),
+            index: 0,
+            onTap: () {},
+          ),
+        ),
+      );
+
+      // `o$g$a.b2` → `bindRankTags`：一行 TagLayout，条目间是分隔点。
+      final subtitle = tester.widget<Text>(find.text('多人二刷 · 9320万热度'));
+      // `e44`/TagLayout 文字：12sp（@dimen/qy），#66000000（gray_40）。
+      expect(subtitle.style!.fontSize, 12);
+      expect(subtitle.style!.color, const Color(0x66000000));
+      expect(subtitle.maxLines, 1);
+    });
+
+    testWidgets('keeps a single title line when the payload has no tags', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 360,
+          child: HomeRankRow(item: book(), index: 0, onTap: () {}),
+        ),
+      );
+
+      expect(find.textContaining('·'), findsNothing);
+    });
+
+    testWidgets('paints the top three indices gold and the rest black', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 360,
+          child: Column(
+            children: [
+              for (var i = 0; i < 4; i++)
+                HomeRankRow(
+                  item: book(id: 'b$i'),
+                  index: i,
+                  onTap: () {},
+                ),
+            ],
+          ),
+        ),
+      );
+
+      Color colorOf(String label) =>
+          tester.widget<Text>(find.text(label)).style!.color!;
+
+      // `SkinDelegate.setTextColor(view, 2131561676)` = #FFDCAD6D for i + 1 <= 3.
+      expect(colorOf('1'), const Color(0xFFDCAD6D));
+      expect(colorOf('3'), const Color(0xFFDCAD6D));
+      // 其余是 `@color/abd` = skin_color_black_light (#FF000000)；本客户端用
+      // 自己的墨色 palette.ink 代替纯黑，与全站正文一致。
+      expect(colorOf('4'), const HomePalette(false).ink);
+    });
+  });
+
+  group('HomeBookCard', () {
+    testWidgets('writes the score after the title with its 分 suffix', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 360,
+          child: HomeBookCard(item: book(score: 9.3), onTap: () {}),
+        ),
+      );
+
+      final score = tester.widget<Text>(find.text('9.3分'));
+      // `j6.e`: 有分数时字号取 `aVar.c`，`InfiniteSingleBookHolder` 传 `.n(16)`
+      // 即 16sp；颜色 `skin_color_orange_brand_light`(#FFFA6725)。
+      expect(score.style!.fontSize, 16);
+      expect(score.style!.color, const Color(0xFFFA6725));
+    });
+
+    testWidgets('drops the score when the payload has none', (tester) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 360,
+          child: HomeBookCard(item: book(), onTap: () {}),
+        ),
+      );
+
+      // `j6` 在分数为空时写「暂无评分」，而 `av1.xml` 的 `ajr` 位官方默认在
+      // 无分数时也是隐藏的，所以这里判空即可。
+      expect(find.text('暂无评分'), findsNothing);
+      expect(find.textContaining('分'), findsNothing);
+    });
+
+    testWidgets(
+      'shows one title line, no author line and a two-line abstract',
+      (tester) async {
+        await pump(
+          tester,
+          SizedBox(
+            width: 360,
+            child: HomeBookCard(
+              item: book(
+                title: '一个小说的书名',
+                author: '某作者',
+                intro: '书摘内容，用来验证摘要占两行。',
+              ),
+              onTap: () {},
+            ),
+          ),
+        );
+
+        // Vertical card (S0): the title gets two lines, not one.
+        expect(tester.widget<Text>(find.text('一个小说的书名')).maxLines, 2);
+        expect(find.text('某作者'), findsNothing);
+        expect(tester.widget<Text>(find.text('书摘内容，用来验证摘要占两行。')).maxLines, 2);
+      },
+    );
+  });
+
+  /// `axy.xml` + `bdr.xml` + `dap.xml`: the 书荒广场 card is a book-sized cell in
+  /// the same two-column grid, not a full-width banner. Upstream moves the title
+  /// and the entry to a bottom pill whenever `dynamic_card_move_title_and_entry_
+  /// to_bottom` is set, which is what the real feed sends.
+  group('HomeTopicCard', () {
+    HomeCell topicCell({Map<String, dynamic> style = const {}}) => HomeCell(
+      showType: 339,
+      name: '书荒广场',
+      id: '',
+      style: style,
+      items: const [],
+      children: const [],
+      url: 'dragon1967://webview?url=https%3A%2F%2Fexample.com%2Flist',
+      topics: const [
+        HomeTopic(
+          id: 't1',
+          title: '番茄十大颠峰小说',
+          tips: '拯救了30万人的书荒',
+          cover: '',
+          url: 'dragon1967://webview?url=https%3A%2F%2Fexample.com%2Ft1',
+        ),
+        HomeTopic(
+          id: 't2',
+          title: '番茄10.0的神作',
+          tips: '拯救了1729.7万人的书荒',
+          cover: '',
+          url: '',
+        ),
+      ],
+    );
+
+    testWidgets('keeps one title line and one tips line per topic', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(width: 180, child: HomeTopicCard(cell: topicCell())),
+      );
+
+      expect(tester.widget<Text>(find.text('番茄十大颠峰小说')).maxLines, 2);
+      expect(tester.widget<Text>(find.text('拯救了30万人的书荒')).maxLines, 1);
+      expect(find.text('番茄10.0的神作'), findsOneWidget);
+    });
+
+    testWidgets('moves the title into the bottom pill and drops the header', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 180,
+          child: HomeTopicCard(
+            cell: topicCell(
+              style: const {
+                'dynamic_card_move_title_and_entry_to_bottom': true,
+              },
+            ),
+          ),
+        ),
+      );
+
+      // 官方 `m4()` 把 `v`/`w`/`x`（图标 / 更多行 / 顶部标题）全部 gone，
+      // 只留底部 `dap.xml` 的胶囊，胶囊文案就是 `cell_name`。
+      expect(find.text('更多'), findsNothing);
+      expect(find.text('书荒广场'), findsOneWidget);
+    });
+
+    testWidgets('shows the header when the payload keeps the title on top', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(width: 180, child: HomeTopicCard(cell: topicCell())),
+      );
+
+      // 没有那个开关时走 `r4()`：顶部标题 + 「更多」都在，胶囊里是同一个名字。
+      expect(find.text('更多'), findsOneWidget);
+      expect(find.text('书荒广场'), findsNWidgets(2));
+    });
+
+    testWidgets('falls back to 书荒广场 when the cell has no name', (tester) async {
+      final cell = HomeCell(
+        showType: 339,
+        name: '',
+        id: '',
+        style: const {'dynamic_card_move_title_and_entry_to_bottom': true},
+        items: const [],
+        children: const [],
+        topics: const [
+          HomeTopic(id: 't1', title: '话题一', tips: '', cover: '', url: ''),
+        ],
+      );
+
+      await pump(
+        tester,
+        SizedBox(width: 180, child: HomeTopicCard(cell: cell)),
+      );
+
+      expect(find.text('书荒广场'), findsOneWidget);
+    });
+  });
+}

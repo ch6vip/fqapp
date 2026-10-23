@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/home_cell.dart';
 import '../models/media_item.dart';
+import '../services/api_client.dart';
+import '../services/app_links.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
@@ -16,6 +18,7 @@ import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 import '../widgets/home/home_hero.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_skeleton.dart';
 import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
@@ -139,10 +142,10 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   List<MediaItem> _visibleItems(HomeState state) {
     if (state.tabIndex == 0) return state.items;
-    final categories = _categoriesOf(state);
-    if (state.tabIndex >= categories.length) return state.items;
-    final kind = HomeNotifier.tabKinds[categories[state.tabIndex].label];
-    if (kind == null) return state.items;
+    final kind = ref
+        .read(homeProvider.notifier)
+        .identityOf(state.tabIndex)
+        .kind;
     return state.items.where((item) => item.kind == kind).toList();
   }
 
@@ -208,9 +211,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                               SliverToBoxAdapter(
                                 child: HomeHero(
                                   onSearch: _openSearch,
-                                  onRanks: _openRanks,
-                                  onRefresh: notifier.load,
-                                  refreshing: state.isLoading,
+                                  onImageSearch: _openImageSearch,
                                 ),
                               ),
                               SliverPersistentHeader(
@@ -253,10 +254,15 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// its own blocks and nothing else, so those other sources stay in their own
   /// tabs.
   List<Widget>? _blockSlivers(HomeState state, double gridWidth) {
-    if (state.tabIndex != 0) return null;
+    // 每个书城分类都渲染自己那份 `cell_data`（官方 `m0` 对 `tab_type` 一视
+    // 同仁地建区块），所以这里不再只放行「推荐」。没带区块的分类照旧落到
+    // 下面的旧管线，不会被空掉。
     final cells = state.cells;
     if (cells.isEmpty) return null;
-    registerDefaultHomeCells(onOpenRankBoard: _openRanks);
+    registerDefaultHomeCells(
+      onOpenRankBoard: _openRanks,
+      loadBoard: _loadRankPreview,
+    );
 
     final slivers = <Widget>[];
     var rendered = false;
@@ -278,6 +284,8 @@ class _HomePageState extends ConsumerState<HomePage> {
         continue;
       }
       if (isHomeGridBlock(cell)) {
+        // A white rounded block card cannot wrap a sliver list, so grid blocks
+        // render as a box widget inside `HomeBlockCard` instead of a sliver.
         slivers.add(
           SliverToBoxAdapter(
             child: buildCardSection(
@@ -285,6 +293,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               cell,
               onOpen: _openItem,
               gridWidth: gridWidth,
+              onMore: () => _openCellMore(cell),
             ),
           ),
         );
@@ -334,9 +343,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         if (!state.isLoading) {
           WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
         }
-        return const [
-          SliverToBoxAdapter(child: HomeFeedLoading(message: '正在寻找好故事')),
-        ];
+        // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
+        // paints the skeleton rather than a spinner.
+        return const [SliverToBoxAdapter(child: HomeSkeleton())];
       }
       return [
         SliverFillRemaining(
@@ -468,6 +477,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// 官方搜索框右侧的「识剧」入口（`c5e.xml` 的 `search_image_icon_container`，
+  /// 文案 `@string/dv8`）。官方点它是拍照识剧，走的是独立的图像检索接口；
+  /// 这条链路还没有接入，先把入口摆回官方位置，点击时说明状态。
+  void _openImageSearch() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('识剧还在接入中，暂时只支持文字搜索')),
+    );
+  }
+
   /// The rank board. Its catalogue (and the rank id the entries endpoint needs)
   /// only exist inside the novel homepage response the app already fetches.
   ///
@@ -480,8 +498,40 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// Reloads the homepage rank preview for one board.
+  ///
+  /// Official flow: `RankMixContentHolder.K7` fetches the picked board through
+  /// the same rank endpoint and swaps the preview in place, so the page stays
+  /// put. Only the first page is needed — the preview shows four rows.
+  Future<List<MediaItem>> _loadRankPreview(String rankId, int algo) async {
+    final board = await ApiClient.instance.rankBoard(
+      rankId: rankId,
+      algo: algo,
+    );
+    return [
+      for (final entry in board.entries)
+        if (entry.id.isNotEmpty) entry.toMediaItem(),
+    ];
+  }
+
   void _openItem(MediaItem item) {
     openBookDetail(context, item);
+  }
+
+  /// Opens a block's 「更多书籍信息」 target (`jd.xml` node `anr`).
+  ///
+  /// Upstream binds the strip to the cell's own `url`; when the cell carries
+  /// none the tap falls through to the generic more-books list.
+  void _openCellMore(HomeCell cell) {
+    final url = cell.url;
+    if (url.isNotEmpty) {
+      unawaited(openAppLink(context, url));
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const RankPage()),
+    );
   }
 
   Future<void> _resumeItem(MediaItem item) async {

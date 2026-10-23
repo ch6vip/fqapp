@@ -4,7 +4,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
-import '../models/media_item.dart';
 import '../models/rank.dart';
 import '../services/api_client.dart';
 import '../services/poster_cache.dart';
@@ -421,19 +420,7 @@ class _RankPageState extends State<RankPage> {
 
   void _openEntry(RankEntry entry) {
     if (entry.id.isEmpty) return;
-    openBookDetail(
-      context,
-      MediaItem(
-        id: entry.id,
-        title: entry.title,
-        cover: entry.cover,
-        author: entry.author,
-        badge: entry.category,
-        ep: '',
-        kind: entry.kind,
-        seriesId: entry.seriesId.isEmpty ? null : entry.seriesId,
-      ),
-    );
+    openBookDetail(context, entry.toMediaItem());
   }
 }
 

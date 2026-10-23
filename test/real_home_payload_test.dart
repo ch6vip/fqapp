@@ -43,5 +43,12 @@ void main() {
     expect(cells[1].showType, 384); // MultiTabMixedUnlimitedV2 猜你喜欢
     expect(cells[1].name, '猜你喜欢');
     expect(cells[1].flatten().length, greaterThanOrEqualTo(11));
+
+    // 排行行的副标题：官方 TagLayout 渲染 secondary_info_list 的 content
+    // （真机样本第一条是「多人二刷 / 9320万热度」），解析层必须保留。
+    final firstRankBook = cells[0].flatten().first;
+    expect(firstRankBook.rankTags, isNotEmpty);
+    expect(firstRankBook.rankTags.first, '多人二刷');
+    expect(firstRankBook.rankTags.last, contains('热度'));
   });
 }

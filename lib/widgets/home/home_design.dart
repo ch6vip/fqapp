@@ -47,6 +47,15 @@ class HomePalette {
   Color get searchBarText => eink
       ? Colors.black
       : (dark ? const Color(0xFF8E8A85) : const Color(0x66000000));
+
+  /// 官方正文次级色 `skin_color_gray_40_light` = **#66000000**（60% 黑）。
+  ///
+  /// 官方信息层级是「纯黑标题 + 60% 黑正文」两档；此前实现用的是
+  /// `#262522` + `#706C66` 两档实色灰，整体偏灰，与官方观感不同。
+  /// 暗色下按同一「次级」语义给 60% 白。
+  Color get body => eink
+      ? Colors.black
+      : (dark ? const Color(0x99FFFFFF) : const Color(0x66000000));
 }
 
 /// Pointer, keyboard and accessibility activation share the same action.

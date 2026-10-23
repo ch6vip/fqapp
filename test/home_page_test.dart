@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
@@ -11,6 +10,8 @@ import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
+import 'package:fqapp/widgets/home/home_hero.dart';
+import 'package:fqapp/widgets/home/home_skeleton.dart';
 
 void main() {
   testWidgets(
@@ -127,8 +128,8 @@ void main() {
   });
 
   testWidgets('首页按上游区块渲染：排行榜条 + 猜你喜欢网格', (tester) async {
-    // 视口要高：排行榜是 16 行竖列表（官方 b7d.xml），矮屏会把后面的区块
-    // 挤出视口，find 默认只看可见节点。
+    // 视口要高：排行榜区块在猜你喜欢上面，矮屏会把后面的区块挤出视口，
+    // find 默认只看可见节点。
     await tester.binding.setSurfaceSize(const Size(400, 2600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -219,12 +220,183 @@ void main() {
     // 两个区块标题都在。
     expect(find.text('排行榜'), findsWidgets);
     expect(find.text('猜你喜欢'), findsWidgets);
-    // 排行榜是竖列表（官方 b7d.xml），不是横向条：序号 1、2 都渲染出来。
+    // 排行榜预览：序号 1、2 都渲染出来（官方 b7d.xml 的序号列）。
     expect(find.text('1'), findsWidgets);
     expect(find.text('2'), findsWidgets);
     // 卡片都在（榜单书 + 猜你喜欢）。
     expect(find.text('榜单书一'), findsWidgets);
     expect(find.text('猜你喜欢一'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('非「推荐」分类也按自己的区块渲染', (tester) async {
+    // 官方 m0 对每个 tab_type 一视同仁地建区块，所以「经典」「漫画」这些
+    // 分类同样渲染自己那份 cell_data，而不是退回旧的「今日焦点 + 值得一看」
+    // 管线。
+    await tester.binding.setSurfaceSize(const Size(400, 2600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    MediaItem book(String id, String title) => MediaItem(
+      id: id,
+      title: title,
+      cover: '',
+      author: '',
+      badge: '',
+      ep: '',
+      kind: 'book',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                      HomepagePage(
+                        items: [book('c1', '经典书一'), book('c2', '经典书二')],
+                        cells: [
+                          HomeCell(
+                            showType: 384,
+                            name: '经典必读',
+                            id: '',
+                            style: const {},
+                            items: const [],
+                            children: [
+                              HomeCell(
+                                showType: 385,
+                                name: '',
+                                id: '',
+                                style: const {},
+                                items: [
+                                  book('c1', '经典书一'),
+                                  book('c2', '经典书二'),
+                                ],
+                                children: const [],
+                              ),
+                            ],
+                          ),
+                        ],
+                        tabs: const [
+                          HomeTabItem(type: 2, title: '推荐'),
+                          HomeTabItem(type: 11, title: '经典'),
+                        ],
+                        nextOffset: null,
+                        sessionId: null,
+                      ),
+              searchLoader: (query, {int page = 1}) async => [],
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: HomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 先切到「经典」（服务端下标 1）。
+    await tester.tap(find.byKey(const ValueKey('home_category_1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('经典必读'), findsWidgets);
+    expect(find.text('经典书一'), findsWidgets);
+    // 旧管线的东西不该出现。
+    expect(find.text('值得一看'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('385 网格里的书荒广场卡也渲染，且不打乱书卡', (tester) async {
+    // 真实 feed 的 385 有 11 张书卡 + 第 4 张「书荒广场」话题卡；那张卡没有
+    // book_data，以前会被解析层整个丢掉，网格就少一格。
+    await tester.binding.setSurfaceSize(const Size(400, 2600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    MediaItem book(String id, String title) => MediaItem(
+      id: id,
+      title: title,
+      cover: '',
+      author: '',
+      badge: '',
+      ep: '',
+      kind: 'book',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                      HomepagePage(
+                        items: [
+                          book('c1', '猜你喜欢一'),
+                          book('c2', '猜你喜欢二'),
+                        ],
+                        cells: [
+                          HomeCell(
+                            showType: 384,
+                            name: '猜你喜欢',
+                            id: '',
+                            style: const {'hide_title': true},
+                            items: const [],
+                            children: [
+                              HomeCell(
+                                showType: 385,
+                                name: '',
+                                id: '',
+                                style: const {},
+                                items: [
+                                  book('c1', '猜你喜欢一'),
+                                  book('c2', '猜你喜欢二'),
+                                ],
+                                children: [
+                                  HomeCell(
+                                    showType: 339,
+                                    name: '书荒广场',
+                                    id: '',
+                                    style: {
+                                      'dynamic_card_move_title_and_entry_to_bottom':
+                                          true,
+                                    },
+                                    items: [],
+                                    children: [],
+                                    url: 'dragon1967://lynxview?fallbackUrl=x',
+                                    topics: [
+                                      HomeTopic(
+                                        id: 't1',
+                                        title: '番茄十大颠峰小说',
+                                        tips: '拯救了30万人的书荒',
+                                        cover: '',
+                                        url: '',
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                        nextOffset: null,
+                        sessionId: null,
+                      ),
+              searchLoader: (query, {int page = 1}) async => [],
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: HomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 书卡还在。
+    expect(find.text('猜你喜欢一'), findsWidgets);
+    expect(find.text('猜你喜欢二'), findsWidgets);
+    // 话题卡的三行内容也渲染了：标题、tips、底部胶囊文案。
+    expect(find.text('番茄十大颠峰小说'), findsWidgets);
+    expect(find.text('拯救了30万人的书荒'), findsWidgets);
+    expect(find.text('书荒广场'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -266,12 +438,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final hint = find.text('搜索书名、作者');
+      final hint = find.text(HomeHero.searchHint);
       expect(hint, findsOneWidget);
+      // 官方顶栏搜索框右侧没有常驻按钮（`h4f`/`gpe` 均 gone），提示文案要能
+      // 在窄屏上完整放下，且不能越过右侧的「识剧」入口。
       expect(
         tester.getRect(hint).right,
         lessThanOrEqualTo(
-          tester.getRect(find.byIcon(LucideIcons.refresh_ccw)).left,
+          tester.getRect(find.byKey(const Key('home_image_search_button'))).left,
         ),
       );
       expect(tester.takeException(), isNull);
@@ -403,7 +577,8 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(offsets, [0, 1]);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    // Cold first load paints the `cmc.xml` skeleton, not a spinner.
+    expect(find.byType(HomeSkeleton), findsOneWidget);
     expect(find.text('暂无内容'), findsNothing);
 
     secondPage.complete(
@@ -412,7 +587,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(offsets, [0, 1]);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(HomeSkeleton), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
     expect(offsets, [0, 1, 2]);

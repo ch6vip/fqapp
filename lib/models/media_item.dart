@@ -67,6 +67,11 @@ class MediaItem {
   /// names. Empty when the card carries neither.
   final List<String> categories;
 
+  /// 排行行副标题：`secondary_info_list` 各条的 `content`（如
+  /// 「多人二刷」「9320万热度」），按 `line_idx` 分行后顺序拼接。官方排行块
+  /// 的行内 TagLayout（`b8w.xml` `f5p`）渲染的就是它们；空表不渲染该行。
+  final List<String> rankTags;
+
   /// 「作者声明：内容由AI生成」行（`video_detail.ai_usage_type > 0`，
   /// 官方播放页信息层按它渲染声明行）。
   final bool aiGenerated;
@@ -92,6 +97,7 @@ class MediaItem {
     this.intro = '',
     this.followerCount = 0,
     this.categories = const [],
+    this.rankTags = const [],
     this.episodeListText = '',
     this.aiGenerated = false,
   });
@@ -120,6 +126,7 @@ class MediaItem {
     String? intro,
     int? followerCount,
     List<String>? categories,
+    List<String>? rankTags,
     String? episodeListText,
     bool? aiGenerated,
   }) => MediaItem(
@@ -138,6 +145,7 @@ class MediaItem {
     intro: intro ?? this.intro,
     followerCount: followerCount ?? this.followerCount,
     categories: categories ?? this.categories,
+    rankTags: rankTags ?? this.rankTags,
     episodeListText: episodeListText ?? this.episodeListText,
     aiGenerated: aiGenerated ?? this.aiGenerated,
   );
@@ -237,6 +245,9 @@ class MediaItem {
       item['secondary_infos'] ?? bd['secondary_infos'],
       fallback: item['category_schema'] ?? bd['category_schema'],
     );
+    final rankTags = parseRankTags(
+      bd['secondary_info_list'] ?? item['secondary_info_list'],
+    );
 
     return MediaItem(
       id:
@@ -311,11 +322,12 @@ class MediaItem {
           ]) ??
           '',
       intro:
-          _firstString(item, ['series_intro', 'intro']) ??
-          _firstString(bd, ['series_intro', 'intro']) ??
+          _firstString(item, ['series_intro', 'intro', 'abstract']) ??
+          _firstString(bd, ['series_intro', 'intro', 'abstract']) ??
           '',
       followerCount: followedCount,
       categories: categories,
+      rankTags: rankTags,
       episodeListText: episodeListText,
       aiGenerated: aiUsageType > 0,
     );
@@ -1274,6 +1286,26 @@ bool _flag(Map<String, dynamic> m, List<String> keys) {
   return false;
 }
 
+/// 排行行副标题（`secondary_info_list`，`SecondaryInfo.java` 的 wire 格式）。
+///
+/// 官方按 `line_idx` 把条目分成两行（`ItemDataModel.setAllInfoList`），排行
+/// 块的行把每行渲染成一个 TagLayout（`o$g$a.b2`）。这里按行序摊平成一组
+/// `content`：行内顺序保持上游顺序，line 0 在前。
+List<String> parseRankTags(dynamic value) {
+  if (value is! List) return const [];
+  final byLine = <int, List<String>>{};
+  for (final entry in value) {
+    if (entry is! Map) continue;
+    final content = entry['content'];
+    if (content is! String || content.trim().isEmpty) continue;
+    final line = _asInt(entry['line_idx']) ?? 0;
+    (byLine[line] ??= []).add(content.trim());
+  }
+  if (byLine.isEmpty) return const [];
+  final lines = byLine.keys.toList()..sort();
+  return List.unmodifiable([for (final line in lines) ...byLine[line]!]);
+}
+
 /// Category names for the info panel's chip row. The feed card's
 /// `video_detail.secondary_infos` marks categories with `data_type == 3`
 /// (other entries are actors and the like); `category_schema` — a JSON string
@@ -1317,6 +1349,7 @@ extension MediaItemJson on MediaItem {
     if (intro.isNotEmpty) 'intro': intro,
     if (followerCount > 0) 'followerCount': followerCount,
     if (categories.isNotEmpty) 'categories': categories,
+    if (rankTags.isNotEmpty) 'rankTags': rankTags,
     if (episodeListText.isNotEmpty) 'episodeListText': episodeListText,
     if (aiGenerated) 'aiGenerated': true,
     // The promotional badge must survive a round-trip; the keys reuse
@@ -1355,6 +1388,9 @@ extension MediaItemJson on MediaItem {
       followerCount: _asInt(map['followerCount']) ?? 0,
       categories: map['categories'] is List
           ? List.unmodifiable((map['categories'] as List).map((e) => '$e'))
+          : const [],
+      rankTags: map['rankTags'] is List
+          ? List.unmodifiable((map['rankTags'] as List).map((e) => '$e'))
           : const [],
       episodeListText: field('episodeListText'),
       aiGenerated: map['aiGenerated'] == true,

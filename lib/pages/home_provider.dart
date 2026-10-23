@@ -211,12 +211,75 @@ class HomeNotifier extends Notifier<HomeState> {
     '视频': 16,
   };
 
+  /// 服务端 `tab_type`（官方 `BookstoreTabType`）→ 卡片种类。
+  ///
+  /// 服务端下发的 `data.tab_item` 有 11 项（推荐/小说/经典/知识/听书/看剧/
+  /// 视频/短篇/漫画/新书/商城），与本地 7 项兜底表既不同长也不同序。若用本地
+  /// 表按服务端下标取名字，点「经典」（服务端下标 2）会去拉 `tab_type=8`
+  /// （短剧）——串台。所以索引落在服务端表内时，种类与 `tab_type` 都从那一项
+  /// 自己的类型推。
+  static const _kindByTabType = <int, String>{
+    2: 'book', // recommend
+    3: 'book', // new_book
+    5: 'audio', // audio
+    8: 'video', // video_episode（看剧）
+    9: 'manga', // comic
+    11: 'book', // classic
+    12: 'book', // knowledge2
+    15: 'book', // ecom_book
+    16: 'video', // video_feed
+    24: 'manju', // dynamic_comic
+    25: 'book', // novel
+    31: 'book', // latest_published_book
+    103: 'book', // ugc_story（短篇）
+  };
+
+  /// 一个顶栏分类的身份：显示名、卡片种类、要请求的 `tab_type`。
+  ///
+  /// [tabType] 为 null 表示这一项没有可请求的书城流（官方 `female`/`male`
+  /// 这类性别入口），只能走搜索兜底。
+  ///
+  /// 索引口径由 [usesLocalTabs] 决定，**不能靠 state.tabs 是否为空来猜**：
+  /// 短剧页（`dramaProvider`）用本地表下标驱动自己的频道条，它的 state.tabs
+  /// 同样会被服务端那 11 项填满，若跟着服务端下标解析，它的「短剧」（本地 2）
+  /// 就会变成服务端的「经典」。
+  ({String name, String kind, int? tabType}) identityOf(int tabIndex) {
+    final server = state.tabs;
+    if (!usesLocalTabs && tabIndex >= 0 && tabIndex < server.length) {
+      final tab = server[tabIndex];
+      final type = tab.type;
+      return (
+        name: tab.title,
+        kind: _kindByTabType[type] ?? 'book',
+        // 0/1 是官方 female/male 性别入口，没有对应的书城流。
+        tabType: type <= 1 ? null : type,
+      );
+    }
+    final name = tabIndex >= 0 && tabIndex < tabs.length
+        ? tabs[tabIndex]
+        : tabs.first;
+    return (
+      name: name,
+      kind: tabKinds[name] ?? 'book',
+      tabType: tabTypes[name],
+    );
+  }
+
   final HomepageLoader _homepageLoader;
   final SearchTabsLoader _searchLoader;
   final CategorySearchLoader _mangaSearchLoader;
   final CategorySearchLoader _manjuSearchLoader;
   final HomeFeedCache? _feedCache;
   final int initialTabIndex;
+
+  /// 顶栏下标的口径：`true` 表示这一页的分类条由本地 [tabs] 表驱动。
+  ///
+  /// 短剧页（[dramaProvider]）的频道条是本地表下标拼的
+  /// （`drama_page.dart` 的 `dramaChannels` 全用 `HomeNotifier.tabs.indexOf`），
+  /// 而它的 `state.tabs` 同样会被服务端那 11 项填满。若跟着服务端下标解析，
+  /// 它的「短剧」（本地下标 2）就会变成服务端的「经典」——所以这一页必须
+  /// 固定走本地表，不能靠 `state.tabs` 空不空来猜。
+  final bool usesLocalTabs;
 
   HomeNotifier({
     HomepageLoader? homepageLoader,
@@ -225,6 +288,7 @@ class HomeNotifier extends Notifier<HomeState> {
     CategorySearchLoader? manjuSearchLoader,
     HomeFeedCache? feedCache,
     this.initialTabIndex = 0,
+    this.usesLocalTabs = false,
   }) : _feedCache = feedCache ?? HomeFeedCache.instance,
        _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
        _searchLoader = searchLoader ?? ApiClient.instance.searchTabs,
@@ -393,8 +457,12 @@ class HomeNotifier extends Notifier<HomeState> {
   /// Restores a cached tab immediately. Incrementing the generation happens
   /// even on a cache hit, which invalidates requests started by the old tab.
   void selectTab(int index) {
-    // 上限用服务端下发的分类数（有就 11 个），没下发时退回本地兜底表。
-    final limit = state.tabs.isNotEmpty ? state.tabs.length : tabs.length;
+    // 上限跟着下标口径走：走服务端表时是它下发的分类数（首页 11 个），走本地
+    // 表时是本地那 7 个。用错口径会把短剧页的「短剧」（本地下标 2）拦掉或
+    // 放进越界下标。
+    final limit = usesLocalTabs || state.tabs.isEmpty
+        ? tabs.length
+        : state.tabs.length;
     if (index == state.tabIndex || index < 0 || index >= limit) return;
     ++_generation;
     _activeRequest?.cancel();
@@ -472,11 +540,15 @@ class HomeNotifier extends Notifier<HomeState> {
   }
 
   Future<_FetchedFeed> _loadInitial(int tabIndex) async {
-    final name = tabs[tabIndex];
+    final identity = identityOf(tabIndex);
+    final name = identity.name;
     if (name == '全部') return _loadAllInitial();
 
-    final kind = tabKinds[name]!;
-    final tabType = tabTypes[name];
+    final kind = identity.kind;
+    final tabType = identity.tabType;
+    // 搜索兜底的关键词：推荐流（`tab_type=2`）本身就是小说推荐，拿「推荐」
+    // 去搜既不是有效书名也匹配不到搜索结果的 tab；用「小说」才能命中。
+    final searchName = tabType == 2 ? '小说' : name;
     if (tabType != null) {
       try {
         final page = await _homepageLoader(tabType: tabType);
@@ -506,16 +578,16 @@ class HomeNotifier extends Notifier<HomeState> {
       }
     }
 
-    final search = await _searchByType(name);
-    final items = _searchItems(search, name, kind);
-    final progress = _searchProgress(search, name, items, offset: 0);
+    final search = await _searchByType(searchName);
+    final items = _searchItems(search, searchName, kind);
+    final progress = _searchProgress(search, searchName, items, offset: 0);
     return _FetchedFeed(
       items: items,
       nextOffset: null,
       sessionId: null,
       searchPage: 1,
       searchOffsets: {
-        if (progress.nextOffset != null) name: progress.nextOffset!,
+        if (progress.nextOffset != null) searchName: progress.nextOffset!,
       },
       searchCanAdvance: progress.hasCursor,
       recommendExhausted: true,
@@ -665,11 +737,13 @@ class HomeNotifier extends Notifier<HomeState> {
   }
 
   Future<_FetchedFeed> _loadNext(int tabIndex, _TabFeed feed) async {
-    final name = tabs[tabIndex];
+    final identity = identityOf(tabIndex);
+    final name = identity.name;
     if (name == '全部') return _loadAllNext(feed);
 
-    final kind = tabKinds[name]!;
-    final tabType = tabTypes[name];
+    final kind = identity.kind;
+    final searchName = identity.tabType == 2 ? '小说' : name;
+    final tabType = identity.tabType;
     if (tabType != null && !feed.recommendExhausted) {
       try {
         final page = await _homepageLoader(
@@ -699,16 +773,16 @@ class HomeNotifier extends Notifier<HomeState> {
     }
 
     final pageNumber = feed.searchPage + 1;
-    final searchOffset = feed.searchOffsets[name] ?? 0;
+    final searchOffset = feed.searchOffsets[searchName] ?? 0;
     final searchTabs = await _searchByType(
-      name,
+      searchName,
       page: pageNumber,
       offset: searchOffset,
     );
-    final items = _searchItems(searchTabs, name, kind);
+    final items = _searchItems(searchTabs, searchName, kind);
     final progress = _searchProgress(
       searchTabs,
-      name,
+      searchName,
       items,
       offset: searchOffset,
     );
@@ -719,7 +793,7 @@ class HomeNotifier extends Notifier<HomeState> {
       searchPage: pageNumber,
       searchOffsets: {
         ...feed.searchOffsets,
-        if (progress.nextOffset != null) name: progress.nextOffset!,
+        if (progress.nextOffset != null) searchName: progress.nextOffset!,
       },
       searchCanAdvance: progress.hasCursor,
       recommendExhausted: true,
@@ -966,5 +1040,5 @@ final dramaTabIndex = HomeNotifier.tabs.indexOf('短剧');
 /// [homeProvider]: two tabs watching one provider would move together, so
 /// switching the home page to 听书 would replace the 短剧 tab's feed as well.
 final dramaProvider = NotifierProvider<HomeNotifier, HomeState>(
-  () => HomeNotifier(initialTabIndex: dramaTabIndex),
+  () => HomeNotifier(initialTabIndex: dramaTabIndex, usesLocalTabs: true),
 );

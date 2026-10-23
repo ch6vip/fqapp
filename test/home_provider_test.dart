@@ -746,6 +746,134 @@ void main() {
       );
     },
   );
+
+  group('server tab strip drives the tab identity', () {
+    // 服务端 tab_item 有 11 项，与本地 7 项兜底表既不同长也不同序。按下标
+    // 到本地表取名会把「经典」（服务端下标 2）解析成「短剧」，去拉
+    // tab_type=8 —— 点经典看到短剧。
+    const serverTabs = <HomeTabItem>[
+      HomeTabItem(type: 2, title: '推荐'),
+      HomeTabItem(type: 25, title: '小说'),
+      HomeTabItem(type: 11, title: '经典'),
+      HomeTabItem(type: 12, title: '知识'),
+      HomeTabItem(type: 5, title: '听书'),
+      HomeTabItem(type: 8, title: '看剧'),
+      HomeTabItem(type: 16, title: '视频'),
+      HomeTabItem(type: 103, title: '短篇'),
+      HomeTabItem(type: 9, title: '漫画'),
+      HomeTabItem(type: 31, title: '新书'),
+      HomeTabItem(type: 15, title: '商城'),
+    ];
+
+    test('a tab is requested with its own tab_type, not one from 本地表', () async {
+      final requested = <int>[];
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                requested.add(tabType);
+                return HomepagePage(
+                  items: [_item('book-$tabType')],
+                  nextOffset: null,
+                  sessionId: null,
+                  tabs: serverTabs,
+                );
+              },
+          searchLoader: (query, {int page = 1}) async => [],
+          mangaSearchLoader: ({int offset = 0}) async => [],
+          manjuSearchLoader: ({int offset = 0}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      // 首屏「推荐」= tab_type 2。
+      await notifier.load();
+      for (final index in [2, 3, 5, 8, 10]) {
+        notifier.selectTab(index);
+        await _flushMicrotasks();
+      }
+
+      // 每个下标的 tab_type 都来自它自己那一项：推荐 2、经典 11、知识 12、
+      // 看剧 8、漫画 9、商城 15。若退回本地表则会是 2、24、5、16 —— 全部串台。
+      expect(requested, [2, 11, 12, 8, 9, 15]);
+    });
+
+    test('the identity of a server tab keeps its kind and skips gender tabs',
+        () async {
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                  HomepagePage(
+                    items: [_item('book-$tabType')],
+                    nextOffset: null,
+                    sessionId: null,
+                    tabs: const [
+                      HomeTabItem(type: 2, title: '推荐'),
+                      HomeTabItem(type: 0, title: '女生'),
+                      HomeTabItem(type: 9, title: '漫画'),
+                    ],
+                  ),
+          searchLoader: (query, {int page = 1}) async => [],
+          mangaSearchLoader: ({int offset = 0}) async => [],
+          manjuSearchLoader: ({int offset = 0}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+
+      // 分类条还没回来时，下标只能按本地兜底表解释（首屏就是这样）。
+      expect(notifier.identityOf(0), (name: '全部', kind: 'book', tabType: null));
+
+      await notifier.load();
+
+      expect(notifier.identityOf(0), (name: '推荐', kind: 'book', tabType: 2));
+      // 0/1 是官方 female/male 入口，没有对应的书城流，只能走搜索兜底。
+      expect(notifier.identityOf(1), (name: '女生', kind: 'book', tabType: null));
+      expect(notifier.identityOf(2), (name: '漫画', kind: 'manga', tabType: 9));
+    });
+
+    test('dramaProvider keeps reading the 本地表 even when tabs arrive',
+        () async {
+      // 短剧页的频道条是本地表下标拼的（dramaChannels）。它的 state.tabs 同样
+      // 会被服务端那 11 项填满，若跟着服务端下标解析，它的「短剧」（本地 2）
+      // 就会变成服务端的「经典」。
+      final requested = <int>[];
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          usesLocalTabs: true,
+          initialTabIndex: HomeNotifier.tabs.indexOf('短剧'),
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                requested.add(tabType);
+                return HomepagePage(
+                  items: [_item('book-$tabType')],
+                  nextOffset: null,
+                  sessionId: null,
+                  tabs: serverTabs,
+                );
+              },
+          searchLoader: (query, {int page = 1}) async => [],
+          mangaSearchLoader: ({int offset = 0}) async => [],
+          manjuSearchLoader: ({int offset = 0}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+
+      await notifier.load();
+
+      // 本地表「短剧」= tab_type 8，不是服务端下标 2 的「经典」= 11。
+      expect(requested, [8]);
+      expect(
+        notifier.identityOf(HomeNotifier.tabs.indexOf('短剧')),
+        (name: '短剧', kind: 'video', tabType: 8),
+      );
+    });
+  });
 }
 
 Future<void> _loadTab(HomeNotifier notifier, int tabIndex) async {
