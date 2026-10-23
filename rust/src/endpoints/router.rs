@@ -250,6 +250,10 @@ fn match_search(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             api: "hot_search",
             params: p,
         }),
+        "cue" => Some(RouteMatch {
+            api: "search_cue",
+            params: p,
+        }),
         _ => None,
     }
 }

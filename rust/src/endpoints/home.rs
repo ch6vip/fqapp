@@ -17,7 +17,7 @@ const SERIES_FEED_PATH: &str = "/reading/bookapi/bookmall/cell/change/v";
 const SERIES_RELATED_PATH: &str = "/reading/bookapi/plan/v";
 
 /// Go's `reading724Params` (content_util.go).
-fn reading724_params() -> Params {
+pub(crate) fn reading724_params() -> Params {
     let mut p = Params::new();
     p.set("iid", "{install_id}");
     p.set("device_id", "{device_id}");

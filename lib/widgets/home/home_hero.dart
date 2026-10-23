@@ -1,25 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../models/search_discovery.dart';
 import 'home_design.dart';
 
 /// 官方书城顶栏（`res/layout/alx.xml` 的 `fua` 搜索行）。
 ///
-/// 官方在这一层只有一条 36dp 的白色圆角搜索框（`c5e.xml`）：左侧 11dp
-/// 放大镜，中间是 `@string/duw`「请输入书名或作者名」，右侧 marginEnd 12dp
-/// 处是「识剧」图文入口。`alx.xml` 里 `h4f`（收缩搜索）与 `gpe`（分类）两个
-/// 图标位默认 `visibility="gone"`，`i_y`（右上角分类入口）同样是 gone ——
-/// 所以官方顶栏右侧**没有**任何常驻按钮。
+/// 官方在这一层是一条 51dp 的搜索行：`SearchWordDisplayView`（`h21`）占
+/// 剩余宽度，左 16dp 右 16dp；右上角是「分类」入口 `i_y`（默认 gone，由
+/// AB 位 `hasCategoryTab()==false` 时打开）——14dp 分类图 + 2dp 间隔 +
+/// 14sp「分类」，高 `zl`=36dp，左右 padding 10dp，圆角 8dp 的白色底
+/// （`skin_bg_top_right_holder_light` = `skin_color_search_bar_bg_v2_light`）。
 ///
-/// 尺寸取自反编译布局：
-/// * 搜索行 `fua`：height 51dp，paddingTop 6dp / paddingBottom 9dp；
-/// * 搜索框本体 `c5e.xml`：height `@dimen/zl` = 36dp，左右 margin 16dp，
-///   底色 `skin_color_search_bar_bg_v2_light` = #FFFFFF，
-///   圆角 `skin_shape_search_bar_light` = 6dp；
-/// * 放大镜 `c8`：11×11dp，marginStart 16dp；
-/// * 「识剧」`h4i`：14sp，色 `skin_color_search_bar_text_v3_light`(#66000000)，
-///   左侧分隔图 `skin_image_search_divider_icon_light` 与文字间隔 12dp。
-class HomeHero extends StatelessWidget {
+/// 搜索框本体（`c5e.xml`）：36dp 高、6dp 圆角、白底；左侧 11dp 放大镜，
+/// 右侧「识剧」图文入口。框内文案由 `search/cue/v` 的热搜词驱动
+/// （`SearchWordDisplayView` + `VerticalFlipper`，间隔取响应的
+/// `rotate_interval_ms`）；没有词时回退静态提示语 `@string/duw`。
+class HomeHero extends StatefulWidget {
   static const double searchBarHeight = 36;
   static const double searchBarRadius = 6;
 
@@ -29,82 +28,194 @@ class HomeHero extends StatelessWidget {
   /// 官方 `@string/dv8`。
   static const String imageSearchLabel = '识剧';
 
+  /// 官方 `@string/gl`。
+  static const String categoryLabel = '分类';
+
   final VoidCallback onSearch;
   final VoidCallback onImageSearch;
+
+  /// 右上角「分类」入口。null 时不占位（与官方 `i_y` gone 一致）。
+  final VoidCallback? onCategory;
+
+  /// 搜索框热搜词（`/api/v1/search/cue`）。null 表示不接入——测试与离线
+  /// 场景框内保持静态提示语；拉取失败同样回退静态提示语。
+  final Future<SearchCue> Function()? cueLoader;
 
   const HomeHero({
     super.key,
     required this.onSearch,
     required this.onImageSearch,
+    this.onCategory,
+    this.cueLoader,
   });
+
+  @override
+  State<HomeHero> createState() => _HomeHeroState();
+}
+
+class _HomeHeroState extends State<HomeHero> {
+  List<String> _words = const [];
+  int _index = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    final loader = widget.cueLoader;
+    if (loader == null) return;
+    // 热搜词是锦上添花：loader 同步或异步失败都不能波及页面，框内保持
+    // 静态提示语即可。
+    Future<SearchCue> future;
+    try {
+      future = loader();
+    } catch (_) {
+      return;
+    }
+    future
+        .then((cue) {
+          if (!mounted || cue.isEmpty) return;
+          setState(() => _words = cue.words);
+          _startRotation(cue.rotateIntervalMs);
+        })
+        .catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startRotation(int intervalMs) {
+    // 官方 `VerticalFlipper` 也只在多于一条时有翻页的意义。
+    if (_words.length < 2) return;
+    _timer = Timer.periodic(Duration(milliseconds: intervalMs), (_) {
+      // 页面切走（IndexedStack 里未选中）时暂停轮换，回来后下一拍继续。
+      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
+      setState(() => _index = (_index + 1) % _words.length);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final animate = !MediaQuery.disableAnimationsOf(context);
     return Padding(
       // 官方 fua：paddingTop 6dp / paddingBottom 9dp，左右 16dp。
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 9),
-      child: HomePressable(
-        key: const Key('home_search_button'),
-        onTap: onSearch,
-        borderRadius: BorderRadius.circular(searchBarRadius),
-        semanticLabel: searchHint,
-        child: Container(
-          height: searchBarHeight,
-          padding: const EdgeInsets.only(left: 16, right: 12),
-          decoration: BoxDecoration(
-            color: palette.searchBar,
-            borderRadius: BorderRadius.circular(searchBarRadius),
-          ),
-          child: Row(
-            children: [
-              // 官方 c8：11×11dp 放大镜。
-              Icon(
-                LucideIcons.search,
-                size: 11,
-                color: palette.searchBarText,
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  searchHint,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: palette.searchBarText,
-                  ),
+      child: Row(
+        children: [
+          Expanded(
+            child: HomePressable(
+              key: const Key('home_search_button'),
+              onTap: widget.onSearch,
+              borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
+              semanticLabel: HomeHero.searchHint,
+              child: Container(
+                height: HomeHero.searchBarHeight,
+                padding: const EdgeInsets.only(left: 16, right: 12),
+                decoration: BoxDecoration(
+                  color: palette.searchBar,
+                  borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
                 ),
-              ),
-              // 官方 search_image_icon_container：右贴 parent、marginEnd 12dp。
-              GestureDetector(
-                key: const Key('home_image_search_button'),
-                behavior: HitTestBehavior.opaque,
-                onTap: onImageSearch,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Row(
-                    children: [
-                      // 官方分隔图 16dp 高，marginEnd 12dp。
-                      Container(
-                        width: 0.5,
-                        height: 16,
-                        color: palette.searchBarText.withValues(alpha: 0.4),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        imageSearchLabel,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: palette.searchBarText,
+                child: Row(
+                  children: [
+                    // 官方 c8：11×11dp 放大镜。
+                    Icon(
+                      LucideIcons.search,
+                      size: 11,
+                      color: palette.searchBarText,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(child: _cueText(palette, animate)),
+                    // 官方 search_image_icon_container：右贴 parent、marginEnd 12dp。
+                    GestureDetector(
+                      key: const Key('home_image_search_button'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: widget.onImageSearch,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Row(
+                          children: [
+                            // 官方分隔图 16dp 高，marginEnd 12dp。
+                            Container(
+                              width: 0.5,
+                              height: 16,
+                              color: palette.searchBarText.withValues(
+                                alpha: 0.4,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              HomeHero.imageSearchLabel,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: palette.searchBarText,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
+          if (widget.onCategory != null) ...[
+            const SizedBox(width: 16),
+            _categoryPill(palette),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 热搜词轮换位：官方 `VerticalFlipper` 淡入淡出；无词时是静态提示语。
+  Widget _cueText(HomePalette palette, bool animate) {
+    final text = _words.isEmpty ? HomeHero.searchHint : _words[_index];
+    final word = Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      key: ValueKey<String>(text),
+      style: TextStyle(fontSize: 14, color: palette.searchBarText),
+    );
+    if (!animate) return word;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        alignment: Alignment.centerLeft,
+        children: [...previousChildren, ?currentChild],
+      ),
+      child: word,
+    );
+  }
+
+  /// 官方 `i_y`：36dp 高的白色 8dp 圆角胶囊，14dp 图标 + 14sp 文案。
+  Widget _categoryPill(HomePalette palette) {
+    return GestureDetector(
+      key: const Key('home_category_button'),
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onCategory,
+      child: Container(
+        height: HomeHero.searchBarHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: palette.searchBar,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(LucideIcons.layout_grid, size: 14, color: palette.ink),
+            const SizedBox(width: 2),
+            Text(
+              HomeHero.categoryLabel,
+              style: TextStyle(fontSize: 14, color: palette.ink),
+            ),
+          ],
         ),
       ),
     );

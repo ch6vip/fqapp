@@ -1,3 +1,4 @@
+import 'services/api_client.dart';
 import 'services/audio_downloader.dart';
 import 'widgets/desktop_app_frame.dart';
 import 'services/native_player.dart';
@@ -373,6 +374,7 @@ class _RootShellState extends State<RootShell> {
     // 官方是瞬间跳转（scrollToPosition(0)），没有动画。
     _homeScroll.jumpTo(_homeScroll.position.minScrollExtent);
   }
+
   String? _backendError;
 
   @override
@@ -464,7 +466,7 @@ class _RootShellState extends State<RootShell> {
         builder: (context, index, _) => LazyIndexedStack(
           index: index,
           children: [
-            const HomePage(),
+            HomePage(cueLoader: () => ApiClient.instance.searchCue()),
             const DramaPage(),
             LibraryPage(onBrowse: () => desktopTab.value = 0),
             const MinePage(),
@@ -585,7 +587,10 @@ class _RootShellState extends State<RootShell> {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            HomePage(scrollController: _homeScroll),
+            HomePage(
+              scrollController: _homeScroll,
+              cueLoader: () => ApiClient.instance.searchCue(),
+            ),
             const DramaPage(),
             // 空书架上的「去书城找书」切回首页 tab。
             LibraryPage(onBrowse: () => setState(() => _index = 0)),

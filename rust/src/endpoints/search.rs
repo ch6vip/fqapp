@@ -105,6 +105,39 @@ fn handle<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value
     })
 }
 
+/// The bookstore search-bar cue words (`/reading/bookapi/search/cue/v`).
+///
+/// The official bar rotates `data_v1[]` with the response's `rotate_interval_ms`
+/// (`SearchWordDisplayView.m` → `VerticalFlipper.setFlipInterval`). The request
+/// shape follows `y.java R()`/`j0()`: `search_source=1` (BOOKSTORE),
+/// `bookstore_tab` is the tab's `tab_type`, `cue_type` rides the query.
+fn search_cue<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let cue_type = crate::endpoints::util::default_val(&params.get_str("cue_type"), "0");
+        let bookstore_tab =
+            crate::endpoints::util::default_val(&params.get_str("tab_type"), "2");
+        let tab_name = params.get_str("tab_name");
+        let mut p = crate::endpoints::home::reading724_params();
+        p.set("cue_type", cue_type);
+        p.set("bookstore_tab", bookstore_tab);
+        p.set("user_is_login", "0");
+        p.set("search_source", "1");
+        if !tab_name.is_empty() {
+            p.set("tab_name", tab_name.clone());
+        }
+        let spec = UpstreamRequestSpec {
+            mode: UpstreamMode::DeviceSigned,
+            host: crate::endpoints::base::HOST_FQNOVEL.to_string(),
+            path: "/reading/bookapi/search/cue/v".to_string(),
+            params: p.to_pairs(),
+            headers: dragon_read_headers(),
+            ..Default::default()
+        };
+        Upstream::new(ctx.up.clone()).json(&spec).await
+    })
+}
+
 pub fn register(s: &mut Server) {
     s.add_route("search", handle);
+    s.add_route("search_cue", search_cue);
 }

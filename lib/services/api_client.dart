@@ -349,10 +349,8 @@ class ApiClient {
   /// the chapter list arrives as `data.item_data_list` instead of the bridge's
   /// pre-flattened `data.data.chapterListWithVolume` - [parseDirectory] accepts
   /// both.
-  String _directoryUrl(String bookId, String tab) => _url(
-    '/api/v1/books/${Uri.encodeComponent(bookId)}/directory',
-    const {},
-  );
+  String _directoryUrl(String bookId, String tab) =>
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/directory', const {});
 
   /// Search across content types (raw envelope).
   Future<Map<String, dynamic>> search(String query, {int page = 1}) async {
@@ -477,9 +475,7 @@ class ApiClient {
     final id = Uri.encodeComponent(itemId);
     return switch (tab) {
       '漫画' => _url('/api/v1/manga/$id', const {}),
-      '短剧' || '漫剧' => _url('/api/v1/videos/$id', {
-        'mode': ?mode,
-      }),
+      '短剧' || '漫剧' => _url('/api/v1/videos/$id', {'mode': ?mode}),
       _ => _url('/api/v1/chapters/$id', {'tone_id': ?toneId}),
     };
   }
@@ -794,6 +790,26 @@ class ApiClient {
       );
     } on Exception {
       return HotSearch.empty;
+    }
+  }
+
+  /// The bookstore search-bar cue words, rotated in the home search box.
+  /// Returns [SearchCue.empty] on failure: the box then keeps its static hint.
+  Future<SearchCue> searchCue({int tabType = 2, String tabName = ''}) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/search/cue', {
+          'tab_type': '$tabType',
+          if (tabName.isNotEmpty) 'tab_name': tabName,
+        }),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return await Isolate.run(
+        () => SearchCue.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return SearchCue.empty;
     }
   }
 
@@ -1363,9 +1379,7 @@ class ApiClient {
             final rawType = raw['tab_type'];
             final rawTitle = raw['title'];
             if (rawType is num && rawTitle is String && rawTitle.isNotEmpty) {
-              tabs.add(
-                HomeTabItem(type: rawType.toInt(), title: rawTitle),
-              );
+              tabs.add(HomeTabItem(type: rawType.toInt(), title: rawTitle));
             }
             if (raw['tab_type']?.toString() != '$tabType') {
               continue;

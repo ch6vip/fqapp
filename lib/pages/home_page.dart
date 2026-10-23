@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/home_cell.dart';
 import '../models/media_item.dart';
+import '../models/search_discovery.dart';
 import '../services/api_client.dart';
 import '../services/app_links.dart';
 import '../services/book_open_preferences.dart';
@@ -34,6 +35,7 @@ class HomePage extends ConsumerStatefulWidget {
     this.cacheStore,
     this.readerStore,
     this.scrollController,
+    this.cueLoader,
   });
 
   final ChapterCache? cacheStore;
@@ -46,6 +48,12 @@ class HomePage extends ConsumerStatefulWidget {
   /// 所以控制器要能被外面拿到。为 null 时首页自建并自行释放，测试与独立
   /// 使用不受影响。
   final ScrollController? scrollController;
+
+  /// 搜索框热搜词来源，由壳层注入（生产接 `ApiClient.searchCue`）。
+  ///
+  /// 注入而不是页内直连，与 [SearchPage] 的 `hotSearchLoader` 同一规矩：
+  /// 页面测试不落网络（ApiClient 的超时是 20s Timer，挂进测试必炸）。
+  final Future<SearchCue> Function()? cueLoader;
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
@@ -212,6 +220,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 child: HomeHero(
                                   onSearch: _openSearch,
                                   onImageSearch: _openImageSearch,
+                                  onCategory: _openCategory,
+                                  cueLoader: widget.cueLoader,
                                 ),
                               ),
                               SliverPersistentHeader(
@@ -327,12 +337,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// Generic card grid for a block whose type has no widget.
   Widget _gridFallbackFor(HomeCell cell, double gridWidth) =>
-      buildCardSection(
-        context,
-        cell,
-        onOpen: _openItem,
-        gridWidth: gridWidth,
-      );
+      buildCardSection(context, cell, onOpen: _openItem, gridWidth: gridWidth);
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
     final blocks = _blockSlivers(state, gridWidth);
@@ -481,9 +486,18 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 文案 `@string/dv8`）。官方点它是拍照识剧，走的是独立的图像检索接口；
   /// 这条链路还没有接入，先把入口摆回官方位置，点击时说明状态。
   void _openImageSearch() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('识剧还在接入中，暂时只支持文字搜索')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('识剧还在接入中，暂时只支持文字搜索')));
+  }
+
+  /// 官方搜索行右上角的「分类」入口（`alx.xml` `i_y`）。官方点它走
+  /// `turnToCategoryTab` → `//category` 路由，打开的是完整的分类页；那个
+  /// 页面还没有建，先按官方位置摆入口，点击时说明状态。
+  void _openCategory() {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('分类页还在接入中，敬请期待')));
   }
 
   /// The rank board. Its catalogue (and the rank id the entries endpoint needs)
