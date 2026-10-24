@@ -101,7 +101,9 @@ void main() {
 
   test('payload parser keeps the legacy shapes', () {
     final f = front();
-    expect(f.tabs.map((t) => t.name), ['男生', '女生', '出版']);
+    // rule.tab 的 4 频道 + 官方尾部静态补的 短剧/漫画。
+    expect(f.tabs.map((t) => t.name), ['男生', '女生', '出版', '短剧', '漫画']);
+    expect(f.tabs.map((t) => t.value), ['1', '2', '4', '6', '5']);
     expect(f.dims.map((d) => d.name), ['全部', '主题', '角色']);
     expect(f.tiles, hasLength(3));
     expect(f.tiles.last.dim, '3145728');

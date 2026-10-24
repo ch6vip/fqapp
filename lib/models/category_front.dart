@@ -123,6 +123,20 @@ class CategoryFront {
       }
     }
     if (dims.isEmpty || tiles.isEmpty) return empty;
+
+    // 官方顶栏还有「短剧/漫画」两个频道（NewCategoryTabType Comic=5/
+    // ShortSeries=6，客户端写死）；这套身份的 rule.tab 只下发 4 个，按
+    // 官方顺序在尾部补齐，点击仍走同一端点。上游对 5/6 暂不响应时，页面
+    // 落到错误重试态——入口与形态先对齐官方。
+    const officialTail = [
+      CategoryTab(name: '短剧', value: '6'),
+      CategoryTab(name: '漫画', value: '5'),
+    ];
+    final values = tabs.map((t) => t.value).toSet();
+    tabs.addAll(
+      officialTail.where((t) => !values.contains(t.value)),
+    );
+
     return CategoryFront(
       tabs: List.unmodifiable(tabs),
       dims: List.unmodifiable(dims),
