@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/widgets/desktop_app_frame.dart';
 
 void main() {
-  testWidgets('frame title is fqapp; global search hides on the drama tab', (
+  testWidgets('frame title is 什锦铺; global search hides on the drama tab', (
     tester,
   ) async {
     desktopTab.value = 0;
@@ -15,7 +15,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('fqapp'), findsOneWidget);
+    expect(find.text('什锦铺'), findsOneWidget);
     expect(find.text('番茄小铺'), findsNothing);
     expect(find.byKey(const Key('desktop-search')), findsOneWidget);
 
@@ -23,7 +23,7 @@ void main() {
     desktopTab.value = 1;
     await tester.pump();
     expect(find.byKey(const Key('desktop-search')), findsNothing);
-    expect(find.text('fqapp'), findsOneWidget);
+    expect(find.text('什锦铺'), findsOneWidget);
 
     // 切回其它分区，全局搜索恢复。
     desktopTab.value = 0;
