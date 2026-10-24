@@ -345,6 +345,99 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('收藏 tab 只放短剧/漫剧，书架 tab 只放书籍', (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('plain-book', title: '架上小说'));
+        await ShelfStore.instance.add(
+          _item('v1', title: '追的短剧', kind: 'video'),
+        );
+        await ShelfStore.instance.add(
+          _item('m1', title: '追的漫剧', kind: 'manju'),
+        );
+      });
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+
+      // 书架 tab：只有书，视频类不混进来。
+      expect(find.text('架上小说'), findsWidgets);
+      expect(find.text('追的短剧'), findsNothing);
+      expect(find.text('追的漫剧'), findsNothing);
+
+      await tester.tap(find.text('收藏'));
+      await tester.pumpAndSettle();
+      expect(find.text('追的短剧'), findsWidgets);
+      expect(find.text('追的漫剧'), findsWidgets);
+      expect(find.text('架上小说'), findsNothing);
+
+      // 筛选胶囊：短剧只剩 video，漫剧只剩 manju，全部恢复两条都在。
+      await tester.tap(find.byKey(const Key('library-collection-filter-video')));
+      await tester.pumpAndSettle();
+      expect(find.text('追的短剧'), findsWidgets);
+      expect(find.text('追的漫剧'), findsNothing);
+      await tester.tap(find.byKey(const Key('library-collection-filter-manju')));
+      await tester.pumpAndSettle();
+      expect(find.text('追的短剧'), findsNothing);
+      expect(find.text('追的漫剧'), findsWidgets);
+      await tester.tap(find.byKey(const Key('library-collection-filter-all')));
+      await tester.pumpAndSettle();
+      expect(find.text('追的短剧'), findsWidgets);
+      expect(find.text('追的漫剧'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('收藏 tab 编辑态移出：免确认直接执行，书籍不受影响', (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('plain-book', title: '架上小说'));
+        await ShelfStore.instance.add(
+          _item('v1', title: '追的短剧', kind: 'video'),
+        );
+      });
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('收藏'));
+      await tester.pumpAndSettle();
+
+      await tester.longPress(find.byKey(const ValueKey('shelf-grid-video:v1')));
+      await tester.pumpAndSettle();
+      expect(find.text('已选择 1 部'), findsOneWidget);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('shelf-remove-action')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // 短剧已移出，书还在架上。
+      expect(
+        ShelfStore.instance.records().map((record) => record.item.id),
+        ['plain-book'],
+      );
+      expect(find.text('暂无收藏内容'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('收藏为空：空态文案随筛选变化，「找短剧」触发回调', (tester) async {
+      var findDramaCalls = 0;
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(
+          _item('v1', title: '追的短剧', kind: 'video'),
+        );
+      });
+      await tester.pumpWidget(_app(onFindDrama: () => findDramaCalls++));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('收藏'));
+      await tester.pumpAndSettle();
+
+      // 有短剧、无漫剧：切到漫剧筛选是「暂无漫剧」+ 找短剧入口。
+      await tester.tap(find.byKey(const Key('library-collection-filter-manju')));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无漫剧'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('collection-find-drama-button')));
+      await tester.pumpAndSettle();
+      expect(findDramaCalls, 1);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('页头只剩今日已读与版式分段：排序/筛选/编辑入口已移除', (tester) async {
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
@@ -944,12 +1037,14 @@ Future<void> _chooseLayout(WidgetTester tester, String action) async {
 
 Widget _app({
   VoidCallback? onBrowse,
+  VoidCallback? onFindDrama,
   ChapterCache? cache,
   ReaderStore? readerStore,
   Future<ConnectivityView> Function()? connectivity,
 }) => MaterialApp(
   home: LibraryPage(
     onBrowse: onBrowse,
+    onFindDrama: onFindDrama,
     cacheStore: cache,
     readerStore: readerStore,
     connectivity: connectivity,

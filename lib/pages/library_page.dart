@@ -1,5 +1,5 @@
 import '../services/desktop_platform.dart';
-// 书架页：官方免费小说书架形态的本地重设计（双 tab + 页头分层 +
+// 书架页：官方免费小说书架形态的本地重设计（三 tab + 页头分层 +
 // 三档版式 + 编辑态）。设计 token、版式/排序枚举集中在
 // lib/widgets/shelf/shelf_design.dart（docs/system_design.md）。
 //
@@ -37,8 +37,13 @@ import 'search_page.dart';
 /// 6.0 以前的版本在这里存的是列数 (2..6)，读取时迁移成宫格。
 const _bookshelfLayoutPreference = 'bookshelf_layout';
 
-/// 顶栏一级 tab 的官方文案（amg.xml 的 SlidingTabLayout）。
-const _tabTitles = ['书架', '浏览历史'];
+/// 顶栏一级 tab 的官方文案（amg.xml 的 SlidingTabLayout；顺序同官方
+/// 书架页：书架 / 历史 / 收藏）。官方还有「圈子」，本地无此功能不设。
+const _tabTitles = ['书架', '浏览历史', '收藏'];
+
+/// 官方分工：书架 tab 只放书籍类，追剧 / 追漫的视频类只进「收藏」tab
+/// （与短剧页收藏频道同一批 [ShelfStore] 数据）。
+bool _isVideoKind(String kind) => kind == 'video' || kind == 'manju';
 
 enum _MenuAction {
   importBook('导入图书', null, LucideIcons.plus),
@@ -62,14 +67,18 @@ Duration _motionDuration(BuildContext context, int milliseconds) =>
     : Duration(milliseconds: milliseconds);
 
 /// 书架页：L1 标题栏（tab + 搜索 + 更多；菜单承载版式/清空历史/离线缓存）/
-/// L2 工具栏（今日已读 + 版式分段）/ L3 内容区（三档版式）+ 编辑态
-/// （长按卡片进入，提供全选与移出书架）。
-/// 列表数据分别来自 [ShelfStore]（本地加入书架集合）与 [LibraryStore]
-/// （阅读历史）。
+/// L2 工具栏（今日已读 + 版式分段；收藏 tab 为类型筛选 + 版式分段）/
+/// L3 内容区（三档版式）+ 编辑态（长按卡片进入，提供全选与移出书架）。
+/// 列表数据分别来自 [ShelfStore]（本地加入书架集合，按官方分工拆进
+/// 书架与收藏两个 tab）与 [LibraryStore]（阅读历史）。
 class LibraryPage extends StatefulWidget {
   /// 空书架上的「去书城找书」要切到首页 tab；由 RootShell 注入，测试里可以为
   /// 空，此时按钮不响应。
   final VoidCallback? onBrowse;
+
+  /// 收藏 tab 空态上的「找短剧」要切到短剧 tab；由 RootShell 注入，测试里
+  /// 可以为空，此时按钮不响应。
+  final VoidCallback? onFindDrama;
 
   /// 离线直读要用的三件外部依赖；都缺省走真实实现，注入后测试可完全离线
   /// （与缓存页、详情页的注入同一套路）。
@@ -80,6 +89,7 @@ class LibraryPage extends StatefulWidget {
   const LibraryPage({
     super.key,
     this.onBrowse,
+    this.onFindDrama,
     this.cacheStore,
     this.readerStore,
     this.connectivity,
@@ -99,6 +109,11 @@ class _LibraryPageState extends State<LibraryPage> {
   int _todayMinutes = 0;
   List<_ShelfEntry> _shelf = const [];
   List<_ShelfEntry> _browseHistory = const [];
+  List<_ShelfEntry> _collection = const [];
+
+  /// 收藏 tab 的类型筛选：null 全部 / video 短剧 / manju 漫剧（官方还有
+  /// 「其他视频」，本地没有这种 kind，不放空壳胶囊）。
+  String? _collectionFilter;
   bool _visible = false;
 
   /// 已完成入场动画的条目下标：HomeEntrance 只在首屏（index 0–5）播一次，
@@ -139,14 +154,26 @@ class _LibraryPageState extends State<LibraryPage> {
     if (!mounted) return;
     final history = LibraryStore.instance.historySnapshot();
     setState(() {
-      _shelf = _shelfEntries(ShelfStore.instance.records(), history);
+      final records = ShelfStore.instance.records();
+      _shelf = _shelfEntries([
+        for (final record in records)
+          if (!_isVideoKind(record.item.kind)) record,
+      ], history);
+      _collection = _shelfEntries([
+        for (final record in records)
+          if (_isVideoKind(record.item.kind)) record,
+      ], history);
       _browseHistory = [
         for (final entry in history) _ShelfEntry.fromHistory(entry),
       ];
       // 选中集合随数据回真：条目在别处被移出 / 删除后，它的键不该继续占着
       // 「已选择 N 本」，也不该把全选判定带偏。
       final available = {
-        for (final entry in _tab == 0 ? _shelf : _browseHistory)
+        for (final entry in switch (_tab) {
+          1 => _browseHistory,
+          2 => _collection,
+          _ => _shelf,
+        })
           entry.selectionKey,
       };
       _selected.removeWhere((key) => !available.contains(key));
@@ -420,8 +447,16 @@ class _LibraryPageState extends State<LibraryPage> {
     MaterialPageRoute<void>(builder: (_) => const CachedBooksPage()),
   );
 
-  List<_ShelfEntry> get _visibleEntries =>
-      _tab == 0 ? _sortShelf(_shelf) : _browseHistory;
+  List<_ShelfEntry> get _visibleEntries => switch (_tab) {
+    1 => _browseHistory,
+    2 => _sortShelf([
+      for (final entry in _collection)
+        if (_collectionFilter == null ||
+            entry.item.kind == _collectionFilter)
+          entry,
+    ]),
+    _ => _sortShelf(_shelf),
+  };
 
   bool get _allSelected {
     final entries = _visibleEntries;
@@ -471,13 +506,15 @@ class _LibraryPageState extends State<LibraryPage> {
     _enterEdit(entry);
   }
 
-  /// 书架 tab 的「移出书架」：只把条目移出本地收藏库，阅读历史保留。
+  /// 书架 / 收藏 tab 的「移出书架」：只把条目移出本地收藏库，阅读
+  /// 历史保留。
   ///
   /// 决策：可逆操作勿扰——移出书架有 4s 撤销窗口，直接执行，不再弹确认
   /// 对话框（原对话框的「阅读记录会保留」说明挪进 SnackBar 语义里）。
   Future<void> _removeFromShelf() async {
+    final fromCollection = _tab == 2;
     final selected = [
-      for (final entry in _shelf)
+      for (final entry in fromCollection ? _collection : _shelf)
         if (_selected.contains(entry.selectionKey)) entry,
     ];
     if (selected.isEmpty) return;
@@ -499,10 +536,17 @@ class _LibraryPageState extends State<LibraryPage> {
     // screen until the disk round trip finishes reads as a dead button.
     _exitEdit();
     setState(() {
-      _shelf = [
-        for (final entry in _shelf)
-          if (!removed.contains(entry.selectionKey)) entry,
-      ];
+      if (fromCollection) {
+        _collection = [
+          for (final entry in _collection)
+            if (!removed.contains(entry.selectionKey)) entry,
+        ];
+      } else {
+        _shelf = [
+          for (final entry in _shelf)
+            if (!removed.contains(entry.selectionKey)) entry,
+        ];
+      }
     });
     try {
       await ShelfStore.instance.removeKeys(keys);
@@ -524,7 +568,9 @@ class _LibraryPageState extends State<LibraryPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('已移出 ${selected.length} 本，阅读记录会保留'),
+        content: Text(
+          '已移出 ${selected.length} ${fromCollection ? '部' : '本'}，阅读记录会保留',
+        ),
         duration: const Duration(seconds: 4),
         action: SnackBarAction(
           key: const Key('shelf-undo-button'),
@@ -673,6 +719,7 @@ class _LibraryPageState extends State<LibraryPage> {
                       ),
               ),
               if (!_editing && _tab == 0) _toolbar(palette),
+              if (!_editing && _tab == 2) _collectionToolbar(palette),
               Expanded(child: _content(palette)),
             ],
           ),
@@ -834,17 +881,75 @@ class _LibraryPageState extends State<LibraryPage> {
     );
   }
 
+  /// L2 筛选行（收藏 tab）：全部 / 短剧 / 漫剧胶囊 + 右侧版式分段，
+  /// 形态与书架 tab 工具栏同构。
+  Widget _collectionToolbar(HomePalette palette) {
+    return Padding(
+      padding: const EdgeInsets.only(
+        top: ShelfTokens.spaceXS,
+        bottom: ShelfTokens.spaceS,
+        left: ShelfTokens.screenPadding,
+        right: ShelfTokens.screenPadding,
+      ),
+      child: Row(
+        children: [
+          _CollectionChip(
+            key: const Key('library-collection-filter-all'),
+            label: '全部',
+            selected: _collectionFilter == null,
+            palette: palette,
+            onTap: () => setState(() => _collectionFilter = null),
+          ),
+          const SizedBox(width: 8),
+          _CollectionChip(
+            key: const Key('library-collection-filter-video'),
+            label: '短剧',
+            selected: _collectionFilter == 'video',
+            palette: palette,
+            onTap: () => setState(() => _collectionFilter = 'video'),
+          ),
+          const SizedBox(width: 8),
+          _CollectionChip(
+            key: const Key('library-collection-filter-manju'),
+            label: '漫剧',
+            selected: _collectionFilter == 'manju',
+            palette: palette,
+            onTap: () => setState(() => _collectionFilter = 'manju'),
+          ),
+          const Spacer(),
+          _LayoutSegments(
+            current: _layout,
+            palette: palette,
+            onChanged: _setLayout,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _content(HomePalette palette) {
     final entries = _visibleEntries;
     if (entries.isEmpty) {
       // 空态按 tab 区分：书架为空给「去书城找书 + 查看离线缓存」（筛选已
-      // 移除，故这已是书架 tab 唯一的空态）；浏览历史为空沿用官方通用文案。
-      return _tab == 0 && _shelf.isEmpty
-          ? ShelfEmptyState(
-              onBrowse: widget.onBrowse,
-              onCachedBooks: _openCachedBooks,
-            )
-          : const ShelfEmptyHint(text: '未找到相关内容');
+      // 移除，故这已是书架 tab 唯一的空态）；浏览历史为空沿用官方通用
+      // 文案；收藏为空按当前筛选给文案 + 「找短剧」入口（官方空态形态）。
+      if (_tab == 0 && _shelf.isEmpty) {
+        return ShelfEmptyState(
+          onBrowse: widget.onBrowse,
+          onCachedBooks: _openCachedBooks,
+        );
+      }
+      if (_tab == 2) {
+        return ShelfCollectionEmptyState(
+          text: switch (_collectionFilter) {
+            'video' => '暂无短剧',
+            'manju' => '暂无漫剧',
+            _ => '暂无收藏内容',
+          },
+          onFindDrama: widget.onFindDrama,
+        );
+      }
+      return const ShelfEmptyHint(text: '未找到相关内容');
     }
     final body = switch (_layout) {
       BookshelfLayout.grid => _grid(entries),
@@ -1026,7 +1131,7 @@ class _LibraryPageState extends State<LibraryPage> {
           Expanded(
             child: Center(
               child: Text(
-                '已选择 ${_selected.length} 本',
+                '已选择 ${_selected.length} ${_tab == 2 ? '部' : '本'}',
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
@@ -1058,10 +1163,10 @@ class _LibraryPageState extends State<LibraryPage> {
   ///
   /// 官方底栏还有找相似书 / 移动至分组 / 分享为书单 / 加入桌面 / 云同步 /
   /// 导入图书 / 最近删除 / 连载更新提醒，这些本地都没有数据源，不伪造入口；
-  /// 有数据支撑的只有「移出书架」（书架 tab，可撤销故直接执行）与「删除」
-  /// （浏览历史 tab，不可撤销故保留确认）。
+  /// 有数据支撑的只有「移出书架」（书架 / 收藏 tab，可撤销故直接执行）与
+  /// 「删除」（浏览历史 tab，不可撤销故保留确认）。
   Widget _editBottomBar(HomePalette palette) {
-    final removing = _tab == 0;
+    final removing = _tab != 1;
     return _SlideUp(
       child: RepaintBoundary(
         child: DecoratedBox(
@@ -1295,6 +1400,50 @@ class _SlideUpState extends State<_SlideUp> {
         opacity: _shown || disabled ? 1 : 0,
         duration: disabled ? Duration.zero : const Duration(milliseconds: 260),
         child: widget.child,
+      ),
+    );
+  }
+}
+
+/// 收藏 tab 的筛选胶囊（形态对齐短剧页收藏频道的筛选行）：选中浅橙底
+/// 橙字加粗，未选中浅灰底深字。
+class _CollectionChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final HomePalette palette;
+  final VoidCallback onTap;
+
+  const _CollectionChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.palette,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: selected
+              ? HomePalette.accent.withValues(alpha: 0.10)
+              : palette.soft,
+          borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              color: selected ? HomePalette.accent : palette.ink,
+            ),
+          ),
+        ),
       ),
     );
   }

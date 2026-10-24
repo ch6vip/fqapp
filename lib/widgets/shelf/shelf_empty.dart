@@ -83,6 +83,64 @@ class ShelfEmptyState extends StatelessWidget {
   }
 }
 
+/// 收藏 tab 空态（官方收藏页形态）：文案随筛选变化（暂无短剧 / 暂无
+/// 漫剧 / 暂无收藏内容），下方给「找短剧」入口切到短剧 tab。
+class ShelfCollectionEmptyState extends StatelessWidget {
+  final String text;
+  final VoidCallback? onFindDrama;
+
+  const ShelfCollectionEmptyState({
+    super.key,
+    required this.text,
+    this.onFindDrama,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Center(
+      child: HomeEntrance(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: palette.soft,
+                borderRadius: BorderRadius.circular(ShelfTokens.radiusCard),
+              ),
+              child: Icon(
+                LucideIcons.clapperboard,
+                size: 48,
+                color: palette.muted.withValues(alpha: 0.65),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(text, style: TextStyle(fontSize: 14, color: palette.muted)),
+            const SizedBox(height: 20),
+            FilledButton(
+              key: const Key('collection-find-drama-button'),
+              onPressed: onFindDrama,
+              style: FilledButton.styleFrom(
+                backgroundColor: HomePalette.accent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+              child: const Text('找短剧'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// 官方通用空态文案（RecyclerBookLayoutV2）：空历史 / 筛选无结果。
 class ShelfEmptyHint extends StatelessWidget {
   final String text;

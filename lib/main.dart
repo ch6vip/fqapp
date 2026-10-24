@@ -489,7 +489,10 @@ class _RootShellState extends State<RootShell> {
           children: [
             HomePage(cueLoader: () => ApiClient.instance.searchCue()),
             const DramaPage(),
-            LibraryPage(onBrowse: () => desktopTab.value = 0),
+            LibraryPage(
+              onBrowse: () => desktopTab.value = 0,
+              onFindDrama: () => desktopTab.value = 1,
+            ),
             const MinePage(),
           ],
         ),
@@ -637,8 +640,12 @@ class _RootShellState extends State<RootShell> {
               cueLoader: () => ApiClient.instance.searchCue(),
             ),
             const DramaPage(),
-            // 空书架上的「去书城找书」切回首页 tab。
-            LibraryPage(onBrowse: () => setState(() => _index = 0)),
+            // 空书架上的「去书城找书」切回首页 tab；收藏空态的「找短剧」
+            // 切到短剧 tab。
+            LibraryPage(
+              onBrowse: () => setState(() => _index = 0),
+              onFindDrama: () => setState(() => _index = 1),
+            ),
             const MinePage(),
           ],
         ),
