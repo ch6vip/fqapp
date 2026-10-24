@@ -255,3 +255,53 @@ test('the APK workflow shares the Dart gate with a parallel job', () => {
     'analyze and test must not run inside the apk job again',
   );
 });
+
+test('the APK workflow cache paths do not use parse-time env expansion', () => {
+  // ${{ env.ANDROID_HOME }} is expanded at PARSE time, but ANDROID_HOME is only
+  // injected into the job at RUN time by the runner image. The expression
+  // therefore resolved to an empty string and the cache paths became
+  // /ndk/<ver> and /cmake/<ver>; actions/cache then refused to save anything
+  // ("Path(s) specified in the action for caching do(es) not exist"), so both
+  // caches never worked while still costing two steps per run. Verified in run
+  // 40123765356: `path: /ndk/28.2.13676358`.
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    'utf8',
+  );
+  // Strip comments first: the explanatory comment above the cache steps also
+  // spells out `${{ env.ANDROID_HOME }}`, and matching the whole document would
+  // fail on that even when no step actually uses it.
+  const spec = workflow
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+  assert.ok(
+    !/\$\{\{\s*env\.ANDROID_HOME\s*\}\}/.test(spec),
+    'ANDROID_HOME must not be used in ${{ }}: it is empty at parse time',
+  );
+  assert.ok(
+    spec.includes('/usr/local/lib/android/sdk/ndk/'),
+    'the NDK cache must use the documented runner image path',
+  );
+  assert.ok(
+    spec.includes('/usr/local/lib/android/sdk/cmake/'),
+    'the CMake cache must use the documented runner image path',
+  );
+});
+
+test('the APK job keeps the measured Gradle worker limits', () => {
+  // 4 workers was measured on the real 4-vCPU runner and was slower than 2:
+  // release APK compile 220s -> 342s, :app:testDebugUnitTest 66s -> 91s.
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    'utf8',
+  );
+  assert.ok(
+    workflow.includes('-Dorg.gradle.workers.max=2'),
+    'workers.max=4 regressed the APK build; keep the measured value of 2',
+  );
+  assert.ok(
+    /CMAKE_BUILD_PARALLEL_LEVEL: '2'/.test(workflow),
+    'CMAKE_BUILD_PARALLEL_LEVEL=4 regressed the APK build; keep 2',
+  );
+});
