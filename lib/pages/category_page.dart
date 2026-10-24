@@ -244,28 +244,57 @@ class _DimRail extends StatelessWidget {
 }
 
 /// 右侧内容区：维度名组头 + Wrap 文字 chips（当前维度过滤）。
-class _TileArea extends StatelessWidget {
+///
+/// chip 规格与折叠逻辑直译 `CategoryLayoutKt`（1130-1262 / 700-800 行）：
+/// 文字 14sp、圆角 6dp、内边距横 5、最小高 30dp、横向间距 7、行距上 6
+/// 下 4；`tag==1` 的热门项左侧 16dp 火苗图标。标签 **>30** 才出现
+/// 「展开/收起」（12sp + 12dp 箭头），收起显示前 30 个。
+class _TileArea extends StatefulWidget {
   const _TileArea({required this.front, required this.dimIndex});
 
   final CategoryFront front;
   final int dimIndex;
 
   @override
+  State<_TileArea> createState() => _TileAreaState();
+}
+
+class _TileAreaState extends State<_TileArea> {
+  bool _expanded = false;
+
+  static const _collapsedCount = 30;
+
+  @override
+  void didUpdateWidget(_TileArea old) {
+    super.didUpdateWidget(old);
+    // 换维度/换频道回到收起态。
+    if (old.dimIndex != widget.dimIndex || old.front != widget.front) {
+      _expanded = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final dim = front.dims[dimIndex];
-    final isAll = dimIndex == 0 || dim.value == '0';
-    final tiles = isAll
-        ? front.tiles
-        : front.tiles.where((t) => t.dim == dim.value).toList();
+    final dim = widget.front.dims[widget.dimIndex];
+    final isAll = widget.dimIndex == 0 || dim.value == '0';
+    final all = isAll
+        ? widget.front.tiles
+        : widget.front.tiles.where((t) => t.dim == dim.value).toList();
+    final collapsible = all.length > _collapsedCount;
+    final tiles = collapsible && !_expanded
+        ? all.take(_collapsedCount).toList()
+        : all;
+
     return ListView(
+      key: const ValueKey('category_tile_list'),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 12),
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
           child: Text(
-            _dimLabel(dimIndex, dim),
-            // 官方组头：灰 #919191 小字。
+            _dimLabel(widget.dimIndex, dim),
+            // 官方组头：灰 #919191 小字（CategoryLayoutKt 700-730）。
             style: const TextStyle(fontSize: 12, color: Color(0xFF919191)),
           ),
         ),
@@ -277,32 +306,90 @@ class _TileArea extends StatelessWidget {
             ),
           )
         else
+          // 行距 = 每颗 chip 外边距 上6/下4（官方 PaddingKt.o(0,6,0,4)）。
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 7,
+            runSpacing: 10,
             children: [
-              for (final tile in tiles)
-                Container(
-                  key: ValueKey('category_tile_${tile.id}_${tile.name}'),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    // 官方 chip：浅灰圆角底、黑字、紧凑。
-                    color: palette.dark
-                        ? palette.soft
-                        : const Color(0xFFF0F0F1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    tile.name,
-                    style: TextStyle(fontSize: 13, color: palette.ink),
-                  ),
+              for (final tile in tiles) _CategoryChip(tile: tile),
+              if (collapsible)
+                _ExpandToggle(
+                  expanded: _expanded,
+                  onTap: () => setState(() => _expanded = !_expanded),
                 ),
             ],
           ),
       ],
+    );
+  }
+}
+
+/// 一颗分类 chip：`CategoryLayoutKt` 1135-1260。
+class _CategoryChip extends StatelessWidget {
+  const _CategoryChip({required this.tile});
+
+  final CategoryTile tile;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Container(
+      key: ValueKey('category_tile_${tile.id}_${tile.name}'),
+      constraints: const BoxConstraints(minHeight: 30),
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: palette.dark ? palette.soft : const Color(0xFFF0F0F1),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (tile.hot) ...[
+            Icon(LucideIcons.flame, size: 16, color: HomePalette.accent),
+            const SizedBox(width: 2),
+          ],
+          Text(tile.name, style: TextStyle(fontSize: 14, color: palette.ink)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「展开/收起」：12sp 文字 + 12dp 箭头（CategoryLayoutKt 766-786）。
+class _ExpandToggle extends StatelessWidget {
+  const _ExpandToggle({required this.expanded, required this.onTap});
+
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return GestureDetector(
+      key: const Key('category_expand_toggle'),
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 30),
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              expanded ? '收起' : '展开',
+              style: TextStyle(fontSize: 12, color: palette.muted),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              expanded ? LucideIcons.chevron_up : LucideIcons.chevron_down,
+              size: 12,
+              color: palette.muted,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

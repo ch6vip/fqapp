@@ -45,7 +45,12 @@ class CategoryTab {
 
 /// One tile: a bare text chip in the content area.
 class CategoryTile {
-  const CategoryTile({required this.name, this.dim = '', this.id = ''});
+  const CategoryTile({
+    required this.name,
+    this.dim = '',
+    this.id = '',
+    this.hot = false,
+  });
 
   final String name;
 
@@ -53,6 +58,10 @@ class CategoryTile {
   final String dim;
 
   final String id;
+
+  /// `tag == 1` — the hot tiles carry a leading flame icon
+  /// （`CategoryLayoutKt` z2.f() → 16dp「热门标签的图片」）.
+  final bool hot;
 
   static CategoryTile? fromRaw(dynamic value) {
     if (value is! Map) return null;
@@ -62,6 +71,7 @@ class CategoryTile {
       name: name,
       dim: (value['dim'] ?? '').toString(),
       id: (value['id'] ?? '').toString(),
+      hot: value['tag'] == 1 || value['tag'] == '1',
     );
   }
 }
@@ -133,9 +143,7 @@ class CategoryFront {
       CategoryTab(name: '漫画', value: '5'),
     ];
     final values = tabs.map((t) => t.value).toSet();
-    tabs.addAll(
-      officialTail.where((t) => !values.contains(t.value)),
-    );
+    tabs.addAll(officialTail.where((t) => !values.contains(t.value)));
 
     return CategoryFront(
       tabs: List.unmodifiable(tabs),

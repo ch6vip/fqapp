@@ -23,7 +23,7 @@ void main() {
         ],
       },
       'down_category': [
-        {'name': '都市', 'dim': '1048576', 'id': '1'},
+        {'name': '都市', 'dim': '1048576', 'id': '1', 'tag': 1},
         {'name': '玄幻', 'dim': '1048576', 'id': '2'},
         {'name': '女帝', 'dim': '3145728', 'id': '3'},
       ],
@@ -88,6 +88,61 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(requestedTab, 2);
+  });
+
+  testWidgets('超过 30 个标签折叠，展开键切换全量', (tester) async {
+    final f = CategoryFront.fromPayload({
+      'code': 0,
+      'data': {
+        'rule': {
+          'tab': [
+            {'name': '男生', 'value': '1'},
+          ],
+          'dim': [
+            {'name': '全部', 'value': '0'},
+          ],
+        },
+        'down_category': [
+          for (var i = 0; i < 42; i++) {'name': '标签$i', 'dim': '0', 'id': '$i'},
+        ],
+      },
+    });
+    await pump(tester, f);
+
+    // 收起：显示 30 个 + 展开键；第 31 个不可见。
+    expect(find.byKey(const ValueKey('category_tile_30_标签30')), findsNothing);
+    expect(find.text('展开'), findsOneWidget);
+    expect(find.text('标签29'), findsOneWidget);
+
+    // 展开键在 30 个 chip 之后：把内容区拖到底再点。
+    await tester.drag(
+      find.byKey(const ValueKey('category_tile_list')),
+      const Offset(0, -2400),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('category_expand_toggle')).hitTestable(),
+    );
+    await tester.pumpAndSettle();
+
+    // 展开：全量 42 个 + 收起键。
+    expect(find.text('标签41'), findsOneWidget);
+    expect(find.text('收起'), findsOneWidget);
+  });
+
+  testWidgets('热门标签(tag=1)的 chip 带火苗图标', (tester) async {
+    await pump(tester, front());
+    final chip = find.byKey(const ValueKey('category_tile_1_都市'));
+    expect(
+      find.descendant(of: chip, matching: find.byType(Icon)),
+      findsOneWidget,
+    );
+    // 玄幻(tag=0) 无图标。
+    final plain = find.byKey(const ValueKey('category_tile_2_玄幻'));
+    expect(
+      find.descendant(of: plain, matching: find.byType(Icon)),
+      findsNothing,
+    );
   });
 
   testWidgets('an empty payload shows the error view with retry', (
