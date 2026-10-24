@@ -24,6 +24,7 @@ class ReaderAppearanceSheet extends StatefulWidget {
   /// 全局墨水屏模式已开启时，阅读背景跟随全局，不由本面板的色块决定。
   /// 此时面板显示墨水屏为选中，色块点按禁用，避免点 夜间/米白 却毫无变化。
   final bool einkOverride;
+  final VoidCallback? onTextReplacement;
 
   const ReaderAppearanceSheet({
     super.key,
@@ -31,6 +32,7 @@ class ReaderAppearanceSheet extends StatefulWidget {
     required this.onChanged,
     required this.onPickFont,
     this.einkOverride = false,
+    this.onTextReplacement,
   });
 
   @override
@@ -677,6 +679,13 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                         ),
                         // 墨水屏模式下才显示整屏刷新间隔：每翻 N 页全刷压残影。
                         if (widget.einkOverride) _einkRefreshIntervalRow(),
+                        if (widget.onTextReplacement != null)
+                          ListTile(
+                            leading: const Icon(Icons.find_replace),
+                            title: const Text('正文替换'),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: widget.onTextReplacement,
+                          ),
                         // 恢复默认: official akh row — centred 28dp pill.
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),

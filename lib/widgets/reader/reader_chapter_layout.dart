@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_preferences.dart';
+import '../../services/text_replacement_engine.dart';
 import '../../services/reader_underline_store.dart';
 import 'reader_bubble.dart';
 import 'reader_illustration.dart';
@@ -231,6 +232,20 @@ class ReaderTextPage {
 
 // Note: 两种阅读方式共用行测量，进度保存规范化正文的文字偏移；见
 // .agents/notes/implemented/feature/2026-09-10-reader-pagination.md
+class _SourceBlock {
+  const _SourceBlock(
+    this.start,
+    this.text,
+    this.displayStart,
+    this.displayLength,
+    this.map,
+  );
+  final int start, displayStart, displayLength;
+  final String text;
+  final TextOffsetMap? map;
+  int get end => start + text.length;
+}
+
 class ReaderChapterLayout {
   final ReaderLayoutSpec spec;
   final List<ReaderContentBlock> blocks;
@@ -238,6 +253,8 @@ class ReaderChapterLayout {
   final int textLength;
   final double contentHeight;
   final int legacyTextLength;
+  final List<_SourceBlock> _sourceBlocks;
+  final int sourceTextLength;
 
   ReaderChapterLayout._(
     this.spec,
@@ -246,19 +263,28 @@ class ReaderChapterLayout {
     this.textLength,
     this.contentHeight,
     this.legacyTextLength,
+    this._sourceBlocks,
+    this.sourceTextLength,
   );
 
   factory ReaderChapterLayout({
     required String title,
     required ChapterContent content,
     required ReaderLayoutSpec spec,
+    TextReplacementResult? replacement,
     Map<int, int> paragraphBubbles = const {},
     Map<int, ParagraphBubbleVariant> paragraphBubbleVariants = const {},
     Set<int> underlinedParagraphs = const {},
     Widget Function(int paraIndex, int count, ParagraphBubbleVariant variant)?
     bubbleBuilder,
   }) {
-    final body = content.withoutLeadingTitle(title);
+    final source = replacement?.source ?? content;
+    final body = source.withoutLeadingTitle(title);
+    final sourceIndices = {
+      for (var i = 0; i < source.blocks.length; i++) source.blocks[i]: i,
+    };
+    final sourceBlocks = <_SourceBlock>[];
+    var sourceOffset = 0;
     final legacyText = [
       if (title.isNotEmpty) title,
       ...splitChapterParagraphs(body.legacyText),
@@ -268,12 +294,35 @@ class ReaderChapterLayout {
     var legacyCursor = 0;
     var top = 0.0;
     for (final element in [ChapterParagraph(title), ...body.blocks]) {
-      final text = element is ChapterParagraph ? element.text : '\uFFFC';
+      final sourceText = element is ChapterParagraph ? element.text : '\uFFFC';
+      final originalIndex = sourceIndices[element];
+      final transformed = originalIndex == null
+          ? element
+          : replacement?.content.blocks[originalIndex] ?? element;
+      final text = transformed is ChapterParagraph
+          ? transformed.text
+          : '\uFFFC';
+      sourceBlocks.add(
+        _SourceBlock(
+          sourceOffset,
+          sourceText,
+          offset,
+          text.length,
+          originalIndex == null
+              ? null
+              : replacement?.paragraphMaps[originalIndex],
+        ),
+      );
+      sourceOffset +=
+          sourceText.length + (blocks.isEmpty && sourceText.isEmpty ? 0 : 1);
       var legacyStart = legacyCursor;
       if (element is ChapterParagraph) {
-        final found = legacyText.indexOf(text, legacyCursor);
+        final found = legacyText.indexOf(sourceText, legacyCursor);
         if (found >= 0) legacyStart = found;
-        legacyCursor = (legacyStart + text.length).clamp(0, legacyText.length);
+        legacyCursor = (legacyStart + sourceText.length).clamp(
+          0,
+          legacyText.length,
+        );
       }
       final paraIndex = element is ChapterParagraph ? element.paraIndex : null;
       final startMs = element is ChapterParagraph ? element.startMs : null;
@@ -338,7 +387,59 @@ class ReaderChapterLayout {
       math.max(0, offset - 1),
       top,
       legacyText.length,
+      List.unmodifiable(sourceBlocks),
+      math.max(0, sourceOffset - 1),
     );
+  }
+
+  int sourceOffsetForDisplay(
+    int offset, {
+    TextBoundaryBias bias = TextBoundaryBias.start,
+  }) {
+    final block =
+        _sourceBlocks[_floorIndex(
+          _sourceBlocks.length,
+          (i) => _sourceBlocks[i].displayStart <= offset,
+        )];
+    final local = (offset - block.displayStart).clamp(0, block.displayLength);
+    return (block.start + (block.map?.toSource(local, bias: bias) ?? local))
+        .clamp(0, sourceTextLength);
+  }
+
+  int displayOffsetForSource(
+    int offset, {
+    TextBoundaryBias bias = TextBoundaryBias.start,
+  }) {
+    var index = _floorIndex(
+      _sourceBlocks.length,
+      (i) => _sourceBlocks[i].start <= offset,
+    );
+    final block = _sourceBlocks[index];
+    if (block.displayLength == 0) {
+      while (++index < blocks.length) {
+        if (blocks[index].text.isNotEmpty) return blocks[index].start;
+      }
+      for (final previous in blocks.reversed) {
+        if (previous.text.isNotEmpty) return previous.end;
+      }
+      return 0;
+    }
+    final local = (offset - block.start).clamp(0, block.text.length);
+    return (block.displayStart +
+            (block.map?.toDisplay(local, bias: bias) ?? local))
+        .clamp(0, textLength);
+  }
+
+  String sourceTextInRange(int start, int end) {
+    final out = StringBuffer();
+    for (final block in _sourceBlocks) {
+      final from = math.max(start, block.start) - block.start;
+      final to = math.min(end, block.end) - block.start;
+      if (to > from) {
+        out.write(block.text.substring(from, to).replaceAll('\uFFFC', ''));
+      }
+    }
+    return out.toString();
   }
 
   double get maxScroll => math.max(
@@ -362,8 +463,10 @@ class ReaderChapterLayout {
       if (candidate.legacyStart > target) break;
       block = candidate;
     }
-    return block.start +
-        (target - block.legacyStart).clamp(0, block.text.length);
+    final raw = _sourceBlocks[block.index];
+    return displayOffsetForSource(
+      raw.start + (target - block.legacyStart).clamp(0, raw.text.length),
+    );
   }
 
   int legacyOffsetForText(int offset) {
@@ -373,7 +476,9 @@ class ReaderChapterLayout {
     return (block.legacyStart +
             (block.isImage
                 ? 0
-                : (offset - block.start).clamp(0, block.text.length)))
+                : (sourceOffsetForDisplay(offset) -
+                          _sourceBlocks[block.index].start)
+                      .clamp(0, _sourceBlocks[block.index].text.length)))
         .clamp(0, legacyTextLength);
   }
 
@@ -403,6 +508,14 @@ class ReaderChapterLayout {
           blocks.length,
           (index) => blocks[index].start <= offset,
         )];
+    if (block.lines.isEmpty) {
+      final visible = blocks.where(
+        (b) => b.lines.isNotEmpty && b.start >= offset,
+      );
+      return visible.isEmpty
+          ? maxScroll
+          : (spec.verticalPadding + visible.first.top).clamp(0, maxScroll);
+    }
     final line =
         block.lines[_floorIndex(
           block.lines.length,
@@ -437,7 +550,9 @@ class ReaderChapterLayout {
         rawOffset == rawOffset.truncateToDouble()) {
       final offset = saved?['positionVersion'] == 1
           ? offsetFromLegacyText(rawOffset.clamp(0, legacyTextLength).toInt())
-          : rawOffset.clamp(0, textLength).toInt();
+          : displayOffsetForSource(
+              rawOffset.clamp(0, sourceTextLength).toInt(),
+            );
       return (textOffset: offset, scroll: scrollForTextOffset(offset));
     }
     final rawPosition = saved?['position'];
@@ -647,7 +762,7 @@ class ReaderChapterLayout {
         ?bubbleSpan,
       ],
     );
-    if (title && text.isEmpty) {
+    if (text.isEmpty) {
       return ReaderContentBlock(
         index: index,
         text: text,

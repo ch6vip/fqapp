@@ -17,6 +17,7 @@ class ListeningSession extends ChangeNotifier {
 
   /// System TTS reports character progress, never a fabricated audio duration.
   double? textProgress;
+  int? textReplacementRevision;
 
   /// The sentence currently being spoken, in TTS-text coordinates (offsets
   /// into SystemTtsBook.plainText: body paragraphs joined by '\n', title
@@ -51,6 +52,7 @@ class ListeningSession extends ChangeNotifier {
     required Duration duration,
     required bool playing,
     double? textProgress,
+    int? textReplacementRevision,
     ({int start, int end})? sentenceRange,
   }) {
     final structural =
@@ -65,6 +67,7 @@ class ListeningSession extends ChangeNotifier {
     this.duration = duration;
     this.playing = playing;
     this.textProgress = textProgress;
+    this.textReplacementRevision = textReplacementRevision;
     this.sentenceRange = sentenceRange;
     final now = DateTime.now();
     if (structural ||
@@ -84,6 +87,7 @@ class ListeningSession extends ChangeNotifier {
     duration = Duration.zero;
     playing = false;
     textProgress = null;
+    textReplacementRevision = null;
     sentenceRange = null;
     notifyListeners();
   }

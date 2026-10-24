@@ -99,8 +99,9 @@ class ReaderRangeUnderline {
   final String bookId;
   final String chapterId;
 
-  /// Offsets into the chapter's display text — the same space as
-  /// `ReaderContentBlock.start`, see [ReaderUnderlineStore.rangeKeyFor].
+  /// Offsets into the original chapter text (the untransformed v2 layout).
+  /// The reader maps display selections back before saving, so changing
+  /// replacement rules does not move stored marks onto unrelated text.
   final int start;
   final int end;
   final String text;
