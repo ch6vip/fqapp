@@ -369,14 +369,23 @@ class HomeNotifier extends Notifier<HomeState> {
   /// work instead of only ignoring its result.
   BackendRequest? _activeRequest;
 
+  /// Tabs whose appends are waiting on the debounced snapshot write; see
+  /// [_scheduleSave].
+  final Set<int> _dirtySaveTabs = {};
+  Timer? _saveDebounce;
+
   /// The category this feed opens on. The home page starts on 全部; a page that
   /// is locked to one channel starts on that channel and never shows the strip.
   @override
   HomeState build() {
     ++_generation;
     // Leaving the page (or rebuilding the provider) stops whatever is in
-    // flight instead of only ignoring its result.
-    ref.onDispose(() => _activeRequest?.cancel());
+    // flight instead of only ignoring its result. The pending snapshot write
+    // dies with it: _feeds is cleared below, so there is nothing left to save.
+    ref.onDispose(() {
+      _activeRequest?.cancel();
+      _saveDebounce?.cancel();
+    });
     _activeRequest?.cancel();
     _feeds.clear();
     return HomeState(tabIndex: initialTabIndex);
@@ -474,18 +483,10 @@ class HomeNotifier extends Notifier<HomeState> {
       );
       // 上报只在翻页时发生：看第一张卡没滑动就没有 lastVid——兜底用
       // 当前列表首卡（它就是本次会话实际展示的第一张），让续接链在
-      // 下一次冷启动成立。
-      final savedVid =
-          feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
-      unawaited(
-        _feedCache?.save(
-          tabIndex,
-          feed.items,
-          hasMore: feed.hasMore,
-          lastVid: savedVid,
-          cells: feed.cellsForView(),
-        ),
-      );
+      // 下一次冷启动成立。整页替换立即落盘，并清掉翻页留下的待写防抖。
+      _saveDebounce?.cancel();
+      _dirtySaveTabs.clear();
+      _writeSnapshot(tabIndex);
     } catch (error) {
       if (!ref.mounted ||
           generation != _generation ||
@@ -561,17 +562,7 @@ class HomeNotifier extends Notifier<HomeState> {
         isLoadMore: false,
         hasMore: feed.hasMore,
       );
-      final savedVid =
-          feed.lastVid ?? (feed.items.isEmpty ? null : feed.items.first.id);
-      unawaited(
-        _feedCache?.save(
-          tabIndex,
-          feed.items,
-          hasMore: feed.hasMore,
-          lastVid: savedVid,
-          cells: feed.cellsForView(),
-        ),
-      );
+      _scheduleSave(tabIndex);
     } catch (error) {
       if (!ref.mounted ||
           generation != _generation ||
@@ -588,6 +579,48 @@ class HomeNotifier extends Notifier<HomeState> {
         hasMore: false,
       );
     }
+  }
+
+  /// Writes one tab's current feed to the snapshot store, fire-and-forget.
+  ///
+  /// 上报只在翻页时发生：看第一张卡没滑动就没有 lastVid——兜底用当前列表
+  /// 首卡（它就是本次会话实际展示的第一张），让续接链在下一次冷启动成立。
+  void _writeSnapshot(int tabIndex) {
+    final feed = _feeds[tabIndex];
+    final cache = _feedCache;
+    if (feed == null || cache == null || feed.items.isEmpty) return;
+    final savedVid = feed.lastVid ?? feed.items.first.id;
+    unawaited(
+      cache.save(
+        tabIndex,
+        feed.items,
+        hasMore: feed.hasMore,
+        lastVid: savedVid,
+        cells: feed.cellsForView(),
+      ),
+    );
+  }
+
+  /// Debounced [_writeSnapshot] for pagination.
+  ///
+  /// A snapshot write encodes up to [HomeFeedCache.maxItems] cards plus the
+  /// whole block tree on the UI isolate; firing one per appended page lands
+  /// exactly on the frame the new cards render. Debouncing coalesces a paging
+  /// burst into one write per tab of its final state. `load()` keeps writing
+  /// immediately: it replaces page one (pull-to-refresh, tab entry) and is not
+  /// a burst.
+  void _scheduleSave(int tabIndex) {
+    _dirtySaveTabs.add(tabIndex);
+    _saveDebounce?.cancel();
+    _saveDebounce = Timer(const Duration(seconds: 2), () {
+      _saveDebounce = null;
+      if (!ref.mounted) return;
+      final tabs = _dirtySaveTabs.toSet();
+      _dirtySaveTabs.clear();
+      for (final tab in tabs) {
+        _writeSnapshot(tab);
+      }
+    });
   }
 
   /// Records the card currently on screen so the next snapshot save can store
