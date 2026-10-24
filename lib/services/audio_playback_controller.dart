@@ -321,6 +321,8 @@ class _AudioPlaybackController extends ChangeNotifier
       NativePlayer.startListenForeground(
         title: _title,
         episode: _chapters[_index].title,
+        // 通知大图 / 媒体卡封面用的是当前书籍封面，不是应用图标。
+        coverUrl: _cover,
         playing: isPlaying,
         hasPrev: _index > 0,
         hasNext: _index < _chapters.length - 1,

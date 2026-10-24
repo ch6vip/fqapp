@@ -346,6 +346,12 @@ class NativePlayerPlugin internal constructor(
                 val intent = Intent(context, ListenKeepAliveService::class.java).apply {
                     putExtra(ListenKeepAliveService.EXTRA_TITLE, call.argument<String>("title"))
                     putExtra(ListenKeepAliveService.EXTRA_EPISODE, call.argument<String>("episode"))
+                    // 通知大图与媒体卡封面用当前作品封面（issue #123）。空串时
+                    // 服务退回应用图标。
+                    putExtra(
+                        ListenKeepAliveService.EXTRA_COVER_URL,
+                        call.argument<String>("coverUrl"),
+                    )
                     putExtra(ListenKeepAliveService.EXTRA_PLAYING, call.argument<Boolean>("playing") ?: true)
                     putExtra(ListenKeepAliveService.EXTRA_HAS_PREV, call.argument<Boolean>("hasPrev") ?: true)
                     putExtra(ListenKeepAliveService.EXTRA_HAS_NEXT, call.argument<Boolean>("hasNext") ?: true)

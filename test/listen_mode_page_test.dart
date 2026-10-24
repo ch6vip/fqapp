@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -28,6 +29,9 @@ void main() {
     SharedPreferences.setMockInitialValues({'player_playback_rate': 1.0});
     AudioPreferences.instance.resetForTest();
   });
+
+  // issue #123：后台媒体控件的大图必须是当前作品封面。
+  _coverChannelTests();
 
   testWidgets('进入听书页：用当前画质档取流建播放器并自动开播', (tester) async {
     final created = <FakeNativePlayer>[];
@@ -265,4 +269,44 @@ Future<void> _pump(
   );
   await tester.tap(find.text('open'));
   await tester.pumpAndSettle();
+}
+
+/// issue #123：后台媒体控件的大图必须是当前作品封面，不是应用图标。
+///
+/// 官方做法（`dn2/i.java` `PlayNotificationImpl`）是把 `bookInfo.thumbUrl`
+/// 下载成 Bitmap 交给通知的 `setLargeIcon` 与媒体会话的 `ALBUM_ART`；这边
+/// 对应 `startListenForeground` 的 `coverUrl` 通道参数，由
+/// `ListenKeepAliveService` 在原生侧拉图。这里锁住「Dart 侧确实把封面发出去」
+/// 这一环——漏传就等于退回两个应用图标。
+void _coverChannelTests() {
+  const channel = MethodChannel('fqapp/native_player');
+
+  testWidgets('后台保活通知带上当前作品封面', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'player_playback_rate': 1.0,
+      'audio_background_playback_enabled': true,
+    });
+    AudioPreferences.instance.resetForTest();
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+
+    final starts = calls
+        .where((call) => call.method == 'startListenForeground')
+        .toList();
+    expect(starts, isNotEmpty, reason: '后台播放在开关打开时必须起前台服务');
+    final args = starts.last.arguments as Map;
+    expect(args['coverUrl'], 'https://cdn.example/cover.jpg');
+    // 封面之外，标题与集名也不能丢。
+    expect(args['title'], '测试剧');
+    expect(args['episode'], '第一集');
+  });
 }

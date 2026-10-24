@@ -395,9 +395,15 @@ class NativePlayer {
 
   /// [positionMs] / [durationMs] / [speed] 喂给系统媒体卡片：位置 + 倍速由系统外推，
   /// 总时长决定卡片两侧的时间。缺省 0/0/1 时卡片显示 00:00，所以调用方要尽量给真实值。
+  ///
+  /// [coverUrl] 是当前在读/在听内容的封面地址。官方（`dn2/i.java`
+  /// `PlayNotificationImpl`）把它下载成 Bitmap 后同时写进通知的
+  /// `setLargeIcon` 与媒体会话的 `METADATA_KEY_ALBUM_ART`，系统媒体卡片、
+  /// 锁屏与通知左上角显示的都是它；拿不到或下载失败时退回应用图标。
   static Future<void> startListenForeground({
     required String title,
     required String episode,
+    String coverUrl = '',
     bool playing = true,
     bool hasPrev = true,
     bool hasNext = true,
@@ -413,6 +419,7 @@ class NativePlayer {
       await _channel.invokeMethod<void>('startListenForeground', {
         'title': title,
         'episode': episode,
+        'coverUrl': coverUrl,
         'playing': playing,
         'hasPrev': hasPrev,
         'hasNext': hasNext,

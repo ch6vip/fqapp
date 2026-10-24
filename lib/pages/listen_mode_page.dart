@@ -226,6 +226,8 @@ class _ListenModePageState extends State<ListenModePage>
     return NativePlayer.startListenForeground(
       title: widget.seriesTitle,
       episode: _episodeTitle(_index),
+      // 通知左上角与系统媒体卡片显示的就是这张封面（对齐官方）。
+      coverUrl: widget.coverUrl,
       playing: player?.playWhenReady ?? true,
       hasPrev: _index > 0,
       hasNext: _index < widget.episodes.length - 1,
