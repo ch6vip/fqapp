@@ -911,7 +911,8 @@ void main() {
     (tester) async {
       // 反编译：收藏同样有编辑头/长按进编辑/删除专用底条（`bb3.p0`）与
       // GenreScrollTabLayout 筛选行；编辑头标题 `ye()` 在筛选「全部」时就是
-      // 「全部」；删除确认框是「确认删除吗？」+ 按钮文案「删除」。
+      // 「全部」；官方删除确认框是「确认删除吗？」+ 按钮文案「删除」，
+      // 本项目按 issue #126 不弹、直接执行（见 `_confirmDelete`）。
       await tester.binding.setSurfaceSize(const Size(360, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -965,15 +966,13 @@ void main() {
       // 已选择后缀 = 官方 `xe()`：漫剧/短剧之外一律「视频」。
       expect(find.text('已选择 1 个视频'), findsOneWidget);
 
-      // 全选 → 删除 → 官方确认框「确认删除吗？」。
+      // 全选 → 删除：收藏删除可逆，按 #126 直接执行、不弹确认框。
       await tester.tap(find.byKey(const Key('drama_recent_select_all')));
       await _flush(tester);
       expect(find.text('已选择 2 个视频'), findsOneWidget);
       await tester.tap(find.byKey(const Key('drama_shelf_delete')));
       await tester.pumpAndSettle();
-      expect(find.text('确认删除吗？'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('drama_shelf_delete_confirm')));
-      await tester.pumpAndSettle();
+      expect(find.text('确认删除吗？'), findsNothing);
       // Hive 的写 Future 在真实异步里完成（删除即时生效于内存，revision
       // 通知却等持久化 resolve），测试的 fake-async 需要放行真实时钟。
       await tester.runAsync(() async {

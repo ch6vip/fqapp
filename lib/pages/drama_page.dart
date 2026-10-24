@@ -4615,34 +4615,35 @@ class _LocalListState extends State<_LocalList> {
     });
   }
 
-  /// 官方删除前先确认（最近 `Te()`：标题「确定删除浏览历史吗？」、
-  /// 确认/取消；收藏 `re()`→`hy2.d0`：标题「确认删除吗？」、按钮文案
-  /// 「删除」）。成功 Toast「删除成功」/失败「删除失败」，500ms 后退出
-  /// 编辑（`P2`/`pb` 的 `postInForeground(500)`）。
+  /// 历史删除沿用官方确认（最近 `Te()`：标题「确定删除浏览历史吗？」、
+  /// 确认/取消）。收藏删除官方同样先确认（`re()`→`hy2.d0`：标题
+  /// 「确认删除吗？」、按钮文案「删除」），但取消追剧可逆（可重新
+  /// 追剧、观看历史保留），按 issue #126 与书架页「可逆操作勿扰」的
+  /// 同一决策直接执行、不弹确认框。成功 Toast「删除成功」/失败
+  /// 「删除失败」，500ms 后退出编辑（`P2`/`pb` 的
+  /// `postInForeground(500)`）。
   Future<void> _confirmDelete() async {
     final fromShelf = fromShelfEdit;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(fromShelf ? '确认删除吗？' : '确定删除浏览历史吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            key: Key(
-              fromShelf
-                  ? 'drama_shelf_delete_confirm'
-                  : 'drama_recent_delete_confirm',
+    if (!fromShelf) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('确定删除浏览历史吗？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
             ),
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(fromShelf ? '删除' : '确认'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+            TextButton(
+              key: const Key('drama_recent_delete_confirm'),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     final selected = _selected.toSet();
     var removed = 0;
     if (fromShelf) {
