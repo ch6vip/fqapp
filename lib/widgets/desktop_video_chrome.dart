@@ -462,6 +462,339 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
               builder: (context, constraints) {
                 final canDock = !full && constraints.maxWidth >= 1000;
                 final docked = canDock && !_dockCollapsed;
+                // 全屏时运输条浮在画面上（官方全屏播放器同型）：非全屏仍占
+                // 固定 112 的高度，画面几何不随控件显隐跳动；全屏若也占位，
+                // 画面会被顶上去，底下留一条黑条。
+                final picture = Center(
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _toggle,
+                      onDoubleTap: _full,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Center(
+                            child: AspectRatio(
+                              aspectRatio:
+                                  c.player != null &&
+                                      c.player!.videoWidth > 0 &&
+                                      c.player!.videoHeight > 0
+                                  ? c.player!.videoWidth /
+                                        c.player!.videoHeight
+                                  : 16 / 9,
+                              child: c.child,
+                            ),
+                          ),
+                          Positioned.fill(
+                            child: Listener(
+                              behavior:
+                                  HitTestBehavior.translucent,
+                              onPointerSignal: _onPointerSignal,
+                            ),
+                          ),
+                          if (c.danmakuEnabled)
+                            IgnorePointer(
+                              child: PlayletDanmakuLayer(
+                                entries: c.danmaku,
+                                position: _position,
+                                playing: c.playing,
+                                enabled: true,
+                                settings: c.danmakuSettings,
+                                rate: _rate,
+                                landscape: true,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+                final transport = SizedBox(
+                  height: 112,
+                  child: AnimatedOpacity(
+                    opacity: _visible || !c.playing ? 1 : 0,
+                    duration: const Duration(milliseconds: 150),
+                    child: IgnorePointer(
+                      ignoring: !_visible && c.playing,
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Colors.transparent, Color(0xB3000000)],
+                          ),
+                        ),
+                        child: StreamBuilder<Duration>(
+                          stream: c.player?.positionStream,
+                          initialData:
+                              c.player?.position ?? Duration.zero,
+                          builder: (context, snapshot) {
+                            final max = math
+                                .max(1, c.duration.inMilliseconds)
+                                .toDouble();
+                            final position =
+                                snapshot.data ?? Duration.zero;
+                            return Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    const SizedBox(width: 16),
+                                    Text(_time(position)),
+                                    Expanded(
+                                      child: Slider(
+                                        value:
+                                            (_scrub ??
+                                                    position
+                                                        .inMilliseconds
+                                                        .toDouble())
+                                                .clamp(0, max),
+                                        max: max,
+                                        onChanged: _ready
+                                            ? (v) => setState(
+                                                () => _scrub = v,
+                                              )
+                                            : null,
+                                        onChangeEnd: (v) {
+                                          unawaited(
+                                            _seek(
+                                              Duration(
+                                                milliseconds: v
+                                                    .round(),
+                                              ),
+                                            ),
+                                          );
+                                          setState(
+                                            () => _scrub = null,
+                                          );
+                                          _show();
+                                        },
+                                      ),
+                                    ),
+                                    Text(_time(c.duration)),
+                                    const SizedBox(width: 16),
+                                  ],
+                                ),
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      tooltip: '上一集',
+                                      onPressed: c.currentIndex > 0
+                                          ? () => c.onSelectEpisode(
+                                              c.currentIndex - 1,
+                                            )
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.skip_previous,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: '快退 10 秒',
+                                      onPressed: _ready
+                                          ? () => _seek(
+                                              position -
+                                                  const Duration(
+                                                    seconds: 10,
+                                                  ),
+                                            )
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.replay_10,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: '播放 / 暂停（空格）',
+                                      onPressed: _ready
+                                          ? _toggle
+                                          : null,
+                                      icon: Icon(
+                                        c.playing
+                                            ? Icons.pause
+                                            : Icons.play_arrow,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: '快进 10 秒',
+                                      onPressed: _ready
+                                          ? () => _seek(
+                                              position +
+                                                  const Duration(
+                                                    seconds: 10,
+                                                  ),
+                                            )
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.forward_10,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: '下一集',
+                                      onPressed:
+                                          c.currentIndex + 1 <
+                                              c.episodes.length
+                                          ? () => c.onSelectEpisode(
+                                              c.currentIndex + 1,
+                                            )
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.skip_next,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    if (c.onToggleDanmaku != null)
+                                      IconButton(
+                                        tooltip: '弹幕',
+                                        onPressed: c.onToggleDanmaku,
+                                        icon: Icon(
+                                          c.danmakuEnabled
+                                              ? Icons.subtitles
+                                              : Icons.subtitles_off,
+                                        ),
+                                      ),
+                                    if (c.onDanmakuSettingsChanged !=
+                                        null)
+                                      IconButton(
+                                        tooltip: '弹幕设置',
+                                        onPressed: () => showDialog<void>(
+                                          context: context,
+                                          builder: (_) => Dialog(
+                                            child: SizedBox(
+                                              width: 420,
+                                              child: PlayletDanmakuSettingsPanel(
+                                                settings:
+                                                    c.danmakuSettings,
+                                                landscape: true,
+                                                onChanged: c
+                                                    .onDanmakuSettingsChanged,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        icon: const Icon(Icons.tune),
+                                      ),
+                                    PopupMenuButton<double>(
+                                      tooltip: '倍速',
+                                      initialValue: _rate,
+                                      onSelected: (v) {
+                                        setState(() => _rate = v);
+                                        unawaited(
+                                          widget.onRateSelected(v),
+                                        );
+                                      },
+                                      itemBuilder: (_) => [
+                                        for (final rate
+                                            in PlayerPreferences
+                                                .playbackRates)
+                                          PopupMenuItem(
+                                            value: rate,
+                                            child: Text('${rate}x'),
+                                          ),
+                                      ],
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(
+                                          8,
+                                        ),
+                                        child: Text('${_rate}x'),
+                                      ),
+                                    ),
+                                    if (c
+                                            .qualityVariants
+                                            .isNotEmpty &&
+                                        c.onQualitySelected != null)
+                                      PopupMenuButton<int>(
+                                        tooltip: '清晰度',
+                                        onSelected: (i) =>
+                                            c.onQualitySelected!(
+                                              c.qualityVariants[i],
+                                            ),
+                                        itemBuilder: (_) => [
+                                          for (
+                                            var i = 0;
+                                            i <
+                                                c
+                                                    .qualityVariants
+                                                    .length;
+                                            i++
+                                          )
+                                            PopupMenuItem(
+                                              value: i,
+                                              child: Text(
+                                                c
+                                                    .qualityVariants[i]
+                                                    .name,
+                                              ),
+                                            ),
+                                        ],
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(8),
+                                          child: Text('清晰度'),
+                                        ),
+                                      ),
+                                    IconButton(
+                                      tooltip: '静音',
+                                      onPressed: () {
+                                        setState(
+                                          () => _volume = _volume == 0
+                                              ? 1
+                                              : 0,
+                                        );
+                                        unawaited(
+                                          _applyVolume(_volume) ??
+                                              Future<void>.value(),
+                                        );
+                                      },
+                                      icon: Icon(
+                                        _volume == 0
+                                            ? Icons.volume_off
+                                            : Icons.volume_up,
+                                      ),
+                                    ),
+                                    if (constraints.maxWidth >= 900)
+                                      SizedBox(
+                                        width: 82,
+                                        child: Slider(
+                                          value: _volume,
+                                          onChanged: (v) {
+                                            setState(
+                                              () => _volume = v,
+                                            );
+                                            unawaited(
+                                              _applyVolume(v) ??
+                                                  Future<
+                                                    void
+                                                  >.value(),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    IconButton(
+                                      tooltip: '选集',
+                                      onPressed: _showCatalog,
+                                      icon: const Icon(
+                                        Icons.playlist_play,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: '全屏（F / Esc）',
+                                      onPressed: _full,
+                                      icon: Icon(
+                                        full
+                                            ? Icons.fullscreen_exit
+                                            : Icons.fullscreen,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                );
                 return Row(
                   children: [
                     Expanded(
@@ -519,329 +852,22 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                 ),
                               ),
                             Expanded(
-                              child: Center(
-                                child: AspectRatio(
-                                  aspectRatio: 16 / 9,
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: _toggle,
-                                    onDoubleTap: _full,
-                                    child: Stack(
+                              child: full
+                                  ? Stack(
                                       fit: StackFit.expand,
                                       children: [
-                                        Center(
-                                          child: AspectRatio(
-                                            aspectRatio:
-                                                c.player != null &&
-                                                    c.player!.videoWidth > 0 &&
-                                                    c.player!.videoHeight > 0
-                                                ? c.player!.videoWidth /
-                                                      c.player!.videoHeight
-                                                : 16 / 9,
-                                            child: c.child,
-                                          ),
+                                        picture,
+                                        Positioned(
+                                          left: 0,
+                                          right: 0,
+                                          bottom: 0,
+                                          child: transport,
                                         ),
-                                        Positioned.fill(
-                                          child: Listener(
-                                            behavior:
-                                                HitTestBehavior.translucent,
-                                            onPointerSignal: _onPointerSignal,
-                                          ),
-                                        ),
-                                        if (c.danmakuEnabled)
-                                          IgnorePointer(
-                                            child: PlayletDanmakuLayer(
-                                              entries: c.danmaku,
-                                              position: _position,
-                                              playing: c.playing,
-                                              enabled: true,
-                                              settings: c.danmakuSettings,
-                                              rate: _rate,
-                                              landscape: true,
-                                            ),
-                                          ),
                                       ],
-                                    ),
-                                  ),
-                                ),
-                              ),
+                                    )
+                                  : picture,
                             ),
-                            // Reserve transport height even while hidden, keeping picture geometry stable.
-                            SizedBox(
-                              height: 112,
-                              child: AnimatedOpacity(
-                                opacity: _visible || !c.playing ? 1 : 0,
-                                duration: const Duration(milliseconds: 150),
-                                child: IgnorePointer(
-                                  ignoring: !_visible && c.playing,
-                                  child: StreamBuilder<Duration>(
-                                    stream: c.player?.positionStream,
-                                    initialData:
-                                        c.player?.position ?? Duration.zero,
-                                    builder: (context, snapshot) {
-                                      final max = math
-                                          .max(1, c.duration.inMilliseconds)
-                                          .toDouble();
-                                      final position =
-                                          snapshot.data ?? Duration.zero;
-                                      return Column(
-                                        children: [
-                                          Row(
-                                            children: [
-                                              const SizedBox(width: 16),
-                                              Text(_time(position)),
-                                              Expanded(
-                                                child: Slider(
-                                                  value:
-                                                      (_scrub ??
-                                                              position
-                                                                  .inMilliseconds
-                                                                  .toDouble())
-                                                          .clamp(0, max),
-                                                  max: max,
-                                                  onChanged: _ready
-                                                      ? (v) => setState(
-                                                          () => _scrub = v,
-                                                        )
-                                                      : null,
-                                                  onChangeEnd: (v) {
-                                                    unawaited(
-                                                      _seek(
-                                                        Duration(
-                                                          milliseconds: v
-                                                              .round(),
-                                                        ),
-                                                      ),
-                                                    );
-                                                    setState(
-                                                      () => _scrub = null,
-                                                    );
-                                                    _show();
-                                                  },
-                                                ),
-                                              ),
-                                              Text(_time(c.duration)),
-                                              const SizedBox(width: 16),
-                                            ],
-                                          ),
-                                          Row(
-                                            children: [
-                                              IconButton(
-                                                tooltip: '上一集',
-                                                onPressed: c.currentIndex > 0
-                                                    ? () => c.onSelectEpisode(
-                                                        c.currentIndex - 1,
-                                                      )
-                                                    : null,
-                                                icon: const Icon(
-                                                  Icons.skip_previous,
-                                                ),
-                                              ),
-                                              IconButton(
-                                                tooltip: '快退 10 秒',
-                                                onPressed: _ready
-                                                    ? () => _seek(
-                                                        position -
-                                                            const Duration(
-                                                              seconds: 10,
-                                                            ),
-                                                      )
-                                                    : null,
-                                                icon: const Icon(
-                                                  Icons.replay_10,
-                                                ),
-                                              ),
-                                              IconButton(
-                                                tooltip: '播放 / 暂停（空格）',
-                                                onPressed: _ready
-                                                    ? _toggle
-                                                    : null,
-                                                icon: Icon(
-                                                  c.playing
-                                                      ? Icons.pause
-                                                      : Icons.play_arrow,
-                                                ),
-                                              ),
-                                              IconButton(
-                                                tooltip: '快进 10 秒',
-                                                onPressed: _ready
-                                                    ? () => _seek(
-                                                        position +
-                                                            const Duration(
-                                                              seconds: 10,
-                                                            ),
-                                                      )
-                                                    : null,
-                                                icon: const Icon(
-                                                  Icons.forward_10,
-                                                ),
-                                              ),
-                                              IconButton(
-                                                tooltip: '下一集',
-                                                onPressed:
-                                                    c.currentIndex + 1 <
-                                                        c.episodes.length
-                                                    ? () => c.onSelectEpisode(
-                                                        c.currentIndex + 1,
-                                                      )
-                                                    : null,
-                                                icon: const Icon(
-                                                  Icons.skip_next,
-                                                ),
-                                              ),
-                                              const Spacer(),
-                                              if (c.onToggleDanmaku != null)
-                                                IconButton(
-                                                  tooltip: '弹幕',
-                                                  onPressed: c.onToggleDanmaku,
-                                                  icon: Icon(
-                                                    c.danmakuEnabled
-                                                        ? Icons.subtitles
-                                                        : Icons.subtitles_off,
-                                                  ),
-                                                ),
-                                              if (c.onDanmakuSettingsChanged !=
-                                                  null)
-                                                IconButton(
-                                                  tooltip: '弹幕设置',
-                                                  onPressed: () => showDialog<void>(
-                                                    context: context,
-                                                    builder: (_) => Dialog(
-                                                      child: SizedBox(
-                                                        width: 420,
-                                                        child: PlayletDanmakuSettingsPanel(
-                                                          settings:
-                                                              c.danmakuSettings,
-                                                          landscape: true,
-                                                          onChanged: c
-                                                              .onDanmakuSettingsChanged,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  icon: const Icon(Icons.tune),
-                                                ),
-                                              PopupMenuButton<double>(
-                                                tooltip: '倍速',
-                                                initialValue: _rate,
-                                                onSelected: (v) {
-                                                  setState(() => _rate = v);
-                                                  unawaited(
-                                                    widget.onRateSelected(v),
-                                                  );
-                                                },
-                                                itemBuilder: (_) => [
-                                                  for (final rate
-                                                      in PlayerPreferences
-                                                          .playbackRates)
-                                                    PopupMenuItem(
-                                                      value: rate,
-                                                      child: Text('${rate}x'),
-                                                    ),
-                                                ],
-                                                child: Padding(
-                                                  padding: const EdgeInsets.all(
-                                                    8,
-                                                  ),
-                                                  child: Text('${_rate}x'),
-                                                ),
-                                              ),
-                                              if (c
-                                                      .qualityVariants
-                                                      .isNotEmpty &&
-                                                  c.onQualitySelected != null)
-                                                PopupMenuButton<int>(
-                                                  tooltip: '清晰度',
-                                                  onSelected: (i) =>
-                                                      c.onQualitySelected!(
-                                                        c.qualityVariants[i],
-                                                      ),
-                                                  itemBuilder: (_) => [
-                                                    for (
-                                                      var i = 0;
-                                                      i <
-                                                          c
-                                                              .qualityVariants
-                                                              .length;
-                                                      i++
-                                                    )
-                                                      PopupMenuItem(
-                                                        value: i,
-                                                        child: Text(
-                                                          c
-                                                              .qualityVariants[i]
-                                                              .name,
-                                                        ),
-                                                      ),
-                                                  ],
-                                                  child: const Padding(
-                                                    padding: EdgeInsets.all(8),
-                                                    child: Text('清晰度'),
-                                                  ),
-                                                ),
-                                              IconButton(
-                                                tooltip: '静音',
-                                                onPressed: () {
-                                                  setState(
-                                                    () => _volume = _volume == 0
-                                                        ? 1
-                                                        : 0,
-                                                  );
-                                                  unawaited(
-                                                    _applyVolume(_volume) ??
-                                                        Future<void>.value(),
-                                                  );
-                                                },
-                                                icon: Icon(
-                                                  _volume == 0
-                                                      ? Icons.volume_off
-                                                      : Icons.volume_up,
-                                                ),
-                                              ),
-                                              if (constraints.maxWidth >= 900)
-                                                SizedBox(
-                                                  width: 82,
-                                                  child: Slider(
-                                                    value: _volume,
-                                                    onChanged: (v) {
-                                                      setState(
-                                                        () => _volume = v,
-                                                      );
-                                                      unawaited(
-                                                        _applyVolume(v) ??
-                                                            Future<
-                                                              void
-                                                            >.value(),
-                                                      );
-                                                    },
-                                                  ),
-                                                ),
-                                              IconButton(
-                                                tooltip: '选集',
-                                                onPressed: _showCatalog,
-                                                icon: const Icon(
-                                                  Icons.playlist_play,
-                                                ),
-                                              ),
-                                              IconButton(
-                                                tooltip: '全屏（F / Esc）',
-                                                onPressed: _full,
-                                                icon: Icon(
-                                                  full
-                                                      ? Icons.fullscreen_exit
-                                                      : Icons.fullscreen,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                            ],
-                                          ),
-                                        ],
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ),
+                            if (!full) transport,
                           ],
                         ),
                       ),
