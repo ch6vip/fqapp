@@ -1346,8 +1346,18 @@ class ApiClient {
     int tabType = 2,
     int offset = 0,
     String? sessionId,
+    int? tabIndex,
+    int? lastTabIndex,
   }) async {
-    final r = await _get(_homepageUrl(tabType, offset, sessionId));
+    final r = await _get(
+      _homepageUrl(
+        tabType,
+        offset,
+        sessionId,
+        tabIndex: tabIndex,
+        lastTabIndex: lastTabIndex,
+      ),
+    );
     return _decodeAsync(r);
   }
 
@@ -1363,6 +1373,8 @@ class ApiClient {
     int tabType = 2,
     int offset = 0,
     String? sessionId,
+    int? tabIndex,
+    int? lastTabIndex,
   }) async {
     // 翻页时第一段只是用来开 cell 的：它的游标和视频流不是一回事，而且把第二段
     // 的 session 再传给 tab 接口会被上游拒掉（客户端表现为 SERVICE_ERROR）。所以
@@ -1380,7 +1392,15 @@ class ApiClient {
       );
       if (flow != null) return flow;
     }
-    final r = await _get(_homepageUrl(tabType, offset, sessionId));
+    final r = await _get(
+      _homepageUrl(
+        tabType,
+        offset,
+        sessionId,
+        tabIndex: tabIndex,
+        lastTabIndex: lastTabIndex,
+      ),
+    );
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
     final tab = await Isolate.run(() {
@@ -1560,12 +1580,23 @@ class ApiClient {
     }
   }
 
-  String _homepageUrl(int tabType, int offset, String? sessionId) =>
-      _url('/api/v1/recommend/homepage', {
-        'tab_type': '$tabType',
-        'offset': '$offset',
-        if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
-      });
+  String _homepageUrl(
+    int tabType,
+    int offset,
+    String? sessionId, {
+    int? tabIndex,
+    int? lastTabIndex,
+  }) => _url('/api/v1/recommend/homepage', {
+    'tab_type': '$tabType',
+    'offset': '$offset',
+    // 上游按 `tab_index` 决定回哪个 tab 的 `cell_data`；只带 `tab_type` 时
+    // 后端补 0，等于永远要推荐流的区块（「听书」会显示推荐榜）。官方请求
+    // 模型里 `tabIndex`/`lastTabIndex` 都是正式字段
+    // （J:rpc/model/BookstoreTabRequest.java:130,182）。
+    if (tabIndex != null) 'tab_index': '$tabIndex',
+    if (lastTabIndex != null) 'last_tab_index': '$lastTabIndex',
+    if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
+  });
 
   /// Health check.
   Future<bool> health() async {

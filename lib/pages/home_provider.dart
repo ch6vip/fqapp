@@ -11,6 +11,20 @@ import '../services/user_facing_error.dart';
 
 typedef HomepageLoader =
     Future<HomepagePage> Function({int tabType, int offset, String? sessionId});
+
+/// 生产加载器（[ApiClient.homepagePage]）的形状。
+///
+/// 顶栏选中下标是这一页自己的状态，测试里的 loader 只关心 `tabType`，
+/// 所以注入点保持 [HomepageLoader] 的宽签名，真正要下发的下标在
+/// [_loadInitial] / [_loadNext] 里按形状喂给生产加载器。
+typedef HomepageLoaderWithIndex =
+    Future<HomepagePage> Function({
+      int tabType,
+      int offset,
+      String? sessionId,
+      int? tabIndex,
+      int? lastTabIndex,
+    });
 typedef SearchTabsLoader =
     Future<List<SearchTab>> Function(String query, {int page});
 typedef CategorySearchLoader = Future<List<SearchTab>> Function({int offset});
@@ -26,6 +40,14 @@ class HomeState {
   /// rather than showing nothing.
   final List<HomeCell> cells;
 
+  /// 这份 [cells] 属于哪个顶栏分类（加载它的那个 tab 的下标）。
+  ///
+  /// 渲染区块前必须拿它和 [tabIndex] 比一次：上游曾把 `tab_index` 写死成 0，
+  /// 于是「听书」里画出了推荐榜。请求侧已经修好，这里让数据自己声明归属，
+  /// 页面就不必猜这份区块是谁的。`null` 表示来源没有声明（旧快照/测试构造），
+  /// 此时按原来的方式照常渲染。
+  final int? cellsTabIndex;
+
   final int tabIndex;
 
   /// 服务端下发的顶栏分类（`data.tab_item`）。空时调用方用 [HomeNotifier.tabs]
@@ -40,6 +62,7 @@ class HomeState {
   const HomeState({
     this.items = const [],
     this.cells = const [],
+    this.cellsTabIndex,
     this.tabs = const [],
     this.tabIndex = 0,
     this.isLoading = false,
@@ -51,6 +74,8 @@ class HomeState {
   HomeState copyWith({
     List<MediaItem>? items,
     List<HomeCell>? cells,
+    int? cellsTabIndex,
+    bool clearCellsTabIndex = false,
     List<HomeTabItem>? tabs,
     int? tabIndex,
     bool? isLoading,
@@ -62,6 +87,10 @@ class HomeState {
     return HomeState(
       items: items ?? this.items,
       cells: cells ?? this.cells,
+      // 区块换了归属要能一起改；没给就沿用上一次的归属。
+      cellsTabIndex: clearCellsTabIndex
+          ? null
+          : (cellsTabIndex ?? this.cellsTabIndex),
       tabs: tabs ?? this.tabs,
       tabIndex: tabIndex ?? this.tabIndex,
       isLoading: isLoading ?? this.isLoading,
@@ -305,10 +334,30 @@ class HomeNotifier extends Notifier<HomeState> {
     );
   }
 
-  final HomepageLoader _homepageLoader;
+  final HomepageLoaderWithIndex _indexedHomepageLoader;
   final SearchTabsLoader _searchLoader;
   final CategorySearchLoader _mangaSearchLoader;
   final CategorySearchLoader _manjuSearchLoader;
+
+  /// 拉一页首页流，带上顶栏选中下标——上游按 `tab_index` 决定回哪个分类
+  /// 的区块。测试注入的加载器在构造期已适配成同一形状（多余参数被忽略）。
+  ///
+  /// [tabIndex] 缺省取当前顶栏选中项，而不是传进来的 `tabType` 对应的位置：
+  /// 「全部」在内部是以小说（`tab_type=2`）去拉的，顶栏上却停在第 0 项，
+  /// 拿 `tabType` 反推会把 2 报成 1。
+  Future<HomepagePage> _fetchHomepage({
+    required int tabType,
+    int? tabIndex,
+    int offset = 0,
+    String? sessionId,
+  }) => _indexedHomepageLoader(
+    tabType: tabType,
+    offset: offset,
+    sessionId: sessionId,
+    tabIndex: tabIndex ?? state.tabIndex,
+    lastTabIndex: _lastTabIndex,
+  );
+
   final HomeFeedCache? _feedCache;
   final int initialTabIndex;
 
@@ -322,7 +371,12 @@ class HomeNotifier extends Notifier<HomeState> {
   final bool usesLocalTabs;
 
   HomeNotifier({
+    /// 只关心 `tabType` 的加载器（测试注入点）。给了它就不再看下标，所以
+    /// 这里在构造期直接把它适配成带下标的形状。
     HomepageLoader? homepageLoader,
+
+    /// 需要顶栏下标的加载器；缺省走 [ApiClient.homepagePage]。
+    HomepageLoaderWithIndex? indexedHomepageLoader,
     SearchTabsLoader? searchLoader,
     CategorySearchLoader? mangaSearchLoader,
     CategorySearchLoader? manjuSearchLoader,
@@ -330,7 +384,24 @@ class HomeNotifier extends Notifier<HomeState> {
     this.initialTabIndex = 0,
     this.usesLocalTabs = false,
   }) : _feedCache = feedCache ?? HomeFeedCache.instance,
-       _homepageLoader = homepageLoader ?? ApiClient.instance.homepagePage,
+       // 注入的 loader 只认 `tabType`；生产路径要额外带上顶栏下标，所以
+       // 缺省时直接用带下标的那个（见 [HomepageLoaderWithIndex]）；注入的
+       // 测试加载器只认 `tabType`，这里补一层适配，多余的下标参数丢弃。
+       _indexedHomepageLoader =
+           indexedHomepageLoader ??
+           (homepageLoader == null
+               ? ApiClient.instance.homepagePage
+               : ({
+                   int tabType = 2,
+                   int offset = 0,
+                   String? sessionId,
+                   int? tabIndex,
+                   int? lastTabIndex,
+                 }) => homepageLoader(
+                   tabType: tabType,
+                   offset: offset,
+                   sessionId: sessionId,
+                 )),
        _searchLoader = searchLoader ?? ApiClient.instance.searchTabs,
        _mangaSearchLoader =
            mangaSearchLoader ??
@@ -373,6 +444,13 @@ class HomeNotifier extends Notifier<HomeState> {
   /// [_scheduleSave].
   final Set<int> _dirtySaveTabs = {};
   Timer? _saveDebounce;
+
+  /// 上一次选中的顶栏下标，随请求发给上游（官方 `lastTabIndex`）。
+  ///
+  /// 上游按 `tab_index` 决定回哪个 tab 的 `cell_data`，只带 `tab_type` 时
+  /// 拿回的是推荐流的区块——「听书」里显示推荐榜就是这么来的。这里记住
+  /// 切换前的位置，切走后第一次加载就能把「从哪来」一起告诉上游。
+  int? _lastTabIndex;
 
   /// The category this feed opens on. The home page starts on 全部; a page that
   /// is locked to one channel starts on that channel and never shows the strip.
@@ -451,6 +529,7 @@ class HomeNotifier extends Notifier<HomeState> {
     state = state.copyWith(
       items: feed.items,
       cells: feed.cellsForView(),
+      cellsTabIndex: tabIndex,
       isLoading: true,
       isLoadMore: false,
       hasMore: true,
@@ -476,6 +555,7 @@ class HomeNotifier extends Notifier<HomeState> {
       state = state.copyWith(
         items: feed.items,
         cells: feed.cellsForView(),
+        cellsTabIndex: tabIndex,
         tabs: feed.tabs,
         isLoading: false,
         isLoadMore: false,
@@ -515,6 +595,9 @@ class HomeNotifier extends Notifier<HomeState> {
         ? tabs.length
         : state.tabs.length;
     if (index == state.tabIndex || index < 0 || index >= limit) return;
+    // 记住切换前的位置：下一次加载要把它当 `last_tab_index` 交给上游，
+    // 上游据此知道用户是从哪个分类过来的。
+    _lastTabIndex = state.tabIndex;
     ++_generation;
     _activeRequest?.cancel();
     final cached = _feeds[index];
@@ -525,6 +608,9 @@ class HomeNotifier extends Notifier<HomeState> {
       // 首页显示别的 tab 的内容；而回到首页时旧的 cells 已随 feed 重建，
       // 不显式清空就会渲染出上一页的块。
       cells: cached?.cellsForView() ?? const [],
+      // 区块的归属跟着换到新分类：缓存里那份就是这个分类的。
+      cellsTabIndex: cached == null ? null : index,
+      clearCellsTabIndex: cached == null,
       tabs: state.tabs,
       isLoading: false,
       isLoadMore: false,
@@ -559,6 +645,7 @@ class HomeNotifier extends Notifier<HomeState> {
       state = state.copyWith(
         items: feed.items,
         cells: feed.cellsForView(),
+        cellsTabIndex: tabIndex,
         isLoadMore: false,
         hasMore: feed.hasMore,
       );
@@ -643,7 +730,10 @@ class HomeNotifier extends Notifier<HomeState> {
     Object? loaderFailure;
     if (tabType != null) {
       try {
-        final page = await _homepageLoader(tabType: tabType);
+        final page = await _fetchHomepage(
+          tabType: tabType,
+
+        );
         final items = _forceKind(page.items, kind);
         final nextOffset = page.nextOffset;
         final canAdvance = nextOffset != null && nextOffset > 0;
@@ -806,7 +896,10 @@ class HomeNotifier extends Notifier<HomeState> {
   /// after the first.
   Future<_AllManjuGroup> _loadAllManju() async {
     try {
-      final page = await _homepageLoader(tabType: tabTypes['漫剧']!);
+      final page = await _fetchHomepage(
+        tabType: tabTypes['漫剧']!,
+
+      );
       final items = _forceKind(page.items, 'manju');
       if (items.isNotEmpty) {
         return (
@@ -845,8 +938,9 @@ class HomeNotifier extends Notifier<HomeState> {
     Object? loaderFailure;
     if (tabType != null && !feed.recommendExhausted) {
       try {
-        final page = await _homepageLoader(
+        final page = await _fetchHomepage(
           tabType: tabType,
+
           offset: feed.offset,
           sessionId: feed.sessionId,
         );

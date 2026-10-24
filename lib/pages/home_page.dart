@@ -170,6 +170,19 @@ class _HomePageState extends ConsumerState<HomePage> {
         .kind;
     return state.items.where((item) => item.kind == kind).toList();
   }
+  /// 当前分类的区块，或空表示这份 `cells` 不属于这里。
+  ///
+  /// 归属由数据自己声明（[HomeState.cellsTabIndex]），不再靠页面猜：上游曾把
+  /// `tab_index` 写死成 0 返回推荐流，于是「听书」里画出了推荐榜。请求侧已经
+  /// 修好，这里再兜一道——不属于当前分类的区块一律不画，别把别人的内容
+  /// 当成自己这份。
+  List<HomeCell> _cellsOfCurrentTab(HomeState state) {
+    final cells = state.cells;
+    if (cells.isEmpty) return const [];
+    final owner = state.cellsTabIndex;
+    if (owner == null) return cells;
+    return owner == state.tabIndex ? cells : const [];
+  }
 
   /// 顶栏分类：固定用本地六分类（推荐/小说/短剧/漫剧/漫画/听书）。
   ///
@@ -300,7 +313,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 每个书城分类都渲染自己那份 `cell_data`（官方 `m0` 对 `tab_type` 一视
     // 同仁地建区块），所以这里不再只放行「推荐」。没带区块的分类照旧落到
     // 下面的旧管线，不会被空掉。
-    final cells = state.cells;
+    final cells = _cellsOfCurrentTab(state);
     if (cells.isEmpty) return null;
     registerDefaultHomeCells(
       onOpenRankBoard: _openRanks,
