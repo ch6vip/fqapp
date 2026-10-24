@@ -204,3 +204,54 @@ test('a stale Android Rust core can be detected before packaging', () => {
     'the guard must export its decision step for tests',
   );
 });
+
+test('the APK workflow fetches tags before the version-monotonicity gate', () => {
+  // The gate reads `git tag --list 'v*'`, and actions/checkout defaults to
+  // `--depth=1 --no-tags`, which makes that list empty. An empty list is not a
+  // failure: the gate then compares against nothing and passes. So the tags
+  // must be fetched explicitly, and `fetch-tags: true` is NOT enough -- it
+  // still runs under --depth=1, which resolves only tags reachable from the
+  // fetched tip (verified: 0 tags after a depth-1 --no-tags clone, 8 after
+  // `git fetch --tags`).
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    'utf8',
+  );
+  // Search the parsed step commands, not the raw file: the comment above the
+  // step also mentions `git fetch --tags`, so a substring match on the whole
+  // document would still pass after the step itself was deleted.
+  const commands = workflow
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+  assert.ok(
+    commands.includes('git fetch --tags'),
+    'the APK workflow must fetch tags; without it the monotonicity gate is dead',
+  );
+  assert.ok(
+    commands.indexOf('git fetch --tags') < commands.indexOf('highest_tag='),
+    'tags must be fetched before the gate reads git tag --list',
+  );
+});
+
+test('the APK workflow shares the Dart gate with a parallel job', () => {
+  // flutter test is the single largest step of the run. It needs only the
+  // Flutter SDK, so serialising it behind the NDK/Gradle/Rust setup wasted
+  // wall-clock time. It must stay a FULL run, not a reduced suite.
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    'utf8',
+  );
+  assert.ok(
+    /^\s{2}dart-gate:/m.test(workflow),
+    'the Dart gate must be its own job so it can run in parallel with apk',
+  );
+  assert.ok(
+    /flutter test --no-pub --concurrency=4 --reporter compact/.test(workflow),
+    'the Dart gate must run the full suite on all four cores',
+  );
+  assert.ok(
+    !/flutter analyze --no-pub\n\s+flutter test/.test(workflow),
+    'analyze and test must not run inside the apk job again',
+  );
+});
