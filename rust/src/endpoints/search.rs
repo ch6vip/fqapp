@@ -114,8 +114,7 @@ fn handle<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value
 fn search_cue<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
     Box::pin(async move {
         let cue_type = crate::endpoints::util::default_val(&params.get_str("cue_type"), "0");
-        let bookstore_tab =
-            crate::endpoints::util::default_val(&params.get_str("tab_type"), "2");
+        let bookstore_tab = crate::endpoints::util::default_val(&params.get_str("tab_type"), "2");
         let tab_name = params.get_str("tab_name");
         let mut p = crate::endpoints::home::reading724_params();
         p.set("cue_type", cue_type);
