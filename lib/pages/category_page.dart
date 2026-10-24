@@ -3,15 +3,19 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/category_front.dart';
 import '../services/api_client.dart';
-import '../services/app_links.dart';
 import '../widgets/home/home_design.dart';
 
-/// 官方分类页（`KmpCategoryFragment`，数据一次 GET `new_category/front` 全量）。
+/// 官方分类页（`BookCategoryActivity`，7.0.9.32 实测形态）：
 ///
-/// 结构（`CategoryLayout.kt`）：左侧频道竖列（男频/女频/出版…），右侧按
-/// cell 分组的分类瓦片滚动区（`z2`：`pic_url` 图标 + name，点击走
-/// `category_landpage_url`）。官方为 Compose 无 XML；尺寸按官方截屏：
-/// 左列约 88dp，瓦片 3 列。
+/// * 顶部横向频道 tab（男生/女生/有声书/出版…；选中黑加粗，未选灰
+///   #8C8C8C），左端返回、右端搜索；
+/// * 左侧 87dp 维度栏（热门标签/主题/角色/情节——首项「全部」官方显示为
+///   「热门标签」），选中黑加粗；
+/// * 右侧内容区：当前维度名做组头（灰 #919191 小字），瓦片为**纯文字
+///   chip**（黑字、浅灰圆角底、紧凑内边距），按 Wrap 流式排列。
+///
+/// 数据一次 GET 一个频道（`category_tab` 不同瓦片不同），维度切换是本地
+/// 过滤（`down_category[].dim` 对 `rule.dim[].value`）。
 class CategoryPage extends StatefulWidget {
   const CategoryPage({super.key, this.loader});
 
@@ -26,7 +30,9 @@ class CategoryPage extends StatefulWidget {
 class _CategoryPageState extends State<CategoryPage> {
   CategoryFront? _front;
   String? _error;
-  int _channelIndex = 0;
+  int _tabValue = 1;
+  int _dimIndex = 0;
+  bool _loading = false;
 
   @override
   void initState() {
@@ -34,28 +40,26 @@ class _CategoryPageState extends State<CategoryPage> {
     _load();
   }
 
-  Future<CategoryFront> _fetch({int tab = 1}) =>
+  Future<CategoryFront> _fetch({required int tab}) =>
       widget.loader?.call(tab: tab) ??
       ApiClient.instance.categoryFront(tab: tab);
 
-  Future<void> _load() async {
-    final front = await _fetch();
+  Future<void> _load({int? tab}) async {
+    final target = tab ?? _tabValue;
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final front = await _fetch(tab: target);
     if (!mounted) return;
     setState(() {
+      _loading = false;
+      _tabValue = target;
+      _dimIndex = 0;
       _front = front;
       _error = front.isEmpty ? '分类暂时没有内容，稍后再试' : null;
     });
-  }
-
-  void _openTile(CategoryTile tile) {
-    final url = tile.url;
-    if (url.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('${tile.name} 的详情页还在接入中')));
-      return;
-    }
-    openAppLink(context, url);
   }
 
   @override
@@ -64,53 +68,127 @@ class _CategoryPageState extends State<CategoryPage> {
     final front = _front;
     return Scaffold(
       backgroundColor: palette.canvas,
-      appBar: AppBar(
-        backgroundColor: palette.canvas,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-        title: Text('分类', style: TextStyle(color: palette.ink, fontSize: 17)),
-        leading: IconButton(
-          icon: Icon(LucideIcons.chevron_left, color: palette.ink, size: 22),
-          onPressed: () => Navigator.maybePop(context),
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            _TopBar(
+              tabs: front?.tabs ?? const [],
+              selected: _tabValue,
+              onSelect: (v) => _load(tab: int.tryParse(v) ?? 1),
+            ),
+            if (_loading)
+              Padding(
+                padding: const EdgeInsets.only(top: 120),
+                child: CircularProgressIndicator(color: HomePalette.accent),
+              )
+            else if (_error != null)
+              Expanded(
+                child: _ErrorView(message: _error!, onRetry: _load),
+              )
+            else if (front != null)
+              Expanded(
+                child: Row(
+                  children: [
+                    _DimRail(
+                      dims: front.dims,
+                      selectedIndex: _dimIndex,
+                      onSelect: (i) => setState(() => _dimIndex = i),
+                    ),
+                    Expanded(
+                      child: _TileArea(front: front, dimIndex: _dimIndex),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
-      body: front == null
-          ? Center(child: CircularProgressIndicator(color: HomePalette.accent))
-          : _error != null
-          ? _ErrorView(message: _error!, onRetry: _load)
-          : Row(
-              children: [
-                _ChannelRail(
-                  channels: front.channels,
-                  selectedIndex: _channelIndex,
-                  onSelect: (i) => setState(() => _channelIndex = i),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 32),
-                    itemCount: front.channels[_channelIndex].groups.length,
-                    itemBuilder: (context, index) => _GroupSection(
-                      group: front.channels[_channelIndex].groups[index],
-                      onOpenTile: _openTile,
-                    ),
-                  ),
-                ),
-              ],
-            ),
     );
   }
 }
 
-/// 左侧频道竖列：选中项竖条 + 加粗，其余灰。
-class _ChannelRail extends StatelessWidget {
-  const _ChannelRail({
-    required this.channels,
+/// 顶栏：返回 + 横向频道 tab + 搜索。
+class _TopBar extends StatelessWidget {
+  const _TopBar({
+    required this.tabs,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final List<CategoryTab> tabs;
+  final int selected;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          IconButton(
+            key: const Key('category_back'),
+            icon: Icon(LucideIcons.chevron_left, size: 24, color: palette.ink),
+            onPressed: () => Navigator.maybePop(context),
+          ),
+          Expanded(
+            child: tabs.isEmpty
+                ? const SizedBox.shrink()
+                : ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.only(right: 8),
+                    itemCount: tabs.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 24),
+                    itemBuilder: (context, index) {
+                      final tab = tabs[index];
+                      final isSelected = int.tryParse(tab.value) == selected;
+                      return GestureDetector(
+                        key: ValueKey('category_tab_${tab.value}'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => onSelect(tab.value),
+                        child: Center(
+                          child: Text(
+                            tab.name,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: isSelected
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                              // 官方：选中纯黑，未选 #8C8C8C。
+                              color: isSelected
+                                  ? palette.ink
+                                  : const Color(0xFF8C8C8C),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          IconButton(
+            key: const Key('category_search'),
+            icon: Icon(LucideIcons.search, size: 20, color: palette.ink),
+            onPressed: () {},
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 维度栏项的显示名：首项「全部」官方写作「热门标签」。
+String _dimLabel(int index, CategoryDim dim) => index == 0 ? '热门标签' : dim.name;
+
+/// 左侧 87dp 维度栏。
+class _DimRail extends StatelessWidget {
+  const _DimRail({
+    required this.dims,
     required this.selectedIndex,
     required this.onSelect,
   });
 
-  final List<CategoryChannel> channels;
+  final List<CategoryDim> dims;
   final int selectedIndex;
   final ValueChanged<int> onSelect;
 
@@ -118,15 +196,15 @@ class _ChannelRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return SizedBox(
-      width: 88,
+      width: 87,
       child: ColoredBox(
         color: palette.soft,
         child: ListView.builder(
-          itemCount: channels.length,
+          itemCount: dims.length,
           itemBuilder: (context, index) {
             final selected = index == selectedIndex;
             return GestureDetector(
-              key: ValueKey('category_channel_$index'),
+              key: ValueKey('category_dim_$index'),
               behavior: HitTestBehavior.opaque,
               onTap: () => onSelect(index),
               child: Container(
@@ -135,16 +213,15 @@ class _ChannelRail extends StatelessWidget {
                 color: selected ? palette.canvas : null,
                 child: Row(
                   children: [
-                    // 官方选中态：左侧品牌橙竖条。
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
                       width: 3,
-                      height: selected ? 20 : 0,
+                      height: selected ? 18 : 0,
                       color: HomePalette.accent,
                     ),
                     Expanded(
                       child: Text(
-                        channels[index].name,
+                        _dimLabel(index, dims[index]),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,
@@ -166,88 +243,65 @@ class _ChannelRail extends StatelessWidget {
   }
 }
 
-/// 右侧一组：分组名 + 3 列瓦片（图标 + 名称）。
-class _GroupSection extends StatelessWidget {
-  const _GroupSection({required this.group, required this.onOpenTile});
+/// 右侧内容区：维度名组头 + Wrap 文字 chips（当前维度过滤）。
+class _TileArea extends StatelessWidget {
+  const _TileArea({required this.front, required this.dimIndex});
 
-  final CategoryGroup group;
-  final void Function(CategoryTile) onOpenTile;
+  final CategoryFront front;
+  final int dimIndex;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final dim = front.dims[dimIndex];
+    final isAll = dimIndex == 0 || dim.value == '0';
+    final tiles = isAll
+        ? front.tiles
+        : front.tiles.where((t) => t.dim == dim.value).toList();
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
-        if (group.name.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              group.name,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: palette.ink,
-              ),
-            ),
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 12),
+          child: Text(
+            _dimLabel(dimIndex, dim),
+            // 官方组头：灰 #919191 小字。
+            style: const TextStyle(fontSize: 12, color: Color(0xFF919191)),
           ),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 0.92,
-          ),
-          itemCount: group.tiles.length,
-          itemBuilder: (context, index) {
-            final tile = group.tiles[index];
-            return GestureDetector(
-              key: ValueKey('category_tile_${tile.id}_${tile.name}'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onOpenTile(tile),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: palette.soft,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: tile.icon.isEmpty
-                            ? Icon(
-                                LucideIcons.book_open,
-                                size: 28,
-                                color: palette.muted,
-                              )
-                            : Image.network(
-                                tile.icon,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => Icon(
-                                  LucideIcons.book_open,
-                                  size: 28,
-                                  color: palette.muted,
-                                ),
-                              ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    tile.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: palette.ink),
-                  ),
-                ],
-              ),
-            );
-          },
         ),
+        if (tiles.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 32),
+            child: Center(
+              child: Text('这个维度暂时没有标签', style: TextStyle(color: palette.muted)),
+            ),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final tile in tiles)
+                Container(
+                  key: ValueKey('category_tile_${tile.id}_${tile.name}'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    // 官方 chip：浅灰圆角底、黑字、紧凑。
+                    color: palette.dark
+                        ? palette.soft
+                        : const Color(0xFFF0F0F1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    tile.name,
+                    style: TextStyle(fontSize: 13, color: palette.ink),
+                  ),
+                ),
+            ],
+          ),
       ],
     );
   }

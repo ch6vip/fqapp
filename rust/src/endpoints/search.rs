@@ -222,6 +222,11 @@ fn category_front<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResu
         p.set("new_category_tab", "1");
         p.set("sub_category_tab", "0");
         p.set("req_scene", "0");
+        // v2 参数：官方 7.0.9.32 的分类页（同端点）拿到的是带 tab_list/
+        // sub_tabs 的新 schema，缺这几个字段时服务端回退老结构
+        // （rule.categoy_tab_dic + down_category 平铺）。
+        p.set("category_tab_v2", "1");
+        p.set("last_choose_tab_v2", "1");
         let spec = UpstreamRequestSpec {
             mode: UpstreamMode::DeviceSigned,
             host: crate::endpoints::base::HOST_FQNOVEL.to_string(),
