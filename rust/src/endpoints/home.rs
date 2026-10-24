@@ -49,19 +49,34 @@ pub(crate) fn reading724_params() -> Params {
     p.set("rom_version", "miui_V816_OS3.0.9.0.WOLCNXM");
     p
 }
+/// 顶栏选中下标 `(tab_index, last_tab_index)`。
+///
+/// 上游按 `tab_index` 决定回哪个 tab 的 `cell_data`，只带 `tab_type` 不够：
+/// 这里曾经把它写死成 `"0"`，于是任何分类都拿回推荐流的区块——客户端表现为
+/// 「听书」里显示推荐榜/猜你喜欢。官方请求模型里 `tabIndex` / `lastTabIndex`
+/// 是正式字段（J:rpc/model/BookstoreTabRequest.java:130,182），选中下标由
+/// `m0.java:3091` 的 `setBookMallTabDataList(arrayList, i)` 维护。
+///
+/// 缺省时两者都退化成 "0"（老调用方只发 `tab_type`，与改动前一致）。
+fn strip_indexes(params: &Params) -> (String, String) {
+    let tab_index = default_val(&params.get_str("tab_index"), "0");
+    let last_tab_index = default_val(&params.get_str("last_tab_index"), tab_index.as_str());
+    (tab_index, last_tab_index)
+}
 
 fn homepage_recommend<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
     Box::pin(async move {
         let client_template = default_val(&params.get_str("client_template"), "0");
         let tab_type = default_val(&params.get_str("tab_type"), "2");
         let offset = default_val(&params.get_str("offset"), "0");
+        let (tab_index, last_tab_index) = strip_indexes(params);
         let session_id = params.get_str("session_id");
 
         let mut p = reading724_params();
         p.set("last_search_query_from_rec", "false");
         p.set("ClickedContent", "");
         p.set("client_template", client_template);
-        p.set("last_tab_index", "0");
+        p.set("last_tab_index", last_tab_index);
         p.set("screen_width_px", "1281");
         p.set("classic_tab_style", "v3");
         p.set("tab_type", tab_type);
@@ -83,7 +98,7 @@ fn homepage_recommend<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, Api
         p.set("cold_start_is_double_gd", "false");
         p.set("page_entry_time", "0");
         p.set("cold_start_session", "1");
-        p.set("tab_index", "0");
+        p.set("tab_index", tab_index);
         p.set("lore_tab_style", "v5");
         p.set("device_level", "3");
         p.set("unlimited_short_series_change_type", "0");
@@ -357,8 +372,52 @@ fn series_related<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResu
 }
 
 pub fn register(s: &mut Server) {
+
     s.add_route("homepage_recommend", homepage_recommend);
     s.add_route("channel_tabs", channel_tabs);
     s.add_route("series_feed", series_feed);
     s.add_route("series_related", series_related);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_indexes;
+    use crate::endpoints::Params;
+
+    fn params(pairs: &[(&str, &str)]) -> Params {
+        Params::from_pairs(
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn audio_tab_reports_its_own_index() {
+        // 「听书」在本地六分类里是第 5 项。以前这里写死 "0"，上游就回推荐流
+        // 的区块，「听书」里画出推荐榜——真机复现过的那条路径。
+        let (tab_index, last_tab_index) =
+            strip_indexes(&params(&[("tab_type", "5"), ("tab_index", "5")]));
+        assert_eq!(tab_index, "5");
+        assert_eq!(last_tab_index, "5", "没带 last 时跟上当前下标");
+    }
+
+    #[test]
+    fn the_previous_index_is_forwarded_as_sent() {
+        let (tab_index, last_tab_index) = strip_indexes(&params(&[
+            ("tab_type", "5"),
+            ("tab_index", "5"),
+            ("last_tab_index", "0"),
+        ]));
+        assert_eq!(tab_index, "5");
+        assert_eq!(last_tab_index, "0");
+    }
+
+    #[test]
+    fn legacy_callers_still_land_on_the_first_tab() {
+        let (tab_index, last_tab_index) = strip_indexes(&params(&[("tab_type", "2")]));
+        assert_eq!(tab_index, "0");
+        assert_eq!(last_tab_index, "0");
+    }
 }
