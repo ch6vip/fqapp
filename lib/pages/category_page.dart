@@ -335,9 +335,10 @@ class _CategoryChip extends StatelessWidget {
     final palette = HomePalette.of(context);
     return Container(
       key: ValueKey('category_tile_${tile.id}_${tile.name}'),
-      constraints: const BoxConstraints(minHeight: 30),
+      // 官方 minHeight 30：固定高避免 Container 在 Wrap 里被拉满整行
+      // （带 alignment 的 Container 会吞掉父级的 loose 宽度）。
+      height: 30,
       padding: const EdgeInsets.symmetric(horizontal: 5),
-      alignment: Alignment.center,
       decoration: BoxDecoration(
         color: palette.dark ? palette.soft : const Color(0xFFF0F0F1),
         borderRadius: BorderRadius.circular(6),
@@ -371,9 +372,12 @@ class _ExpandToggle extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
-        constraints: const BoxConstraints(minHeight: 30),
+        height: 30,
         padding: const EdgeInsets.symmetric(horizontal: 5),
-        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: palette.dark ? palette.soft : const Color(0xFFF0F0F1),
+          borderRadius: BorderRadius.circular(6),
+        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
