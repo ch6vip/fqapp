@@ -572,16 +572,21 @@ class HomeNotifier extends Notifier<HomeState> {
           cells: feed.cellsForView(),
         ),
       );
-    } catch (_) {
+    } catch (error) {
       if (!ref.mounted ||
           generation != _generation ||
           state.tabIndex != tabIndex) {
         return;
       }
-      // Stop automatic bottom-of-grid retry loops. Pull-to-refresh gives the
-      // user an explicit retry path and resets this flag.
+      // Stop automatic bottom-of-grid retry loops; the error reaches the
+      // stream footer's retry state (hasMore alone would read as 「已显示全部
+      // 内容」, which lies about a failed page). Pull-to-refresh resets both.
       feed.hasMore = false;
-      state = state.copyWith(isLoadMore: false, hasMore: false);
+      state = state.copyWith(
+        error: userFacingError(error),
+        isLoadMore: false,
+        hasMore: false,
+      );
     }
   }
 
@@ -602,6 +607,7 @@ class HomeNotifier extends Notifier<HomeState> {
     // 搜索兜底的关键词：推荐流（`tab_type=2`）本身就是小说推荐，拿「推荐」
     // 去搜既不是有效书名也匹配不到搜索结果的 tab；用「小说」才能命中。
     final searchName = tabType == 2 ? '小说' : name;
+    Object? loaderFailure;
     if (tabType != null) {
       try {
         final page = await _homepageLoader(tabType: tabType);
@@ -625,14 +631,20 @@ class HomeNotifier extends Notifier<HomeState> {
             hasMore: true,
           );
         }
-      } catch (_) {
+      } catch (loaderError) {
         // Older backends may not expose recommendations; search below keeps the
-        // tab usable.
+        // tab usable — but only when it actually produces something. An empty
+        // fallback is a dead page and must surface the original error (the
+        // stream footer's retry state depends on it).
+        loaderFailure = loaderError;
       }
     }
 
     final search = await _searchByType(searchName);
     final items = _searchItems(search, searchName, kind);
+    if (items.isEmpty && loaderFailure != null) {
+      throw loaderFailure;
+    }
     final progress = _searchProgress(search, searchName, items, offset: 0);
     return _FetchedFeed(
       items: items,
@@ -797,6 +809,7 @@ class HomeNotifier extends Notifier<HomeState> {
     final kind = identity.kind;
     final searchName = identity.tabType == 2 ? '小说' : name;
     final tabType = identity.tabType;
+    Object? loaderFailure;
     if (tabType != null && !feed.recommendExhausted) {
       try {
         final page = await _homepageLoader(
@@ -819,9 +832,11 @@ class HomeNotifier extends Notifier<HomeState> {
             hasMore: true,
           );
         }
-      } catch (_) {
+      } catch (loaderError) {
         // Fall through to search. A recommendation outage should not make the
-        // whole category stop paginating.
+        // whole category stop paginating — unless the fallback is empty too,
+        // in which case the original error surfaces (see below).
+        loaderFailure = loaderError;
       }
     }
 
@@ -833,6 +848,9 @@ class HomeNotifier extends Notifier<HomeState> {
       offset: searchOffset,
     );
     final items = _searchItems(searchTabs, searchName, kind);
+    if (items.isEmpty && loaderFailure != null) {
+      throw loaderFailure;
+    }
     final progress = _searchProgress(
       searchTabs,
       searchName,
@@ -920,6 +938,11 @@ class HomeNotifier extends Notifier<HomeState> {
     ];
     final recommendationPage = recommendation.value;
     final items = _interleave(groups);
+    // 推荐源翻页报错、其余兜底源也没产出时把错误透传出去——否则 loadMore
+    // 拿到一页空「成功」，流尾会把加载失败谎报成「已显示全部内容」。
+    if (items.isEmpty && recommendationPage == null) {
+      throw recommendation.error ?? StateError('翻页失败');
+    }
     return _FetchedFeed(
       items: items,
       nextOffset: recommendationPage?.nextOffset,

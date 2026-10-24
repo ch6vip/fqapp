@@ -587,6 +587,59 @@ void main() {
     await cache.close();
   });
 
+  test('翻页失败置 error 而不是只置 hasMore（footer 重试的判定输入）', () async {
+    // P1 回归：曾只置 hasMore=false，流尾会谎报「已显示全部内容」。
+    // 页面 footer 的重试分支判定是 error != null && items.isNotEmpty。
+    var page = 0;
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async {
+              page += 1;
+              if (page == 1) {
+                return HomepagePage(
+                  items: [_item('first-1')],
+                  cells: const [
+                    HomeCell(
+                      showType: 384,
+                      name: '',
+                      id: '',
+                      style: {},
+                      items: [],
+                      children: [
+                        HomeCell(
+                          showType: 385,
+                          name: '',
+                          id: '',
+                          style: {},
+                          items: [],
+                          children: [],
+                        ),
+                      ],
+                    ),
+                  ],
+                  nextOffset: 10,
+                  sessionId: null,
+                );
+              }
+              throw StateError('翻页失败');
+            },
+        searchLoader: (query, {int page = 1}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(provider.notifier).load();
+
+    await container.read(provider.notifier).loadMore();
+
+    final state = container.read(provider);
+    expect(state.error, isNotNull);
+    expect(state.hasMore, isFalse);
+    // 已有内容保留（错误页不清空列表）。
+    expect(state.items.map((i) => i.id), ['first-1']);
+  });
+
   test('追加页的书拼进流区块，网格真的无限', () async {
     // 区块管线只渲染 cells；分页响应不带区块，若新书只进 items，网格永远
     // 停在首页那批卡。追加页必须合入 385 流区块（cellsForView）。

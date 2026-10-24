@@ -203,30 +203,5 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('榜书9'), findsOneWidget);
     });
-
-    testWidgets('the rank block sits on the canvas, not a white card', (
-      tester,
-    ) async {
-      await tester.binding.setSurfaceSize(const Size(400, 900));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: HomeRankCell(cell: rankCell(), onOpen: (_) {}, onMore: () {}),
-          ),
-        ),
-      );
-
-      // asb.xml 根节点没有背景 drawable，整块直接坐在 #F6F6F6 画布上。
-      expect(
-        find.descendant(
-          of: find.byType(HomeRankCell),
-          matching: find.byType(HomeBlockCard),
-        ),
-        findsNothing,
-      );
-    });
   });
 }

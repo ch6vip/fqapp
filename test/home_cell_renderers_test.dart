@@ -37,12 +37,7 @@ void main() {
     for (final type in [511, 384, 385, 512, 339]) {
       expect(HomeCellRenderers.handles(type), isFalse, reason: 'type $type');
       expect(
-        HomeCellRenderers.build(
-          ctx,
-          cellWith(type),
-          fallback: () => const Text('fallback'),
-          onOpen: (_) {},
-        ),
+        HomeCellRenderers.build(ctx, cellWith(type), onOpen: (_) {}),
         isNull,
         reason: 'type $type 未注册时调用方应沿用原渲染',
       );
@@ -65,27 +60,20 @@ void main() {
       ),
     );
     HomeCell? seen;
-    var fallbackUsed = false;
-    HomeCellRenderers.register(
-      511,
-      (context, cell, {required fallback, required onOpen}) {
-        seen = cell;
-        fallbackUsed = true;
-        return const Text('排行榜');
-      },
-    );
+    HomeCellRenderers.register(511, (context, cell, {required onOpen}) {
+      seen = cell;
+      return const Text('排行榜');
+    });
 
     final widget = HomeCellRenderers.build(
       ctx,
       cellWith(511, name: '排行榜'),
-      fallback: () => const Text('fallback'),
       onOpen: (_) {},
     );
 
     expect(HomeCellRenderers.handles(511), isTrue);
     expect(HomeCellRenderers.count, 1);
     expect(seen?.name, '排行榜');
-    expect(fallbackUsed, isTrue);
     expect(widget, isA<Text>());
     // 其他类型不受影响。
     expect(HomeCellRenderers.handles(384), isFalse);
@@ -93,20 +81,14 @@ void main() {
 
   test('re-registering a type replaces it instead of adding a second one', () {
     var calls = 0;
-    HomeCellRenderers.register(
-      511,
-      (c, cell, {required fallback, required onOpen}) {
-        calls = 1;
-        return const SizedBox();
-      },
-    );
-    HomeCellRenderers.register(
-      511,
-      (c, cell, {required fallback, required onOpen}) {
-        calls = 2;
-        return const SizedBox();
-      },
-    );
+    HomeCellRenderers.register(511, (c, cell, {required onOpen}) {
+      calls = 1;
+      return const SizedBox();
+    });
+    HomeCellRenderers.register(511, (c, cell, {required onOpen}) {
+      calls = 2;
+      return const SizedBox();
+    });
     expect(HomeCellRenderers.count, 1);
     expect(calls, 0, reason: '注册本身不渲染');
   });
@@ -124,8 +106,11 @@ void main() {
   });
 
   test('grid blocks are recognised for the homepage grid path', () {
-    expect(isHomeGridBlock(cellWith(kHomeCellMixedFeed)), isFalse,
-        reason: '没有卡片时不算可渲染区块');
+    expect(
+      isHomeGridBlock(cellWith(kHomeCellMixedFeed)),
+      isFalse,
+      reason: '没有卡片时不算可渲染区块',
+    );
     final withCards = HomeCell(
       showType: kHomeCellMixedFeed,
       name: '猜你喜欢',

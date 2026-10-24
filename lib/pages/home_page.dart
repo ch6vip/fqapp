@@ -172,75 +172,69 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     return Scaffold(
       backgroundColor: palette.canvas,
-      body: Stack(
-        children: [
-          Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: isWindowsDesktop ? 1440 : 840,
-              ),
-              child: SafeArea(
-                bottom: false,
-                child: state.error != null && state.items.isEmpty
-                    ? HomeFeedError(
-                        headline: '故事还在路上',
-                        message: '暂时无法加载推荐，稍后再试一次。',
-                        detail: state.error!,
-                        onRetry: notifier.load,
-                      )
-                    : RefreshIndicator(
-                        color: HomePalette.accent,
-                        backgroundColor: palette.surface,
-                        onRefresh: notifier.load,
-                        // The grid used to measure itself from inside a sliver
-                        // (SliverLayoutBuilder). A sliver's constraints carry
-                        // the scroll offset, so they differ on every scroll
-                        // frame -- which re-ran the builder, handed the sliver
-                        // a fresh SliverChildBuilderDelegate, and rebuilt every
-                        // visible card for the whole duration of the scroll.
-                        // Measuring once here keeps the grid out of the scroll
-                        // path completely.
-                        child: LayoutBuilder(
-                          builder: (context, constraints) => CustomScrollView(
-                            key: const Key('home_feed'),
-                            controller: _scroll,
-                            physics: const BouncingScrollPhysics(
-                              parent: AlwaysScrollableScrollPhysics(),
-                            ),
-                            slivers: [
-                              SliverToBoxAdapter(
-                                child: HomeHero(
-                                  onSearch: _openSearch,
-                                  onCategory: _openCategory,
-                                  cueLoader: widget.cueLoader,
-                                ),
-                              ),
-                              SliverPersistentHeader(
-                                pinned: true,
-                                delegate: HomeTabBarDelegate(
-                                  selectedIndex: state.tabIndex,
-                                  onSelect: notifier.selectTab,
-                                  categories: _categoriesOf(state),
-                                  extent:
-                                      HomeTabBarDelegate.barHeight +
-                                      HomeTabBarDelegate.bottomPadding +
-                                      (textScale - 1).clamp(0, 2) * 16,
-                                  dark: palette.dark,
-                                ),
-                              ),
-                              ..._contentSlivers(
-                                state,
-                                constraints.maxWidth - _gridPadding * 2,
-                              ),
-                            ],
-                          ),
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: isWindowsDesktop ? 1440 : 840),
+          child: SafeArea(
+            bottom: false,
+            child: state.error != null && state.items.isEmpty
+                ? HomeFeedError(
+                    headline: '故事还在路上',
+                    message: '暂时无法加载推荐，稍后再试一次。',
+                    detail: state.error!,
+                    onRetry: notifier.load,
+                  )
+                : RefreshIndicator(
+                    color: HomePalette.accent,
+                    backgroundColor: palette.surface,
+                    onRefresh: notifier.load,
+                    // The grid used to measure itself from inside a sliver
+                    // (SliverLayoutBuilder). A sliver's constraints carry
+                    // the scroll offset, so they differ on every scroll
+                    // frame -- which re-ran the builder, handed the sliver
+                    // a fresh SliverChildBuilderDelegate, and rebuilt every
+                    // visible card for the whole duration of the scroll.
+                    // Measuring once here keeps the grid out of the scroll
+                    // path completely.
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => CustomScrollView(
+                        key: const Key('home_feed'),
+                        controller: _scroll,
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
                         ),
+                        slivers: [
+                          SliverToBoxAdapter(
+                            child: HomeHero(
+                              onSearch: _openSearch,
+                              onCategory: _openCategory,
+                              cueLoader: widget.cueLoader,
+                            ),
+                          ),
+                          SliverPersistentHeader(
+                            pinned: true,
+                            delegate: HomeTabBarDelegate(
+                              selectedIndex: state.tabIndex,
+                              onSelect: notifier.selectTab,
+                              categories: _categoriesOf(state),
+                              extent:
+                                  HomeTabBarDelegate.barHeight +
+                                  HomeTabBarDelegate.bottomPadding +
+                                  (textScale - 1).clamp(0, 2) * 16,
+                              dark: palette.dark,
+                            ),
+                          ),
+                          ..._contentSlivers(
+                            state,
+                            constraints.maxWidth - _gridPadding * 2,
+                          ),
+                        ],
                       ),
-              ),
-            ),
+                    ),
+                  ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -273,12 +267,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       // 要落到下面的 grid 分支，否则这个块会被静默跳过——首页曾因此只显示
       // 排行榜、整段「猜你喜欢」消失。
       final custom = HomeCellRenderers.handles(cell.showType)
-          ? HomeCellRenderers.build(
-              context,
-              cell,
-              fallback: () => _gridFallbackFor(cell, gridWidth),
-              onOpen: _openItem,
-            )
+          ? HomeCellRenderers.build(context, cell, onOpen: _openItem)
           : null;
       if (custom != null) {
         slivers.add(SliverToBoxAdapter(child: custom));
@@ -332,10 +321,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 84)));
     return slivers;
   }
-
-  /// Generic card grid for a block whose type has no widget.
-  Widget _gridFallbackFor(HomeCell cell, double gridWidth) =>
-      buildCardSection(context, cell, onOpen: _openItem, gridWidth: gridWidth);
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
     final blocks = _blockSlivers(state, gridWidth);

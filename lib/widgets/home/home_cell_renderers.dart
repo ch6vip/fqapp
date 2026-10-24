@@ -5,14 +5,10 @@ import '../../models/media_item.dart';
 import 'home_cell_blocks.dart';
 
 /// Renders one bookstore block.
-///
-/// [fallback] draws the same block with the generic card grid, so a block type
-/// that has no dedicated widget yet still shows its books instead of a gap.
 typedef HomeCellBuilder =
     Widget Function(
       BuildContext context,
       HomeCell cell, {
-      required Widget fallback,
       required ValueChanged<MediaItem> onOpen,
     });
 
@@ -55,17 +51,11 @@ class HomeCellRenderers {
   static Widget? build(
     BuildContext context,
     HomeCell cell, {
-    required Widget Function() fallback,
     required ValueChanged<MediaItem> onOpen,
   }) {
     final builder = _builders[cell.showType];
     if (builder == null) return null;
-    return builder(
-      context,
-      cell,
-      fallback: fallback(),
-      onOpen: onOpen,
-    );
+    return builder(context, cell, onOpen: onOpen);
   }
 }
 
@@ -96,8 +86,7 @@ bool isHomeGridBlock(HomeCell cell) =>
 ///
 /// The first tab (`tab_type=2`) ships exactly two blocks — `RankCellV3`(511)
 /// 「排行榜」 and `MultiTabMixedUnlimitedV2`(384)「猜你喜欢」 — so those are the
-/// ones adopted. Everything else keeps the generic grid; see the fallback path
-/// in [HomeCellRenderers.build].
+/// ones adopted. Everything else keeps the bare grid in the page pipeline.
 ///
 /// Needs the grid width for the card layout, which the caller knows and this
 /// registry does not. Cards inside a grid block are therefore rendered by the
@@ -116,7 +105,7 @@ void registerDefaultHomeCells({
 }) {
   HomeCellRenderers.register(
     kHomeCellRank,
-    (context, cell, {required fallback, required onOpen}) => buildRankCell(
+    (context, cell, {required onOpen}) => buildRankCell(
       context,
       cell,
       onOpen: onOpen,
