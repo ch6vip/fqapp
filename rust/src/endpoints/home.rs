@@ -372,7 +372,6 @@ fn series_related<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResu
 }
 
 pub fn register(s: &mut Server) {
-
     s.add_route("homepage_recommend", homepage_recommend);
     s.add_route("channel_tabs", channel_tabs);
     s.add_route("series_feed", series_feed);
