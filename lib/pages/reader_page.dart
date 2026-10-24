@@ -2399,6 +2399,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final book = SystemTtsBook(
         bookId: widget.bookId,
         title: widget.title,
+        coverUrl: widget.cover,
         chapters: widget.chapters,
         startIndex: _index,
         initialContent: content,

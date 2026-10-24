@@ -206,6 +206,12 @@ class DesktopPlatform with WindowListener {
             MusicMetadata(
               title: args['title'] as String?,
               artist: args['episode'] as String?,
+              // Windows 的「正在播放」卡片同样用作品封面（issue #123）；
+              // SMTC 自己按 URL 拉图，取不到就保留应用图标。
+              thumbnail: switch (args['coverUrl']) {
+                final String url when url.isNotEmpty => url,
+                _ => null,
+              },
             ),
           );
           await smtc.setIsPrevEnabled(args['hasPrev'] == true);

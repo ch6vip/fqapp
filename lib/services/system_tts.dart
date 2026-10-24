@@ -97,6 +97,7 @@ class SystemTtsBook {
   SystemTtsBook({
     required this.bookId,
     required this.title,
+    this.coverUrl = '',
     required List<Chapter> chapters,
     required this.startIndex,
     required this.initialContent,
@@ -114,6 +115,12 @@ class SystemTtsBook {
 
   final String bookId;
   final String title;
+
+  /// 当前书的封面地址：交给 `ListenKeepAliveService` 当通知大图与媒体卡封面，
+  /// 与听书走同一条通路（官方 `dn2/i.java` 的 `setLargeIcon`）。空串时退回
+  /// 应用图标。
+  final String coverUrl;
+
   final List<Chapter> chapters;
   final int startIndex;
   final ChapterContent initialContent;
@@ -464,6 +471,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
           await NativePlayer.startListenForeground(
             title: book.title,
             episode: '系统朗读 · ${chapter.title}',
+            coverUrl: book.coverUrl,
             playing: wantPlay && !loading && error == null,
             hasPrev: index > 0,
             hasNext: index + 1 < book.chapters.length,
