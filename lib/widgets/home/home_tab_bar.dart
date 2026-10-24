@@ -34,7 +34,9 @@ const homeCategories = [
 /// 上一版是圆角胶囊 + 图标 + 橙色选中底，和官方完全不是一种东西。
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   static const double barHeight = 38;
-  static const double bottomPadding = 10;
+  // `alx.xml` 为 10dp；2026-10-24 用户拍板不对齐官方——顶栏与排行榜条
+  // 的距离按视觉收紧（与区块头 margin 联动，见 _rankStripTopMargin）。
+  static const double bottomPadding = 4;
   static const double selectedSize = 24;
   static const double unselectedSize = 16;
   static const double tabSpacing = 20;

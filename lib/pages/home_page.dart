@@ -91,6 +91,21 @@ class _HomePageState extends ConsumerState<HomePage> {
   double? _gridTitleScale;
   double? _gridMetaScale;
 
+  /// The block pipeline's content slivers (rank strip, card stream grid),
+  /// given the same reuse contract as [_gridSliver].
+  ///
+  /// Without this cache, every state publish during pagination — `isLoadMore`
+  /// turning on and back off — rebuilt the whole block list with fresh grid
+  /// slivers and child delegates, and `SliverChildBuilderDelegate
+  /// .shouldRebuild` is always true, so every mounted card rebuilt twice per
+  /// page load. `cellsForView()` mints a new list whenever a page appends, so
+  /// the identity check below is also exactly the invalidation signal.
+  List<Widget>? _blocksBody;
+  List<HomeCell>? _blocksCells;
+  double? _blocksWidth;
+  double? _blocksTitleScale;
+  double? _blocksMetaScale;
+
   @override
   void initState() {
     super.initState();
@@ -250,6 +265,38 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// its own blocks and nothing else, so those other sources stay in their own
   /// tabs.
   List<Widget>? _blockSlivers(HomeState state, double gridWidth) {
+    final body = _blockBodySlivers(state, gridWidth);
+    if (body == null) return null;
+
+    final slivers = <Widget>[...body];
+    // 官方流尾（aes.xml/u4，type 199）三态文案；错误但页面已有内容时给
+    // 重试（loadMore 失败只把 hasMore 置 false，items 还在）。
+    if (state.isLoadMore) {
+      slivers.add(
+        SliverToBoxAdapter(
+          child: HomeStreamFooter.loading(onRetry: _maybeLoadMore),
+        ),
+      );
+    } else if (state.error != null && state.items.isNotEmpty) {
+      slivers.add(
+        SliverToBoxAdapter(
+          child: HomeStreamFooter.retry(onRetry: _maybeLoadMore),
+        ),
+      );
+    } else if (!state.hasMore) {
+      slivers.add(const SliverToBoxAdapter(child: HomeStreamFooter.done()));
+    }
+    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 84)));
+    return slivers;
+  }
+
+  /// The block pipeline's content slivers, reused verbatim while they still
+  /// describe the same cells, width and text scale.
+  ///
+  /// The stream footer and trailing spacer stay out of the cache: they follow
+  /// `isLoadMore` / `error` / `hasMore`, which flip on every pagination cycle —
+  /// exactly the rebuilds the cache exists to short-circuit.
+  List<Widget>? _blockBodySlivers(HomeState state, double gridWidth) {
     // 每个书城分类都渲染自己那份 `cell_data`（官方 `m0` 对 `tab_type` 一视
     // 同仁地建区块），所以这里不再只放行「推荐」。没带区块的分类照旧落到
     // 下面的旧管线，不会被空掉。
@@ -259,6 +306,22 @@ class _HomePageState extends ConsumerState<HomePage> {
       onOpenRankBoard: _openRanks,
       loadBoard: _loadRankPreview,
     );
+
+    final scaler = MediaQuery.textScalerOf(context);
+    final titleScale = scaler.scale(14);
+    final metaScale = scaler.scale(12);
+    final cached = _blocksBody;
+    if (cached != null &&
+        identical(_blocksCells, cells) &&
+        _blocksWidth == gridWidth &&
+        _blocksTitleScale == titleScale &&
+        _blocksMetaScale == metaScale) {
+      return cached;
+    }
+    _blocksCells = cells;
+    _blocksWidth = gridWidth;
+    _blocksTitleScale = titleScale;
+    _blocksMetaScale = metaScale;
 
     final slivers = <Widget>[];
     var rendered = false;
@@ -284,15 +347,21 @@ class _HomePageState extends ConsumerState<HomePage> {
         slivers.add(
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-            sliver: SliverGrid(
-              gridDelegate: homeBookGridDelegate(
-                context,
-                available: gridWidth - 12 * 2 + _gridPadding * 2,
-              ),
-              delegate: SliverChildBuilderDelegate((context, index) {
+            // 交错网格（官方 StaggeredFeedLayout）：无摘要/无标签的卡更短，
+            // 不再按最坏情况预留统一格高。
+            sliver: homeBookMasonry(
+              context,
+              childCount: entries.length,
+              itemBuilder: (context, index) {
                 final item = entries[index];
-                return HomeBookCard(item: item, onTap: () => _openItem(item));
-              }, childCount: entries.length),
+                // 挂 key：续播裁剪（snapshot sublist 丢前段卡）会让所有下标
+                // 移位，没有 key 时整屏卡片按位置错位重建。
+                return HomeBookCard(
+                  key: ValueKey('${item.kind}:${item.id}'),
+                  item: item,
+                  onTap: () => _openItem(item),
+                );
+              },
             ),
           ),
         );
@@ -300,26 +369,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       }
     }
     if (!rendered) return null;
-
-    // 官方流尾（aes.xml/u4，type 199）三态文案；错误但页面已有内容时给
-    // 重试（loadMore 失败只把 hasMore 置 false，items 还在）。
-    if (state.isLoadMore) {
-      slivers.add(
-        SliverToBoxAdapter(
-          child: HomeStreamFooter.loading(onRetry: _maybeLoadMore),
-        ),
-      );
-    } else if (state.error != null && state.items.isNotEmpty) {
-      slivers.add(
-        SliverToBoxAdapter(
-          child: HomeStreamFooter.retry(onRetry: _maybeLoadMore),
-        ),
-      );
-    } else if (!state.hasMore) {
-      slivers.add(const SliverToBoxAdapter(child: HomeStreamFooter.done()));
-    }
-    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 84)));
-    return slivers;
+    return _blocksBody = slivers;
   }
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {

@@ -1,10 +1,13 @@
 import 'dart:math' as math;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../../models/home_cell.dart';
 import '../../models/media_item.dart';
+import '../../services/poster_cache.dart';
 import 'home_cell_renderers.dart';
 import 'home_design.dart';
 
@@ -37,7 +40,11 @@ const double _blockBottomMargin = 14;
 // ── Rank block (`asb.xml`, `widge/o.java`) ─────────────────────────────────
 
 const double _rankStripHeight = 32;
-const double _rankStripTopMargin = 20;
+/// `asb.xml` 头部 `marginTop=20dp`。2026-10-24 用户拍板不对齐官方：
+/// 首页顶栏到排行榜条按视觉收紧，实测节奏（字形间距离）调到
+/// tab→榜名条 ~24dp < 榜名条→预览首行 ~16dp 的倒挂消失，行间 ~12dp。
+/// tab 条自身保留 bottomPadding=4 作为吸顶时与内容的缓冲。
+const double _rankStripTopMargin = 0;
 
 /// End margin of the title row (`asb.xml` `@id/ex` `layout_marginEnd="16dp"`),
 /// which is what separates the strip from 「更多」.
@@ -51,7 +58,9 @@ const double _rankStripItemInset = 8;
 const double _rankStripSelectedSize = 16;
 const double _rankStripIdleSize = 14;
 const double _rankStripIdleAlpha = 0.4;
-const double _rankStripContentGap = 8;
+/// 榜名条到预览首行的间距（`asb.xml` 为 8dp）。2026-10-24 用户拍板不对齐
+/// 官方：标题贴近内容，8 → 2（见 [_rankStripTopMargin] 的节奏说明）。
+const double _rankStripContentGap = 2;
 
 /// `o.getPages()` returns 4 (3 only for the oversized-font path).
 const int _rankRowsPerPage = 4;
@@ -145,39 +154,25 @@ const Color _cardDarkBg = Color(0xFF1C1C1C);
 const double _gridGap = 8;
 const double _gridRowGap = 8;
 
-/// Height of one card cell.
+/// The card stream as the official `StaggeredFeedLayout` shapes it.
 ///
-/// Cover (width × 1.4) + the text box; the score badge sits on the cover and
-/// adds no height. Follows the text scale so a large-font device clips
-/// nothing.
-double homeBookCardExtent(BuildContext context, {required double columnWidth}) {
-  final scaler = MediaQuery.textScalerOf(context);
-  final cover = columnWidth * _cardCoverHeightRatio;
-  final title = (scaler.scale(_cardTitleSize) + _cardTitleLineExtra) * 2;
-  final abstract =
-      (scaler.scale(_cardMetaSize) * _cardAbstractLineMultiply +
-          _cardAbstractLineExtra) *
-      2;
-  // 标签行：chip 高 = 12sp×1.2 + 2dp 垂直 padding，上面 4dp 间距。网格是
-  // 统一高度而约半数卡无标签——按有标签取高，无标签卡多 ~21dp 底部留白。
-  final tags = scaler.scale(_cardTagSize) * 1.2 + 2 + 4;
-  return cover +
-      _cardTextPadding.top +
-      title +
-      4 +
-      abstract +
-      tags +
-      _cardTextPadding.bottom;
-}
-
-/// Column width for a card block, given the width available to the cards.
-///
-/// Mirrors the grid math so [homeBookCardExtent] and the actual layout cannot
-/// disagree by a rounding step.
-double homeCardColumnWidth(BuildContext context, double available) {
-  final columns = homeColumnCount(context);
-  return (available - _gridGap * (columns - 1)) / columns;
-}
+/// `us3.a.r` renders 「猜你喜欢」 as a **staggered** grid (two columns on
+/// phones): each card takes its own height, so a card without an abstract or
+/// without tag chips is simply shorter. A uniform `mainAxisExtent` instead
+/// reserved the worst case — two-line abstract plus tag row — for every cell,
+/// leaving 30–50dp of dead space on roughly half the stream and stretching
+/// the feed's scroll length by the same amount.
+SliverMasonryGrid homeBookMasonry(
+  BuildContext context, {
+  required IndexedWidgetBuilder itemBuilder,
+  required int childCount,
+}) => SliverMasonryGrid.count(
+  crossAxisCount: homeColumnCount(context),
+  crossAxisSpacing: _gridGap,
+  mainAxisSpacing: _gridRowGap,
+  itemBuilder: itemBuilder,
+  childCount: childCount,
+);
 
 /// Columns for the card stream — a direct port of `us3.a.q()`.
 ///
@@ -209,23 +204,6 @@ int homeColumnCount(BuildContext context, {bool padAdapt = false}) {
   if (shortSide >= 516) return 3;
   return 2;
 }
-
-/// Grid delegate for callers that still render a real [SliverGrid].
-///
-/// `mainAxisExtent` tracks [homeColumnCount] and [available] so a wide screen
-/// neither stretches the columns nor keeps a phone-sized card height.
-SliverGridDelegate homeBookGridDelegate(
-  BuildContext context, {
-  required double available,
-}) => SliverGridDelegateWithFixedCrossAxisCount(
-  crossAxisCount: homeColumnCount(context),
-  crossAxisSpacing: _gridGap,
-  mainAxisSpacing: _gridRowGap,
-  mainAxisExtent: homeBookCardExtent(
-    context,
-    columnWidth: homeCardColumnWidth(context, available),
-  ),
-);
 
 /// 「更多」 on a block header: 14sp label plus the 4×7 arrow (`asb.xml`).
 class HomeBlockMore extends StatelessWidget {
@@ -691,17 +669,30 @@ class _Cover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final fallback = ColoredBox(color: palette.soft);
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: SizedBox(
         width: width,
         height: height,
         child: url.isEmpty
-            ? ColoredBox(color: palette.soft)
-            : Image.network(
-                url,
+            ? fallback
+            : CachedNetworkImage(
+                // 同一张封面在旧管线（StoryCover）走 PosterCache 磁盘缓存
+                // 并按格子尺寸解码；裸 Image.network 只有内存缓存且按原图
+                // 分辨率解码，冷启动全量重下、快速滑动时反复重解码。
+                cacheManager: PosterCache.instance,
+                imageUrl: url,
                 fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => ColoredBox(color: palette.soft),
+                memCacheWidth:
+                    (width * MediaQuery.devicePixelRatioOf(context))
+                        .ceil()
+                        .clamp(1, 1200),
+                fadeInDuration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                placeholder: (_, _) => fallback,
+                errorWidget: (_, _, _) => fallback,
               ),
       ),
     );
