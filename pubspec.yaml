@@ -1,5 +1,5 @@
 name: fqapp
-description: "A new Flutter project."
+description: "什锦铺 — 小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
