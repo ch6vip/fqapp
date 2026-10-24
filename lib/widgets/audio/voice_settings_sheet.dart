@@ -45,11 +45,13 @@ class VoiceSettingsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: palette.canvas,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+    // 弹层要自己和听书页分开：深色 / OLED 取 surface + 上缘发丝线，
+    // 纯黑画布上的 barrier 变暗不起作用。
+    return Material(
+      key: const Key('voice_settings_surface'),
+      color: homeSheetColor(palette),
+      clipBehavior: Clip.antiAlias,
+      shape: homeSheetShape(palette, top: 16),
       child: SafeArea(
         top: false,
         child: Column(

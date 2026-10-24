@@ -14,12 +14,12 @@ Future<Chapter?> showDetailDirectory(
   context: context,
   isScrollControlled: true,
   useSafeArea: true,
-  backgroundColor: HomePalette.of(context).canvas,
+  // 与听书页同一规则：深色 / OLED 弹层取 surface + 发丝边，否则 barrier
+  // 在纯黑画布上叠不出变暗，弹层和详情页连成一片。
+  backgroundColor: homeSheetColor(HomePalette.of(context)),
   barrierColor: Colors.black.withValues(alpha: 0.42),
   clipBehavior: Clip.antiAlias,
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-  ),
+  shape: homeSheetShape(HomePalette.of(context), top: 28),
   sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
       ? AnimationStyle.noAnimation
       : const AnimationStyle(

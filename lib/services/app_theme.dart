@@ -1,6 +1,9 @@
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:flutter/material.dart';
 
 /// Persisted theme-mode preference key: 'theme_mode' = 'light'|'dark'|'system'.
+/// 墨水屏是第四种外观，单独存 [einkModeKey]。
 const themeModeKey = 'theme_mode';
 
 /// Brand seed color for the whole app (also used by the player slider and
@@ -14,13 +17,47 @@ final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier(
 );
 
 /// Persisted e-ink mode key: 'eink_mode' = bool.
-/// #15/#9：墨水屏模式。开启时全应用纯黑白、无毛玻璃、无过渡动画，
-/// 避免墨水屏量化灰阶 / 残影。关闭后恢复原主题。
+/// #15/#9：墨水屏模式（设置 → 外观 → 主题模式的第四项）。开启时全应用
+/// 纯黑白、无毛玻璃、无过渡动画，避免墨水屏量化灰阶 / 残影。切回其它
+/// 主题即恢复。
 const einkModeKey = 'eink_mode';
 
 /// Global e-ink mode notifier; the settings page writes it, MaterialApp
 /// rebuilds with the e-ink theme.
 final ValueNotifier<bool> einkModeNotifier = ValueNotifier(false);
+
+/// Persisted OLED pure-black key: 'oled_mode' = bool.
+/// OLED 模式：大面积底色用纯黑省电；卡片 / 弹层等交互表面保持近黑 + 描边，
+/// 避免纯黑把文字、图标和纯黑海报一起吞掉。只在深色外观下生效（跟随系统
+/// 时看系统亮度），与墨水屏互斥。
+const oledModeKey = 'oled_mode';
+
+/// Global OLED mode notifier; the settings page writes it, MaterialApp
+/// rebuilds with the pure-black palette.
+final ValueNotifier<bool> oledModeNotifier = ValueNotifier(false);
+
+/// 当前外观实际是不是深色：墨水屏恒为浅色（纯黑白），跟随系统时取系统亮度。
+/// [systemBrightness] 供设置页传入 `MediaQuery.platformBrightnessOf(context)`，
+/// 这样系统切换深浅色时页面会跟着重建；其余调用方省略即可。
+bool isDarkAppearance({Brightness? systemBrightness}) {
+  if (einkModeNotifier.value) return false;
+  switch (themeModeNotifier.value) {
+    case ThemeMode.light:
+      return false;
+    case ThemeMode.dark:
+      return true;
+    case ThemeMode.system:
+      return (systemBrightness ??
+              PlatformDispatcher.instance.platformBrightness) ==
+          Brightness.dark;
+  }
+}
+
+/// OLED 纯黑当前是否生效：开关打开并且外观确实处于深色。深色以外的外观
+/// 忽略该开关，阅读页 / 首页色板都按它取纯黑白板。
+bool oledActive({Brightness? systemBrightness}) =>
+    oledModeNotifier.value &&
+    isDarkAppearance(systemBrightness: systemBrightness);
 
 /// No page transition: e-ink screens ghost on every animated frame, so
 /// route changes must swap instantly instead of sliding / fading.
@@ -186,21 +223,33 @@ class AppTheme {
   static ThemeData createTheme(
     Brightness brightness, {
     bool einkMode = false,
+    bool oledMode = false,
   }) {
     if (einkMode) return _createEinkTheme();
     final isDark = brightness == Brightness.dark;
+    // OLED 纯黑只在深色下成立；浅色模式忽略该开关。
+    final oled = oledMode && isDark;
     final primary = isDark ? accentDark : accent;
-    final canvas = isDark ? const Color(0xFF151517) : const Color(0xFFFCFAF7);
-    final surface = isDark ? const Color(0xFF242427) : Colors.white;
-    final surfaceContainerLow =
-        isDark ? const Color(0xFF1C1C1F) : const Color(0xFFF7F5F0);
-    final surfaceContainer =
-        isDark ? const Color(0xFF242428) : const Color(0xFFF2EFE9);
-    final surfaceContainerHigh =
-        isDark ? const Color(0xFF2C2C32) : const Color(0xFFEBE7DF);
+    final canvas = oled
+        ? Colors.black
+        : (isDark ? const Color(0xFF151517) : const Color(0xFFFCFAF7));
+    final surface = oled
+        ? const Color(0xFF0C0C0E)
+        : (isDark ? const Color(0xFF242427) : Colors.white);
+    final surfaceContainerLow = oled
+        ? const Color(0xFF121215)
+        : (isDark ? const Color(0xFF1C1C1F) : const Color(0xFFF7F5F0));
+    final surfaceContainer = oled
+        ? const Color(0xFF17171A)
+        : (isDark ? const Color(0xFF242428) : const Color(0xFFF2EFE9));
+    final surfaceContainerHigh = oled
+        ? const Color(0xFF1F1F23)
+        : (isDark ? const Color(0xFF2C2C32) : const Color(0xFFEBE7DF));
     final ink = isDark ? const Color(0xFFF5F1EB) : const Color(0xFF262522);
     final muted = isDark ? const Color(0xFFA7A39E) : const Color(0xFF706C66);
-    final line = isDark ? const Color(0xFF333336) : const Color(0xFFE8E4DE);
+    final line = oled
+        ? const Color(0xFF2E2E34)
+        : (isDark ? const Color(0xFF333336) : const Color(0xFFE8E4DE));
 
     final scheme = ColorScheme(
       brightness: brightness,
@@ -220,15 +269,21 @@ class AppTheme {
       onTertiary: Colors.white,
       surface: surface,
       onSurface: ink,
-      surfaceContainerLowest: isDark ? const Color(0xFF0F0F11) : Colors.white,
+      surfaceContainerLowest: oled
+          ? Colors.black
+          : (isDark ? const Color(0xFF0F0F11) : Colors.white),
       surfaceContainerLow: surfaceContainerLow,
       surfaceContainer: surfaceContainer,
       surfaceContainerHigh: surfaceContainerHigh,
-      surfaceContainerHighest:
-          isDark ? const Color(0xFF34343A) : const Color(0xFFE4DFD6),
+      surfaceContainerHighest: oled
+          ? const Color(0xFF27272C)
+          : (isDark ? const Color(0xFF34343A) : const Color(0xFFE4DFD6)),
       onSurfaceVariant: muted,
-      outline: isDark ? const Color(0xFF7A7670) : const Color(0xFF9E9A92),
-      outlineVariant: line,
+      outline: oled
+          ? const Color(0xFF8A867F)
+          : (isDark ? const Color(0xFF7A7670) : const Color(0xFF9E9A92)),
+      // 描边比卡片底色亮一档：纯黑画布上仍能看出卡片 / 弹层边界。
+      outlineVariant: oled ? const Color(0xFF3F3F47) : line,
       error: isDark ? const Color(0xFFFFB4AB) : const Color(0xFFBA1A1A),
       onError: isDark ? const Color(0xFF690005) : Colors.white,
       errorContainer:

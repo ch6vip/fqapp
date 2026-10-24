@@ -6,6 +6,7 @@ import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/native_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -223,6 +224,33 @@ void main() {
       expect(session.store.entry?['completed'], true);
     },
   );
+
+  testWidgets('the playback settings sheet separates itself from the page', (
+    tester,
+  ) async {
+    themeModeNotifier.value = ThemeMode.dark;
+    oledModeNotifier.value = true;
+    addTearDown(() {
+      oledModeNotifier.value = false;
+      themeModeNotifier.value = ThemeMode.system;
+    });
+    final session = _Session();
+    await _mount(
+      tester,
+      session,
+      theme: AppTheme.createTheme(Brightness.dark, oledMode: true),
+    );
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+
+    final sheet = tester.widget<BottomSheet>(find.byType(BottomSheet));
+    // 听书页是纯黑画布，barrier 叠在上面不会变暗；弹层必须比画布高一档，
+    // 再加一圈发丝线，才能看出设置和听书页的分界。
+    expect(sheet.backgroundColor, const Color(0xFF0C0C0E));
+    final shape = sheet.shape! as RoundedRectangleBorder;
+    expect(shape.side.width, 0.8);
+    expect(shape.side.color.a, closeTo(0.8, 0.01));
+  });
 
   testWidgets(
     'completed history stays paused and replays only when requested',
@@ -867,7 +895,11 @@ Future<void> _unmount(WidgetTester tester) async {
   await _flush(tester);
 }
 
-Future<void> _mount(WidgetTester tester, _Session session) async {
+Future<void> _mount(
+  WidgetTester tester,
+  _Session session, {
+  ThemeData? theme,
+}) async {
   await tester.binding.setSurfaceSize(const Size(430, 932));
   tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   addTearDown(() async {
@@ -875,7 +907,7 @@ Future<void> _mount(WidgetTester tester, _Session session) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.binding.setSurfaceSize(null);
   });
-  await tester.pumpWidget(session.app());
+  await tester.pumpWidget(session.app(theme: theme));
   await _flush(tester);
 }
 
@@ -937,7 +969,8 @@ class _Session {
                Chapter(itemId: '$index', title: '第$index章', volumeName: '第一卷'),
            ];
 
-  Widget app() => MaterialApp(
+  Widget app({ThemeData? theme}) => MaterialApp(
+    theme: theme,
     home: AudioPage(
       bookId: 'book',
       title: '测试听书',

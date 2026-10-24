@@ -1163,10 +1163,10 @@ class _AudioPageState extends State<AudioPage> {
     final palette = HomePalette.of(context);
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: palette.canvas,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      // 深色 / OLED 下弹层取 surface：barrier 在纯黑画布上叠不出变暗，
+      // 用 canvas 会和听书页连成一片，看不出弹层上缘。
+      backgroundColor: homeSheetColor(palette),
+      shape: homeSheetShape(palette, top: 24),
       showDragHandle: false,
       builder: (context) {
         final palette = HomePalette.of(context);
@@ -1208,7 +1208,7 @@ class _AudioPageState extends State<AudioPage> {
                 ),
                 const SizedBox(height: 12),
                 Material(
-                  color: palette.surface,
+                  color: homeSheetCardColor(palette),
                   borderRadius: BorderRadius.circular(18),
                   clipBehavior: Clip.antiAlias,
                   child: Container(

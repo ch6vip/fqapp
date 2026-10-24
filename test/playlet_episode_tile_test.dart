@@ -42,7 +42,8 @@ void main() {
     expect(EpisodeTileState.watched.textColor, const Color(0x66000000));
     expect(EpisodeTileState.disabled.textColor, const Color(0x33000000));
     // 普通=浅色皮肤的 normal_light（skin_color_black_light=#FF000000）；
-    // 深肤变体 #CCFFFFFF 配深色面板，本面板固定白底。
+    // 深肤变体 #CCFFFFFF 配深色面板，本面板深色改走色板色（见
+    // _episodeTextColor），浅色仍是白底黑字。
     expect(EpisodeTileState.normal.textColor, const Color(0xFF000000));
     expect(EpisodeTileState.normal.backgroundColor, const Color(0x08000000));
   });
@@ -92,7 +93,10 @@ void main() {
   });
 
   test('the directory item_status also marks an episode as unplayable', () {
-    final episode = Episode.fromRaw({'item_id': 'v1', 'item_status': 2}, index: 0);
+    final episode = Episode.fromRaw({
+      'item_id': 'v1',
+      'item_status': 2,
+    }, index: 0);
     expect(episode.disabled, isTrue);
   });
 
@@ -118,12 +122,7 @@ void main() {
     final selected = <int>[];
     final episodes = [
       Chapter(itemId: 'v1', title: '第 1 集', volumeName: '剧集'),
-      Chapter(
-        itemId: 'v2',
-        title: '第 2 集',
-        volumeName: '剧集',
-        disabled: true,
-      ),
+      Chapter(itemId: 'v2', title: '第 2 集', volumeName: '剧集', disabled: true),
       Chapter(
         itemId: 'v3',
         title: '第 3 集',
