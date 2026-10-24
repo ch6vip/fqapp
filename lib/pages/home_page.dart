@@ -4,18 +4,24 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/home_cell.dart';
 import '../models/media_item.dart';
+import '../models/search_discovery.dart';
+import '../services/api_client.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
-import '../widgets/home/ambient_backdrop.dart';
+import '../widgets/home/home_cell_blocks.dart';
+import '../widgets/home/home_cell_renderers.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 import '../widgets/home/home_hero.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_skeleton.dart';
 import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
+import 'category_page.dart';
 import 'detail_page.dart';
 import 'cached_book_reader.dart';
 import 'rank_page.dart';
@@ -28,6 +34,7 @@ class HomePage extends ConsumerStatefulWidget {
     this.cacheStore,
     this.readerStore,
     this.scrollController,
+    this.cueLoader,
   });
 
   final ChapterCache? cacheStore;
@@ -41,11 +48,19 @@ class HomePage extends ConsumerStatefulWidget {
   /// 使用不受影响。
   final ScrollController? scrollController;
 
+  /// 搜索框热搜词来源，由壳层注入（生产接 `ApiClient.searchCue`）。
+  ///
+  /// 注入而不是页内直连，与 [SearchPage] 的 `hotSearchLoader` 同一规矩：
+  /// 页面测试不落网络（ApiClient 的超时是 20s Timer，挂进测试必炸）。
+  final Future<SearchCue> Function()? cueLoader;
+
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
+  /// 旧编辑式布局的副标题（已不再用于首屏：官方书城区块自带 `bqe.xml`
+  /// 头部，没有这种一句文案）。保留是因为 fallback 网格仍会用到。
   static const _captions = [
     '换个故事，换一种心情',
     '翻开之后，就舍不得合上',
@@ -134,9 +149,19 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   List<MediaItem> _visibleItems(HomeState state) {
     if (state.tabIndex == 0) return state.items;
-    final kind = HomeNotifier.tabKinds[homeCategories[state.tabIndex].label];
+    final kind = ref
+        .read(homeProvider.notifier)
+        .identityOf(state.tabIndex)
+        .kind;
     return state.items.where((item) => item.kind == kind).toList();
   }
+
+  /// 顶栏分类：固定用本地六分类（推荐/小说/短剧/漫剧/漫画/听书）。
+  ///
+  /// 2026-10-24 用户决定回退服务端 11 项方案——服务端表没有「短剧/漫剧」，
+  /// 跨媒介入口只能本地给；点击身份由 `homeProvider` 的 `usesLocalTabs`
+  /// 本地表驱动，与这里的下标一一对应。
+  List<HomeCategory> _categoriesOf(HomeState state) => homeCategories;
 
   @override
   Widget build(BuildContext context) {
@@ -147,87 +172,168 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     return Scaffold(
       backgroundColor: palette.canvas,
-      body: Stack(
-        children: [
-          Positioned.fill(child: AmbientBackdrop(scroll: _scroll)),
-          Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: isWindowsDesktop ? 1440 : 840,
-              ),
-              child: SafeArea(
-                bottom: false,
-                child: state.error != null && state.items.isEmpty
-                    ? HomeFeedError(
-                        headline: '故事还在路上',
-                        message: '暂时无法加载推荐，稍后再试一次。',
-                        detail: state.error!,
-                        onRetry: notifier.load,
-                      )
-                    : RefreshIndicator(
-                        color: HomePalette.accent,
-                        backgroundColor: palette.surface,
-                        onRefresh: notifier.load,
-                        // The grid used to measure itself from inside a sliver
-                        // (SliverLayoutBuilder). A sliver's constraints carry
-                        // the scroll offset, so they differ on every scroll
-                        // frame -- which re-ran the builder, handed the sliver
-                        // a fresh SliverChildBuilderDelegate, and rebuilt every
-                        // visible card for the whole duration of the scroll.
-                        // Measuring once here keeps the grid out of the scroll
-                        // path completely.
-                        child: LayoutBuilder(
-                          builder: (context, constraints) => CustomScrollView(
-                            key: const Key('home_feed'),
-                            controller: _scroll,
-                            physics: const BouncingScrollPhysics(
-                              parent: AlwaysScrollableScrollPhysics(),
-                            ),
-                            slivers: [
-                              SliverToBoxAdapter(
-                                child: HomeHero(
-                                  onSearch: _openSearch,
-                                  onRanks: _openRanks,
-                                  onRefresh: notifier.load,
-                                  refreshing: state.isLoading,
-                                ),
-                              ),
-                              SliverPersistentHeader(
-                                pinned: true,
-                                delegate: HomeTabBarDelegate(
-                                  selectedIndex: state.tabIndex,
-                                  onSelect: notifier.selectTab,
-                                  extent: 54 + (textScale - 1).clamp(0, 2) * 20,
-                                  dark: palette.dark,
-                                ),
-                              ),
-                              ..._contentSlivers(
-                                state,
-                                constraints.maxWidth - _gridPadding * 2,
-                              ),
-                            ],
-                          ),
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: isWindowsDesktop ? 1440 : 840),
+          child: SafeArea(
+            bottom: false,
+            child: state.error != null && state.items.isEmpty
+                ? HomeFeedError(
+                    headline: '故事还在路上',
+                    message: '暂时无法加载推荐，稍后再试一次。',
+                    detail: state.error!,
+                    onRetry: notifier.load,
+                  )
+                : RefreshIndicator(
+                    color: HomePalette.accent,
+                    backgroundColor: palette.surface,
+                    onRefresh: notifier.load,
+                    // The grid used to measure itself from inside a sliver
+                    // (SliverLayoutBuilder). A sliver's constraints carry
+                    // the scroll offset, so they differ on every scroll
+                    // frame -- which re-ran the builder, handed the sliver
+                    // a fresh SliverChildBuilderDelegate, and rebuilt every
+                    // visible card for the whole duration of the scroll.
+                    // Measuring once here keeps the grid out of the scroll
+                    // path completely.
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => CustomScrollView(
+                        key: const Key('home_feed'),
+                        controller: _scroll,
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
                         ),
+                        slivers: [
+                          SliverToBoxAdapter(
+                            child: HomeHero(
+                              onSearch: _openSearch,
+                              onCategory: _openCategory,
+                              cueLoader: widget.cueLoader,
+                            ),
+                          ),
+                          SliverPersistentHeader(
+                            pinned: true,
+                            delegate: HomeTabBarDelegate(
+                              selectedIndex: state.tabIndex,
+                              onSelect: notifier.selectTab,
+                              categories: _categoriesOf(state),
+                              extent:
+                                  HomeTabBarDelegate.barHeight +
+                                  HomeTabBarDelegate.bottomPadding +
+                                  (textScale - 1).clamp(0, 2) * 16,
+                              dark: palette.dark,
+                            ),
+                          ),
+                          ..._contentSlivers(
+                            state,
+                            constraints.maxWidth - _gridPadding * 2,
+                          ),
+                        ],
                       ),
-              ),
-            ),
+                    ),
+                  ),
           ),
-        ],
+        ),
       ),
     );
   }
 
+  /// Renders the page as upstream blocks, or null to keep the flat grid.
+  ///
+  /// Only the "全部" tab carries blocks (`tab_type=2`), and only when at least
+  /// one block type has a widget. Returning null leaves the previous pipeline —
+  /// and therefore the previous look — completely untouched.
+  ///
+  /// This replaces the cross-media interleave that used to mix recommendations
+  /// with drama/comic/audio search results: the official bookstore tab shows
+  /// its own blocks and nothing else, so those other sources stay in their own
+  /// tabs.
+  List<Widget>? _blockSlivers(HomeState state, double gridWidth) {
+    // 每个书城分类都渲染自己那份 `cell_data`（官方 `m0` 对 `tab_type` 一视
+    // 同仁地建区块），所以这里不再只放行「推荐」。没带区块的分类照旧落到
+    // 下面的旧管线，不会被空掉。
+    final cells = state.cells;
+    if (cells.isEmpty) return null;
+    registerDefaultHomeCells(
+      onOpenRankBoard: _openRanks,
+      loadBoard: _loadRankPreview,
+    );
+
+    final slivers = <Widget>[];
+    var rendered = false;
+    for (final cell in cells) {
+      // 只有真拿到 widget 才算处理过。handles() 为真但 build() 返回 null 时
+      // 要落到下面的 grid 分支，否则这个块会被静默跳过——首页曾因此只显示
+      // 排行榜、整段「猜你喜欢」消失。
+      final custom = HomeCellRenderers.handles(cell.showType)
+          ? HomeCellRenderers.build(context, cell, onOpen: _openItem)
+          : null;
+      if (custom != null) {
+        slivers.add(SliverToBoxAdapter(child: custom));
+        rendered = true;
+        continue;
+      }
+      if (isHomeGridBlock(cell)) {
+        // 官方的卡片流不装在白色区块卡里：卡片直接铺在 #F6F6F6 画布上，
+        // 外边距 12dp、列间距 8dp、行距 8dp（源码级：DoubleRowMarginConfig
+        // 默认 8/12 + ta5/j decoration + k1:1247 容器 padding），流也没有
+        // 自己的标题和「更多书籍信息」条。顶距 0——385 强制隐藏标题/筛选
+        // 时 feed 侧 top inset 就是 0（k1.java h3() → i(0)）。
+        final entries = homeCellEntries(cell);
+        slivers.add(
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+            sliver: SliverGrid(
+              gridDelegate: homeBookGridDelegate(
+                context,
+                available: gridWidth - 12 * 2 + _gridPadding * 2,
+              ),
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final item = entries[index];
+                return HomeBookCard(item: item, onTap: () => _openItem(item));
+              }, childCount: entries.length),
+            ),
+          ),
+        );
+        rendered = true;
+      }
+    }
+    if (!rendered) return null;
+
+    // 官方流尾（aes.xml/u4，type 199）三态文案；错误但页面已有内容时给
+    // 重试（loadMore 失败只把 hasMore 置 false，items 还在）。
+    if (state.isLoadMore) {
+      slivers.add(
+        SliverToBoxAdapter(
+          child: HomeStreamFooter.loading(onRetry: _maybeLoadMore),
+        ),
+      );
+    } else if (state.error != null && state.items.isNotEmpty) {
+      slivers.add(
+        SliverToBoxAdapter(
+          child: HomeStreamFooter.retry(onRetry: _maybeLoadMore),
+        ),
+      );
+    } else if (!state.hasMore) {
+      slivers.add(const SliverToBoxAdapter(child: HomeStreamFooter.done()));
+    }
+    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 84)));
+    return slivers;
+  }
+
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
+    final blocks = _blockSlivers(state, gridWidth);
+    if (blocks != null) return blocks;
     final items = _visibleItems(state);
     if (items.isEmpty) {
       if (state.isLoading || state.hasMore) {
         if (!state.isLoading) {
           WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
         }
-        return const [
-          SliverToBoxAdapter(child: HomeFeedLoading(message: '正在寻找好故事')),
-        ];
+        // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
+        // paints the skeleton rather than a spinner.
+        return const [SliverToBoxAdapter(child: HomeSkeleton())];
       }
       return [
         SliverFillRemaining(
@@ -264,10 +370,8 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (rest.isNotEmpty) ...[
         SliverToBoxAdapter(
           child: HomeSectionHeader(
-            title: state.tabIndex == 0
-                ? '发现更多好故事'
-                : '值得一看的${homeCategories[state.tabIndex].label}',
-            subtitle: _captions[state.tabIndex],
+            title: '值得一看',
+            subtitle: _captions[state.tabIndex % _captions.length],
           ),
         ),
         _gridSliverFor(state, rest, gridWidth),
@@ -361,6 +465,16 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// 官方搜索行右上角的「分类」入口（`alx.xml` `i_y`）。官方点它走
+  /// `turnToCategoryTab` → `//category` 路由（`BookCategoryActivity` →
+  /// `KmpCategoryFragment`）；这里打开同结构的分类页。
+  void _openCategory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CategoryPage()),
+    );
+  }
+
   /// The rank board. Its catalogue (and the rank id the entries endpoint needs)
   /// only exist inside the novel homepage response the app already fetches.
   ///
@@ -371,6 +485,22 @@ class _HomePageState extends ConsumerState<HomePage> {
       context,
       MaterialPageRoute(builder: (_) => const RankPage()),
     );
+  }
+
+  /// Reloads the homepage rank preview for one board.
+  ///
+  /// Official flow: `RankMixContentHolder.K7` fetches the picked board through
+  /// the same rank endpoint and swaps the preview in place, so the page stays
+  /// put. Only the first page is needed — the preview shows four rows.
+  Future<List<MediaItem>> _loadRankPreview(String rankId, int algo) async {
+    final board = await ApiClient.instance.rankBoard(
+      rankId: rankId,
+      algo: algo,
+    );
+    return [
+      for (final entry in board.entries)
+        if (entry.id.isNotEmpty) entry.toMediaItem(),
+    ];
   }
 
   void _openItem(MediaItem item) {

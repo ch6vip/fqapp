@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'home_design.dart';
 
@@ -11,24 +10,51 @@ class HomeCategory {
 }
 
 const homeCategories = [
-  HomeCategory('推荐', LucideIcons.sparkles),
-  HomeCategory('小说', LucideIcons.book_open),
-  HomeCategory('短剧', LucideIcons.clapperboard),
-  HomeCategory('漫剧', LucideIcons.film),
-  HomeCategory('漫画', LucideIcons.image),
-  HomeCategory('听书', LucideIcons.headphones),
+  HomeCategory('推荐', Icons.circle),
+  HomeCategory('小说', Icons.circle),
+  HomeCategory('短剧', Icons.circle),
+  HomeCategory('漫剧', Icons.circle),
+  HomeCategory('漫画', Icons.circle),
+  HomeCategory('听书', Icons.circle),
 ];
 
+/// 官方书城顶部 tab 条（`res/layout/alx.xml` 的 `SlidingTabLayout aj0`）。
+///
+/// 尺寸全部取自反编译布局，不是估计值：
+/// * 高度 38dp，paddingBottom 10dp；
+/// * paddingStart 20dp / paddingEnd 13dp；
+/// * 选中字号 `av5` = 24sp，未选中字号 `avq` = 16sp；
+/// * 选中色 `aui` 与未选中色 `avn` 都是 `skin_color_black_light`(#000000)
+///   —— 官方不靠颜色区分，只靠字号、字重（两态都粗体）和未选中 0.4 透明度；
+/// * tab 间距 `avb` = 20dp（`SlidingTabLayout.O()` 里
+///   `setMargins(0, 0, this.K, 0)`，`this.K` 就是 `avb`），tab 高 `avc` = 34dp；
+/// * 指示器：`aup` = 0dp（高度 0）。`onDraw` 里 `if (this.s > 0.0f)` 才绘制，
+///   所以官方书城顶栏**没有下划线**。`auw` = 16dp 是宽度，高度为 0 时无效。
+///
+/// 上一版是圆角胶囊 + 图标 + 橙色选中底，和官方完全不是一种东西。
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
+  static const double barHeight = 38;
+  static const double bottomPadding = 10;
+  static const double selectedSize = 24;
+  static const double unselectedSize = 16;
+  static const double tabSpacing = 20;
+
+  /// 未选中项的透明度 `avr`（`SlidingTabLayout.a6`，`L2048 getFloat(55, 0.4f)`）。
+  static const double unselectedAlpha = 0.4;
+
   final int selectedIndex;
   final ValueChanged<int> onSelect;
+
+  /// 顶栏分类。服务端下发 `tab_item` 时用服务端的，否则用 [homeCategories]。
+  final List<HomeCategory> categories;
   final double extent;
   final bool dark;
 
   HomeTabBarDelegate({
     required this.selectedIndex,
     required this.onSelect,
-    this.extent = 54,
+    this.categories = homeCategories,
+    this.extent = barHeight + bottomPadding,
     this.dark = false,
   });
 
@@ -47,82 +73,58 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     final palette = HomePalette.of(context);
     final duration = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
-        : const Duration(milliseconds: 200);
+        : const Duration(milliseconds: 180);
+    // pinned header 的 layoutExtent 必须等于 extent，否则 Flutter 报
+    // "layoutExtent exceeds paintExtent"。字号随 textScale 长大时 extent
+    // 同步变大，所以这里的高度必须从 extent 反推，不能用写死的 38。
+    final rowHeight = (extent - bottomPadding).clamp(barHeight, 200.0);
 
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.canvas,
-        border: Border(
-          bottom: BorderSide(
-            color: palette.line.withValues(alpha: 0.5),
-            width: 0.6,
-          ),
-        ),
-      ),
-      child: Center(
+      decoration: BoxDecoration(color: palette.canvas),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: bottomPadding),
         child: SizedBox(
-          height: 38,
+          height: rowHeight,
           child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.only(left: 20, right: 13),
             scrollDirection: Axis.horizontal,
-            itemCount: homeCategories.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 6),
+            itemCount: categories.length,
+            separatorBuilder: (_, _) => const SizedBox(width: tabSpacing),
             itemBuilder: (context, index) {
               final selected = index == selectedIndex;
-              final category = homeCategories[index];
+              final category = categories[index];
               return Semantics(
                 selected: selected,
                 button: true,
                 label: category.label,
                 excludeSemantics: true,
                 onTap: () => onSelect(index),
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    key: ValueKey('home_category_$index'),
-                    onTap: () => onSelect(index),
-                    borderRadius: BorderRadius.circular(19),
-                    child: AnimatedContainer(
-                      duration: duration,
-                      curve: Curves.easeOutCubic,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? HomePalette.accent
-                            : palette.soft.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(19),
-                        boxShadow: selected
-                            ? [
-                                BoxShadow(
-                                  color: HomePalette.accent.withValues(alpha: 0.28),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ]
-                            : null,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            category.icon,
-                            size: 14,
-                            color: selected ? Colors.white : palette.muted,
+                child: GestureDetector(
+                  key: ValueKey('home_category_$index'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onSelect(index),
+                  // 官方书城顶栏不画指示器：`alx.xml` 把 `aup`(指示器高度)
+                  // 设成 0，`SlidingTabLayout.onDraw` 只在 `s > 0` 时绘制。
+                  //
+                  // 选中态只差「字号 + 透明度」：`s0()` 对每一项都调
+                  // `setTypeface(a(1))`（`R5 = getInt(53, 2)` 让 `z` 恒为真），
+                  // 所以两态都是粗体；未选中项再叠加 `alpha = a6` = 0.4
+                  // （`avr`，`L2048 getFloat(55, 0.4f)`）。
+                  child: SizedBox(
+                    height: rowHeight,
+                    child: Center(
+                      child: AnimatedDefaultTextStyle(
+                        duration: duration,
+                        curve: Curves.easeOutCubic,
+                        style: TextStyle(
+                          fontSize: selected ? selectedSize : unselectedSize,
+                          fontWeight: FontWeight.w700,
+                          color: palette.ink.withValues(
+                            alpha: selected ? 1 : unselectedAlpha,
                           ),
-                          const SizedBox(width: 5),
-                          AnimatedDefaultTextStyle(
-                            duration: duration,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight:
-                                  selected ? FontWeight.w700 : FontWeight.w500,
-                              color: selected ? Colors.white : palette.ink,
-                              letterSpacing: 0.2,
-                            ),
-                            child: Text(category.label),
-                          ),
-                        ],
+                          height: 1,
+                        ),
+                        child: Text(category.label),
                       ),
                     ),
                   ),
@@ -142,5 +144,6 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
       selectedIndex != oldDelegate.selectedIndex ||
       extent != oldDelegate.extent ||
       onSelect != oldDelegate.onSelect ||
+      categories != oldDelegate.categories ||
       dark != oldDelegate.dark;
 }

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../models/audio_extra.dart';
+import '../models/home_cell.dart';
 import '../models/author_profile.dart';
 import '../models/backend_resource_url.dart';
 import '../models/book_comment.dart';
@@ -20,6 +21,7 @@ import '../models/media_id.dart';
 import '../models/playlet_comment.dart';
 import '../models/rank.dart';
 import '../models/related_series.dart';
+import '../models/category_front.dart';
 import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
 import 'app_log.dart';
@@ -32,15 +34,57 @@ import 'request_gate.dart';
 /// callers update the feed atomically after checking that the request is
 /// still current.
 class HomepagePage {
+  /// Flat card list, in document order. Still the primary path: every caller
+  /// that just wants cards keeps using this.
   final List<MediaItem> items;
+
+  /// Same page, but keeping the upstream block boundaries.
+  ///
+  /// Empty when the payload had no recognisable blocks (or an older backend
+  /// answered), so a renderer that wants blocks can fall back to [items]
+  /// instead of showing nothing. See [HomeCell] for why the boundaries matter.
+  final List<HomeCell> cells;
+
   final int? nextOffset;
   final String? sessionId;
+
+  /// 服务端本次下发的一级分类（`data.tab_item` 逐条的 `tab_type` / `title`）。
+  ///
+  /// 官方书城顶部的 tab 条不是写死的：`tab_item` 里每一条就是一个 tab，
+  /// 名字取服务端的 `title`、身份取 `tab_type`（官方 `BaseBookMallFragment`
+  /// 的 `f()` 返回 `getTabType()`，`n()` 返回 `getTabName()`）。本地此前硬编码
+  /// 了 6 个跨媒介分类，既缺官方实际下发的「经典/知识/短篇/新书/商城」，
+  /// 又编了一个服务端根本没有的「漫剧」，所以顶栏怎么调都不像官方。
+  ///
+  /// 空表示这次响应没带 `tab_item`（老后端或非首页接口），调用方应退回
+  /// 本地兜底表。
+  final List<HomeTabItem> tabs;
 
   const HomepagePage({
     required this.items,
     required this.nextOffset,
     required this.sessionId,
+    this.cells = const [],
+    this.tabs = const [],
   });
+}
+
+/// 服务端下发的一个一级分类（`data.tab_item` 的一项）。
+class HomeTabItem {
+  final int type;
+  final String title;
+
+  const HomeTabItem({required this.type, required this.title});
+
+  @override
+  bool operator ==(Object other) =>
+      other is HomeTabItem && other.type == type && other.title == title;
+
+  @override
+  int get hashCode => Object.hash(type, title);
+
+  @override
+  String toString() => 'HomeTabItem($type, $title)';
 }
 
 /// API client talking to the local Rust core.
@@ -306,10 +350,8 @@ class ApiClient {
   /// the chapter list arrives as `data.item_data_list` instead of the bridge's
   /// pre-flattened `data.data.chapterListWithVolume` - [parseDirectory] accepts
   /// both.
-  String _directoryUrl(String bookId, String tab) => _url(
-    '/api/v1/books/${Uri.encodeComponent(bookId)}/directory',
-    const {},
-  );
+  String _directoryUrl(String bookId, String tab) =>
+      _url('/api/v1/books/${Uri.encodeComponent(bookId)}/directory', const {});
 
   /// Search across content types (raw envelope).
   Future<Map<String, dynamic>> search(String query, {int page = 1}) async {
@@ -434,9 +476,7 @@ class ApiClient {
     final id = Uri.encodeComponent(itemId);
     return switch (tab) {
       '漫画' => _url('/api/v1/manga/$id', const {}),
-      '短剧' || '漫剧' => _url('/api/v1/videos/$id', {
-        'mode': ?mode,
-      }),
+      '短剧' || '漫剧' => _url('/api/v1/videos/$id', {'mode': ?mode}),
       _ => _url('/api/v1/chapters/$id', {'tone_id': ?toneId}),
     };
   }
@@ -751,6 +791,46 @@ class ApiClient {
       );
     } on Exception {
       return HotSearch.empty;
+    }
+  }
+
+  /// The category front page (left-rail channels + tiles).
+  ///
+  /// Returns [CategoryFront.empty] on failure: the category entry then shows
+  /// its error state instead of blocking the home page.
+  Future<CategoryFront> categoryFront({int tab = 1}) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/category', {'category_tab': '$tab'}),
+        timeout: const Duration(seconds: 15),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return await Isolate.run(
+        () => CategoryFront.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return CategoryFront.empty;
+    }
+  }
+
+  /// The bookstore search-bar cue words, rotated in the home search box.
+  /// Returns [SearchCue.empty] on failure: the box then keeps its static hint.
+  Future<SearchCue> searchCue({int tabType = 2, String tabName = ''}) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/search/cue', {
+          'tab_type': '$tabType',
+          if (tabName.isNotEmpty) 'tab_name': tabName,
+        }),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return await Isolate.run(
+        () => SearchCue.fromPayload(_decodeEnvelope(status, bytes)),
+      );
+    } on Exception {
+      return SearchCue.empty;
     }
   }
 
@@ -1308,13 +1388,21 @@ class ApiClient {
       int? nextOffset;
       String? nextSessionId;
       var selectedPayload = payload;
+      final tabs = <HomeTabItem>[];
       final data = payload['data'];
       if (data is Map) {
         final tabItems = data['tab_item'];
         if (tabItems is List) {
           selectedPayload = <String, dynamic>{};
           for (final raw in tabItems) {
-            if (raw is! Map || raw['tab_type']?.toString() != '$tabType') {
+            if (raw is! Map) continue;
+            // 顶栏分类：官方用服务端 title 当名字、tab_type 当身份，这里照抄。
+            final rawType = raw['tab_type'];
+            final rawTitle = raw['title'];
+            if (rawType is num && rawTitle is String && rawTitle.isNotEmpty) {
+              tabs.add(HomeTabItem(type: rawType.toInt(), title: rawTitle));
+            }
+            if (raw['tab_type']?.toString() != '$tabType') {
               continue;
             }
             selectedPayload = Map<String, dynamic>.from(raw);
@@ -1335,9 +1423,12 @@ class ApiClient {
         selectedPayload,
         kind: tabType == 24 ? 'manju' : null,
       );
+      final cells = parseHomeCells(selectedPayload);
       return (
         page: HomepagePage(
           items: items,
+          cells: cells,
+          tabs: tabs,
           nextOffset: nextOffset,
           sessionId: nextSessionId,
         ),
@@ -1390,6 +1481,7 @@ class ApiClient {
           kind: tabType == 24 ? 'manju' : 'video',
         );
         if (items.isEmpty) return null;
+        final cells = parseHomeCells(payload);
         int? nextOffset;
         String? nextSessionId;
         final data = payload['data'];
@@ -1405,6 +1497,7 @@ class ApiClient {
         }
         return HomepagePage(
           items: items,
+          cells: cells,
           nextOffset: nextOffset,
           sessionId: nextSessionId,
         );

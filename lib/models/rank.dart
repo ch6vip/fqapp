@@ -59,6 +59,7 @@ class RankEntry {
     this.readCount = '',
     this.kind = 'book',
     this.seriesId = '',
+    this.tags = const [],
   });
 
   /// 1-based place in the list.
@@ -80,6 +81,10 @@ class RankEntry {
   /// Series id for drama entries; the id DetailPage resolves content with.
   final String seriesId;
 
+  /// 行副标题（`secondary_info_list` 的 content），与 [MediaItem.rankTags]
+  /// 同源——榜单响应的行里同样带「多人二刷 / 9320万热度」。
+  final List<String> tags;
+
   bool get isEmpty => id.isEmpty && title.isEmpty;
 
   String get statusLabel => switch (creationStatus) {
@@ -95,6 +100,19 @@ class RankEntry {
     if (statusLabel.isNotEmpty) statusLabel,
   ].join(' · ');
 
+  /// The card shape used by the rank page and the homepage rank preview.
+  MediaItem toMediaItem() => MediaItem(
+    id: id,
+    title: title,
+    cover: cover,
+    author: author,
+    badge: category,
+    ep: '',
+    kind: kind,
+    seriesId: seriesId.isEmpty ? null : seriesId,
+    rankTags: tags,
+  );
+
   Map<String, dynamic> toJson() => {
     'position': position,
     'id': id,
@@ -108,6 +126,7 @@ class RankEntry {
     'readCount': readCount,
     'kind': kind,
     'seriesId': seriesId,
+    if (tags.isNotEmpty) 'tags': tags,
   };
 
   static RankEntry fromJson(Map<String, dynamic> map) => RankEntry(
@@ -125,6 +144,9 @@ class RankEntry {
     readCount: map['readCount'] is String ? map['readCount'] as String : '',
     kind: map['kind'] is String ? map['kind'] as String : 'book',
     seriesId: map['seriesId'] is String ? map['seriesId'] as String : '',
+    tags: map['tags'] is List
+        ? List.unmodifiable((map['tags'] as List).map((e) => '$e'))
+        : const [],
   );
 }
 
@@ -150,9 +172,9 @@ class RankBoard {
       hasMore: map['hasMore'] == true,
       entries: rawEntries is List
           ? List.unmodifiable(
-              rawEntries
-                  .whereType<Map>()
-                  .map((entry) => RankEntry.fromJson(Map<String, dynamic>.from(entry))),
+              rawEntries.whereType<Map>().map(
+                (entry) => RankEntry.fromJson(Map<String, dynamic>.from(entry)),
+              ),
             )
           : const [],
     );
@@ -394,6 +416,7 @@ class RankCatalog {
       creationStatus: _int(book['creation_status'], fallback: -1),
       wordNumber: _int(book['word_number']),
       readCount: _string(book['read_count']),
+      tags: parseRankTags(book['secondary_info_list']),
     );
   }
 

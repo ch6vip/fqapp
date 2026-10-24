@@ -1,13 +1,28 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/services/home_feed_cache.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 void main() {
+  setUpAll(() async {
+    final directory = await Directory.systemTemp.createTemp(
+      'fqapp-home-provider-test-',
+    );
+    Hive.init(directory.path);
+  });
+
+  tearDown(() async {
+    await Hive.close();
+    HomeFeedCache.hiveReady = false;
+  });
+
   test(
     'legacy manga search stops on duplicates without a real cursor',
     () async {
@@ -35,62 +50,6 @@ void main() {
       expect(container.read(provider).hasMore, isFalse);
     },
   );
-
-  for (final failedOffset in [0, 17]) {
-    test(
-      'combined feed retries manga at $failedOffset and resets exhaustion on refresh',
-      () async {
-        final offsets = <int>[];
-        var failed = false;
-        final provider = NotifierProvider<HomeNotifier, HomeState>(
-          () => HomeNotifier(
-            homepageLoader:
-                ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                    HomepagePage(
-                      items: [_item('book-$offset')],
-                      nextOffset: offset + 1,
-                      sessionId: null,
-                    ),
-            searchLoader: (query, {int page = 1}) async => [],
-            mangaSearchLoader: ({int offset = 0}) async {
-              offsets.add(offset);
-              if (offset == failedOffset && !failed) {
-                failed = true;
-                throw StateError('temporary outage');
-              }
-              return [
-                SearchTab(
-                  title: '漫画',
-                  items: [_item('manga-$offset', kind: 'manga')],
-                  hasMore: offset == 0,
-                  nextOffset: 17,
-                ),
-              ];
-            },
-          ),
-        );
-        final container = ProviderContainer();
-        addTearDown(container.dispose);
-        final notifier = container.read(provider.notifier);
-        await notifier.load();
-        for (var i = 0; i < 4; i++) {
-          await notifier.loadMore();
-        }
-        expect(offsets, failedOffset == 0 ? [0, 0, 17] : [0, 17, 17]);
-        expect(
-          container
-              .read(provider)
-              .items
-              .where((item) => item.kind == 'manga')
-              .map((item) => item.id),
-          ['manga-0', 'manga-17'],
-        );
-        await notifier.load();
-        await notifier.loadMore();
-        expect(offsets.sublist(offsets.length - 2), [0, 17]);
-      },
-    );
-  }
 
   for (final tabIndex in [0, HomeNotifier.tabs.indexOf('漫画')]) {
     for (final middlePage in ['duplicate', 'empty', 'filtered']) {
@@ -266,73 +225,6 @@ void main() {
       expect(offsets, [0, 17, 23]);
       expect(homepageOffsets, [0]);
     });
-  }
-
-  for (final failedOffset in [0, 17]) {
-    test(
-      'combined feed retries manju cursor $failedOffset and remembers exhaustion',
-      () async {
-        final offsets = <int>[];
-        var failed = false;
-        final provider = NotifierProvider<HomeNotifier, HomeState>(
-          () => HomeNotifier(
-            homepageLoader:
-                ({int tabType = 2, int offset = 0, String? sessionId}) async {
-                  // Manju prefers its own stream; return nothing for it so this
-                  // test keeps exercising the search fallback and its cursor.
-                  if (tabType == 24) {
-                    return const HomepagePage(
-                      items: [],
-                      nextOffset: null,
-                      sessionId: null,
-                    );
-                  }
-                  return HomepagePage(
-                    items: [_item('book-$offset')],
-                    nextOffset: offset + 1,
-                    sessionId: null,
-                  );
-                },
-            searchLoader: (query, {int page = 1}) async => [],
-            manjuSearchLoader: ({int offset = 0}) async {
-              offsets.add(offset);
-              if (offset == failedOffset && !failed) {
-                failed = true;
-                throw StateError('temporary failure');
-              }
-              return [
-                SearchTab(
-                  title: '短剧',
-                  items: [_item('manju-$offset', kind: 'manju')],
-                  hasMore: offset == 0,
-                  nextOffset: 17,
-                ),
-              ];
-            },
-          ),
-        );
-        final container = ProviderContainer();
-        addTearDown(container.dispose);
-        final notifier = container.read(provider.notifier);
-        await notifier.load();
-        for (var page = 0; page < 4; page++) {
-          await notifier.loadMore();
-        }
-        expect(offsets, failedOffset == 0 ? [0, 0, 17] : [0, 17, 17]);
-        expect(
-          container
-              .read(provider)
-              .items
-              .where((item) => item.kind == 'manju')
-              .map((item) => item.id),
-          ['manju-0', 'manju-17'],
-        );
-        expect(container.read(provider).hasMore, isTrue);
-        await notifier.load();
-        await notifier.loadMore();
-        expect(offsets.sublist(offsets.length - 2), [0, 17]);
-      },
-    );
   }
 
   test('manju stops when an empty search page repeats its cursor', () async {
@@ -548,47 +440,6 @@ void main() {
   }
 
   test(
-    'a failed category does not skip its page in the combined feed',
-    () async {
-      final videoRequests = <int>[];
-      final provider = NotifierProvider<HomeNotifier, HomeState>(
-        () => HomeNotifier(
-          homepageLoader:
-              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                  HomepagePage(
-                    items: [_item('novel-$offset')],
-                    nextOffset: offset + 1,
-                    sessionId: null,
-                  ),
-          searchLoader: (query, {int page = 1}) async {
-            if (query != '短剧') return [];
-            videoRequests.add(page);
-            if (videoRequests.length == 1) {
-              throw StateError('temporary failure');
-            }
-            return [
-              SearchTab(
-                title: '短剧',
-                items: [_item('video-$page', kind: 'video')],
-              ),
-            ];
-          },
-        ),
-      );
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-      final notifier = container.read(provider.notifier);
-      await notifier.load();
-      await notifier.loadMore();
-      expect(videoRequests, [1, 1]);
-      expect(
-        container.read(provider).items.map((item) => item.id),
-        contains('video-1'),
-      );
-    },
-  );
-
-  test(
     'an initial request can finish after its provider is disposed',
     () async {
       final response = Completer<HomepagePage>();
@@ -630,6 +481,234 @@ void main() {
     container.read(provider.notifier).selectTab(1);
     await _flushMicrotasks();
     expect(container.read(provider).items.map((item) => item.id), ['novel']);
+  });
+
+  test('推荐流可用时首页只显示它自己的区块，不再混排其他来源', () async {
+    // 官方书城 tab 只渲染自己的 block，不把短剧/漫画/听书交错进来。
+    var searchCalls = 0;
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                HomepagePage(
+                  items: [_item('rec-1'), _item('rec-2')],
+                  cells: const [
+                    HomeCell(
+                      showType: 384,
+                      name: '猜你喜欢',
+                      id: '',
+                      style: {},
+                      items: [],
+                      children: [],
+                    ),
+                  ],
+                  nextOffset: null,
+                  sessionId: null,
+                ),
+        searchLoader: (query, {int page = 1}) async {
+          searchCalls++;
+          return [
+            SearchTab(title: '综合', items: [_item('search-$query')]),
+          ];
+        },
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(provider.notifier).load();
+    final state = container.read(provider);
+
+    // 只有推荐流的卡片，短剧/漫画/听书都不该被拉进来。
+    expect(state.items.map((i) => i.id), ['rec-1', 'rec-2']);
+    expect(state.cells, hasLength(1));
+    expect(state.cells.single.name, '猜你喜欢');
+    expect(searchCalls, 0, reason: '不再为混排去搜其他来源');
+  });
+
+  test('快照带区块时首帧即区块版，冷启动不再闪旧版网格', () async {
+    HomeFeedCache.hiveReady = true;
+    final cache = HomeFeedCache();
+    await cache.save(
+      0,
+      [_item('cached-1')],
+      hasMore: true,
+      cells: const [
+        HomeCell(
+          showType: 511,
+          name: '排行榜',
+          id: '',
+          style: {},
+          items: [],
+          children: [],
+        ),
+      ],
+    );
+
+    final releaseNetwork = Completer<void>();
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        feedCache: cache,
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async {
+              await releaseNetwork.future;
+              return HomepagePage(
+                items: [_item('fresh-1')],
+                cells: const [
+                  HomeCell(
+                    showType: 384,
+                    name: '猜你喜欢',
+                    id: '',
+                    style: {},
+                    items: [],
+                    children: [],
+                  ),
+                ],
+                nextOffset: null,
+                sessionId: null,
+              );
+            },
+        searchLoader: (query, {int page = 1}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final loading = container.read(provider.notifier).load();
+
+    // 首帧即区块版：网络还没回答，state.cells 就已经非空 —— home_page 的
+    // 区块管线不再退回旧版聚光灯+平铺网格，冷启动不会先闪旧版首页。
+    expect(container.read(provider).cells.map((cell) => cell.name), ['排行榜']);
+    expect(container.read(provider).items.map((item) => item.id), ['cached-1']);
+
+    releaseNetwork.complete();
+    await loading;
+    // 网络整页替换时 cells 照常跟着换（stale-while-revalidate 语义）。
+    expect(container.read(provider).cells.map((cell) => cell.name), ['猜你喜欢']);
+    expect(container.read(provider).items.map((item) => item.id), ['fresh-1']);
+    await cache.close();
+  });
+
+  test('翻页失败置 error 而不是只置 hasMore（footer 重试的判定输入）', () async {
+    // P1 回归：曾只置 hasMore=false，流尾会谎报「已显示全部内容」。
+    // 页面 footer 的重试分支判定是 error != null && items.isNotEmpty。
+    var page = 0;
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async {
+              page += 1;
+              if (page == 1) {
+                return HomepagePage(
+                  items: [_item('first-1')],
+                  cells: const [
+                    HomeCell(
+                      showType: 384,
+                      name: '',
+                      id: '',
+                      style: {},
+                      items: [],
+                      children: [
+                        HomeCell(
+                          showType: 385,
+                          name: '',
+                          id: '',
+                          style: {},
+                          items: [],
+                          children: [],
+                        ),
+                      ],
+                    ),
+                  ],
+                  nextOffset: 10,
+                  sessionId: null,
+                );
+              }
+              throw StateError('翻页失败');
+            },
+        searchLoader: (query, {int page = 1}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(provider.notifier).load();
+
+    await container.read(provider.notifier).loadMore();
+
+    final state = container.read(provider);
+    expect(state.error, isNotNull);
+    expect(state.hasMore, isFalse);
+    // 已有内容保留（错误页不清空列表）。
+    expect(state.items.map((i) => i.id), ['first-1']);
+  });
+
+  test('追加页的书拼进流区块，网格真的无限', () async {
+    // 区块管线只渲染 cells；分页响应不带区块，若新书只进 items，网格永远
+    // 停在首页那批卡。追加页必须合入 385 流区块（cellsForView）。
+    var page = 0;
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async {
+              page += 1;
+              if (page == 1) {
+                return HomepagePage(
+                  items: [_item('first-1'), _item('first-2')],
+                  cells: const [
+                    HomeCell(
+                      showType: 384,
+                      name: '猜你喜欢',
+                      id: '',
+                      style: {},
+                      items: [],
+                      children: [
+                        HomeCell(
+                          showType: 385,
+                          name: '',
+                          id: '',
+                          style: {},
+                          items: [],
+                          children: [],
+                        ),
+                      ],
+                    ),
+                  ],
+                  nextOffset: 10,
+                  sessionId: null,
+                );
+              }
+              // 续页：只有 items，没有 cells。
+              return HomepagePage(
+                items: [_item('next-1'), _item('next-2')],
+                nextOffset: null,
+                sessionId: null,
+              );
+            },
+        searchLoader: (query, {int page = 1}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(provider.notifier).load();
+
+    final firstCells = container.read(provider).cells;
+    expect(firstCells.single.showType, 384);
+    expect(
+      firstCells.single.children.single.items.map((i) => i.id),
+      isEmpty,
+    );
+
+    await container.read(provider.notifier).loadMore();
+
+    // 追加页的书出现在流区块的渲染列表里。
+    final merged = container.read(provider).cells;
+    expect(
+      merged.single.children.single.items.map((i) => i.id),
+      ['next-1', 'next-2'],
+    );
+    // items 也照常追加（旧管线/去重语义不变）。
+    expect(
+      container.read(provider).items.map((i) => i.id),
+      ['first-1', 'first-2', 'next-1', 'next-2'],
+    );
   });
 
   test('the combined feed keeps novels when recommendations fail', () async {
@@ -758,46 +837,6 @@ void main() {
     expect(tag.darkColors, ['#009962', '#11B279']);
   });
 
-  test('the combined feed keeps badges from every source', () async {
-    final provider = NotifierProvider<HomeNotifier, HomeState>(
-      () => HomeNotifier(
-        homepageLoader:
-            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                HomepagePage(
-                  // Tag per stream so a drop in either group is visible.
-                  items: [_item('stream-$tabType', tag: _newTag)],
-                  nextOffset: null,
-                  sessionId: null,
-                ),
-        searchLoader: (query, {int page = 1}) async => [
-          SearchTab(
-            title: query,
-            items: [_item('$query-1', kind: 'video', tag: _newTag)],
-          ),
-        ],
-        mangaSearchLoader: ({int offset = 0}) async => [],
-        manjuSearchLoader: ({int offset = 0}) async => [],
-      ),
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(provider.notifier);
-    await _loadTab(notifier, 0);
-
-    final items = container.read(provider).items;
-    expect(items, isNotEmpty);
-    // Both recommendation streams feed the combined feed, so both ids must be
-    // present and neither may lose its badge.
-    expect(items.map((i) => i.id), containsAll(['stream-2', 'stream-24']));
-    for (final item in items) {
-      expect(
-        item.tag?.text,
-        '上新',
-        reason: '${item.id} (${item.kind}) lost its badge',
-      );
-    }
-  });
-
   test(
     'the combined feed takes manju from its own stream, not search',
     () async {
@@ -907,6 +946,147 @@ void main() {
       );
     },
   );
+
+  group('server tab strip drives the tab identity', () {
+    // 服务端 tab_item 有 11 项，与本地 7 项兜底表既不同长也不同序。按下标
+    // 到本地表取名会把「经典」（服务端下标 2）解析成「短剧」，去拉
+    // tab_type=8 —— 点经典看到短剧。
+    const serverTabs = <HomeTabItem>[
+      HomeTabItem(type: 2, title: '推荐'),
+      HomeTabItem(type: 25, title: '小说'),
+      HomeTabItem(type: 11, title: '经典'),
+      HomeTabItem(type: 12, title: '知识'),
+      HomeTabItem(type: 5, title: '听书'),
+      HomeTabItem(type: 8, title: '看剧'),
+      HomeTabItem(type: 16, title: '视频'),
+      HomeTabItem(type: 103, title: '短篇'),
+      HomeTabItem(type: 9, title: '漫画'),
+      HomeTabItem(type: 31, title: '新书'),
+      HomeTabItem(type: 15, title: '商城'),
+    ];
+
+    test(
+      'a tab is requested with its own tab_type, not one from 本地表',
+      () async {
+        final requested = <int>[];
+        final provider = NotifierProvider<HomeNotifier, HomeState>(
+          () => HomeNotifier(
+            homepageLoader:
+                ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                  requested.add(tabType);
+                  return HomepagePage(
+                    items: [_item('book-$tabType')],
+                    nextOffset: null,
+                    sessionId: null,
+                    tabs: serverTabs,
+                  );
+                },
+            searchLoader: (query, {int page = 1}) async => [],
+            mangaSearchLoader: ({int offset = 0}) async => [],
+            manjuSearchLoader: ({int offset = 0}) async => [],
+          ),
+        );
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(provider.notifier);
+        // 首屏「推荐」= tab_type 2。
+        await notifier.load();
+        for (final index in [2, 3, 5, 8, 10]) {
+          notifier.selectTab(index);
+          await _flushMicrotasks();
+        }
+
+        // 每个下标的 tab_type 都来自它自己那一项：推荐 2、经典 11、知识 12、
+        // 看剧 8、漫画 9、商城 15。若退回本地表则会是 2、24、5、16 —— 全部串台。
+        expect(requested, [2, 11, 12, 8, 9, 15]);
+      },
+    );
+
+    test(
+      'the identity of a server tab keeps its kind and skips gender tabs',
+      () async {
+        final provider = NotifierProvider<HomeNotifier, HomeState>(
+          () => HomeNotifier(
+            homepageLoader:
+                ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                    HomepagePage(
+                      items: [_item('book-$tabType')],
+                      nextOffset: null,
+                      sessionId: null,
+                      tabs: const [
+                        HomeTabItem(type: 2, title: '推荐'),
+                        HomeTabItem(type: 0, title: '女生'),
+                        HomeTabItem(type: 9, title: '漫画'),
+                      ],
+                    ),
+            searchLoader: (query, {int page = 1}) async => [],
+            mangaSearchLoader: ({int offset = 0}) async => [],
+            manjuSearchLoader: ({int offset = 0}) async => [],
+          ),
+        );
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(provider.notifier);
+
+        // 分类条还没回来时，下标只能按本地兜底表解释（首屏就是这样）。
+        expect(notifier.identityOf(0), (
+          name: '全部',
+          kind: 'book',
+          tabType: null,
+        ));
+
+        await notifier.load();
+
+        expect(notifier.identityOf(0), (name: '推荐', kind: 'book', tabType: 2));
+        // 0/1 是官方 female/male 入口，没有对应的书城流，只能走搜索兜底。
+        expect(notifier.identityOf(1), (
+          name: '女生',
+          kind: 'book',
+          tabType: null,
+        ));
+        expect(notifier.identityOf(2), (name: '漫画', kind: 'manga', tabType: 9));
+      },
+    );
+
+    test('dramaProvider keeps reading the 本地表 even when tabs arrive', () async {
+      // 短剧页的频道条是本地表下标拼的（dramaChannels）。它的 state.tabs 同样
+      // 会被服务端那 11 项填满，若跟着服务端下标解析，它的「短剧」（本地 2）
+      // 就会变成服务端的「经典」。
+      final requested = <int>[];
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          usesLocalTabs: true,
+          initialTabIndex: HomeNotifier.tabs.indexOf('短剧'),
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                requested.add(tabType);
+                return HomepagePage(
+                  items: [_item('book-$tabType')],
+                  nextOffset: null,
+                  sessionId: null,
+                  tabs: serverTabs,
+                );
+              },
+          searchLoader: (query, {int page = 1}) async => [],
+          mangaSearchLoader: ({int offset = 0}) async => [],
+          manjuSearchLoader: ({int offset = 0}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+
+      await notifier.load();
+
+      // 本地表「短剧」= tab_type 8，不是服务端下标 2 的「经典」= 11。
+      expect(requested, [8]);
+      expect(notifier.identityOf(HomeNotifier.tabs.indexOf('短剧')), (
+        name: '短剧',
+        kind: 'video',
+        tabType: 8,
+      ));
+    });
+  });
 }
 
 Future<void> _loadTab(HomeNotifier notifier, int tabIndex) async {

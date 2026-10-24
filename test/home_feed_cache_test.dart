@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
@@ -88,8 +89,88 @@ void main() {
     await cache.close();
   });
 
-  test('load returns null before the box exists and after the TTL',
-      () async {
+  test('cells round trip through save and load', () async {
+    HomeFeedCache.hiveReady = true;
+    final cache = HomeFeedCache();
+    const rankCell = HomeCell(
+      showType: 511,
+      name: '排行榜',
+      id: 'rank-1',
+      style: {'cover_size': 2},
+      items: [],
+      children: [
+        HomeCell(
+          showType: 512,
+          name: '',
+          id: '',
+          style: {},
+          items: [],
+          children: [],
+        ),
+      ],
+      url: 'dragon1967://rank',
+      extra: {
+        'rank_with_category_data': {'boards': 3},
+      },
+    );
+    final gridCell = HomeCell(
+      showType: 384,
+      name: '猜你喜欢',
+      id: '',
+      style: const {},
+      items: [_item('c1'), _item('c2')],
+      children: const [],
+    );
+    await cache.save(
+      4,
+      [_item('a')],
+      hasMore: true,
+      cells: [rankCell, gridCell],
+    );
+
+    final snapshot = cache.load(4)!;
+    expect(snapshot.cells, hasLength(2));
+
+    final restoredRank = snapshot.cells.first;
+    expect(restoredRank.showType, 511);
+    expect(restoredRank.name, '排行榜');
+    expect(restoredRank.id, 'rank-1');
+    expect(restoredRank.url, 'dragon1967://rank');
+    expect(restoredRank.style['cover_size'], 2);
+    expect(restoredRank.extra['rank_with_category_data'], {'boards': 3});
+    // Children recurse, so nested blocks survive the round trip too.
+    expect(restoredRank.children, hasLength(1));
+    expect(restoredRank.children.single.showType, 512);
+
+    final restoredGrid = snapshot.cells.last;
+    expect(restoredGrid.name, '猜你喜欢');
+    expect(restoredGrid.items.map((item) => item.id), ['c1', 'c2']);
+    // The card keeps its rendered fields, badge included.
+    expect(restoredGrid.items.first.tag?.text, '爆款');
+    await cache.close();
+  });
+
+  test(
+    'a snapshot without a cells field degrades to an empty cell list',
+    () async {
+      HomeFeedCache.hiveReady = true;
+      final cache = HomeFeedCache();
+      // save() without cells writes exactly the pre-cells record shape.
+      await cache.save(7, [_item('a')], hasMore: true);
+
+      // Pin the old format: the record on disk carries no `cells` key.
+      final box = await Hive.openBox('home_feed_cache_v1');
+      final raw = Map<String, dynamic>.from(box.get('7') as Map);
+      expect(raw.containsKey('cells'), isFalse);
+
+      final snapshot = cache.load(7)!;
+      expect(snapshot.items.map((item) => item.id), ['a']);
+      expect(snapshot.cells, isEmpty);
+      await cache.close();
+    },
+  );
+
+  test('load returns null before the box exists and after the TTL', () async {
     final cache = HomeFeedCache();
     expect(cache.load(0), isNull);
 
@@ -109,128 +190,135 @@ void main() {
     await cache.close();
   });
 
-  test('cold start renders the cached feed while the refresh is in flight',
-      () async {
-    HomeFeedCache.hiveReady = true;
-    final cache = HomeFeedCache();
-    await cache.save(0, [_item('cached-1'), _item('cached-2')], hasMore: true);
+  test(
+    'cold start renders the cached feed while the refresh is in flight',
+    () async {
+      HomeFeedCache.hiveReady = true;
+      final cache = HomeFeedCache();
+      await cache.save(0, [
+        _item('cached-1'),
+        _item('cached-2'),
+      ], hasMore: true);
 
-    final networkStarted = Completer<void>();
-    final releaseNetwork = Completer<void>();
-    final provider = NotifierProvider<HomeNotifier, HomeState>(
-      () => HomeNotifier(
-        feedCache: cache,
-        homepageLoader:
-            ({int tabType = 2, int offset = 0, String? sessionId}) async {
-          networkStarted.complete();
-          await releaseNetwork.future;
-          return HomepagePage(
-            items: [_item('fresh-1', kind: 'book')],
-            nextOffset: 1,
-            sessionId: null,
-          );
-        },
-        searchLoader: (query, {int page = 1}) async => [],
-      ),
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(provider.notifier);
-    final loading = notifier.load();
-
-    // Before the network answers, the snapshot is already on screen.
-    expect(
-      container.read(provider).items.map((item) => item.id),
-      ['cached-1', 'cached-2'],
-    );
-    expect(container.read(provider).isLoading, isTrue);
-
-    releaseNetwork.complete();
-    await loading;
-    expect(
-      container.read(provider).items.map((item) => item.id),
-      ['fresh-1'],
-    );
-  });
-
-  test('a failed refresh keeps the cached feed visible with the error',
-      () async {
-    HomeFeedCache.hiveReady = true;
-    final cache = HomeFeedCache();
-    await cache.save(3, [_item('kept')], hasMore: true);
-
-    final provider = NotifierProvider<HomeNotifier, HomeState>(
-      () => HomeNotifier(
-        feedCache: cache,
-        initialTabIndex: 3,
-        homepageLoader:
-            ({
-              int tabType = 2,
-              int offset = 0,
-              String? sessionId,
-            }) async => throw StateError('offline'),
-        searchLoader:
-            (query, {int page = 1}) async => throw StateError('offline'),
-      ),
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(provider.notifier);
-    await notifier.load();
-    await _flushMicrotasks();
-    final state = container.read(provider);
-    expect(state.error, isNotNull);
-    expect(state.items.map((item) => item.id), ['kept']);
-  });
-
-  test('a resumed cold start appends the fresh feed after the resume card',
-      () async {
-    HomeFeedCache.hiveReady = true;
-    final cache = HomeFeedCache();
-    await cache.save(
-      6,
-      [_item('old-1'), _item('last'), _item('old-3')],
-      hasMore: true,
-      lastVid: 'last',
-    );
-
-    final provider = NotifierProvider<HomeNotifier, HomeState>(
-      () => HomeNotifier(
-        feedCache: cache,
-        initialTabIndex: 6,
-        homepageLoader:
-            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                HomepagePage(
-                  // 'last' reappears in the response: the seen set must
-                  // deduplicate it (the client-side equivalent of the
-                  // official filterIds request parameter).
-                  items: [_item('fresh-1'), _item('last'), _item('fresh-2')],
+      final networkStarted = Completer<void>();
+      final releaseNetwork = Completer<void>();
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          feedCache: cache,
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                networkStarted.complete();
+                await releaseNetwork.future;
+                return HomepagePage(
+                  items: [_item('fresh-1', kind: 'book')],
                   nextOffset: 1,
                   sessionId: null,
-                ),
-        searchLoader: (query, {int page = 1}) async => [],
-      ),
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(provider.notifier);
-    final loading = notifier.load();
+                );
+              },
+          searchLoader: (query, {int page = 1}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      final loading = notifier.load();
 
-    // The visible list starts AT the resume card: earlier snapshot cards are
-    // dropped, matching the official single-video landing cache.
-    expect(
-      container.read(provider).items.map((item) => item.id),
-      ['last', 'old-3'],
-    );
+      // Before the network answers, the snapshot is already on screen.
+      expect(container.read(provider).items.map((item) => item.id), [
+        'cached-1',
+        'cached-2',
+      ]);
+      expect(container.read(provider).isLoading, isTrue);
 
-    await loading;
-    // The fresh list is appended after the visible card, never replacing it —
-    // the on-screen video must not flip to a different one.
-    expect(
-      container.read(provider).items.map((item) => item.id),
-      ['last', 'old-3', 'fresh-1', 'fresh-2'],
-    );
-  });
+      releaseNetwork.complete();
+      await loading;
+      expect(container.read(provider).items.map((item) => item.id), [
+        'fresh-1',
+      ]);
+    },
+  );
+
+  test(
+    'a failed refresh keeps the cached feed visible with the error',
+    () async {
+      HomeFeedCache.hiveReady = true;
+      final cache = HomeFeedCache();
+      await cache.save(3, [_item('kept')], hasMore: true);
+
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          feedCache: cache,
+          initialTabIndex: 3,
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                  throw StateError('offline'),
+          searchLoader: (query, {int page = 1}) async =>
+              throw StateError('offline'),
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      await notifier.load();
+      await _flushMicrotasks();
+      final state = container.read(provider);
+      expect(state.error, isNotNull);
+      expect(state.items.map((item) => item.id), ['kept']);
+    },
+  );
+
+  test(
+    'a resumed cold start appends the fresh feed after the resume card',
+    () async {
+      HomeFeedCache.hiveReady = true;
+      final cache = HomeFeedCache();
+      await cache.save(
+        6,
+        [_item('old-1'), _item('last'), _item('old-3')],
+        hasMore: true,
+        lastVid: 'last',
+      );
+
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          feedCache: cache,
+          initialTabIndex: 6,
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                  HomepagePage(
+                    // 'last' reappears in the response: the seen set must
+                    // deduplicate it (the client-side equivalent of the
+                    // official filterIds request parameter).
+                    items: [_item('fresh-1'), _item('last'), _item('fresh-2')],
+                    nextOffset: 1,
+                    sessionId: null,
+                  ),
+          searchLoader: (query, {int page = 1}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      final loading = notifier.load();
+
+      // The visible list starts AT the resume card: earlier snapshot cards are
+      // dropped, matching the official single-video landing cache.
+      expect(container.read(provider).items.map((item) => item.id), [
+        'last',
+        'old-3',
+      ]);
+
+      await loading;
+      // The fresh list is appended after the visible card, never replacing it —
+      // the on-screen video must not flip to a different one.
+      expect(container.read(provider).items.map((item) => item.id), [
+        'last',
+        'old-3',
+        'fresh-1',
+        'fresh-2',
+      ]);
+    },
+  );
 
   test('a resume card already at index zero still appends instead of '
       'replacing', () async {
@@ -261,48 +349,53 @@ void main() {
     addTearDown(container.dispose);
     final notifier = container.read(provider.notifier);
     await notifier.load();
-    expect(
-      container.read(provider).items.map((item) => item.id),
-      ['last', 'old-2', 'fresh-1'],
-    );
+    expect(container.read(provider).items.map((item) => item.id), [
+      'last',
+      'old-2',
+      'fresh-1',
+    ]);
   });
 
-  test('a resume point outside the snapshot falls back to wholesale replace',
-      () async {
-    HomeFeedCache.hiveReady = true;
-    final cache = HomeFeedCache();
-    await cache.save(6, [_item('a'), _item('b')], hasMore: true,
-        lastVid: 'gone');
+  test(
+    'a resume point outside the snapshot falls back to wholesale replace',
+    () async {
+      HomeFeedCache.hiveReady = true;
+      final cache = HomeFeedCache();
+      await cache.save(
+        6,
+        [_item('a'), _item('b')],
+        hasMore: true,
+        lastVid: 'gone',
+      );
 
-    final provider = NotifierProvider<HomeNotifier, HomeState>(
-      () => HomeNotifier(
-        feedCache: cache,
-        initialTabIndex: 6,
-        homepageLoader:
-            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                HomepagePage(
-                  items: [_item('fresh-1')],
-                  nextOffset: 1,
-                  sessionId: null,
-                ),
-        searchLoader: (query, {int page = 1}) async => [],
-      ),
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(provider.notifier);
-    await notifier.load();
-    expect(
-      container.read(provider).items.map((item) => item.id),
-      ['fresh-1'],
-    );
-  });
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          feedCache: cache,
+          initialTabIndex: 6,
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                  HomepagePage(
+                    items: [_item('fresh-1')],
+                    nextOffset: 1,
+                    sessionId: null,
+                  ),
+          searchLoader: (query, {int page = 1}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      await notifier.load();
+      expect(container.read(provider).items.map((item) => item.id), [
+        'fresh-1',
+      ]);
+    },
+  );
 
   test('a manual refresh replaces the list instead of resuming', () async {
     HomeFeedCache.hiveReady = true;
     final cache = HomeFeedCache();
-    await cache.save(6, [_item('a'), _item('b')], hasMore: true,
-        lastVid: 'b');
+    await cache.save(6, [_item('a'), _item('b')], hasMore: true, lastVid: 'b');
 
     final provider = NotifierProvider<HomeNotifier, HomeState>(
       () => HomeNotifier(
@@ -323,25 +416,40 @@ void main() {
     final notifier = container.read(provider.notifier);
     await notifier.load(manualRefresh: true);
     // Official Refresh path: the response replaces page one wholesale.
-    expect(
-      container.read(provider).items.map((item) => item.id),
-      ['fresh-1'],
-    );
+    expect(container.read(provider).items.map((item) => item.id), ['fresh-1']);
   });
 
-  test('the position reported by the page is persisted as the resume point',
-      () async {
+  // 真机冷启动必命中落地缓存，走的是 replace=false 的续播分支。区块此前只在
+  // replace=true 时赋值，于是真机上 feed.cells 永远是空的，首页永远退回旧网格。
+  // 本用例锁死：续播路径也必须拿到这一页的区块。
+  test('a resumed cold start still receives the page blocks', () async {
     HomeFeedCache.hiveReady = true;
     final cache = HomeFeedCache();
+    await cache.save(
+      0,
+      [_item('old-1'), _item('last')],
+      hasMore: true,
+      lastVid: 'last',
+    );
+
+    const rankCell = HomeCell(
+      showType: 511,
+      name: '排行榜',
+      id: '',
+      style: {},
+      items: [],
+      children: [],
+    );
     final provider = NotifierProvider<HomeNotifier, HomeState>(
       () => HomeNotifier(
         feedCache: cache,
-        initialTabIndex: 6,
+        initialTabIndex: 0,
         homepageLoader:
             ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                HomepagePage(
-                  items: [_item('fresh-1'), _item('fresh-2')],
-                  nextOffset: 1,
+                const HomepagePage(
+                  items: [],
+                  cells: [rankCell],
+                  nextOffset: null,
                   sessionId: null,
                 ),
         searchLoader: (query, {int page = 1}) async => [],
@@ -349,12 +457,39 @@ void main() {
     );
     final container = ProviderContainer();
     addTearDown(container.dispose);
-    final notifier = container.read(provider.notifier);
-    notifier.noteCurrentVid('fresh-2');
-    await notifier.load();
-    // The save is fire-and-forget file IO; give the event loop real time.
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    expect(cache.load(6)!.lastVid, 'fresh-2');
+    await container.read(provider.notifier).load();
+    expect(container.read(provider).cells.map((cell) => cell.showType), [511]);
     await cache.close();
   });
+
+  test(
+    'the position reported by the page is persisted as the resume point',
+    () async {
+      HomeFeedCache.hiveReady = true;
+      final cache = HomeFeedCache();
+      final provider = NotifierProvider<HomeNotifier, HomeState>(
+        () => HomeNotifier(
+          feedCache: cache,
+          initialTabIndex: 6,
+          homepageLoader:
+              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                  HomepagePage(
+                    items: [_item('fresh-1'), _item('fresh-2')],
+                    nextOffset: 1,
+                    sessionId: null,
+                  ),
+          searchLoader: (query, {int page = 1}) async => [],
+        ),
+      );
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(provider.notifier);
+      notifier.noteCurrentVid('fresh-2');
+      await notifier.load();
+      // The save is fire-and-forget file IO; give the event loop real time.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(cache.load(6)!.lastVid, 'fresh-2');
+      await cache.close();
+    },
+  );
 }

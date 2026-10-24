@@ -124,3 +124,54 @@ String _string(dynamic value) {
 extension _IfEmpty on String {
   String ifEmpty(String fallback) => isEmpty ? fallback : this;
 }
+
+/// The bookstore search-bar cue words (`/reading/bookapi/search/cue/v`).
+///
+/// The official bar rotates `data_v1[]` on a `VerticalFlipper` with the
+/// response's `rotate_interval_ms` (`SearchWordDisplayView.m`); the display
+/// text of one word is `display_text`/`display_text_v2`, falling back to
+/// `text` (`SearchCueWord.java`).
+class SearchCue {
+  const SearchCue({
+    this.words = const [],
+    this.rotateIntervalMs = defaultIntervalMs,
+  });
+
+  /// Milliseconds one word stays on screen before the next flip.
+  static const defaultIntervalMs = 5000;
+
+  static const empty = SearchCue();
+
+  final List<String> words;
+
+  /// `rotate_interval_ms`; [defaultIntervalMs] when the payload carries none.
+  final int rotateIntervalMs;
+
+  bool get isEmpty => words.isEmpty;
+
+  static SearchCue fromPayload(Map<String, dynamic> payload) {
+    final code = payload['code'];
+    if (code != null && code != 0 && code != 200) return empty;
+    final dataV1 = payload['data_v1'];
+    if (dataV1 is! List) return empty;
+    final words = <String>[];
+    final seen = <String>{};
+    for (final entry in dataV1) {
+      if (entry is! Map) continue;
+      final text = _string(
+        entry['display_text_v2'],
+      ).ifEmpty(_string(entry['display_text'])).ifEmpty(_string(entry['text']));
+      if (text.isEmpty || !seen.add(text)) continue;
+      words.add(text);
+    }
+    if (words.isEmpty) return empty;
+    final rawInterval = payload['rotate_interval_ms'];
+    final interval = rawInterval is num
+        ? rawInterval.toInt()
+        : int.tryParse('$rawInterval') ?? 0;
+    return SearchCue(
+      words: List.unmodifiable(words),
+      rotateIntervalMs: interval > 0 ? interval : defaultIntervalMs,
+    );
+  }
+}
