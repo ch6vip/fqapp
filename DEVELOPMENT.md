@@ -644,3 +644,16 @@ adb logcat -s flutter
 - [x] 发现类入口：搜索联想词与热搜、作者主页、排行榜、书评回复、章节试读预览
 - [x] Release 签名配置与 R8 混淆
 - [x] 整本 TXT 导出（离线缓存页每行「导出 TXT」→ 系统「下载」；重取最新目录与每章正文，按后端 `/api/download` 同形组装）
+
+
+## 正文替换（#120）
+
+规则存于 SharedPreferences 的 reader_text_replacement_v1 版本化 JSON，默认关闭。TextReplacementStore 串行验证/写入后发布不可变快照；写失败不发布。配置页及阅读器排版页共用正文替换入口。
+
+TextReplacementEngine 在独立 isolate 内编译用户正则、预览和逐段转换，执行预算 1 秒，超时或取消时请求立即终止 worker 并释放端口；结果按原文、标题和规则快照复用最近 8 章。上限为 50 条规则、每个匹配/替换字段 2048 个 UTF-16 code units，章节输出不超过 max(65536, 原文文本长度×4)，映射编辑最多 200000 段。正则采用 Dart unicode 模式；替换模板支持 $0、$1…$99、$$。不支持跨段匹配或在替换结果中插入换行。
+
+ChapterContent 原文、legacyText、缓存和导入文件保持原语义。ReaderChapterLayout 消费原文与派生结果，逐段组合编辑映射；历史 positionVersion=2 以及范围划线 start/end 始终保存在未替换的章节坐标中（包含标题/插图占位符/分隔符）。v1 历史先迁移原始布局坐标，再映射到显示位置。选择替换词内部的一部分时，持久化范围向原文匹配区间两侧扩展；整个段落被删除时保留原身份且不绘制，避免后续段评和划线移位。复制使用显示文字。
+
+阅读器首次加载、预取补图/时间轴刷新及规则变化共用转换服务，以章节、原文版本和 generation 拒绝迟到结果；规则与刷新并发时以最新原文重新生成。原始标题去除只执行一次，避免正文被替换成标题后再次被误删。系统 TTS 首章与后续章节均从原文转换，固定同一会话快照；规则保存时关闭旧会话并清理高亮，需重新启动。真人录音不变。
+
+验证：运行 flutter analyze --no-pub 与 flutter test；重点套件为 text_replacement_*、reader_text_replacement、reader_paragraph_actions、reader_chapter_layout、reader_pagination、reader_illustrations、offline_reader 和 system_tts。Android/Windows 的构建与真机超时终止行为仍须在对应环境验收；Linux 主机单测不代表设备或 AOT 验收完成。

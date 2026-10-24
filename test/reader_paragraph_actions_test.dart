@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fqapp/models/text_replacement_rule.dart';
+import 'package:fqapp/services/text_replacement_engine.dart';
+import 'package:fqapp/services/text_replacement_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -104,6 +107,7 @@ Widget _app(
   ReaderUnderlineStore store, {
   String? html,
   bool localOnly = false,
+  TextReplacementStore? replacementStore,
 }) => MaterialApp(
   home: ReaderPage(
     bookId: 'reader-test',
@@ -116,6 +120,7 @@ Widget _app(
     chapterLoader: (_) async =>
         parseChapterContent(html ?? _html).toCacheText(),
     underlineStore: store,
+    replacementStore: replacementStore,
   ),
 );
 
@@ -165,6 +170,102 @@ void main() {
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
+  });
+
+  testWidgets('long press finds a saved range after earlier text shrinks', (
+    tester,
+  ) async {
+    const html =
+        '<p idx="0">AAAAAAAAAAAAAAAAAAAA</p><p idx="1">abcdefghijk</p>';
+    final replacements = TextReplacementStore();
+    await replacements.save(
+      enabled: true,
+      rules: [
+        const TextReplacementRule(
+          id: 'a',
+          pattern: 'AAAAAAAAAAAAAAAAAAAA',
+          replacement: 'X',
+        ),
+      ],
+    );
+    await tester.runAsync(
+      () => TextReplacementEngine.instance.transform(
+        source: parseChapterContent(html),
+        chapterTitle: '第一章',
+        snapshot: replacements.snapshot,
+      ),
+    );
+    final store = _MemoryUnderlines();
+    // Title [0,3), separator; first paragraph [4,24), separator.
+    const record = ReaderRangeUnderline(
+      bookId: 'reader-test',
+      chapterId: 'c1',
+      start: 25,
+      end: 30,
+      text: 'abcde',
+    );
+    store.entries[record.key] = record.toMap();
+    await tester.pumpWidget(
+      _app(store, html: html, replacementStore: replacements),
+    );
+    await tester.pumpAndSettle();
+    final paragraph = find.byKey(const ValueKey('reader-paragraph-1'));
+    final rect = tester.getRect(paragraph);
+    await tester.longPressAt(Offset(rect.left + 45, rect.top + 12));
+    await tester.pumpAndSettle();
+    expect(find.text('删除划线'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('reader-action-underline')));
+    await tester.pumpAndSettle();
+    expect(store.entries, isEmpty);
+  });
+
+  testWidgets('a saved mark inside a replaced word stays deletable by identity', (
+    tester,
+  ) async {
+    const html = '<p idx="0">abcdefghijklmnop</p>';
+    final replacements = TextReplacementStore();
+    await replacements.save(
+      enabled: true,
+      rules: [
+        const TextReplacementRule(
+          id: 'a',
+          pattern: 'abcdefghijklmnop',
+          replacement: 'XYZ',
+        ),
+      ],
+    );
+    await tester.runAsync(
+      () => TextReplacementEngine.instance.transform(
+        source: parseChapterContent(html),
+        chapterTitle: '第一章',
+        snapshot: replacements.snapshot,
+      ),
+    );
+    final store = _MemoryUnderlines();
+    // The old mark covers only letters inside the original word, not all of it.
+    const record = ReaderRangeUnderline(
+      bookId: 'reader-test',
+      chapterId: 'c1',
+      start: 6,
+      end: 9,
+      text: 'cde',
+    );
+    store.entries[record.key] = record.toMap();
+    await tester.pumpWidget(
+      _app(store, html: html, replacementStore: replacements),
+    );
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(
+      find.byKey(const ValueKey('reader-paragraph-0')),
+    );
+    await tester.longPressAt(Offset(rect.left + 45, rect.top + 12));
+    await tester.pumpAndSettle();
+    final undo = find.byKey(const ValueKey('reader-action-underline'));
+    // The restored displayed range happens to cover the whole transformed paragraph.
+    expect(find.text('取消划线'), findsOneWidget);
+    await tester.tap(undo);
+    await tester.pumpAndSettle();
+    expect(store.entries, isEmpty);
   });
 
   // `/api/content` answers with plain text and no `<p idx>`, so those chapters

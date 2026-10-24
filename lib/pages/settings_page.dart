@@ -21,6 +21,7 @@ import 'cached_dramas_page.dart';
 import 'library_backup_page.dart';
 import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
+import 'text_replacement_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
 /// navigation). Each category opens its own CommonSetting-style page.
@@ -42,8 +43,20 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: LucideIcons.book_open,
         title: '阅读',
-        subtitle: '点书直达阅读器（书架 / 发现入口）',
-        items: [_shelfDirectReaderItem(), _discoverDirectReaderItem()],
+        subtitle: '阅读入口、正文替换',
+        items: [
+          _shelfDirectReaderItem(),
+          _discoverDirectReaderItem(),
+          SettingsItem(
+            icon: Icons.find_replace,
+            title: '正文替换',
+            subtitle: '自定义普通文本或正则替换规则',
+            onTap: (context, _) => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TextReplacementPage()),
+            ),
+          ),
+        ],
       ),
       SettingsCategory(
         icon: LucideIcons.headphones,
