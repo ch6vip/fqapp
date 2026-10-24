@@ -77,15 +77,17 @@ env:
   # as a repository secret.
   RELEASE_SIGNER_SHA256: 'e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550'
   FQAPP_USE_MAVEN_MIRRORS: 'false'
-  # The 2-worker limits were set when one runner hosted the Rust cross-compile,
-  # the whole Dart test suite and the Gradle build at once. Those now run in
-  # separate jobs (apk / dart-gate), so this job owns all 4 vCPUs and half the
-  # workers was leaving the machine idle.
+  # workers.max / CMAKE_BUILD_PARALLEL_LEVEL stay at 2. Raising them to 4 was
+  # measured and made things WORSE on the 4-vCPU / 16 GB runner: the release APK
+  # compile went 220s -> 342s and :app:testDebugUnitTest 66s -> 91s, i.e. the
+  # extra workers only added memory pressure and context switching. The runner
+  # has 4 cores but the R8 + resource-shrink + CMake phases are not short enough
+  # tasks to benefit from over-subscription.
   # kotlin.incremental is forced back on: gradle.properties disables it to dodge
   # a Windows file-locking bug ("Could not close incremental caches"), and CI is
   # Linux-only. A system property overrides the gradle.properties entry.
-  GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m" -Dorg.gradle.workers.max=4 -Dorg.gradle.daemon=false -Dkotlin.incremental=true'
-  CMAKE_BUILD_PARALLEL_LEVEL: '4'
+  GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m" -Dorg.gradle.workers.max=2 -Dorg.gradle.daemon=false -Dkotlin.incremental=true'
+  CMAKE_BUILD_PARALLEL_LEVEL: '2'
   CARGO_BUILD_JOBS: '2'
   CARGO_TERM_COLOR: always
 
@@ -226,18 +228,25 @@ jobs:
       # sdkmanager for the already-present packages costs network round-trips for
       # no downloads, so they are dropped. Each missing piece is cached on its own
       # key: an NDK bump must not invalidate the CMake entry (and vice versa).
+      # The runner image's Android SDK root, spelled out instead of using
+      # ${{ env.ANDROID_HOME }}: that variable is injected into the job at RUN
+      # time, while `${{ }}` is expanded at PARSE time, so it evaluated to an
+      # empty string and the cache paths silently became /ndk/... and /cmake/...
+      # (actions/cache then refused to save -- "Path(s) specified in the action
+      # for caching do(es) not exist" -- so these caches never worked at all).
+      # This is the path actions/runner-images documents for ubuntu-24.04.
       - name: Cache the pinned NDK
         id: ndk-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
           key: android-ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
 
       - name: Cache the pinned CMake
         id: cmake-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ env.ANDROID_HOME }}/cmake/${{ env.CMAKE_VERSION }}
+          path: /usr/local/lib/android/sdk/cmake/${{ env.CMAKE_VERSION }}
           key: android-cmake-${{ env.CMAKE_VERSION }}-${{ runner.os }}
 
       - name: Install the missing Android SDK components
