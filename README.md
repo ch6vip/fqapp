@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/images/app_logo.webp" width="100" alt="fqapp">
+  <img src="assets/images/app_logo.webp" width="100" alt="什锦铺">
 </p>
 
-<h1 align="center">fqapp · 看小说、短剧、漫画的手机 App</h1>
+<h1 align="center">什锦铺 · 看小说、短剧、漫画的手机 App</h1>
 
 <p align="center">不用注册 · 不用付费 · 打开就能看</p>
 
