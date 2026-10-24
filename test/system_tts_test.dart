@@ -8,6 +8,8 @@ import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/system_tts.dart';
+import 'package:fqapp/services/text_replacement_store.dart';
+import 'package:fqapp/models/text_replacement_rule.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _methods = MethodChannel('fqapp/system_tts');
@@ -54,6 +56,7 @@ void main() {
   SystemTtsPlayback session({
     String text = '正文。',
     Future<String> Function(Chapter)? loader,
+    TextReplacementStore? replacements,
   }) => SystemTtsPlayback(
     SystemTtsBook(
       bookId: 'local:book',
@@ -66,10 +69,55 @@ void main() {
       localOnly: true,
       initialContent: ChapterContent.fromPlainText(text),
       textLoader: loader,
+      replacementStore: replacements,
     ),
     beforePlay: () async {},
     onStop: () {},
   );
+
+  testWidgets(
+    'saving rules closes a running system session and clears highlight',
+    (tester) async {
+      final replacements = TextReplacementStore();
+      await replacements.load();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final playback = session(replacements: replacements);
+      playback.start();
+      await tester.pump();
+      expect(spoken(), isNotEmpty);
+      await replacements.save(
+        enabled: true,
+        rules: [
+          const TextReplacementRule(id: 'r', pattern: '正文', replacement: '新正文'),
+        ],
+      );
+      await tester.pump();
+      expect(playback.closed, isTrue);
+      expect(ListeningSession.instance.sentenceRange, isNull);
+      await playback.close();
+      await tester.pump();
+    },
+  );
+
+  testWidgets('rules changed before queued TTS start prevent stale speech', (
+    tester,
+  ) async {
+    final replacements = TextReplacementStore();
+    await replacements.load();
+    final playback = session(replacements: replacements);
+    await replacements.save(
+      enabled: true,
+      rules: [
+        const TextReplacementRule(id: 'r', pattern: '正文', replacement: '新正文'),
+      ],
+    );
+    playback.start();
+    await tester.pump();
+    expect(spoken(), isEmpty);
+    expect(playback.closed, isTrue);
+    await playback.close();
+    await tester.pump();
+  });
 
   testWidgets('pause invalidates a pending engine initialization', (
     tester,

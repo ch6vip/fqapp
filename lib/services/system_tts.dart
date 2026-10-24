@@ -6,6 +6,9 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/media_item.dart';
+import '../models/text_replacement_rule.dart';
+import 'text_replacement_engine.dart';
+import 'text_replacement_store.dart';
 import 'api_client.dart';
 import 'audio_preferences.dart';
 import 'backend_transport.dart';
@@ -101,7 +104,13 @@ class SystemTtsBook {
     this.localOnly = false,
     this.textLoader,
     this.cache,
-  }) : chapters = List.unmodifiable(chapters);
+    TextReplacementSnapshot? replacementSnapshot,
+    TextReplacementStore? replacementStore,
+  }) : replacementStore = replacementStore ?? TextReplacementStore.instance,
+       replacementSnapshot =
+           replacementSnapshot ??
+           (replacementStore ?? TextReplacementStore.instance).snapshot,
+       chapters = List.unmodifiable(chapters);
 
   final String bookId;
   final String title;
@@ -112,6 +121,22 @@ class SystemTtsBook {
   final bool localOnly;
   final Future<String> Function(Chapter)? textLoader;
   final ChapterCache? cache;
+  final TextReplacementSnapshot replacementSnapshot;
+  final TextReplacementStore replacementStore;
+
+  Future<TextReplacementResult> loadDisplay(
+    int index, {
+    BackendRequest? request,
+    TextReplacementCancellation? cancellation,
+  }) async {
+    final content = await load(index, request: request);
+    return TextReplacementEngine.instance.transform(
+      source: content,
+      chapterTitle: chapters[index].title,
+      snapshot: replacementSnapshot,
+      cancellation: cancellation,
+    );
+  }
 
   Future<ChapterContent> load(int index, {BackendRequest? request}) async {
     if (index == startIndex) return initialContent;
@@ -182,6 +207,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _notificationQueue = Future<void>.value();
   Future<void>? _closeFuture;
   BackendRequest? _loadRequest;
+  TextReplacementCancellation? _replacementCancellation;
 
   Chapter get chapter => book.chapters[index];
   double get progress =>
@@ -192,7 +218,15 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   void start() {
     if (_started || closed) return;
     _started = true;
+    // Rule updates can occur while this book waits for history or ownership,
+    // before this session has subscribed to future changes.
+    if (book.replacementStore.snapshot.revision !=
+        book.replacementSnapshot.revision) {
+      _replacementChanged();
+      return;
+    }
     WidgetsBinding.instance.addObserver(this);
+    book.replacementStore.changes.addListener(_replacementChanged);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -227,6 +261,9 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     if (closed || next < 0 || next >= book.chapters.length) return;
     final token = ++_generation;
     _loadRequest?.cancel();
+    _replacementCancellation?.cancel();
+    final cancellation = _replacementCancellation =
+        TextReplacementCancellation();
     final request = _loadRequest = BackendRequest();
     _id = null;
     wantPlay = _allowed;
@@ -241,7 +278,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       await SystemTts.stop();
       if (closed || token != _generation) return;
       final content = await book
-          .load(next, request: request)
+          .loadDisplay(next, request: request, cancellation: cancellation)
           .timeout(
             const Duration(seconds: 30),
             onTimeout: () {
@@ -250,7 +287,11 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
             },
           );
       if (closed || token != _generation) return;
-      _text = SystemTtsBook.plainText(content, chapter.title);
+      _text = content
+          .bodyBlocks(chapter.title)
+          .whereType<ChapterParagraph>()
+          .map((p) => p.text)
+          .join('\n');
       if (_text.trim().isEmpty) throw StateError('本章没有可朗读的文字');
       _offset = _safeOffset(_offset.clamp(0, _text.length));
       loading = false;
@@ -406,6 +447,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       duration: Duration.zero,
       playing: wantPlay && !loading && error == null,
       textProgress: progress,
+      textReplacementRevision: book.replacementSnapshot.revision,
       // The piece being spoken is one sentence (see _speak's sentence-sized
       // split). Before the first piece the range is empty: no highlight.
       sentenceRange: _pieceEnd > _pieceStart
@@ -431,6 +473,17 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _replacementChanged() {
+    if (closed ||
+        book.replacementStore.snapshot.revision ==
+            book.replacementSnapshot.revision) {
+      return;
+    }
+    // The owner also closes this session; close() is idempotent.
+    unawaited(close());
+    onStop();
+  }
+
   void _preferencesChanged() {
     if (closed) return;
     if (!_allowed) {
@@ -450,6 +503,8 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _close() async {
     closed = true;
+    _replacementCancellation?.cancel();
+    book.replacementStore.changes.removeListener(_replacementChanged);
     ++_generation;
     _loadRequest?.cancel();
     _id = null;
