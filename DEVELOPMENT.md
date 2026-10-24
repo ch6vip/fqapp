@@ -12,6 +12,7 @@
 - [项目结构](#项目结构)
 - [构建环境](#构建环境)
 - [构建 APK](#构建-apk)
+- [测试](#测试)
 - [Android 原生核心集成](#android-原生核心集成)
 - [API 对接说明](#api-对接说明)
 - [数据模型](#数据模型)
@@ -273,6 +274,25 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 | `Flutter requires Android SDK 36` | `sdkmanager "platforms;android-36"` |
 | maven.google.com 超时 | 已配置阿里云镜像 |
 | `flutter doctor --android-licenses` 卡住 | `sdkmanager --licenses` 手动接受 |
+
+---
+
+## 测试
+
+### 分层跑测试
+
+测试按「秒级模块 → 收尾全量 → CI 兜底」三层跑，日常迭代不要每次都付全量的成本：
+
+| 层 | 命令 | 规模 | 何时用 |
+|---|---|---|---|
+| 模块 | `./scripts/test_quick.sh home` | 秒级 | 改动迭代的每一轮 |
+| 全量 | `./scripts/test_quick.sh --all`（即 `flutter test --no-pub`） | 2000+ 项 / 数分钟 | 交付前收尾 |
+| CI | `android-apk.yml` 与 `windows.yml` 每次 master push 全量 | 同全量 | 兜底 |
+
+- `test_quick.sh` 的模块词按测试文件名**子串**匹配：`home` 会同时命中 `home_page_test.dart`、`home_scroll_cost_test.dart`、`real_home_payload_test.dart`（子串宽是特性，`provider` 这类词会带出全部 `*_provider_test.dart`）。多个词合并去重后一次跑，也可直接传测试文件路径；拼错的模块词是硬错误，不会静默少跑。
+- 脚本固定带 `--no-pub`：首次 `flutter pub get` 之后，每次运行前的依赖解析是纯启动开销。`--concurrency=N` 可提并行（默认沿用 Flutter 的 4）。
+- **收尾仍要全量**：跨模块的涟漪只有全量能兜住——例如 `dramaProvider` 复用 `HomeNotifier`，改 `home_provider.dart` 可能影响 `drama_page_test.dart` 的断言；CI 反正会全量跑，本地先跑一次（数分钟）换一个比 CI 快得多的失败反馈。
+- 套件平均单项约 0.2 秒，没有病态慢测试；耗时大头是播放器/短剧/音频侧的广度（约六成文件）。靠删测试精简省不了多少时间，还会丢掉按回归记录的防坑文档——要精简就精简跑法，不是删用例。
 
 ---
 
