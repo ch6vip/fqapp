@@ -261,8 +261,16 @@ JNIEXPORT jint JNICALL Java_com_fqapp_fqapp_SpeechTempo_nativeProcess(
 
     (*env)->ReleaseByteArrayElements(env, dst, dst_buf, 0);
 
-    if (written_total > 0xFFFFu) return -1;
-    return (jint)((written_total << 16) | (jint)src_len);
+    /*
+     * 输入整块已被接收（低 16 位只能是 src_len，超过 16 位说明单块过大，
+     * 那是调用方的分块参数错了，按契约直接拒绝）。
+     *
+     * 输出超 16 位则不返回错误——已经写进 dst 的样本是有效的，丢掉等于
+     * 丢音频。截断到 65535 并让调用方下一轮继续拉取剩余部分。
+     */
+    if (src_len > 0xFFFF) return -1;
+    const size_t reported = written_total > 0xFFFFu ? 0xFFFFu : written_total;
+    return (jint)((reported << 16) | (jint)src_len);
 }
 
 JNIEXPORT jint JNICALL Java_com_fqapp_fqapp_SpeechTempo_nativeFlush(

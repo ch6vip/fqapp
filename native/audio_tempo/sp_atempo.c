@@ -638,6 +638,16 @@ static void yae_apply(struct sp_atempo *atempo,
                       uint8_t **dst_ref,
                       uint8_t *dst_end)
 {
+    /*
+     * flush 之后若又有新输入（seek / 循环播放），状态机必须回到正常流程，
+     * 否则 yae_apply 的四个分支全都不匹配，永远不产帧——表现为 seek 之后
+     * 静默无声。位置与环形缓冲也要一并复位，否则新数据会接着旧时间线走。
+     */
+    if (atempo->state == YAE_FLUSH_OUTPUT) {
+        yae_clear(atempo);
+        yae_update(atempo);
+    }
+
     while (1) {
         if (atempo->state == YAE_LOAD_FRAGMENT) {
             if (yae_load_frag(atempo, src_ref, src_end) != 0) {

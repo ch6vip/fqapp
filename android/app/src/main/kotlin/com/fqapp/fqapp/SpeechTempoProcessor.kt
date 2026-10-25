@@ -38,11 +38,18 @@ internal class SpeechTempoProcessor(
     private companion object {
         const val TAG = "SpeechTempoProcessor"
 
-        /** 交给 native 的单块上限：够覆盖多个 WSOLA 窗口，又不至于延迟过大。 */
-        const val CHUNK_BYTES = 32 * 1024
+        /**
+         * 交给 native 的单块上限。
+         *
+         * 必须够小：JNI 用 16 位装「输出字节数」，而上限 65535 是在**重采样之后**
+         * 算的。8 KiB 的原始输入最坏放大（16 kHz -> 48 kHz 的 3 倍，再叠加 0.75x
+         * 的 1.34 倍）也只有约 33 KiB，留足余量。早先的 32 KiB 在 24 kHz 输入下
+         * 1.0x 就会产出 65536 字节，直接把返回值打成 -1，整块音频被丢弃。
+         */
+        const val CHUNK_BYTES = 8 * 1024
 
-        /** 输出缓冲上限：重采样 + 最慢倍速叠加后的余量。 */
-        const val OUTPUT_CAPACITY = CHUNK_BYTES * 6
+        /** 输出缓冲上限：8 KiB 输入经 3 倍重采样与 0.75x 后的余量。 */
+        const val OUTPUT_CAPACITY = 64 * 1024
 
         /**
          * 变速前统一的采样率，对齐官方 `start samplefilter: src samplerate ->
@@ -195,8 +202,18 @@ internal class SpeechTempoProcessor(
 
     override fun onQueueEndOfStream() {
         if (handle != 0) {
-            // 先把攒着的输入喂完。
+            /*
+             * 先把攒着的输入喂完。drain() 只处理「至少一个完整帧」的余量，
+             * 尾部不足一帧的残片（半个采样）属于损坏输入，丢弃是对的；
+             * 但 drain 之后仍可能有 >0 的完整帧（native 要更多输入才出帧），
+             * 这些必须交给 nativeFlush 去逼出来，不能直接扔。
+             */
             drain()
+            /*
+             * nativeFlush 每次把内部残留尽力写进 dst 并返回写入量；返回 0
+             * 表示已经排空。上限 64 轮只是防御——正常一到两轮就干净了，
+             * 无界循环会在 native 侧状态异常时把 UI 线程锁死。
+             */
             val dst = ByteArray(OUTPUT_CAPACITY)
             var guard = 0
             while (guard++ < 64) {
@@ -208,6 +225,7 @@ internal class SpeechTempoProcessor(
                 out.put(dst, 0, flushed)
                 out.flip()
                 pendingOutput = out
+                if (flushed < dst.size) break
             }
         }
         inputEnded = true
