@@ -22,7 +22,38 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(sp_crypto_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# WSOLA 时伸缩（FFmpeg af_atempo.c 的移植，LGPL-2.1-or-later）。
+# 听书高倍速的听感对齐官方实现，见 issue #129。
+add_library(sp_audio_tempo STATIC
+    audio_tempo/sp_atempo.c
+    third_party/kissfft/kiss_fft.c
+    third_party/kissfft/kiss_fftr.c
+)
+target_include_directories(sp_audio_tempo PUBLIC audio_tempo)
+target_include_directories(sp_audio_tempo PRIVATE third_party/kissfft)
+target_compile_definitions(sp_audio_tempo PRIVATE KISS_FFT_BUILD=1)
+set_target_properties(sp_audio_tempo PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    C_VISIBILITY_PRESET hidden
+)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    # 本仓库自己的移植代码按全告警级别把控；kissfft 是原样 vendored 的第三方
+    # 源码，只放宽它自带的一处有符号比较告警。
+    target_compile_options(sp_audio_tempo PRIVATE -Wall -Wextra -Wpedantic -Wno-sign-compare)
+endif()
+
 if(ANDROID)
+    # 时伸缩的 JNI 桥：ExoPlayer 的 AudioProcessor 直接调用这里的采样级接口。
+    add_library(shortplay_tempo SHARED android/tempo_jni_bridge.c)
+    target_link_libraries(shortplay_tempo PRIVATE sp_audio_tempo)
+    target_compile_options(shortplay_tempo PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_options(shortplay_tempo PRIVATE
+        "-Wl,-z,max-page-size=16384"
+        "-Wl,-z,common-page-size=16384"
+        "-Wl,-z,relro"
+        "-Wl,-z,now"
+    )
+
     add_library(shortplay_crypto SHARED android/jni_bridge.c)
     target_link_libraries(shortplay_crypto PRIVATE sp_crypto_core)
     target_compile_options(shortplay_crypto PRIVATE -Wall -Wextra -Wpedantic)

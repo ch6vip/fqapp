@@ -23,11 +23,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('听书变速引擎'), findsOneWidget);
-    expect(find.text(AudioRateEngine.platform.label), findsOneWidget);
+    expect(find.text(AudioRateEngine.wsola.label), findsOneWidget);
 
     await tester.tap(find.text('听书变速引擎'));
     await tester.pumpAndSettle();
-    expect(find.text('系统混音器变速，高倍速下更接近 1.0× 原声（默认）'), findsOneWidget);
+    expect(
+      find.text('与番茄官方同一套算法（FFmpeg atempo），高倍速听感最接近原声（默认）'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text(AudioRateEngine.builtIn.label));
     await tester.pumpAndSettle();

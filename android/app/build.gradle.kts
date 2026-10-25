@@ -83,7 +83,10 @@ android {
         // every split build at configuration time.
         externalNativeBuild {
             cmake {
-                targets += "shortplay_crypto"
+                // shortplay_tempo 是 issue #129 的 WSOLA 时伸缩库，必须一起打包；
+                // 漏在这里 Gradle 不会编译它，运行期 System.loadLibrary 会抛
+                // UnsatisfiedLinkError。
+                targets += listOf("shortplay_crypto", "shortplay_tempo")
             }
         }
     }
