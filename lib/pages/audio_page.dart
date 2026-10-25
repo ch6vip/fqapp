@@ -173,6 +173,13 @@ class _AudioPageState extends State<AudioPage> {
   bool _attaching = false;
   bool _attachFailed = false;
   bool _routeCurrent = true;
+
+  /// 边听边读：在听书页内把正文面板展开，而不是跳到另一个页面。
+  ///
+  /// 官方就是这个形态（`AudioTextTabFragment` 在听书页里嵌一个阅读器视图，
+  /// `als.xml` 的正文容器占满剩余高度），播放控制留在底部。
+  bool _readingAlong = false;
+
   _AudioPlaybackController get c => _session!;
 
   @override
@@ -439,7 +446,9 @@ class _AudioPageState extends State<AudioPage> {
             ),
             ?modeSwitch,
             Expanded(
-              child: SingleChildScrollView(
+              child: _readingAlong
+                  ? _readAlongPanel()
+                  : SingleChildScrollView(
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 560),
@@ -771,22 +780,65 @@ class _AudioPageState extends State<AudioPage> {
     );
   }
 
-  /// TTS shares stable chapter IDs with the novel. Fixed recordings retain
-  /// their subtitle view; their chapter numbers cannot map a different book.
-  Future<void> _showReadAlong() async {
-    if (c._closed || c._chapters.isEmpty) return;
-    if (c._mode == 'tts' && c._ttsBookId == c._bookId && !c._offline) {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => ReaderPage(
+  /// 边听边读面板：把阅读器嵌在听书页里，播放控制留在底部。
+  ///
+  /// 官方 `AudioTextTabFragment` 就是这个形态——听书页内一个占满剩余高度的
+  /// 阅读器视图（`als.xml` 的 `db0` 容器），正文正常排版、当前朗读句高亮，
+  /// 而不是跳到另一个页面。只有 TTS 与正文共享章节 ID 时才成立；定点讲书的
+  /// 章节编号无法映射到另一本书，仍旧只能看字幕。
+  Widget _readAlongPanel() {
+    final palette = HomePalette.of(context);
+    return Column(
+      children: [
+        // 面板内的退出口：阅读器自己不再持有返回手势（embedded 模式），
+        // 这一行就是官方「返回听书」的对应物。
+        SizedBox(
+          height: 40,
+          child: Row(
+            children: [
+              const SizedBox(width: 8),
+              IconButton(
+                key: const Key('audio_read_along_back'),
+                tooltip: '返回听书',
+                onPressed: () => setState(() => _readingAlong = false),
+                style: IconButton.styleFrom(foregroundColor: palette.ink),
+                icon: const Icon(LucideIcons.chevron_down, size: 20),
+              ),
+              Expanded(
+                child: Text(
+                  c._chapters[c._index].title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.muted,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ReaderPage(
             bookId: c._bookId,
             title: c._title,
             cover: c._cover,
             chapters: c._chapters,
             startIndex: c._index,
+            embedded: true,
           ),
         ),
-      );
+      ],
+    );
+  }
+
+  /// TTS shares stable chapter IDs with the novel. Fixed recordings retain
+  /// their subtitle view; their chapter numbers cannot map a different book.
+  Future<void> _showReadAlong() async {
+    if (c._closed || c._chapters.isEmpty) return;
+    if (c._mode == 'tts' && c._ttsBookId == c._bookId && !c._offline) {
+      setState(() => _readingAlong = true);
       return;
     }
     final palette = HomePalette.of(context);

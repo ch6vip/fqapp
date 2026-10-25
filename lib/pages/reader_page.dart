@@ -81,6 +81,14 @@ class ReaderPage extends StatefulWidget {
   final TextReplacementStore? replacementStore;
   final TextReplacementEngine? replacementEngine;
 
+  /// Renders inside an existing page instead of owning the screen.
+  ///
+  /// 边听边读 shows the reader as a panel of the listening page rather than as a
+  /// pushed route. The embedded form must not install its own Scaffold,
+  /// PopScope or system-bar styling — the host already owns those, and wrapping
+  /// twice makes the status bar flip between the two colour sets.
+  final bool embedded;
+
   /// Paragraph ideas for the current chapter. When both this and
   /// [commentResolver] are null the reader fetches them itself, unless a
   /// [chapterCache] was injected (an injected cache marks the caller as
@@ -109,6 +117,7 @@ class ReaderPage extends StatefulWidget {
     this.imageProviderFactory,
     this.ideasLoader,
     this.commentResolver,
+    this.embedded = false,
     this.shelfItem,
     this.underlineStore,
     this.replacementStore,
@@ -2666,21 +2675,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final overlayStyle = preset.isDark
         ? SystemUiOverlayStyle.light
         : SystemUiOverlayStyle.dark;
-    return PopScope<Object?>(
-      canPop: !_controlsVisible,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _controlsVisible) _toggleControls();
-      },
-      child: AnnotatedRegion<SystemUiOverlayStyle>(
-        value: overlayStyle.copyWith(
-          statusBarColor: preset.backgroundColor,
-          systemNavigationBarColor: preset.backgroundColor,
-        ),
-        child: Theme(
-          data: preset.theme(Theme.of(context)),
-          child: Scaffold(
-            backgroundColor: preset.backgroundColor,
-            body: Stack(
+    final surface = Theme(
+      data: preset.theme(Theme.of(context)),
+      child: Stack(
               fit: StackFit.expand,
               children: [
                 SafeArea(
@@ -2758,8 +2755,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 if (_einkFlashVisible)
                   const Positioned.fill(child: ColoredBox(color: Colors.white)),
               ],
-            ),
-          ),
+      ),
+    );
+    // 边听边读把阅读器作为听书面板呈现：宿主已经持有 Scaffold、返回手势与
+    // 系统栏样式，这里再套一层会让状态栏在两层之间来回跳。分页本身量的是
+    // constraints.biggest，面板矮只是重排，不依赖全屏假设。
+    if (widget.embedded) {
+      return ColoredBox(color: preset.backgroundColor, child: surface);
+    }
+    return PopScope<Object?>(
+      canPop: !_controlsVisible,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _controlsVisible) _toggleControls();
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlayStyle.copyWith(
+          statusBarColor: preset.backgroundColor,
+          systemNavigationBarColor: preset.backgroundColor,
+        ),
+        child: Scaffold(
+          backgroundColor: preset.backgroundColor,
+          body: surface,
         ),
       ),
     );
