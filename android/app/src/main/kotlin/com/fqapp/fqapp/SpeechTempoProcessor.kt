@@ -41,8 +41,15 @@ internal class SpeechTempoProcessor(
         /** 交给 native 的单块上限：够覆盖多个 WSOLA 窗口，又不至于延迟过大。 */
         const val CHUNK_BYTES = 32 * 1024
 
-        /** 输出缓冲上限：比例最高 0.5×（放大两倍）再留些余量。 */
-        const val OUTPUT_CAPACITY = CHUNK_BYTES * 3
+        /** 输出缓冲上限：重采样 + 最慢倍速叠加后的余量。 */
+        const val OUTPUT_CAPACITY = CHUNK_BYTES * 6
+
+        /**
+         * 变速前统一的采样率，对齐官方 `start samplefilter: src samplerate ->
+         * dst samplerate`。48 kHz 是 Android 音频输出的通用速率，WSOLA 在这里
+         * 拿到 sample_rate/24 = 2048 点的窗口（24 kHz 输入只有 1024 点）。
+         */
+        const val TARGET_SAMPLE_RATE = 48_000
     }
 
     private var handle: Int = 0
@@ -58,7 +65,14 @@ internal class SpeechTempoProcessor(
     private val frameBytes: Int get() = 2 * channelCount
 
     private fun openHandle() {
-        handle = SpeechTempo.nativeCreate(sampleRateHz, channelCount, speed.toDouble())
+        handle = SpeechTempo.nativeCreateChain(
+            sampleRateHz,
+            channelCount,
+            speed.toDouble(),
+            // 官方在 atempo 之前把 PCM 统一到输出采样率（samplefilter），
+            // 否则 WSOLA 的窗口只有 sample_rate/24，24k 输入精度减半。
+            TARGET_SAMPLE_RATE,
+        )
         if (handle == 0) {
             // 创建失败不能静默：直接抛出去，让 ExoPlayer 走它的错误路径，
             // 而不是让用户以为在听 1.0×。
@@ -68,8 +82,9 @@ internal class SpeechTempoProcessor(
         }
         Log.i(
             TAG,
-            "atempo ready sr=$sampleRateHz ch=$channelCount speed=$speed " +
-                "window=${SpeechTempo.nativeWindow(handle)}",
+            "atempo chain ready sr=$sampleRateHz->$TARGET_SAMPLE_RATE " +
+                "ch=$channelCount speed=$speed window=${SpeechTempo.nativeWindow(handle)} " +
+                "resample=${sampleRateHz != TARGET_SAMPLE_RATE}",
         )
     }
 
@@ -101,7 +116,15 @@ internal class SpeechTempoProcessor(
             }
             openHandle()
         }
-        return inputAudioFormat
+        /*
+         * 输出采样率是 TARGET_SAMPLE_RATE（native 侧第一级重采样），必须如实
+         * 报告给下游——AudioTrack 会按它初始化，报错就是变调/变速。
+         */
+        return AudioProcessor.AudioFormat(
+            TARGET_SAMPLE_RATE,
+            inputAudioFormat.channelCount,
+            C.ENCODING_PCM_16BIT,
+        )
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -227,7 +250,14 @@ internal object SpeechTempo {
         System.loadLibrary("shortplay_tempo")
     }
 
-    external fun nativeCreate(sampleRate: Int, channels: Int, tempo: Double): Int
+    external fun nativeCreateChain(
+        sampleRate: Int,
+        channels: Int,
+        tempo: Double,
+        targetRate: Int,
+    ): Int
+
+    external fun nativeOutputBound(handle: Int, inputBytes: Int): Int
     external fun nativeDestroy(handle: Int)
     external fun nativeSetTempo(handle: Int, tempo: Double): Int
     external fun nativeWindow(handle: Int): Int

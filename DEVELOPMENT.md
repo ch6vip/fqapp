@@ -566,8 +566,18 @@ App 通过 `ApiClient` 调用后端 **`/api/v1/*` 业务路由**（Rust 核心 `
   视频/短剧播放器永远走 Media3 内建变速，否则音频处理与视频渲染不再
   步进同一套计时。三档都在新建播放器时生效。
 
+  **变速前置重采样**：与官方 `samplefilter` 对齐——进 atempo 之前把 PCM
+  统一到 48 kHz（`sp_resample.c`），否则 24 kHz 的 TTS 只有 1024 点窗口，
+  周期估计精度减半。相位是 64 位 Q16 定点（32 位在长块上会回绕）。
+
+  **响度压缩未做**：官方还有一层 `LoudnessAudioProcessor`（SAMICore →
+  `mammon::LoudnessProcess`），但它依赖服务端下发的
+  `volumeBalanceSrcLoudness`，且目标 LUFS 在 stripped 二进制里取不到。
+  直接打包官方 `.so` 不可行（4 KiB 对齐不满足 16 KiB 页、私有许可、
+  +15 MB/ABI）。要做应按 BS.1770 单遍流式归一，目标 -16 LUFS。
+
   算法回归：`NATIVE_CC=gcc node --test test/native_atempo_test.cjs`
-  （时长比例、幅度、纯音保真度、拼接无爆音、窗口推导）。
+  （时长比例、幅度、纯音保真度、拼接无爆音、窗口推导、重采样比例/音高/幅度）。
 
 > **听书页的「书评」与章评**：官方听书页的操作项是「章评」（章末讨论），但章评属于
 > 章节而不是正在收听的书；该面板展示的是整本书评，所以按实际内容标注为「书评」。

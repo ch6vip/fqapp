@@ -26,6 +26,7 @@ endif()
 # 听书高倍速的听感对齐官方实现，见 issue #129。
 add_library(sp_audio_tempo STATIC
     audio_tempo/sp_atempo.c
+    audio_tempo/sp_resample.c
     third_party/kissfft/kiss_fft.c
     third_party/kissfft/kiss_fftr.c
 )
