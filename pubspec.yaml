@@ -104,6 +104,7 @@ flutter:
     - assets/filters/
     - assets/plugins/
     - assets/images/app_logo.webp
+    - assets/images/wechat_reward.png
     - assets/images/bubble/
     # 短剧单列卡右侧栏/信息层的官方图标，从
     # `ckao/decompile/apktool/res/drawable*/` 原样抽出（见
