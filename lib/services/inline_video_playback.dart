@@ -309,8 +309,16 @@ class InlineVideoPlayback {
     if (previous != null && previousId != null && previousId != contentId) {
       _parkWithState(previousId, previous);
     } else if (previous != null && previousId == contentId) {
-      // Same drama re-activated (a retry): the old decoder is stale.
-      unawaited(previous.dispose());
+      // Same drama re-activated (next episode / retry): the old decoder is
+      // stale and is not parked. Its destruction has to join the [_releases]
+      // chain — [switchVariant] and [_teardown] both do that, because "only
+      // one native player alive at a time" is the contract [release]
+      // documents. Disposing it on the side let the new decoder be created
+      // while the old one was still tearing down: two native players briefly
+      // coexisted, which surfaces as "playback failed" on the next episode
+      // (MediaCodec slot contention on Android, an unclosed media session on
+      // the desktop side).
+      _retire(previous);
     }
 
     // Reuse path: the pool still holds this drama's paused decoder.
@@ -1036,6 +1044,28 @@ class InlineVideoPlayback {
       release,
     ]).then<void>((_) {}).catchError((Object _) {});
     return _releases;
+  }
+
+  /// Queue [player]'s **destructive** release behind every earlier one, keeping
+  /// the chain in [_releases] so the next `create` waits for it.
+  ///
+  /// Same contract as [_teardown], minus the session-state reset: the caller is
+  /// mid-`activate` and is about to install its own state, so only the native
+  /// side is touched here. Pausing first keeps a decoder that still holds an
+  /// audio track from being audible until the release lands.
+  void _retire(NativePlayer player) {
+    final release = () async {
+      try {
+        if (player.isCreated) await player.pause();
+      } catch (_) {
+        // A decoder that refuses to pause still has to be released.
+      }
+      await player.dispose();
+    }();
+    _releases = Future.wait([
+      _releases,
+      release,
+    ]).then<void>((_) {}).catchError((Object _) {});
   }
 
   Map<String, dynamic> _historyEntry(

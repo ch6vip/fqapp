@@ -28,7 +28,7 @@
     "lib/services/desktop_platform.dart": 694,
     "lib/services/drama_downloader.dart": 549,
     "lib/services/imported_book_store.dart": 1098,
-    "lib/services/inline_video_playback.dart": 1091,
+    "lib/services/inline_video_playback.dart": 1121,
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 746,
     "lib/services/system_tts.dart": 540,

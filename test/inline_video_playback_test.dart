@@ -187,4 +187,61 @@ void main() {
       contains('create:https://example.invalid/a-1-1080.mp4'),
     );
   });
+
+  test('播下一集：旧解码器释放完成前不建新解码器', () async {
+    // 同一部剧换集时旧解码器作废重建，新的必须等旧的释放结束。否则两台原生
+    // 播放器同时存活：Android 撞 MediaCodec 名额、桌面端撞媒体会话未关闭，
+    // 表现为「播下一集时提示播放失败」。
+    final releaseGate = Completer<void>();
+    final players = <ControlledNativePlayer>[];
+    final session = InlineVideoPlayback(
+      directoryLoader: (id, tab) async => [
+        [
+          Chapter(itemId: '$id-1', title: '第 1 集', volumeName: '剧集'),
+          Chapter(itemId: '$id-2', title: '第 2 集', volumeName: '剧集'),
+        ],
+      ],
+      contentLoader: (itemId, tab) async => {
+        'video_url': 'https://example.invalid/$itemId.mp4',
+      },
+      playerFactory: () {
+        final player = ControlledNativePlayer(
+          // 只有第一台卡在释放门上，第二台正常建。
+          releaseGate: players.isEmpty ? releaseGate : null,
+        );
+        players.add(player);
+        return player;
+      },
+      historyStore: MemoryReaderStore(),
+    );
+    addTearDown(session.dispose);
+
+    await session.activate(_series('a'));
+    expect(session.activeEpisodeIndex, 0);
+    expect(players, hasLength(1));
+    expect(players.single.calls, contains('play'));
+
+    final next = session.activate(_series('a'), startEpisodeIndex: 1);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(
+      players,
+      hasLength(1),
+      reason: '旧解码器还在释放中，新解码器不能开始创建',
+    );
+    expect(players.single.calls, contains('dispose'));
+    expect(
+      players.single.calls,
+      isNot(contains('released')),
+      reason: '释放仍被门挡住，说明断言确实卡在中间态',
+    );
+
+    releaseGate.complete();
+    await next;
+    expect(players, hasLength(2));
+    expect(players[0].calls, contains('released'));
+    expect(players[1].calls, contains('create:https://example.invalid/a-2.mp4'));
+    expect(players[1].calls, contains('play'));
+    expect(session.activeEpisodeIndex, 1);
+    expect(session.activeVid.value, 'a-2');
+  });
 }
