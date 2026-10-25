@@ -3,6 +3,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/category_front.dart';
 import '../services/api_client.dart';
+import '../services/desktop_platform.dart';
 import '../widgets/home/home_design.dart';
 
 /// 官方分类页（`BookCategoryActivity`，7.0.9.32 实测形态）：
@@ -15,9 +16,10 @@ import '../widgets/home/home_design.dart';
 ///   `TabPageRightContent` 遍历 cells，每组一个组头 + `chunked(3)` 网格行；
 ///   老身份只回平铺数据，这里按「热门标签=全量 + 其余 dim 各一组」重建）。
 ///   组头 12sp 灰 #969696、行高 24dp，>30 的组在组头右端出「展开/收起」；
-///   chip 为**三列等宽**（官方每颗 `weight(1f)`，尾行补 Spacer）：定高
+///   chip 为**等宽网格**（官方每颗 `weight(1f)`，尾行补 Spacer）：定高
 ///   30dp、圆角 6dp、底 #ECECEC、上6下4行距、7dp 列距、14sp 黑字居中，
-///   热门项左侧 16dp 近黑火苗；
+///   热门项左侧 16dp 近黑火苗。官方在手机上固定三列；桌面窗口宽，这里按
+///   [_chipTargetWidth] 加列（手机仍夹在三列），否则 chip 会被拉成横条。
 /// * 左栏点击 → 滚动定位到对应分组（官方 `TabPageScrollEffect`），滚动
 ///   反向同步左栏高亮（官方 `c1` 按 firstVisibleItem 反查）。
 ///
@@ -44,6 +46,29 @@ class _Section {
 /// 官方收起态每组只显示前 30 颗（`CollectionsKt.take(_, 30)`）。
 const _collapsedCount = 30;
 
+/// 左侧维度栏宽度（官方 88dp 定值）。
+const double _dimRailWidth = 88;
+
+/// 桌面下每颗 chip 的目标宽度。
+///
+/// 官方在手机上把内容区 `chunked(3)` 三等分，375dp 屏上每颗约 80dp。桌面
+/// 窗口宽得多，若仍死守三列，1280dp 下每颗会被拉到 350dp——一排三条 12:1
+/// 的横条，中间大片空白。这里改成「内容区够宽就加列」：手机上仍夹在官方
+/// 那 3 列（255 / 170 = 1.5），1280dp 下是 6 列（每颗约 187dp）。
+const double _chipTargetWidth = 170;
+
+/// 列数夹取区间：下限固定为官方的三列，上限防超宽屏（5K 全屏 2483dp）
+/// 排出十几列后每颗又变得过窄。
+const int _chipMinColumns = 3;
+const int _chipMaxColumns = 10;
+
+/// 按内容区可用宽度（已扣掉左右 padding）算列数。
+int _chipColumnsFor(double contentWidth) =>
+    (contentWidth / _chipTargetWidth).floor().clamp(
+      _chipMinColumns,
+      _chipMaxColumns,
+    );
+
 class _CategoryPageState extends State<CategoryPage> {
   CategoryFront? _front;
   String? _error;
@@ -55,6 +80,13 @@ class _CategoryPageState extends State<CategoryPage> {
   final Set<int> _expanded = <int>{};
   final ScrollController _scroll = ScrollController();
   bool _programmaticScroll = false;
+
+  /// 当前列数，由 [build] 里的 `LayoutBuilder` 按实际宽度写回。
+  ///
+  /// 滚动定位用的是「组高前缀和」，而行数按列数算，两者必须用同一个值；
+  /// 列数只在布局阶段变化，所以这里存成普通字段而不是 `setState`——它不
+  /// 影响已经渲染的内容，只在下一帧的 `_sectionHeight` 里被读到。
+  int _columns = _chipMinColumns;
 
   @override
   void initState() {
@@ -113,7 +145,8 @@ class _CategoryPageState extends State<CategoryPage> {
   }
 
   // —— 滚动 ↔ 左栏联动（官方 R0 前缀和定位 + c1 反查）——
-  // 所有行高都是定值：组头上距 16 + 组头 24 + 每网格行 40（上6+30+下4）。
+  // 所有行高都是定值：组头上距 16 + 组头 24 + 每网格行 40（上6+30+下4）；
+  // 行数按当前列数 [_columns] 算，与 `_SectionView` 的换行步长同源。
   double _sectionHeight(int index) {
     final section = _sections[index];
     final visible = _expanded.contains(index)
@@ -121,7 +154,7 @@ class _CategoryPageState extends State<CategoryPage> {
         : (section.tiles.length > _collapsedCount
               ? _collapsedCount
               : section.tiles.length);
-    final rows = (visible / 3).ceil();
+    final rows = (visible / _columns).ceil();
     return 16 + 24 + rows * 40.0;
   }
 
@@ -190,15 +223,27 @@ class _CategoryPageState extends State<CategoryPage> {
               Expanded(child: _ErrorView(message: _error!, onRetry: _load))
             else if (front != null)
               Expanded(
-                child: Row(
-                  children: [
-                    _DimRail(
-                      sections: _sections,
-                      selectedIndex: _selected,
-                      onSelect: _scrollToSection,
-                    ),
-                    Expanded(child: _SectionList(state: this)),
-                  ],
+                // 列数按实际内容区宽度算：手机仍是官方三列，桌面按 170dp
+                // 一颗的目标宽度加列，免得 chip 被拉成细长横条。
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final columns = _chipColumnsFor(
+                      constraints.maxWidth - _dimRailWidth - 32,
+                    );
+                    _columns = columns;
+                    return Row(
+                      children: [
+                        _DimRail(
+                          sections: _sections,
+                          selectedIndex: _selected,
+                          onSelect: _scrollToSection,
+                        ),
+                        Expanded(
+                          child: _SectionList(state: this, columns: columns),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
           ],
@@ -227,11 +272,16 @@ class _TopBar extends StatelessWidget {
       height: 48,
       child: Row(
         children: [
-          IconButton(
-            key: const Key('category_back'),
-            icon: Icon(LucideIcons.chevron_left, size: 24, color: palette.ink),
-            onPressed: () => Navigator.maybePop(context),
-          ),
+          // 桌面壳层顶栏已经有「← 什锦铺」，这里再放一个返回键就是两个
+          // 箭头上下叠着。手机上保留官方形态。
+          if (isWindowsDesktop)
+            const SizedBox(width: 16)
+          else
+            IconButton(
+              key: const Key('category_back'),
+              icon: Icon(LucideIcons.chevron_left, size: 24, color: palette.ink),
+              onPressed: () => Navigator.maybePop(context),
+            ),
           Expanded(
             child: tabs.isEmpty
                 ? const SizedBox.shrink()
@@ -294,7 +344,7 @@ class _DimRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return SizedBox(
-      width: 88,
+      width: _dimRailWidth,
       child: ColoredBox(
         color: palette.soft,
         child: ListView.builder(
@@ -330,9 +380,10 @@ class _DimRail extends StatelessWidget {
 /// LazyColumn，每组「组头 + chunked(3) 网格行」两个 item；此处一组一个
 /// item（组头 + Column(网格行)），行高全是定值，滚动定位用前缀和。
 class _SectionList extends StatelessWidget {
-  const _SectionList({required this.state});
+  const _SectionList({required this.state, required this.columns});
 
   final _CategoryPageState state;
+  final int columns;
 
   @override
   Widget build(BuildContext context) {
@@ -354,6 +405,7 @@ class _SectionList extends StatelessWidget {
           state: state,
           index: index,
           section: state._sections[index],
+          columns: columns,
         ),
       ),
     );
@@ -365,11 +417,13 @@ class _SectionView extends StatelessWidget {
     required this.state,
     required this.index,
     required this.section,
+    required this.columns,
   });
 
   final _CategoryPageState state;
   final int index;
   final _Section section;
+  final int columns;
 
   @override
   Widget build(BuildContext context) {
@@ -387,8 +441,14 @@ class _SectionView extends StatelessWidget {
           expanded: state._expanded.contains(index),
           onToggle: () => state._toggle(index),
         ),
-        for (var i = 0; i < visible.length; i += 3)
-          _ChipRow(tiles: visible.sublist(i, (i + 3).clamp(0, visible.length))),
+        for (var i = 0; i < visible.length; i += columns)
+          _ChipRow(
+            tiles: visible.sublist(
+              i,
+              (i + columns).clamp(0, visible.length),
+            ),
+            columns: columns,
+          ),
       ],
     );
   }
@@ -452,17 +512,19 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 一行至多 3 颗等宽 chip（官方 `chunked(_, 3)` + 每颗 `weight(1f)`，
-/// 不足 3 颗的尾行用同权 Spacer 补位，保持前几颗不抢宽）。列距 7dp。
+/// 一行 [columns] 颗等宽 chip（官方 `chunked(3)` + 每颗 `weight(1f)`，手机上
+/// 就是三列；桌面按宽度加列）。不足 [columns] 颗的尾行用同权 Spacer 补位，
+/// 保持前几颗不抢宽。列距 7dp。
 class _ChipRow extends StatelessWidget {
-  const _ChipRow({required this.tiles});
+  const _ChipRow({required this.tiles, required this.columns});
 
   final List<CategoryTile> tiles;
+  final int columns;
 
   @override
   Widget build(BuildContext context) {
     final cells = <Widget>[];
-    for (var i = 0; i < 3; i++) {
+    for (var i = 0; i < columns; i++) {
       if (i > 0) cells.add(const SizedBox(width: 7));
       cells.add(
         Expanded(
