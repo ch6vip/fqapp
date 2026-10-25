@@ -10,7 +10,7 @@ import 'package:fqapp/widgets/home/home_cell_blocks.dart';
 void main() {
   late BuildContext context;
 
-  Future<void> pump() async {
+  Future<void> pump(WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
@@ -26,7 +26,7 @@ void main() {
   testWidgets('phone keeps 2 columns, pads follow the breakpoints', (
     tester,
   ) async {
-    await pump();
+    await pump(tester);
 
     // `b()` 平板适配开关关着，手机恒 2 列。
     expect(homeColumnCount(context), 2);
@@ -39,7 +39,7 @@ void main() {
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     try {
-      await pump();
+      await pump(tester);
       // 平板适配开关不覆盖桌面：桌面窗口若死守 2 列，1280 宽下每张卡
       // 570dp、封面 1.4 高，两张卡就吃掉一整屏。桌面按同一套断点走。
       expect(homeColumnCount(context), greaterThan(2));
