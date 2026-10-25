@@ -392,7 +392,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           audioRange.startPara,
           audioRange.startOff,
           audioRange.endPara,
-          audioRange.endOff,
+          // The upstream end offset is inclusive (official
+          // `toTargetTextBlock` passes `endParaOff + 1`); this side is
+          // half-open, so the +1 belongs here.
+          audioRange.endOff + 1,
+          startElementIndex: audioRange.elemIndex,
+          startElementOffset: audioRange.elemOff,
         );
         if (translated != null) {
           next = (translated.start, translated.end);

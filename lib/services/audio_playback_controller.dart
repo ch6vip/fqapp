@@ -731,16 +731,28 @@ class _AudioPlaybackController extends ChangeNotifier
   ///
   /// Title points are dropped: the reader's title block is not a paragraph the
   /// backend numbers, so a title range would land on the wrong text.
-  ({int startPara, int startOff, int endPara, int endOff})? _paraRangeAt(
-    Duration position,
-  ) {
+  ({
+    int startPara,
+    int startOff,
+    int endPara,
+    int endOff,
+    int? elemIndex,
+    int? elemOff,
+  })?
+  _paraRangeAt(Duration position) {
     final point = _timeTrack.pointAt(position);
     if (point == null || !point.isBody) return null;
+    // positionV2 narrows the start to one inline `<blk>`; it is optional, and
+    // the reader falls back to the paragraph offset when the chapter did not
+    // record element boundaries.
+    final hasElement = point.hasElementCoordinate;
     return (
       startPara: point.startPara,
       startOff: point.startParaOff,
       endPara: point.endPara,
       endOff: point.endParaOff,
+      elemIndex: hasElement ? point.startElementIndex : null,
+      elemOff: hasElement ? point.startElementOffset : null,
     );
   }
 

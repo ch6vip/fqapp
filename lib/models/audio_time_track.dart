@@ -35,16 +35,42 @@ class AudioSyncPoint {
     this.isTitle = false,
     this.audioItemId = '',
     this.novelItemId = '',
+    this.startElementIndex,
+    this.startElementOffset,
   });
 
   /// Audio start of this range. Milliseconds, matching the player position.
   final int startTime;
 
-  /// Text range as (paragraph index, offset inside that paragraph).
+  /// Text range as (paragraph id, offset inside that paragraph).
+  ///
+  /// [startPara] is the upstream `<p idx="N">` id, not a display ordinal.
   final int startPara;
   final int startParaOff;
   final int endPara;
   final int endParaOff;
+
+  /// `positionV2` element coordinates, when the response carried them.
+  ///
+  /// They address the same position as [startPara]/[startParaOff] but one level
+  /// deeper: the index of the inline `<blk>` inside the paragraph and the
+  /// character offset inside that element. Null when absent — the official
+  /// client then falls back to the paragraph-level pair, which every point
+  /// carries as well.
+  final int? startElementIndex;
+  final int? startElementOffset;
+
+  /// Whether `positionV2` can be used (official `isNewCoordinate()` minus the
+  /// all-zero case that official `isEmptyNewCoordinate()` also rejects).
+  bool get hasElementCoordinate {
+    final index = startElementIndex;
+    final offset = startElementOffset;
+    if (index == null || offset == null) return false;
+    if (index < 0 || offset < 0) return false;
+    // The upstream's all-zero guard would drop paragraph 0 / offset 0, which is
+    // a real position; only reject it when the paragraph is also 0.
+    return !(startPara == 0 && index == 0 && offset == 0);
+  }
 
   /// The point covers the chapter title rather than body text.
   final bool isTitle;
@@ -86,7 +112,21 @@ class AudioSyncPoint {
       isTitle: raw['is_title'] == true,
       audioItemId: audioItemId,
       novelItemId: '${raw['item_id'] ?? ''}',
+      startElementIndex: _elementCoord(raw, 'start_element_index'),
+      startElementOffset: _elementCoord(raw, 'start_element_offset'),
     );
+  }
+
+  /// Reads one `positionV2` field. The response spells the object both
+  /// `positionV2` and `position_info_v2` depending on the endpoint, so both are
+  /// accepted; a missing object yields null rather than a zero.
+  static int? _elementCoord(Map raw, String key) {
+    final v2 = raw['positionV2'] ?? raw['position_info_v2'];
+    if (v2 is! Map) return null;
+    final value = v2[key];
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   Duration get start => Duration(milliseconds: startTime);
