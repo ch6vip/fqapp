@@ -140,6 +140,18 @@ class _ReaderTapZoneEditorState extends State<_ReaderTapZoneEditor> {
                   child: const Text('单手模式'),
                 ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white54),
+                  ),
+                  onPressed: () =>
+                      _applyPreset(fullscreenReaderTapZones),
+                  child: const Text('全屏翻页'),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),

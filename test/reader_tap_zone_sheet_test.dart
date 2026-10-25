@@ -66,6 +66,16 @@ void main() {
     expect(await pending, oneHandReaderTapZones);
   });
 
+  testWidgets('fullscreen preset turns every cell but the center into next '
+      'page', (tester) async {
+    final pending = await openEditor(tester, defaultReaderTapZones);
+    await tester.tap(find.text('全屏翻页'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+    expect(await pending, fullscreenReaderTapZones);
+  });
+
   testWidgets('closing without 完成 discards the edits', (tester) async {
     final pending = await openEditor(tester, defaultReaderTapZones);
     await tester.tap(find.text('单手模式'));
