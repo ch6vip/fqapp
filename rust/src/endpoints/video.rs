@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use base64::Engine;
@@ -1288,11 +1288,16 @@ async fn download_and_save(
 
     if let Ok(info) = std::fs::metadata(&fp) {
         if info.len() > 0 {
-            if !content_key.is_empty() {
-                if let Err(err) = decrypt_cached_video_if_needed(&fp, content_key) {
-                    let _ = std::fs::remove_file(&fp);
-                    return Err(err);
-                }
+            // The cache keeps the downloaded bytes exactly as they arrived
+            // (CENC-encrypted when the source is encrypted); the serve path
+            // decrypts ranges on demand. All this path has to do is keep the
+            // key sidecar in place — which also repairs a sidecar lost to a
+            // crash between the download's rename and its sidecar write.
+            if !content_key.is_empty()
+                && cache_cenc_state(&fp) == CacheCencState::Encrypted
+                && read_key_sidecar(&fp).as_deref() != Some(content_key)
+            {
+                write_key_sidecar(&fp, content_key)?;
             }
             return Ok(format!("/src/{filename}"));
         }
@@ -1305,7 +1310,7 @@ async fn download_and_save(
         // Streaming download: the body is written chunk by chunk and never
         // held whole in memory (P1-9). `VIDEO_CACHE_LOCK` above still
         // serializes downloads; the lock is kept because the cache file,
-        // the decrypt step, and the prune pass below are not safe to run
+        // the key sidecar, and the prune pass below are not safe to run
         // concurrently for the same video.
         // The streaming client bypasses `UpstreamClient::do_request`, so
         // apply the mock-origin rewrite here; without it the download
@@ -1334,15 +1339,20 @@ async fn download_and_save(
         std::fs::write(&part_path, &data).map_err(|e| e.to_string())?;
     }
 
-    if !content_key.is_empty() {
-        if let Err(err) = decrypt_cached_video_if_needed(&part_path, content_key) {
-            let _ = std::fs::remove_file(&part_path);
-            return Err(err);
-        }
-    }
     if let Err(err) = std::fs::rename(&part_path, &fp) {
         let _ = std::fs::remove_file(&part_path);
         return Err(err.to_string());
+    }
+    // The bytes on disk stay exactly as downloaded — encrypted when the
+    // source is CENC (P1-7). The key sidecar is what lets the serve path
+    // decrypt ranges on demand, now and in later processes; if it cannot be
+    // written the entry would be undecodable, so fail the download instead
+    // of leaving a dead cache file behind.
+    if !content_key.is_empty() && cache_cenc_state(&fp) == CacheCencState::Encrypted {
+        if let Err(err) = write_key_sidecar(&fp, content_key) {
+            let _ = std::fs::remove_file(&fp);
+            return Err(err);
+        }
     }
     prune_src_cache(&src_dir, &fp);
 
@@ -1370,14 +1380,33 @@ fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
     let Ok(entries) = std::fs::read_dir(src_dir) else {
         return;
     };
+    let entries: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .map(|entry| {
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                entry.path(),
+            )
+        })
+        .collect();
+    let names: HashSet<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+    // Key sidecars (`<video>.key`, P1-7) belong to their video entry: one
+    // whose video (or in-flight `.part`) is gone can never serve again.
+    for (name, path) in &entries {
+        if let Some(stem) = name.strip_suffix(".key") {
+            if !names.contains(stem) && !names.contains(format!("{stem}.part").as_str()) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
     let mut items: Vec<CacheEntry> = Vec::new();
     let mut total: i64 = 0;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
+    for entry in entries.iter().map(|(name, _)| name) {
+        let name = entry.as_str();
         if name.ends_with(".part") || name.ends_with(".tmp") {
             continue;
         }
-        let ext = Path::new(&name)
+        let ext = Path::new(name)
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
@@ -1389,7 +1418,8 @@ fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
         if !is_video && !is_manga_image {
             continue;
         }
-        let Ok(meta) = entry.metadata() else {
+        let path = Path::new(src_dir).join(name);
+        let Ok(meta) = std::fs::metadata(&path) else {
             continue;
         };
         if !meta.is_file() || meta.len() == 0 {
@@ -1398,7 +1428,7 @@ fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
         let when = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
         total += meta.len() as i64;
         items.push(CacheEntry {
-            path: Path::new(src_dir).join(&name),
+            path,
             size: meta.len(),
             when,
         });
@@ -1415,33 +1445,351 @@ fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
             continue;
         }
         if std::fs::remove_file(&item.path).is_ok() {
+            // A video's key sidecar (P1-7) is part of the entry, not a
+            // separate cache citizen.
+            let _ = std::fs::remove_file(key_sidecar_path(&item.path));
             total -= item.size as i64;
         }
     }
 }
 
-fn decrypt_cached_video_if_needed(fp: &Path, content_key: &[u8]) -> Result<(), String> {
-    // Bound the read: a cached file above the per-file cap is rejected
-    // instead of being slurped into memory.
-    let meta = std::fs::metadata(fp).map_err(|e| e.to_string())?;
-    if meta.len() > MAX_VIDEO_DOWNLOAD_BYTES {
-        return Err(format!(
-            "cached video {} bytes exceeds cap {MAX_VIDEO_DOWNLOAD_BYTES}",
-            meta.len()
+// ---------------------------------------------------------------------------
+// Encrypted on-disk video cache (P1-7)
+//
+// Downloaded bytes are stored exactly as they arrived — CENC-encrypted when
+// the source is encrypted — and the decrypted view exists only in memory, one
+// served range at a time. The per-video content key (derived from `spade_a`
+// during source resolution, never persisted before) travels in a sidecar
+// file next to the cache entry: `<name>.mp4.key`, hex encoded. The cache
+// directory is app-private; the sidecar is what lets a later process serve a
+// cached file without re-resolving the source, and `download_and_save`'s
+// cache-hit path rewrites it if it ever goes missing.
+// ---------------------------------------------------------------------------
+
+/// Upper bound for the `moov` box read at serve/migration time, matching the
+/// native player core's SP_MAX_MOOV_BYTES. A larger moov is treated as
+/// undetectable rather than read without bound.
+const MAX_MOOV_BYTES: u64 = 16 * 1024 * 1024;
+
+fn key_sidecar_path(fp: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.key", fp.display()))
+}
+
+fn write_key_sidecar(fp: &Path, content_key: &[u8]) -> Result<(), String> {
+    let sidecar = key_sidecar_path(fp);
+    let tmp = PathBuf::from(format!("{}.tmp", sidecar.display()));
+    std::fs::write(&tmp, hex::encode(content_key)).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &sidecar).map_err(|e| e.to_string())
+}
+
+fn read_key_sidecar(fp: &Path) -> Option<Vec<u8>> {
+    let raw = std::fs::read_to_string(key_sidecar_path(fp)).ok()?;
+    let key = hex::decode(raw.trim()).ok()?;
+    if key.len() == 16 || key.len() == 24 || key.len() == 32 {
+        Some(key)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheCencState {
+    /// The file's `moov` carries an encrypted sample entry (encv/enca).
+    Encrypted,
+    /// The file parses as MP4 and no track is encrypted: either an
+    /// originally-clear download or a plaintext file left by the pre-P1-7
+    /// in-place decrypt. The two are indistinguishable from the bytes.
+    Clear,
+    /// No readable `moov` (truncated, not MP4, moov over the cap): nothing
+    /// can be concluded, so callers leave the file alone.
+    Unknown,
+}
+
+/// Locates the top-level `moov` box by walking box headers only.
+fn locate_moov(file: &mut std::fs::File, len: u64) -> Option<(u64, u64)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut off = 0u64;
+    while off + 8 <= len {
+        file.seek(SeekFrom::Start(off)).ok()?;
+        let mut hdr = [0u8; 16];
+        file.read_exact(&mut hdr[..8]).ok()?;
+        let size32 = u32::from_be_bytes(hdr[..4].try_into().ok()?);
+        let (size, header) = if size32 == 1 {
+            file.read_exact(&mut hdr[8..16]).ok()?;
+            (u64::from_be_bytes(hdr[8..16].try_into().ok()?), 16u64)
+        } else if size32 == 0 {
+            (len - off, 8u64)
+        } else {
+            (size32 as u64, 8u64)
+        };
+        if size < header || off + size > len {
+            return None;
+        }
+        if &hdr[4..8] == b"moov" {
+            return Some((off, size));
+        }
+        off += size;
+    }
+    None
+}
+
+/// Reads exactly the `moov` box bytes and its file offset.
+fn read_moov_bytes(path: &Path) -> Option<(u64, Vec<u8>)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let (off, size) = locate_moov(&mut file, len)?;
+    if size > MAX_MOOV_BYTES {
+        return None;
+    }
+    file.seek(SeekFrom::Start(off)).ok()?;
+    let mut buf = vec![0u8; size as usize];
+    file.read_exact(&mut buf).ok()?;
+    Some((off, buf))
+}
+
+fn cache_cenc_state(path: &Path) -> CacheCencState {
+    match read_moov_bytes(path) {
+        Some((_, moov)) => {
+            if mp4_needs_cenc_decrypt(&moov) {
+                CacheCencState::Encrypted
+            } else {
+                CacheCencState::Clear
+            }
+        }
+        None => CacheCencState::Unknown,
+    }
+}
+
+/// Per-file CENC index cache: range requests from a player arrive in
+/// bursts, and re-reading the moov for each one would be wasteful. Keyed by
+/// path and invalidated by (length, mtime), which a re-download changes.
+type CencIndexCache =
+    std::sync::Mutex<HashMap<PathBuf, (u64, std::time::SystemTime, Arc<CencIndex>)>>;
+
+static CENC_INDEX_CACHE: OnceLock<CencIndexCache> = OnceLock::new();
+
+fn cenc_index_for_file(path: &Path) -> Result<Option<Arc<CencIndex>>, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let len = meta.len();
+    let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    let cache = CENC_INDEX_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some((cached_len, cached_mtime, index)) = guard.get(path) {
+            if *cached_len == len && *cached_mtime == modified {
+                return Ok(Some(index.clone()));
+            }
+        }
+    }
+    let Some((moov_off, moov)) = read_moov_bytes(path) else {
+        return Ok(None);
+    };
+    let Some(index) = build_cenc_index(&moov, moov_off, len)? else {
+        return Ok(None);
+    };
+    let index = Arc::new(index);
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(path.to_path_buf(), (len, modified, index.clone()));
+    }
+    Ok(Some(index))
+}
+
+/// Serves one `/src/*` request for a CENC-encrypted cache file, decrypting
+/// only the requested range. Returns `None` for anything that is not an
+/// encrypted MP4 with a sidecar key question to answer — the caller falls
+/// back to the plain static file path (clear MP4s, manga images, ...).
+pub(crate) async fn serve_src_file(
+    src_dir: &str,
+    rest: &str,
+    req: &crate::dispatch::Request,
+) -> Option<crate::dispatch::Response> {
+    use crate::dispatch::{Response, ResponseBody};
+    let root = Path::new(src_dir);
+    let path = crate::static_files::resolve_confined(root, rest).await?;
+    if path.extension().and_then(|e| e.to_str()) != Some("mp4") {
+        return None;
+    }
+    if cache_cenc_state(&path) != CacheCencState::Encrypted {
+        return None;
+    }
+    // The file is encrypted: serving the raw bytes would hand the player
+    // undecodable data with a success status, so a missing key is an
+    // explicit error instead. Re-resolving the source rewrites the sidecar
+    // through the cache-hit path in `download_and_save`.
+    let Some(key) = read_key_sidecar(&path) else {
+        return Some(Response::json(
+            503,
+            &serde_json::json!({
+                "success": false,
+                "error": "cached video key missing; re-resolve the source",
+            }),
         ));
+    };
+    let index = match cenc_index_for_file(&path) {
+        Ok(Some(index)) => index,
+        Ok(None) => return None,
+        Err(err) => {
+            return Some(Response::json(
+                500,
+                &serde_json::json!({ "success": false, "error": err }),
+            ));
+        }
+    };
+    let meta = std::fs::metadata(&path).ok()?;
+    let total = meta.len();
+    let content_type = crate::dispatch::mime_for(&path).to_string();
+    let range = crate::static_files::parse_range(req.header("range"), total);
+    let is_head = req.method.eq_ignore_ascii_case("HEAD");
+    let (status, offset, length, extra) = match range {
+        crate::static_files::ByteRange::Full => (200u16, 0u64, total, Vec::new()),
+        crate::static_files::ByteRange::Partial { start, end } => (
+            206u16,
+            start,
+            end - start + 1,
+            vec![(
+                "content-range".to_string(),
+                format!("bytes {start}-{end}/{total}"),
+            )],
+        ),
+        crate::static_files::ByteRange::Unsatisfiable => {
+            return Some(Response {
+                status: 416,
+                content_type,
+                headers: vec![
+                    ("accept-ranges".to_string(), "bytes".to_string()),
+                    ("content-range".to_string(), format!("bytes */{total}")),
+                    ("content-length".to_string(), "0".to_string()),
+                ],
+                body: ResponseBody::Bytes(Vec::new()),
+            });
+        }
+    };
+    let mut headers = vec![
+        ("accept-ranges".to_string(), "bytes".to_string()),
+        ("content-length".to_string(), length.to_string()),
+    ];
+    headers.extend(extra);
+    let body = if is_head {
+        ResponseBody::Bytes(Vec::new())
+    } else {
+        ResponseBody::FileDecrypted {
+            path,
+            offset,
+            length,
+            total,
+            index,
+            key,
+        }
+    };
+    Some(Response {
+        status,
+        content_type,
+        headers,
+        body,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// One-time migration: plaintext video cache cleanup (P1-7 follow-up)
+//
+// Versions before the streaming-decrypt change decrypted cached videos in
+// place, so an upgraded install can hold plaintext MP4s in the cache
+// directory. The user-facing decision (2026-10-25) is to remove them
+// automatically on the first launch of the new version. The sweep is scoped
+// to the Rust cache directory (`<runtime>/src`) and to completed `.mp4` /
+// `.m4s` entries whose moov proves them clear; the user's offline downloads
+// live in a different directory (`offline-video`, managed by the Dart
+// download store) and are never touched. Best-effort throughout: failures
+// are logged and retried on the next launch via the pending list, and
+// nothing here may fail core init.
+// ---------------------------------------------------------------------------
+
+const CACHE_FORMAT_MARKER: &str = ".cachefmt-v2";
+const CACHE_FORMAT_PENDING: &str = ".cachefmt-v2-pending";
+
+pub(crate) fn migrate_plaintext_video_cache(src_dir: &Path) {
+    let marker = src_dir.join(CACHE_FORMAT_MARKER);
+    let pending_path = src_dir.join(CACHE_FORMAT_PENDING);
+    let first_run = !marker.exists();
+
+    let mut targets: Vec<PathBuf> = Vec::new();
+    if first_run {
+        let entries = match std::fs::read_dir(src_dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                log::warn!("p17 migration: cannot scan {}: {err}", src_dir.display());
+                return;
+            }
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".part") || name.ends_with(".tmp") {
+                continue;
+            }
+            let ext = Path::new(&name)
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            // `.ts` entries never passed through the MP4 CENC decrypt, so
+            // they are out of scope even though they are clear by nature.
+            if ext != "mp4" && ext != "m4s" {
+                continue;
+            }
+            if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
+                targets.push(entry.path());
+            }
+        }
+    } else if let Ok(list) = std::fs::read_to_string(&pending_path) {
+        // Later launches only retry the names a previous run failed to
+        // remove; each one is re-tested below, so a name since reused by an
+        // encrypted cache entry is kept.
+        targets = list
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| src_dir.join(line))
+            .collect();
+    } else {
+        return;
     }
-    let mut data = std::fs::read(fp).map_err(|e| e.to_string())?;
-    if !mp4_needs_cenc_decrypt(&data) {
-        return Ok(());
+
+    let mut failed: Vec<String> = Vec::new();
+    let mut removed = 0usize;
+    for path in &targets {
+        // Only a file that provably parses as a clear MP4 is removed. An
+        // encrypted entry is the new cache format and stays; an unreadable
+        // one cannot be told apart from user data and also stays (the
+        // regular LRU prune ages it out).
+        if cache_cenc_state(path) != CacheCencState::Clear {
+            continue;
+        }
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                removed += 1;
+                let _ = std::fs::remove_file(key_sidecar_path(path));
+            }
+            Err(err) => {
+                log::warn!(
+                    "p17 migration: cannot remove plaintext cache {}: {err}",
+                    path.display()
+                );
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    failed.push(name.to_string());
+                }
+            }
+        }
     }
-    // Decrypt in place on the single buffer: the old code cloned it first,
-    // doubling peak memory for the largest files. Full streaming decrypt
-    // would need the CENC box walk (`decrypt_cenc_mp4`) restructured around
-    // a partial `moov`, so the whole-file decrypt stays, minus the copy.
-    decrypt_cenc_mp4(&mut data, content_key)?;
-    let tmp = PathBuf::from(format!("{}.tmp", fp.display()));
-    std::fs::write(&tmp, &data).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, fp).map_err(|e| e.to_string())
+    if removed > 0 {
+        log::info!("p17 migration: removed {removed} plaintext video cache file(s)");
+    }
+    if first_run {
+        let _ = std::fs::write(&marker, b"2\n");
+    }
+    if failed.is_empty() {
+        let _ = std::fs::remove_file(&pending_path);
+    } else {
+        let _ = std::fs::write(&pending_path, failed.join("\n"));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1579,12 +1927,62 @@ fn mp4_needs_cenc_decrypt(data: &[u8]) -> bool {
     false
 }
 
-fn decrypt_cenc_mp4(data: &mut [u8], content_key: &[u8]) -> Result<(), String> {
-    if content_key.len() != 16 && content_key.len() != 24 && content_key.len() != 32 {
-        return Err("invalid CENC content key length".to_string());
-    }
+// ---------------------------------------------------------------------------
+// CENC index: everything needed to turn a byte range of the encrypted file
+// into the same range of the decrypted view, without touching the rest of
+// the file. Built from the `moov` box alone (sample data is never read), so
+// the serve path can decrypt on demand per Range request (P1-7) — the same
+// shape the native player core uses for offline files (sp_mp4_index).
+// ---------------------------------------------------------------------------
+
+/// A length-preserving header rewrite (sample-entry type, `sinf` -> `free`),
+/// expressed as replacement bytes at an absolute file offset.
+#[derive(Debug, Clone)]
+pub struct CencPatch {
+    pub off: u64,
+    pub bytes: Vec<u8>,
+}
+
+/// One encrypted byte run inside a sample. `base` is the number of encrypted
+/// bytes preceding this run *within the same sample*: the CENC CTR keystream
+/// is continuous across a sample's encrypted runs (clear subsample parts do
+/// not consume keystream), so a run's keystream starts at `counter0` advanced
+/// by `base` bytes.
+#[derive(Debug, Clone)]
+pub struct CencEncRange {
+    pub off: u64,
+    pub size: u64,
+    pub counter0: [u8; 16],
+    pub base: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CencIndex {
+    /// Sorted by `off`.
+    pub patches: Vec<CencPatch>,
+    /// Sorted by `off`; ranges never overlap in a well-formed file.
+    pub ranges: Vec<CencEncRange>,
+}
+
+/// Builds the index from a byte slice holding either a whole MP4 or exactly
+/// its `moov` box. `base_off` is the file offset the slice starts at (0 for a
+/// whole file, the moov offset for a moov-only slice); sample-data offsets
+/// come from `stco`/`co64` values and are absolute either way. Returns `None`
+/// when no track carries an encrypted sample entry.
+fn build_cenc_index(
+    data: &[u8],
+    base_off: u64,
+    file_len: u64,
+) -> Result<Option<CencIndex>, String> {
+    let mut index = CencIndex::default();
+    let mut any_encrypted_entry = false;
     for boxes in mp4_track_boxes(data) {
-        rewrite_encrypted_sample_entries(data, &boxes);
+        if boxes.get(b"encv").is_some_and(|v| !v.is_empty())
+            || boxes.get(b"enca").is_some_and(|v| !v.is_empty())
+        {
+            any_encrypted_entry = true;
+        }
+        collect_sample_entry_patches(data, &boxes, base_off, &mut index.patches);
         let senc_boxes = boxes.get(b"senc").cloned().unwrap_or_default();
         let stsz_boxes = boxes.get(b"stsz").cloned().unwrap_or_default();
         let stsc_boxes = boxes.get(b"stsc").cloned().unwrap_or_default();
@@ -1615,55 +2013,98 @@ fn decrypt_cenc_mp4(data: &mut [u8], content_key: &[u8]) -> Result<(), String> {
             if sample.size == 0 {
                 continue;
             }
-            let mut ranges: Vec<ByteRange> = Vec::new();
+            // The whole-file decrypt only touches the keystream when the
+            // sample actually has encrypted bytes; keep that tolerance so a
+            // corrupt IV size on a clear sample cannot fail the whole file.
+            let needs_keystream =
+                entry.subsamples.is_empty() || entry.subsamples.iter().any(|s| s.encrypted > 0);
+            if needs_keystream && entry.iv.len() != 8 && entry.iv.len() != 16 {
+                return Err(format!("unsupported CENC IV size: {}", entry.iv.len()));
+            }
+            let mut counter0 = [0u8; 16];
+            counter0[..entry.iv.len().min(16)].copy_from_slice(&entry.iv[..entry.iv.len().min(16)]);
+            let mut base: u64 = 0;
             if !entry.subsamples.is_empty() {
                 let mut pos = sample.off;
                 for sub in &entry.subsamples {
                     pos += sub.clear;
                     if sub.encrypted > 0 {
-                        ranges.push(ByteRange {
-                            off: pos,
-                            size: sub.encrypted,
-                        });
+                        let (off, size) = (pos as u64, sub.encrypted as u64);
+                        // Mirror the whole-file decrypt: a run reaching past
+                        // the end of the file is skipped and consumes no
+                        // keystream.
+                        if off + size <= file_len {
+                            index.ranges.push(CencEncRange {
+                                off,
+                                size,
+                                counter0,
+                                base,
+                            });
+                            base += size;
+                        }
                     }
                     pos += sub.encrypted;
                 }
             } else {
-                ranges.push(ByteRange {
-                    off: sample.off,
-                    size: sample.size,
-                });
+                let (off, size) = (sample.off as u64, sample.size as u64);
+                if off + size <= file_len {
+                    index.ranges.push(CencEncRange {
+                        off,
+                        size,
+                        counter0,
+                        base: 0,
+                    });
+                }
             }
-            ctr_crypt_ranges(data, content_key, &entry.iv, &ranges)?;
         }
     }
-    Ok(())
+    if !any_encrypted_entry {
+        return Ok(None);
+    }
+    index.patches.sort_by_key(|p| p.off);
+    index.ranges.sort_by_key(|r| r.off);
+    Ok(Some(index))
 }
 
-fn rewrite_encrypted_sample_entries(data: &mut [u8], boxes: &HashMap<[u8; 4], Vec<Mp4Box>>) {
+/// Records the rewrites `rewrite_encrypted_sample_entries` used to apply in
+/// place (encv -> hvc1, enca -> mp4a, `sinf` blanked into a `free` box) as
+/// offset patches instead, so the file on disk keeps its original bytes.
+fn collect_sample_entry_patches(
+    data: &[u8],
+    boxes: &HashMap<[u8; 4], Vec<Mp4Box>>,
+    base_off: u64,
+    out: &mut Vec<CencPatch>,
+) {
     for (typ, replacement) in [(b"encv", b"hvc1"), (b"enca", b"mp4a")] {
         let Some(list) = boxes.get(typ) else {
             continue;
         };
         for b in list {
             if b.off + 8 <= data.len() {
-                data[b.off + 4..b.off + 8].copy_from_slice(replacement);
+                out.push(CencPatch {
+                    off: base_off + (b.off + 4) as u64,
+                    bytes: replacement.to_vec(),
+                });
             }
             let Some(child_start) = box_children_start(typ, b.off, b.header) else {
                 continue;
             };
             for child in iter_boxes(data, child_start, b.off + b.size) {
                 if child.typ == *b"sinf" {
-                    if child.off + 8 <= data.len() {
-                        data[child.off..child.off + 4].copy_from_slice(&8u32.to_be_bytes());
-                        data[child.off + 4..child.off + 8].copy_from_slice(b"free");
-                    }
+                    let mut header = Vec::with_capacity(8);
+                    header.extend_from_slice(&8u32.to_be_bytes());
+                    header.extend_from_slice(b"free");
+                    out.push(CencPatch {
+                        off: base_off + child.off as u64,
+                        bytes: header,
+                    });
                     let start = child.off + 8;
                     let end = (child.off + child.size).min(data.len());
                     if start < end {
-                        for byte in &mut data[start..end] {
-                            *byte = 0;
-                        }
+                        out.push(CencPatch {
+                            off: base_off + start as u64,
+                            bytes: vec![0u8; end - start],
+                        });
                     }
                     break;
                 }
@@ -1672,10 +2113,84 @@ fn rewrite_encrypted_sample_entries(data: &mut [u8], boxes: &HashMap<[u8; 4], Ve
     }
 }
 
-/// Upper bound for the number of samples a single `stsz` box may declare.
-/// A real track stays far below this (a 10-hour 60 fps video is ~2.2M
-/// samples). Without a cap, the fixed-size branch below allocates one
-/// `usize` per declared sample from just 8 header bytes, so a corrupt or
+/// Advances a big-endian 128-bit CTR counter by `blocks` blocks.
+fn ctr_counter_plus(counter0: &[u8; 16], blocks: u64) -> [u8; 16] {
+    let hi = u64::from_be_bytes(counter0[0..8].try_into().expect("counter hi"));
+    let lo = u64::from_be_bytes(counter0[8..16].try_into().expect("counter lo"));
+    let (lo, carry) = lo.overflowing_add(blocks);
+    let hi = hi.wrapping_add(carry as u64);
+    let mut out = [0u8; 16];
+    out[0..8].copy_from_slice(&hi.to_be_bytes());
+    out[8..16].copy_from_slice(&lo.to_be_bytes());
+    out
+}
+
+/// Turns `buf` — the file bytes starting at absolute offset `buf_off` — into
+/// the decrypted view of the same range: header patches applied, sample data
+/// XORed with the keystream at the correct per-sample position. This is the
+/// single transform behind the one-shot decrypt, the FFI body materialisation
+/// and the loopback streaming body, so all three agree byte for byte.
+pub(crate) fn apply_cenc_index(
+    buf: &mut [u8],
+    buf_off: u64,
+    index: &CencIndex,
+    content_key: &[u8],
+) -> Result<(), String> {
+    if content_key.len() != 16 && content_key.len() != 24 && content_key.len() != 32 {
+        return Err("invalid CENC content key length".to_string());
+    }
+    let buf_start = buf_off;
+    let buf_end = buf_off + buf.len() as u64;
+    for patch in &index.patches {
+        let patch_end = patch.off + patch.bytes.len() as u64;
+        let s = patch.off.max(buf_start);
+        let e = patch_end.min(buf_end);
+        if s < e {
+            let src = &patch.bytes[(s - patch.off) as usize..(e - patch.off) as usize];
+            buf[(s - buf_start) as usize..(e - buf_start) as usize].copy_from_slice(src);
+        }
+    }
+    for range in &index.ranges {
+        let range_end = range.off + range.size;
+        let s = range.off.max(buf_start);
+        let e = range_end.min(buf_end);
+        if s >= e {
+            continue;
+        }
+        // Keystream position of byte `s` within the sample's encrypted
+        // stream; CTR blocks are generated per 16 bytes from there.
+        let mut stream_pos = range.base + (s - range.off);
+        let mut pos = s;
+        while pos < e {
+            let counter = ctr_counter_plus(&range.counter0, stream_pos / 16);
+            let keystream = aes_encrypt_block(content_key, &counter)?;
+            let block_off = (stream_pos % 16) as usize;
+            let take = (16 - block_off).min((e - pos) as usize);
+            let dst = (pos - buf_start) as usize;
+            for i in 0..take {
+                buf[dst + i] ^= keystream[block_off + i];
+            }
+            pos += take as u64;
+            stream_pos += take as u64;
+        }
+    }
+    Ok(())
+}
+
+/// Whole-file in-place decrypt, kept as the reference transform the serve
+/// path is validated against: it produces exactly the bytes the per-range
+/// path serves. Only tests call it now — production never decrypts a whole
+/// file — so it is compiled for tests only.
+#[cfg(test)]
+fn decrypt_cenc_mp4(data: &mut [u8], content_key: &[u8]) -> Result<(), String> {
+    if content_key.len() != 16 && content_key.len() != 24 && content_key.len() != 32 {
+        return Err("invalid CENC content key length".to_string());
+    }
+    let Some(index) = build_cenc_index(data, 0, data.len() as u64)? else {
+        return Ok(());
+    };
+    apply_cenc_index(data, 0, &index, content_key)
+}
 /// hostile box with a huge `sample_count` can OOM the process.
 const MAX_STSZ_SAMPLES: usize = 10_000_000;
 
@@ -1863,11 +2378,6 @@ fn parse_senc(data: &[u8], b: Mp4Box, iv_size: usize) -> Vec<SencEntry> {
     entries
 }
 
-struct ByteRange {
-    off: usize,
-    size: usize,
-}
-
 fn aes_encrypt_block(key: &[u8], block: &[u8; 16]) -> Result<[u8; 16], String> {
     use aes::cipher::generic_array::GenericArray;
     use aes::cipher::{BlockEncrypt, KeyInit};
@@ -1893,46 +2403,6 @@ fn aes_encrypt_block(key: &[u8], block: &[u8; 16]) -> Result<[u8; 16], String> {
     let mut out = [0u8; 16];
     out.copy_from_slice(&b);
     Ok(out)
-}
-
-fn ctr_crypt_ranges(
-    data: &mut [u8],
-    content_key: &[u8],
-    iv: &[u8],
-    ranges: &[ByteRange],
-) -> Result<(), String> {
-    if ranges.is_empty() {
-        return Ok(());
-    }
-    let mut counter = [0u8; 16];
-    match iv.len() {
-        8 => counter[..8].copy_from_slice(iv),
-        16 => counter.copy_from_slice(iv),
-        n => return Err(format!("unsupported CENC IV size: {n}")),
-    }
-
-    let mut keystream = [0u8; 16];
-    let mut keystream_pos = 16usize;
-    for r in ranges {
-        if r.size == 0 || r.off + r.size > data.len() {
-            continue;
-        }
-        for i in 0..r.size {
-            if keystream_pos == 16 {
-                keystream = aes_encrypt_block(content_key, &counter)?;
-                for byte in counter.iter_mut().rev() {
-                    *byte = byte.wrapping_add(1);
-                    if *byte != 0 {
-                        break;
-                    }
-                }
-                keystream_pos = 0;
-            }
-            data[r.off + i] ^= keystream[keystream_pos];
-            keystream_pos += 1;
-        }
-    }
-    Ok(())
 }
 
 pub fn register(s: &mut Server) {
@@ -2277,40 +2747,188 @@ mod cenc_sample_fixture {
         assert_ne!(file, original, "the wrong key must have changed the bytes");
     }
 
-    /// The production entry point is the one that must be idempotent: it gates
-    /// on the sample entry, so a second pass over an already-decrypted file must
-    /// not XOR the samples again (CENC CTR is symmetric, so that would corrupt
-    /// the video).
+    /// P1-7: the cache file now stays encrypted on disk and the decrypted
+    /// view is produced per served range. Applying the index range by range
+    /// — unaligned probes, block-straddling slices, and a sequential
+    /// small-chunk pass like the streaming body's — must reproduce the
+    /// whole-file decrypt byte for byte.
     #[test]
-    fn the_cached_video_path_decrypts_once_and_is_idempotent() {
+    fn served_ranges_match_the_whole_file_decrypt() {
         let f = fixture();
         let c = &f["cenc"];
-        let expected = plain_samples(c, "full_sample_plain_b64");
         let key = hex::decode(c["key_hex"].as_str().unwrap()).unwrap();
+        for case in ["full_sample_b64", "subsample_b64"] {
+            let encrypted = b64(c, case);
+            let mut whole = encrypted.clone();
+            decrypt_cenc_mp4(&mut whole, &key).expect("whole decrypt");
+            assert_ne!(whole, encrypted, "{case} must actually be encrypted");
 
+            let index = build_cenc_index(&encrypted, 0, encrypted.len() as u64)
+                .expect("index build")
+                .expect("encrypted fixture must produce an index");
+            let mut probes: Vec<(usize, usize)> = vec![(0, encrypted.len()), (0, 28)];
+            let mut off = 0;
+            while off < encrypted.len() {
+                probes.push((off, (encrypted.len() - off).min(37)));
+                off += 37;
+            }
+            for (off, len) in probes {
+                let mut buf = encrypted[off..off + len].to_vec();
+                apply_cenc_index(&mut buf, off as u64, &index, &key).expect("apply");
+                assert_eq!(buf, whole[off..off + len], "{case} range {off}+{len}");
+            }
+            let mut streamed = Vec::with_capacity(encrypted.len());
+            let mut pos = 0usize;
+            while pos < encrypted.len() {
+                let take = (encrypted.len() - pos).min(7);
+                let mut buf = encrypted[pos..pos + take].to_vec();
+                apply_cenc_index(&mut buf, pos as u64, &index, &key).expect("chunk apply");
+                streamed.extend_from_slice(&buf);
+                pos += take;
+            }
+            assert_eq!(streamed, whole, "{case} chunked stream");
+        }
+    }
+
+    fn p17_temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "fqapp-cenc-{}-{:?}",
+            "fqapp-p17-{tag}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    /// The serve path builds its index from the moov box alone; that index
+    /// must agree with the one built from the whole file.
+    #[test]
+    fn index_from_moov_slice_matches_whole_file_index() {
+        let f = fixture();
+        let c = &f["cenc"];
+        let encrypted = b64(c, "full_sample_b64");
+        let dir = p17_temp_dir("moov");
         let path = dir.join("sample.mp4");
-        std::fs::write(&path, b64(c, "full_sample_b64")).expect("write fixture");
+        std::fs::write(&path, &encrypted).expect("write fixture");
 
-        decrypt_cached_video_if_needed(&path, &key).expect("first pass");
-        let once = std::fs::read(&path).expect("read once");
-        let region = &once[c["full_mdat_offset"].as_u64().unwrap() as usize..];
+        let (moov_off, moov) = read_moov_bytes(&path).expect("moov must be readable");
+        assert_eq!(moov_off, 28, "fixture moov offset");
+        let from_moov = build_cenc_index(&moov, moov_off, encrypted.len() as u64)
+            .expect("build from moov")
+            .expect("index from moov");
+        let from_file = build_cenc_index(&encrypted, 0, encrypted.len() as u64)
+            .expect("build from file")
+            .expect("index from file");
+        assert_eq!(from_moov.patches.len(), from_file.patches.len());
+        for (a, b) in from_moov.patches.iter().zip(&from_file.patches) {
+            assert_eq!((a.off, &a.bytes), (b.off, &b.bytes), "patch");
+        }
+        assert_eq!(from_moov.ranges.len(), from_file.ranges.len());
+        for (a, b) in from_moov.ranges.iter().zip(&from_file.ranges) {
+            assert_eq!(
+                (a.off, a.size, a.base, a.counter0),
+                (b.off, b.size, b.base, b.counter0),
+                "range"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Cache state detection and the key sidecar roundtrip the serve path
+    /// depends on: encrypted stays detectable, a decrypted copy reads as
+    /// clear, garbage is unknown (and therefore never deleted blindly).
+    #[test]
+    fn cache_state_detection_and_sidecar_roundtrip() {
+        let f = fixture();
+        let c = &f["cenc"];
+        let encrypted = b64(c, "full_sample_b64");
+        let key = hex::decode(c["key_hex"].as_str().unwrap()).unwrap();
+        let mut plaintext = encrypted.clone();
+        decrypt_cenc_mp4(&mut plaintext, &key).expect("decrypt");
+
+        let dir = p17_temp_dir("state");
+        let enc_path = dir.join("enc.mp4");
+        std::fs::write(&enc_path, &encrypted).expect("write encrypted");
+        assert_eq!(cache_cenc_state(&enc_path), CacheCencState::Encrypted);
+        assert!(read_key_sidecar(&enc_path).is_none());
+        write_key_sidecar(&enc_path, &key).expect("write sidecar");
         assert_eq!(
-            &region[..expected[0].len()],
-            expected[0].as_slice(),
-            "the first pass must produce the Go plaintext"
+            read_key_sidecar(&enc_path).expect("sidecar"),
+            key,
+            "sidecar must roundtrip the content key"
         );
-        assert!(!mp4_needs_cenc_decrypt(&once), "encv must be rewritten");
 
-        // Second pass: no encrypted sample entry left, so nothing is touched.
-        decrypt_cached_video_if_needed(&path, &key).expect("second pass");
-        let twice = std::fs::read(&path).expect("read twice");
-        assert_eq!(once, twice, "the second pass must be a no-op");
+        let plain_path = dir.join("plain.mp4");
+        std::fs::write(&plain_path, &plaintext).expect("write plaintext");
+        assert_eq!(cache_cenc_state(&plain_path), CacheCencState::Clear);
+
+        let junk_path = dir.join("junk.mp4");
+        std::fs::write(&junk_path, b"not an mp4 at all").expect("write junk");
+        assert_eq!(cache_cenc_state(&junk_path), CacheCencState::Unknown);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The one-time migration (user decision 2026-10-25): plaintext cache
+    /// files from the old in-place decrypt are removed on first run;
+    /// encrypted entries, unparseable files and non-video files stay; the
+    /// marker makes later runs no-ops except for pending retries, which
+    /// re-test the file before deleting anything.
+    #[test]
+    fn migration_removes_plaintext_and_keeps_the_rest() {
+        let f = fixture();
+        let c = &f["cenc"];
+        let encrypted = b64(c, "full_sample_b64");
+        let key = hex::decode(c["key_hex"].as_str().unwrap()).unwrap();
+        let mut plaintext = encrypted.clone();
+        decrypt_cenc_mp4(&mut plaintext, &key).expect("decrypt");
+
+        let dir = p17_temp_dir("migration");
+        std::fs::write(dir.join("enc.mp4"), &encrypted).expect("enc");
+        std::fs::write(dir.join("plain.mp4"), &plaintext).expect("plain");
+        std::fs::write(dir.join("plain.mp4.key"), b"deadbeef").expect("plain sidecar");
+        std::fs::write(dir.join("junk.mp4"), b"not an mp4").expect("junk");
+        std::fs::write(dir.join("note.txt"), &plaintext).expect("note");
+        std::fs::write(dir.join("clip.ts"), &plaintext).expect("ts");
+
+        migrate_plaintext_video_cache(&dir);
+        assert!(!dir.join("plain.mp4").exists(), "plaintext cache removed");
+        assert!(
+            !dir.join("plain.mp4.key").exists(),
+            "its sidecar goes with it"
+        );
+        assert!(dir.join("enc.mp4").exists(), "encrypted cache kept");
+        assert!(dir.join("junk.mp4").exists(), "unparseable file kept");
+        assert!(dir.join("note.txt").exists(), "non-video file kept");
+        assert!(
+            dir.join("clip.ts").exists(),
+            ".ts never went through the MP4 decrypt"
+        );
+        assert!(dir.join(CACHE_FORMAT_MARKER).exists(), "marker written");
+
+        // Second run is a no-op.
+        migrate_plaintext_video_cache(&dir);
+        assert!(dir.join("enc.mp4").exists());
+
+        // A pending retry removes a plaintext file that shows up later…
+        std::fs::write(dir.join("late.mp4"), &plaintext).expect("late");
+        std::fs::write(dir.join(CACHE_FORMAT_PENDING), b"late.mp4\n").expect("pending");
+        migrate_plaintext_video_cache(&dir);
+        assert!(!dir.join("late.mp4").exists(), "pending plaintext removed");
+        assert!(
+            !dir.join(CACHE_FORMAT_PENDING).exists(),
+            "pending list cleared once empty"
+        );
+
+        // …but re-tests first: a name since reused by an encrypted entry is
+        // kept, not deleted.
+        std::fs::write(dir.join("reused.mp4"), &encrypted).expect("reused");
+        std::fs::write(dir.join(CACHE_FORMAT_PENDING), b"reused.mp4\n").expect("pending");
+        migrate_plaintext_video_cache(&dir);
+        assert!(
+            dir.join("reused.mp4").exists(),
+            "reused encrypted name kept"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

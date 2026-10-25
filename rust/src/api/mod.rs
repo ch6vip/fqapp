@@ -164,6 +164,10 @@ pub(crate) async fn init_core(
     let root = resolve_runtime_dir(&config_path, &runtime_dir);
     let src_dir = root.join("src");
     let _ = std::fs::create_dir_all(&src_dir);
+    // P1-7 one-time sweep: remove plaintext video cache files left by the
+    // old in-place decrypt (see endpoints::video). Best-effort and quick —
+    // it must never block or fail startup.
+    crate::endpoints::video::migrate_plaintext_video_cache(&src_dir);
 
     let pool = match mock_origin.as_ref() {
         Some(origin) => DevicePool::with_mock_origin(&pool_path, origin.clone()).await?,
