@@ -58,6 +58,12 @@ jobs:
         run: flutter pub get
       - name: Analyze application
         run: flutter analyze --no-pub
+      # AGENTS.md caps files at 500 lines and functions at 80. The codebase is
+      # already over that in many places, so this gate freezes today's debt
+      # instead of pretending it is clean: a listed file may shrink but not grow.
+      - name: Check size budget
+        shell: bash
+        run: ./scripts/check_line_budget.sh
       - name: Test layout and playback lifecycle
         run: >-
           flutter test --no-pub
