@@ -391,11 +391,63 @@ fn handle_timeline<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiRes
     })
 }
 
+/// Audio time points: GET → `/reading/reader/audio/timepoint/`.
+///
+/// Mirrors the official `AudioTimePointRequest` (`ro4/f.java` `$GET
+/// /reading/reader/audio/timepoint/`). The answer is the mapping that makes
+/// listen-along highlighting possible without any text matching: each entry
+/// carries `start_para` / `start_para_off` / `end_para` / `end_para_off`
+/// (paragraph index plus character offset inside it) against an audio window
+/// `start_time` / `end_time` in milliseconds.
+///
+/// `req_type` selects which timeline is asked for (`AudioTimePointReqType`):
+/// 1 = tts (智能朗读), 2 = audio (真人讲书), 3 = para_match_audio,
+/// 4 = para_match_text, 5 = local book tts.
+///
+/// Measured against the live upstream (2026-10), **3 is the one that answers
+/// with usable offsets**: 1 replies `101049 TTS_MAY_HASNT_PRODUCT` for books
+/// without generated speech, 2 replies `101002 NOVEL_DATA_GET_ERROR`, and 4
+/// answers `code:0` but with every offset zero and `positionV2: null`. Only 3
+/// carries the paragraph ranges the reader needs, so it is the default here.
+const AUDIO_TIMEPOINT_PATH: &str = "/reading/reader/audio/timepoint/";
+
+fn handle_timepoint<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
+    Box::pin(async move {
+        let book_id = params.get_str("book_id");
+        let item_id = default_val(&params.get_str("item_id"), &params.get_str("chapter_id"));
+        if book_id.is_empty() || item_id.is_empty() {
+            return Err(ApiError::BadRequest(
+                "缺少参数: book_id / item_id 均为必填".to_string(),
+            ));
+        }
+        let tone_id = default_val(&params.get_str("tone_id"), "0");
+        let req_type = default_val(&params.get_str("req_type"), "3");
+
+        let mut p = reading_724_params();
+        set_param(&mut p, "book_id", book_id);
+        set_param(&mut p, "item_id", item_id);
+        set_param(&mut p, "tone_id", tone_id);
+        set_param(&mut p, "req_type", req_type);
+
+        Upstream::new(ctx.up.clone())
+            .json(&UpstreamRequestSpec {
+                mode: UpstreamMode::DeviceSigned,
+                host: HOST_FQNOVEL.to_string(),
+                path: AUDIO_TIMEPOINT_PATH.to_string(),
+                params: p,
+                headers: dragon_read_headers(),
+                ..Default::default()
+            })
+            .await
+    })
+}
+
 pub fn register(s: &mut Server) {
     s.add_route("audio_book_detail", handle_book_detail);
     s.add_route("audio_chapter_info", handle_chapter_info);
     s.add_route("audio_play", handle_play);
     s.add_route("audio_timeline", handle_timeline);
+    s.add_route("audio_timepoint", handle_timepoint);
 }
 
 #[cfg(test)]

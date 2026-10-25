@@ -46,6 +46,12 @@ fn rest_paths_match_the_go_route_table() {
             vec![("item_id", "7319413832366443582")],
         ),
         (
+            "/api/v1/chapters/7319413832366443582/timepoints",
+            vec![],
+            "audio_timepoint",
+            vec![("item_id", "7319413832366443582")],
+        ),
+        (
             "/api/v1/chapters/7491705434915488318/reviews",
             vec![],
             "idea_list",

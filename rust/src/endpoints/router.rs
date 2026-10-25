@@ -109,6 +109,15 @@ fn match_chapters(parts: &[&str], q: &Params) -> Option<RouteMatch> {
                 params: p,
             })
         }
+        // 听书与正文的同步映射（官方 AudioTimePointResponse）：
+        // 按音频毫秒直出「第几段第几个字符」，是听书高亮的唯一数据源。
+        "timepoints" => {
+            p.set("item_id", id);
+            Some(RouteMatch {
+                api: "audio_timepoint",
+                params: p,
+            })
+        }
         "reviews" => {
             p.set("item_id", id);
             Some(RouteMatch {
