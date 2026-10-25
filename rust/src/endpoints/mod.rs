@@ -7,6 +7,7 @@
 pub mod account_history;
 pub mod account_library;
 pub mod audio;
+pub mod audio_text;
 pub mod author;
 pub mod base;
 pub mod book;
