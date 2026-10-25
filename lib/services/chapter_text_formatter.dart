@@ -4,6 +4,11 @@ import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' show parseFragment;
 
 import '../models/backend_resource_url.dart';
+import 'chapter_content_blocks.dart';
+
+// The models moved out to keep the parse pipeline readable; re-export them so
+// every existing `import chapter_text_formatter.dart` keeps resolving them.
+export 'chapter_content_blocks.dart';
 
 const _paragraphTags = {
   'address',
@@ -93,59 +98,66 @@ bool _holdsContentMarker(String text) {
   return _truncatedMarker.hasMatch(text);
 }
 
-sealed class ChapterBlock {
-  const ChapterBlock();
+/// Decodes cached `<blk>` spans. Unknown shapes are dropped rather than
+/// rejected: a cache written before this field existed simply has none, and the
+/// reader then falls back to paragraph-level offsets.
+List<ChapterBlkSpan> _blkSpansFromCache(Object? raw) {
+  if (raw is! List) return const [];
+  final spans = <ChapterBlkSpan>[];
+  for (final entry in raw) {
+    if (entry is! Map) continue;
+    final index = entry['e'];
+    final start = entry['s'];
+    final length = entry['l'];
+    if (index is! int || start is! int || length is! int) continue;
+    if (start < 0 || length <= 0) continue;
+    spans.add(
+      ChapterBlkSpan(
+        elementIndex: index,
+        start: start,
+        length: length,
+        startOffsetInPara: entry['p'] is int ? entry['p'] as int : null,
+      ),
+    );
+  }
+  return spans;
 }
 
-class ChapterParagraph extends ChapterBlock {
-  final String text;
-
-  /// Upstream paragraph id from the `<p idx="N">` attribute.
-  ///
-  /// Chapter ideas (段评) are keyed by this id, so it is the only way to line a
-  /// paragraph up with its comment count. Null for plain-text sources and for
-  /// markup that carries no attribute.
-  final int? paraIndex;
-
-  /// Start of this paragraph's audio, in milliseconds from the beginning of the
-  /// chapter, taken from the first `<span start_time="N">` inside it.
-  ///
-  /// Audio chapters ship the spoken timeline inline in the same markup that
-  /// carries the text, so 从本段听 needs no extra request. Null for the many
-  /// books without audio.
-  ///
-  /// Note: 段落时间轴就在正文标记里，官方与本地核心都没有独立接口 — 见
-  /// .agents/notes/implemented/feature/2026-09-19-listen-from-paragraph.md
-  final int? startMs;
-
-  /// True for the `<img alt="...">` caption emitted when an image URL is
-  /// unusable. It is real rendered text, but it must never be mistaken for the
-  /// leading chapter title when the title is stripped.
-  final bool isImageCaption;
-
-  const ChapterParagraph(
-    this.text, {
-    this.paraIndex,
-    this.startMs,
-    this.isImageCaption = false,
-  });
-}
-
-class ChapterImage extends ChapterBlock {
-  final String url;
-  final String alt;
-  final double? width;
-  final double? height;
-
-  const ChapterImage({
-    required this.url,
-    this.alt = '',
-    this.width,
-    this.height,
-  });
-
-  double? get aspectRatio =>
-      width != null && height != null ? width! / height! : null;
+/// Maps the `<blk>` elements collected from raw markup onto the paragraph that
+/// `flush()` actually emits.
+///
+/// The raw buffer is rewritten before it becomes a block — content markers are
+/// stripped and whitespace trimmed — so the offsets recorded while parsing do
+/// not survive. The element *text* does, so each span is located in the final
+/// paragraph by walking forward from the previous one. Spans that cannot be
+/// placed are dropped: the caller then falls back to paragraph-level offsets,
+/// which is correct but coarser, whereas a misplaced span would highlight the
+/// wrong characters.
+List<ChapterBlkSpan> _remapBlkSpans(
+  List<({int eIdx, int? startPos, String text})> raw,
+  String paragraph,
+) {
+  if (raw.isEmpty || paragraph.isEmpty) return const [];
+  final spans = <ChapterBlkSpan>[];
+  var cursor = 0;
+  for (final element in raw) {
+    // Normalisation trims paragraph edges, so search for the element's trimmed
+    // form — that is the part that survived.
+    final needle = element.text.trim();
+    if (needle.isEmpty) continue;
+    final at = paragraph.indexOf(needle, cursor);
+    if (at < 0) continue;
+    spans.add(
+      ChapterBlkSpan(
+        elementIndex: element.eIdx,
+        start: at,
+        length: needle.length,
+        startOffsetInPara: element.startPos,
+      ),
+    );
+    cursor = at + needle.length;
+  }
+  return spans;
 }
 
 // Note: 图文缓存、旧文字锚点迁移与原始 HTML 来源见
@@ -294,6 +306,17 @@ class ChapterContent {
                 if (block.paraIndex != null) 'idx': block.paraIndex,
                 if (block.startMs != null) 'start': block.startMs,
                 if (block.isImageCaption) 'caption': true,
+                if (block.blkSpans.isNotEmpty)
+                  'blk': [
+                    for (final span in block.blkSpans)
+                      {
+                        'e': span.elementIndex,
+                        's': span.start,
+                        'l': span.length,
+                        if (span.startOffsetInPara != null)
+                          'p': span.startOffsetInPara,
+                      },
+                  ],
               },
               ChapterImage() => {
                 'type': 'image',
@@ -327,6 +350,7 @@ class ChapterContent {
         final paraIndex = raw['idx'] is int ? raw['idx'] as int : null;
         final startMs = raw['start'] is int ? raw['start'] as int : null;
         final isCaption = raw['caption'] == true;
+        final blkSpans = _blkSpansFromCache(raw['blk']);
         final paragraphs = splitChapterParagraphs(raw['text'] as String);
         for (var i = 0; i < paragraphs.length; i++) {
           blocks.add(
@@ -338,6 +362,7 @@ class ChapterContent {
               // on the chapter opening for every piece after the first.
               startMs: startMs,
               isImageCaption: isCaption,
+              blkSpans: i == 0 ? blkSpans : const [],
             ),
           );
         }
@@ -384,6 +409,28 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
   // Start of the spoken audio for the paragraph in scope, from its first
   // `<span start_time="N">`.
   int? activeStartMs;
+  // Rendered length of [pending] so far, used to delimit `<blk>` elements.
+  int pendingLength = 0;
+  final List<({int eIdx, int? startPos, int start})> blkStack = [];
+  final List<({int eIdx, int? startPos, String text})> activeBlkSpans = [];
+
+  void writePending(String value) {
+    pending.write(value);
+    pendingLength += value.length;
+  }
+
+  /// Closes the innermost `<blk>`, recording the text it contributed.
+  ///
+  /// Raw offsets do not survive the rewrite that turns [pending] into a
+  /// paragraph, so the element text is kept instead and located afterwards.
+  void closeBlk() {
+    if (blkStack.isEmpty) return;
+    final open = blkStack.removeLast();
+    if (pendingLength <= open.start) return;
+    final text = pending.toString().substring(open.start);
+    activeBlkSpans.add((eIdx: open.eIdx, startPos: open.startPos, text: text));
+  }
+
   void flush() {
     final paragraphs = splitChapterParagraphs(
       _stripContentMarkers(pending.toString()),
@@ -392,15 +439,25 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
       // A single upstream paragraph can split into several display paragraphs;
       // the id belongs to the first of them, but the spoken start is inherited
       // by every piece (the audio for the whole paragraph begins there).
+      // `<blk>` spans were measured against the raw buffer; they only line up
+      // with the emitted text when the paragraph was not split. A split
+      // paragraph drops them rather than risk a misplaced highlight.
+      final spans = paragraphs.length == 1
+          ? _remapBlkSpans(activeBlkSpans, paragraphs[i])
+          : const <ChapterBlkSpan>[];
       blocks.add(
         ChapterParagraph(
           paragraphs[i],
           paraIndex: i == 0 ? activeIndex : null,
           startMs: activeStartMs,
+          blkSpans: spans,
         ),
       );
     }
     pending = StringBuffer();
+    pendingLength = 0;
+    blkStack.clear();
+    activeBlkSpans.clear();
     // A leading break/image can flush no text. Its paragraph id still belongs
     // to the first body paragraph that is eventually emitted.
     if (paragraphs.isNotEmpty) {
@@ -411,7 +468,7 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
 
   void append(dom.Node node) {
     if (node is dom.Text) {
-      pending.write(node.data);
+      writePending(node.data);
     } else if (node is dom.Element) {
       final tag = node.localName;
       if (_hiddenTags.contains(tag)) return;
@@ -458,15 +515,28 @@ ChapterContent parseChapterContent(String source, {String? baseUrl}) {
         final raw = node.attributes['start_time']?.trim();
         activeStartMs = raw == null || raw.isEmpty ? null : int.tryParse(raw);
       }
+      // `<blk e_idx="N">` marks one spoken element; positionV2 addresses text
+      // by (element index, offset inside it).
+      final isBlk = tag == 'blk';
+      if (isBlk) {
+        final rawIdx = node.attributes['e_idx']?.trim();
+        final rawStart = node.attributes['e_start_position']?.trim();
+        blkStack.add((
+          eIdx: rawIdx == null ? -1 : (int.tryParse(rawIdx) ?? -1),
+          startPos: rawStart == null ? null : int.tryParse(rawStart),
+          start: pendingLength,
+        ));
+      }
       for (final child in node.nodes) {
         append(child);
       }
+      if (isBlk) closeBlk();
       if (paragraph) {
         flush();
         activeIndex = null;
         activeStartMs = null;
       }
-      if (tag == 'td' || tag == 'th') pending.write(' ');
+      if (tag == 'td' || tag == 'th') writePending(' ');
     }
   }
 

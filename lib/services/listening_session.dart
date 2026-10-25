@@ -34,7 +34,7 @@ class ListeningSession extends ChangeNotifier {
   /// [sentenceRange] indexes the TTS text blob. Conflating them would smear the
   /// highlight across paragraphs, so they stay separate fields and the reader
   /// picks whichever its source produced.
-  ({int startPara, int startOff, int endPara, int endOff})? audioParaRange;
+  ({int startPara, int startOff, int endPara, int endOff, int? elemIndex, int? elemOff})? audioParaRange;
 
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -63,7 +63,7 @@ class ListeningSession extends ChangeNotifier {
     double? textProgress,
     int? textReplacementRevision,
     ({int start, int end})? sentenceRange,
-    ({int startPara, int startOff, int endPara, int endOff})? audioParaRange,
+    ({int startPara, int startOff, int endPara, int endOff, int? elemIndex, int? elemOff})? audioParaRange,
   }) {
     final structural =
         this.bookId != bookId ||

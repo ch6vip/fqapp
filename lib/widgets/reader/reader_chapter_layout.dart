@@ -114,7 +114,19 @@ class ReaderContentBlock {
 
   /// Upstream paragraph id, when the source carried one. Paragraph-comment
   /// bubbles are keyed by this, not by the block's ordinal position.
+  ///
+  /// The 听书 timeline addresses text by this id too, so listen-along
+  /// highlighting resolves through it rather than through [index].
   final int? paraIndex;
+
+  /// Inline `<blk>` boundaries of this paragraph, in reading order.
+  ///
+  /// `positionV2` from the audio timeline addresses text as
+  /// `(element index, offset inside that element)`, so turning it into a
+  /// paragraph offset needs these. Empty when the markup had no `<blk>` or the
+  /// paragraph was rewritten while parsing; callers then use the paragraph-level
+  /// offsets, which every point carries as well.
+  final List<ChapterBlkSpan> blkSpans;
 
   /// Identity of this paragraph for local features (划线, the long-press menu):
   /// [paraIndex] when the markup carried one, else an ordinal-derived id. The
@@ -152,6 +164,7 @@ class ReaderContentBlock {
     this.bubbleCount,
     this.bubbleVariant,
     this.underlined = false,
+    this.blkSpans = const [],
   });
 
   int get end => start + text.length;
@@ -195,58 +208,92 @@ class ReaderContentBlock {
   return (start: layoutStart, end: layoutEnd);
 }
 
-/// Maps a 听书 time-point range (paragraph index + offset inside it) onto the
-/// layout's absolute character offsets.
+/// Maps a 听书 time-point range onto the layout's absolute character offsets.
 ///
-/// The audio timeline addresses text the way the backend does: `(para, off)`
-/// with `para` counting body paragraphs from the first one after the title.
-/// The layout interleaves those same paragraphs with image blocks and a title
-/// block at index 0, so this walks the blocks in order and counts only the
-/// text ones.
+/// The upstream addresses text by **paragraph id** (`<p idx="N">`, which the
+/// official client calls `IDragonParagraph.getId()`), not by display order, so
+/// the match goes through [ReaderContentBlock.paraIndex]. Display order and id
+/// order disagree whenever the markup holds marker-only or empty paragraphs —
+/// which is why counting paragraphs here lit the wrong text.
 ///
-/// Returns `null` when the range addresses nothing in this layout — a stale
-/// timeline (the chapter text changed), a title-only point, or a paragraph the
-/// current layout does not have. Callers treat that as "no highlight" rather
-/// than as an error: a wrong highlight is worse than none.
+/// Offsets are half-open here: the caller passes `endOffset + 1` because the
+/// upstream end offset is inclusive (official `toTargetTextBlock` does the same
+/// `+1`).
+///
+/// When [startElementIndex]/[startElementOffset] are supplied and the paragraph
+/// recorded its `<blk>` spans, the start is narrowed to that element:
+/// `positionV2` addresses text one level deeper than the paragraph.
+///
+/// Returns `null` when the point addresses nothing in this layout — a stale
+/// timeline, a title-only point, or a paragraph this chapter does not render.
+/// Callers treat that as "no highlight": a wrong highlight is worse than none.
 ({int start, int end})? audioTimePointLayoutRange(
   ReaderChapterLayout layout,
   int startPara,
   int startParaOff,
   int endPara,
-  int endParaOff,
-) {
-  // The title block (index 0) is not one of the backend's body paragraphs.
-  var bodyOrdinal = 0;
-  var layoutStart = -1;
-  var layoutEnd = -1;
-  for (var i = 1; i < layout.blocks.length; i++) {
-    final block = layout.blocks[i];
+  int endParaOff, {
+  int? startElementIndex,
+  int? startElementOffset,
+}) {
+  final from = _blockByParaId(layout, startPara);
+  final to = endPara == startPara
+      ? from
+      : _blockByParaId(layout, endPara);
+  if (from == null || to == null) return null;
+
+  final startInPara = _paraOffset(
+    from,
+    startParaOff,
+    startElementIndex,
+    startElementOffset,
+  ).clamp(0, from.text.length);
+  // A range that spans paragraphs lights from this paragraph's start offset to
+  // the last one's end offset; the single absolute span covers everything
+  // between them, which is what the reader paints.
+  final endInPara = endParaOff.clamp(0, to.text.length);
+
+  final start = from.start + startInPara;
+  final end = to.start + endInPara;
+  if (end <= start) return null;
+  return (start: start, end: end);
+}
+
+/// The block whose upstream paragraph id is [paraId], if this layout renders it.
+ReaderContentBlock? _blockByParaId(ReaderChapterLayout layout, int paraId) {
+  for (final block in layout.blocks) {
     if (block.isImage) continue;
-    final ordinal = bodyOrdinal++;
-    final length = block.text.length;
-
-    // The point may start or end on a paragraph other than this one; clamp to
-    // the overlap so a range spanning paragraphs still lights both ends.
-    final startsHere = startPara == ordinal;
-    final endsHere = endPara == ordinal;
-    if (!startsHere && !endsHere) {
-      // A range that spans this paragraph entirely (start before, end after).
-      if (startPara < ordinal && endPara > ordinal) {
-        if (layoutStart < 0) layoutStart = block.start;
-        layoutEnd = block.start + length;
-      }
-      continue;
-    }
-
-    final from = startsHere ? startParaOff.clamp(0, length) : 0;
-    final to = endsHere ? endParaOff.clamp(0, length) : length;
-    if (to > from) {
-      if (layoutStart < 0) layoutStart = block.start + from;
-      layoutEnd = block.start + to;
-    }
+    if (block.paraIndex == paraId) return block;
   }
-  if (layoutStart < 0 || layoutEnd <= layoutStart) return null;
-  return (start: layoutStart, end: layoutEnd);
+  return null;
+}
+
+/// Paragraph offset for a point, preferring the `positionV2` element when the
+/// paragraph recorded its `<blk>` boundaries.
+int _paraOffset(
+  ReaderContentBlock block,
+  int paraOffset,
+  int? elementIndex,
+  int? elementOffset,
+) {
+  final spans = block.blkSpans;
+  // element_index < 0 means the upstream sent no element coordinate, and in that
+  // case element_offset already is the paragraph offset (official `S(-1, x)`
+  // returns x unchanged).
+  if (spans.isEmpty || elementIndex == null || elementIndex < 0) {
+    return paraOffset;
+  }
+  final offset = elementOffset ?? 0;
+  for (final span in spans) {
+    if (span.elementIndex < elementIndex) continue;
+    if (span.elementIndex == elementIndex) {
+      return span.start + offset.clamp(0, span.length);
+    }
+    break;
+  }
+  // The element is not in this paragraph: trust the paragraph-level offset,
+  // which the upstream sends alongside every positionV2.
+  return paraOffset;
 }
 
 /// A slice retains its original paragraph layout, including justification.
@@ -380,6 +427,9 @@ class ReaderChapterLayout {
       }
       final paraIndex = element is ChapterParagraph ? element.paraIndex : null;
       final startMs = element is ChapterParagraph ? element.startMs : null;
+      final blkSpans = element is ChapterParagraph
+          ? element.blkSpans
+          : const <ChapterBlkSpan>[];
       final bubbleCount = paraIndex == null
           ? null
           : paragraphBubbles[paraIndex];
@@ -421,6 +471,7 @@ class ReaderChapterLayout {
               paraIndex: paraIndex,
               textId: textId,
               startMs: startMs,
+              blkSpans: blkSpans,
               bubbleCount: bubbleCount,
               bubbleVariant: bubbleVariant,
               bubble: bubble,
@@ -779,6 +830,7 @@ class ReaderChapterLayout {
     int? paraIndex,
     int? textId,
     int? startMs,
+    List<ChapterBlkSpan> blkSpans = const [],
     int? bubbleCount,
     ParagraphBubbleVariant? bubbleVariant,
     Widget? bubble,
@@ -830,6 +882,7 @@ class ReaderChapterLayout {
         paraIndex: paraIndex,
         textId: textId,
         startMs: startMs,
+        blkSpans: blkSpans,
         bubbleCount: bubbleCount,
         bubbleVariant: bubbleVariant,
         underlined: underlined,
@@ -920,6 +973,7 @@ class ReaderChapterLayout {
         paraIndex: paraIndex,
         textId: textId,
         startMs: startMs,
+        blkSpans: blkSpans,
         bubbleCount: bubbleCount,
         bubbleVariant: bubbleVariant,
       );
