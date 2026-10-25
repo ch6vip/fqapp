@@ -23,7 +23,18 @@ class ListeningSession extends ChangeNotifier {
   /// into SystemTtsBook.plainText: body paragraphs joined by '\n', title
   /// stripped, images excluded). The reader translates it into layout
   /// coordinates to paint the 句高亮 wash. Null for audiobook playback,
-  /// which has no text positions.
+  /// which reports [audioParaRange] instead.
+  ({int start, int end})? sentenceRange;
+
+  /// The passage being narrated by 听书 (真人讲书 / 智能朗读), in the backend's
+  /// own coordinates: `(paragraph ordinal, offset inside that paragraph)`.
+  ///
+  /// This is *not* [sentenceRange]: the audio timeline numbers body paragraphs
+  /// from the backend's markup (official `AudioTimePoint.start_para`), while
+  /// [sentenceRange] indexes the TTS text blob. Conflating them would smear the
+  /// highlight across paragraphs, so they stay separate fields and the reader
+  /// picks whichever its source produced.
+  ({int startPara, int startOff, int endPara, int endOff})? audioParaRange;
 
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -42,8 +53,6 @@ class ListeningSession extends ChangeNotifier {
   /// Publishes a state change. Position updates arrive far more often than the
   /// reader needs, so notifications are throttled to one per second unless
   /// something structural changed (chapter, playing).
-  ({int start, int end})? sentenceRange;
-
   void update({
     required String bookId,
     required String chapterId,
@@ -54,12 +63,14 @@ class ListeningSession extends ChangeNotifier {
     double? textProgress,
     int? textReplacementRevision,
     ({int start, int end})? sentenceRange,
+    ({int startPara, int startOff, int endPara, int endOff})? audioParaRange,
   }) {
     final structural =
         this.bookId != bookId ||
         this.chapterId != chapterId ||
         this.playing != playing ||
-        this.sentenceRange != sentenceRange;
+        this.sentenceRange != sentenceRange ||
+        this.audioParaRange != audioParaRange;
     this.bookId = bookId;
     this.chapterId = chapterId;
     this.chapterTitle = chapterTitle;
@@ -69,6 +80,7 @@ class ListeningSession extends ChangeNotifier {
     this.textProgress = textProgress;
     this.textReplacementRevision = textReplacementRevision;
     this.sentenceRange = sentenceRange;
+    this.audioParaRange = audioParaRange;
     final now = DateTime.now();
     if (structural ||
         now.difference(_lastNotify) >= const Duration(seconds: 1)) {
@@ -89,6 +101,7 @@ class ListeningSession extends ChangeNotifier {
     textProgress = null;
     textReplacementRevision = null;
     sentenceRange = null;
+    audioParaRange = null;
     notifyListeners();
   }
 }

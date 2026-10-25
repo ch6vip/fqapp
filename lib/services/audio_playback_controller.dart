@@ -57,6 +57,10 @@ class _AudioPlaybackController extends ChangeNotifier
   List<AudioVoice> _voices = const [_defaultVoice];
   AudioExtras _extras = const AudioExtras();
   SubtitleTrack _subtitles = SubtitleTrack.empty;
+
+  /// 听书 → 正文的同步映射（官方 AudioTimePoint）。缺省为空，此时不发
+  /// sentenceRange，阅读页不高亮——没映射时高亮一个猜的位置比不高亮更糟。
+  AudioTimeTrack _timeTrack = AudioTimeTrack.empty;
   // Modal routes rebuild independently of the player page. See
   // .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
   final _readAlong = ValueNotifier<_ReadAlongSnapshot>((
@@ -115,6 +119,23 @@ class _AudioPlaybackController extends ChangeNotifier
     return ApiClient.instance.chapterTimeline(itemId, toneId: toneId);
   }
 
+  /// Resolves the 听书 → 正文 mapping that drives listen-along highlighting.
+  ///
+  /// Same shape as [_loadSubtitles]: optional, and an empty answer is normal
+  /// (the book has no generated timeline for this tone).
+  Future<AudioTimeTrack> _loadTimePoints(String itemId, String toneId) {
+    final loader = request.timePointLoader;
+    if (loader != null) return loader(itemId, toneId);
+    if (request.sourceLoader != null || request.playerFactory != null) {
+      return Future.value(AudioTimeTrack.empty);
+    }
+    return ApiClient.instance.chapterTimePoints(
+      _bookId,
+      itemId,
+      toneId: toneId,
+    );
+  }
+
   bool _current(int generation, [NativePlayer? player]) =>
       !_closed &&
       generation == _generation &&
@@ -126,8 +147,8 @@ class _AudioPlaybackController extends ChangeNotifier
   void start() {
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次听书进度，避免被杀丢进度。
-    _unregisterFairMemoryFlush =
-        FairMemoryService.instance.registerFlushHandler(_persistProgress);
+    _unregisterFairMemoryFlush = FairMemoryService.instance
+        .registerFlushHandler(_persistProgress);
     NativePlayer.setRemoteCommandHandler(
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
@@ -504,6 +525,8 @@ class _AudioPlaybackController extends ChangeNotifier
       // Subtitles are decoration: they arrive whenever the book has generated
       // speech text and are ignored otherwise.
       unawaited(_refreshSubtitles(generation, itemId, source.toneId));
+      // 同步映射决定阅读页的朗读高亮；与字幕同时拉取，两个请求互不依赖。
+      unawaited(_refreshTimePoints(generation, itemId, source.toneId));
       if (_wantPlay) await _play(player, generation);
       if (!_current(generation, player)) return;
       _syncForeground();
@@ -644,6 +667,26 @@ class _AudioPlaybackController extends ChangeNotifier
     );
   }
 
+  /// Loads the 听书 → 正文 mapping for a chapter and publishes it if the
+  /// chapter is still the active one.
+  Future<void> _refreshTimePoints(
+    int generation,
+    String itemId,
+    String toneId,
+  ) async {
+    try {
+      final track = await _loadTimePoints(itemId, toneId);
+      if (!_current(generation)) return;
+      _timeTrack = track;
+      // The chapter may already be playing: publish once so the reader picks
+      // the highlight up without waiting for the next position tick.
+      _publishListeningSession(playing: _player?.playing ?? false);
+    } catch (_) {
+      // 没有映射不是错误：这本书没生成过时间轴，或者章节文本已变化。保留
+      // 上一次的空值，阅读页就不高亮。
+    }
+  }
+
   void _publishMoreState() {
     if (_closed) return;
     _moreState.value = (
@@ -667,16 +710,37 @@ class _AudioPlaybackController extends ChangeNotifier
   void _publishListeningSession({bool playing = true}) {
     if (_index < 0 || _index >= _chapters.length) return;
     final chapter = _chapters[_index];
+    final position = _boundedPosition(
+      _player?.position ?? _position.value,
+      _duration,
+    );
     ListeningSession.instance.update(
       bookId: _bookId,
       chapterId: chapter.itemId,
       chapterTitle: chapter.title,
-      position: _boundedPosition(
-        _player?.position ?? _position.value,
-        _duration,
-      ),
+      position: position,
       duration: _duration,
       playing: playing && !_completed,
+      // The time point covering this instant, in the backend's paragraph
+      // coordinates. Absent timeline → null → the reader paints nothing.
+      audioParaRange: _paraRangeAt(position),
+    );
+  }
+
+  /// The text range the backend says is spoken at [position], or null.
+  ///
+  /// Title points are dropped: the reader's title block is not a paragraph the
+  /// backend numbers, so a title range would land on the wrong text.
+  ({int startPara, int startOff, int endPara, int endOff})? _paraRangeAt(
+    Duration position,
+  ) {
+    final point = _timeTrack.pointAt(position);
+    if (point == null || !point.isBody) return null;
+    return (
+      startPara: point.startPara,
+      startOff: point.startParaOff,
+      endPara: point.endPara,
+      endOff: point.endParaOff,
     );
   }
 
@@ -1124,7 +1188,10 @@ class _AudioPlaybackController extends ChangeNotifier
     required String cover,
     required String toneId,
   }) async {
-    if (_closed || _switchingVersion || targetId.isEmpty || targetId == _bookId) {
+    if (_closed ||
+        _switchingVersion ||
+        targetId.isEmpty ||
+        targetId == _bookId) {
       return;
     }
     var generation = _generation;

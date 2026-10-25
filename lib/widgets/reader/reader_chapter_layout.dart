@@ -195,6 +195,60 @@ class ReaderContentBlock {
   return (start: layoutStart, end: layoutEnd);
 }
 
+/// Maps a 听书 time-point range (paragraph index + offset inside it) onto the
+/// layout's absolute character offsets.
+///
+/// The audio timeline addresses text the way the backend does: `(para, off)`
+/// with `para` counting body paragraphs from the first one after the title.
+/// The layout interleaves those same paragraphs with image blocks and a title
+/// block at index 0, so this walks the blocks in order and counts only the
+/// text ones.
+///
+/// Returns `null` when the range addresses nothing in this layout — a stale
+/// timeline (the chapter text changed), a title-only point, or a paragraph the
+/// current layout does not have. Callers treat that as "no highlight" rather
+/// than as an error: a wrong highlight is worse than none.
+({int start, int end})? audioTimePointLayoutRange(
+  ReaderChapterLayout layout,
+  int startPara,
+  int startParaOff,
+  int endPara,
+  int endParaOff,
+) {
+  // The title block (index 0) is not one of the backend's body paragraphs.
+  var bodyOrdinal = 0;
+  var layoutStart = -1;
+  var layoutEnd = -1;
+  for (var i = 1; i < layout.blocks.length; i++) {
+    final block = layout.blocks[i];
+    if (block.isImage) continue;
+    final ordinal = bodyOrdinal++;
+    final length = block.text.length;
+
+    // The point may start or end on a paragraph other than this one; clamp to
+    // the overlap so a range spanning paragraphs still lights both ends.
+    final startsHere = startPara == ordinal;
+    final endsHere = endPara == ordinal;
+    if (!startsHere && !endsHere) {
+      // A range that spans this paragraph entirely (start before, end after).
+      if (startPara < ordinal && endPara > ordinal) {
+        if (layoutStart < 0) layoutStart = block.start;
+        layoutEnd = block.start + length;
+      }
+      continue;
+    }
+
+    final from = startsHere ? startParaOff.clamp(0, length) : 0;
+    final to = endsHere ? endParaOff.clamp(0, length) : length;
+    if (to > from) {
+      if (layoutStart < 0) layoutStart = block.start + from;
+      layoutEnd = block.start + to;
+    }
+  }
+  if (layoutStart < 0 || layoutEnd <= layoutStart) return null;
+  return (start: layoutStart, end: layoutEnd);
+}
+
 /// A slice retains its original paragraph layout, including justification.
 /// Reflowing a substring here would change line breaks and repeat indentation.
 @immutable
@@ -1041,7 +1095,8 @@ class ReaderBlockContent extends StatelessWidget {
           onParagraphLongPress!(block, details.globalPosition),
       onLongPressMoveUpdate: onParagraphLongPressMoveUpdate == null
           ? null
-          : (details) => onParagraphLongPressMoveUpdate!(details.globalPosition),
+          : (details) =>
+                onParagraphLongPressMoveUpdate!(details.globalPosition),
       onLongPressEnd: onParagraphLongPressEnd == null
           ? null
           : (details) => onParagraphLongPressEnd!(details.globalPosition),

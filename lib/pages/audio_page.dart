@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/audio_extra.dart';
+import '../models/audio_time_track.dart';
 import '../models/book_comment.dart';
 import '../models/book_detail.dart';
 import '../models/chapter_media.dart';
@@ -69,6 +70,10 @@ class AudioPage extends StatefulWidget {
   /// because the backend only answers for a real tone.
   final SubtitleLoader? subtitleLoader;
 
+  /// 听书 → 正文的同步映射（官方 AudioTimePoint）。驱动阅读页的朗读高亮；
+  /// 没有映射时不高亮，而不是猜一个位置。
+  final TimePointLoader? timePointLoader;
+
   /// Current-chapter opening excerpt shown under the cover, mirroring the
   /// official listening page. Defaults to `/chapters/summary`.
   final Future<String?> Function(String itemId)? excerptLoader;
@@ -99,6 +104,7 @@ class AudioPage extends StatefulWidget {
     this.voicesLoader,
     this.extrasLoader,
     this.subtitleLoader,
+    this.timePointLoader,
     this.excerptLoader,
     this.directoryLoader,
     this.downloadStore,
@@ -129,6 +135,9 @@ class AudioExtras {
 typedef AudioExtrasLoader = Future<AudioExtras> Function(String bookId);
 typedef SubtitleLoader =
     Future<SubtitleTrack> Function(String itemId, String toneId);
+
+typedef TimePointLoader =
+    Future<AudioTimeTrack> Function(String itemId, String toneId);
 
 typedef _ReadAlongSnapshot = ({
   String chapterTitle,
