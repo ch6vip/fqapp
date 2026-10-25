@@ -76,7 +76,7 @@ internal class SpeechTempoProcessor(
     private val frameBytes: Int get() = 2 * channelCount
 
     private fun openHandle() {
-        handle = SpeechTempo.nativeCreateChain(
+        handle = SpeechTempo.createChain(
             sampleRateHz,
             channelCount,
             speed.toDouble(),
@@ -95,7 +95,7 @@ internal class SpeechTempoProcessor(
         Log.i(
             TAG,
             "atempo chain ready sr=$sampleRateHz->$resolvedTargetRate " +
-                "ch=$channelCount speed=$speed window=${SpeechTempo.nativeWindow(handle)} " +
+                "ch=$channelCount speed=$speed window=${SpeechTempo.window(handle)} " +
                 "resample=${sampleRateHz != resolvedTargetRate}",
         )
     }
@@ -104,7 +104,7 @@ internal class SpeechTempoProcessor(
         if (value == speed) return
         speed = value
         if (handle != 0) {
-            val rc = SpeechTempo.nativeSetTempo(handle, value.toDouble())
+            val rc = SpeechTempo.setTempo(handle, value.toDouble())
             if (rc != 0) Log.w(TAG, "setTempo($value) rejected rc=$rc")
         }
     }
@@ -123,7 +123,7 @@ internal class SpeechTempoProcessor(
             sampleRateHz = inputAudioFormat.sampleRate
             channelCount = inputAudioFormat.channelCount
             if (handle != 0) {
-                SpeechTempo.nativeDestroy(handle)
+                SpeechTempo.destroy(handle)
                 handle = 0
             }
             openHandle()
@@ -170,7 +170,7 @@ internal class SpeechTempoProcessor(
             pendingInput.get(src)
 
             val dst = ByteArray(OUTPUT_CAPACITY)
-            val packed = SpeechTempo.nativeProcess(handle, src, dst)
+            val packed = SpeechTempo.process(handle, src, dst)
             if (packed < 0) {
                 Log.e(TAG, "nativeProcess failed, dropping round")
                 break
@@ -222,7 +222,7 @@ internal class SpeechTempoProcessor(
             val dst = ByteArray(OUTPUT_CAPACITY)
             var guard = 0
             while (guard++ < 64) {
-                val flushed = SpeechTempo.nativeFlush(handle, dst)
+                val flushed = SpeechTempo.flush(handle, dst)
                 if (flushed <= 0) break
                 val out = ByteBuffer.allocate(pendingOutput.remaining() + flushed)
                     .order(ByteOrder.nativeOrder())
@@ -249,7 +249,7 @@ internal class SpeechTempoProcessor(
         pendingOutput = AudioProcessor.EMPTY_BUFFER
         inputEnded = false
         if (handle != 0) {
-            SpeechTempo.nativeDestroy(handle)
+            SpeechTempo.destroy(handle)
             handle = 0
         }
     }
@@ -260,27 +260,78 @@ internal class SpeechTempoProcessor(
         inputEnded = false
         // flush 会发生在中途（seek / 换曲）：重建算法状态，保留倍速。
         if (handle != 0) {
-            SpeechTempo.nativeDestroy(handle)
+            SpeechTempo.destroy(handle)
             handle = 0
         }
         if (sampleRateHz > 0 && channelCount > 0) openHandle()
     }
 }
 
-/** `libshortplay_tempo.so` 的入口。 */
+/**
+ * `libshortplay_tempo.so` 的入口。
+ *
+ * 加载放在显式 [ensureLoaded] 里，不用 `init {}`：object 的 init 在**类首次
+ * 被引用**时就会跑，若那时 Flutter 的 JNI 还没初始化（Dart 插件注册阶段），
+ * `System.loadLibrary` 之后的 JNI 调用会直接 SIGSEGV，错误信息是
+ * `JNI is not initialized ... before 'main()'`。真机上报过这个崩溃。
+ *
+ * 真正需要 native 的时机是 AudioProcessor 的 configure，那时引擎已就绪。
+ */
 internal object SpeechTempo {
-    init {
-        System.loadLibrary("shortplay_tempo")
+    @Volatile
+    private var loaded = false
+
+    private fun ensureLoaded() {
+        if (loaded) return
+        synchronized(this) {
+            if (loaded) return
+            System.loadLibrary("shortplay_tempo")
+            loaded = true
+        }
     }
 
-    external fun nativeCreateChain(
+    fun createChain(
+        sampleRate: Int,
+        channels: Int,
+        tempo: Double,
+        targetRate: Int,
+    ): Int {
+        ensureLoaded()
+        return nativeCreateChain(sampleRate, channels, tempo, targetRate)
+    }
+
+    fun destroy(handle: Int) {
+        ensureLoaded()
+        nativeDestroy(handle)
+    }
+
+    fun setTempo(handle: Int, tempo: Double): Int {
+        ensureLoaded()
+        return nativeSetTempo(handle, tempo)
+    }
+
+    fun window(handle: Int): Int {
+        ensureLoaded()
+        return nativeWindow(handle)
+    }
+
+    fun process(handle: Int, src: ByteArray, dst: ByteArray): Int {
+        ensureLoaded()
+        return nativeProcess(handle, src, dst)
+    }
+
+    fun flush(handle: Int, dst: ByteArray): Int {
+        ensureLoaded()
+        return nativeFlush(handle, dst)
+    }
+
+    private external fun nativeCreateChain(
         sampleRate: Int,
         channels: Int,
         tempo: Double,
         targetRate: Int,
     ): Int
 
-    external fun nativeOutputBound(handle: Int, inputBytes: Int): Int
     external fun nativeDestroy(handle: Int)
     external fun nativeSetTempo(handle: Int, tempo: Double): Int
     external fun nativeWindow(handle: Int): Int
