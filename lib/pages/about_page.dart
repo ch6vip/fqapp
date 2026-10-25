@@ -16,7 +16,7 @@ class AboutPage extends StatelessWidget {
   /// `version`. Without a package_info dependency the value is
   /// static, so test/about_version_test.dart parses the pubspec and fails the
   /// build check when the two drift apart after a version bump.
-  static const versionText = '1.0.132 (137)';
+  static const versionText = '1.0.133 (138)';
 
   /// Bundled WeChat reward code (赞赏码), shown large in a dialog from the
   /// support card. Copied from .github/wechat.png, the same image the repo's
