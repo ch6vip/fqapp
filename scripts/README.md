@@ -12,7 +12,7 @@
 | [check_native_alignment.cjs](check_native_alignment.cjs) | 检查一个或多个 ELF 库（ARM64/ARM）的 LOAD 段对齐 | Node.js；只读取指定 `.so` |
 | [check_so_freshness.cjs](check_so_freshness.cjs) | 打版前检查 `libfqapi_core.so` 是否比 `rust/` 的最新改动新（判据 CRIT-011）；mtime 不是内容证明，`--expect-sha256` 可比对内容哈希 | Node.js、git；只读取文件时间与 git 历史；未接入 CI（CI 每次重编 Rust） |
 | [verify_audio_cenc.cjs](verify_audio_cenc.cjs) | 检查播放响应和加密 AAC 样本 | Node.js；会按响应中的地址有限下载 HTTPS 音频，属于在线诊断 |
-| [generate_app_icons.py](generate_app_icons.py) | 从品牌源图生成 Android 图标及应用 Logo | Python 3、Pillow；修改已提交图片，普通构建直接使用现有图片 |
+| [generate_app_icons.py](generate_app_icons.py) | 从品牌源图生成 Android 图标、Windows 图标及应用 Logo | Python 3、Pillow ≥ 9.1；修改已提交图片，普通构建直接使用现有图片 |
 
 ## Rust 构建与宿主集成
 

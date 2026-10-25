@@ -64,7 +64,8 @@ class DesktopAppFrame extends StatelessWidget {
                   leading: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 20),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
+                      // Same plate radius as the about page logo (15%).
+                      borderRadius: BorderRadius.circular(7),
                       child: Image.asset(
                         'assets/images/app_logo.webp',
                         width: 44,
