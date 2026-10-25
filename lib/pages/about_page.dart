@@ -15,9 +15,10 @@ class AboutPage extends StatelessWidget {
   static const versionText = '1.0.132 (137)';
 
   /// Pixel width of the bundled logo (assets/images/app_logo.webp). The logo
-  /// is displayed at 96dp, so it only needs re-decoding above 4× DPI; clamping
+  /// is displayed at 88dp, so it only needs re-decoding above 4× DPI; clamping
   /// to the asset's real width keeps a high-DPI device from asking the decoder
-  /// to upscale a surface the asset does not have.
+  /// to upscale a surface the asset does not have. Keep it in sync with
+  /// LOGO_SIZE in scripts/generate_app_icons.py.
   static const _logoPixelWidth = 384;
 
   @override
@@ -34,9 +35,11 @@ class AboutPage extends StatelessWidget {
         children: [
           const SizedBox(height: 16),
           Center(
+            // The bundled logo is full-bleed; 13 of 88 keeps the plate's 15%
+            // corner radius so the image and the shadow outline agree.
             child: Container(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(13),
                 boxShadow: [
                   BoxShadow(
                     color: HomePalette.accent.withValues(alpha: 0.20),
@@ -46,14 +49,14 @@ class AboutPage extends StatelessWidget {
                 ],
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(13),
                 child: Image.asset(
                   'assets/images/app_logo.webp',
                   width: 88,
                   height: 88,
                   // Decode at the display size rather than the whole 384²
                   // surface, which would hold ~590 KB in the image cache for a
-                  // 96dp logo.
+                  // 88dp logo.
                   cacheWidth: (88 * MediaQuery.devicePixelRatioOf(context))
                       .round()
                       .clamp(88, _logoPixelWidth),
