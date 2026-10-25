@@ -1,9 +1,11 @@
 //! Loopback HTTP adapter.
 //!
-//! Serves `/src/*` decrypted manga images and the `/api/v1/*` business routes to
-//! the same dispatcher the FFI bridge uses, so there is exactly one business
-//! implementation. External readers (Legado book sources, local tooling) use
-//! this adapter; there is no built-in Web UI.
+//! Serves `/src/*` cache resources (manga images, clear media, and
+//! CENC-encrypted videos decrypted range by range — P1-7) and the
+//! `/api/v1/*` business routes to the same dispatcher the FFI bridge uses,
+//! so there is exactly one business implementation. External readers
+//! (Legado book sources, local tooling) use this adapter; there is no
+//! built-in Web UI.
 //!
 //! Static file bodies are streamed from disk (with Range support) instead of
 //! being read into memory, so serving a large media file costs a bounded
@@ -274,6 +276,19 @@ async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> 
                 .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
+        ResponseBody::FileDecrypted {
+            path,
+            offset,
+            length,
+            index,
+            key,
+            ..
+        } => match stream_decrypted_file(&path, offset, length, index, &key).await {
+            Ok(body) => builder
+                .body(body)
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
     }
 }
 
@@ -308,6 +323,43 @@ async fn stream_file(path: &std::path::Path, offset: u64, length: u64) -> Result
         limited,
         64 * 1024,
     )))
+}
+
+/// Streams a range of a CENC-encrypted cache file, decrypting each chunk at
+/// its absolute file offset as it passes (P1-7). Chunks arrive sequentially,
+/// and the transform is position-exact, so chunk boundaries do not matter.
+async fn stream_decrypted_file(
+    path: &std::path::Path,
+    offset: u64,
+    length: u64,
+    index: Arc<crate::endpoints::video::CencIndex>,
+    key: &[u8],
+) -> Result<Body, String> {
+    use futures::StreamExt;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    if offset > 0 {
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let limited = file.take(length);
+    let key = key.to_vec();
+    let mut pos = offset;
+    let stream = ReaderStream::with_capacity(limited, 64 * 1024).map(move |chunk| {
+        chunk.map(|bytes| {
+            let mut buf = bytes.to_vec();
+            // The key was validated when the response was built; a failure
+            // here can only come from a torn read, and passing the chunk
+            // through untransformed is no worse than the I/O error path.
+            let _ = crate::endpoints::video::apply_cenc_index(&mut buf, pos, &index, &key);
+            pos += buf.len() as u64;
+            axum::body::Bytes::from(buf)
+        })
+    });
+    Ok(Body::from_stream(stream))
 }
 
 #[cfg(test)]

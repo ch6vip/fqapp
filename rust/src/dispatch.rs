@@ -46,6 +46,18 @@ pub enum ResponseBody {
         length: u64,
         total: u64,
     },
+    /// A byte range of a CENC-encrypted cache file, to be transformed with
+    /// the file's index and content key while it is materialised/streamed
+    /// (P1-7): the bytes on disk stay encrypted, the decrypted view exists
+    /// only in the response.
+    FileDecrypted {
+        path: PathBuf,
+        offset: u64,
+        length: u64,
+        total: u64,
+        index: std::sync::Arc<crate::endpoints::video::CencIndex>,
+        key: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +110,23 @@ impl Response {
                     ));
                 }
                 read_range(&path, offset, length).await
+            }
+            ResponseBody::FileDecrypted {
+                path,
+                offset,
+                length,
+                index,
+                key,
+                ..
+            } => {
+                if length > crate::static_files::FFI_BODY_LIMIT {
+                    return Err(format!(
+                        "resource too large for the in-process transport: {length} bytes"
+                    ));
+                }
+                let mut buf = read_range(&path, offset, length).await?;
+                crate::endpoints::video::apply_cenc_index(&mut buf, offset, &index, &key)?;
+                Ok(buf)
             }
         }
     }
@@ -165,9 +194,14 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
         return Response::json(200, &json!({ "status": "ok", "devices": devices }));
     }
 
-    // static image server for decrypted manga images
+    // static file server for the runtime cache directory (manga images,
+    // clear media, and — via the video hook — CENC-encrypted videos whose
+    // ranges are decrypted on demand, P1-7)
     if !ctx.src_dir.is_empty() && (path == "/src" || path.starts_with("/src/")) {
         let rest = path.strip_prefix("/src/").unwrap_or("");
+        if let Some(resp) = crate::endpoints::video::serve_src_file(&ctx.src_dir, rest, req).await {
+            return resp;
+        }
         return crate::static_files::serve(Path::new(&ctx.src_dir), rest, req).await;
     }
 
