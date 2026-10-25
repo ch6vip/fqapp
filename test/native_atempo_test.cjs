@@ -17,6 +17,8 @@ const root = path.resolve(__dirname, '..');
 const outputDirectory = path.join(root, 'build', 'native-tests');
 const executable = path.join(outputDirectory,
   process.platform === 'win32' ? 'atempo-vectors.exe' : 'atempo-vectors');
+const resampleExecutable = path.join(outputDirectory,
+  process.platform === 'win32' ? 'resample-vectors.exe' : 'resample-vectors');
 const compiler = process.env.NATIVE_CC || process.env.CC || 'cc';
 
 function compile() {
@@ -121,4 +123,70 @@ test('立体声与单声道给出同样的时长比例', () => {
   const stereo = run(48000, 2, 2.0, 440, 2);
   assert.ok(Math.abs(mono.duration_ratio - stereo.duration_ratio) < 0.05,
     `单声道 ${mono.duration_ratio} 与立体声 ${stereo.duration_ratio} 差距过大`);
+});
+
+/** 跑一次重采样驱动。 */
+function runResample(inRate, outRate, channels, freq, seconds) {
+  const result = spawnSync(resampleExecutable,
+    [String(inRate), String(outRate), String(channels), String(freq), String(seconds)],
+    { encoding: 'utf8', timeout: 120_000, windowsHide: true });
+  assert.equal(result.status, 0,
+    `resample driver failed (status ${result.status}): ${result.stderr}`);
+  const values = {};
+  for (const line of result.stdout.split('\n')) {
+    const match = /^([a-z_0-9]+)=(-?[\d.]+)\s*$/.exec(line.trim());
+    if (match) values[match[1]] = Number(match[2]);
+  }
+  return values;
+}
+
+test('变速前置重采样：帧数比例与目标一致', () => {
+  // 这一级是官方的 samplefilter（atempo 之前统一采样率）。
+  for (const [inRate, outRate] of [
+    [24000, 48000],
+    [22050, 48000],
+    [44100, 48000],
+    [16000, 48000],
+    [48000, 48000],
+  ]) {
+    const r = runResample(inRate, outRate, 1, 440, 2);
+    const expected = outRate / inRate;
+    assert.ok(Math.abs(r.ratio - expected) < 0.01,
+      `${inRate}->${outRate} 比例 ${r.ratio} 偏离 ${expected.toFixed(4)}`);
+  }
+});
+
+test('变速前置重采样不改变音高', () => {
+  for (const [inRate, outRate] of [[24000, 48000], [22050, 48000], [44100, 48000]]) {
+    const r = runResample(inRate, outRate, 1, 440, 2);
+    assert.ok(Math.abs(r.out_freq - 440) < 5,
+      `${inRate}->${outRate} 输出频率 ${r.out_freq}Hz 偏离 440Hz`);
+  }
+});
+
+test('变速前置重采样不产生爆音', () => {
+  // 线性插值只会让相邻样本差变小（升采样）或翻倍（降采样），
+  // 出现远大于输入的跳变说明相位跳帧。
+  for (const [inRate, outRate] of [[24000, 48000], [44100, 48000], [48000, 48000]]) {
+    const r = runResample(inRate, outRate, 1, 440, 2);
+    assert.ok(r.out_max_step <= r.in_max_step * 2 + 4,
+      `${inRate}->${outRate} 输出最大阶跃 ${r.out_max_step} 远超输入 ${r.in_max_step}`);
+  }
+});
+
+test('变速前置重采样保持幅度', () => {
+  for (const [inRate, outRate] of [[24000, 48000], [22050, 48000]]) {
+    const r = runResample(inRate, outRate, 1, 440, 2);
+    const ratio = r.out_rms / r.in_rms;
+    assert.ok(ratio > 0.9 && ratio < 1.1,
+      `${inRate}->${outRate} RMS 比 ${ratio.toFixed(3)} 超出 ±10%`);
+  }
+});
+
+test('长缓冲不溢出（相位是 64 位）', () => {
+  // 回归：32 位相位在 48k->48k 且单块超过约 6.5 万帧时回绕，
+  // 表现为多吐 2 个样本并读到缓冲区外（爆音）。
+  const r = runResample(48000, 48000, 1, 440, 5); // 24 万帧
+  assert.equal(r.out_frames, r.in_frames,
+    `48k->48k 应逐帧恒等，实际 ${r.out_frames} vs ${r.in_frames}`);
 });

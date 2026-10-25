@@ -37,6 +37,32 @@ Hann 窗、归一化互相关（`drifti * (i-i0) * (i1-i)`）与上游逐行一�
 末尾乘回 `nfft` 抹平差异——漏了会让相关值整体缩小 nfft 倍，权重项主导
 对齐搜索，选错拼接点后波形被破坏（表现为时长正常但严重失真）。
 
+## 变速前置重采样（sp_resample.c）
+
+官方在 atempo 之前把 PCM 统一到输出采样率——`libttmplayer.so` 的
+`build ppl: in-sampleRate: %d, out-sampleRate: %d, ..., speed: %f`
+就是这一步。没有它，WSOLA 的窗口（`sample_rate / 24`）在 24 kHz 的
+TTS 上只有 1024 点，比 48 kHz 的 2048 点少一半，周期估计更粗。
+
+`sp_resampler` 是线性插值，相位用 **Q16 定点、64 位累加**：32 位在
+48k→48k（step = 65536）时单块超过约 6.5 万帧就会回绕，表现为多吐 2 个
+样本并读到缓冲区外（爆音）。这一点有专门的回归用例。
+
+## 响度压缩（未做）
+
+官方还有一层 `LoudnessAudioProcessor`（`libaudioprocessor.so` →
+SAMICore → `mammon::LoudnessProcess`，参数在
+`assets/boost_sound_compressor_opt.json`）。没有移植，原因：
+
+1. 它的 `Threshold dB = 0` 假定信号已由**服务端下发的**
+   `volumeBalanceSrcLoudness` 提到目标电平，我们没有那个参数；
+2. 增益决策在 stripped 的 SAMICore 里，官方目标 LUFS 无法取得；
+3. 直接打包官方 `.so` 不可行：`p_align=0x1000`（不满足 Android 15+
+   的 16 KiB 页要求）、私有许可、连带 17 个依赖库约 +15 MB/ABI。
+
+如果以后要响度拉平，应按 BS.1770 / EBU R128 标准实现单遍流式归一，
+目标取 -16 LUFS，而不是照抄上述 JSON 参数。
+
 ## 回归
 
 ```bash
@@ -44,7 +70,8 @@ NATIVE_CC=gcc node --test test/native_atempo_test.cjs
 ```
 
 覆盖时长比例、幅度稳定、440 Hz 纯音保真度（R²）、拼接处无爆音、
-窗口按 `sample_rate/24` 推导、单/立体声一致。
+窗口按 `sample_rate/24` 推导、单/立体声一致；重采样部分覆盖帧数比例、
+音高保持、无爆音、幅度保持与长缓冲不溢出。
 
 ## 许可
 
