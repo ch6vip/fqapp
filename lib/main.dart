@@ -73,10 +73,15 @@ Future<void> main() async {
       await FairMemoryService.instance.flushForExit();
       try {
         await NativePlayer.pauseOthers();
-      } catch (_) {}
+      } catch (error, stack) {
+        // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
+        AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
+      }
       try {
         await BackendService.instance.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
+      }
       await Hive.close();
     };
   }
@@ -94,7 +99,11 @@ Future<void> _initializeLocalData() async {
   Future<void> optional(Future<void> Function() run) async {
     try {
       await run();
-    } catch (_) {}
+    } catch (error, stack) {
+      // 可选项失败时启动照常继续，但必须留下可检索的记录，否则一个永远
+      // 打不开的可选 box 会以「某功能默默不生效」的形式表现出来。
+      AppLog.w('startup', '可选本地数据初始化失败，已跳过', error: error, stack: stack);
+    }
   }
 
   await Future.wait<void>([
@@ -160,7 +169,11 @@ Future<void> _initializeLocalData() async {
         metered: view.metered,
       );
     });
-  } catch (_) {}
+  } catch (_) {
+    // 监听连通性只为自动暂停下载；拿不到不构成启动失败，但值得留一条记录，
+    // 否则「断网没自动暂停」会被当成下载器自己的 bug。
+    AppLog.w('startup', '连通性监听注册失败，自动暂停下载不可用');
+  }
   // 海报缓存的字节预算清扫：超额时删最旧的图。失败不影响任何页面。
   unawaited(PosterCache.instance.enforceBudget());
   // 小米澎湃 OS 公平运行内存：注册 TRIM/KILL 通道回调。必须在启动时构造，
@@ -301,6 +314,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
       await (widget.initializer ?? _initializeLocalData)();
       if (mounted) setState(() => _ready = true);
     } catch (_) {
+      // 这里不写日志：启动失败发生在持久化开启之前，而 AppLog 的写入会排到
+      // 那条尚未完成的 I/O 之后（test/app_bootstrap_test.dart 的失败路径用例
+      // 因此会挂到超时）。失败本身已经由界面的重试入口与 runZonedGuarded 呈现。
       if (mounted) setState(() => _failed = true);
     } finally {
       _initializing = false;
