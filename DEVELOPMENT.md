@@ -549,12 +549,25 @@ App 通过 `ApiClient` 调用后端 **`/api/v1/*` 业务路由**（Rust 核心 `
 - 播放秒数与章节定时保存，暂停、切章和退出时立即保存；重新进入可续听
 - 后台播放：听书支持后台 keepalive（用户可在设置中开关）与通知栏媒体控制；
   断开耳机或蓝牙（becoming noisy）时自动暂停
-- 倍速变速引擎（#129）：听书播放器建时带 `audioOnly: true`，原生侧据此用
-  `setEnableAudioTrackPlaybackParams(true)` 把时伸缩交给系统音频混音器
-  （AudioTrack/APM）。同一段语音 2.0× 实测内建 Sonic 的谐噪比低 2.9 dB，
-  即用户听到的「电音/金属感」。设置 → 听书 → 听书变速引擎 可在「系统 /
-  兼容（内建 Sonic）」间切换；视频/短剧播放器永远走内建变速，否则音频
-  处理与视频渲染不再步进同一套计时。两档都在新建播放器时生效。
+- 倍速变速引擎（#129）：默认走**移植自 FFmpeg `af_atempo` 的 WSOLA**
+  （`native/audio_tempo/sp_atempo.c` + kissfft，编进 `libshortplay_tempo.so`）。
+  番茄官方听书倍速就是这条路——`libttmplayer.so` 里
+  `avfilter_get_by_name("atempo")`、参数 `tempo=%1.2f`，
+  `aformat -> atempo -> abuffersink`；窗口 `sample_rate/24`、Hann 窗重叠
+  相加、FFT 互相关对齐。本仓库的参数与官方逐项一致，所以听感对齐。
+  Media3 自带的 SonicAudioProcessor 是另一套实现（AMDF 基频搜索），
+  高倍速下发毛/电音，只作为「兼容」回退档保留。
+
+  设置 → 听书 → 听书变速引擎 三档：**对齐官方（WSOLA，默认）** /
+  系统（AudioTrack/APM，`setEnableAudioTrackPlaybackParams`）/
+  兼容（Media3 Sonic）。插入方式是自定义
+  `DefaultAudioSink.AudioProcessorChain`（`WsolaProcessorChain`），
+  只替换「谁来做时伸缩」，SilenceSkipping 的位置与默认编排一致。
+  视频/短剧播放器永远走 Media3 内建变速，否则音频处理与视频渲染不再
+  步进同一套计时。三档都在新建播放器时生效。
+
+  算法回归：`NATIVE_CC=gcc node --test test/native_atempo_test.cjs`
+  （时长比例、幅度、纯音保真度、拼接无爆音、窗口推导）。
 
 > **听书页的「书评」与章评**：官方听书页的操作项是「章评」（章末讨论），但章评属于
 > 章节而不是正在收听的书；该面板展示的是整本书评，所以按实际内容标注为「书评」。

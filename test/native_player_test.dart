@@ -460,7 +460,7 @@ void main() {
           .arguments
           as Map<Object?, Object?>;
       expect(arguments['audioOnly'], true);
-      expect(arguments['audioRateEngine'], 'platform');
+      expect(arguments['audioRateEngine'], 'wsola');
     } finally {
       await player.dispose();
       await tester.pump();

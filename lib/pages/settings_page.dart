@@ -548,9 +548,14 @@ class SettingsPage extends StatelessWidget {
                     value: value,
                     title: Text(value.label),
                     subtitle: Text(
-                      value == AudioRateEngine.platform
-                          ? '系统混音器变速，高倍速下更接近 1.0× 原声（默认）'
-                          : 'Media3 内建变速，不依赖系统实现，保底用',
+                      switch (value) {
+                        AudioRateEngine.wsola =>
+                          '与番茄官方同一套算法（FFmpeg atempo），高倍速听感最接近原声（默认）',
+                        AudioRateEngine.platform =>
+                          '系统混音器变速，不依赖本应用的 native 库',
+                        AudioRateEngine.builtIn =>
+                          'Media3 内建 Sonic，保底用（改动前的行为）',
+                      },
                     ),
                   ),
               ],

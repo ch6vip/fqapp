@@ -17,13 +17,12 @@ class AudioPreferences {
 
   /// 听书倍速的变速实现（issue #129）。
   ///
-  /// 默认 [AudioRateEngine.platform]：倍速交给系统音频混音器
-  /// （AudioTrack/APM，Media3 的 `setEnableAudioTrackPlaybackParams`）。
-  /// 实测同一段语音 2.0×，Media3 内建 Sonic 的谐噪比比系统实现低 2.9 dB
-  /// ——即用户听到的「电音/金属感」。失败时可以退回 [builtIn]
-  /// （Media3 SonicAudioProcessor，不依赖系统实现）。
+  /// 默认 [AudioRateEngine.wsola]：番茄官方听书倍速走的也是 FFmpeg
+  /// `atempo`（见 `dn2`/`libttmplayer.so` 的取证），本仓库用移植后的同一份
+  /// 算法，因此听感最接近官方。另有 [AudioRateEngine.platform]（系统混音器）
+  /// 与 [AudioRateEngine.builtIn]（Media3 Sonic）两个回退档。
   final ValueNotifier<AudioRateEngine> rateEngine = ValueNotifier(
-    AudioRateEngine.platform,
+    AudioRateEngine.wsola,
   );
 
   bool _loaded = false;
@@ -45,7 +44,7 @@ class AudioPreferences {
   void resetForTest() {
     _loaded = false;
     backgroundPlayback.value = true;
-    rateEngine.value = AudioRateEngine.platform;
+    rateEngine.value = AudioRateEngine.wsola;
   }
 
   Future<void> setBackgroundPlayback(bool value) async {
@@ -88,10 +87,17 @@ class AudioRateEngineCache {
 /// `name`（platform / builtIn）就是跨端的协议名：Kotlin 侧 `AudioRateEngine`
 /// 用 `wireName` 逐字解析（BUILT_IN 这个常量名不上线），改一处必须同步另一处。
 enum AudioRateEngine {
-  /// 系统混音器变速（AudioTrack/APM）。Android 可闻更接近 1.0× 原声。
+  /// 移植自官方 FFmpeg `af_atempo` 的 WSOLA（默认）。
+  ///
+  /// 番茄 7.0.9.32 的听书倍速走的就是这条路：native 层
+  /// `avfilter_get_by_name("atempo")`、参数 `tempo=%1.2f`。窗口
+  /// `sample_rate/24`、Hann 窗重叠相加、FFT 互相关对齐，听感与官方一致。
+  wsola('对齐官方'),
+
+  /// 系统混音器变速（AudioTrack/APM）。不依赖我们的 native 库。
   platform('系统'),
 
-  /// Media3 内建 Sonic 变速。不依赖系统实现，保底选项。
+  /// Media3 内建 Sonic 变速。最后的保底项（改动前的行为）。
   builtIn('兼容');
 
   const AudioRateEngine(this.label);
@@ -101,6 +107,6 @@ enum AudioRateEngine {
 
   static AudioRateEngine fromName(String? name) => values.firstWhere(
     (value) => value.name == name,
-    orElse: () => AudioRateEngine.platform,
+    orElse: () => AudioRateEngine.wsola,
   );
 }

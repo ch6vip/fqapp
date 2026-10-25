@@ -10,9 +10,9 @@ import org.junit.Test
  */
 class AudioRateEngineTest {
     @Test fun `missing or unknown names fall back to the platform engine`() {
-        assertEquals(AudioRateEngine.PLATFORM, AudioRateEngine.fromName(null))
-        assertEquals(AudioRateEngine.PLATFORM, AudioRateEngine.fromName(""))
-        assertEquals(AudioRateEngine.PLATFORM, AudioRateEngine.fromName("sonic2"))
+        assertEquals(AudioRateEngine.WSOLA, AudioRateEngine.fromName(null))
+        assertEquals(AudioRateEngine.WSOLA, AudioRateEngine.fromName(""))
+        assertEquals(AudioRateEngine.WSOLA, AudioRateEngine.fromName("sonic2"))
     }
 
     @Test fun `known names are parsed case insensitively`() {
@@ -25,7 +25,7 @@ class AudioRateEngineTest {
         // Dart 侧用 `name` 序列化（builtIn，不是 BUILT_IN），两边靠 wireName
         // 逐字对齐，否则设置静默失效。
         assertEquals(
-            listOf("platform", "builtIn"),
+            listOf("wsola", "platform", "builtIn"),
             AudioRateEngine.entries.map { it.wireName },
         )
         // 解码器偏好两边都用 `name.lowercase()`。
@@ -36,6 +36,9 @@ class AudioRateEngineTest {
     }
 
     @Test fun `audio players honour the selected engine`() {
+        val wsola = PlayerBuildOptions(audioOnly = true, rateEngine = AudioRateEngine.WSOLA)
+        assertEquals(AudioRateEngine.WSOLA, wsola.effectiveRateEngine)
+
         val platform = PlayerBuildOptions(audioOnly = true, rateEngine = AudioRateEngine.PLATFORM)
         assertEquals(AudioRateEngine.PLATFORM, platform.effectiveRateEngine)
 

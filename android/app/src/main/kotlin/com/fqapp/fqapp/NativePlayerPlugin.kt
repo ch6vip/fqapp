@@ -35,6 +35,8 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
@@ -1160,12 +1162,14 @@ internal enum class VideoDecoderPreference {
  * 所以保留 [BUILT_IN] 作为可回退的兼容档。
  */
 internal enum class AudioRateEngine(val wireName: String) {
+    /** 移植自官方 FFmpeg af_atempo 的 WSOLA，听感对齐番茄官方（issue #129）。 */
+    WSOLA("wsola"),
     PLATFORM("platform"),
     BUILT_IN("builtIn");
 
     companion object {
         fun fromName(value: String?): AudioRateEngine =
-            entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: PLATFORM
+            entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: WSOLA
     }
 }
 
@@ -1203,7 +1207,33 @@ internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlay
             "audio rate engine=${options.effectiveRateEngine.wireName} platform=$platformRate"
         )
     }
-    val renderers = DefaultRenderersFactory(context)
+    /*
+     * issue #129：选 WSOLA 时用自定义 AudioProcessorChain —— 把内建 Sonic 换成
+     * 移植过来的 FFmpeg atempo（SpeechTempoProcessor），听感与番茄官方一致。
+     * 音高/速度变化的时机、SilenceSkipping 的位置都保持 Media3 的默认编排，
+     * 只替换「谁来做时伸缩」。
+     */
+    val wsola = options.effectiveRateEngine == AudioRateEngine.WSOLA
+    val factory = if (wsola) {
+        object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioProcessorChain(WsolaProcessorChain())
+                    .setEnableFloatOutput(enableFloatOutput)
+                    // 时伸缩已由 WSOLA 完成，AudioTrack 不能再做一次。
+                    .setEnableAudioTrackPlaybackParams(false)
+                    .build()
+            }
+        }
+    } else {
+        DefaultRenderersFactory(context)
+    }
+
+    val renderers = factory
         .setEnableDecoderFallback(true)
         // 用户选的解码器策略（issue #92）。自动 = 不干预，MediaTek 部分芯片
         // 在 Android 15 + HEVC + DRM 上硬解静默黑屏（androidx/media#2711），
