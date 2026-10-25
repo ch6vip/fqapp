@@ -6,8 +6,8 @@ import 'package:fqapp/pages/category_page.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 
 /// 官方 7.0.9.32 分类页形态：顶部频道 tab + 左侧维度栏 + 右侧分组堆叠的
-/// 三列等宽 chip 网格。左栏点击滚动定位分组，滚动反向同步高亮；>30 的组
-/// 组头右端出「展开/收起」；频道切换重新请求。
+/// 等宽 chip 网格（手机三列，桌面按宽度加列）。左栏点击滚动定位分组，滚动
+/// 反向同步高亮；>30 的组组头右端出「展开/收起」；频道切换重新请求。
 void main() {
   CategoryFront front() => CategoryFront.fromPayload({
     'code': 0,
@@ -75,6 +75,32 @@ void main() {
     expect(rects[2].left - rects[1].right, closeTo(7, 0.5));
     // 官方 chip 定高 30dp（上6下4 边距在 Padding 上，不含在 rect 内）。
     expect(rects[0].height, 30);
+  });
+
+  testWidgets('a desktop-width viewport adds columns instead of stretching', (
+    tester,
+  ) async {
+    // 1280 窗口：内容区 1280 − 88(维度栏) − 32(padding) = 1160dp，
+    // 按每颗 170dp 目标是 6 列、每颗约 187dp。死守三列会拉到约 380dp。
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(home: CategoryPage(loader: ({int tab = 1}) async => front())),
+    );
+    await tester.pumpAndSettle();
+
+    final rects = [
+      for (final id in const ['1_都市', '2_玄幻', '3_女帝'])
+        tester.getRect(find.byKey(ValueKey('category_tile_$id')).first),
+    ];
+    // 前三颗仍在同一行、等宽。
+    expect(rects[0].top, closeTo(rects[1].top, 0.5));
+    expect(rects[1].top, closeTo(rects[2].top, 0.5));
+    expect(rects[1].width, closeTo(rects[0].width, 0.5));
+    // 每颗是对半切（约 187dp），不是铺满整宽（那会是 ~380dp）。
+    expect(rects[0].width, lessThan(220));
+    expect(rects[0].width, greaterThan(160));
   });
 
   testWidgets('rail tap scrolls to the section and highlights it', (
