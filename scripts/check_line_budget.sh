@@ -86,6 +86,51 @@ def line_count(path):
         return sum(1 for _ in handle)
 
 
+def _bracket_delta(text):
+    """Net count of opening minus closing brackets on one line.
+
+    Deliberately crude (strings/comments are not parsed): the block-body
+    measurement is just as crude, and a Dart declaration line almost never
+    carries bracket characters inside a literal.
+    """
+    return sum(text.count(ch) for ch in '([{') - sum(text.count(ch) for ch in ')]}')
+
+
+def function_last_line(lines, index):
+    """Index of the last line belonging to the declaration starting at `index`.
+
+    Two shapes are measured differently:
+
+    * `Widget build(...) { ... }` — a brace block; it ends at the `}` that
+      matches the declaration's own indentation.
+    * `Widget build(...) => SizedBox(...)` — an expression body has no brace
+      block of its own, so matching `}` would swallow every member that
+      follows (that is how a 30-line builder used to be counted as 166).
+      Such a body ends at the first line where the brackets balance and the
+      statement terminates with `;`.
+    """
+    head = lines[index]
+    expression = '=>' in head
+    if not expression and index + 1 < len(lines):
+        # `) =>` may be wrapped onto the next line by the formatter.
+        expression = '=>' in lines[index + 1]
+    if expression:
+        balance = 0
+        for pos in range(index, len(lines)):
+            balance += _bracket_delta(lines[pos])
+            if balance <= 0 and lines[pos].rstrip().endswith(';'):
+                return pos
+        return len(lines) - 1
+    indent = len(head) - len(head.lstrip())
+    end = index + 1
+    while end < len(lines):
+        body = lines[end]
+        if body.strip() == '}' and (len(body) - len(body.lstrip())) == indent:
+            return end - 1
+        end += 1
+    return len(lines) - 1
+
+
 def long_functions(path):
     """(identity, line, length, symbol) for each declaration over the limit.
 
@@ -108,14 +153,7 @@ def long_functions(path):
                 owner = match.group(1)
         if not any(p.search(text) for p in FUNCTION_PATTERNS):
             continue
-        indent = len(text) - len(text.lstrip())
-        end = index + 1
-        while end < len(lines):
-            body = lines[end]
-            if body.strip() == '}' and (len(body) - len(body.lstrip())) == indent:
-                break
-            end += 1
-        length = end - index
+        length = function_last_line(lines, index) - index + 1
         if length <= function_limit:
             continue
         name = 'build' if 'Widget' in text else (re.search(r'fn\s+(\w+)', text) or [None, 'fn'])[1]
