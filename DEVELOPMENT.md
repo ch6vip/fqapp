@@ -566,9 +566,12 @@ App 通过 `ApiClient` 调用后端 **`/api/v1/*` 业务路由**（Rust 核心 `
   视频/短剧播放器永远走 Media3 内建变速，否则音频处理与视频渲染不再
   步进同一套计时。三档都在新建播放器时生效。
 
-  **变速前置重采样**：与官方 `samplefilter` 对齐——进 atempo 之前把 PCM
-  统一到 48 kHz（`sp_resample.c`），否则 24 kHz 的 TTS 只有 1024 点窗口，
-  周期估计精度减半。相位是 64 位 Q16 定点（32 位在长块上会回绕）。
+  **变速前置重采样**：与官方 `FFSampleFilter`/`aformat` 对齐——进 atempo
+  之前把 PCM 统一到**设备原生输出采样率**（`AudioTrack.getNativeOutputSampleRate`，
+  见 `NativePlayerPlugin.nativeOutputSampleRate()`），不是写死 48 kHz，
+  否则原生 44.1 kHz 的设备上 AudioTrack 会再隐式重采样一次。相位是 64 位
+  Q16 定点（32 位在长块上会回绕）。本项目实测音源均为 48 kHz，这一级
+  当前是空操作，保留给原生率不同的机型。
 
   **响度压缩未做**：官方还有一层 `LoudnessAudioProcessor`（SAMICore →
   `mammon::LoudnessProcess`），但它依赖服务端下发的

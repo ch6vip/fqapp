@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.net.Uri
 import android.provider.Settings
 import android.os.Build
@@ -1194,6 +1195,25 @@ internal data class PlayerBuildOptions(
  * 播放器工厂。解码器偏好与变速引擎都是 builder 期定型，事后无法改，
  * 不过两者都会影响 renderer 集合。
  */
+/**
+ * 设备原生输出采样率，等价于官方 TTPlayer 里的 `getNativeOutputSampleRate`。
+ *
+ * 官方在 atempo 之前用 FFSampleFilter/aformat 把 PCM 统一到这个速率
+ * （`start samplefilter %p, src samplerate:%d ... dst samplerate:%d`），
+ * 这样 AudioTrack 不必再做一次隐式重采样。拿不到时退回 48 kHz 这个
+ * Android 音频输出的通用速率。
+ */
+internal fun nativeOutputSampleRate(): Int {
+    return try {
+        AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
+            .takeIf { it > 0 } ?: FALLBACK_SAMPLE_RATE
+    } catch (_: Throwable) {
+        FALLBACK_SAMPLE_RATE
+    }
+}
+
+private const val FALLBACK_SAMPLE_RATE = 48_000
+
 internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlayer {
     // Note: decoder init fallback and 206 diagnostics — see
     // .agents/notes/implemented/bug-fix/2026-10-15-issue2-decoder-initialization-fallback.md.
@@ -1222,7 +1242,9 @@ internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlay
                 enableAudioTrackPlaybackParams: Boolean
             ): AudioSink {
                 return DefaultAudioSink.Builder(context)
-                    .setAudioProcessorChain(WsolaProcessorChain())
+                    .setAudioProcessorChain(
+                        WsolaProcessorChain(nativeOutputSampleRate())
+                    )
                     .setEnableFloatOutput(enableFloatOutput)
                     // 时伸缩已由 WSOLA 完成，AudioTrack 不能再做一次。
                     .setEnableAudioTrackPlaybackParams(false)
