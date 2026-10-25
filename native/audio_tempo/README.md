@@ -39,10 +39,20 @@ Hann 窗、归一化互相关（`drifti * (i-i0) * (i1-i)`）与上游逐行一�
 
 ## 变速前置重采样（sp_resample.c）
 
-官方在 atempo 之前把 PCM 统一到输出采样率——`libttmplayer.so` 的
-`build ppl: in-sampleRate: %d, out-sampleRate: %d, ..., speed: %f`
-就是这一步。没有它，WSOLA 的窗口（`sample_rate / 24`）在 24 kHz 的
-TTS 上只有 1024 点，比 48 kHz 的 2048 点少一半，周期估计更粗。
+官方在 atempo 之前把 PCM 统一到采样率——`libttmplayer.so` 里能看到
+`FFSampleFilter`（`start samplefilter %p, src samplerate:%d ... dst samplerate:%d`）
+与它内部的 `aformat` 节点（`sample_rates=%d:channel_layouts=0x%lx:sample_fmts=%s`）。
+目标速率来自 `getNativeOutputSampleRate`，也就是**设备原生输出采样率**，
+不是写死的 48 kHz——否则 AudioTrack 会再隐式重采样一次。
+
+本仓库对应 `NativePlayerPlugin.nativeOutputSampleRate()`
+（`AudioTrack.getNativeOutputSampleRate(STREAM_MUSIC)`，失败退回 48 kHz），
+经 `WsolaProcessorChain` 传进 `SpeechTempoProcessor` 作为 targetRate。
+
+没有这一级时，WSOLA 的窗口（`sample_rate / 24`）在 24 kHz 的音源上只有
+1024 点，比 48 kHz 的 2048 点少一半，周期估计更粗。实测本项目的 TTS 与
+书籍音频都是 48 kHz（`resample=false`），这一级当前是空操作，保留它是
+为了设备原生率不是 48 kHz 的机型。
 
 `sp_resampler` 是线性插值，相位用 **Q16 定点、64 位累加**：32 位在
 48k→48k（step = 65536）时单块超过约 6.5 万帧就会回绕，表现为多吐 2 个

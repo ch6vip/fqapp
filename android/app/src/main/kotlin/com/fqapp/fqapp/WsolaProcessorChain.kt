@@ -29,8 +29,17 @@ internal class WsolaProcessorChain(
     private val tempoProcessor: SpeechTempoProcessor,
 ) : DefaultAudioSink.AudioProcessorChain {
 
-    /** 无参重载：采样参数由 configure 决定，这里只传初始倍速。 */
-    constructor() : this(SpeechTempoProcessor())
+    /**
+     * 按设备原生输出采样率建链。
+     *
+     * [nativeOutputSampleRate] 对应官方的 `AudioTrack.getNativeOutputSampleRate()`：
+     * TTPlayer 在 atempo 之前用 samplefilter 把 PCM 统一到这个速率，避免
+     * AudioTrack 再做一次隐式重采样。这里由 Media3 的 `AudioCapabilities`
+     * 提供同一个值。
+     */
+    constructor(nativeOutputSampleRate: Int) : this(
+        SpeechTempoProcessor(targetSampleRate = nativeOutputSampleRate),
+    )
 
     private val silenceSkipping = SilenceSkippingAudioProcessor()
     private val toInt16Pcm = ToInt16PcmAudioProcessor()

@@ -29,11 +29,21 @@ import java.nio.ByteOrder
 @OptIn(UnstableApi::class)
 internal class SpeechTempoProcessor(
     initialSpeed: Float = 1f,
+    /**
+     * 变速前要统一到的采样率，由外部按官方 `getNativeOutputSampleRate()`
+     * 的等价物（Media3 的 `AudioCapabilities`）传进来。0 表示未知，
+     * 退化为「不做重采样」，只按输入采样率跑 WSOLA。
+     */
+    private val targetSampleRate: Int = 0,
 ) : BaseAudioProcessor() {
 
     /** 真实采样率要到 configure 才知道（WSOLA 的窗口由它决定）。 */
     private var sampleRateHz: Int = 0
     private var channelCount: Int = 0
+
+    /** 实际使用的统一采样率：目标未知时保持输入采样率不变。 */
+    private val resolvedTargetRate: Int
+        get() = if (targetSampleRate > 0) targetSampleRate else sampleRateHz
 
     private companion object {
         const val TAG = "SpeechTempoProcessor"
@@ -51,12 +61,6 @@ internal class SpeechTempoProcessor(
         /** 输出缓冲上限：8 KiB 输入经 3 倍重采样与 0.75x 后的余量。 */
         const val OUTPUT_CAPACITY = 64 * 1024
 
-        /**
-         * 变速前统一的采样率，对齐官方 `start samplefilter: src samplerate ->
-         * dst samplerate`。48 kHz 是 Android 音频输出的通用速率，WSOLA 在这里
-         * 拿到 sample_rate/24 = 2048 点的窗口（24 kHz 输入只有 1024 点）。
-         */
-        const val TARGET_SAMPLE_RATE = 48_000
     }
 
     private var handle: Int = 0
@@ -76,9 +80,10 @@ internal class SpeechTempoProcessor(
             sampleRateHz,
             channelCount,
             speed.toDouble(),
-            // 官方在 atempo 之前把 PCM 统一到输出采样率（samplefilter），
-            // 否则 WSOLA 的窗口只有 sample_rate/24，24k 输入精度减半。
-            TARGET_SAMPLE_RATE,
+            // 官方在 atempo 之前把 PCM 统一到**设备原生输出采样率**
+            // （`getNativeOutputSampleRate()` + samplefilter），而不是写死
+            // 48 kHz——否则 44.1k 设备上 AudioTrack 会再隐式重采样一次。
+            resolvedTargetRate,
         )
         if (handle == 0) {
             // 创建失败不能静默：直接抛出去，让 ExoPlayer 走它的错误路径，
@@ -89,9 +94,9 @@ internal class SpeechTempoProcessor(
         }
         Log.i(
             TAG,
-            "atempo chain ready sr=$sampleRateHz->$TARGET_SAMPLE_RATE " +
+            "atempo chain ready sr=$sampleRateHz->$resolvedTargetRate " +
                 "ch=$channelCount speed=$speed window=${SpeechTempo.nativeWindow(handle)} " +
-                "resample=${sampleRateHz != TARGET_SAMPLE_RATE}",
+                "resample=${sampleRateHz != resolvedTargetRate}",
         )
     }
 
@@ -124,11 +129,11 @@ internal class SpeechTempoProcessor(
             openHandle()
         }
         /*
-         * 输出采样率是 TARGET_SAMPLE_RATE（native 侧第一级重采样），必须如实
+         * 输出采样率 = 设备原生输出率（native 侧第一级重采样到此），必须如实
          * 报告给下游——AudioTrack 会按它初始化，报错就是变调/变速。
          */
         return AudioProcessor.AudioFormat(
-            TARGET_SAMPLE_RATE,
+            resolvedTargetRate,
             inputAudioFormat.channelCount,
             C.ENCODING_PCM_16BIT,
         )
