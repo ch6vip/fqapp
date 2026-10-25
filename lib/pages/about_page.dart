@@ -42,57 +42,9 @@ class AboutPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
         children: [
-          Center(
-            // The bundled logo is full-bleed; 12 of 80 keeps the plate's 15%
-            // corner radius so the image and the shadow outline agree.
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: HomePalette.accent.withValues(alpha: 0.20),
-                    blurRadius: 18,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.asset(
-                  'assets/images/app_logo.webp',
-                  width: 80,
-                  height: 80,
-                  // Decode at the display size rather than the whole 384²
-                  // surface, which would hold ~590 KB in the image cache for a
-                  // 80dp logo.
-                  cacheWidth: (80 * MediaQuery.devicePixelRatioOf(context))
-                      .round()
-                      .clamp(80, _logoPixelWidth),
-                  fit: BoxFit.contain,
-                  excludeFromSemantics: true,
-                ),
-              ),
-            ),
-          ),
+          const _AboutLogo(),
           const SizedBox(height: 12),
-          Column(
-            children: [
-              Text(
-                '什锦铺',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -0.3,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: outline, fontSize: 13),
-              ),
-            ],
-          ),
+          const _AboutHeading(),
           const SizedBox(height: 16),
           Text(
             '什锦铺把小说、短剧、漫剧、漫画和听书聚到一起。'
@@ -103,51 +55,7 @@ class AboutPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          _AboutCard(
-            children: [
-              _AboutRow(
-                icon: Icons.commit_outlined,
-                title: '当前版本',
-                trailingText: AboutPage.versionText,
-                showCopyGlyph: true,
-                onTap: () => _copyVersion(context),
-              ),
-              const Divider(height: 1, indent: 68),
-              const _AboutRow(
-                icon: Icons.system_update_alt,
-                title: '检查更新',
-                subtitle: '前往 GitHub 发布页查看新版本',
-                url: 'https://github.com/ch6vip/fqapp/releases',
-              ),
-              const Divider(height: 1, indent: 68),
-              _AboutRow(
-                icon: Icons.balance,
-                title: '开源许可',
-                subtitle: 'GPL-3.0 与第三方组件许可',
-                onTap: () => showLicensePage(
-                  context: context,
-                  applicationName: '什锦铺',
-                  applicationVersion: AboutPage.versionText,
-                  applicationLegalese:
-                      '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。',
-                ),
-              ),
-              const Divider(height: 1, indent: 68),
-              const _AboutRow(
-                icon: Icons.code,
-                title: 'Source Code',
-                subtitle: 'github.com/ch6vip/fqapp',
-                url: 'https://github.com/ch6vip/fqapp',
-              ),
-              const Divider(height: 1, indent: 68),
-              const _AboutRow(
-                icon: Icons.feedback_outlined,
-                title: '问题反馈',
-                subtitle: '前往 GitHub Issues 提交',
-                url: 'https://github.com/ch6vip/fqapp/issues',
-              ),
-            ],
-          ),
+          const _AboutInfoCard(),
           const SizedBox(height: 12),
           const _SupportCard(),
           const SizedBox(height: 24),
@@ -213,6 +121,129 @@ class AboutPage extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 头部 logo：全幅图片，圆角与投影跟随图版的 15% 板式圆角。
+class _AboutLogo extends StatelessWidget {
+  const _AboutLogo();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      // The bundled logo is full-bleed; 12 of 80 keeps the plate's 15%
+      // corner radius so the image and the shadow outline agree.
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: HomePalette.accent.withValues(alpha: 0.20),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.asset(
+            'assets/images/app_logo.webp',
+            width: 80,
+            height: 80,
+            // Decode at the display size rather than the whole 384²
+            // surface, which would hold ~590 KB in the image cache for a
+            // 80dp logo.
+            cacheWidth: (80 * MediaQuery.devicePixelRatioOf(context))
+                .round()
+                .clamp(80, AboutPage._logoPixelWidth),
+            fit: BoxFit.contain,
+            excludeFromSemantics: true,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 头部应用名与一行定位副标题。
+class _AboutHeading extends StatelessWidget {
+  const _AboutHeading();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      children: [
+        Text(
+          '什锦铺',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+            letterSpacing: -0.3,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: theme.colorScheme.outline, fontSize: 13),
+        ),
+      ],
+    );
+  }
+}
+
+/// 信息卡：版本（点按复制）、检查更新、开源许可、源码与反馈。
+class _AboutInfoCard extends StatelessWidget {
+  const _AboutInfoCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return _AboutCard(
+      children: [
+        _AboutRow(
+          icon: Icons.commit_outlined,
+          title: '当前版本',
+          trailingText: AboutPage.versionText,
+          showCopyGlyph: true,
+          onTap: () => AboutPage._copyVersion(context),
+        ),
+        const Divider(height: 1, indent: 68),
+        const _AboutRow(
+          icon: Icons.system_update_alt,
+          title: '检查更新',
+          subtitle: '前往 GitHub 发布页查看新版本',
+          url: 'https://github.com/ch6vip/fqapp/releases',
+        ),
+        const Divider(height: 1, indent: 68),
+        _AboutRow(
+          icon: Icons.balance,
+          title: '开源许可',
+          subtitle: 'GPL-3.0 与第三方组件许可',
+          onTap: () => showLicensePage(
+            context: context,
+            applicationName: '什锦铺',
+            applicationVersion: AboutPage.versionText,
+            applicationLegalese:
+                '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。',
+          ),
+        ),
+        const Divider(height: 1, indent: 68),
+        const _AboutRow(
+          icon: Icons.code,
+          title: 'Source Code',
+          subtitle: 'github.com/ch6vip/fqapp',
+          url: 'https://github.com/ch6vip/fqapp',
+        ),
+        const Divider(height: 1, indent: 68),
+        const _AboutRow(
+          icon: Icons.feedback_outlined,
+          title: '问题反馈',
+          subtitle: '前往 GitHub Issues 提交',
+          url: 'https://github.com/ch6vip/fqapp/issues',
+        ),
+      ],
     );
   }
 }
@@ -338,7 +369,6 @@ class _SupportCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final palette = HomePalette.of(context);
     final brand = palette.eink ? palette.ink : _brandColor;
     final onBrand = palette.eink ? palette.canvas : Colors.white;
@@ -360,45 +390,7 @@ class _SupportCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: brand,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.volunteer_activism,
-                    size: 20,
-                    color: onBrand,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '支持作者',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '如果这个项目对你有帮助，欢迎在爱发电支持我',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: theme.colorScheme.outline,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+            _SupportHeader(brand: brand, onBrand: onBrand),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -436,6 +428,51 @@ class _SupportCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 支持卡头部：品牌色图标块 + 标题与一句说明。
+class _SupportHeader extends StatelessWidget {
+  final Color brand;
+  final Color onBrand;
+
+  const _SupportHeader({required this.brand, required this.onBrand});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: brand,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(Icons.volunteer_activism, size: 20, color: onBrand),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '支持作者',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '如果这个项目对你有帮助，欢迎在爱发电支持我',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
