@@ -95,19 +95,24 @@ void main() {
     await _unmount(tester);
   });
 
-  testWidgets('the more panel offers only the official 倍速 row', (
-    tester,
-  ) async {
-    final session = _Session();
-    await _mount(tester, session);
-    await tester.tap(find.byTooltip('更多'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('player-more-rate-row')), findsOneWidget);
-    expect(find.byKey(const ValueKey('player-auto-advance')), findsNothing);
-    expect(find.text('自动连播'), findsNothing);
-    expect(find.text('1.5x'), findsOneWidget);
-    await _unmount(tester);
-  });
+  testWidgets(
+    'the more panel offers exactly one rate entry, no auto-advance row',
+    (tester) async {
+      final session = _Session();
+      await _mount(tester, session);
+      await tester.tap(find.byTooltip('更多'));
+      await tester.pumpAndSettle();
+      // 倍速入口全页只有一处：底栏显示当前档时点它直接开档位弹层，面板里就
+      // 不再放倍速行；底栏没有当前档（catalog 形态）时反过来。
+      final entries =
+          find.byKey(const ValueKey('player-rate-text')).evaluate().length +
+          find.byKey(const ValueKey('player-more-rate-row')).evaluate().length;
+      expect(entries, 1, reason: '倍速入口要么在底栏、要么在面板，只能有一个');
+      expect(find.byKey(const ValueKey('player-auto-advance')), findsNothing);
+      expect(find.text('自动连播'), findsNothing);
+      await _unmount(tester);
+    },
+  );
 
   testWidgets('completion waits for an in-flight paging gesture to settle', (
     tester,
@@ -123,26 +128,25 @@ void main() {
     await _unmount(tester);
   });
 
-  testWidgets(
-    'play at the end of the last episode restarts it from zero',
-    (tester) async {
-      final session = _Session();
-      await _mount(tester, session);
-      await _tapNext(tester);
-      await _tapNext(tester);
-      final last = session.players.last;
-      await last.pause();
-      last.emitCompleted();
-      await _flush(tester);
-      last.calls.clear();
-      await tester.tap(find.byTooltip('播放'));
-      await _flush(tester);
-      expect(last.calls, containsAllInOrder(['seek:0ms', 'play']));
-      expect(last.position, Duration.zero);
-      expect(session.players, hasLength(3));
-      await _unmount(tester);
-    },
-  );
+  testWidgets('play at the end of the last episode restarts it from zero', (
+    tester,
+  ) async {
+    final session = _Session();
+    await _mount(tester, session);
+    await _tapNext(tester);
+    await _tapNext(tester);
+    final last = session.players.last;
+    await last.pause();
+    last.emitCompleted();
+    await _flush(tester);
+    last.calls.clear();
+    await tester.tap(find.byTooltip('播放'));
+    await _flush(tester);
+    expect(last.calls, containsAllInOrder(['seek:0ms', 'play']));
+    expect(last.position, Duration.zero);
+    expect(session.players, hasLength(3));
+    await _unmount(tester);
+  });
 
   testWidgets(
     'backgrounding during a pending restart cannot start playback later',

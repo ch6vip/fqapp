@@ -113,6 +113,12 @@ class NativePlayerPlugin internal constructor(
     private var floatingFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var floatingVolumeBeforeDuck: Float? = null
 
+    /**
+     * 播放页「上下滑动调亮度」覆盖的窗口亮度。null = 当前没有覆盖；存起来
+     * 是为了退出播放页时还原系统/宿主原来的亮度。
+     */
+    private var originalWindowBrightness: Float? = null
+
     private var eventSink: EventChannel.EventSink? = null
     private var noisyReceiverRegistered = false
 
@@ -173,6 +179,8 @@ class NativePlayerPlugin internal constructor(
         activityBinding?.removeRequestPermissionsResultListener(this)
         activityBinding = null
         activity = null
+        // 窗口随 Activity 重建，亮度覆盖已经不存在，别让下一次 reset 拿旧值。
+        originalWindowBrightness = null
     }
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
@@ -183,6 +191,7 @@ class NativePlayerPlugin internal constructor(
         activityBinding?.removeRequestPermissionsResultListener(this)
         activityBinding = null
         activity = null
+        originalWindowBrightness = null
     }
 
     override fun onRequestPermissionsResult(
@@ -276,6 +285,85 @@ class NativePlayerPlugin internal constructor(
         return value
     }
 
+    /**
+     * 分屏播放页上下滑手势的初始档位：窗口亮度（没有覆盖时读系统亮度）与
+     * 媒体音量，都归一化到 0..1，并带上音量的档数（HUD 按同一档位取整，
+     * 避免「显示 37% 实际是第 59/160 档」的偏差）。拿不到 Activity 时回
+     * null，Dart 侧显示「暂不可用」而不是静默无效。
+     */
+    private fun gestureLevels(): Map<String, Any>? {
+        val currentActivity = activity ?: return null
+        return try {
+            val windowBrightness = currentActivity.window.attributes.screenBrightness
+            val brightness = if (windowBrightness >= 0f) {
+                windowBrightness.coerceIn(NativeGestureLevels.brightnessFloor, 1f)
+            } else {
+                val raw = Settings.System.getInt(
+                    currentActivity.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    128
+                )
+                NativeGestureLevels.normaliseBrightness(raw)
+            }
+            val audio = currentActivity.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val maxVolume = audio?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 0
+            val volume = if (audio != null && maxVolume > 0) {
+                NativeGestureLevels.volumeFraction(
+                    audio.getStreamVolume(AudioManager.STREAM_MUSIC),
+                    maxVolume
+                )
+            } else {
+                0.0
+            }
+            mapOf(
+                "brightness" to brightness.toDouble(),
+                "volume" to volume,
+                "volumeSteps" to maxVolume
+            )
+        } catch (error: Throwable) {
+            Log.w(TAG, "read gesture levels failed", error)
+            null
+        }
+    }
+
+    private fun applyWindowBrightness(value: Float) {
+        val currentActivity = activity ?: return
+        val attributes = currentActivity.window.attributes
+        // 第一次调节才记原值：后续手势都在覆盖值上继续，不会把中间值当成原值。
+        if (originalWindowBrightness == null) {
+            originalWindowBrightness = attributes.screenBrightness
+        }
+        attributes.screenBrightness = value.coerceIn(NativeGestureLevels.brightnessFloor, 1f)
+        currentActivity.window.attributes = attributes
+    }
+
+    private fun resetWindowBrightness() {
+        val original = originalWindowBrightness ?: return
+        originalWindowBrightness = null
+        val currentActivity = activity ?: return
+        val attributes = currentActivity.window.attributes
+        attributes.screenBrightness = original
+        currentActivity.window.attributes = attributes
+    }
+
+    private fun applyMediaVolume(value: Float) {
+        val audio = activity?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (maxVolume <= 0) return
+        // flags=0：不弹系统音量面板，反馈由 Flutter 侧的档位 HUD 负责。
+        // 勿扰/固定音量模式下 setStreamVolume 可能直接抛 SecurityException，
+        // 手势失败不能把播放一起带崩。
+        try {
+            audio.setStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                NativeGestureLevels.volumeIndex(value, maxVolume),
+                0
+            )
+        } catch (error: Throwable) {
+            Log.w(TAG, "set media volume failed", error)
+        }
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "create" -> {
@@ -320,6 +408,23 @@ class NativePlayerPlugin internal constructor(
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 val volume = call.requiredArgument<Number>("volume", result)?.toFloat() ?: return
                 players[id]?.player?.volume = volume
+                result.success(null)
+            }
+            // 分屏播放页上下滑手势：左半窗口亮度、右半媒体音量。都是设备级
+            // 档位，不属于某个播放器实例，所以不带 id。
+            "gestureLevels" -> result.success(gestureLevels())
+            "setScreenBrightness" -> {
+                val value = call.requiredArgument<Number>("value", result)?.toFloat() ?: return
+                applyWindowBrightness(value)
+                result.success(null)
+            }
+            "resetScreenBrightness" -> {
+                resetWindowBrightness()
+                result.success(null)
+            }
+            "setMediaVolume" -> {
+                val value = call.requiredArgument<Number>("value", result)?.toFloat() ?: return
+                applyMediaVolume(value)
                 result.success(null)
             }
             "setRate" -> {

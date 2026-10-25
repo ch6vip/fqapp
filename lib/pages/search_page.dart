@@ -39,6 +39,10 @@ class SearchPage extends StatefulWidget {
   final Future<MediaItem?> Function(String id)? idSearchLoader;
   final SearchHistoryRepository? historyStore;
 
+  /// 打开时选中的分类页签。分区入口把语境带进来：短剧分区从漫剧频道进
+  /// 搜索落「漫剧」，其余频道落「短剧」；缺省仍是「综合」。
+  final SearchCategory initialCategory;
+
   /// Optional discovery sources. Leaving them null fetches from the backend
   /// unless another loader was injected, which marks the caller as offline (the
   /// rule the other pages follow).
@@ -53,6 +57,7 @@ class SearchPage extends StatefulWidget {
     this.historyStore,
     this.suggestLoader,
     this.hotSearchLoader,
+    this.initialCategory = SearchCategory.general,
   });
 
   @override
@@ -61,7 +66,7 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   static const _paginationThreshold = 480.0;
-  static const _categories = _SearchCategory.values;
+  static const _categories = SearchCategory.values;
   static const _listViewPreference = 'search_list_view';
   static const _minimumScorePreference = 'search_minimum_score';
 
@@ -125,6 +130,8 @@ class _SearchPageState extends State<SearchPage> {
   @override
   void initState() {
     super.initState();
+    // 首帧就停在该页签：分区入口（短剧/漫剧）进来的搜索不该先闪「综合」。
+    _tabIndex = _categories.indexOf(widget.initialCategory);
     _scrollController.addListener(_onScroll);
     _loadHistory();
     unawaited(_loadLayout());
@@ -455,7 +462,7 @@ class _SearchPageState extends State<SearchPage> {
       final page = separateManjuSearchTabs(sources).firstWhere(
         (tab) =>
             tab.title == category.title ||
-            (category == _SearchCategory.book &&
+            (category == SearchCategory.book &&
                 tab.title == category.sourceTitle),
         orElse: () => SearchTab(title: category.title, items: []),
       );
@@ -1072,7 +1079,11 @@ class _SearchPageState extends State<SearchPage> {
   }
 }
 
-enum _SearchCategory {
+/// 搜索页的分类页签。
+///
+/// 公开是给分区入口用的：短剧分区的搜索要带上频道语境（漫剧频道落「漫剧」、
+/// 其余频道落「短剧」），[SearchPage.initialCategory] 直接收这个枚举。
+enum SearchCategory {
   general('综合', 1),
   book('小说', 3, 'book'),
   video('短剧', 11, 'video'),
@@ -1080,7 +1091,7 @@ enum _SearchCategory {
   manga('漫画', 8, 'manga'),
   audio('听书', 2, 'audio');
 
-  const _SearchCategory(this.title, this.tabType, [this.kind]);
+  const SearchCategory(this.title, this.tabType, [this.kind]);
 
   final String title;
   final int tabType;

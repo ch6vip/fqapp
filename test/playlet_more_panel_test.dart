@@ -20,13 +20,27 @@ import 'support/fakes.dart';
 /// - 两个开关行整行可点，Switch 自身不可点
 ///   （`ShortSeriesMorePanelDialogV2$ActionItemSingleChoiceHolder`）
 void main() {
-  setUp(() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
     // 本套用例验的是深色 V2 面板（撑满/静音行、取消行、药丸拖选）；浅色
     // 分支（style 未下发，发布默认）另有用例覆盖。钉 style=1 走深色支。
     PlayerStyleConfig.instance = const PlayerStyleConfig(morePanelStyle: 1);
     PlayerPanelPreferences.setDefaultMute(true);
   });
+
+  /// 深色 V2 是**底部 sheet** 形态（横屏右侧面板是另一套宫格，见
+  /// video_player_chrome_test 的矮窗用例）。测试默认 surface 是 800×600，会被
+  /// 判成横屏走到宫格上，所以每条 sheet 用例先钉成竖屏——`setSurfaceSize`
+  /// 只能在用例体内调（在 `setUp` 里会触发 `inTest` 断言）。
+  void sheetTest(String description, WidgetTesterCallback body) {
+    testWidgets(description, (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await body(tester);
+    });
+  }
 
   Widget app({
     FakeNativePlayer? nativePlayer,
@@ -72,20 +86,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> scrollRates(WidgetTester tester, double distance) async {
-    final bounds = tester.getRect(
-      find.byKey(const ValueKey('player-more-rate-scroll')),
-    );
-    await tester.dragFrom(
-      Offset(bounds.center.dx, bounds.top + 2),
-      Offset(distance, 0),
-    );
-    await tester.pumpAndSettle();
-  }
-
-  testWidgets('the panel carries the fill-screen and mute rows', (
-    tester,
-  ) async {
+  sheetTest('the panel carries the fill-screen and mute rows', (tester) async {
     await tester.pumpWidget(app(onFill: (_) {}, onMute: (_) {}));
     await tester.pumpAndSettle();
     await openMore(tester);
@@ -101,7 +102,7 @@ void main() {
     );
   });
 
-  testWidgets('the rows disappear without their callbacks', (tester) async {
+  sheetTest('the rows disappear without their callbacks', (tester) async {
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
     await openMore(tester);
@@ -109,7 +110,7 @@ void main() {
     expect(find.text('默认静音'), findsNothing);
   });
 
-  testWidgets('tapping the whole row toggles the switch', (tester) async {
+  sheetTest('tapping the whole row toggles the switch', (tester) async {
     final fills = <bool>[];
     final mutes = <bool>[];
     await tester.pumpWidget(
@@ -145,7 +146,7 @@ void main() {
     expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
   });
 
-  testWidgets('retained options follow the official groups and action order', (
+  sheetTest('retained options follow the official groups and action order', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -154,7 +155,7 @@ void main() {
     await tester.pumpAndSettle();
     await openMore(tester);
     final positions = [
-      for (final id in ['rate', 'fill', 'mute', 'danmaku'])
+      for (final id in ['fill', 'mute', 'danmaku'])
         tester.getTopLeft(find.byKey(ValueKey('player-more-$id-row'))).dy,
     ];
     expect(positions, orderedEquals([...positions]..sort()));
@@ -162,105 +163,88 @@ void main() {
     expect(find.text('取消'), findsOneWidget);
     expect(find.byType(ChoiceChip), findsNothing);
     expect(find.text('分享'), findsNothing);
+    // 倍速入口全页只有一个：这套用例的 surface 是竖屏 catalog 形态，底栏
+    // 不显示当前档，入口就留在面板里（点开档位弹层）。
+    final panel = find.byKey(const ValueKey('player-more-panel'));
+    expect(find.byKey(const ValueKey('player-more-rate-row')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-rate-text')), findsNothing);
+    // 档位不再内联铺在面板里：只剩行尾那一个当前档文案。
+    expect(find.byKey(const ValueKey('player-more-rate-scroll')), findsNothing);
+    expect(
+      find.descendant(of: panel, matching: find.text('0.75x')),
+      findsNothing,
+      reason: '0.75x 档位不该内联在视频设置里',
+    );
+    expect(
+      find.byKey(const ValueKey('player-more-rate-value')),
+      findsOneWidget,
+    );
   });
 
-  testWidgets(
-    'rate pills follow the panel list and restore on the next player',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(360, 780));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final player = FakeNativePlayer()..isPlaying = true;
-      await tester.pumpWidget(app(nativePlayer: player));
-      await tester.pumpAndSettle();
-      await openMore(tester);
-      player.calls.clear();
-      await scrollRates(tester, -200);
-      expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
-      expect(player.calls, isEmpty);
-      await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 150));
-      expect(player.rate, 1);
-      await tester.pumpAndSettle();
-      expect(player.rate, 2);
-      expect(player.calls, ['rate:2.0']);
-      expect(await PlayerPreferences.loadPlaybackRate(), 2);
-      expect(find.byKey(const ValueKey('player-more-panel')), findsNothing);
+  sheetTest('the bottom-bar rate opens its own sheet and persists the pick', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 780));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(app(nativePlayer: player));
+    await tester.pumpAndSettle();
+    // 底栏「倍速」文字只在清屏态出现（官方：清屏后留这一个入口），它开的
+    // 是档位弹层，不是视频设置面板。
+    await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
+    await tester.pump();
+    player.calls.clear();
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-more-panel')), findsNothing);
+    expect(find.byKey(const ValueKey('player-rate-sheet')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('player-rate-sheet-4')));
+    await tester.pumpAndSettle();
+    expect(player.calls, ['rate:2.0']);
+    expect(await PlayerPreferences.loadPlaybackRate(), 2);
+    expect(find.byKey(const ValueKey('player-rate-sheet')), findsNothing);
 
-      await tester.pumpWidget(const SizedBox.shrink());
-      final next = FakeNativePlayer()..isPlaying = true;
-      await tester.pumpWidget(app(nativePlayer: next));
-      await tester.pumpAndSettle();
-      expect(next.rate, 2);
-      await openMore(tester);
-      final selected = find.byKey(const ValueKey('player-more-rate-2.0'));
-      expect(selected.hitTestable(), findsOneWidget);
-      expect(tester.widget<Semantics>(selected).properties.selected, isTrue);
-      // 官方点当前档位不重复提交，也不会关闭。
-      next.calls.clear();
-      await tester.tap(selected);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
-      expect(next.calls, isEmpty);
-    },
-  );
+    // 换播放器（下一集/重进播放页）沿用已保存的档位，弹层里标的也是它。
+    await tester.pumpWidget(const SizedBox.shrink());
+    final next = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(app(nativePlayer: next));
+    await tester.pumpAndSettle();
+    expect(next.rate, 2);
+    await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-rate-sheet-4')),
+        matching: find.byIcon(Icons.check),
+      ),
+      findsOneWidget,
+    );
+  });
 
-  testWidgets(
-    'back during a rate animation never pops the player or applies it',
-    (tester) async {
-      final player = FakeNativePlayer()..isPlaying = true;
-      await tester.pumpWidget(app(nativePlayer: player));
-      await tester.pumpAndSettle();
-      await openMore(tester);
-      player.calls.clear();
-      await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 150));
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byType(VideoPlayerChrome), findsOneWidget);
-      expect(find.byKey(const ValueKey('player-more-panel')), findsNothing);
-      expect(player.calls, isEmpty);
-      expect(await PlayerPreferences.loadPlaybackRate(), 1);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  for (final cancel in [false, true]) {
-    testWidgets('rate thumb drag commits only on release (cancel: $cancel)', (
-      tester,
-    ) async {
-      final player = FakeNativePlayer()..isPlaying = true;
-      await tester.pumpWidget(app(nativePlayer: player));
-      await tester.pumpAndSettle();
-      await openMore(tester);
-      player.calls.clear();
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byKey(const ValueKey('player-more-rate-1.0'))),
-      );
-      await gesture.moveBy(const Offset(20, 0));
-      await tester.pump();
-      await gesture.moveBy(const Offset(90, 0));
-      await tester.pump();
-      expect(player.calls, isEmpty);
-      if (cancel) {
-        await gesture.cancel();
-      } else {
-        await gesture.up();
-      }
-      await tester.pumpAndSettle();
-      expect(player.rate, cancel ? 1 : 1.5);
-      expect(player.calls, cancel ? isEmpty : ['rate:1.5']);
-      expect(
-        find.byKey(const ValueKey('player-more-panel')),
-        cancel ? findsOneWidget : findsNothing,
-      );
-      expect(tester.takeException(), isNull);
-    });
-  }
+  sheetTest('back on the rate sheet applies nothing and keeps the player', (
+    tester,
+  ) async {
+    final player = FakeNativePlayer()..isPlaying = true;
+    await tester.pumpWidget(app(nativePlayer: player));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
+    await tester.pump();
+    player.calls.clear();
+    await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(VideoPlayerChrome), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-rate-sheet')), findsNothing);
+    expect(player.calls, isEmpty);
+    expect(await PlayerPreferences.loadPlaybackRate(), 1);
+    expect(tester.takeException(), isNull);
+  });
 
   for (final dismissal in ['outside', 'back', 'swipe']) {
-    testWidgets(
+    sheetTest(
       '$dismissal closes only the sheet and preserves paused clear screen',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(400, 800));
@@ -271,6 +255,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
         await tester.pump();
+        // 清屏态下唯一的设置入口是底栏「倍速」文字，它开的是档位弹层。
         await tester.tap(find.byKey(const ValueKey('player-rate-text')));
         await tester.pumpAndSettle();
         player.calls.clear();
@@ -281,14 +266,14 @@ void main() {
             await tester.binding.handlePopRoute();
           case 'swipe':
             await tester.fling(
-              find.byKey(const ValueKey('player-more-drag-handle')),
+              find.byKey(const ValueKey('player-option-drag-handle')),
               const Offset(0, 250),
               1200,
             );
         }
         await tester.pumpAndSettle();
         await tester.pump(const Duration(seconds: 4));
-        expect(find.byKey(const ValueKey('player-more-panel')), findsNothing);
+        expect(find.byKey(const ValueKey('player-rate-sheet')), findsNothing);
         expect(find.text('恢复'), findsOneWidget);
         expect(player.calls, isEmpty);
         expect(player.isPlaying, isFalse);
@@ -301,7 +286,7 @@ void main() {
     );
   }
 
-  testWidgets(
+  sheetTest(
     'rotation resizes the sheet and keeps switch state and reachability',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(400, 800));
@@ -349,42 +334,45 @@ void main() {
     },
   );
 
-  testWidgets(
-    'large text in a short window keeps all local controls reachable',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(320, 400));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final mutes = <bool>[];
-      var danmakuToggles = 0;
-      await tester.pumpWidget(
-        app(
-          textScaler: TextScaler.linear(2.5),
-          onFill: (_) {},
-          onMute: mutes.add,
-          onDanmaku: () => danmakuToggles++,
-        ),
-      );
+  sheetTest('large text in a short window keeps all local controls reachable', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final mutes = <bool>[];
+    var danmakuToggles = 0;
+    await tester.pumpWidget(
+      app(
+        textScaler: TextScaler.linear(2.5),
+        onFill: (_) {},
+        onMute: mutes.add,
+        onDanmaku: () => danmakuToggles++,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openMore(tester);
+    for (final id in ['mute', 'danmaku']) {
+      final row = find.byKey(ValueKey('player-more-$id-row'));
+      await tester.ensureVisible(row);
+      await tester.tap(row);
       await tester.pumpAndSettle();
-      await openMore(tester);
-      for (final id in ['mute', 'danmaku']) {
-        final row = find.byKey(ValueKey('player-more-$id-row'));
-        await tester.ensureVisible(row);
-        await tester.tap(row);
-        await tester.pumpAndSettle();
-      }
-      expect(mutes, [false]);
-      expect(danmakuToggles, 1);
-      final rates = find.byKey(const ValueKey('player-more-rate-scroll'));
-      await tester.ensureVisible(rates);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('player-more-rate-2.0')),
-      );
-      await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
-      await tester.pumpAndSettle();
-      expect(await PlayerPreferences.loadPlaybackRate(), 2);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    }
+    expect(mutes, [false]);
+    expect(danmakuToggles, 1);
+    // 面板里只有倍速「入口行」，没有内联档位：大字号下面板不会被药丸行
+    // 撑高到滚不到底，开关行仍都点得到。
+    final panel = find.byKey(const ValueKey('player-more-panel'));
+    expect(
+      find.descendant(of: panel, matching: find.text('倍速')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: panel, matching: find.text('0.75x')),
+      findsNothing,
+    );
+    expect(find.descendant(of: panel, matching: find.text('3x')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   test('fill screen follows the official portrait default', () async {
     // 官方：竖屏且 SP 无键 -> false（FillScreenDataManager.java:29-32）。

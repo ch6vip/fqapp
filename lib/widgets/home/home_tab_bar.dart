@@ -20,9 +20,8 @@ const homeCategories = [
 
 /// 官方书城顶部 tab 条（`res/layout/alx.xml` 的 `SlidingTabLayout aj0`）。
 ///
-/// 尺寸全部取自反编译布局，不是估计值：
+/// 尺寸取自反编译布局，只有左右内边距按用户要求收口：
 /// * 高度 38dp，paddingBottom 10dp；
-/// * paddingStart 20dp / paddingEnd 13dp；
 /// * 选中字号 `av5` = 24sp，未选中字号 `avq` = 16sp；
 /// * 选中色 `aui` 与未选中色 `avn` 都是 `skin_color_black_light`(#000000)
 ///   —— 官方不靠颜色区分，只靠字号、字重（两态都粗体）和未选中 0.4 透明度；
@@ -30,6 +29,16 @@ const homeCategories = [
 ///   `setMargins(0, 0, this.K, 0)`，`this.K` 就是 `avb`），tab 高 `avc` = 34dp；
 /// * 指示器：`aup` = 0dp（高度 0）。`onDraw` 里 `if (this.s > 0.0f)` 才绘制，
 ///   所以官方书城顶栏**没有下划线**。`auw` = 16dp 是宽度，高度为 0 时无效。
+///
+/// 左右内边距官方是 `paddingStart` 20dp / `paddingEnd` 13dp——**本来就不对称**，
+/// 贴上去后「推荐」左侧的空隙明显大于末位 tab 右侧（用户 2026-10-25 指出）。
+/// 首页的栏距是搜索框那对 16dp（`HomeHero` 的 `fua`），短剧频道条也用同一对
+/// 16dp，所以这里跟着收口成对称 16dp，让条带与它正上方的搜索框对齐。
+///
+/// 只收口 padding 还不够：六个分类在 361dp 的手机上只有 308dp 宽，右边多出来
+/// 的空间是**剩余空间**而不是 padding，所以末位 tab 右缘照样离屏 40dp。条带放
+/// 得下时会把富余按间隔平摊（见 [_gapWidth]），两端才同时落在 [sidePadding] 那
+/// 条竖线上。
 ///
 /// 上一版是圆角胶囊 + 图标 + 橙色选中底，和官方完全不是一种东西。
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
@@ -40,6 +49,13 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   static const double selectedSize = 24;
   static const double unselectedSize = 16;
   static const double tabSpacing = 20;
+
+  /// 条带的左右栏距：与 [HomeHero] 搜索框一致（官方 20/13 的不对称见类注释）。
+  static const double sidePadding = 16;
+
+  /// 放得下时每个间隔最多再撑这么多：桌面宽窗里若按富余等比摊开，六个分类会被
+  /// 摊到整屏两端，比留白更难看。
+  static const double maxExtraSpacing = 12;
 
   /// 未选中项的透明度 `avr`（`SlidingTabLayout.a6`，`L2048 getFloat(55, 0.4f)`）。
   static const double unselectedAlpha = 0.4;
@@ -95,52 +111,109 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
         padding: const EdgeInsets.only(bottom: bottomPadding),
         child: SizedBox(
           height: rowHeight,
-          child: ListView.separated(
-            padding: const EdgeInsets.only(left: 20, right: 13),
-            scrollDirection: Axis.horizontal,
-            itemCount: categories.length,
-            separatorBuilder: (_, _) => const SizedBox(width: tabSpacing),
-            itemBuilder: (context, index) {
-              final selected = index == selectedIndex;
-              final category = categories[index];
-              return Semantics(
-                selected: selected,
-                button: true,
-                label: category.label,
-                excludeSemantics: true,
-                onTap: () => onSelect(index),
-                child: GestureDetector(
-                  key: ValueKey('home_category_$index'),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => onSelect(index),
-                  // 官方书城顶栏不画指示器：`alx.xml` 把 `aup`(指示器高度)
-                  // 设成 0，`SlidingTabLayout.onDraw` 只在 `s > 0` 时绘制。
-                  //
-                  // 选中态只差「字号 + 透明度」：`s0()` 对每一项都调
-                  // `setTypeface(a(1))`（`R5 = getInt(53, 2)` 让 `z` 恒为真），
-                  // 所以两态都是粗体；未选中项再叠加 `alpha = a6` = 0.4
-                  // （`avr`，`L2048 getFloat(55, 0.4f)`）。
-                  child: SizedBox(
-                    height: rowHeight,
-                    child: Center(
-                      child: AnimatedDefaultTextStyle(
-                        duration: duration,
-                        curve: Curves.easeOutCubic,
-                        style: TextStyle(
-                          fontSize: selected ? selectedSize : unselectedSize,
-                          fontWeight: FontWeight.w700,
-                          color: palette.ink.withValues(
-                            alpha: selected ? 1 : unselectedAlpha,
-                          ),
-                          height: 1,
-                        ),
-                        child: Text(category.label),
-                      ),
-                    ),
-                  ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final gap = _gapWidth(context, constraints.maxWidth, palette);
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: sidePadding),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var index = 0; index < categories.length; index++) ...[
+                      if (index > 0) SizedBox(width: gap),
+                      _tab(index, rowHeight, duration, palette),
+                    ],
+                  ],
                 ),
               );
             },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// tab 之间的间隔。
+  ///
+  /// 官方 `avb` = 20dp 是「条带一定放不下」的前提下的值。本地六个分类在手机宽
+  /// 上放得下，此时右边露出来的空白是剩余空间，跟 padding 无关——所以要把它按
+  /// 间隔平摊，首个 tab 的左缘与末位 tab 的右缘才同时落在 [sidePadding] 竖线上。
+  /// 摊得太多（桌面宽窗）就封顶到 [maxExtraSpacing]，宁可留一边空白也不要把分类
+  /// 扯散。
+  double _gapWidth(
+    BuildContext context,
+    double availableWidth,
+    HomePalette palette,
+  ) {
+    final gaps = categories.length - 1;
+    if (gaps <= 0 || !availableWidth.isFinite) return tabSpacing;
+
+    // 每个 tab 的宽度就是它那行字的宽度（Center 在 Row 里收缩包裹），用同一个
+    // TextStyle + textScaler 量出来才算得准。
+    final scaler = MediaQuery.textScalerOf(context);
+    final textDirection = Directionality.of(context);
+    var contentWidth = 0.0;
+    for (var index = 0; index < categories.length; index++) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: categories[index].label,
+          style: _labelStyle(index == selectedIndex, palette),
+        ),
+        textDirection: textDirection,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      contentWidth += painter.width;
+      painter.dispose();
+    }
+
+    final spare =
+        availableWidth - 2 * sidePadding - contentWidth - gaps * tabSpacing;
+    if (spare <= 0) return tabSpacing;
+    return tabSpacing + (spare / gaps).clamp(0.0, maxExtraSpacing);
+  }
+
+  TextStyle _labelStyle(bool selected, HomePalette palette) => TextStyle(
+    fontSize: selected ? selectedSize : unselectedSize,
+    fontWeight: FontWeight.w700,
+    color: palette.ink.withValues(alpha: selected ? 1 : unselectedAlpha),
+    height: 1,
+  );
+
+  Widget _tab(
+    int index,
+    double rowHeight,
+    Duration duration,
+    HomePalette palette,
+  ) {
+    final selected = index == selectedIndex;
+    final category = categories[index];
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: category.label,
+      excludeSemantics: true,
+      onTap: () => onSelect(index),
+      child: GestureDetector(
+        key: ValueKey('home_category_$index'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onSelect(index),
+        // 官方书城顶栏不画指示器：`alx.xml` 把 `aup`(指示器高度) 设成 0，
+        // `SlidingTabLayout.onDraw` 只在 `s > 0` 时绘制。
+        //
+        // 选中态只差「字号 + 透明度」：`s0()` 对每一项都调 `setTypeface(a(1))`
+        // （`R5 = getInt(53, 2)` 让 `z` 恒为真），所以两态都是粗体；未选中项再叠加
+        // `alpha = a6` = 0.4（`avr`，`L2048 getFloat(55, 0.4f)`）。
+        child: SizedBox(
+          height: rowHeight,
+          child: Center(
+            child: AnimatedDefaultTextStyle(
+              duration: duration,
+              curve: Curves.easeOutCubic,
+              style: _labelStyle(selected, palette),
+              child: Text(category.label),
+            ),
           ),
         ),
       ),

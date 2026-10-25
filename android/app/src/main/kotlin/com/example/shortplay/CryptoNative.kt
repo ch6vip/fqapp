@@ -330,6 +330,19 @@ internal fun percentDecodePath(raw: String): String {
 }
 
 /**
+ * Windows 的 JVM 单测会把 `file:///C:/...` 解析成 `/C:/...`；Java 的 [File]
+ * 会把这个前导 `/` 当成「当前驱动器的根」，得到 `E:\C:\...`，于是根内文件也
+ * 被判为越界。Android 下发的都是 POSIX 路径，剥离盘符斜杠只影响本地单测，
+ * 安全性仍由 [isFileWithinRoots] 的规范化比较保证。
+ */
+internal fun stripWindowsDriveSlash(path: String): String {
+    if (path.length < 4 || path[0] != '/' || path[2] != ':') return path
+    if (!path[1].isLetter()) return path
+    if (path[3] != '/' && path[3] != '\\') return path
+    return path.substring(1)
+}
+
+/**
  * Resolve a `file://` URL to a readable file inside [allowedRoots], or null.
  * Rejects non-file schemes, non-empty non-localhost hosts, and any path
  * whose canonical form escapes every root. Deliberately parses the URL by
@@ -346,7 +359,7 @@ internal fun resolveOfflineFile(url: String, allowedRoots: List<File>): File? {
     if (host.isNotEmpty() && host != "localhost") return null
     val rawPath = rest.substring(slash)
     if (rawPath.isEmpty()) return null
-    val file = File(percentDecodePath(rawPath))
+    val file = File(stripWindowsDriveSlash(percentDecodePath(rawPath)))
     if (!isFileWithinRoots(file, allowedRoots)) return null
     return if (file.isFile) file else null
 }

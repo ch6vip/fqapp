@@ -36,7 +36,10 @@ void main() {
         closeTo(source.aspectRatio, .0001),
       );
       // Fit width: the whole picture stays inside, letterboxed vertically.
-      expect(result.video.width, lessThanOrEqualTo(result.viewport.width + .01));
+      expect(
+        result.video.width,
+        lessThanOrEqualTo(result.viewport.width + .01),
+      );
       expect(
         result.video.height,
         lessThanOrEqualTo(result.viewport.height + .01),
@@ -68,7 +71,10 @@ void main() {
     // viewport, and a filled picture would be cropped under the sheet.
     final result = layout(const Size(1080, 1920), fit: VideoFit.contain);
     expect(result.video.width, lessThanOrEqualTo(result.viewport.width + .01));
-    expect(result.video.height, lessThanOrEqualTo(result.viewport.height + .01));
+    expect(
+      result.video.height,
+      lessThanOrEqualTo(result.viewport.height + .01),
+    );
     expect(result.video.width / result.video.height, closeTo(9 / 16, .0001));
     // A wide source fits the same way, so the two modes only differ on the
     // sources the official client fills.
@@ -84,10 +90,7 @@ void main() {
     expect(result.video.width, greaterThanOrEqualTo(result.viewport.width));
     expect(result.video.height, greaterThanOrEqualTo(result.viewport.height));
     expect(result.video.width.isFinite && result.video.height.isFinite, isTrue);
-    expect(
-      result.video.width / result.video.height,
-      closeTo(16 / 4096, .0001),
-    );
+    expect(result.video.width / result.video.height, closeTo(16 / 4096, .0001));
   });
 
   test('an unknown size answers fill the same way in both entry points', () {
@@ -123,21 +126,155 @@ void main() {
     );
   });
 
-  test('a portrait source in a landscape fullscreen keeps its whole picture', () {
-    // 修复前会走 fillFrame：9:16 的片子被放大到铺满横屏、两轴都溢出并被裁切
-    // （720P 拉大近 3 倍，画面一片糊）。修复后按 contain 居中：高度贴满、
-    // 宽度留黑边，比例不变。
-    final fit = PlayerVideoLayout.fitFor(fillScreen: true, fullScreen: true);
-    final result = PlayerVideoLayout.calculate(
-      window: const Size(800, 400),
-      insets: EdgeInsets.zero,
-      videoSize: const Size(1080, 1920),
-      fit: fit,
-      fullScreen: true,
-    );
-    expect(result.video.height, closeTo(result.viewport.height, .5));
-    expect(result.video.width, lessThan(result.viewport.width));
-    expect(result.video.width / result.video.height, closeTo(9 / 16, .0001));
-    expect(result.video.center, result.viewport.center);
+  test(
+    'a portrait source in a landscape fullscreen keeps its whole picture',
+    () {
+      // 修复前会走 fillFrame：9:16 的片子被放大到铺满横屏、两轴都溢出并被裁切
+      // （720P 拉大近 3 倍，画面一片糊）。修复后按 contain 居中：高度贴满、
+      // 宽度留黑边，比例不变。
+      final fit = PlayerVideoLayout.fitFor(fillScreen: true, fullScreen: true);
+      final result = PlayerVideoLayout.calculate(
+        window: const Size(800, 400),
+        insets: EdgeInsets.zero,
+        videoSize: const Size(1080, 1920),
+        fit: fit,
+        fullScreen: true,
+      );
+      expect(result.video.height, closeTo(result.viewport.height, .5));
+      expect(result.video.width, lessThan(result.viewport.width));
+      expect(result.video.width / result.video.height, closeTo(9 / 16, .0001));
+      expect(result.video.center, result.viewport.center);
+    },
+  );
+
+  test('a side cutout never pushes the picture off center', () {
+    // 横握时摄像头/挖孔只在屏幕一侧（`insets.left` 或 `insets.right`）：
+    // 画面必须按整窗居中、黑边左右等宽，否则整块画面会被推向另一侧。
+    for (final insets in [
+      const EdgeInsets.only(left: 44),
+      const EdgeInsets.only(right: 44),
+      const EdgeInsets.symmetric(horizontal: 32),
+    ]) {
+      final result = PlayerVideoLayout.calculate(
+        window: const Size(800, 400),
+        insets: insets,
+        videoSize: const Size(1080, 1920),
+        fit: VideoFit.contain,
+        fullScreen: true,
+      );
+      expect(result.viewport, Offset.zero & const Size(800, 400));
+      expect(result.video.center.dx, closeTo(400, .01));
+      expect(
+        result.video.left,
+        closeTo(800 - result.video.right, .01),
+        reason: '左右黑边必须等宽（insets: $insets）',
+      );
+    }
+  });
+
+  group('split geometry', () {
+    const phone = Size(407, 904);
+    const phoneInsets = EdgeInsets.only(top: 39, bottom: 16);
+
+    test('a wide source sizes the top half by its own aspect', () {
+      final height = PlayerVideoLayout.splitTopHeight(
+        window: phone,
+        insets: phoneInsets,
+        videoSize: const Size(1920, 1080),
+      );
+      final available = 904 - phoneInsets.vertical;
+      // 407 / (16/9) ≈ 228.9：横屏片源按宽度铺满，上半区自然高度。
+      expect(height, closeTo(407 / (16 / 9), .5));
+      expect(height, greaterThanOrEqualTo(available * .22));
+      expect(height, lessThanOrEqualTo(available * .5));
+    });
+
+    test('a portrait source leaves at least half the height to the panel', () {
+      final height = PlayerVideoLayout.splitTopHeight(
+        window: phone,
+        insets: phoneInsets,
+        videoSize: const Size(1080, 1920),
+      );
+      final available = 904 - phoneInsets.vertical;
+      // 竖屏片源最多 4:3 高，且不超过可用高度的 50%。
+      expect(height, closeTo(available * .42, .5));
+      expect(height, lessThanOrEqualTo(available * .5));
+    });
+
+    test('a short window still leaves a usable video box', () {
+      final height = PlayerVideoLayout.splitTopHeight(
+        window: const Size(320, 260),
+        insets: EdgeInsets.zero,
+        videoSize: const Size(1920, 1080),
+      );
+      expect(height, greaterThanOrEqualTo(96));
+      expect(height, lessThanOrEqualTo(130));
+    });
+
+    test('an empty window yields no split boxes', () {
+      expect(
+        PlayerVideoLayout.splitTopHeight(
+          window: Size.zero,
+          insets: EdgeInsets.zero,
+          videoSize: const Size(1920, 1080),
+        ),
+        0,
+      );
+      expect(
+        PlayerVideoLayout.splitLeftWidth(
+          window: Size.zero,
+          insets: EdgeInsets.zero,
+        ),
+        0,
+      );
+    });
+
+    test('left-right split keeps the panel between 32% and 45% wide', () {
+      final video = PlayerVideoLayout.splitLeftWidth(
+        window: const Size(900, 420),
+        insets: EdgeInsets.zero,
+      );
+      // 900 宽：面板 38% = 342，视频 558。
+      expect(video, closeTo(558, .5));
+      expect(900 - video, closeTo(342, .5));
+
+      final narrow = PlayerVideoLayout.splitLeftWidth(
+        window: const Size(600, 360),
+        insets: EdgeInsets.zero,
+      );
+      // 窄屏面板 44% = 264，视频 336。
+      expect(narrow, closeTo(336, .5));
+      expect(600 - narrow, closeTo(264, .5));
+    });
+
+    test('left-right split measures the window without the safe insets', () {
+      final video = PlayerVideoLayout.splitLeftWidth(
+        window: const Size(900, 420),
+        insets: const EdgeInsets.symmetric(horizontal: 44),
+      );
+      // 可用宽 812，面板 38% = 308.56，视频 503.44。
+      expect(video, closeTo(812 - 812 * .38, .5));
+    });
+
+    test('compact layout does not reserve the portrait chrome margins', () {
+      const window = Size(407, 229);
+      final compact = PlayerVideoLayout.calculate(
+        window: window,
+        insets: EdgeInsets.zero,
+        videoSize: const Size(1920, 1080),
+        fit: VideoFit.contain,
+        compact: true,
+      );
+      final immersive = PlayerVideoLayout.calculate(
+        window: window,
+        insets: EdgeInsets.zero,
+        videoSize: const Size(1920, 1080),
+        fit: VideoFit.contain,
+      );
+      expect(compact.viewport, Offset.zero & window);
+      // 整屏形态给信息层/运输条留 44 + 163，分屏盒子里全部还给画面。
+      expect(immersive.viewport.height, lessThan(compact.viewport.height));
+      expect(compact.video.height, closeTo(window.height, .5));
+    });
   });
 }

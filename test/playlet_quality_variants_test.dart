@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/widgets/player/playlet_more_panel.dart';
+import 'package:fqapp/widgets/player/playlet_option_sheet.dart';
 
 void main() {
   group('EpisodeSource variants parsing', () {
@@ -32,7 +33,10 @@ void main() {
       });
       expect(source.variants.map((v) => v.name).toList(), ['720P', '540P']);
       expect(source.variants[1].keyHex, 'bb');
-      expect(source.withVariant(source.variants[1]).url, 'https://cdn.example/540.mp4');
+      expect(
+        source.withVariant(source.variants[1]).url,
+        'https://cdn.example/540.mp4',
+      );
       expect(source.withVariant(source.variants[1]).keyHex, 'bb');
       // 档位列表跟随副本，切档后面板仍能再切回。
       expect(source.withVariant(source.variants[1]).variants.length, 2);
@@ -46,7 +50,7 @@ void main() {
     });
   });
 
-  group('PlayletMorePanel quality row', () {
+  group('PlayletMorePanel quality entry row', () {
     final variants = [
       const EpisodeVariant(
         name: '720P',
@@ -64,9 +68,8 @@ void main() {
 
     Future<void> openPanel(
       WidgetTester tester, {
-      required List<EpisodeVariant> qualityVariants,
-      String? currentQualityUrl,
-      ValueChanged<EpisodeVariant>? onQualitySelected,
+      String? qualityLabel,
+      VoidCallback? onOpenQuality,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -77,13 +80,11 @@ void main() {
                   onPressed: () => showModalBottomSheet<void>(
                     context: context,
                     builder: (_) => PlayletMorePanel(
-                      rate: 1.0,
                       fillScreen: false,
                       defaultMute: true,
                       danmakuEnabled: false,
-                      qualityVariants: qualityVariants,
-                      currentQualityUrl: currentQualityUrl,
-                      onQualitySelected: onQualitySelected,
+                      qualityLabel: qualityLabel,
+                      onOpenQuality: onOpenQuality,
                     ),
                   ),
                   child: const Text('open'),
@@ -98,32 +99,66 @@ void main() {
     }
 
     testWidgets('hides the row for a single-stream episode', (tester) async {
-      await openPanel(
-        tester,
-        qualityVariants: const [],
-        onQualitySelected: (_) {},
-      );
+      // 官方 `oi3/k.P()` 门在宿主侧：单流不传回调，整行不出现。
+      await openPanel(tester);
       expect(find.text('清晰度'), findsNothing);
     });
 
-    testWidgets('shows the row with the current rendition and selects another',
-        (tester) async {
-      EpisodeVariant? picked;
+    testWidgets('shows the current rendition and hands the tap to the host', (
+      tester,
+    ) async {
+      var opened = 0;
       await openPanel(
         tester,
-        qualityVariants: variants,
-        currentQualityUrl: 'https://cdn.example/720.mp4',
-        onQualitySelected: (v) => picked = v,
+        qualityLabel: '720P',
+        onOpenQuality: () => opened++,
       );
       expect(find.text('清晰度'), findsOneWidget);
-      // 档位列表默认收起，行尾显示当前档名。
-      expect(find.text('720P'), findsOneWidget);
+      // 档位不再内联铺开：行尾只写当前档，点开交给宿主（档位弹层）。
+      expect(find.text('540P'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-more-quality-value')),
+        findsOneWidget,
+      );
       await tester.tap(find.text('清晰度'));
       await tester.pumpAndSettle();
-      // 展开后两档都可见，当前档仅一行（行尾名收起后才出现）。
+      expect(opened, 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the picker lists every rendition and returns the pick', (
+      tester,
+    ) async {
+      EpisodeVariant? picked;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: TextButton(
+                  onPressed: () async {
+                    picked = await showPlayletQualitySheet(
+                      context,
+                      variants: variants,
+                      currentUrl: 'https://cdn.example/720.mp4',
+                    );
+                  },
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('player-quality-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('720P'), findsOneWidget);
       expect(find.text('540P'), findsOneWidget);
-      expect(find.byKey(const ValueKey('player-more-quality-1')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('player-more-quality-1')));
+      await tester.tap(find.byKey(const ValueKey('player-quality-sheet-1')));
       await tester.pumpAndSettle();
       expect(picked?.name, '540P');
       expect(picked?.keyHex, 'bb');

@@ -499,10 +499,13 @@ class _PlayletDanmakuLayerState extends State<PlayletDanmakuLayer>
   Widget _bubble(PlayletComment entry) => Container(
     key: ValueKey('danmaku-${entry.id}'),
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-    decoration: BoxDecoration(
-      color: const Color(0x66000000),
-      borderRadius: BorderRadius.circular(4),
-    ),
+    // 「弹幕背景透明」开后只留文字与描边阴影，压在亮画面上也不糊。
+    decoration: widget.settings.transparentBackground
+        ? null
+        : BoxDecoration(
+            color: const Color(0x66000000),
+            borderRadius: BorderRadius.circular(4),
+          ),
     child: Text(
       entry.text,
       maxLines: 1,

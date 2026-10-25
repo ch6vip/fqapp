@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,43 +81,44 @@ void main() {
     await second.dispose();
   });
 
-  testWidgets('an unknown size pins landscape and a late size changes nothing', (
-    tester,
-  ) async {
-    final orientations = _OrientationLog()..install(tester);
-    // Starts unknown, exactly like a player created for the next episode.
-    final player = FakeNativePlayer(width: 0, height: 0);
+  testWidgets(
+    'an unknown size pins landscape and a late size changes nothing',
+    (tester) async {
+      final orientations = _OrientationLog()..install(tester);
+      // Starts unknown, exactly like a player created for the next episode.
+      final player = FakeNativePlayer(width: 0, height: 0);
 
-    await tester.pumpWidget(_app(player));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('全屏'));
-    await tester.pumpAndSettle();
-    // 尺寸未知也直接请求横屏：官方全屏是独立横屏 Activity，不按片源尺寸决定。
-    expect(orientations.last, isNotNull);
-    expect(
-      orientations.last!.every(
-        (value) => value.startsWith('DeviceOrientation.landscape'),
-      ),
-      isTrue,
-    );
-    expect(orientations.requests.length, 1);
+      await tester.pumpWidget(_app(player));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('全屏'));
+      await tester.pumpAndSettle();
+      // 尺寸未知也直接请求横屏：官方全屏是独立横屏 Activity，不按片源尺寸决定。
+      expect(orientations.last, isNotNull);
+      expect(
+        orientations.last!.every(
+          (value) => value.startsWith('DeviceOrientation.landscape'),
+        ),
+        isTrue,
+      );
+      expect(orientations.requests.length, 1);
 
-    // 尺寸到达后方向不再变化（没有第二次请求）。
-    player.width = 1920;
-    player.height = 1080;
-    await tester.pumpWidget(_app(player));
-    await tester.pumpAndSettle();
-    expect(orientations.requests.length, 1);
-    expect(
-      orientations.last!.every(
-        (value) => value.startsWith('DeviceOrientation.landscape'),
-      ),
-      isTrue,
-    );
+      // 尺寸到达后方向不再变化（没有第二次请求）。
+      player.width = 1920;
+      player.height = 1080;
+      await tester.pumpWidget(_app(player));
+      await tester.pumpAndSettle();
+      expect(orientations.requests.length, 1);
+      expect(
+        orientations.last!.every(
+          (value) => value.startsWith('DeviceOrientation.landscape'),
+        ),
+        isTrue,
+      );
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    await player.dispose();
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    },
+  );
 
   testWidgets('a portrait video still goes fullscreen in landscape (#59)', (
     tester,
@@ -153,6 +156,71 @@ void main() {
     expect(orientations.last, isEmpty);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await player.dispose();
+  });
+
+  testWidgets('back leaves fullscreen and pins the window to portrait', (
+    tester,
+  ) async {
+    // 返回键的语义是「退出横屏、回到原来的竖屏页」。只放开朝向的话，仍横握
+    // 的设备会立刻转回横屏，看起来像「按返回反而进了横屏选集」。
+    final orientations = _OrientationLog()..install(tester);
+    final player = FakeNativePlayer(width: 1920, height: 1080);
+
+    await tester.pumpWidget(_app(player));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('全屏'));
+    await tester.pumpAndSettle();
+    expect(orientations.pinnedPortraitOnly, isFalse);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(orientations.last, ['DeviceOrientation.portraitUp']);
+
+    // 退出播放页要放开这把竖屏锁，后面的页面不能跟着被锁住。
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(orientations.last, isEmpty);
+    await player.dispose();
+  });
+
+  testWidgets('pushing another route suspends the portrait pin', (
+    tester,
+  ) async {
+    // 竖屏钉是引擎级的：不随路由释放的话，从分屏面板 push 的详情 / 听剧页
+    // 会一直被锁在竖屏，直到播放页被 pop。
+    final orientations = _OrientationLog()..install(tester);
+    final player = FakeNativePlayer(width: 1920, height: 1080);
+
+    await tester.pumpWidget(_app(player));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('全屏'));
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(orientations.last, ['DeviceOrientation.portraitUp']);
+
+    final navigator = Navigator.of(
+      tester.element(find.byType(VideoPlayerChrome)),
+    );
+    unawaited(
+      navigator.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('详情')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('详情'), findsOneWidget);
+    expect(orientations.last, isEmpty);
+
+    navigator.pop();
+    await tester.pumpAndSettle();
+    expect(orientations.last, ['DeviceOrientation.portraitUp']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(orientations.last, isEmpty);
     await player.dispose();
   });
 }

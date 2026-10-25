@@ -16,6 +16,7 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/digg_store.dart';
+import 'package:fqapp/services/drama_channel_preferences.dart';
 import 'package:fqapp/services/drama_mute_preferences.dart';
 import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
@@ -191,6 +192,8 @@ void main() {
   // has to exist before the first build.
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    // 频道选择是进程级静态态：别的用例切过频道会带进本页的冷启动恢复。
+    DramaChannelPreferences.reset();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('fqapp/native_player'),
@@ -768,20 +771,23 @@ void main() {
     // 浅色支没有取消行（官方 aae 布局同款）。
     expect(find.text('取消'), findsNothing);
 
-    // 选 1.25x：药丸点击立即回传（官方 jj3/i.e 语义），feed 播放器生效并
-    // 写入全局速率配置（全页播放页读同一份）。面板退场动画跨帧推进。
-    // 官方 6 档 + 1x 带「（默认）」，药丸轨道需要横向滚动，先滚到目标档再点。
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('player-more-light-rate-1.25')),
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('player-more-light-rate-1.25')));
+    // 选 1.25x：面板的「倍速」入口行先收起面板，再级联开档位弹层，选中
+    // 即落地并写入全局速率配置（全页播放页读同一份）。
+    await tester.tap(find.text('倍速'));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 300));
     await _flush(tester);
     await tester.pump(const Duration(milliseconds: 600));
     await _flush(tester);
     expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
+    expect(find.byKey(const ValueKey('player-rate-sheet')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('player-rate-sheet-2')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 600));
+    await _flush(tester);
+    expect(find.byKey(const ValueKey('player-rate-sheet')), findsNothing);
     expect(session.players.single.calls, contains('rate:1.25'));
     expect(await PlayerPreferences.loadPlaybackRate(), 1.25);
     // 面板选速不是快进：速率≠1 也不出现「2倍速快进中」。
@@ -927,11 +933,18 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await _flush(tester);
     expect(find.text('清晰度'), findsOneWidget);
+    // 档位不再内联铺开：点入口行才开档位弹层。
+    expect(find.text('540P'), findsNothing);
+    await tester.tap(find.text('清晰度'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    expect(find.byKey(const ValueKey('player-quality-sheet')), findsOneWidget);
     expect(find.text('1080P'), findsOneWidget);
     expect(find.text('540P'), findsOneWidget);
 
     // 选 1080P（官方 bgw）：Toast 立即出，不等换流完成。
-    await tester.tap(find.byKey(const ValueKey('player-more-light-quality-0')));
+    await tester.tap(find.byKey(const ValueKey('player-quality-sheet-0')));
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('清晰度已成功切换至1080P'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 400));
@@ -939,7 +952,7 @@ void main() {
     await _flush(tester);
     await tester.pump(const Duration(milliseconds: 600));
     await _flush(tester);
-    expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
+    expect(find.byKey(const ValueKey('player-quality-sheet')), findsNothing);
     // 旧解码器销毁（换档不是入池），新解码器按所选档重建并回跳 30s。
     expect(session.players, hasLength(2));
     expect(session.players.first.calls, contains('dispose'));
