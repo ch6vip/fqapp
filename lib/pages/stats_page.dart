@@ -9,6 +9,7 @@ import '../services/book_open_preferences.dart';
 import '../services/library_store.dart';
 import '../services/poster_cache.dart';
 import '../services/media_history_store.dart';
+import '../widgets/stats/stats_overview_grid.dart';
 import 'detail_page.dart';
 
 /// Reading statistics page modeled after the legado ReadRecordFragment:
@@ -273,14 +274,9 @@ class _StatsPageState extends State<StatsPage> {
             widget.header!,
             const SizedBox(height: 16),
           ],
-          _dateHeader(),
-          const SizedBox(height: 18),
-          _OverviewCard(
-            today: _todayMinutes(),
-            month: _monthMinutes(),
-            total: _totalMinutes,
-            activeDays: _activeDays,
-          ),
+          // 日期与概览同属「这次统计」的数据摘要，共用一个卡片，使标题层级
+          // 与本页其它分区（红线 + 文字都在卡内）保持一致。
+          _Card(title: '阅读与视听统计', child: _summaryBody()),
           const SizedBox(height: 12),
           _Card(
             title: '阅读热力图',
@@ -305,6 +301,24 @@ class _StatsPageState extends State<StatsPage> {
           _RankCard(items: _rankItems.take(5).toList(), onMore: _showRank),
         ],
       ),
+    );
+  }
+
+  /// 日期选择 + 四项概览。两者都是「选中这一天的统计」摘要，放在同一个
+  /// 卡片里；日期块自己带点击手势，所以直接拼进 Column。
+  Widget _summaryBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _dateHeader(),
+        const SizedBox(height: 18),
+        _OverviewCard(
+          today: _todayMinutes(),
+          month: _monthMinutes(),
+          total: _totalMinutes,
+          activeDays: _activeDays,
+        ),
+      ],
     );
   }
 
@@ -526,61 +540,13 @@ class _OverviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final stats = <(String, String)>[
-      ('今日', today > 0 ? _formatDuring(today) : '--'),
-      ('本月', month > 0 ? _formatDuring(month) : '--'),
-      ('总计', _formatDuring(total)),
-      ('活跃天数', '$activeDays 天'),
-    ];
-    final scheme = Theme.of(context).colorScheme;
-    final scaler = MediaQuery.textScalerOf(context);
-    return _Card(
-      child: GridView(
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          mainAxisExtent: scaler.scale(20) * 1.2 + scaler.scale(12) * 1.2 + 24,
-        ),
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        children: [
-          for (final (label, value) in stats)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 19,
-                      height: 1.2,
-                      fontWeight: FontWeight.bold,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.2,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
+    return StatsOverviewGrid(
+      stats: [
+        (today > 0 ? _formatDuring(today) : '--', '今日'),
+        (month > 0 ? _formatDuring(month) : '--', '本月'),
+        (_formatDuring(total), '总计'),
+        ('$activeDays 天', '活跃天数'),
+      ],
     );
   }
 }

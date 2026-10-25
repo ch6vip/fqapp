@@ -15,8 +15,6 @@ class MinePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final palette = HomePalette.of(context);
 
     return Scaffold(
@@ -38,17 +36,11 @@ class MinePage extends StatelessWidget {
           ),
         ],
       ),
-      body: StatsPage(
-        header: _buildProfileHeader(context, scheme, palette),
-      ),
+      body: StatsPage(header: _buildProfileHeader(context, palette)),
     );
   }
 
-  Widget _buildProfileHeader(
-    BuildContext context,
-    ColorScheme scheme,
-    HomePalette palette,
-  ) {
+  Widget _buildProfileHeader(BuildContext context, HomePalette palette) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -102,10 +94,7 @@ class MinePage extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       '沉浸阅读，记录每一个好故事',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: palette.muted,
-                      ),
+                      style: TextStyle(fontSize: 12.5, color: palette.muted),
                     ),
                   ],
                 ),
@@ -203,27 +192,9 @@ class MinePage extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            Container(
-              width: 3.5,
-              height: 14,
-              margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(
-                color: HomePalette.accent,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Text(
-              '阅读与视听统计',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: palette.ink,
-              ),
-            ),
-          ],
-        ),
+        // 「阅读与视听统计」作为下面统计卡片的标题，交给 StatsPage 的 _Card 渲染：
+        // 那一层把红线 + 标题放在卡片内边距里，与本页其余分区一致。
+        // 这里不再自己画一份，否则同一节标题会出现两遍、且只有它是卡外的。
       ],
     );
   }
