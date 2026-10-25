@@ -157,7 +157,8 @@ class _ListenModePageState extends State<ListenModePage>
       await previous?.dispose();
       NativePlayer? created;
       try {
-        final player = (widget.playerFactory ?? NativePlayer.new)();
+        final player =
+            (widget.playerFactory ?? () => NativePlayer(audioOnly: true))();
         created = player;
         await player.create(url, keyHex);
         await player.setRate(_rate);

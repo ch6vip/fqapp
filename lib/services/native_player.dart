@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'app_log.dart';
+import 'audio_preferences.dart';
 import 'player_preferences.dart';
 
 // Codec metadata only: never log the whole platform payload or exception text.
@@ -58,6 +59,8 @@ class NativePlaybackException implements Exception {
 
 /// Flutter-side wrapper of the native ExoPlayer host.
 class NativePlayer {
+  NativePlayer({this.audioOnly = false});
+
   static const _channel = AppMethodChannel('fqapp/native_player');
   static const _events = AppEventChannel('fqapp/native_player/events');
   static const _methodTimeout = Duration(seconds: 10);
@@ -195,6 +198,11 @@ class NativePlayer {
   int _appliedSeekGeneration = 0;
   int _playWhenReadyGeneration = 0;
 
+  /// 是否纯音频（听书）。原生侧据此决定倍速用哪种变速实现：视频/短剧
+  /// 仍用 Media3 内建的 Sonic，否则视频倍速会跟着变（音频处理与视频渲染
+  /// 必须同步走同一套计时）。见 issue #129。
+  final bool audioOnly;
+
   int? get textureId => _textureId;
   int? get playerId => _playerId;
   bool get isCreated => _textureId != null && !_disposed;
@@ -278,6 +286,14 @@ class NativePlayer {
             // （以及冷启动）一直挂住。偏好由 `DecoderPreferenceCache` 在启动和
             // 设置变更时维护。
             'videoDecoder': DecoderPreferenceCache.current.name,
+            // 纯音频播放器才带上变速引擎：视频用内建 Sonic（音频处理与视频
+            // 渲染必须同步计时），只有听书能选系统混音器变速（issue #129）。
+            // 值取内存里的偏好（启动时 load 过），理由与解码器偏好相同：
+            // 起播路径上不能 await 读盘。
+            if (audioOnly) ...{
+              'audioOnly': true,
+              'audioRateEngine': AudioRateEngineCache.current.name,
+            },
           })
           .then((result) async {
             final rawPlayerId = result?['playerId'];

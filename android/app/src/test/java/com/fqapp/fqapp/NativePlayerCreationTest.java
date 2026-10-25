@@ -107,7 +107,7 @@ public class NativePlayerCreationTest {
             when(producer.id()).thenReturn(23L);
             when(stream.open(URL, KEY)).thenReturn(7L);
             when(stream.size(7L)).thenReturn(100L);
-            plugin = new NativePlayerPlugin(stream, (context, decoder) -> player);
+            plugin = new NativePlayerPlugin(stream, (context, options) -> player);
             plugin.onAttachedToEngine(binding);
         }
 

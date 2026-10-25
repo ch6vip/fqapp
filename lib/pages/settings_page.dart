@@ -72,6 +72,7 @@ class SettingsPage extends StatelessWidget {
         subtitle: '后台播放、通知栏控制与系统朗读',
         items: [
           _backgroundAudioItem(),
+          if (!isWindowsDesktop) _audioRateEngineItem(),
           SettingsItem(
             icon: LucideIcons.mic,
             title: '系统朗读',
@@ -498,6 +499,70 @@ class SettingsPage extends StatelessWidget {
       unawaited(AudioPreferences.instance.setBackgroundPlayback(!current));
     },
   );
+
+  /// 听书倍速的变速实现（issue #129）：默认交给系统混音器，高倍速下明显
+  /// 没那么「电音」；内建 Sonic 作为厂商实现异常时的回退档。
+  ///
+  /// 与「视频解码器」同理：audio sink 在 build 时定型，新建播放器才生效。
+  SettingsItem _audioRateEngineItem() => SettingsItem(
+    icon: LucideIcons.gauge,
+    title: '听书变速引擎',
+    subtitle: '高倍速发毛、像电音时可在两档间切换，重新进入听书页生效',
+    trailingBuilder: (context) => ValueListenableBuilder<AudioRateEngine>(
+      valueListenable: AudioPreferences.instance.rateEngine,
+      builder: (context, value, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value.label,
+            style: TextStyle(color: Theme.of(context).colorScheme.outline),
+          ),
+          const SizedBox(width: 4),
+          const Icon(LucideIcons.chevron_right, size: 18),
+        ],
+      ),
+    ),
+    onTap: (context, setState) => _showAudioRateEngineDialog(context, setState),
+  );
+
+  Future<void> _showAudioRateEngineDialog(
+    BuildContext context,
+    StateSetter refresh,
+  ) async {
+    final current = AudioPreferences.instance.rateEngine.value;
+    final selected = await showDialog<AudioRateEngine>(
+      context: context,
+      builder: (c) => SimpleDialog(
+        title: const Text('听书变速引擎'),
+        children: [
+          RadioGroup<AudioRateEngine>(
+            groupValue: current,
+            onChanged: (v) {
+              if (v != null) Navigator.pop(c, v);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final value in AudioRateEngine.values)
+                  RadioListTile<AudioRateEngine>(
+                    value: value,
+                    title: Text(value.label),
+                    subtitle: Text(
+                      value == AudioRateEngine.platform
+                          ? '系统混音器变速，高倍速下更接近 1.0× 原声（默认）'
+                          : 'Media3 内建变速，不依赖系统实现，保底用',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    await AudioPreferences.instance.setRateEngine(selected);
+    refresh(() {});
+  }
 
   // ── 短剧 ──────────────────────────────────────────────────────────────
 
