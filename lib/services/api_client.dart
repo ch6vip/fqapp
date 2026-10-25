@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../models/audio_extra.dart';
+import '../models/audio_time_track.dart';
 import '../models/home_cell.dart';
 import '../models/author_profile.dart';
 import '../models/backend_resource_url.dart';
@@ -657,8 +658,41 @@ class ApiClient {
     }
   }
 
-  /// Chapter ideas (段评 / 章评): per-paragraph counts and comment ids.
+  /// 听书 → 正文的同步映射（官方 AudioTimePoint）。
   ///
+  /// 阅读页的朗读高亮靠它：上游按音频毫秒直出「第几段第几个字符」，客户端
+  /// 不需要做句子匹配。没有生成过时间轴的书返回 [AudioTimeTrack.empty]，
+  /// 这是正常应答而不是失败。
+  ///
+  /// [reqType] 默认 3：实测只有 3 会返回可用的偏移。1 对无 TTS 的书回
+  /// `101049`，2 回 `101002`，4 虽然 `code:0` 但偏移全为 0。
+  Future<AudioTimeTrack> chapterTimePoints(
+    String bookId,
+    String itemId, {
+    String toneId = '0',
+    int reqType = 3,
+  }) async {
+    try {
+      final response = await _get(
+        _url('/api/v1/chapters/${Uri.encodeComponent(itemId)}/timepoints', {
+          'book_id': bookId,
+          'tone_id': toneId,
+          'req_type': '$reqType',
+        }),
+      );
+      final status = response.statusCode;
+      final bytes = response.bodyBytes;
+      return await Isolate.run(() {
+        final payload = _decodeEnvelope(status, bytes);
+        if (isUnavailableCode(payload['code'])) return AudioTimeTrack.empty;
+        return AudioTimeTrack.fromPayload(payload, audioItemId: itemId);
+      });
+    } on Exception {
+      return AudioTimeTrack.empty;
+    }
+  }
+
+  /// Chapter ideas (段评 / 章评): per-paragraph counts and comment ids.
   /// These come from the item-ideas service, not the book review list — the
   /// latter rejects the item and paragraph comment types outright. The payload
   /// carries counts and comment ids only; comment bodies need a second call
