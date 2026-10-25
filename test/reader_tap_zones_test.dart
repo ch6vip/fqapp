@@ -31,6 +31,21 @@ void main() {
     }
   });
 
+  test('fullscreen preset leaves only the center cell as menu', () {
+    expect(fullscreenReaderTapZones, hasLength(9));
+    for (var i = 0; i < 9; i++) {
+      expect(
+        fullscreenReaderTapZones[i],
+        i == 4 ? ReaderTapZoneAction.menu : ReaderTapZoneAction.nextPage,
+      );
+    }
+    // The preset already keeps a menu zone, so the guard leaves it as is.
+    expect(
+      ensureReaderTapZonesHaveMenu(fullscreenReaderTapZones),
+      fullscreenReaderTapZones,
+    );
+  });
+
   test('tap position resolves to the 3x3 cell', () {
     const zones = defaultReaderTapZones;
     ReaderTapZoneAction at(double dx, double dy) =>

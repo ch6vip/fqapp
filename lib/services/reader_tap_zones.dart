@@ -58,6 +58,21 @@ const List<ReaderTapZoneAction> oneHandReaderTapZones = [
   ReaderTapZoneAction.nextPage,
 ];
 
+/// 全屏翻页九宫格：只有正中一格是菜单，其余八格全部下一页。
+/// 来自 #147 报告人附的图：单手使用时点屏幕下半部分（乃至除正中外的
+/// 任何位置）都翻页，只有正中区域才打开菜单。
+const List<ReaderTapZoneAction> fullscreenReaderTapZones = [
+  ReaderTapZoneAction.nextPage,
+  ReaderTapZoneAction.nextPage,
+  ReaderTapZoneAction.nextPage,
+  ReaderTapZoneAction.nextPage,
+  ReaderTapZoneAction.menu,
+  ReaderTapZoneAction.nextPage,
+  ReaderTapZoneAction.nextPage,
+  ReaderTapZoneAction.nextPage,
+  ReaderTapZoneAction.nextPage,
+];
+
 /// 把九宫格规整为 9 个合法动作；长度不对或含未知值时回落默认。
 /// 接受动作本身（内存里的九宫格）与动作名（持久化读回的字符串）。
 List<ReaderTapZoneAction> normalizeReaderTapZones(List<Object?>? raw) {

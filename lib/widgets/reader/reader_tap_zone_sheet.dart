@@ -115,33 +115,7 @@ class _ReaderTapZoneEditorState extends State<_ReaderTapZoneEditor> {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white54),
-                  ),
-                  onPressed: () =>
-                      _applyPreset(defaultReaderTapZones),
-                  child: const Text('默认'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white54),
-                  ),
-                  onPressed: () =>
-                      _applyPreset(oneHandReaderTapZones),
-                  child: const Text('单手模式'),
-                ),
-              ),
-            ],
-          ),
+          _PresetButtons(onApplyPreset: _applyPreset),
           const SizedBox(height: 8),
           Text(
             hasMenu
@@ -162,6 +136,39 @@ class _ReaderTapZoneEditorState extends State<_ReaderTapZoneEditor> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 预设按钮行：默认 / 单手模式 / 全屏翻页，一键套用整套九宫格。
+class _PresetButtons extends StatelessWidget {
+  const _PresetButtons({required this.onApplyPreset});
+
+  final ValueChanged<List<ReaderTapZoneAction>> onApplyPreset;
+
+  Widget _button(String label, List<ReaderTapZoneAction> preset) {
+    return Expanded(
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.white,
+          side: const BorderSide(color: Colors.white54),
+        ),
+        onPressed: () => onApplyPreset(preset),
+        child: Text(label),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _button('默认', defaultReaderTapZones),
+        const SizedBox(width: 12),
+        _button('单手模式', oneHandReaderTapZones),
+        const SizedBox(width: 12),
+        _button('全屏翻页', fullscreenReaderTapZones),
+      ],
     );
   }
 }
