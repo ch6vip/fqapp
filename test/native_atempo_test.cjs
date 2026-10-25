@@ -17,26 +17,20 @@ const root = path.resolve(__dirname, '..');
 const outputDirectory = path.join(root, 'build', 'native-tests');
 const executable = path.join(outputDirectory,
   process.platform === 'win32' ? 'atempo-vectors.exe' : 'atempo-vectors');
-const resampleExecutable = path.join(outputDirectory,
-  process.platform === 'win32' ? 'resample-vectors.exe' : 'resample-vectors');
 const compiler = process.env.NATIVE_CC || process.env.CC || 'cc';
 
-function compile() {
-  mkdirSync(outputDirectory, { recursive: true });
-  const arguments_ = /(?:^|[\\/])zig(?:\.exe)?$/i.test(compiler) ? ['cc'] : [];
-  arguments_.push('-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
-    // kissfft 是原样 vendored 的第三方源码，它自带一处有符号比较告警。
-    '-Wno-sign-compare',
-    ...(process.env.NATIVE_CFLAGS || '').split(/\s+/).filter(Boolean),
-    path.join(root, 'native', 'tests', 'atempo_vectors.c'),
-    path.join(root, 'native', 'audio_tempo', 'sp_atempo.c'),
-    path.join(root, 'native', 'third_party', 'kissfft', 'kiss_fft.c'),
-    path.join(root, 'native', 'third_party', 'kissfft', 'kiss_fftr.c'),
+/** 编译一个驱动。sources 是相对仓库根的源文件列表。 */
+function build(name, sources, extraArgs) {
+  const compilerFlags = /(?:^|[\/])zig(?:\.exe)?$/i.test(compiler) ? ['cc'] : [];
+  const output = path.join(outputDirectory, name);
+  compilerFlags.push('-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+    ...(extraArgs || []),
+    ...sources.map((source) => path.join(root, source)),
     '-I', path.join(root, 'native', 'audio_tempo'),
     '-I', path.join(root, 'native', 'third_party', 'kissfft'),
     '-lm',
-    '-o', executable);
-  const compiled = spawnSync(compiler, arguments_, {
+    '-o', output);
+  const compiled = spawnSync(compiler, compilerFlags, {
     cwd: root,
     encoding: 'utf8',
     timeout: 180_000,
@@ -45,6 +39,34 @@ function compile() {
   assert.equal(compiled.error, undefined,
     `Set NATIVE_CC to a host C compiler (cc, clang, gcc, zig). ${compiled.error || ''}`);
   assert.equal(compiled.status, 0, compiled.stderr || compiled.stdout);
+  return output;
+}
+
+const kissfftSources = [
+  'native/third_party/kissfft/kiss_fft.c',
+  'native/third_party/kissfft/kiss_fftr.c',
+];
+
+let resampleExecutable;
+let resumeExecutable;
+
+function compile() {
+  mkdirSync(outputDirectory, { recursive: true });
+  // kissfft 是原样 vendored 的第三方源码，它自带一处有符号比较告警。
+  build('atempo-vectors', [
+    'native/tests/atempo_vectors.c',
+    'native/audio_tempo/sp_atempo.c',
+    ...kissfftSources,
+  ], ['-Wno-sign-compare']);
+  resampleExecutable = build('resample-vectors', [
+    'native/tests/resample_vectors.c',
+    'native/audio_tempo/sp_resample.c',
+  ]);
+  resumeExecutable = build('flush-resume', [
+    'native/tests/flush_resume.c',
+    'native/audio_tempo/sp_atempo.c',
+    ...kissfftSources,
+  ], ['-Wno-sign-compare']);
 }
 
 before(compile);
@@ -189,4 +211,25 @@ test('长缓冲不溢出（相位是 64 位）', () => {
   const r = runResample(48000, 48000, 1, 440, 5); // 24 万帧
   assert.equal(r.out_frames, r.in_frames,
     `48k->48k 应逐帧恒等，实际 ${r.out_frames} vs ${r.in_frames}`);
+});
+
+test('flush 之后继续喂输入仍能产帧（seek / 循环播放）', () => {
+  // 回归：yae_flush 把状态置为 YAE_FLUSH_OUTPUT，而 yae_apply 只匹配
+  // LOAD/ADJUST/RELOAD/OVERLAP_ADD 四种，flush 之后再喂数据会卡死状态机
+  // （修复前这个驱动直接超时）。用户侧表现为「拖完进度条之后没声音」。
+  const result = spawnSync(resumeExecutable, [], {
+    encoding: 'utf8', timeout: 60_000, windowsHide: true,
+  });
+  assert.equal(result.status, 0, `driver failed: ${result.stderr}`);
+  const values = {};
+  for (const line of result.stdout.split('\n')) {
+    const match = /^([a-z_]+)=(-?[\d.]+)\s*$/.exec(line.trim());
+    if (match) values[match[1]] = Number(match[2]);
+  }
+  assert.ok(values.first_segment_frames > 0, '第一段应当产出音频');
+  assert.ok(values.second_segment_frames > 0,
+    `flush 之后必须还能产帧，实际 ${values.second_segment_frames}`);
+  const ratio = values.second_segment_frames / values.first_segment_frames;
+  assert.ok(ratio > 0.8 && ratio < 1.2,
+    `flush 前后产出量差异过大: ${ratio.toFixed(3)}`);
 });
