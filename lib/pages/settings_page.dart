@@ -10,6 +10,7 @@ import '../services/app_theme.dart';
 import '../services/audio_preferences.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
+import '../services/player_layout_preferences.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
@@ -37,15 +38,17 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: LucideIcons.palette,
         title: '外观',
-        subtitle: '主题模式、OLED 纯黑',
+        subtitle: '主题模式、OLED 纯黑、播放页布局',
         // 用 builder 而不是固定 items：切到深色 / 切回浅色后，分类页重建
         // 时会重新判定，OLED 行不必退出重进就能出现或消失。
+        // 播放页布局只在手机端有效（Windows 由 DesktopVideoChrome 承担）。
         itemsBuilder: (context) => [
           _themeModeItem(),
           if (isDarkAppearance(
             systemBrightness: MediaQuery.platformBrightnessOf(context),
           ))
             _oledModeItem(),
+          if (!isWindowsDesktop) _playerLayoutItem(),
         ],
       ),
       SettingsCategory(
@@ -393,6 +396,83 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
+  /// 播放页布局：沉浸式 / 横屏片源自动分屏 / 始终分屏。
+  ///
+  /// 只影响短剧播放页，Windows 隐藏（桌面已有 304dp 停靠选集面板）。
+  SettingsItem _playerLayoutItem() => SettingsItem(
+    icon: Icons.vertical_split_rounded,
+    title: '播放页布局',
+    subtitle: '短剧可分屏显示选集和评论，横屏时左右分栏',
+    trailingBuilder: (context) => ValueListenableBuilder<PlayerLayoutMode>(
+      valueListenable: PlayerLayoutPreferences.mode,
+      builder: (context, value, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value.shortLabel,
+            style: TextStyle(color: Theme.of(context).colorScheme.outline),
+          ),
+          const SizedBox(width: 4),
+          const Icon(LucideIcons.chevron_right, size: 18),
+        ],
+      ),
+    ),
+    onTap: (context, setState) => _showPlayerLayoutDialog(context),
+  );
+
+  Future<void> _showPlayerLayoutDialog(BuildContext context) async {
+    final current = PlayerLayoutPreferences.mode.value;
+    final selected = await showDialog<PlayerLayoutMode>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('播放页布局'),
+        children: [
+          RadioGroup<PlayerLayoutMode>(
+            groupValue: current,
+            onChanged: (value) {
+              if (value != null) Navigator.pop(dialogContext, value);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final mode in PlayerLayoutMode.values)
+                  RadioListTile<PlayerLayoutMode>(
+                    value: mode,
+                    title: Text(mode.label),
+                    subtitle: Text(mode.description),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    await _setPlayerLayout(context, selected);
+  }
+
+  Future<void> _setPlayerLayout(
+    BuildContext context,
+    PlayerLayoutMode value,
+  ) async {
+    final previous = PlayerLayoutPreferences.mode.value;
+    if (previous == value) return;
+    PlayerLayoutPreferences.mode.value = value;
+    try {
+      if (!await PlayerLayoutPreferences.save(value)) {
+        throw StateError('Player layout preference was not saved');
+      }
+    } catch (_) {
+      // 落盘失败就退回原选择，避免界面显示与实际不一致。
+      PlayerLayoutPreferences.mode.value = previous;
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('未能保存播放页布局，已恢复原设置')));
+      }
+    }
+  }
+
   // ── 阅读 ──────────────────────────────────────────────────────────────
 
   /// issue #19 第 3 条：点书跳过详情页，直接按上次进度进阅读器（小说/漫画）。
@@ -407,8 +487,7 @@ class SettingsPage extends StatelessWidget {
       valueListenable: PlayerPreferences.floatingWindow,
       builder: (context, value, _) => Switch(
         value: value,
-        onChanged: (enabled) =>
-            unawaited(_setFloatingWindow(context, enabled)),
+        onChanged: (enabled) => unawaited(_setFloatingWindow(context, enabled)),
       ),
     ),
     onTap: (context, setState) {
@@ -429,9 +508,7 @@ class SettingsPage extends StatelessWidget {
     await NativePlayer.requestOverlayPermission();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('请在系统设置中允许“显示在其他应用的上层”，然后回来再开启'),
-        ),
+        const SnackBar(content: Text('请在系统设置中允许“显示在其他应用的上层”，然后回来再开启')),
       );
     }
   }
@@ -448,9 +525,8 @@ class SettingsPage extends StatelessWidget {
       valueListenable: BookOpenPreferences.instance.shelfDirectReader,
       builder: (context, value, _) => Switch(
         value: value,
-        onChanged: (v) => unawaited(
-          BookOpenPreferences.instance.setShelfDirectReader(v),
-        ),
+        onChanged: (v) =>
+            unawaited(BookOpenPreferences.instance.setShelfDirectReader(v)),
       ),
     ),
     onTap: (context, setState) {
@@ -467,17 +543,13 @@ class SettingsPage extends StatelessWidget {
       valueListenable: BookOpenPreferences.instance.discoverDirectReader,
       builder: (context, value, _) => Switch(
         value: value,
-        onChanged: (v) => unawaited(
-          BookOpenPreferences.instance.setDiscoverDirectReader(v),
-        ),
+        onChanged: (v) =>
+            unawaited(BookOpenPreferences.instance.setDiscoverDirectReader(v)),
       ),
     ),
     onTap: (context, setState) {
-      final current =
-          BookOpenPreferences.instance.discoverDirectReader.value;
-      unawaited(
-        BookOpenPreferences.instance.setDiscoverDirectReader(!current),
-      );
+      final current = BookOpenPreferences.instance.discoverDirectReader.value;
+      unawaited(BookOpenPreferences.instance.setDiscoverDirectReader(!current));
     },
   );
   // ── 听书 ──────────────────────────────────────────────────────────────

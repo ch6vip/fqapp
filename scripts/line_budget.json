@@ -1,24 +1,24 @@
 {
   "files": {
-    "lib/main.dart": 727,
+    "lib/main.dart": 752,
     "lib/models/media_item.dart": 1489,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_page.dart": 1926,
     "lib/pages/category_page.dart": 604,
     "lib/pages/comic_reader_page.dart": 955,
     "lib/pages/detail_page.dart": 1663,
-    "lib/pages/drama_page.dart": 4771,
+    "lib/pages/drama_page.dart": 4971,
     "lib/pages/fanqie_history_import_page.dart": 624,
     "lib/pages/home_page.dart": 586,
     "lib/pages/home_provider.dart": 1260,
     "lib/pages/library_page.dart": 1673,
     "lib/pages/log_viewer_page.dart": 757,
-    "lib/pages/player_page.dart": 1746,
+    "lib/pages/player_page.dart": 1803,
     "lib/pages/rank_page.dart": 543,
     "lib/pages/reader_page.dart": 3650,
-    "lib/pages/search_page.dart": 1104,
+    "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
-    "lib/pages/settings_page.dart": 736,
+    "lib/pages/settings_page.dart": 808,
     "lib/pages/stats_page.dart": 1064,
     "lib/services/api_client.dart": 1732,
     "lib/services/app_log.dart": 617,
@@ -39,16 +39,15 @@
     "lib/widgets/detail/detail_reviews.dart": 566,
     "lib/widgets/detail/detail_sections.dart": 641,
     "lib/widgets/home/home_cell_blocks.dart": 1054,
-    "lib/widgets/player/playlet_danmaku_layer.dart": 566,
-    "lib/widgets/player/playlet_more_panel.dart": 565,
-    "lib/widgets/player/playlet_more_panel_light.dart": 585,
-    "lib/widgets/player/story_player_panel.dart": 1050,
+    "lib/widgets/player/player_split_panel.dart": 618,
+    "lib/widgets/player/playlet_danmaku_layer.dart": 569,
+    "lib/widgets/player/story_player_panel.dart": 1082,
     "lib/widgets/reader/reader_appearance_sheet.dart": 1153,
     "lib/widgets/reader/reader_chapter_layout.dart": 1085,
     "lib/widgets/reader/reader_ideas_sheet.dart": 691,
     "lib/widgets/reader/reader_paged_view.dart": 991,
     "lib/widgets/reader/reader_text_selection.dart": 591,
-    "lib/widgets/video_player_chrome.dart": 3217,
+    "lib/widgets/video_player_chrome.dart": 4832,
     "native/android/jni_bridge.c": 538,
     "native/audio_tempo/sp_atempo.c": 885,
     "native/crypto_core/mp4_cenc.c": 1117,
@@ -67,8 +66,8 @@
     "test/desktop_semantics_update_test.dart": 844,
     "test/detail_page_test.dart": 740,
     "test/discovery_pages_test.dart": 690,
-    "test/drama_inline_playback_test.dart": 1153,
-    "test/drama_page_test.dart": 1647,
+    "test/drama_inline_playback_test.dart": 1166,
+    "test/drama_page_test.dart": 1881,
     "test/home_page_test.dart": 707,
     "test/home_provider_test.dart": 1122,
     "test/imported_book_store_test.dart": 527,
@@ -76,9 +75,11 @@
     "test/library_store_test.dart": 657,
     "test/media_item_test.dart": 906,
     "test/native_player_test.dart": 517,
-    "test/playback_guest_regression_test.dart": 735,
+    "test/playback_guest_regression_test.dart": 744,
     "test/player_page_loading_test.dart": 669,
     "test/player_page_stability_test.dart": 562,
+    "test/player_split_layout_test.dart": 658,
+    "test/playlet_danmaku_layer_test.dart": 521,
     "test/reader_bubble_test.dart": 663,
     "test/reader_ideas_test.dart": 597,
     "test/reader_illustrations_test.dart": 1046,
@@ -87,11 +88,11 @@
     "test/reader_paragraph_actions_test.dart": 964,
     "test/search_page_test.dart": 865,
     "test/series_detail_page_test.dart": 865,
-    "test/video_player_chrome_test.dart": 1358
+    "test/video_player_chrome_test.dart": 2140
   },
   "functions": {
     "lib/main.dart::_RootShellState.build": {
-      "line": 448,
+      "line": 473,
       "lines": 278,
       "symbol": "Widget build(BuildContext context) {"
     },
@@ -122,7 +123,7 @@
     },
     "lib/pages/cached_books_page.dart::_CachedBooksPageState.build": {
       "line": 265,
-      "lines": 134,
+      "lines": 137,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/cached_dramas_page.dart::_CachedDramasPageState.build": {
@@ -146,54 +147,39 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaFeedCard.build": {
-      "line": 2271,
+      "line": 2483,
       "lines": 173,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaPageState.build": {
-      "line": 1241,
-      "lines": 160,
+      "line": 1354,
+      "lines": 166,
       "symbol": "Widget build(BuildContext context) {"
     },
-    "lib/pages/drama_page.dart::_FeedMessage.build": {
-      "line": 3405,
-      "lines": 143,
-      "symbol": "Widget build(BuildContext context) => ColoredBox("
-    },
-    "lib/pages/drama_page.dart::_FullscreenRoundButton.build": {
-      "line": 3353,
-      "lines": 195,
-      "symbol": "Widget build(BuildContext context) => ValueListenableBuilder<bool?>("
-    },
     "lib/pages/drama_page.dart::_HistoryCard.build": {
-      "line": 3809,
+      "line": 4016,
       "lines": 155,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_InfoPanelState.build": {
-      "line": 3082,
+      "line": 3292,
       "lines": 153,
       "symbol": "Widget build(BuildContext context) {"
     },
-    "lib/pages/drama_page.dart::_InlineVideoError.build": {
-      "line": 3666,
-      "lines": 106,
-      "symbol": "Widget build(BuildContext context) => Positioned.fill("
-    },
     "lib/pages/drama_page.dart::_LocalListState.build": {
-      "line": 4257,
+      "line": 4461,
       "lines": 105,
       "symbol": "Widget build(BuildContext context) {"
     },
-    "lib/pages/drama_page.dart::_RateHint.build": {
-      "line": 2762,
-      "lines": 116,
-      "symbol": "Widget build(BuildContext context) => AnimatedBuilder("
-    },
     "lib/pages/drama_page.dart::_SeekTrackState.build": {
-      "line": 2881,
-      "lines": 354,
+      "line": 3091,
+      "lines": 138,
       "symbol": "Widget build(BuildContext context) => LayoutBuilder("
+    },
+    "lib/pages/drama_page.dart::_TopBarState.build": {
+      "line": 2173,
+      "lines": 87,
+      "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/fanqie_history_import_page.dart::_FanqieHistoryImportPageState.build": {
       "line": 239,
@@ -215,11 +201,6 @@
       "lines": 88,
       "symbol": "Widget build(BuildContext context) {"
     },
-    "lib/pages/player_page.dart::_PlayerPageState.build": {
-      "line": 1526,
-      "lines": 92,
-      "symbol": "Widget build(BuildContext context) {"
-    },
     "lib/pages/rank_page.dart::_RankRow.build": {
       "line": 435,
       "lines": 107,
@@ -231,7 +212,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/search_page.dart::_SearchPageState.build": {
-      "line": 524,
+      "line": 531,
       "lines": 165,
       "symbol": "Widget build(BuildContext context) {"
     },
@@ -241,8 +222,8 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/settings_page.dart::SettingsPage.build": {
-      "line": 32,
-      "lines": 223,
+      "line": 33,
+      "lines": 225,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/stats_page.dart::_Heatmap.build": {
@@ -426,8 +407,8 @@
       "symbol": "Widget build(BuildContext context) => LayoutBuilder("
     },
     "lib/widgets/player/playlet_danmaku_settings.dart::_PlayletDanmakuSettingsPanelState.build": {
-      "line": 120,
-      "lines": 102,
+      "line": 156,
+      "lines": 115,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/player/playlet_discussion_tile.dart::PlayletDiscussionTile.build": {
@@ -436,13 +417,18 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/player/playlet_more_panel.dart::_PlayletMorePanelState.build": {
-      "line": 168,
-      "lines": 166,
+      "line": 75,
+      "lines": 107,
       "symbol": "Widget build(BuildContext context) => LayoutBuilder("
     },
     "lib/widgets/player/playlet_more_panel_light.dart::PlayletMorePanelLight.build": {
-      "line": 111,
-      "lines": 118,
+      "line": 103,
+      "lines": 151,
+      "symbol": "Widget build(BuildContext context) {"
+    },
+    "lib/widgets/player/playlet_more_panel_side.dart::PlayletMorePanelSide.build": {
+      "line": 210,
+      "lines": 115,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/player/playlet_quick_catalog_sheet.dart::_PlayletQuickCatalogSheetState.build": {
@@ -451,13 +437,13 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/player/story_player_panel.dart::_StoryEpisodeDrawerState.build": {
-      "line": 916,
-      "lines": 133,
+      "line": 945,
+      "lines": 136,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/player/story_player_panel.dart::_StoryPlayerPanelState.build": {
-      "line": 508,
-      "lines": 130,
+      "line": 521,
+      "lines": 146,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/player/story_seek_bar.dart::_StorySeekBarState.build": {
@@ -489,11 +475,6 @@
       "line": 70,
       "lines": 96,
       "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/video_player_chrome.dart::_VideoPlayerChromeState.build": {
-      "line": 1521,
-      "lines": 591,
-      "symbol": "Widget build(BuildContext context) => isWindowsDesktop"
     }
   }
 }

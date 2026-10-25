@@ -112,7 +112,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('player-clear-screen')));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+      // 清屏态：底栏「设置」进视频设置，底栏「倍速」开档位弹层。
+      await tester.tap(find.byKey(const ValueKey('player-settings-text')));
       await tester.pumpAndSettle();
       player.calls.clear();
       await tester.tap(find.byKey(const ValueKey('player-more-fill-row')));
@@ -127,14 +128,20 @@ void main() {
       );
       expect(await PlayerPanelPreferences.loadFillScreen(), isTrue);
       expect(PlayerPanelPreferences.defaultMute, isFalse);
-      await tester.tap(find.byKey(const ValueKey('player-more-rate-2.0')));
+      // 档位不铺在面板里：收面板后走底栏的档位弹层。
+      expect(find.byKey(const ValueKey('player-more-rate-row')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('player-more-cancel')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-rate-sheet-4')));
       await tester.pumpAndSettle();
       expect(player.calls, ['volume:1.0', 'rate:2.0']);
       expect(player.isPlaying, isFalse);
       expect(player.position, const Duration(seconds: 35));
       expect(find.text('恢复'), findsOneWidget);
       expect(await PlayerPreferences.loadPlaybackRate(), 2);
-      await tester.tap(find.byKey(const ValueKey('player-rate-text')));
+      await tester.tap(find.byKey(const ValueKey('player-settings-text')));
       await tester.pumpAndSettle();
       expect(
         tester

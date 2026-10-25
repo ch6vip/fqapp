@@ -27,8 +27,10 @@ import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
+import 'services/player_layout_preferences.dart';
 import 'services/backend_service.dart';
 import 'services/digg_store.dart';
+import 'services/drama_channel_preferences.dart';
 import 'services/drama_download_store.dart';
 import 'services/drama_downloader.dart';
 import 'services/fair_memory.dart';
@@ -46,10 +48,29 @@ import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/home/home_design.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // 绑定初始化与 runApp 必须处在同一个 Zone：此前 `ensureInitialized` 在
+  // Zone 外、`runApp` 在 `runZonedGuarded` 里，Flutter 每次冷启动都会断言
+  // 「Zone mismatch」并把它当成框架异常抛出来（真机 app.log 每次启动一条
+  // `[E] framework: Zone mismatch`，2026-10-25），把真正的异常淹没在启动
+  // 噪声里。因此整条启动流程收进同一个受保护的 Zone。
+  await runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    // 装配失败不许挡住界面：记一条错误后照常 runApp，各页面自行退化。
+    try {
+      await _prepareRuntime();
+    } catch (error, stack) {
+      AppLog.e('main', '启动装配失败，继续挂载界面', error: error, stack: stack);
+    }
+    runApp(const ProviderScope(child: FqApp()));
+  }, (error, stack) => AppLog.e('zone', '未捕获异步异常', error: error, stack: stack));
+}
+
+/// `runApp` 之前的运行时装配：桌面窗口回调、应用内日志、分享与 Rust 日志的桥。
+/// 这些都不决定界面能不能起来，所以失败只记日志（见 [main]）。
+Future<void> _prepareRuntime() async {
   if (isWindowsDesktop) await DesktopPlatform.instance.initialize();
   // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
-  // runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
+  // [main] 的 runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
   AppLog.instance.install();
   unawaited(AppLog.instance.startPersistence());
   // 短剧分享的「系统分享」走 Android 的 Intent.ACTION_SEND
@@ -85,10 +106,6 @@ Future<void> main() async {
       await Hive.close();
     };
   }
-  runZonedGuarded(
-    () => runApp(const ProviderScope(child: FqApp())),
-    (error, stack) => AppLog.e('zone', '未捕获异步异常', error: error, stack: stack),
-  );
 }
 
 Future<void> _initializeLocalData() async {
@@ -190,6 +207,14 @@ Future<void> _initializeLocalData() async {
   einkModeNotifier.value = sp.getBool(einkModeKey) ?? false;
   // OLED 纯黑与墨水屏互斥；两个旧值同时为 true 时墨水屏优先。
   oledModeNotifier.value = sp.getBool(oledModeKey) ?? false;
+  // 播放页布局（短剧上下分屏/左右分栏）同样是可选偏好：读不到退化为
+  // 沉浸式，不阻塞启动。
+  PlayerLayoutPreferences.mode.value = PlayerLayoutPreferences.decode(
+    sp.getString(PlayerLayoutPreferences.key),
+  );
+  // 短剧分区上次停在哪个频道（官方 SP `last_tab_type`）：同样只读一次，
+  // 页面在 initState 同步取用，首帧不会先闪「推荐」。
+  DramaChannelPreferences.load(sp);
 }
 
 class FqApp extends StatefulWidget {

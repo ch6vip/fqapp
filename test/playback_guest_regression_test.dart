@@ -15,7 +15,15 @@ import 'support/controlled_player.dart';
 import 'support/fakes.dart';
 
 void main() {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+
   setUp(() {
+    // 横屏布局只看窗口宽高（设备横置即横屏，不再跟着 `_fullScreen` 走），
+    // 测试默认窗口 800×600 会被判成横屏。这里的用例按手机竖屏写，统一把
+    // 视口钉成 360×800；要横屏的用例自己调 [_enterLandscape]。
+    final view = binding.platformDispatcher.views.first;
+    view.physicalSize = const Size(360, 800);
+    view.devicePixelRatio = 1;
     SharedPreferences.setMockInitialValues({});
     // 面板交互用例钉住深色分支（play_control_panel_style_v681.style=1）。
     PlayerStyleConfig.instance = const PlayerStyleConfig(
@@ -23,7 +31,12 @@ void main() {
       morePanelStyle: 1,
     );
   });
-  tearDown(() => PlayerStyleConfig.instance = PlayerStyleConfig.defaults);
+  tearDown(() {
+    PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
+    final view = binding.platformDispatcher.views.first;
+    view.resetPhysicalSize();
+    view.resetDevicePixelRatio();
+  });
 
   testWidgets('anonymous comments expose no unavailable editor', (
     tester,
@@ -69,8 +82,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     await tester.tap(find.byKey(const ValueKey('landscape-lock')));
     await tester.pump();
     expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
@@ -139,8 +151,7 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     await tester.pumpWidget(MaterialApp(home: _chrome(player)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final point = tester.getCenter(find.byKey(const ValueKey('video-surface')));
     await tester.tapAt(point);
     await tester.pump(const Duration(milliseconds: 80));
@@ -158,8 +169,7 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     await tester.pumpWidget(MaterialApp(home: _chrome(player)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final left = Offset(surface.left + surface.width / 6, surface.center.dy);
     await tester.tapAt(left);
@@ -178,8 +188,7 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     await tester.pumpWidget(MaterialApp(home: _chrome(player)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final right = Offset(surface.right - surface.width / 6, surface.center.dy);
     await tester.tapAt(right);
@@ -199,8 +208,7 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = false;
     await tester.pumpWidget(MaterialApp(home: _chrome(player, playing: false)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final left = Offset(surface.left + surface.width / 6, surface.center.dy);
     await tester.tapAt(left);
@@ -229,8 +237,7 @@ void main() {
       MaterialApp(home: _chrome(atStart, initialPosition: Duration.zero)),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     var surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final left = Offset(surface.left + surface.width / 6, surface.center.dy);
     await tester.tapAt(left);
@@ -252,8 +259,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final right = Offset(surface.right - surface.width / 6, surface.center.dy);
     await tester.tapAt(right);
@@ -275,8 +281,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final left = Offset(surface.left + surface.width / 6, surface.center.dy);
     await tester.tapAt(left);
@@ -301,8 +306,7 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     await tester.pumpWidget(MaterialApp(home: _chrome(player)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final third = surface.width / 3;
     final onLeftEdge = Offset(surface.left + third, surface.center.dy);
@@ -345,8 +349,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final left = Offset(surface.left + surface.width / 6, surface.center.dy);
     await tester.tapAt(left);
@@ -389,8 +392,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     final surface = tester.getRect(find.byKey(const ValueKey('video-surface')));
     final left = Offset(surface.left + surface.width / 6, surface.center.dy);
     await tester.tapAt(left);
@@ -419,8 +421,7 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     await tester.pumpWidget(MaterialApp(home: _chrome(player)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     await tester.tap(find.byTooltip('更多'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -473,12 +474,9 @@ void main() {
     final player = FakeNativePlayer()..isPlaying = true;
     await tester.pumpWidget(MaterialApp(home: _chrome(player)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    // 全屏切换的 _scheduleHide 在 await _applySystemUi() 之后：
-    // 零时长 pump 冲刷异步链但不推进假时钟，让 3s 隐藏计时器先排上。
-    await tester.pump();
-    await tester.pump();
-    await tester.pump();
+    // 全屏切换的 _scheduleHide 在 await _applySystemUi() 之后：零时长 pump
+    // 冲刷异步链但不推进假时钟，让 3s 隐藏计时器先排上。
+    await _enterLandscape(tester);
     expect(find.byKey(const ValueKey('landscape-play')), findsOneWidget);
     await tester.pump(const Duration(seconds: 4));
     expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
@@ -548,8 +546,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-      await tester.pump();
+      await _enterLandscape(tester);
       final frame = tester.getRect(find.byKey(const ValueKey('video-frame')));
       final lock = find.byKey(const ValueKey('landscape-lock'));
       final position = tester.getRect(lock).center;
@@ -639,8 +636,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-    await tester.pump();
+    await _enterLandscape(tester);
     await tester.tap(find.byKey(const ValueKey('landscape-episodes')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -688,6 +684,19 @@ void main() {
       await player.dispose();
     },
   );
+}
+
+/// 点「全屏观看」再把窗口转成横屏：横屏布局只按窗口宽高判定，光点按钮
+/// 不会改视口。
+Future<void> _enterLandscape(WidgetTester tester) async {
+  // 同一个用例可能连开两台播放器：先放回竖屏，「全屏观看」入口才会在场。
+  await tester.binding.setSurfaceSize(null);
+  await tester.pump();
+  await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
+  await tester.pump();
+  await tester.binding.setSurfaceSize(const Size(800, 600));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await tester.pump();
 }
 
 Widget _chrome(

@@ -1,36 +1,28 @@
 import 'package:flutter/material.dart';
 
-import '../../services/episode_source_cache.dart';
-import '../../services/player_preferences.dart';
+import 'player_toast.dart';
 import 'quality_icon.dart';
 
 /// 短剧更多面板的**浅色分支**（官方 `ShortSeriesMorePanelDialogV2` 在
 /// `play_control_panel_style_v681.style` 未下发或为 0 时的形态，
-/// `MorePanelV681.d()==false`：内容布局 `aae.xml` 的 `#FAFAFA` 底 +
-/// 16dp 顶圆角，不被 `Q0()` 染成 `#FF1C1C1C`）。
+/// `MorePanelV681.d()==false`：内容布局 `aae.xml` 的 `#FAFAFA` 底 + 16dp
+/// 顶圆角，不被 `Q0()` 染成 `#FF1C1C1C`）。
 ///
-/// 行集与官方截图对齐后按用户拍板裁剪（2026-09-29）：白卡 1 = 倍速、
-/// 清晰度、清屏播放、离线缓存；白卡 2 = 听视频、弹幕、字体大小。无取消行，
-/// 举报/投屏/不感兴趣三行明确不做。真功能行：倍速/清晰度/清屏播放/弹幕
-/// /听视频（官方 `jm3.d0`：打开听书模式页）/字体大小（官方 `jm3.t0`：
-/// 打开字号弹层，行尾档位文案）。离线缓存暂无后端链路，点击关面板并
-/// 提示「暂未支持」——不是静默死入口。
+/// 放开关、下钻入口，以及**可选的**倍速/清晰度入口行（`rateLabel` /
+/// `onOpenRate` 等）：底栏已有当前档时宿主不传，面板里就不出现这两项；
+/// `catalog` 形态竖屏、feed 卡片、通用播放器才由宿主传入、点开档位弹层。
+/// 白卡 1 = 清屏播放、离线缓存；白卡 2 = 听视频、弹幕、字体大小。
+/// 举报/投屏/不感兴趣三行明确不做。
 ///
 /// 色值（日间皮肤）：面板底 `#FAFAFA`，卡片白底 12dp 圆角；行文字与图标
-/// `skin_color_black_light`=#000000；未选中档位
-/// `skin_color_gray_40_light`=#66000000；开关开启
-/// `skin_color_orange_brand_light`=#FA6725；药丸行是浅灰轨道上排开、
-/// 选中档白底黑粗体。
+/// `skin_color_black_light`=#000000；开关开启
+/// `skin_color_orange_brand_light`=#FA6725。
 ///
 /// 浅色支图标是官方 APK 的本地 drawable（jm3 行类 + 弹层级各自绑定），
 /// 夜间皮肤官方走 SkinDelegate 翻白，这里按 MaterialApp 亮度做等价切换。
 class PlayletMorePanelLight extends StatelessWidget {
   const PlayletMorePanelLight({
     super.key,
-    required this.rate,
-    this.qualityVariants = const [],
-    this.currentQualityUrl,
-    this.onQualitySelected,
     this.clearScreen = false,
     this.onToggleClearScreen,
     this.danmakuEnabled = false,
@@ -40,14 +32,11 @@ class PlayletMorePanelLight extends StatelessWidget {
     this.onOpenFontSettings,
     this.onOpenListenMode,
     this.onOpenOfflineCache,
+    this.rateLabel,
+    this.onOpenRate,
+    this.qualityLabel,
+    this.onOpenQuality,
   });
-
-  final double rate;
-
-  /// 多档流在场才显示清晰度行（与深色分支同门，官方 `oi3/k.P()`）。
-  final List<EpisodeVariant> qualityVariants;
-  final String? currentQualityUrl;
-  final ValueChanged<EpisodeVariant>? onQualitySelected;
 
   final bool clearScreen;
   final VoidCallback? onToggleClearScreen;
@@ -73,6 +62,15 @@ class PlayletMorePanelLight extends StatelessWidget {
   /// 「暂未支持」占位（feed 长按面板未接下载）。
   final VoidCallback? onOpenOfflineCache;
 
+  /// 倍速/清晰度的**入口行**（行尾当前档，点击交给宿主开档位弹层）。
+  ///
+  /// 播放页不放这两行：底栏右下角已经写着当前档，点它直接开档位弹层。
+  /// feed 卡片没有那条底栏，长按面板是它唯一的换档入口，所以宿主在这里传
+  /// label + 回调（回调非空才出行；清晰度只在多档流在场时传）。
+  final String? rateLabel;
+  final VoidCallback? onOpenRate;
+  final String? qualityLabel;
+  final VoidCallback? onOpenQuality;
 
   static Color _foreground(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -95,12 +93,6 @@ class PlayletMorePanelLight extends StatelessWidget {
       ? const Color(0x14FFFFFF)
       : Colors.white;
 
-  /// 官方药丸行 `ScrollableMultipleOptionsView` 的浅灰轨道。
-  static Color _trackColor(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0x1FFFFFFF)
-      : const Color(0x0F000000);
-
   TextStyle _labelStyle(BuildContext context) => TextStyle(
     fontSize: 16,
     fontWeight: FontWeight.bold,
@@ -111,6 +103,8 @@ class PlayletMorePanelLight extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
+      // 底部弹层通栏宽：左边那条竖握时的挖孔不该把整列内容右推。
+      left: false,
       child: Column(
         key: const ValueKey('player-more-light-panel'),
         mainAxisSize: MainAxisSize.min,
@@ -138,9 +132,40 @@ class PlayletMorePanelLight extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _panelCard(context, [
-                    _rateRow(context),
-                    if (onQualitySelected != null && qualityVariants.length > 1)
-                      _qualityRow(context),
+                    // 倍速/清晰度入口行（feed 专用：卡片没有底栏当前档可点，
+                    // 播放页的两项走底栏直连的档位弹层）。
+                    if (onOpenRate != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-rate',
+                        icon: 'more_rate',
+                        label: '倍速',
+                        trailing: rateLabel,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenRate!();
+                        },
+                      ),
+                    if (onOpenQuality != null)
+                      _actionRow(
+                        context,
+                        key: 'player-more-light-quality',
+                        leading: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CustomPaint(
+                            painter: QualityIconPainter(
+                              color: _foreground(context),
+                            ),
+                          ),
+                        ),
+                        label: '清晰度',
+                        trailing: qualityLabel,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onOpenQuality!();
+                        },
+                      ),
                     // 官方行序：清屏行在选项之后（jm3.a 的 p0(!zB0)）。
                     if (onToggleClearScreen != null)
                       _actionRow(
@@ -237,103 +262,15 @@ class PlayletMorePanelLight extends StatelessWidget {
     child: Column(mainAxisSize: MainAxisSize.min, children: rows),
   );
 
-  /// 药丸轨道：浅灰圆角底 + 横向滚动（官方 ScrollableMultipleOptionsView）。
-  Widget _pillTrack(BuildContext context, Widget child) => Container(
-    height: 36,
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(
-      color: _trackColor(context),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      physics: const ClampingScrollPhysics(),
-      child: child,
-    ),
-  );
-
-  /// 倍速行：图标 + 标签 + 药丸档位。
-  ///
-  /// 档位来自 `PlayerPreferences.playbackRates`（用户设备官方实测：含
-  /// 2x/3x、无 1.75x）。药丸文案就是 `1x`；「（默认）」只出现在横屏沉浸面板
-  /// 的大字号子列表里（官方 `strings/ec5`）。
-  Widget _rateRow(BuildContext context) => Padding(
-    key: const ValueKey('player-more-light-rate-row'),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    child: SizedBox(
-      height: 30,
-      child: Row(
-        children: [
-          _PanelIconLight(name: 'more_rate', color: _foreground(context)),
-          const SizedBox(width: 8),
-          Text('倍速', style: _labelStyle(context)),
-          const SizedBox(width: 16),
-          Expanded(
-            child: _pillTrack(
-              context,
-              Row(
-                children: [
-                  for (final rate in PlayerPreferences.playbackRates)
-                    _OptionPill(
-                      key: ValueKey('player-more-light-rate-$rate'),
-                      label:
-                          '${rate == rate.roundToDouble() ? rate.toInt() : rate}x',
-                      selected: rate == this.rate,
-                      onTap: () => Navigator.pop(context, rate),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  /// 清晰度行：多档流药丸直接铺开，选中档即当前流。
-  Widget _qualityRow(BuildContext context) => Padding(
-    key: const ValueKey('player-more-light-quality-row'),
-    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-    child: SizedBox(
-      height: 30,
-      child: Row(
-        children: [
-          SizedBox(
-            width: 24,
-            height: 24,
-            child: CustomPaint(
-              painter: QualityIconPainter(color: _foreground(context)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text('清晰度', style: _labelStyle(context)),
-          const SizedBox(width: 16),
-          Expanded(
-            child: _pillTrack(
-              context,
-              Row(
-                children: [
-                  for (final (index, variant) in qualityVariants.indexed)
-                    _OptionPill(
-                      key: ValueKey('player-more-light-quality-$index'),
-                      label: variant.name,
-                      selected: variant.url == currentQualityUrl,
-                      onTap: () => Navigator.pop(context, variant),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
   /// 官方可下钻行：图标 + 文案 + 尾注/箭头，点击随面板关闭（jm3 行语义）。
+  ///
+  /// 图标默认取 `assets/images/drama/<icon>.webp`；没有对应资产的（清晰度
+  /// 用的是自绘图标）传 [leading]。
   Widget _actionRow(
     BuildContext context, {
     required String key,
-    required String icon,
+    String? icon,
+    Widget? leading,
     required String label,
     String? trailing,
     required VoidCallback onTap,
@@ -353,12 +290,20 @@ class PlayletMorePanelLight extends StatelessWidget {
           height: 48,
           child: Row(
             children: [
-              _PanelIconLight(name: icon, color: _foreground(context)),
-              const SizedBox(width: 8),
+              if (leading != null) ...[
+                SizedBox(width: 24, height: 24, child: leading),
+                const SizedBox(width: 8),
+              ] else if (icon != null) ...[
+                _PanelIconLight(name: icon, color: _foreground(context)),
+                const SizedBox(width: 8),
+              ],
               Text(label, style: _labelStyle(context)),
               const Spacer(),
               if (trailing != null) ...[
-                Text(trailing, style: TextStyle(fontSize: 14, color: _muted(context))),
+                Text(
+                  trailing,
+                  style: TextStyle(fontSize: 14, color: _muted(context)),
+                ),
                 const SizedBox(width: 4),
               ],
               Icon(Icons.chevron_right, size: 22, color: _muted(context)),
@@ -380,11 +325,10 @@ class PlayletMorePanelLight extends StatelessWidget {
     String? trailing,
   }) {
     void onTap() {
-      final messenger = ScaffoldMessenger.of(context);
+      // 面板随后就关，提示先挂到根 Overlay 上：换成紧凑胶囊 Toast 后
+      // 不再依赖 ScaffoldMessenger 的排队与时长。
+      PlayerToast.show(context, '$label暂未支持');
       Navigator.pop(context);
-      messenger.showSnackBar(
-        SnackBar(content: Text('$label暂未支持')),
-      );
     }
 
     return _actionRow(
@@ -402,8 +346,7 @@ class PlayletMorePanelLight extends StatelessWidget {
 ///
 /// bottom sheet 不跟随父级 setState 重建，开关若只渲染传入的快照，
 /// 点完会停在旧状态、重开面板才刷新；本地 state 让开关动画立刻跟随。
-/// 面板其余行都随面板关闭（清屏/字号/下钻行）或随关闭回传（倍速/
-/// 清晰度），不受此问题影响。
+/// 面板其余行都随面板关闭（清屏/字号/下钻行），不受此问题影响。
 class _SwitchRow extends StatefulWidget {
   const _SwitchRow({
     required this.rowKey,
@@ -443,91 +386,35 @@ class _SwitchRowState extends State<_SwitchRow> {
 
   @override
   Widget build(BuildContext context) => Semantics(
-        key: ValueKey('${widget.rowKey}-row'),
-        label: widget.label,
-        toggled: _enabled,
-        onTap: _toggle,
-        excludeSemantics: true,
-        child: InkWell(
-          onTap: _toggle,
-          excludeFromSemantics: true,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: SizedBox(
-              height: 48,
-              child: Row(
-                children: [
-                  _PanelIconLight(name: widget.icon, color: widget.foreground),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(widget.label, style: widget.labelStyle)),
-                  const SizedBox(width: 12),
-                  _LightSwitch(value: _enabled),
-                ],
-              ),
-            ),
+    key: ValueKey('${widget.rowKey}-row'),
+    label: widget.label,
+    toggled: _enabled,
+    onTap: _toggle,
+    excludeSemantics: true,
+    child: InkWell(
+      onTap: _toggle,
+      excludeFromSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: SizedBox(
+          height: 48,
+          child: Row(
+            children: [
+              _PanelIconLight(name: widget.icon, color: widget.foreground),
+              const SizedBox(width: 8),
+              Expanded(child: Text(widget.label, style: widget.labelStyle)),
+              const SizedBox(width: 12),
+              _LightSwitch(value: _enabled),
+            ],
           ),
         ),
-      );
+      ),
+    ),
+  );
 
   void _toggle() {
     setState(() => _enabled = !_enabled);
     widget.onToggle();
-  }
-}
-
-/// 30dp 选项药丸：选中白底黑粗体、未选中灰字（官方浅色截图形态）。
-class _OptionPill extends StatelessWidget {
-  const _OptionPill({
-    super.key,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final foreground = dark ? const Color(0xCCFFFFFF) : const Color(0xFF000000);
-    final muted = dark ? const Color(0x66FFFFFF) : const Color(0x66000000);
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Semantics(
-        label: '$label${selected ? '（当前）' : ''}',
-        button: true,
-        selected: selected,
-        onTap: onTap,
-        excludeSemantics: true,
-        child: InkWell(
-          onTap: onTap,
-          excludeFromSemantics: true,
-          borderRadius: BorderRadius.circular(15),
-          child: Container(
-            height: 30,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              // 选中白底在浅灰轨道上可辨：深色底配色反转。
-              color: selected
-                  ? (dark ? const Color(0x33FFFFFF) : Colors.white)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(15),
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                color: selected ? foreground : muted,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -558,7 +445,10 @@ class _LightSwitch extends StatelessWidget {
         curve: Curves.easeInOut,
         alignment: value ? Alignment.centerRight : Alignment.centerLeft,
         child: const DecoratedBox(
-          decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+          ),
           child: SizedBox.square(dimension: 14),
         ),
       ),

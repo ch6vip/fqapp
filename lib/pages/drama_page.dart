@@ -15,12 +15,14 @@ import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import '../services/api_client.dart';
 import '../services/backend_transport.dart';
+import '../services/drama_channel_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/episode_source_cache.dart';
 import '../services/inline_video_playback.dart';
 
 import '../services/library_store.dart';
 import '../services/native_player.dart';
+import '../services/playback_format.dart';
 import '../services/player_history.dart';
 import '../services/player_style_config.dart';
 import '../services/shelf_store.dart';
@@ -38,7 +40,9 @@ import '../widgets/player/playlet_font_scale_sheet.dart';
 import '../widgets/player/playlet_hot_comment_bar.dart';
 import '../widgets/player/playlet_more_panel.dart';
 import '../widgets/player/playlet_more_panel_light.dart';
+import '../widgets/player/playlet_option_sheet.dart';
 import '../widgets/player/playlet_quick_catalog_sheet.dart';
+import '../widgets/player/player_toast.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'detail_page.dart';
 import 'drama_download_sheet.dart';
@@ -199,6 +203,48 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
   }
 }
 
+/// 搜索行高度（首页 `fua` 的 51dp）：6dp 上留白 + 36dp 框体 + 9dp 下留白。
+/// 原先沿用 `ap4.xml` 的 38dp，上下只剩 1dp，频道标签几乎贴着搜索框。
+const _dramaSearchRowHeight = 51.0;
+
+/// 频道条基础高度；大字号下由 [_dramaStripHeightFor] 抬高。
+const _dramaStripBaseHeight = 38.0;
+
+/// 频道条在大字号下随选中字号一起长高：24sp 放大后若仍锁死 38dp，会和
+/// 3dp 指示条一起撞破条带。思路同首页 tab 条的 textScale 补偿。
+///
+/// 与 [_dramaSearchRowHeight] 一样放在文件顶层：顶栏是两处（悬浮层本身与
+/// 依赖它的列表留白）共用的布局契约，不该藏在页面 State 里。
+double _dramaStripHeightFor(BuildContext context) {
+  final text = MediaQuery.textScalerOf(context).scale(24) * 1.1 + 6;
+  return text > _dramaStripBaseHeight ? text + 4 : _dramaStripBaseHeight;
+}
+
+/// 悬浮顶栏（搜索行 + 频道条）在状态栏下方占的高度。
+///
+/// 顶栏是 `Stack` 里的悬浮层，不占页面布局：feed 的下拉提示、网格的顶部
+/// 留白、最近/收藏的筛选行都得自己让出这段高度。桌面端不渲染搜索行
+/// （搜索入口收敛到频道条右端图标），比手机端少一个 [_dramaSearchRowHeight]。
+double dramaTopChromeHeight(BuildContext context) =>
+    (isWindowsDesktop ? 0.0 : _dramaSearchRowHeight) +
+    _dramaStripHeightFor(context);
+
+/// 频道条的定位锚点：条数变化时只增删尾部，保留已有 index 的 `GlobalKey`。
+///
+/// 全部重建会让每个标签的 Element 换新：大字号选中过渡动画被打断，整条
+/// 频道条闪一下（服务端频道表替换本地表时就能看到）。抽成纯函数也让这条
+/// 规则可被单测直接钉住。
+@visibleForTesting
+List<GlobalKey> syncChannelTabKeys(List<GlobalKey> current, int count) {
+  if (current.length == count) return current;
+  return [
+    for (var index = 0; index < count; index++)
+      index < current.length
+          ? current[index]
+          : GlobalKey(debugLabel: 'drama_channel_$index'),
+  ];
+}
+
 /// The bottom navigation's 短剧 destination, laid out like the official
 /// `SeriesMallFragment`: a full-screen vertical feed of dramas with a floating
 /// top bar (search row + channel strip) over it.
@@ -235,7 +281,10 @@ class DramaPage extends ConsumerStatefulWidget {
   contentLoader;
   final NativePlayer Function()? playerFactory;
   final ReaderStore? historyStore;
-  final Widget Function()? searchPageBuilder;
+
+  /// 分区搜索页的构造缝。带上默认分类（短剧/漫剧），测试可断言落点；
+  /// 缺省打开 [SearchPage]。
+  final Widget Function(SearchCategory category)? searchPageBuilder;
 
   /// 服务端频道表加载器（测试缝）。默认走 `ApiClient.channelTabs()`。
   final Future<ChannelTable> Function()? channelLoader;
@@ -263,15 +312,12 @@ class DramaPage extends ConsumerStatefulWidget {
 
 class _DramaPageState extends ConsumerState<DramaPage>
     with WidgetsBindingObserver {
-  static const _searchRowHeight = 38.0;
-  static const _stripHeight = 38.0;
   static const _pullRefreshTrigger = 64.0;
 
   /// 顶栏在本页内容上方占的高度：移动端是搜索行 + 频道条两行；桌面端
   /// 不渲染搜索行——分区搜索入口收敛到频道条右端的搜索图标（壳层全局
   /// 搜索在短剧分区也隐藏），只占频道条一行，把垂直空间还给视频/网格。
-  double get _topChromeHeight =>
-      (isWindowsDesktop ? 0.0 : _searchRowHeight) + _stripHeight;
+  double get _topChromeHeight => dramaTopChromeHeight(context);
 
   double _effectiveBottomInset(BuildContext context) {
     if (widget.bottomInset != null) return widget.bottomInset!;
@@ -340,6 +386,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// 再开设置面板，与字号行同款级联，避免 `_modalOpen` 计账互相覆盖）。
   bool _pendingFeedDanmakuSettings = false;
 
+  /// 面板「倍速」/「清晰度」入口行级联打开的档位弹层。feed 卡片没有播放页
+  /// 那条显示当前档的底栏，长按面板是它唯一的换档入口，所以这两项在面板里
+  /// 留行、点开弹层（与播放页「底栏直连档位弹层」同一份
+  /// [showPlayletRateSheet] / [showPlayletQualitySheet]）。
+  bool _pendingFeedRate = false;
+  bool _pendingFeedQuality = false;
+
   /// feed 弹幕（官方信息流同样渲染弹幕，面板有开关行）：时间轴、取数
   /// 调度器与全局配置都复用播放页的那一套（CRIT-009 的时间字段约定在
   /// 模型层已固化）。vid -> seriesId 随每次切集登记，取数时按 vid 取，
@@ -397,9 +450,20 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   DramaChannel get _current => _channels[_channel];
 
+  /// 冷启动回到上次看的频道（官方 SP `last_tab_type`）。类型不认识或该
+  /// 频道已从服务端表里消失时留在「推荐」。
+  int _restoredChannelIndex() {
+    final type = DramaChannelPreferences.selectedType;
+    if (type == null) return 0;
+    final index = _channels.indexWhere((channel) => channel.serverType == type);
+    return index < 0 ? 0 : index;
+  }
+
   @override
   void initState() {
     super.initState();
+    // 频道必须在首帧前定下来：顶栏高亮、dock 肤色和首屏加载都读 `_current`。
+    _channel = _restoredChannelIndex();
     // 重进页面时先把壳层的 dock 肤色对齐到当前频道（默认是推荐，黑）。
     // 放到帧后：initState 发生在壳层 build 期间，直接改 notifier 会触发
     // 壳层的 setState-in-build。
@@ -501,10 +565,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
       table =
           await (widget.channelLoader?.call() ??
               ApiClient.instance.channelTabs(
-                // 官方 SeriesMallVM：tabType 传当前频道、lastTabType 传上次选中
-                // 频道（SP last_tab_type，无值 -1），服务端据此算 tab_index。
+                // 官方 SeriesMallVM：tabType 传当前频道、lastTabType 传上次
+                // 选中的频道（SP last_tab_type，无值 -1），服务端据此算
+                // tab_index。当前频道在 initState 已按 SP 恢复，两者不是一回事。
                 tabType: current.serverType ?? kChannelVideoFeed,
-                lastTabType: current.serverType ?? -1,
+                lastTabType: DramaChannelPreferences.lastType,
               ));
     } catch (_) {
       return;
@@ -622,8 +687,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       // playWhenReady 事件重算，可能还停在暂停前的值。
       final player = _inline.player;
       if (player != null &&
-          (player.playing ||
-              (player.playWhenReady && !player.completed))) {
+          (player.playing || (player.playWhenReady && !player.completed))) {
         _inlineVisibilityPaused = true;
       }
       // `inactive` 只是瞬态打断（下拉通知栏/控制中心）：feed 继续播；
@@ -710,6 +774,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _channel = index;
       _screenIndex = 0;
     });
+    // 记住这次选择（官方把 `tab_type` 写回 SP）：下次冷启动直接落在这里。
+    final type = channel.serverType;
+    if (type != null) unawaited(DramaChannelPreferences.save(type));
     // 壳层的 dock / 系统导航栏跟着频道换肤（推荐＝深色，浅色页＝画布色）。
     dramaLightPageNotifier.value = !channel.playsInline;
     // Local channels read this device's own data; switching the provider would
@@ -858,10 +925,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final dark = PlayerStyleConfig.instance.morePanelDarkStyle;
     // 浅色支面板的内容会随夜间皮肤翻白（`PlayletMorePanelLight`），底色也
     // 得一起翻：否则深色主题下是 #FAFAFA 底配白字。
-    final darkSheet =
-        dark || Theme.of(context).brightness == Brightness.dark;
+    final darkSheet = dark || Theme.of(context).brightness == Brightness.dark;
+    // 倍速/清晰度入口行的行尾当前档（feed 卡片没有底栏显示它们）。
+    final rateLabel = '${formatPlaybackRate(_inline.rate.value)}x';
+    final qualityLabel = _inline.currentVariant?.name;
     try {
-      final selected = await showModalBottomSheet<Object>(
+      await showModalBottomSheet<void>(
         context: context,
         useSafeArea: true,
         isScrollControlled: true,
@@ -881,11 +950,14 @@ class _DramaPageState extends ConsumerState<DramaPage>
         builder: (context) {
           if (!dark) {
             return PlayletMorePanelLight(
-              rate: _inline.rate.value,
-              // 清晰度行：会话当前流的多档 renditions（官方单流时由组件隐藏）。
-              qualityVariants: _inline.variants,
-              currentQualityUrl: _inline.currentVariant?.url,
-              onQualitySelected: _switchFeedQuality,
+              // 倍速/清晰度入口行：官方是面板内的药丸行，这里改成点开
+              // 档位弹层（feed 卡片没有底栏当前档可点）。
+              rateLabel: rateLabel,
+              onOpenRate: () => _pendingFeedRate = true,
+              qualityLabel: qualityLabel,
+              onOpenQuality: _inline.variants.length > 1
+                  ? () => _pendingFeedQuality = true
+                  : null,
               clearScreen: _feedClearScreen,
               onToggleClearScreen: () =>
                   setState(() => _feedClearScreen = !_feedClearScreen),
@@ -908,7 +980,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
             );
           }
           return PlayletMorePanel(
-            rate: _inline.rate.value,
+            // 倍速/清晰度入口行（与浅色支同门，点开档位弹层）。
+            rateLabel: rateLabel,
+            onOpenRate: () => _pendingFeedRate = true,
+            qualityLabel: qualityLabel,
+            onOpenQuality: _inline.variants.length > 1
+                ? () => _pendingFeedQuality = true
+                : null,
             // feed 没有画面撑满，行随回调缺省隐藏。
             fillScreen: false,
             defaultMute: _inline.muted.value,
@@ -920,18 +998,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
             clearScreen: _feedClearScreen,
             onToggleClearScreen: () =>
                 setState(() => _feedClearScreen = !_feedClearScreen),
-            qualityVariants: _inline.variants,
-            currentQualityUrl: _inline.currentVariant?.url,
-            onQualitySelected: _switchFeedQuality,
           );
         },
       );
-      // 浅色支回传 EpisodeVariant（清晰度），深色支回传 double（倍速）。
-      if (selected is EpisodeVariant) {
-        _switchFeedQuality(selected);
-      } else if (selected is double) {
-        unawaited(_inline.selectRate(selected));
-      }
     } finally {
       _feedPanelOpen = false;
       if (mounted) setState(() {});
@@ -949,14 +1018,61 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _pendingFeedDanmakuSettings = false;
       unawaited(_showFeedDanmakuSettings());
     }
+    // 「倍速」「清晰度」入口行：面板收起后再开档位弹层，选中即落地。
+    if (_pendingFeedRate) {
+      _pendingFeedRate = false;
+      unawaited(_showFeedRateSheet());
+    }
+    if (_pendingFeedQuality) {
+      _pendingFeedQuality = false;
+      unawaited(_showFeedQualitySheet());
+    }
+  }
+
+  /// feed 的倍速档位弹层（与播放页底栏「倍速」共用 [showPlayletRateSheet]）。
+  Future<void> _showFeedRateSheet() async {
+    if (_modalOpen || _openingId != null) return;
+    setState(() => _modalOpen = true);
+    try {
+      final picked = await showPlayletRateSheet(
+        context,
+        rate: _inline.rate.value,
+        dark:
+            PlayerStyleConfig.instance.morePanelDarkStyle ||
+            Theme.of(context).brightness == Brightness.dark,
+      );
+      if (picked != null) await _inline.selectRate(picked);
+    } finally {
+      _modalOpen = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// feed 的清晰度档位弹层（与播放页底栏「清晰度」共用
+  /// [showPlayletQualitySheet]）。
+  Future<void> _showFeedQualitySheet() async {
+    if (_modalOpen || _openingId != null) return;
+    setState(() => _modalOpen = true);
+    try {
+      final picked = await showPlayletQualitySheet(
+        context,
+        variants: _inline.variants,
+        currentUrl: _inline.currentVariant?.url,
+        dark:
+            PlayerStyleConfig.instance.morePanelDarkStyle ||
+            Theme.of(context).brightness == Brightness.dark,
+      );
+      if (picked != null) _switchFeedQuality(picked);
+    } finally {
+      _modalOpen = false;
+      if (mounted) setState(() {});
+    }
   }
 
   /// 清晰度切换（官方 `bgw`）：Toast 立即出，不等换流完成。
   void _switchFeedQuality(EpisodeVariant variant) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('清晰度已成功切换至${variant.name}')));
+    PlayerToast.show(context, '清晰度已成功切换至${variant.name}');
     unawaited(_inline.switchVariant(variant));
   }
 
@@ -979,7 +1095,6 @@ class _DramaPageState extends ConsumerState<DramaPage>
   Future<void> _showFeedDanmakuSettings() async {
     if (_modalOpen || _openingId != null) return;
     setState(() => _modalOpen = true);
-    final messenger = ScaffoldMessenger.of(context);
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
     try {
@@ -1000,8 +1115,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
               setState(() => _feedDanmakuSettings = settings);
               unawaited(DanmakuSettings.save(settings));
             },
-            onReset: () =>
-                messenger.showSnackBar(const SnackBar(content: Text('设置成功'))),
+            onReset: () => PlayerToast.show(context, '设置成功'),
           );
           if (!landscape) return panel;
           return Container(
@@ -1121,10 +1235,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
     if (enabled) _restartFeedDanmaku();
     await DanmakuPreference.save(enabled);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(enabled ? danmakuEnabledToast : danmakuDisabledToast),
-      ),
+    PlayerToast.show(
+      context,
+      enabled ? danmakuEnabledToast : danmakuDisabledToast,
     );
   }
 
@@ -1370,6 +1483,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
             if (!_recentEditing &&
                 !(isWindowsDesktop && DesktopPlatform.fullscreen.value))
               Positioned(
+                // 推荐（视频流）与看剧/漫剧（浅色页）切换时，下面的浅色
+                // 渐变背板会整体插入或移除，Stack 的子项下标随之错位。
+                // 不挂 key 的话顶栏会被整棵重建，标签放大动画一帧就走完。
+                key: const ValueKey('drama_top_bar'),
                 top: 0,
                 left: 0,
                 right: 0,
@@ -1378,6 +1495,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   selected: _channel,
                   onSelect: _selectChannel,
                   onSearch: _openSearch,
+                  // 占位文案跟着频道语境走：漫剧频道搜漫剧，其余搜短剧。
+                  hint: _current.kind == 'manju' ? '请输入漫剧名或主演名' : '请输入短剧名或主演名',
                   // 官方浅色页（看剧/漫剧）的顶栏换浅肤：深色字 + 浅灰搜索框。
                   light: lightPage,
                 ),
@@ -1686,8 +1805,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   title: item.title,
                   seriesTitle: item.title,
                   synopsis: item.intro,
-                  onWheelNavigate: (delta) =>
-                      _desktopWheelDrama(items, delta),
+                  onWheelNavigate: (delta) => _desktopWheelDrama(items, delta),
                   episodes: _inline.episodes,
                   currentIndex: _inline.activeEpisodeIndex ?? 0,
                   duration: _inline.duration.value,
@@ -1855,11 +1973,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
         ),
       );
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(userFacingError(error))));
-      }
+      if (mounted) PlayerToast.show(context, userFacingError(error));
     } finally {
       _modalOpen = false;
       if (mounted) {
@@ -1950,13 +2064,20 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   void _openSearch() {
+    // 官方短剧分区的搜索落在对应内容分类，而不是「综合」：漫剧频道搜
+    // 漫剧，其余频道（推荐/看剧/最近/收藏）的内容只可能是短剧或漫剧，
+    // 默认短剧（2026-10-25 用户要求把频道语境带进搜索）。
+    final category = _current.kind == 'manju'
+        ? SearchCategory.manju
+        : SearchCategory.video;
     unawaited(
       _pushOverFeed(
         () => Navigator.push(
           context,
           MaterialPageRoute<void>(
             builder: (_) =>
-                widget.searchPageBuilder?.call() ?? const SearchPage(),
+                widget.searchPageBuilder?.call(category) ??
+                SearchPage(initialCategory: category),
           ),
         ),
       ),
@@ -1964,13 +2085,16 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 }
 
-/// The floating top bar: a 44dp search row over a 38dp channel strip, both on a
+/// The floating top bar: a 51dp search row over a 38dp channel strip, both on a
 /// light scrim so the official black-on-white text stays readable over video.
-class _TopBar extends StatelessWidget {
+class _TopBar extends StatefulWidget {
   final List<DramaChannel> channels;
   final int selected;
   final ValueChanged<int> onSelect;
   final VoidCallback onSearch;
+
+  /// 搜索框占位文案，跟着频道语境走：漫剧频道搜漫剧，其余频道搜短剧。
+  final String hint;
 
   /// 官方浅色页（漫剧）的顶栏浅肤：深色字、浅灰搜索框。默认 false =
   /// 黑底视频流的浅色字顶栏（书城/短剧语境）。
@@ -1981,8 +2105,69 @@ class _TopBar extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.onSearch,
+    required this.hint,
     this.light = false,
   });
+
+  @override
+  State<_TopBar> createState() => _TopBarState();
+}
+
+class _TopBarState extends State<_TopBar> {
+  /// 频道条自己的滚动控制器：选中项可能不在视口里（冷启动按 SP 恢复到
+  /// 「收藏」、大字号下五个标签总宽超出屏幕）。
+  final ScrollController _strip = ScrollController();
+
+  /// 每个标签的定位锚点，「把选中项滚进视口」靠它取位置。
+  List<GlobalKey> _tabKeys = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTabKeys();
+    // 首帧就要滚到位：SP 恢复的频道可能停在视口右端之外。
+    _revealSelected(animate: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TopBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 服务端频道表替换本地表时条数会变，锚点跟着重建。
+    if (oldWidget.channels.length != widget.channels.length) _syncTabKeys();
+    if (oldWidget.selected != widget.selected) {
+      _revealSelected(animate: !MediaQuery.disableAnimationsOf(context));
+    }
+  }
+
+  @override
+  void dispose() {
+    _strip.dispose();
+    super.dispose();
+  }
+
+  void _syncTabKeys() {
+    _tabKeys = syncChannelTabKeys(_tabKeys, widget.channels.length);
+  }
+
+  /// 把选中标签居中滚进视口。
+  ///
+  /// `ensureVisible` 作用于最近的一层 Scrollable —— 频道条自己，不会带动
+  /// 下面的 feed；减少动画（无障碍）时不动画，直接跳位。
+  void _revealSelected({required bool animate}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final index = widget.selected;
+      if (index < 0 || index >= _tabKeys.length) return;
+      final target = _tabKeys[index].currentContext;
+      if (target == null) return;
+      Scrollable.ensureVisible(
+        target,
+        alignment: 0.5,
+        duration: animate ? const Duration(milliseconds: 220) : Duration.zero,
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1998,61 +2183,74 @@ class _TopBar extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Official compressed header `ap4.xml`: search row is 38dp,
-          // `marginStart/End` 16dp, no `paddingTop` (that 6dp belongs to
-          // uncompressed `ap3.xml`).
+          // 官方压缩态 `ap4.xml` 的搜索行是 38dp；这里按首页 `fua` 的
+          // 51dp（上 6dp / 框体 36dp / 下 9dp）留白，频道标签不再贴着
+          // 搜索框（2026-10-25 用户反馈）。
           // 桌面端不渲染这一行：分区搜索只留频道条右端的搜索图标一处
           // 入口（与 _DramaPageState._topChromeHeight 的桌面高度一致）。
           if (!isWindowsDesktop)
             SizedBox(
-              height: _DramaPageState._searchRowHeight,
+              height: _dramaSearchRowHeight,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                // 官方 `ap4.xml` 的搜索行 38dp、框体 36dp（`c5e.xml` `@dimen/zl`），
-                // 垂直居中。
-                child: Center(child: _searchField(context, light: light)),
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 9),
+                child: _searchField(context, light: widget.light),
               ),
             ),
 
           SizedBox(
-            height: _DramaPageState._stripHeight,
+            height: _dramaStripHeightFor(context),
             child: Row(
               children: [
                 Expanded(
-                  child: ListView.builder(
+                  // 只有五个标签，不用 ListView.builder：定位锚点必须随时
+                  // 拿到 context，不能有还没建出来的标签。
+                  child: SingleChildScrollView(
+                    key: const Key('drama_channel_strip'),
+                    controller: _strip,
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: channels.length,
-                    itemBuilder: (context, index) => _ChannelTab(
-                      label: channels[index].label,
-                      selected: index == selected,
-                      light: light,
-                      onTap: () => onSelect(index),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (
+                          var index = 0;
+                          index < widget.channels.length;
+                          index++
+                        )
+                          _ChannelTab(
+                            key: _tabKeys[index],
+                            label: widget.channels[index].label,
+                            selected: index == widget.selected,
+                            light: widget.light,
+                            onTap: () => widget.onSelect(index),
+                          ),
+                      ],
                     ),
                   ),
                 ),
-                // 官方 `ap3.xml` 的 `@id/h4f`：频道条右端一枚 20×20dp 图标，
-                // 右边距 16dp（`layout_marginEnd`），点击进搜索
-                // （`SeriesMallFragment.Xh()` 把 `clickEvent(this.i)` 接到
-                // `Of(...)` → `openBookSearchActivity`）。它**不是刷新按钮**：
-                // 官方刷新是下拉手势（频道页 `aq0.xml` 的
-                // `PullToRefreshDetectLayout` ＋「下拉刷新内容」`@string/dhk`）。
-                IconButton(
-                  key: const Key('drama_strip_search_button'),
-                  tooltip: '搜索短剧',
-                  onPressed: onSearch,
-                  iconSize: 20,
-                  color: light
-                      ? (palette.dark ? Colors.white : const Color(0xFF1B1B1B))
-                      : Colors.white,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 20,
-                    height: 20,
+                // 官方 `ap3.xml` 的 `@id/h4f` 是 20dp 搜索钮，但手机端顶部
+                // 已有整条搜索框，两处入口重复（2026-10-25 用户要求移除）。
+                // 桌面端不渲染搜索行，搜索只留这一处入口。
+                if (isWindowsDesktop) ...[
+                  IconButton(
+                    key: const Key('drama_strip_search_button'),
+                    tooltip: '搜索短剧',
+                    onPressed: widget.onSearch,
+                    iconSize: 20,
+                    color: widget.light
+                        ? (palette.dark
+                              ? Colors.white
+                              : const Color(0xFF1B1B1B))
+                        : Colors.white,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 20,
+                      height: 20,
+                    ),
+                    icon: const Icon(LucideIcons.search),
                   ),
-                  icon: const Icon(LucideIcons.search),
-                ),
-                const SizedBox(width: 16),
+                  const SizedBox(width: 16),
+                ],
               ],
             ),
           ),
@@ -2073,7 +2271,7 @@ class _TopBar extends StatelessWidget {
       label: '搜索短剧',
       child: GestureDetector(
         key: const Key('drama_search_button'),
-        onTap: onSearch,
+        onTap: widget.onSearch,
         behavior: HitTestBehavior.opaque,
         child: Container(
           height: 36,
@@ -2093,15 +2291,11 @@ class _TopBar extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: Row(
             children: [
-              Icon(
-                LucideIcons.search,
-                size: 14,
-                color: iconColor,
-              ),
+              Icon(LucideIcons.search, size: 14, color: iconColor),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '请输入短剧名或主演名',
+                  widget.hint,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -2120,13 +2314,21 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-/// One tab of the channel strip: 18sp label with a 3dp indicator under it.
+/// One tab of the channel strip: an animated 16→24sp label over a 3dp
+/// indicator.
+///
+/// 字号档位与切换动画移植自首页 tab 条（选中 24sp、未选中 16sp，
+/// `AnimatedDefaultTextStyle` 180ms easeOutCubic），比官方短剧条的固定
+/// 18sp 更有选中感（用户 2026-10-25 要求）。
 ///
 /// The strip floats over the video feed (`ap4.xml` 根背景 @null)，文字用白色系：
 /// 选中纯白加粗、未选中半透明白（官方 `app:aui/avn` 指向的
 /// `skin_color_black_light` 是皮肤资源，截图里短剧 feed 上呈现为深色背景上
 /// 的白字，与皮肤暗色变体一致）。
 class _ChannelTab extends StatelessWidget {
+  static const _selectedSize = 24.0;
+  static const _unselectedSize = 16.0;
+
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -2135,6 +2337,7 @@ class _ChannelTab extends StatelessWidget {
   final bool light;
 
   const _ChannelTab({
+    super.key,
     required this.label,
     required this.selected,
     required this.onTap,
@@ -2151,6 +2354,9 @@ class _ChannelTab extends StatelessWidget {
     final unselectedColor = light && !dark
         ? const Color(0x99000000)
         : const Color(0x99FFFFFF);
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
     return Semantics(
       selected: selected,
       button: true,
@@ -2163,25 +2369,31 @@ class _ChannelTab extends StatelessWidget {
           // 点击水波也走圆角：方角高亮压在浅色页上像一块硬阴影。
           borderRadius: BorderRadius.circular(12),
           // 官方 `ap3.xml`：tab 内边距 `app:avb` = 16dp（TabCompress 开）／20dp（关），
-          // 文字 18sp（`app:avq`/`app:av5`）。这里取压缩态 16dp。
+          // 文字 18sp（`app:avq`/`app:av5`）。这里取压缩态 16dp；字号按
+          // 用户要求换成首页的 24/16 两档。
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  label,
+                AnimatedDefaultTextStyle(
+                  duration: duration,
+                  curve: Curves.easeOutCubic,
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: selected ? _selectedSize : _unselectedSize,
                     height: 1.1,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
                     color: selected ? selectedColor : unselectedColor,
                   ),
+                  child: Text(label),
                 ),
                 // 官方指示条：高 `app:arw` = 3dp、宽 `app:auw` = 16dp（`ap3.xml`），
-                // 在 `SlidingTabLayout.E()` 里按 tab 中心对齐。
+                // 在 `SlidingTabLayout.E()` 里按 tab 中心对齐。透明度跟着
+                // 字号一起过渡，避免切换时只剩字在动。
                 const SizedBox(height: 3),
-                Container(
+                AnimatedContainer(
+                  duration: duration,
+                  curve: Curves.easeOutCubic,
                   width: 16,
                   height: 3,
                   decoration: BoxDecoration(
@@ -2700,9 +2912,7 @@ class _MuteHintState extends State<_MuteHint> {
             key: const Key('drama_mute_hint'),
             onTap: () {
               unawaited(widget.playback.toggleMute());
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('已开启声音')));
+              PlayerToast.show(context, '已开启声音');
             },
             behavior: HitTestBehavior.opaque,
             child: AnimatedContainer(
@@ -3536,10 +3746,7 @@ class _PullRefreshHint extends StatelessWidget {
             SizedBox(
               width: 16,
               height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: color,
-              ),
+              child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
             ),
           ],
         ),
@@ -4113,10 +4320,7 @@ class _HistoryEmpty extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          Text(
-            message,
-            style: TextStyle(fontSize: 14, color: palette.muted),
-          ),
+          Text(message, style: TextStyle(fontSize: 14, color: palette.muted)),
           if (onFind != null) ...[
             const SizedBox(height: 20),
             GestureDetector(
@@ -4374,16 +4578,20 @@ class _LocalListState extends State<_LocalList> {
 
   /// 非编辑态顶区（官方 `daj.xml` + `c4e.xml`）：可横滑的 chips 行
   /// （14h/7v、圆角 6dp）+ 右侧「编辑」（14sp 粗体；官方 chips 行
-  /// marginEnd 52dp 给它让位）。悬浮顶栏（搜索 38 + 频道条 38）仍然压在
-  /// 页面上方，chips 行要整体让到它下面。
+  /// marginEnd 52dp 给它让位）。悬浮顶栏仍然压在页面上方，chips 行要整体
+  /// 让到它下面。
   ///
   /// [filtered] 为空时（筛到没有记录的那一类）不给「编辑」：进编辑会把
   /// 悬浮顶栏藏掉，而编辑头只在有记录时出现，用户就没有「完成」可按了。
   Widget _normalHeader(List<MediaItem> filtered) {
     final top = MediaQuery.paddingOf(context).top;
     final palette = HomePalette.of(context);
+    // 让位高度必须跟 [_TopBar] 同一套算法：搜索行 51 + 频道条 38（桌面端
+    // 没有搜索行，也要少让一段）。这里曾经写死 84（＝旧 38+38+8），
+    // 搜索行加高后 chips 会钻到频道条底下（2026-10-25）。
+    final chrome = dramaTopChromeHeight(context);
     return Container(
-      padding: EdgeInsets.fromLTRB(12, top + 84, 12, 8),
+      padding: EdgeInsets.fromLTRB(12, top + chrome + 8, 12, 8),
       child: Row(
         children: [
           Expanded(
@@ -4456,10 +4664,7 @@ class _LocalListState extends State<_LocalList> {
                   }),
                   child: Text(
                     allSelected ? '取消全选' : '全选',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: palette.ink,
-                    ),
+                    style: TextStyle(fontSize: 16, color: palette.ink),
                   ),
                 ),
                 const Spacer(),
@@ -4491,10 +4696,7 @@ class _LocalListState extends State<_LocalList> {
                       padding: const EdgeInsets.only(top: 2),
                       child: Text(
                         '已选择 ${_selected.length} 个$_selectionSuffix',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: palette.muted,
-                        ),
+                        style: TextStyle(fontSize: 12, color: palette.muted),
                       ),
                     ),
                 ],
@@ -4697,9 +4899,7 @@ class _LocalListState extends State<_LocalList> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              color: selected
-                  ? const Color(0xFFFA6725)
-                  : palette.ink,
+              color: selected ? const Color(0xFFFA6725) : palette.ink,
             ),
           ),
         ),

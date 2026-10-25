@@ -527,6 +527,57 @@ App 通过 `ApiClient` 调用后端 **`/api/v1/*` 业务路由**（Rust 核心 `
 - 暂停时拖动进度保持暂停，切到后台暂停播放
 - 播放秒数、集数和封面定时写入历史，支持续看
 
+### 播放页布局与手势
+
+播放页的布局、右缘浮层与手势在近几轮重构中形成了固定约定，改动前请先读这一节。
+
+**布局三档**（`PlayerLayoutMode`，持久化在 `services/player_layout_preferences.dart`，
+设置页「播放页布局」可切换）：
+
+| 档位 | 行为 |
+|---|---|
+| 沉浸式 | 单画面，方向跟视频比例走 |
+| 横屏片源自动分屏 | **竖屏设备**上遇到横版片源才自动分屏（只走上下轴）；其余同沉浸 |
+| 始终分屏 | 一律分屏，分屏比例由用户拖动分隔条决定 |
+
+- 画面几何统一走 `widgets/player/player_video_layout.dart`：**横屏按整窗宽度居中**，
+  不再从画面里挖掉挖孔那一侧的安全区；纵向仍让开上下 `insets`。
+- 分屏有上下、左右两轴，但**只记当前轴的比例**（`_splitRatio` + `_splitRatioSideBySide`）：
+  换轴时旧轴比例作废、回落该轴自己的默认值（竖屏约 0.28、横屏约 0.64）。
+- 分屏视频盒（`compact`）不复用竖屏底栏：紧凑条上直接显示当前倍速（`compact-rate`）。
+
+**右缘浮层**（`widgets/player/player_side_panel.dart`）：视频设置、弹幕设置、
+字体大小、选集抽屉、同系列共用同一份几何——贴右缘、铺满高、宽 = `(窗宽/3).clamp(240,420)`、
+左圆角 12、200ms 滑入。**面板贴右缘时 `SafeArea` 必须 `left: false`**：左边那条安全区
+属于屏幕另一侧的挖孔，让开会把整列内容右推。宽度用 `LayoutBuilder(constraints.maxWidth)`
+量，不要用 `MediaQuery.size`（页面嵌在别处时两者不等）。
+
+**倍速 / 清晰度的入口**：**底栏（或分屏紧凑条）已经显示当前档时**，这两项不出现在
+「视频设置」里——点当前档直接开档位弹层：竖屏是底部弹层（`widgets/player/playlet_option_sheet.dart`，
+键 `player-rate-sheet` / `player-quality-sheet`），横屏是右侧面板
+（`player-side-rates` / `player-side-quality`）。反过来，**底栏没有当前档可点**时
+（`catalog` 形态竖屏、feed 卡片、通用播放器）视频设置里保留一行入口（行尾当前档，
+点开同一个弹层）；分屏紧凑条已有当前档，不再重复给入口。
+
+**横屏「下一集」卡**（`video_player_chrome.dart` 的 `_nextEpisodeCard`）：
+
+- **16:9 为理想比例**；封面按「3 倍卡高」铺进去并上移一个卡高，窗口里只露出封面中间 **1/3**。
+- 锁定按钮在场时排在它**正下方**（锁仍钉在右缘中点，不动），高度取「锁底 → 进度条上沿」
+  的剩余空间，48–72dp；没接锁功能时在顶栏与底条之间居中。
+- 卡片整体右移半宽，**右半溢出屏幕**，只留左半可见；可见宽度下限 48dp（因此卡宽 ≥96dp，
+  高度 48–53dp 时卡片会比 16:9 略方），右缘再让开 `insets.right` 的挖孔。可用高度连
+  48dp 都放不下时**整卡不画**（不做迷你热区）。卡内文字只排在可见左半、集数用
+  `FittedBox` 缩排，避免被屏幕边缘硬切或省略。
+- 读屏语义是「下一集，第N集」，`onTap` 挂在 `Semantics` 上（`excludeSemantics` 会丢掉
+  子树的 tap action）；最后一集不摆。
+
+**手势通道**（`services/playback_gesture_levels.dart` ↔ `NativePlayerPlugin.kt`）：
+左半屏上下滑调亮度、右半屏调音量，经 `MethodChannel('fqapp/native_player')` 调用
+`gestureLevels` / `setScreenBrightness` / `resetScreenBrightness` / `setMediaVolume`。
+亮度下限固定 0.02（Dart 与 Kotlin 两侧同值），只在「被覆盖过」时才在退出播放页时还原
+窗口亮度；`NativeGestureLevels.kt` 负责把 255/1023/2047/4095 四种 OEM 量程归一。这些
+调用都不需要额外权限（窗口亮度覆盖 + `AudioManager.setStreamVolume`）。
+
 ### 书架（`library_page.dart`）
 - 阅读历史：支持列表或封面网格（含进度、集数）
 - 清空功能
@@ -676,6 +727,9 @@ adb logcat -s flutter
 - [x] 发现类入口：搜索联想词与热搜、作者主页、排行榜、书评回复、章节试读预览
 - [x] Release 签名配置与 R8 混淆
 - [x] 整本 TXT 导出（离线缓存页每行「导出 TXT」→ 系统「下载」；重取最新目录与每章正文，按后端 `/api/download` 同形组装）
+- [ ] **拆分 `lib/widgets/video_player_chrome.dart`**：该文件已 4800+ 行（`scripts/line_budget.json`
+      记录的上限是 4832，只准缩不准涨）。把横屏顶栏/底栏、「下一集」卡、右侧面板流程、抽屉与
+      手势分别拆到 `lib/widgets/player/` 下的独立文件，目标回到 3000 行以内，再 `--update` 收紧预算。
 
 
 ## 正文替换（#120）

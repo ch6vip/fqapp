@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
+import 'package:fqapp/widgets/home/home_hero.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 import 'package:fqapp/widgets/home/home_spotlight.dart';
 import 'package:fqapp/widgets/home/home_tab_bar.dart';
@@ -158,6 +159,157 @@ void main() {
     await tester.pumpAndSettle();
     expect(selected, 1);
     semantics.dispose();
+  });
+
+  testWidgets('the pinned strip keeps the same gutter as the search row', (
+    tester,
+  ) async {
+    // 官方 `alx.xml` 的内边距是 paddingStart 20dp / paddingEnd 13dp，天生
+    // 不对称：条带滚到头，「推荐」左边比末位 tab 右边多 7dp，看着就是没跟
+    // 它正上方的搜索框对齐（用户 2026-10-25 指出）。两侧都收成 16dp，与
+    // HomeHero 同一对栏距。
+    //
+    // 只收 padding 还不够：六个分类在手机宽上放得下，右边空出来的其实是剩余
+    // 空间，所以间隔还得把富余摊掉，末位 tab 才会贴到同一条竖线上。
+    await tester.binding.setSurfaceSize(const Size(360, 200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    void ignore(int _) {}
+    await tester.pumpWidget(
+      _app(
+        Column(
+          children: [
+            HomeHero(onSearch: () {}),
+            CustomScrollView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              slivers: [
+                SliverPersistentHeader(
+                  delegate: HomeTabBarDelegate(
+                    selectedIndex: 0,
+                    onSelect: ignore,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final search = tester.getRect(find.byKey(const Key('home_search_button')));
+    final firstTab = find.byKey(const ValueKey('home_category_0'));
+    expect(
+      tester
+          .widget<SingleChildScrollView>(
+            find
+                .ancestor(
+                  of: firstTab,
+                  matching: find.byType(SingleChildScrollView),
+                )
+                .first,
+          )
+          .padding,
+      const EdgeInsets.symmetric(horizontal: HomeTabBarDelegate.sidePadding),
+    );
+    // 左端：与搜索框同一条竖线。
+    expect(tester.getRect(firstTab).left, search.left);
+
+    // 右端：与左端同宽，不再少掉那一段剩余空间。
+    final lastIndex = homeCategories.length - 1;
+    final secondTab = tester.getRect(
+      find.byKey(const ValueKey('home_category_1')),
+    );
+    final last = tester.getRect(
+      find.byKey(ValueKey('home_category_$lastIndex')),
+    );
+    expect(last.right, closeTo(360 - HomeTabBarDelegate.sidePadding, 0.01));
+    // 富余确实摊到了间隔上，而不是靠 padding 硬塞。
+    expect(
+      secondTab.left - tester.getRect(firstTab).right,
+      greaterThan(HomeTabBarDelegate.tabSpacing),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a wide window stops spreading the tabs', (tester) async {
+    // 桌面窗口能宽到六个数倍：富余无上限地摊到间隔上会把分类扯到整屏两端，
+    // 比留白更难看，所以封顶在 tabSpacing + maxExtraSpacing。
+    await tester.binding.setSurfaceSize(const Size(900, 200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    void ignore(int _) {}
+    await tester.pumpWidget(
+      _app(
+        CustomScrollView(
+          slivers: [
+            SliverPersistentHeader(
+              delegate: HomeTabBarDelegate(selectedIndex: 0, onSelect: ignore),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final first = tester.getRect(find.byKey(const ValueKey('home_category_0')));
+    final second = tester.getRect(find.byKey(const ValueKey('home_category_1')));
+    expect(
+      second.left - first.right,
+      closeTo(
+        HomeTabBarDelegate.tabSpacing + HomeTabBarDelegate.maxExtraSpacing,
+        0.01,
+      ),
+    );
+    expect(first.left, HomeTabBarDelegate.sidePadding);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an overflowing strip scrolls to the same gutters', (
+    tester,
+  ) async {
+    // 服务端下发的分类比本地六个多，360 宽放不下：两端内边距这时才直接可见。
+    await tester.binding.setSurfaceSize(const Size(360, 200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    void ignore(int _) {}
+    const categories = [
+      HomeCategory('推荐', Icons.circle),
+      HomeCategory('小说', Icons.circle),
+      HomeCategory('短剧', Icons.circle),
+      HomeCategory('漫剧', Icons.circle),
+      HomeCategory('漫画', Icons.circle),
+      HomeCategory('听书', Icons.circle),
+      HomeCategory('精选', Icons.circle),
+      HomeCategory('完本', Icons.circle),
+    ];
+    await tester.pumpWidget(
+      _app(
+        CustomScrollView(
+          slivers: [
+            SliverPersistentHeader(
+              delegate: HomeTabBarDelegate(
+                selectedIndex: 0,
+                onSelect: ignore,
+                categories: categories,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final firstTab = find.byKey(const ValueKey('home_category_0'));
+    expect(tester.getRect(firstTab).left, HomeTabBarDelegate.sidePadding);
+
+    await tester.fling(firstTab, const Offset(-400, 0), 900);
+    await tester.pumpAndSettle();
+    final lastIndex = categories.length - 1;
+    final last = tester.getRect(
+      find.byKey(ValueKey('home_category_$lastIndex')),
+    );
+    expect(last.right, lessThanOrEqualTo(360));
+    expect(360 - last.right, closeTo(HomeTabBarDelegate.sidePadding, 0.01));
+    expect(tester.takeException(), isNull);
   });
 
   test('the pinned tab bar rebuilds when the palette changes', () {

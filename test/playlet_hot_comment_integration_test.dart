@@ -10,6 +10,20 @@ import 'package:flutter/material.dart';
 /// 播放页热评行的接入用例：仅在有热评、竖屏、未清屏/锁定时出现，
 /// 点击回调带上当前那条。
 void main() {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    // 热评行只在竖屏出现，而默认测试窗口 800×600 现在是横屏：钉成手机竖屏。
+    final view = binding.platformDispatcher.views.first;
+    view.physicalSize = const Size(400, 888);
+    view.devicePixelRatio = 1;
+  });
+  tearDown(() {
+    final view = binding.platformDispatcher.views.first;
+    view.resetPhysicalSize();
+    view.resetDevicePixelRatio();
+  });
+
   PlayletComment comment(String id) =>
       PlayletComment(id: id, text: '内容$id', userName: '小明');
 

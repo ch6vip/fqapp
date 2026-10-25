@@ -87,16 +87,20 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     _expectClearScreen();
 
+    // 清屏态底栏「倍速」开的是档位弹层（视频设置的出口是底栏「设置」）。
     await tester.tap(find.byKey(const ValueKey('player-rate-text')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('player-more-rate-row')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-rate-sheet')), findsOneWidget);
     expect(find.byKey(const ValueKey('player-clear-screen')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('player-more-rate-1.25')));
+    await tester.tap(find.byKey(const ValueKey('player-rate-sheet-2')));
     await tester.pumpAndSettle();
     expect(player.rate, 1.25);
     expect(find.text('1.25x'), findsOneWidget);
     await tester.pump(const Duration(seconds: 4));
     _expectClearScreen();
+    await tester.tap(find.byKey(const ValueKey('player-settings-text')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-more-panel')), findsOneWidget);
   });
 
   testWidgets('clear screen survives paging, loading and player replacement', (
@@ -212,18 +216,44 @@ void main() {
   });
 
   testWidgets(
-    'landscape vertical swipes leave device settings, episode and playback untouched',
+    'landscape vertical swipes adjust the device, not episode or playback',
     (tester) async {
+      // 横屏竖直翻页本来就没开（`canPage == false`），空出来的上下滑按
+      // B站 补成「左半屏亮度 / 右半屏音量」：设备档位变，画面、选集与
+      // 播放状态都不动。
       final player = FakeNativePlayer()..isPlaying = true;
       final selected = <int>[];
+      // 默认的通道只记账不回档位：手势需要真档位才能起手，进横屏那一下
+      // 就会预读，所以要在 mount 之前换掉。
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('fqapp/native_player'),
+            (call) async {
+              nativeCalls.add(call);
+              if (call.method == 'gestureLevels') {
+                return <String, double>{'brightness': .5, 'volume': .5};
+              }
+              return null;
+            },
+          );
       await _mount(tester, player, landscape: true, selected: selected);
       final video = tester.element(find.byKey(const ValueKey('video-frame')));
       player.calls.clear();
+      nativeCalls.clear();
+
       await _slide(tester, const Offset(200, 200), const Offset(0, -50));
+      expect(find.textContaining('亮度'), findsOneWidget);
+      expect(
+        nativeCalls.where((call) => call.method == 'setScreenBrightness'),
+        isNotEmpty,
+      );
       await _slide(tester, const Offset(600, 200), const Offset(0, 60));
-      expect(nativeCalls, isEmpty);
-      expect(find.textContaining('亮度'), findsNothing);
-      expect(find.textContaining('音量'), findsNothing);
+      expect(find.textContaining('音量'), findsOneWidget);
+      expect(
+        nativeCalls.where((call) => call.method == 'setMediaVolume'),
+        isNotEmpty,
+      );
+
       expect(
         tester.element(find.byKey(const ValueKey('video-frame'))),
         same(video),

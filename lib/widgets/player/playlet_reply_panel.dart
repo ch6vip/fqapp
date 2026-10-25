@@ -25,12 +25,17 @@ class PlayletReplyPanel extends StatefulWidget {
     required this.onBack,
     this.loader,
     this.focusReplyId = '',
+    this.embedded = false,
   });
 
   final String seriesId;
   final PlayletComment comment;
   final VoidCallback onBack;
   final PlayletReplyPageLoader? loader;
+
+  /// 嵌进播放页分屏时隐藏右上角关闭钮（没有可关闭的弹层路由），
+  /// 左上的返回箭头仍负责回到评论列表。
+  final bool embedded;
 
   /// 回复型热评定位（`hot_reply_id`）：非空时首页走官方 source=1002
   /// 定点读（business_param.ref_reply_id/insert_reply_ids，
@@ -85,8 +90,9 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
     final requestedCursor = _cursor;
     // 官方定点读只在首页（cursor 为空）带 ref_reply_id（`L()` 的
     // cursor=""），加载更多回到普通分页。
-    final refReplyId =
-        _useFocus && requestedCursor.isEmpty ? widget.focusReplyId : '';
+    final refReplyId = _useFocus && requestedCursor.isEmpty
+        ? widget.focusReplyId
+        : '';
     final pinnedFirst = refReplyId.isNotEmpty;
     try {
       // 官方回复分页每页 5 条（`y.java:97-98` static{o=5;p=5}）。
@@ -117,7 +123,9 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
           });
         }
         final ids = _replies.map((reply) => reply.id).toSet();
-        _replies.addAll(replies.where((reply) => reply.id.isEmpty || ids.add(reply.id)));
+        _replies.addAll(
+          replies.where((reply) => reply.id.isEmpty || ids.add(reply.id)),
+        );
         if (page.totalCount > 0) _total = page.totalCount;
         _cursor = page.cursor;
         _hasMore =
@@ -170,12 +178,13 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
                 ),
               ),
             ),
-            IconButton(
-              tooltip: '关闭',
-              key: const ValueKey('playlet-replies-close'),
-              onPressed: () => Navigator.pop(context),
-              icon: Icon(Icons.close_rounded, color: palette.muted),
-            ),
+            if (!widget.embedded)
+              IconButton(
+                tooltip: '关闭',
+                key: const ValueKey('playlet-replies-close'),
+                onPressed: () => Navigator.pop(context),
+                icon: Icon(Icons.close_rounded, color: palette.muted),
+              ),
           ],
         ),
         const Divider(height: 1),
@@ -248,10 +257,7 @@ class _PlayletReplyPanelState extends State<PlayletReplyPanel> {
               child: const Text('加载更多回复'),
             )
           : _replies.isEmpty
-          ? Text(
-              '暂无回复',
-              style: TextStyle(color: HomePalette.of(context).muted),
-            )
+          ? Text('暂无回复', style: TextStyle(color: HomePalette.of(context).muted))
           : const SizedBox.shrink(),
     ),
   );

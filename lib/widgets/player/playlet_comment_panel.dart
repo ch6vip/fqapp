@@ -43,15 +43,26 @@ class PlayletCommentPanel extends StatefulWidget {
     this.focusCommentId = '',
     this.focusReplyId = '',
     this.replyLoader,
+    this.embedded = false,
+    this.onTotalChanged,
   });
 
   final String seriesId;
+
+  /// 嵌进播放页分屏时置 true：填满父级高度、隐藏「剧评」标题与关闭钮，
+  /// 筛选、分页、回复子面板保持不变。回复子面板的返回箭头仍回到评论列表；
+  /// 嵌入态不拦截系统返回键，避免和播放页的 PopScope 争用同一次 pop。
+  final bool embedded;
 
   /// 缺省走 `ApiClient.playletComments`。
   final PlayletCommentPageLoader? loader;
 
   /// 宿主已知的评论数（官方入口计数同源），用于首屏空态文案。
   final int initialTotal;
+
+  /// 服务端总数变化（首屏加载、加载更多、发评论后刷新）时回传宿主，
+  /// 让分屏 Tab 上的「评论 N」与列表总数保持一致。
+  final ValueChanged<int>? onTotalChanged;
 
   /// 官方从热评进入评论时带 `hot_comment_id`/`hot_reply_id`
   /// （`SeriesHotCommentView.java:468-559`）。本地等价：用
@@ -123,6 +134,31 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
   }
 
   @override
+  void didUpdateWidget(covariant PlayletCommentPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final incoming = widget.initialTotal;
+    if (incoming <= 0 ||
+        incoming == oldWidget.initialTotal ||
+        incoming <= (_total ?? 0)) {
+      return;
+    }
+    // 宿主拿到更新的入口计数（详情 / 热评页返回）：本地还没有更细的数据时
+    // 直接采用；已经加载过的列表总数优先，避免回退。
+    _total = incoming;
+    _publishTotal();
+  }
+
+  /// 把最新总数回传宿主。父级的 setState 不能落在 build/布局阶段，延到帧后。
+  void _publishTotal() {
+    final total = _total;
+    final callback = widget.onTotalChanged;
+    if (total == null || callback == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) callback(total);
+    });
+  }
+
+  @override
   void dispose() {
     _scroll.dispose();
     super.dispose();
@@ -173,6 +209,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
         tag: _tag,
       );
       if (!mounted || generation != _generation) return;
+      final previousTotal = _total;
       setState(() {
         if (reset) {
           _comments
@@ -194,6 +231,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
             page.cursor != requestedCursor;
         _loading = false;
       });
+      if (_total != previousTotal) _publishTotal();
       // 回复型热评（hot_reply_id 非空）：官方直接定位到该楼层所在
       // 的回复列表（show_hot_comment_dialog）。父评论一出现就自动进楼，
       // 回复面板再用 focusReplyId 做 source=1002 定点读。
@@ -240,40 +278,42 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
     final height = MediaQuery.sizeOf(context).height;
     final replyTarget = _replyTarget;
     if (replyTarget != null) {
+      final replies = PlayletReplyPanel(
+        key: ValueKey(replyTarget.id),
+        seriesId: widget.seriesId,
+        comment: replyTarget,
+        loader: widget.replyLoader,
+        // 回复型热评定位：父评论正是焦点评论时带上回复 id。
+        focusReplyId: replyTarget.id == widget.focusCommentId
+            ? widget.focusReplyId
+            : '',
+        onBack: () => setState(() => _replyTarget = null),
+        embedded: widget.embedded,
+      );
+      if (widget.embedded) return replies;
       return PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, result) {
           if (!didPop) setState(() => _replyTarget = null);
         },
-        child: SizedBox(
-          height: height * .62,
-          child: PlayletReplyPanel(
-            key: ValueKey(replyTarget.id),
-            seriesId: widget.seriesId,
-            comment: replyTarget,
-            loader: widget.replyLoader,
-            // 回复型热评定位：父评论正是焦点评论时带上回复 id。
-            focusReplyId: replyTarget.id == widget.focusCommentId
-                ? widget.focusReplyId
-                : '',
-            onBack: () => setState(() => _replyTarget = null),
-          ),
-        ),
+        child: SizedBox(height: height * .62, child: replies),
       );
     }
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!widget.embedded) _header() else const SizedBox(height: 4),
+        _filters(),
+        const Divider(height: 1),
+        Expanded(child: _body()),
+      ],
+    );
+    if (widget.embedded) return content;
     return SizedBox(
       // 官方高度是屏幕高 × 系数（CommentDialogHelper.java:473-483）；竖屏用
       // 0.62 作为该系数在本布局下的等价，避免顶到状态栏。
       height: height * .62,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _header(),
-          _filters(),
-          const Divider(height: 1),
-          Expanded(child: _body()),
-        ],
-      ),
+      child: content,
     );
   }
 
@@ -304,11 +344,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
             key: const ValueKey('playlet-comment-close'),
             tooltip: '关闭',
             onPressed: () => Navigator.maybePop(context),
-            icon: Icon(
-              Icons.close_rounded,
-              size: 20,
-              color: palette.muted,
-            ),
+            icon: Icon(Icons.close_rounded, size: 20, color: palette.muted),
           ),
         ],
       ),
@@ -319,6 +355,10 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
     height: 40,
     child: ListView(
       scrollDirection: Axis.horizontal,
+      // 只有「全部 / 最新」两个固定项，永远不需要横向滚动；保留
+      // Scrollable 会在分屏里抢走 PageView 的横滑手势（从筛选条起手
+      // 切不了选集/评论）。
+      physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       children: [for (final option in _fixedFilters) _filterChip(option)],
     ),

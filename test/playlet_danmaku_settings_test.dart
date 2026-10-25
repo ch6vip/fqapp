@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/widgets/player/playlet_danmaku_settings.dart';
 
@@ -97,5 +98,74 @@ void main() {
     expect(find.text('39%'), findsNothing);
     expect(find.text('100%'), findsWidgets);
     expect(find.text('适中'), findsWidgets);
+  });
+
+  testWidgets('the transparent background switch reports and persists', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final changes = <DanmakuSettings>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PlayletDanmakuSettingsPanel(
+            settings: const DanmakuSettings(),
+            landscape: false,
+            onChanged: changes.add,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    Switch switch_() => tester.widget<Switch>(
+      find.byKey(const ValueKey('danmaku-settings-transparent')),
+    );
+    expect(switch_().value, isFalse);
+
+    // 整行可点（与更多面板的开关行同一语义），不只认开关本身。
+    await tester.tap(
+      find.byKey(const ValueKey('danmaku-settings-transparent-row')),
+    );
+    await tester.pumpAndSettle();
+    expect(changes.last.transparentBackground, isTrue);
+    expect(switch_().value, isTrue);
+
+    // 落盘后能读回：键在官方 danmaku_config 下，重置回默认时同时被写回。
+    await DanmakuSettings.save(changes.last);
+    expect((await DanmakuSettings.load()).transparentBackground, isTrue);
+    await DanmakuSettings.save(const DanmakuSettings());
+    expect((await DanmakuSettings.load()).transparentBackground, isFalse);
+  });
+
+  testWidgets('the landscape panel has no sheet handle', (tester) async {
+    // 横屏是右侧全高面板（与选集抽屉同宽），拖拽手柄只属于底部 sheet。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PlayletDanmakuSettingsPanel(
+            settings: const DanmakuSettings(),
+            landscape: true,
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('danmaku-settings-drag-handle')),
+      findsNothing,
+    );
+    // 换成和选集抽屉同款的标题行（居中标题 + 左侧 ✕）。
+    expect(find.text('弹幕设置'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('player-side-panel-close')),
+      findsOneWidget,
+    );
+    // 横屏的「显示区域」按屏高密度换算。
+    expect(find.text('1/4屏'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('danmaku-settings-transparent')),
+      findsOneWidget,
+    );
   });
 }

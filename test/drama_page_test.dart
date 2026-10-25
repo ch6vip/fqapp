@@ -18,10 +18,12 @@ import 'package:fqapp/models/series_detail.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/series_detail_page.dart';
+import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/desktop_platform.dart';
+import 'package:fqapp/services/drama_channel_preferences.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/services/shelf_store.dart';
@@ -145,7 +147,7 @@ class _Seams {
   DramaPage page({
     Future<List<List<Chapter>>> Function(String id, String tab)?
     directoryLoader,
-    Widget Function()? searchPageBuilder,
+    Widget Function(SearchCategory category)? searchPageBuilder,
     Future<ChannelTable> Function()? channelLoader,
     Future<SeriesDetail> Function(String seriesId)? seriesDetailLoader,
     Future<PlayletCommentPage> Function(String seriesId)? seriesCommentLoader,
@@ -182,6 +184,9 @@ late Directory _hiveDir;
 void main() {
   // 本地列表和播放回归共用存储；开箱 I/O 保持在 fake-async 区外。
   setUp(() async {
+    // 频道选择是进程级静态态：上一个用例点过「收藏」就会带进下一个用例的
+    // 冷启动恢复，必须先清掉。
+    DramaChannelPreferences.reset();
     _hiveDir = await Directory.systemTemp.createTemp('fqapp-drama-test-');
     Hive.init(_hiveDir.path);
     // 生产 config.json 发新底栏（use_new_player_bottom_style=true）；测试
@@ -426,9 +431,10 @@ void main() {
     );
     expect(channelInk.borderRadius, BorderRadius.circular(12));
     expect(find.byKey(const Key('drama_search_button')), findsOneWidget);
-    // 官方 `ap3.xml` 的 `@id/h4f` 是 20dp **搜索**按钮（`Xh()` → `mh()`
-    // 「点击新按钮 从书城进如搜索页」），不是刷新按钮。刷新在官方是下拉手势。
-    expect(find.byKey(const Key('drama_strip_search_button')), findsOneWidget);
+    // 官方 `ap3.xml` 的 `@id/h4f` 是 20dp 搜索钮，但手机端顶部已有整条
+    // 搜索框，两处入口重复（2026-10-25 用户要求移除）。桌面端没有搜索行，
+    // 才保留频道条右端这一处入口。
+    expect(find.byKey(const Key('drama_strip_search_button')), findsNothing);
 
     // 全屏卡片保留底部观看与信息入口，用户移除了右侧追剧、点赞栏。
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
@@ -471,6 +477,221 @@ void main() {
     // 挂载在 8.3s 结束，这里泵到 8.7s。
     await tester.pump(const Duration(seconds: 3, milliseconds: 700));
     expect(find.text('上滑查看更多视频'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('频道条按首页留白，标签切换沿用首页放大动画', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    // 搜索行 51dp（6 + 36 + 9），选中 24sp 标签的顶部与搜索框底边之间
+    // 至少留出 9dp；旧的 38dp 搜索行只有约 7dp，标签贴着搜索框。
+    final search = tester.getRect(find.byKey(const Key('drama_search_button')));
+    final selectedTab = tester.getRect(find.text('推荐'));
+    expect(selectedTab.top - search.bottom, greaterThanOrEqualTo(9));
+
+    double fontSizeOf(String label) {
+      final rich = tester.widget<RichText>(
+        find.descendant(of: find.text(label), matching: find.byType(RichText)),
+      );
+      return rich.text.style!.fontSize!;
+    }
+
+    // 首页的字号档位：选中 24sp、未选中 16sp。
+    expect(fontSizeOf('推荐'), 24);
+    expect(fontSizeOf('看剧'), 16);
+
+    await tester.tap(find.text('看剧'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+    // 切换不是瞬间跳字号：180ms 动画走到一半时两档都还在中间值。
+    expect(fontSizeOf('推荐'), greaterThan(16));
+    expect(fontSizeOf('推荐'), lessThan(24));
+    expect(fontSizeOf('看剧'), greaterThan(16));
+    expect(fontSizeOf('看剧'), lessThan(24));
+
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(fontSizeOf('推荐'), 16);
+    expect(fontSizeOf('看剧'), 24);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('大字号下频道条随选中字号长高，不撞破搜索框', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: _Seams().page(),
+        ),
+      ),
+    );
+    await _flush(tester);
+
+    final tab = tester.getRect(
+      find.ancestor(of: find.text('推荐'), matching: find.byType(InkWell)).first,
+    );
+    final search = tester.getRect(find.byKey(const Key('drama_search_button')));
+    // 24sp 在 2 倍字号下已有 52.8dp 高，锁死 38dp 会溢出；条带要跟着长高。
+    expect(tab.height, greaterThan(38));
+    expect(tab.top, greaterThan(search.bottom));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('冷启动回到上次看的频道，搜索占位跟着频道语境', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    // 官方把上次频道写进 SP（`last_tab_type` 语义）：这里上次停在漫剧（24）。
+    SharedPreferences.setMockInitialValues({
+      DramaChannelPreferences.key: kChannelDynamicComic,
+      DramaChannelPreferences.lastKey: kChannelVideoFeed,
+    });
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    await tester.pumpAndSettle();
+
+    // 首帧就落在漫剧：网格直接是 24 的流，不再先闪一下「推荐」。
+    expect(find.text('24-0 作品'), findsOneWidget);
+    expect(find.text('16-0 作品'), findsNothing);
+    // 搜索占位跟着频道语境走（漫剧频道搜漫剧）。
+    expect(find.text('请输入漫剧名或主演名'), findsOneWidget);
+    expect(find.text('请输入短剧名或主演名'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('上次频道不在本地表里就回落到推荐', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    // 28＝预约：服务端会下发，本地没有数据源、刻意不渲染。恢复时找不到
+    // 对应频道必须稳稳落在「推荐」，不能空表越界。
+    DramaChannelPreferences.selectedType = 28;
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    expect(find.text('16-0 作品'), findsOneWidget);
+    expect(find.text('请输入短剧名或主演名'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('频道条把选中项滚进视口，切换后写回 SP', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    SharedPreferences.setMockInitialValues({
+      DramaChannelPreferences.key: kChannelDynamicComic,
+      DramaChannelPreferences.lastKey: kChannelVideoFeed,
+    });
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          // 2 倍字号（Android 上限）下五个标签总宽超出 360dp：不滚的话
+          // 恢复到的「漫剧」会卡在视口外。
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: _Seams().page(),
+        ),
+      ),
+    );
+    await _flush(tester);
+    await tester.pumpAndSettle();
+
+    final strip = tester.widget<SingleChildScrollView>(
+      find.byKey(const Key('drama_channel_strip')),
+    );
+    // 恢复到的「漫剧」在视口右端之外：首帧就该把条带滚过去。
+    expect(strip.controller!.offset, greaterThan(0));
+    final manju = tester.getRect(find.text('漫剧'));
+    expect(manju.left, greaterThanOrEqualTo(0));
+    expect(manju.right, lessThanOrEqualTo(360));
+
+    // 点「看剧」：条带跟着滚回去，选中项始终完整可见。
+    final before = strip.controller!.offset;
+    await tester.tap(find.text('看剧'));
+    await tester.pumpAndSettle();
+    expect(strip.controller!.offset, lessThan(before));
+    final episode = tester.getRect(find.text('看剧'));
+    expect(episode.left, greaterThanOrEqualTo(0));
+    expect(episode.right, lessThanOrEqualTo(360));
+    expect(find.text('8-0 作品'), findsOneWidget);
+
+    // 选择写回 SP：下次冷启动落在看剧（8），上一次是漫剧（24）。
+    expect(DramaChannelPreferences.selectedType, kChannelVideoEpisode);
+    expect(DramaChannelPreferences.lastType, kChannelDynamicComic);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('分区搜索带上频道语境：漫剧频道落漫剧分类', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    final opened = <SearchCategory>[];
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            searchPageBuilder: (category) {
+              opened.add(category);
+              return const Scaffold(body: Text('搜索页'));
+            },
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+
+    // 推荐频道的内容是短剧，搜索落「短剧」分类。
+    await tester.tap(find.byKey(const Key('drama_search_button')));
+    await tester.pumpAndSettle();
+    expect(opened, [SearchCategory.video]);
+    expect(find.text('搜索页'), findsOneWidget);
+
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+
+    // 切到漫剧再进搜索：落在「漫剧」分类，而不是「综合」。
+    await tester.tap(find.text('漫剧'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('drama_search_button')));
+    await tester.pumpAndSettle();
+    expect(opened, [SearchCategory.video, SearchCategory.manju]);
     expect(tester.takeException(), isNull);
   });
 
@@ -843,6 +1064,19 @@ void main() {
       // 「漫剧」出现在 chip、封面角标与频道条上，共 3 处。
       expect(find.text('漫剧'), findsNWidgets(3));
       expect(find.text('全球杀机 作品'), findsOneWidget);
+
+      // 悬浮顶栏（搜索 51 + 频道条 38）是 Stack 里的悬浮层，筛选行必须整体
+      // 让到它下面。实现里曾写死 top+84（＝旧 38+38+8），搜索行加高后
+      // chips 上沿会钻到频道条里 5dp。
+      final strip = tester.getRect(
+        find
+            .ancestor(of: find.text('推荐'), matching: find.byType(InkWell))
+            .first,
+      );
+      final chips = tester.getRect(
+        find.byKey(const Key('drama_recent_filter')),
+      );
+      expect(chips.top, greaterThanOrEqualTo(strip.bottom + 8));
 
       // 漫剧 chip（作用域限定在筛选行，避免命中频道条）→ 只剩漫剧卡。
       await tester.tap(
