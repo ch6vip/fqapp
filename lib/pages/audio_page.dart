@@ -58,6 +58,13 @@ class AudioPage extends StatefulWidget {
   /// request can opt out to seek deliberately instead.
   final bool resumeSession;
   final ReaderStore? historyStore;
+
+  /// Chapter text cache handed to the embedded 边听边读 reader.
+  ///
+  /// Without it the reader opens the encrypted Hive box itself, which on a cold
+  /// start means a secure-storage round trip before the first chapter appears.
+  /// The host already has one when it matters, so pass it through.
+  final ChapterCache? chapterCache;
   final NativePlayer Function()? playerFactory;
   final Future<AudioSource> Function(String itemId, {String? toneId})?
   sourceLoader;
@@ -99,6 +106,7 @@ class AudioPage extends StatefulWidget {
     this.resumeSession = true,
     this.cover = '',
     this.historyStore,
+    this.chapterCache,
     this.playerFactory,
     this.sourceLoader,
     this.voicesLoader,
@@ -787,49 +795,17 @@ class _AudioPageState extends State<AudioPage> {
   /// 而不是跳到另一个页面。只有 TTS 与正文共享章节 ID 时才成立；定点讲书的
   /// 章节编号无法映射到另一本书，仍旧只能看字幕。
   Widget _readAlongPanel() {
-    final palette = HomePalette.of(context);
-    return Column(
-      children: [
-        // 面板内的退出口：阅读器自己不再持有返回手势（embedded 模式），
-        // 这一行就是官方「返回听书」的对应物。
-        SizedBox(
-          height: 40,
-          child: Row(
-            children: [
-              const SizedBox(width: 8),
-              IconButton(
-                key: const Key('audio_read_along_back'),
-                tooltip: '返回听书',
-                onPressed: () => setState(() => _readingAlong = false),
-                style: IconButton.styleFrom(foregroundColor: palette.ink),
-                icon: const Icon(LucideIcons.chevron_down, size: 20),
-              ),
-              Expanded(
-                child: Text(
-                  c._chapters[c._index].title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.muted,
-                    fontSize: 12.5,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ReaderPage(
-            bookId: c._bookId,
-            title: c._title,
-            cover: c._cover,
-            chapters: c._chapters,
-            startIndex: c._index,
-            embedded: true,
-          ),
-        ),
-      ],
+    // 阅读器自己的顶栏就是面板的标题行（官方也是这样：正文面板上方只有
+    // 一条阅读器工具栏）。这里不再额外画一条，否则会出现两套标题叠着。
+    return ReaderPage(
+      bookId: c._bookId,
+      title: c._title,
+      cover: c._cover,
+      chapters: c._chapters,
+      startIndex: c._index,
+      embedded: true,
+      chapterCache: widget.chapterCache,
+      onEmbeddedBack: () => setState(() => _readingAlong = false),
     );
   }
 
@@ -837,7 +813,11 @@ class _AudioPageState extends State<AudioPage> {
   /// their subtitle view; their chapter numbers cannot map a different book.
   Future<void> _showReadAlong() async {
     if (c._closed || c._chapters.isEmpty) return;
-    if (c._mode == 'tts' && c._ttsBookId == c._bookId && !c._offline) {
+    // 内嵌阅读器只要章节能对上就成立。`_offline` 的名字容易误导：它是
+    // 「注入了 loader」而非「离线播放」，把它当成拦截条件会让注入了任何
+    // loader 的调用（含测试）永远打不开面板。真正的前提只有一条——TTS 与
+    // 正文共享章节 ID，也就是 `_ttsBookId == _bookId`。
+    if (c._mode == 'tts' && c._ttsBookId == c._bookId) {
       setState(() => _readingAlong = true);
       return;
     }

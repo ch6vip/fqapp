@@ -104,11 +104,11 @@ void main() {
     final subtitles = Completer<SubtitleTrack>();
     await _mount(tester, _AudioSession((_, _) => subtitles.future).app());
     await _openReadAlong(tester);
-    expect(find.text('本章暂无同步字幕'), findsOneWidget);
+    // TTS 走内嵌阅读器面板，字幕不再是 sheet：面板本身就带正文高亮。
+    expect(find.byType(ReaderPage), findsOneWidget);
     subtitles.complete(_track);
     await _flush(tester);
-    expect(_currentSubtitle(tester), '第一句同步字幕');
-    expect(find.text('本章暂无同步字幕'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -120,30 +120,16 @@ void main() {
       );
       await _mount(tester, session.app());
       await _openReadAlong(tester);
-      expect(_currentSubtitle(tester), '第一句同步字幕');
+      // TTS 走内嵌阅读器面板；字幕不再以 sheet 呈现。
+      expect(find.byType(ReaderPage), findsOneWidget);
       session.players.first.emitPosition(const Duration(seconds: 9));
       await _flush(tester);
-      expect(_currentSubtitle(tester), '第二句同步字幕');
+      // 自动切章后播放器重建，面板仍在且不抛异常。
       session.players.first.emitCompleted();
       await _flush(tester);
       expect(session.players, hasLength(2));
-      expect(find.text('第二句同步字幕'), findsNothing);
-      expect(find.text('本章暂无同步字幕'), findsOneWidget);
-      expect(
-        tester
-            .widget<Text>(
-              find.byKey(const ValueKey('audio-read-along-chapter')),
-            )
-            .data,
-        '第二章',
-      );
       nextSubtitles.complete(_nextTrack);
       await _flush(tester);
-      expect(_currentSubtitle(tester), '下一章同步字幕');
-      Navigator.of(
-        tester.element(find.byKey(const Key('audio_subtitle_current'))),
-      ).pop();
-      await tester.pumpAndSettle();
       session.players.last.emitPosition(const Duration(seconds: 12));
       await _flush(tester);
       expect(tester.takeException(), isNull);
@@ -158,7 +144,8 @@ void main() {
     );
     await _mount(tester, session.app());
     await _openReadAlong(tester);
-    expect(find.text('本章暂无同步字幕'), findsOneWidget);
+    // 字幕拉取失败是可选路径：面板照样打开，播放不中断。
+    expect(find.byType(ReaderPage), findsOneWidget);
     expect(session.players.single.isPlaying, isTrue);
     expect(tester.takeException(), isNull);
   });
@@ -351,14 +338,18 @@ void main() {
   });
 }
 
-String? _currentSubtitle(WidgetTester tester) =>
-    tester.widget<Text>(find.byKey(const Key('audio_subtitle_current'))).data;
-
+/// Opens 边听边读.
+///
+/// The panel embeds the reader, which keeps its own timers running, so
+/// `pumpAndSettle` never reaches a still frame — pump a bounded number of
+/// frames instead.
 Future<void> _openReadAlong(WidgetTester tester) async {
   final entry = find.byKey(const Key('audio_read_along'));
   await tester.ensureVisible(entry);
   await tester.tap(entry);
-  await tester.pumpAndSettle();
+  for (var i = 0; i < 10; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
 }
 
 Future<void> _flush(WidgetTester tester) async {
@@ -376,6 +367,10 @@ Future<void> _mount(
   await tester.binding.setSurfaceSize(const Size(430, 932));
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox.shrink());
+    // The embedded reader arms a 500ms save debounce; unmounting cancels it in
+    // dispose(), but the frame that runs dispose must be pumped before the
+    // framework's pending-timer invariant is checked.
+    await tester.pump(const Duration(milliseconds: 600));
     await _flush(tester);
     await tester.binding.setSurfaceSize(null);
   });
@@ -460,6 +455,7 @@ class _AudioSession {
         Chapter(itemId: 'c2', title: '第二章', volumeName: '正文'),
       ],
       historyStore: store,
+      chapterCache: MemoryChapterCache(),
       sourceLoader:
           sourceLoader ??
           (id, {toneId}) async => AudioSource(

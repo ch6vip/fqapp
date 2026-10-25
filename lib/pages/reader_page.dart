@@ -89,6 +89,13 @@ class ReaderPage extends StatefulWidget {
   /// twice makes the status bar flip between the two colour sets.
   final bool embedded;
 
+  /// What the toolbar's back button does in embedded mode.
+  ///
+  /// Standalone, back pops the reader's own route. Embedded, there is no route
+  /// of the reader's own — `Navigator.pop` would dismiss the whole listening
+  /// page, so the host supplies a callback that collapses the panel instead.
+  final VoidCallback? onEmbeddedBack;
+
   /// Paragraph ideas for the current chapter. When both this and
   /// [commentResolver] are null the reader fetches them itself, unless a
   /// [chapterCache] was injected (an injected cache marks the caller as
@@ -118,6 +125,7 @@ class ReaderPage extends StatefulWidget {
     this.ideasLoader,
     this.commentResolver,
     this.embedded = false,
+    this.onEmbeddedBack,
     this.shelfItem,
     this.underlineStore,
     this.replacementStore,
@@ -2681,9 +2689,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               fit: StackFit.expand,
               children: [
                 SafeArea(
+                  // 嵌入时宿主已经消费过系统 insets，再来一层会把正文顶下去。
+                  top: !widget.embedded,
+                  bottom: !widget.embedded,
                   child: Column(
                     children: [
-                      if (_preferences.readingInfoMode ==
+                      if (!widget.embedded &&
+                          _preferences.readingInfoMode ==
                           ReaderInfoMode.detailed)
                         GestureDetector(
                           onTap: _toggleControls,
@@ -2726,7 +2738,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                           child: _buildContent(preset, windowPadding),
                         ),
                       ),
-                      if (_preferences.showReadingInfo)
+                      if (!widget.embedded && _preferences.showReadingInfo)
                         ListenableBuilder(
                           listenable: _scrollController,
                           builder: (context, _) => ReaderStatusBar(
@@ -2826,8 +2838,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         child: Row(
           children: [
             IconButton(
-              tooltip: '返回书籍',
-              onPressed: () => Navigator.of(context).pop(),
+              key: const ValueKey('reader-toolbar-back'),
+              tooltip: widget.embedded ? '返回听书' : '返回书籍',
+              onPressed: widget.embedded
+                  ? (widget.onEmbeddedBack ??
+                        () => Navigator.of(context).maybePop())
+                  : () => Navigator.of(context).pop(),
               icon: Icon(LucideIcons.arrow_left, color: preset.textColor),
             ),
             Expanded(
