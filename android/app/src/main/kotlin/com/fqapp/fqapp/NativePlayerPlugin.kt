@@ -59,31 +59,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * Decrypted plaintext is served to ExoPlayer through a [CryptoDataSource] backed
  * by the C crypto core; events are pushed to Flutter over an EventChannel.
  */
+/** 播放器日志 tag：类内与顶层 [buildPlayer] 共用，避免两处字面量漂移。 */
+internal const val PLAYER_LOG_TAG = "NativePlayerPlugin"
+
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerPlugin internal constructor(
     private val cryptoStream: CryptoStream = JniCryptoStream,
-    private val playerFactory: (Context, VideoDecoderPreference) -> ExoPlayer = { context, decoder ->
-        // Note: decoder init fallback and 206 diagnostics — see
-        // .agents/notes/implemented/bug-fix/2026-10-15-issue2-decoder-initialization-fallback.md.
-        val renderers = DefaultRenderersFactory(context)
-            .setEnableDecoderFallback(true)
-            // 用户选的解码器策略（issue #92）。自动 = 不干预，MediaTek 部分芯片
-            // 在 Android 15 + HEVC + DRM 上硬解静默黑屏（androidx/media#2711），
-            // 没有错误回调，只能让用户手动切软解。
-            .setMediaCodecSelector(
-                when (decoder) {
-                    VideoDecoderPreference.SOFTWARE -> SoftwareOnlyCodecSelector
-                    VideoDecoderPreference.HARDWARE -> HardwareFirstCodecSelector
-                    VideoDecoderPreference.AUTOMATIC -> MediaCodecSelector.DEFAULT
-                }
-            )
-        ExoPlayer.Builder(context, renderers).build()
-    }
+    private val playerFactory: (Context, PlayerBuildOptions) -> ExoPlayer = ::buildPlayer
 ) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     PluginRegistry.RequestPermissionsResultListener {
 
     companion object {
-        private const val TAG = "NativePlayerPlugin"
+        private const val TAG = PLAYER_LOG_TAG
         private const val POST_NOTIFICATIONS_REQUEST = 7412
         @Volatile private var instance: NativePlayerPlugin? = null
 
@@ -295,7 +282,20 @@ class NativePlayerPlugin internal constructor(
                 val decoder = VideoDecoderPreference.fromName(
                     call.argument<String>("videoDecoder")
                 )
-                handleCreate(cdnUrl, keyHex, decoder, result)
+                // 纯音频播放器（听书）才能选系统混音器变速；缺省/未知取值退回
+                // Media3 内建的 Sonic，与本次改动前完全一致（issue #129）。
+                val audioOnly = call.argument<Boolean>("audioOnly") == true
+                val rateEngine = if (audioOnly) {
+                    AudioRateEngine.fromName(call.argument<String>("audioRateEngine"))
+                } else {
+                    AudioRateEngine.BUILT_IN
+                }
+                handleCreate(
+                    cdnUrl,
+                    keyHex,
+                    PlayerBuildOptions(decoder, audioOnly, rateEngine),
+                    result
+                )
             }
             "play" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
@@ -558,7 +558,7 @@ class NativePlayerPlugin internal constructor(
     private fun handleCreate(
         cdnUrl: String,
         keyHex: String,
-        decoder: VideoDecoderPreference,
+        options: PlayerBuildOptions,
         result: MethodChannel.Result
     ) {
         // Note: deferred CDN I/O — see .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
@@ -568,7 +568,7 @@ class NativePlayerPlugin internal constructor(
 
         if (keyHex.isEmpty()) {
             handler.post {
-                createPlayerWithUri(playerId, cdnUrl, decoder)
+                createPlayerWithUri(playerId, cdnUrl, options)
             }
         } else {
             try {
@@ -577,7 +577,7 @@ class NativePlayerPlugin internal constructor(
                 // A separate probe repeats all metadata I/O and cannot be
                 // cancelled while the native open is still obtaining a handle.
                 handler.post {
-                    createPlayerWithCrypto(playerId, cdnUrl, keyHex, decoder)
+                    createPlayerWithCrypto(playerId, cdnUrl, keyHex, options)
                 }
             } catch (_: Throwable) {
                 failCreation(playerId)
@@ -594,9 +594,9 @@ class NativePlayerPlugin internal constructor(
     private fun createPlayerWithUri(
         playerId: Int,
         uri: String,
-        decoder: VideoDecoderPreference
+        options: PlayerBuildOptions
     ) {
-        createPlayer(playerId, decoder) { player ->
+        createPlayer(playerId, options) { player ->
             player.setMediaItem(MediaItem.fromUri(uri))
         }
     }
@@ -605,10 +605,10 @@ class NativePlayerPlugin internal constructor(
         playerId: Int,
         cdnUrl: String,
         keyHex: String,
-        decoder: VideoDecoderPreference
+        options: PlayerBuildOptions
     ) {
         cryptoStream.clearHttpStatus(cdnUrl)
-        createPlayer(playerId, decoder, cdnUrl) { player ->
+        createPlayer(playerId, options, cdnUrl) { player ->
             val dataSourceFactory = DataSource.Factory {
                 CryptoDataSource(cdnUrl, keyHex, cryptoStream)
             }
@@ -620,7 +620,7 @@ class NativePlayerPlugin internal constructor(
 
     private fun createPlayer(
         playerId: Int,
-        decoder: VideoDecoderPreference,
+        options: PlayerBuildOptions,
         diagnosticUrl: String? = null,
         configure: (ExoPlayer) -> Unit
     ) {
@@ -635,7 +635,7 @@ class NativePlayerPlugin internal constructor(
             // MediaCodec supplies the buffer dimensions; don't resize the
             // producer to match the description panel's Flutter rectangle.
             producer = textureRegistry.createSurfaceProducer()
-            player = playerFactory(flutterBinding.applicationContext, decoder)
+            player = playerFactory(flutterBinding.applicationContext, options)
             output = NativeVideoOutput(player, producer)
             players[playerId] = PlayerInstance(playerId, player, output, diagnosticUrl)
             output.attach()
@@ -1145,6 +1145,78 @@ internal enum class VideoDecoderPreference {
         fun fromName(value: String?): VideoDecoderPreference =
             entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: AUTOMATIC
     }
+}
+
+/**
+ * 听书倍速的变速实现（与 Dart 侧 `AudioRateEngine` 同名，issue #129）。
+ *
+ * [BUILT_IN] = Media3 自带的 Sonic 时伸缩（`SonicAudioProcessor`，默认行为）；
+ * [PLATFORM] = 系统音频混音器时伸缩（`AudioTrack.setPlaybackParams`，需要
+ * Media3 的 `setEnableAudioTrackPlaybackParams(true)` 才会启用）。
+ *
+ * 同一段智能朗读语音 2.0× 实测，Sonic 的谐噪比比系统实现低 2.9 dB，听感就是
+ * 用户报的「电音/金属感」。系统实现依赖厂商 AudioFlinger/APM，而 ExoPlayer
+ * 历史上在部分蓝牙设备上开这个选项会报 AudioTrack init failed（#9712），
+ * 所以保留 [BUILT_IN] 作为可回退的兼容档。
+ */
+internal enum class AudioRateEngine(val wireName: String) {
+    PLATFORM("platform"),
+    BUILT_IN("builtIn");
+
+    companion object {
+        fun fromName(value: String?): AudioRateEngine =
+            entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: PLATFORM
+    }
+}
+
+/**
+ * 建播放器时的固定参数。
+ *
+ * [audioOnly] 是听书专用播放器：只有这种播放器才能选 [AudioRateEngine.PLATFORM]。
+ * 视频/短剧必须走 Media3 内建变速，否则音频处理与视频渲染不再步进同一套计时
+ * （画面与声音会错位）。
+ */
+internal data class PlayerBuildOptions(
+    val decoder: VideoDecoderPreference = VideoDecoderPreference.AUTOMATIC,
+    val audioOnly: Boolean = false,
+    val rateEngine: AudioRateEngine = AudioRateEngine.BUILT_IN
+) {
+    /** 真正生效的变速引擎：视频播放器永远强制内建变速。 */
+    val effectiveRateEngine: AudioRateEngine
+        get() = if (audioOnly) rateEngine else AudioRateEngine.BUILT_IN
+}
+
+/**
+ * 播放器工厂。解码器偏好与变速引擎都是 builder 期定型，事后无法改，
+ * 不过两者都会影响 renderer 集合。
+ */
+internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlayer {
+    // Note: decoder init fallback and 206 diagnostics — see
+    // .agents/notes/implemented/bug-fix/2026-10-15-issue2-decoder-initialization-fallback.md.
+    // issue #129：听书倍速改由系统混音器做（AudioTrack/APM），高倍速下
+    // 谐噪比明显好于内建 Sonic。默认值 false，视频播放器保持内建变速。
+    val platformRate = options.effectiveRateEngine == AudioRateEngine.PLATFORM
+    if (options.audioOnly) {
+        // 一行可检索的日志：反馈「高倍速电音/没声音」时能先分清是哪一档。
+        Log.i(
+            PLAYER_LOG_TAG,
+            "audio rate engine=${options.effectiveRateEngine.wireName} platform=$platformRate"
+        )
+    }
+    val renderers = DefaultRenderersFactory(context)
+        .setEnableDecoderFallback(true)
+        // 用户选的解码器策略（issue #92）。自动 = 不干预，MediaTek 部分芯片
+        // 在 Android 15 + HEVC + DRM 上硬解静默黑屏（androidx/media#2711），
+        // 没有错误回调，只能让用户手动切软解。
+        .setMediaCodecSelector(
+            when (options.decoder) {
+                VideoDecoderPreference.SOFTWARE -> SoftwareOnlyCodecSelector
+                VideoDecoderPreference.HARDWARE -> HardwareFirstCodecSelector
+                VideoDecoderPreference.AUTOMATIC -> MediaCodecSelector.DEFAULT
+            }
+        )
+        .setEnableAudioTrackPlaybackParams(platformRate)
+    return ExoPlayer.Builder(context, renderers).build()
 }
 
 /**

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -433,6 +434,56 @@ void main() {
       expect(player.textureId, 12);
     },
   );
+
+  // issue #129：变速引擎只对听书（纯音频）播放器下发，否则原生侧会给视频
+  // 也打开 AudioTrack 变速，画面与声音不再步进同一套计时。
+  testWidgets('audio players request the platform rate engine on create', (
+    tester,
+  ) async {
+    AudioPreferences.instance.resetForTest();
+    final player = NativePlayer(audioOnly: true);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(_eventMethods, (_) async => null);
+    messenger.setMockMethodCallHandler(_methods, (call) async {
+      calls.add(call);
+      return call.method == 'create' ? {'playerId': 71} : null;
+    });
+    try {
+      final creation = player.create('https://example.invalid/listen.mp3', '');
+      await tester.pump();
+      await _sendEvent({'playerId': 71, 'type': 'created', 'value': 9});
+      await tester.pump();
+      expect(await creation, 9);
+      final arguments = calls
+          .firstWhere((call) => call.method == 'create')
+          .arguments
+          as Map<Object?, Object?>;
+      expect(arguments['audioOnly'], true);
+      expect(arguments['audioRateEngine'], 'platform');
+    } finally {
+      await player.dispose();
+      await tester.pump();
+      await messenger.handlePlatformMessage(_eventMethods.name, null, (_) {});
+      await tester.pump(const Duration(seconds: 31));
+      messenger.setMockMethodCallHandler(_methods, null);
+      messenger.setMockMethodCallHandler(_eventMethods, null);
+      AudioPreferences.instance.resetForTest();
+    }
+  });
+
+  // 视频播放器不带这两个键：老客户端的 create 参数与视频变速行为都不变。
+  nativeTest('video players never send the audio rate engine', (
+    tester,
+    player,
+  ) async {
+    await _createPlayer(tester, player);
+    final arguments =
+        calls.firstWhere((call) => call.method == 'create').arguments
+            as Map<Object?, Object?>;
+    expect(arguments.containsKey('audioOnly'), false);
+    expect(arguments.containsKey('audioRateEngine'), false);
+  });
 }
 
 Future<void> _createPlayer(WidgetTester tester, NativePlayer player) async {
