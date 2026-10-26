@@ -7,7 +7,7 @@
     "lib/pages/category_page.dart": 604,
     "lib/pages/comic_reader_page.dart": 955,
     "lib/pages/detail_page.dart": 1663,
-    "lib/pages/drama_page.dart": 4997,
+    "lib/pages/drama_page.dart": 4986,
     "lib/pages/fanqie_history_import_page.dart": 624,
     "lib/pages/home_page.dart": 615,
     "lib/pages/home_provider.dart": 1362,
@@ -147,8 +147,8 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaFeedCard.build": {
-      "line": 2499,
-      "lines": 168,
+      "line": 2483,
+      "lines": 173,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaPageState.build": {
@@ -157,22 +157,22 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_HistoryCard.build": {
-      "line": 4042,
+      "line": 4031,
       "lines": 155,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_InfoPanelState.build": {
-      "line": 3303,
+      "line": 3292,
       "lines": 153,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_LocalListState.build": {
-      "line": 4487,
+      "line": 4476,
       "lines": 105,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_SeekTrackState.build": {
-      "line": 3102,
+      "line": 3091,
       "lines": 138,
       "symbol": "Widget build(BuildContext context) => LayoutBuilder("
     },
