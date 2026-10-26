@@ -23,6 +23,7 @@ import '../widgets/home/home_skeleton.dart';
 import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
+import '../widgets/tab_swipe_area.dart';
 import 'category_page.dart';
 import 'detail_page.dart';
 import 'cached_book_reader.dart';
@@ -231,40 +232,45 @@ class _HomePageState extends ConsumerState<HomePage> {
                     // Measuring once here keeps the grid out of the scroll
                     // path completely.
                     child: LayoutBuilder(
-                      builder: (context, constraints) => CustomScrollView(
-                        key: const Key('home_feed'),
-                        controller: _scroll,
-                        physics: const BouncingScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
+                      builder: (context, constraints) => TabSwipeArea(
+                        index: state.tabIndex,
+                        count: categories.length,
+                        onSelect: notifier.selectTab,
+                        child: CustomScrollView(
+                          key: const Key('home_feed'),
+                          controller: _scroll,
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
+                          slivers: [
+                            SliverToBoxAdapter(
+                              child: HomeHero(
+                                onSearch: _openSearch,
+                                onCategory: _openCategory,
+                                cueLoader: widget.cueLoader,
+                              ),
+                            ),
+                            SliverPersistentHeader(
+                              pinned: true,
+                              delegate: HomeTabBarDelegate(
+                                selectedIndex: state.tabIndex,
+                                onSelect: notifier.selectTab,
+                                categories: _categoriesOf(state),
+                                extent:
+                                    HomeTabBarDelegate.barHeight +
+                                    HomeTabBarDelegate.bottomPadding +
+                                    (textScale - 1).clamp(0, 2) * 16,
+                                dark: palette.dark,
+                                eink: palette.eink,
+                                oled: palette.oled,
+                              ),
+                            ),
+                            ..._contentSlivers(
+                              state,
+                              constraints.maxWidth - _gridPadding * 2,
+                            ),
+                          ],
                         ),
-                        slivers: [
-                          SliverToBoxAdapter(
-                            child: HomeHero(
-                              onSearch: _openSearch,
-                              onCategory: _openCategory,
-                              cueLoader: widget.cueLoader,
-                            ),
-                          ),
-                          SliverPersistentHeader(
-                            pinned: true,
-                            delegate: HomeTabBarDelegate(
-                              selectedIndex: state.tabIndex,
-                              onSelect: notifier.selectTab,
-                              categories: _categoriesOf(state),
-                              extent:
-                                  HomeTabBarDelegate.barHeight +
-                                  HomeTabBarDelegate.bottomPadding +
-                                  (textScale - 1).clamp(0, 2) * 16,
-                              dark: palette.dark,
-                              eink: palette.eink,
-                              oled: palette.oled,
-                            ),
-                          ),
-                          ..._contentSlivers(
-                            state,
-                            constraints.maxWidth - _gridPadding * 2,
-                          ),
-                        ],
                       ),
                     ),
                   ),

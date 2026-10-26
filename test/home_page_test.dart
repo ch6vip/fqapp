@@ -704,4 +704,67 @@ void main() {
     expect(canvasOf(), const HomePalette(true).canvas);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('横向手势在首页分类之间切换', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              // 只放一条卡片：空列表会落到骨架屏，那里的循环动画永远 settle
+              // 不下来。
+              homepageLoader:
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [
+                      MediaItem(
+                        id: 'a',
+                        title: '推荐 作品',
+                        cover: '',
+                        author: '',
+                        badge: '',
+                        ep: '',
+                        kind: 'book',
+                      ),
+                    ],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
+              // 搜索发现也可能在加载时被拉一次：给空表，别落到真 ApiClient。
+              searchLoader: (query, {int page = 1}) async => <SearchTab>[],
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: HomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(HomePage)),
+      listen: false,
+    );
+    expect(container.read(homeProvider).tabIndex, 0);
+
+    await tester.drag(
+      find.byKey(const Key('home_feed')),
+      const Offset(-260, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(container.read(homeProvider).tabIndex, 1);
+
+    // 回到首个分类，再往右滑：边界只给阻尼位移，不环绕到末位分类。
+    await tester.drag(find.byKey(const Key('home_feed')), const Offset(260, 0));
+    await tester.pumpAndSettle();
+    expect(container.read(homeProvider).tabIndex, 0);
+    await tester.drag(find.byKey(const Key('home_feed')), const Offset(260, 0));
+    await tester.pumpAndSettle();
+    expect(container.read(homeProvider).tabIndex, 0);
+    expect(tester.takeException(), isNull);
+  });
 }
