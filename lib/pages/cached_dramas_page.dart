@@ -116,6 +116,17 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     }
   }
 
+  /// 这一集在本剧里的位置（0 起）。
+  ///
+  /// 目录（`summary.drama.episodes`）的顺序才是权威的；记录里的 index 只在
+  /// 目录里找不到条目时兜底（理论上不会发生）。
+  int _episodePosition(CachedDramaSummary summary, CachedEpisode episode) {
+    final position = summary.drama.episodes.indexWhere(
+      (e) => e.itemId == episode.itemId,
+    );
+    return position >= 0 ? position : episode.index;
+  }
+
   @override
   Widget build(BuildContext context) {
     final episodeCount = _dramas.fold(
@@ -323,7 +334,10 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
                             ),
                             dense: true,
                             title: Text(
-                              '第 ${episode.index + 1} 集'
+                              // 集序以目录顺序为准：老记录里的 index 是
+                              // 「入队时的相对序号」，直接 +1 会显示成
+                              // 「第 1 集 · 第13集」。
+                              '第 ${_episodePosition(item, episode) + 1} 集'
                               '${episode.title.isEmpty ? '' : ' · ${episode.title}'}',
                             ),
                             subtitle: Text(

@@ -35,6 +35,19 @@ void main() {
     expect(prefs.ahead.value, 0);
   });
 
+  test('下载画质选择持久化，默认最高', () async {
+    final prefs = DramaCachePreferences.instance;
+    await prefs.load();
+    expect(prefs.downloadHeight.value, 0, reason: '默认不设上限');
+
+    await prefs.setDownloadHeight(720);
+    expect(prefs.downloadHeight.value, 720);
+
+    prefs.resetForTest();
+    await prefs.load();
+    expect(prefs.downloadHeight.value, 720);
+  });
+
   test('只读 Wi-Fi 开关也持久化', () async {
     final prefs = DramaCachePreferences.instance;
     await prefs.load();

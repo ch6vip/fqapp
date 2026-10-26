@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/drama_cache_preferences.dart';
+import '../services/episode_source_cache.dart';
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
 import '../services/connectivity_status.dart';
@@ -22,6 +23,7 @@ class DramaDownloadSheet extends StatefulWidget {
     required this.cover,
     required this.episodes,
     this.currentIndex = 0,
+    this.qualities = const [],
     this.downloader,
     this.store,
     this.connectivityProbe,
@@ -31,6 +33,13 @@ class DramaDownloadSheet extends StatefulWidget {
   final String title;
   final String cover;
   final List<Chapter> episodes;
+
+  /// 这部剧**实际可选**的清晰度（来自当前集的取流结果）。
+  ///
+  /// 每集到底给哪些档位只有取流接口知道：写死 1080/720/480 会让用户选了
+  /// 720 结果只能下到 360（或者反过来挑到 1080），所以优先拿真实档位列表；
+  /// 拿不到（还没取流过、单流）时才退回固定档位。
+  final List<EpisodeVariant> qualities;
 
   /// 播放页当前在看第几集（0 起）。给「往后 N 集」的快捷缓存定起点，
   /// 打开面板时也直接定位到这一集所在的区间 tab。
@@ -48,6 +57,7 @@ class DramaDownloadSheet extends StatefulWidget {
     required String cover,
     required List<Chapter> episodes,
     int currentIndex = 0,
+    List<EpisodeVariant> qualities = const [],
     DramaDownloader? downloader,
     DramaDownloadStore? store,
   }) => showModalBottomSheet<void>(
@@ -68,6 +78,7 @@ class DramaDownloadSheet extends StatefulWidget {
       cover: cover,
       episodes: episodes,
       currentIndex: currentIndex,
+      qualities: qualities,
       downloader: downloader,
       store: store,
     ),
@@ -168,6 +179,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
       );
       if (proceed != true) return;
     }
+    final height = DramaCachePreferences.instance.downloadHeight.value;
     await _downloader.enqueue(
       drama: CachedDrama(
         id: widget.seriesId,
@@ -176,6 +188,8 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
         episodes: widget.episodes,
       ),
       episodes: selected,
+      // 0 = 最高档，交给引擎在每集实际给到的档位里挑。
+      maxHeight: height == 0 ? null : height,
     );
     if (mounted) setState(_selected.clear);
   }
@@ -269,6 +283,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
                 ),
               ),
             _aheadBar(),
+            _qualityBar(palette),
             _autoCacheBar(palette),
             Flexible(
               child: GridView.count(
@@ -354,6 +369,66 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
                   count == remaining ? '剩余 $count 集' : '往后 $count 集',
                 ),
                 onPressed: () => unawaited(_cacheAhead(count)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 下载画质：每集实际可选档位由取流接口决定，所以这里给的是「上限」。
+  ///
+  /// 以前下载器写死取最高档，用户既看不到也选不了 —— 一集 1080P 动辄
+  /// 五六十 MB，想省空间的人毫无办法。
+  Widget _qualityBar(HomePalette palette) {
+    final prefs = DramaCachePreferences.instance;
+    final current = prefs.downloadHeight.value;
+    // 横向可滚：窄屏（360dp）上四个 chip 加标签放不下一行。
+    // 真实档位优先：同一高度只留一项（上游偶尔给两条同高度不同码率的流），
+    // 按高度从高到低排；0 永远排最前，表示「最高」。
+    final actual = <int, String>{};
+    for (final variant in widget.qualities) {
+      if (variant.height <= 0) continue;
+      actual.putIfAbsent(
+        variant.height,
+        () => variant.name.isEmpty ? '${variant.height}P' : variant.name,
+      );
+    }
+    final options = actual.isEmpty
+        // 还没取流过（或上游只给单流）：只能给固定档位表达意图，
+        // 真正下载时仍按「不超过上限的最高一档」去套。
+        ? [
+            (height: 0, label: '最高'),
+            for (final height in DramaCachePreferences.presetHeights)
+              if (height != 0) (height: height, label: '${height}P'),
+          ]
+        : [
+            (height: 0, label: '最高'),
+            for (final entry in (actual.entries.toList()
+              ..sort((a, b) => b.key.compareTo(a.key))))
+              (height: entry.key, label: entry.value),
+          ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Row(
+        children: [
+          Text(
+            '画质',
+            style: TextStyle(fontSize: 13, color: palette.muted),
+          ),
+          const SizedBox(width: 10),
+          for (final option in options)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                key: ValueKey('download-quality-${option.height}'),
+                label: Text(option.label),
+                selected: current == option.height,
+                onSelected: (_) async {
+                  await prefs.setDownloadHeight(option.height);
+                  if (mounted) setState(() {});
+                },
               ),
             ),
         ],

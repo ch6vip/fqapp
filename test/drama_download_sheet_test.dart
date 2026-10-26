@@ -29,6 +29,7 @@ void main() {
     int currentIndex = 0,
     ThemeData? theme,
     DramaDownloader? engine,
+    List<EpisodeVariant> qualities = const [],
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -40,6 +41,7 @@ void main() {
             cover: '',
             episodes: episodes(episodeCount),
             currentIndex: currentIndex,
+            qualities: qualities,
             downloader: engine ?? downloader,
             store: store,
             // 测试宿主没有 connectivity 平台通道：直接给「WiFi 在线」。
@@ -188,6 +190,43 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await pumpSheet(tester, episodeCount: 9, currentIndex: 2);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('画质只列这部剧真实给到的档位', (tester) async {
+    await pumpSheet(
+      tester,
+      episodeCount: 3,
+      qualities: const [
+        EpisodeVariant(name: '1080P', url: 'u1080', keyHex: '', height: 1080),
+        EpisodeVariant(name: '360P', url: 'u360', keyHex: '', height: 360),
+      ],
+    );
+
+    expect(find.byKey(const ValueKey('download-quality-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('download-quality-1080')), findsOneWidget);
+    expect(find.byKey(const ValueKey('download-quality-360')), findsOneWidget);
+    // 上游没给 720，就不该让用户选 720。
+    expect(find.byKey(const ValueKey('download-quality-720')), findsNothing);
+  });
+
+  testWidgets('选 720P 后下载任务带上画质上限', (tester) async {
+    final engine = DramaDownloader(
+      store: store,
+      resolve: (episode) => Completer<EpisodeSource>().future,
+    );
+    await pumpSheet(tester, episodeCount: 3, engine: engine);
+
+    expect(find.text('画质'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('download-quality-720')));
+    await tester.pumpAndSettle();
+    expect(DramaCachePreferences.instance.downloadHeight.value, 720);
+
+    await tester.tap(find.byKey(const ValueKey('download-cell-ep0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('download-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(engine.value.single.maxHeight, 720);
   });
 
   testWidgets('边看边缓存默认 5 集，关掉后写回偏好', (tester) async {

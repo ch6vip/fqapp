@@ -34,6 +34,7 @@ class DramaCachePreferences {
 
   static const _aheadKey = 'drama_auto_cache_ahead';
   static const _wifiOnlyKey = 'drama_auto_cache_wifi_only';
+  static const _heightKey = 'drama_download_max_height';
 
   /// 默认往后缓存 5 集。
   static const int defaultAhead = 5;
@@ -41,8 +42,20 @@ class DramaCachePreferences {
   /// 面板上可选的档位，0 = 关闭。
   static const List<int> presetAheads = [0, 3, 5, 10];
 
+  /// 下载画质上限的可选档位；0 = 最高（不设上限）。
+  ///
+  /// 存的是「上限」而不是具体某一档：每集实际给了哪些档位由取流接口决定，
+  /// 这里只能表达意图，具体挑哪档见 `DramaDownloader.pickVariant`。
+  static const List<int> presetHeights = [0, 1080, 720, 480];
+
   /// 往后缓存几集；0 = 不自动缓存。
   final ValueNotifier<int> ahead = ValueNotifier<int>(defaultAhead);
+
+  /// 下载画质上限（1080 / 720 / 480），0 = 最高。
+  ///
+  /// 手动缓存与自动往后缓存共用这一个值 —— 同一个「我最多接受多高」的意图，
+  /// 分成两个开关只会让人不知道到底哪次生效。
+  final ValueNotifier<int> downloadHeight = ValueNotifier<int>(0);
 
   /// 只在不计费链路（Wi-Fi / 以太网）下自动缓存。
   ///
@@ -62,6 +75,7 @@ class DramaCachePreferences {
           ? defaultAhead
           : stored.clamp(0, 50);
       wifiOnly.value = sp.getBool(_wifiOnlyKey) ?? true;
+      downloadHeight.value = sp.getInt(_heightKey) ?? 0;
     } catch (_) {
       // 偏好读不出来就用默认值：自动缓存错过的只是便利，不影响播放。
     }
@@ -88,6 +102,15 @@ class DramaCachePreferences {
     } catch (_) {}
   }
 
+  Future<void> setDownloadHeight(int value) async {
+    if (downloadHeight.value == value) return;
+    downloadHeight.value = value;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setInt(_heightKey, value);
+    } catch (_) {}
+  }
+
   /// 忘掉已加载状态，让下一次 [load] 重新读 SharedPreferences。
   ///
   /// 只为测试存在：`_loaded` 是进程级一次性守卫，`setMockInitialValues`
@@ -97,5 +120,6 @@ class DramaCachePreferences {
     _loaded = false;
     ahead.value = defaultAhead;
     wifiOnly.value = true;
+    downloadHeight.value = 0;
   }
 }

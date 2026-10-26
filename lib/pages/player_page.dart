@@ -1075,6 +1075,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     });
   }
 
+  /// 当前实际在播的清晰度（像素高度），取不到返回 null。
+  ///
+  /// `_currentSource.url` 指向的就是正在播的那一档，和 `variants` 里的
+  /// 条目按 url 对回去即可；单流（没有 variants）时无从得知，返回 null。
+  int? _playingHeight() {
+    final source = _currentSource;
+    if (source == null) return null;
+    for (final variant in source.variants) {
+      if (variant.url != source.url) continue;
+      return variant.height > 0 ? variant.height : null;
+    }
+    return null;
+  }
+
   Future<void> _autoCacheNext() async {
     final prefs = DramaCachePreferences.instance;
     final ahead = prefs.ahead.value;
@@ -1102,6 +1116,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ),
         episodes: upcoming,
         auto: true,
+        // 用户在面板里挑过画质就守那个上限；没挑过就跟**当前正在播的这一档**
+        // 保持一致 —— 播放器已经按网速/清晰度选过一次了，自动缓存再自作
+        // 主张挑最高档，只会让流量和空间白涨。
+        maxHeight: prefs.downloadHeight.value != 0
+            ? prefs.downloadHeight.value
+            : _playingHeight(),
       );
       await _trimAutoCache(ahead);
     } catch (_) {
@@ -1800,6 +1820,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       cover: widget.cover,
       episodes: widget.eps,
       currentIndex: _index,
+      // 画质只列这部剧真实给到的档位，避免"选了 720 实际只有 360"。
+      qualities: _currentSource?.variants ?? const [],
     );
   }
 

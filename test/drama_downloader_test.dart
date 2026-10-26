@@ -369,6 +369,28 @@ void main() {
     expect(File(record!.filePath).existsSync(), isTrue);
   });
 
+  test('画质上限：挑不超过上限的最高一档，没有更低的就用最低', () {
+    final source = EpisodeSource('https://example.invalid/a.mp4', '', [
+      const EpisodeVariant(name: '1080P', url: 'u1080', keyHex: '', height: 1080),
+      const EpisodeVariant(name: '720P', url: 'u720', keyHex: '', height: 720),
+      const EpisodeVariant(name: '480P', url: 'u480', keyHex: '', height: 480),
+    ]);
+
+    // 不设上限 = 最高档（原来的行为）。
+    expect(DramaDownloader.pickVariant(source)?.name, '1080P');
+    // 720 上限：给 720，而不是 480。
+    expect(DramaDownloader.pickVariant(source, maxHeight: 720)?.name, '720P');
+    // 上限比最小档还低：退回最小档，不能因为挑不到就失败。
+    expect(DramaDownloader.pickVariant(source, maxHeight: 360)?.name, '480P');
+    // 上限高于所有档位：取最高。
+    expect(DramaDownloader.pickVariant(source, maxHeight: 2160)?.name, '1080P');
+
+    // 上游只给单流（没有 variants）时，任何上限都用主地址。
+    final flat = EpisodeSource('https://example.invalid/b.mp4');
+    expect(DramaDownloader.pickVariant(flat, maxHeight: 480)?.url,
+        'https://example.invalid/b.mp4');
+  });
+
   test('续传越界（HTTP 416）丢掉半成品重下，不会卡在失败', () async {
     // 半成品 500 字节，但重取地址后这条流只有 100 字节：Range 起点越界。
     final part = File('${videoDir.path}${Platform.pathSeparator}ep0.mp4.part')

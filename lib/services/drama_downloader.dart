@@ -23,6 +23,7 @@ class DramaDownloadTask {
     this.total,
     this.error,
     this.auto = false,
+    this.maxHeight,
   });
 
   final String seriesId;
@@ -36,6 +37,12 @@ class DramaDownloadTask {
 
   /// 「边看边往后缓存」自动排的任务（见 [CachedEpisode.auto]）。
   final bool auto;
+
+  /// 下载画质上限（1080 / 720 / 480）；null = 取最高档。
+  ///
+  /// 每集实际可选档位由取流接口决定，所以这里存的是「我最多接受多高」，
+  /// 由 [DramaDownloader.pickVariant] 在可选集合里挑最接近的一档。
+  final int? maxHeight;
 
   double? get progress => total == null || total! <= 0
       ? null
@@ -58,6 +65,7 @@ class DramaDownloadTask {
     total: clearTotal ? null : (total ?? this.total),
     error: clearError ? null : (error ?? this.error),
     auto: auto,
+    maxHeight: maxHeight,
   );
 }
 
@@ -117,6 +125,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     required CachedDrama drama,
     required List<Chapter> episodes,
     bool auto = false,
+    int? maxHeight,
   }) async {
     if (episodes.isEmpty) return;
     for (final episode in episodes) {
@@ -129,6 +138,13 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       }
     }
     await _store.ensureCatalogue(drama);
+    // 集记录里的 index 必须是「在本剧里的第几集」，不是这次传入列表里的
+    // 相对序号 —— 从第 13 集往后缓存 5 集时，序号仍应是 13..17。用相对
+    // 序号会让缓存管理页把它们显示成「第 1 集 · 第13集」。
+    final positions = <String, int>{
+      for (final (position, episode) in drama.episodes.indexed)
+        episode.itemId: position,
+    };
     var changed = false;
     for (final (index, episode) in episodes.indexed) {
       if (_tasks.containsKey(episode.itemId)) continue;
@@ -138,9 +154,10 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
           seriesId: drama.id,
           itemId: episode.itemId,
           title: episode.title,
-          index: index,
+          index: positions[episode.itemId] ?? index,
           status: DramaDownloadStatus.waiting,
           auto: auto,
+          maxHeight: maxHeight,
         ),
       );
       changed = true;
@@ -393,7 +410,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       );
       final source = await _resolve(episode);
       if (task.abortReason != null) return null;
-      final variant = _pickVariant(source);
+      final variant = pickVariant(source, maxHeight: task.snapshot.maxHeight);
       if (variant == null) return '该集没有可下载的播放地址';
 
       client = _clientFactory();
@@ -519,7 +536,14 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       reason != '无效的剧集 ID' && reason != '该集没有可下载的播放地址';
 
   /// 与官方一致的画质策略：固定取最高档；上游只有单流时用主地址。
-  static EpisodeVariant? _pickVariant(EpisodeSource source) {
+  /// 在一集的可选档位里挑一档下载。
+  ///
+  /// [maxHeight] 为 null 时取最高档（原来的行为）。给了上限就取「不超过
+  /// 上限的最高一档」——省流量的人要的是 720P，给他 480P 是错的；如果这集
+  /// 最小的一档也比上限高（比如只有 1080P），那就用最小的一档，总不能
+  /// 因为挑不到就失败。
+  @visibleForTesting
+  static EpisodeVariant? pickVariant(EpisodeSource source, {int? maxHeight}) {
     if (source.variants.isEmpty) {
       if (source.url.isEmpty) return null;
       return EpisodeVariant(
@@ -529,9 +553,18 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
         height: 0,
       );
     }
-    return source.variants.reduce(
-      (a, b) => a.height >= b.height ? a : b,
-    );
+    if (maxHeight == null) {
+      return source.variants.reduce((a, b) => a.height >= b.height ? a : b);
+    }
+    // height <= 0 表示上游没给高度，只能当作最差候选。
+    final known = source.variants.where((v) => v.height > 0).toList();
+    if (known.isEmpty) {
+      return source.variants.reduce((a, b) => a.height >= b.height ? a : b);
+    }
+    final fits = known.where((v) => v.height <= maxHeight).toList()
+      ..sort((a, b) => b.height.compareTo(a.height));
+    if (fits.isNotEmpty) return fits.first;
+    return known.reduce((a, b) => a.height <= b.height ? a : b);
   }
 
   static _ContentRange? _parseContentRange(String? value) {
