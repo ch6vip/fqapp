@@ -203,6 +203,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final state = ref.watch(homeProvider);
     final notifier = ref.read(homeProvider.notifier);
     final palette = HomePalette.of(context);
+    final categories = _categoriesOf(state);
     final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
     return Scaffold(
       backgroundColor: palette.canvas,
@@ -255,7 +256,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                               delegate: HomeTabBarDelegate(
                                 selectedIndex: state.tabIndex,
                                 onSelect: notifier.selectTab,
-                                categories: _categoriesOf(state),
+                                categories: categories,
                                 extent:
                                     HomeTabBarDelegate.barHeight +
                                     HomeTabBarDelegate.bottomPadding +
