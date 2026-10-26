@@ -59,15 +59,15 @@ class HomeCellRenderers {
   }
 }
 
-/// `RankCellV3` — the rank board preview strip.
-const int kHomeCellRank = 511;
+/// `RankCellV3` — the rank board preview strip (constant owned by the model).
+const int kHomeCellRank = kHomeCellRankShowType;
 
 /// `MultiTabMixedUnlimitedV2` — a container block that wraps the card stream.
-const int kHomeCellMixedFeed = 384;
+const int kHomeCellMixedFeed = kHomeCellMixedFeedShowType;
 
 /// `DoubleRowMixedUnlimitedWithFilter` — the card stream itself, one level
 /// inside [kHomeCellMixedFeed].
-const int kHomeCellDoubleRowFeed = 385;
+const int kHomeCellDoubleRowFeed = kHomeCellDoubleRowFeedShowType;
 
 /// `MixedDataInUnlimited` — one card inside the stream.
 const int kHomeCellMixedItem = 339;

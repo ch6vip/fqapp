@@ -61,12 +61,33 @@ class HomepagePage {
   /// 本地兜底表。
   final List<HomeTabItem> tabs;
 
+  /// 这次响应声明自己属于哪个分类：`tab_item` 里被回答那一项的 `tab_type`。
+  ///
+  /// 上游的分类表只有**被回答的那一项**带 `cell_data`，其余项只有标题，
+  /// `data.tab_index` 指向该项在本响应里的位置。客户端按 `tab_type` 认领自己
+  /// 那份；认不到就等于这份区块/卡片是别人的——「听书」里画出推荐榜、
+  /// 猜你喜欢的小说卡片就是这么来的，调用方必须据此拒绝（见
+  /// `HomeNotifier._answersTab`）。
+  ///
+  /// `null` 搭配 [tabScoped] 为 true 表示带了分类表但没有一项是我们的。
+  final int? answeredTabType;
+
+  /// 响应是否被限定到单个分类（带了 `tab_item` 分类表）。
+  ///
+  /// 为 false 时 [answeredTabType] 没有意义：调用方无从判断声明归属（老后端、
+  /// 视频第二段 `cell/change`）。第二段由调用方按构造事实自己标注归属；
+  /// 没带分类表的首页响应还会再过一道「区块族与分类轴是否匹配」的检查（见
+  /// `HomeNotifier._answersTab`）——只带推荐那一族区块的载荷入不了别的分类。
+  final bool tabScoped;
+
   const HomepagePage({
     required this.items,
     required this.nextOffset,
     required this.sessionId,
     this.cells = const [],
     this.tabs = const [],
+    this.answeredTabType,
+    this.tabScoped = false,
   });
 }
 
@@ -1443,10 +1464,13 @@ class ApiClient {
       String? nextSessionId;
       var selectedPayload = payload;
       final tabs = <HomeTabItem>[];
+      var tabScoped = false;
+      int? answeredTabType;
       final data = payload['data'];
       if (data is Map) {
         final tabItems = data['tab_item'];
         if (tabItems is List) {
+          tabScoped = true;
           selectedPayload = <String, dynamic>{};
           for (final raw in tabItems) {
             if (raw is! Map) continue;
@@ -1460,6 +1484,7 @@ class ApiClient {
               continue;
             }
             selectedPayload = Map<String, dynamic>.from(raw);
+            answeredTabType = rawType is num ? rawType.toInt() : tabType;
             final candidate = raw['next_offset'];
             if (candidate is num &&
                 candidate.toInt() > offset &&
@@ -1485,6 +1510,8 @@ class ApiClient {
           tabs: tabs,
           nextOffset: nextOffset,
           sessionId: nextSessionId,
+          answeredTabType: answeredTabType,
+          tabScoped: tabScoped,
         ),
         // 数字型 `cell_id` 在 JSON 里是 double，会被精度截断成上游认不出的值，
         // 必须取 `cell_id_str`。
@@ -1554,6 +1581,10 @@ class ApiClient {
           cells: cells,
           nextOffset: nextOffset,
           sessionId: nextSessionId,
+          // 第二段本来就是我们拿着这个分类的 `cell_id` 换来的流，归属由
+          // 请求本身确定，不需要响应再声明一遍。
+          answeredTabType: tabType,
+          tabScoped: true,
         );
       });
     } catch (error) {

@@ -8,8 +8,10 @@ import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
+import '../services/app_log.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/home_page_affinity.dart';
 import '../services/library_store.dart';
 import '../widgets/home/home_cell_blocks.dart';
 import '../widgets/home/home_cell_renderers.dart';
@@ -106,6 +108,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   double? _blocksTitleScale;
   double? _blocksMetaScale;
 
+  /// Last logged render shape; keeps the diagnostic to one line per change.
+  String? _loggedShape;
+
   @override
   void initState() {
     super.initState();
@@ -170,6 +175,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         .kind;
     return state.items.where((item) => item.kind == kind).toList();
   }
+
   /// 当前分类的区块，或空表示这份 `cells` 不属于这里。
   ///
   /// 归属由数据自己声明（[HomeState.cellsTabIndex]），不再靠页面猜：上游曾把
@@ -382,12 +388,35 @@ class _HomePageState extends ConsumerState<HomePage> {
         rendered = true;
       }
     }
-    if (!rendered) return null;
+    if (!rendered) {
+      // 这份 `cells` 一个块都没画出来（听书的 337、老后端的未知类型…）：
+      // **必须把缓存清掉**。`_blocksCells` 已经在上面改成了这份列表，
+      // 若把 `_blocksBody`（上上个分类建的那套 widget）留着，下一次带着
+      // **同一份列表实例**的重建就会命中缓存、把上一个分类的排行榜/猜你喜欢
+      // 画到当前分类上——真机上「听书第二次加载变成推荐」就是这么来的
+      // （日志：`渲染 blocks tab=5 cells=337`。
+      _blocksBody = null;
+      _blocksCells = null;
+      _blocksWidth = null;
+      _blocksTitleScale = null;
+      _blocksMetaScale = null;
+      return null;
+    }
     return _blocksBody = slivers;
   }
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
     final blocks = _blockSlivers(state, gridWidth);
+    // 设备日志：分类页到底画的是区块还是卡片网格、画了多少张。听书出问题时
+    // 这一行直接说明它被画成了哪一种版式。
+    final shape = blocks != null
+        ? 'blocks tab=${state.tabIndex} '
+              'cells=${describeHomeCells(_cellsOfCurrentTab(state))}'
+        : 'grid tab=${state.tabIndex} items=${_visibleItems(state).length}';
+    if (shape != _loggedShape) {
+      _loggedShape = shape;
+      AppLog.d('home', '渲染 $shape');
+    }
     if (blocks != null) return blocks;
     final items = _visibleItems(state);
     if (items.isEmpty) {

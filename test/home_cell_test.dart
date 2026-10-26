@@ -88,7 +88,10 @@ void main() {
       expect(parseHomeCells(payload).map((c) => c.name), ['小说']);
     });
 
-    test('falls back to the first tab that carries blocks', () {
+    test('does not borrow another tab when the payload names no selection', () {
+      // 上游只给被回答那一项带 `cell_data`，`data.tab_index` 指向它。没有
+      // `tab_index` 就不知道哪一项被回答：曾经退到「第一个带区块的项」，
+      // 而那正是拿别的分类的区块当自己的（真机表现为听书里画推荐榜）。
       final payload = {
         'data': {
           'tab_item': [
@@ -106,7 +109,7 @@ void main() {
           ],
         },
       };
-      expect(parseHomeCells(payload).map((c) => c.name), ['推荐']);
+      expect(parseHomeCells(payload), isEmpty);
     });
 
     test('reads the second-stage video flow one cell_view deeper', () {
