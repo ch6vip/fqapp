@@ -554,6 +554,10 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
 
   void _publish({bool notification = true}) {
     if (closed) return;
+    // 阅读页的悬浮播放条靠这两个回调操作播放器：暂停/继续与关闭。
+    ListeningSession.instance
+      ..onToggle = toggle
+      ..onStop = close;
     ListeningSession.instance.update(
       bookId: book.bookId,
       chapterId: chapter.itemId,

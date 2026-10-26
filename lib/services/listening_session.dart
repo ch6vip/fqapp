@@ -36,6 +36,14 @@ class ListeningSession extends ChangeNotifier {
   /// picks whichever its source produced.
   ({int startPara, int startOff, int endPara, int endOff, int? elemIndex, int? elemOff})? audioParaRange;
 
+  /// 播放控制，由当前正在朗读的引擎挂上。
+  ///
+  /// 阅读页的悬浮播放条要能暂停和关闭，但它只订阅状态、不持有播放器；
+  /// 引擎（TTS / 听书）在开始时挂上回调、结束时清空，读者侧不需要知道
+  /// 背后是哪个实现。
+  Future<void> Function()? onToggle;
+  Future<void> Function()? onStop;
+
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// Whether this session is narrating the given chapter right now.
@@ -102,6 +110,10 @@ class ListeningSession extends ChangeNotifier {
     textReplacementRevision = null;
     sentenceRange = null;
     audioParaRange = null;
+    // 引擎已经结束，回调必须一起清掉：留着会让阅读页的悬浮条去操作一个
+    // 已关闭的播放器。
+    onToggle = null;
+    onStop = null;
     notifyListeners();
   }
 }

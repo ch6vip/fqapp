@@ -709,6 +709,10 @@ class _AudioPlaybackController extends ChangeNotifier
   /// playback (听书跟随翻页).
   void _publishListeningSession({bool playing = true}) {
     if (_index < 0 || _index >= _chapters.length) return;
+    // 阅读页的悬浮播放条靠这两个回调操作播放器。
+    ListeningSession.instance
+      ..onToggle = _togglePlayback
+      ..onStop = close;
     final chapter = _chapters[_index];
     final position = _boundedPosition(
       _player?.position ?? _position.value,

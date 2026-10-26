@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/book_comment.dart';
@@ -16,6 +17,7 @@ import '../services/app_theme.dart';
 import '../services/backend_transport.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_text_formatter.dart';
+import '../services/poster_cache.dart';
 import '../services/text_replacement_engine.dart';
 import '../services/text_replacement_store.dart';
 import '../services/library_store.dart';
@@ -418,8 +420,26 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
   }
 
+  /// 悬浮条的显隐/图标签名。播放状态变化不一定改变高亮范围，所以单独跟踪：
+  /// 少了这一步，暂停后条上的图标不会从「暂停」切回「继续」。
+  (String?, bool)? _lastListeningBarState;
+
+  void _syncListeningBar() {
+    final session = ListeningSession.instance;
+    final next = (
+      session.bookId,
+      session.playing && session.bookId == widget.bookId,
+    );
+    if (next == _lastListeningBarState) return;
+    _lastListeningBarState = next;
+    if (mounted) setState(() {});
+  }
+
   void _onListeningTick() {
     if (!mounted) return;
+    // 悬浮条的显隐与句高亮各自独立：前者只关心「谁在播/播没播」，后者要算
+    // 出当前句在排版里的范围（#161 把这个换算提到了回调顶部）。
+    _syncListeningBar();
     final layout = _chapterLayout;
     final narration = layout == null ? null : _narrationLayoutRange(layout);
     _syncNarrationHighlight(narration);
@@ -2774,11 +2794,111 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ),
                 _menuEdge(top: true, child: _buildToolbar(preset)),
                 _menuEdge(top: false, child: _buildReaderControls(preset)),
+                // 官方把听书中的操作收在左下角一个悬浮条里（封面 + 暂停 + 关闭），
+                // 正文和翻页手势都不受它影响，所以它只在播放中、且菜单没展开时出现。
+                if (_listeningBarVisible) _listeningMiniBar(preset),
                 // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
                 if (_einkFlashVisible)
                   const Positioned.fill(child: ColoredBox(color: Colors.white)),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 是否显示左下角的听书悬浮条。
+  ///
+  /// 官方截图里它只在「这本书正在朗读」时出现，并且菜单展开时让位——菜单
+  /// 自带播放控制，两条同时出现会重复。
+  bool get _listeningBarVisible {
+    final session = ListeningSession.instance;
+    if (!session.playing || session.bookId != widget.bookId) return false;
+    if (session.onToggle == null && session.onStop == null) return false;
+    return !_controlsVisible;
+  }
+
+  /// 左下角悬浮条：圆形封面 + 暂停/继续 + 关闭。
+  ///
+  /// 官方把它做成一个小胶囊，贴左下角浮在正文之上，不占排版空间：正文该
+  /// 怎么翻还怎么翻，读到哪里都不被遮挡。
+  Widget _listeningMiniBar(ReaderThemePreset preset) {
+    final session = ListeningSession.instance;
+    return Positioned(
+      left: 16,
+      bottom: 24 + MediaQuery.paddingOf(context).bottom,
+      child: Material(
+        key: const ValueKey('reader-listening-bar'),
+        color: preset.panelColor,
+        elevation: 3,
+        shadowColor: Colors.black26,
+        borderRadius: BorderRadius.circular(28),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipOval(
+                child: SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: widget.cover.isEmpty
+                      ? ColoredBox(
+                          color: preset.panelColor,
+                          child: Icon(
+                            LucideIcons.headphones,
+                            size: 18,
+                            color: preset.mutedTextColor,
+                          ),
+                        )
+                      : CachedNetworkImage(
+                          imageUrl: widget.cover,
+                          fit: BoxFit.cover,
+                          cacheManager: PosterCache.instance,
+                          placeholder: (_, _) => ColoredBox(
+                            color: preset.panelColor,
+                            child: Icon(
+                              LucideIcons.headphones,
+                              size: 18,
+                              color: preset.mutedTextColor,
+                            ),
+                          ),
+                          errorWidget: (_, _, _) => ColoredBox(
+                            color: preset.panelColor,
+                            child: Icon(
+                              LucideIcons.headphones,
+                              size: 18,
+                              color: preset.mutedTextColor,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                key: const ValueKey('reader-listening-toggle'),
+                tooltip: session.playing ? '暂停' : '继续',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => unawaited(session.onToggle?.call()),
+                icon: Icon(
+                  session.playing ? LucideIcons.pause : LucideIcons.play,
+                  size: 20,
+                  color: preset.textColor,
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('reader-listening-close'),
+                tooltip: '退出听书',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => unawaited(session.onStop?.call()),
+                icon: Icon(
+                  LucideIcons.x,
+                  size: 18,
+                  color: preset.mutedTextColor,
+                ),
+              ),
+            ],
           ),
         ),
       ),
