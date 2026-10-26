@@ -325,8 +325,11 @@ class DesktopPlatform with WindowListener {
         } else {
           await _tts.setLanguage('zh-CN');
         }
+        // flutter_tts 的 Windows 实现内部会再 +0.5（SAPI SpeakingRate 的
+        // 0.5 基线），所以这里减掉同一个偏移才是 app 侧的 rate。
+        // 早先是 *0.5，等效 0.5r+0.5：拉满 2.0× 实际只有 1.5×。
         await _tts.setSpeechRate(
-          ((args['rate'] as num?)?.toDouble() ?? 1) * .5,
+          ((args['rate'] as num?)?.toDouble() ?? 1) - .5,
         );
         return 300;
       case 'speak':
