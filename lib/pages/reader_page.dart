@@ -494,9 +494,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _syncNarrationHighlight((int, int)? narration) {
     if (!mounted) return;
+    // 还在读本章、只是这一拍没匹配上（字幕与正文偶有标点差异）时保留上一拍
+    // 的区间：清空会让整页突然变黑，观感比「晚半拍」差得多。确实不在读本章
+    // 才清。
+    final session = ListeningSession.instance;
+    final active = session.matches(widget.bookId, _chapter.itemId);
+    final held = narration ?? (active ? _narrationRange : null);
     // The follow anchor still uses [narration] when the wash is switched off;
     // only painting depends on the preference.
-    final next = _preferences.narrationHighlight ? narration : null;
+    final next = _preferences.narrationHighlight ? held : null;
     if (next != _narrationRange) {
       setState(() => _narrationRange = next);
     }
