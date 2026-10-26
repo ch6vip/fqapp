@@ -52,8 +52,11 @@ class SystemTts {
         'rate': prefs.rate,
       }) ??
       4000;
-  static Future<void> speak(String text, String id) =>
-      _call<void>('speak', {'text': text, 'id': id});
+  /// Speaks [text] as utterance [id]. [queue] appends it behind the utterance
+  /// already playing instead of cutting it off, which is what lets one sentence
+  /// follow the previous one without a gap.
+  static Future<void> speak(String text, String id, {bool queue = false}) =>
+      _call<void>('speak', {'text': text, 'id': id, 'queue': queue});
   static Future<void> stop() => _call<void>('stop');
   static Future<void> shutdown() => _call<void>('shutdown');
   static Future<void> openSettings() => _call<void>('settings');
@@ -207,21 +210,34 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   int _generation = 0;
   int _serial = 0;
   int _maxLength = 300;
-  String? _id;
+
+  /// Utterances already handed to the engine, keyed by utterance id. One
+  /// sentence each: most Chinese voices never report progress inside an
+  /// utterance, so the sentence is the finest wash the reader can get.
+  final Map<String, ({int start, int end})> _queued = {};
+
+  /// Id of the utterance the engine has started. Events from utterances still
+  /// waiting in its queue must not move the highlight.
+  String? _speakingId;
+
+  /// First character not yet handed to the engine.
+  int _cursor = 0;
+
+  /// The next `speak` must replace the engine queue instead of appending.
+  bool _flushing = true;
   bool _ready = false;
   bool _started = false;
 
-  /// Whether the current piece has reported an `onRangeStart`. Engines differ:
-  /// the platform Speech Services callback word by word, several third-party
-  /// Chinese voices never call it at all. [_offset] only advances on those
-  /// callbacks, so without them a sentence-sized highlight would freeze on the
-  /// first sentence of the piece — [_rangeCapable] remembers the engine's
-  /// behaviour and keeps the whole piece as the range instead.
+  /// Whether the current piece has reported an `onRangeStart`. This no longer
+  /// decides the wash — a piece is one sentence — but it keeps [_offset]
+  /// tracking the voice inside a long sentence, so progress and the follow
+  /// page do not lag behind by a whole sentence.
   bool _rangeSeen = false;
   bool _rangeCapable = false;
   bool _appActive = true;
   StreamSubscription<dynamic>? _subscription;
   Future<void> _notificationQueue = Future<void>.value();
+  Future<void> _pumps = Future<void>.value();
   Future<void>? _closeFuture;
   BackendRequest? _loadRequest;
   TextReplacementCancellation? _replacementCancellation;
@@ -282,7 +298,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     final cancellation = _replacementCancellation =
         TextReplacementCancellation();
     final request = _loadRequest = BackendRequest();
-    _id = null;
+    _resetQueue(_offset);
     wantPlay = _allowed;
     loading = true;
     completed = false;
@@ -341,7 +357,9 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       _ready = true;
     }
     loading = false;
-    await _speak(token);
+    _resetQueue(_offset);
+    _schedulePump(token);
+    await _pumps;
   }
 
   bool _current(int token) =>
@@ -355,39 +373,85 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     return offset;
   }
 
-  Future<void> _speak(int token) async {
-    if (!_current(token)) return;
-    if (_offset >= _text.length) {
-      if (index + 1 < book.chapters.length) {
-        await openChapter(index + 1);
-      } else {
-        completed = true;
-        await pause();
+  /// Drops the engine side of the session and rewinds the enqueue cursor.
+  void _resetQueue(int offset) {
+    _queued.clear();
+    _speakingId = null;
+    _cursor = offset;
+    _flushing = true;
+  }
+
+  /// Keeps the engine queue one sentence ahead of the voice.
+  ///
+  /// Speaking a sentence and waiting for `done` before the next one leaves an
+  /// audible hole every few seconds, so the next utterance is appended while
+  /// the current one plays. One ahead is enough to hide the start latency and
+  /// still stops promptly.
+  Future<void> _pump(int token) async {
+    // Re-checked per sentence: a pause inside the loop must not enqueue more.
+    while (_current(token) && _queued.length < 2) {
+      final range = nextSentenceRange(_text, _cursor, maxLength: _maxLength);
+      if (range == null) return;
+      _cursor = range.end;
+      final id = '${identityHashCode(this)}-${++_serial}';
+      _queued[id] = range;
+      final flush = _flushing;
+      if (flush) {
+        _flushing = false;
+        // The first utterance of a position is the one that will speak, so it
+        // owns the reader from here on: some engines never fire `onStart`, and
+        // their range callbacks would otherwise have no owner to attach to.
+        _show(id, range);
+        // Android 15+ requires foreground eligibility before requesting audio
+        // focus.
+        await _notificationQueue;
+        if (!_current(token) || !_queued.containsKey(id)) return;
       }
-      return;
+      await SystemTts.speak(
+        _text.substring(range.start, range.end),
+        id,
+        queue: !flush,
+      );
+      if (!_current(token)) return;
     }
-    _pieceStart = _offset;
-    // A piece that reported ranges proves the engine can do it; carry that
-    // knowledge forward, the capability does not change between pieces.
+  }
+
+  /// Serializes [_pump]. Two overlapping runs would append a sentence behind
+  /// the one a pending flush is about to replace: the engine drops it and the
+  /// reader waits for a `done` that never comes.
+  void _schedulePump(int token) {
+    _pumps = _pumps.then((_) => _pump(token)).catchError((Object e) async {
+      if (!closed && token == _generation) await _fail(e);
+    });
+  }
+
+  /// Points the reader at [id] and publishes its sentence.
+  void _show(String id, ({int start, int end}) range) {
     if (_rangeSeen) _rangeCapable = true;
     _rangeSeen = false;
-    var end = _safeOffset((_offset + _maxLength).clamp(0, _text.length));
-    // Short sentence-sized requests bound the rewind on engines without range
-    // callbacks. Never split a UTF-16 surrogate pair at either boundary.
-    for (var i = end - 1; i > _offset; i--) {
-      if ('。！？!?；;\n'.contains(_text[i])) {
-        end = i + 1;
-        break;
-      }
-    }
-    _pieceEnd = end;
-    final id = '${identityHashCode(this)}-${++_serial}';
-    _id = id;
+    _speakingId = id;
+    _pieceStart = range.start;
+    _pieceEnd = range.end;
+    _offset = range.start;
     _publish();
-    // Android 15+ requires foreground eligibility before requesting audio focus.
-    await _notificationQueue;
-    if (!_current(token) || _id != id) return;
-    await SystemTts.speak(_text.substring(_pieceStart, end), id);
+  }
+
+  MapEntry<String, ({int start, int end})>? _earliest() {
+    MapEntry<String, ({int start, int end})>? best;
+    for (final entry in _queued.entries) {
+      if (best == null || entry.value.start < best.value.start) best = entry;
+    }
+    return best;
+  }
+
+  Future<void> _advance(int token) async {
+    if (!_current(token)) return;
+    if (index + 1 < book.chapters.length) {
+      await openChapter(index + 1);
+    } else {
+      completed = true;
+      await pause();
+    }
   }
 
   void _event(dynamic value) {
@@ -396,24 +460,49 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       unawaited(pause());
       return;
     }
-    if (_id == null || value['id'] != _id) return;
+    final id = value['id'];
+    if (id is! String) return;
+    final range = _queued[id];
+    // A queued utterance that has not started yet, or a callback from the
+    // piece that is already behind us: neither may move the reader.
+    if (range == null && id != _speakingId) return;
     switch (value['type']) {
+      case 'start':
+        if (range != null) _show(id, range);
+        _schedulePump(_generation);
       case 'range':
         final start = value['start'];
-        if (start is int && start >= 0 && start < _pieceEnd - _pieceStart) {
-          _rangeSeen = true;
-          _offset = _safeOffset(_pieceStart + start);
-          _publish(notification: false);
+        if (range == null ||
+            id != _speakingId ||
+            start is! int ||
+            start < 0 ||
+            start >= range.end - range.start) {
+          return;
         }
+        _rangeSeen = true;
+        _offset = _safeOffset(range.start + start);
+        _publish(notification: false);
       case 'done':
-        _id = null;
-        _offset = _pieceEnd;
-        final token = _generation;
-        unawaited(
-          _speak(token).catchError((Object e) async {
-            if (!closed && token == _generation) await _fail(e);
-          }),
-        );
+        _queued.remove(id);
+        if (_speakingId == id) _speakingId = null;
+        if (range != null) _offset = range.end;
+        // Engines that never call `onRangeStart` still fire `done`, so the
+        // highlight is advanced here as well — the next sentence is already
+        // playing by the time this lands.
+        final next = _earliest();
+        if (next != null) {
+          _show(next.key, next.value);
+        } else if (nextSentenceRange(
+              _text,
+              _cursor,
+              maxLength: _maxLength,
+            ) ==
+            null) {
+          final token = _generation;
+          unawaited(_advance(token));
+          return;
+        }
+        _schedulePump(_generation);
       case 'error':
         unawaited(_fail(StateError('引擎朗读失败，请检查音色或网络后重试')));
       case 'interrupted':
@@ -447,7 +536,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     if (closed) return;
     ++_generation;
     _loadRequest?.cancel();
-    _id = null;
+    _resetQueue(_offset);
     wantPlay = false;
     loading = false;
     _publish();
@@ -536,7 +625,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     book.replacementStore.changes.removeListener(_replacementChanged);
     ++_generation;
     _loadRequest?.cancel();
-    _id = null;
+    _resetQueue(_offset);
     wantPlay = false;
     WidgetsBinding.instance.removeObserver(this);
     AudioPreferences.instance.backgroundPlayback.removeListener(

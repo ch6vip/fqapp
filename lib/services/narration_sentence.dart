@@ -42,6 +42,51 @@ const String _sentenceTrailers = '」』”’"\'）)》〉】';
       piece;
 }
 
+/// The next utterance to hand the engine, starting at [cursor].
+///
+/// One sentence per utterance, because a longer slice is exactly what made the
+/// 句高亮 paint whole paragraphs: an engine that never calls `onRangeStart` can
+/// only report the slice it was given, so the slice has to be the sentence.
+///
+/// [maxLength] is the engine's input limit; an unusually long sentence is cut
+/// there and continues as the following slice. The cut never lands inside a
+/// surrogate pair. Returns null when only whitespace is left, which callers
+/// read as "this chapter is done".
+({int start, int end})? nextSentenceRange(
+  String text,
+  int cursor, {
+  required int maxLength,
+}) {
+  var start = cursor.clamp(0, text.length).toInt();
+  // The previous slice already spoke its trailing break; a lone '\n' would
+  // otherwise become an utterance of its own.
+  while (start < text.length && text[start].trim().isEmpty) {
+    start++;
+  }
+  if (start >= text.length) return null;
+  final limit = start + maxLength;
+  var end = start;
+  while (end < text.length &&
+      end < limit &&
+      !_sentenceEnders.contains(text[end])) {
+    end++;
+  }
+  if (end < text.length && _sentenceEnders.contains(text[end])) {
+    end++;
+    // Closing marks belong to the sentence they end, so `」` is never the first
+    // character of the next utterance.
+    while (end < text.length && _sentenceTrailers.contains(text[end])) {
+      end++;
+    }
+  }
+  if (end > start && end < text.length) {
+    final unit = text.codeUnitAt(end);
+    if (unit >= 0xdc00 && unit <= 0xdfff) end--;
+  }
+  if (end <= start) return null;
+  return (start: start, end: end);
+}
+
 /// The sentence around [offset], clamped to `[lower, upper)`.
 ///
 /// [offset] is a character index into the piece being spoken. Returns null

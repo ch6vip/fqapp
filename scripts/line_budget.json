@@ -33,7 +33,7 @@
     "lib/services/inline_video_playback.dart": 1143,
     "lib/services/library_store.dart": 1204,
     "lib/services/native_player.dart": 746,
-    "lib/services/system_tts.dart": 561,
+    "lib/services/system_tts.dart": 650,
     "lib/services/webdav_client.dart": 781,
     "lib/services/webdav_sync_service.dart": 941,
     "lib/widgets/audio/audio_sections.dart": 1523,
