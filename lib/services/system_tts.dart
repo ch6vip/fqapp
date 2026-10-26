@@ -15,6 +15,7 @@ import 'backend_transport.dart';
 import 'chapter_cache_store.dart';
 import 'chapter_text_formatter.dart';
 import 'listening_session.dart';
+import 'narration_sentence.dart';
 import 'native_player.dart';
 
 class SystemTtsEngine {
@@ -209,6 +210,15 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   String? _id;
   bool _ready = false;
   bool _started = false;
+
+  /// Whether the current piece has reported an `onRangeStart`. Engines differ:
+  /// the platform Speech Services callback word by word, several third-party
+  /// Chinese voices never call it at all. [_offset] only advances on those
+  /// callbacks, so without them a sentence-sized highlight would freeze on the
+  /// first sentence of the piece — [_rangeCapable] remembers the engine's
+  /// behaviour and keeps the whole piece as the range instead.
+  bool _rangeSeen = false;
+  bool _rangeCapable = false;
   bool _appActive = true;
   StreamSubscription<dynamic>? _subscription;
   Future<void> _notificationQueue = Future<void>.value();
@@ -279,6 +289,10 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     error = null;
     index = next;
     _text = '';
+    // The old piece belongs to the previous chapter's coordinates; keeping it
+    // would let the reader paint a range that now points into other text.
+    _pieceStart = 0;
+    _pieceEnd = 0;
     _offset = offset;
     _publish();
     try {
@@ -353,6 +367,10 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _pieceStart = _offset;
+    // A piece that reported ranges proves the engine can do it; carry that
+    // knowledge forward, the capability does not change between pieces.
+    if (_rangeSeen) _rangeCapable = true;
+    _rangeSeen = false;
     var end = _safeOffset((_offset + _maxLength).clamp(0, _text.length));
     // Short sentence-sized requests bound the rewind on engines without range
     // callbacks. Never split a UTF-16 surrogate pair at either boundary.
@@ -383,6 +401,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       case 'range':
         final start = value['start'];
         if (start is int && start >= 0 && start < _pieceEnd - _pieceStart) {
+          _rangeSeen = true;
           _offset = _safeOffset(_pieceStart + start);
           _publish(notification: false);
         }
@@ -455,11 +474,13 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       playing: wantPlay && !loading && error == null,
       textProgress: progress,
       textReplacementRevision: book.replacementSnapshot.revision,
-      // The piece being spoken is one sentence (see _speak's sentence-sized
-      // split). Before the first piece the range is empty: no highlight.
-      sentenceRange: _pieceEnd > _pieceStart
-          ? (start: _pieceStart, end: _pieceEnd)
-          : null,
+      sentenceRange: sentenceHighlightRange(
+        _text,
+        offset: _offset,
+        pieceStart: _pieceStart,
+        pieceEnd: _pieceEnd,
+        precise: _rangeCapable || _rangeSeen,
+      ),
     );
     notifyListeners();
     if (notification) {

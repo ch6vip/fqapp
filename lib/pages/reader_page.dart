@@ -372,54 +372,58 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 切章或未在读本章时清空。
   (int, int)? _narrationRange;
 
-  void _syncNarrationHighlight() {
-    if (!mounted) return;
-    final layout = _chapterLayout;
-    (int, int)? next;
+  /// The passage being narrated, in layout coordinates, or null when this
+  /// chapter is not the one on the voice.
+  ///
+  /// Two sources, two coordinate systems. System TTS reports offsets into the
+  /// TTS text blob; 听书 reports the backend's (paragraph, offset) timeline.
+  /// Each is translated by its own mapper so neither can smear the highlight
+  /// onto the wrong paragraph.
+  (int, int)? _narrationLayoutRange(ReaderChapterLayout layout) {
     final session = ListeningSession.instance;
-    if (_preferences.narrationHighlight &&
-        layout != null &&
-        session.matches(widget.bookId, _chapter.itemId)) {
-      // Two sources, two coordinate systems. System TTS reports offsets into
-      // the TTS text blob; 听书 reports the backend's (paragraph, offset)
-      // timeline. Each is translated by its own mapper so neither can smear
-      // the highlight onto the wrong paragraph.
-      final audioRange = session.audioParaRange;
-      final ttsRange = session.sentenceRange;
-      if (audioRange != null) {
-        final translated = audioTimePointLayoutRange(
-          layout,
-          audioRange.startPara,
-          audioRange.startOff,
-          audioRange.endPara,
-          // The upstream end offset is inclusive (official
-          // `toTargetTextBlock` passes `endParaOff + 1`); this side is
-          // half-open, so the +1 belongs here.
-          audioRange.endOff + 1,
-          startElementIndex: audioRange.elemIndex,
-          startElementOffset: audioRange.elemOff,
-        );
-        if (translated != null) {
-          next = (translated.start, translated.end);
-        }
-      } else if (ttsRange != null &&
-          session.textReplacementRevision ==
-              (_replacement?.snapshotRevision ?? 0)) {
-        final translated = narrationLayoutRange(layout, ttsRange);
-        if (translated != null) {
-          next = (translated.start, translated.end);
-        }
-      }
+    if (!session.matches(widget.bookId, _chapter.itemId)) return null;
+    final audioRange = session.audioParaRange;
+    if (audioRange != null) {
+      final translated = audioTimePointLayoutRange(
+        layout,
+        audioRange.startPara,
+        audioRange.startOff,
+        audioRange.endPara,
+        // The upstream end offset is inclusive (official
+        // `toTargetTextBlock` passes `endParaOff + 1`); this side is
+        // half-open, so the +1 belongs here.
+        audioRange.endOff + 1,
+        startElementIndex: audioRange.elemIndex,
+        startElementOffset: audioRange.elemOff,
+      );
+      return translated == null ? null : (translated.start, translated.end);
     }
+    final ttsRange = session.sentenceRange;
+    if (ttsRange == null ||
+        session.textReplacementRevision !=
+            (_replacement?.snapshotRevision ?? 0)) {
+      return null;
+    }
+    final translated = narrationLayoutRange(layout, ttsRange);
+    return translated == null ? null : (translated.start, translated.end);
+  }
+
+  void _syncNarrationHighlight((int, int)? narration) {
+    if (!mounted) return;
+    // The follow anchor still uses [narration] when the wash is switched off;
+    // only painting depends on the preference.
+    final next = _preferences.narrationHighlight ? narration : null;
     if (next != _narrationRange) {
       setState(() => _narrationRange = next);
     }
   }
 
   void _onListeningTick() {
-    _syncNarrationHighlight();
-    if (!mounted ||
-        !_routeCurrent ||
+    if (!mounted) return;
+    final layout = _chapterLayout;
+    final narration = layout == null ? null : _narrationLayoutRange(layout);
+    _syncNarrationHighlight(narration);
+    if (!_routeCurrent ||
         !_appActive ||
         !_preferences.listeningFollow ||
         _autoTurnTimer != null ||
@@ -440,13 +444,29 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       return;
     }
     if (!session.matches(widget.bookId, _chapter.itemId)) return;
-    final progress = session.progress;
+    // Land on the page holding the start of the sentence under the voice.
+    // The progress ratio is only a fallback: pages do not hold equal amounts
+    // of text (titles, illustrations, paragraph breaks), so a proportional
+    // jump parks the reader a page or two off the highlight.
+    final anchor = narration?.$1;
     if (_paged) {
-      _pagedKey.currentState?.followProgress(progress);
+      final paged = _pagedKey.currentState;
+      if (anchor != null) {
+        paged?.followOffset(anchor);
+      } else {
+        paged?.followProgress(session.progress);
+      }
     } else if (_scrollController.hasClients) {
       final position = _scrollController.position;
       if (position.maxScrollExtent > 0) {
-        _scrollController.jumpTo(progress * position.maxScrollExtent);
+        _scrollController.jumpTo(
+          anchor == null || layout == null
+              ? session.progress * position.maxScrollExtent
+              : layout
+                    .scrollForTextOffset(anchor)
+                    .clamp(0.0, position.maxScrollExtent)
+                    .toDouble(),
+        );
       }
     }
   }

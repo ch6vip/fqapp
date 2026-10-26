@@ -194,6 +194,56 @@ void main() {
     });
   });
 
+  group('ReaderPagedView follow anchor', () {
+    testWidgets('followOffset lands on the page holding the offset', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(400, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // Long enough to span several pages, so a proportional jump and an
+      // offset-based jump cannot land on the same page by accident.
+      final layout = _layout(
+        title: '第一章',
+        blocks: [
+          ChapterParagraph(
+            List.filled(120, '第一句。第二句。第三句。').join(),
+            paraIndex: 0,
+          ),
+        ],
+      );
+      final key = GlobalKey<ReaderPagedViewState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ReaderPagedView(
+              key: key,
+              layout: layout,
+              pageIndex: 0,
+              hasPreviousChapter: false,
+              hasNextChapter: false,
+              onPageChanged: (_) {},
+              onBoundary: (_) async {},
+              onDragStart: () {},
+              turnStyle: ReaderPageTurnStyle.none,
+              backgroundColor: Colors.white,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final pages = layout.pages.length;
+      expect(pages, greaterThan(2));
+      final offset = layout.pages[pages - 1].start;
+      expect(key.currentState!.currentPage, 0);
+      key.currentState!.followOffset(offset);
+      await tester.pump();
+      await tester.pump();
+      expect(layout.pageForOffset(offset), pages - 1);
+      expect(key.currentState!.currentPage, pages - 1);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('ListeningSession sentenceRange', () {
     setUp(ListeningSession.instance.clear);
     tearDown(ListeningSession.instance.clear);

@@ -7,6 +7,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/listening_session.dart';
+import 'package:fqapp/services/narration_sentence.dart';
 import 'package:fqapp/services/system_tts.dart';
 import 'package:fqapp/services/text_replacement_store.dart';
 import 'package:fqapp/models/text_replacement_rule.dart';
@@ -259,4 +260,61 @@ void main() {
       playback.dispose();
     },
   );
+
+  group('sentenceRangeAt', () {
+    test('narrows to the sentence under the offset', () {
+      const text = '第一句。第二句！第三句？';
+      expect(
+        sentenceRangeAt(text, 5, lower: 0, upper: text.length),
+        (start: 4, end: 8),
+      );
+    });
+
+    test('closing marks stay with the sentence they end', () {
+      const text = '他说：「走。」然后就走了。';
+      // Offsets: 0他 1说 2： 3「 4走 5。 6」 7然 …
+      expect(
+        sentenceRangeAt(text, 8, lower: 0, upper: text.length),
+        (start: 7, end: 13),
+      );
+    });
+
+    test('a paragraph break also ends a sentence', () {
+      const text = '第一段\n第二段';
+      expect(
+        sentenceRangeAt(text, 5, lower: 0, upper: text.length),
+        (start: 4, end: 7),
+      );
+    });
+
+    test('the result never leaves the piece being spoken', () {
+      const text = '第一句。第二句。第三句。';
+      // Piece [4, 8) is exactly '第二句。'.
+      expect(sentenceRangeAt(text, 99, lower: 4, upper: 8), (start: 4, end: 8));
+    });
+
+    test('an empty range yields nothing', () {
+      expect(sentenceRangeAt('abc', 0, lower: 0, upper: 0), isNull);
+    });
+  });
+
+  testWidgets('word ranges narrow the highlight to one sentence', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final playback = session(text: '第一句。第二句。第三句。');
+    try {
+      playback.start();
+      await tester.pump();
+      final args = spoken().single.arguments as Map<Object?, Object?>;
+      // Until the engine reports a range, the wash covers the whole piece.
+      expect(ListeningSession.instance.sentenceRange, (start: 0, end: 12));
+      await event({'type': 'range', 'id': args['id'], 'start': 4});
+      await tester.pump();
+      expect(ListeningSession.instance.sentenceRange, (start: 4, end: 8));
+    } finally {
+      await playback.close();
+      await tester.pump();
+    }
+  });
 }
