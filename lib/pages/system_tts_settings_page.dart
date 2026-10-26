@@ -162,8 +162,8 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
                   Slider(
                     value: _prefs.rate,
                     min: 0.5,
-                    max: 2,
-                    divisions: 15,
+                    max: 3,
+                    divisions: 25,
                     label: '${_prefs.rate.toStringAsFixed(1)}×',
                     onChanged: _saving
                         ? null
