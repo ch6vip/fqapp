@@ -1586,6 +1586,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 桌面端窗口失焦报的是 inactive，但窗口还在、内容还在跑。拿它当「退到
+    // 后台」会让鼠标一点别的窗口听书跟随就停摆（见 desktopInactiveStillVisible）。
+    if (state == AppLifecycleState.inactive &&
+        desktopInactiveStillVisible(state)) {
+      return;
+    }
     final resumed = state == AppLifecycleState.resumed;
     if (!resumed && _appActive) {
       _stopAutoTurn();
