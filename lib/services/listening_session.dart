@@ -88,9 +88,19 @@ class ListeningSession extends ChangeNotifier {
 
   /// 跟随开关：按一次定位键开跟随，再按一次放开自由翻页。
   ///
-  /// 只存状态不发通知 —— 迷你栏的按钮自己管图标，阅读页的 10Hz 轮询每拍读
-  /// 一次即可，不需要广播。
+  /// 跟随开关：按定位键开、手动翻页关。
   bool followArmed = false;
+
+  /// 改跟随开关并广播。
+  ///
+  /// 迷你栏的图标要跟着变色/变实心，但它挂在 Overlay 上、不随阅读页重建，
+  /// 只能靠这条通知刷；阅读页自己退出跟随时也必须发一次，否则按钮会一直
+  /// 显示「跟随中」。
+  void setFollowArmed(bool value) {
+    if (followArmed == value) return;
+    followArmed = value;
+    notifyListeners();
+  }
 
   void update({
     required String bookId,

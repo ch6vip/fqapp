@@ -375,6 +375,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _pauseListenFollow() {
     _listenFollowPausedUntil = DateTime.now().add(const Duration(seconds: 15));
+    // 用户自己翻页 = 不想被拽回去，直接退出跟随（图标变回空心）。以前只
+    // 暂停 15 秒，按钮还显示「跟随中」，看着像坏了。
+    ListeningSession.instance.setFollowArmed(false);
   }
 
   /// 朗读句高亮：与跟随翻页独立同步，跟随关闭时高亮仍可显示；暂停、
@@ -588,6 +591,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!_routeCurrent ||
         !_appActive ||
         !_preferences.listeningFollow ||
+        // 没按过定位键就是不跟随：老逻辑只认偏好，开着重播就会自己翻页。
+        !ListeningSession.instance.followArmed ||
         _autoTurnTimer != null ||
         _controlsVisible ||
         _loading ||
@@ -979,11 +984,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!mounted || !_routeCurrent || !_appActive) return;
     // 跟随开关由迷你栏那个按钮管：关着就是自由翻页，什么都不做。
     if (!ListeningSession.instance.followArmed) return;
+    // 设置里的「跟随翻页」是总闸，关掉就永不跟。
+    if (!_preferences.listeningFollow) return;
     final session = ListeningSession.instance;
     if (!session.playing) return;
     if (session.bookId != widget.bookId) return;
-    if (session.chapterId != _chapter.itemId) return;
     if (_loading || _changingChapter || _error != null) return;
+    // 朗读已经读完本章、进了下一章：跟随就该把页面带过去。原来这里直接
+    // return，于是跟着跟着停在旧章不动了（用户报的「读完一章不翻章」）。
+    if (session.chapterId != _chapter.itemId) {
+      final next = widget.chapters.indexWhere(
+        (c) => c.itemId == session.chapterId,
+      );
+      if (next >= 0) unawaited(_jumpToChapter(next, followListening: true));
+      return;
+    }
     // 用户刚手动翻过页：15 秒内不抢，之后再跟上。
     if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
     _addressToPlayback(quiet: true);

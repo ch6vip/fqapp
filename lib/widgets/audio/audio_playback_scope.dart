@@ -479,21 +479,46 @@ class _FollowToggle extends StatefulWidget {
 
 class _FollowToggleState extends State<_FollowToggle> {
   @override
+  void initState() {
+    super.initState();
+    // 阅读页手动翻页会退出跟随，图标得跟着变回来；迷你栏挂在 Overlay 上，
+    // 只能听会话的通知。
+    ListeningSession.instance.addListener(_onSessionChanged);
+  }
+
+  @override
+  void dispose() {
+    ListeningSession.instance.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     final armed = ListeningSession.instance.followArmed;
     return IconButton(
       key: const ValueKey('audio-mini-jump'),
-      tooltip: armed ? '停止跟随，自由翻页' : '跳到播放位置并跟随',
-      // 阅读页注册的处理器；不在阅读页时置灰。
+      // 点一次就跳到朗读处（不管之前开没开），长按才是停止跟随 ——
+      // 之前是「点一下切开关」，已经在跟随时再点只会关掉、不会重新定位，
+      // 想回到朗读处就得点两次。
+      tooltip: armed ? '跟随中，点按回到朗读处；长按停止跟随' : '点按跳到朗读处并跟随',
       onPressed: widget.handler == null
           ? null
           : () {
-              final session = ListeningSession.instance;
-              setState(() => session.followArmed = !session.followArmed);
-              // 开跟随的那一下同时跳过去；关跟随不动页面。
-              if (session.followArmed) widget.handler!();
+              ListeningSession.instance.setFollowArmed(true);
+              widget.handler!();
             },
-      icon: Icon(armed ? Icons.gps_fixed : Icons.my_location),
+      onLongPress: armed
+          ? () => ListeningSession.instance.setFollowArmed(false)
+          : null,
+      icon: Icon(
+        armed ? Icons.gps_fixed : Icons.my_location,
+        // 跟随中染主色：一眼能看出「页面正在被朗读带着走」。
+        color: armed ? Theme.of(context).colorScheme.primary : null,
+      ),
     );
   }
 }
