@@ -179,6 +179,18 @@ Future<void> _flush(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 16));
 }
 
+/// 横滑切标签的三段动画：送出 110ms → onSelect → 迎入 190ms。
+///
+/// `_flush` 只推进 16ms，动画跑完之前 `onSelect` 还没发出、频道不会换，所以
+/// 凡断言切换结果的地方都要先推过这一整段。逐帧推而不是 `pump` 一次大步长：
+/// 大步长会错过 `endOfFrame` 那一轮的重建。
+Future<void> _settleSwipe(WidgetTester tester) async {
+  for (var i = 0; i < 24; i++) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  await _flush(tester);
+}
+
 late Directory _hiveDir;
 
 void main() {
@@ -1877,5 +1889,87 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('横向手势在短剧频道之间切换', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    // 频道选择的单例跨用例存活：先清掉上一个用例写回的频道，否则起手就
+    // 不是「推荐」。
+    SharedPreferences.setMockInitialValues({});
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    // 推荐频道是竖滑播放流。
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
+
+    // 海报格频道之间横滑；播放流的横滑单独有一条用例（进度条是唯一例外）。
+    await tester.ensureVisible(find.text('看剧'));
+    await tester.tap(find.text('看剧'));
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+
+    // 往左：看剧 → 漫剧。
+    await tester.drag(
+      find.byKey(const Key('drama_episode_grid')),
+      const Offset(-260, 0),
+    );
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
+    expect(find.byKey(const Key('drama_episode_grid')), findsNothing);
+
+    // 往右：漫剧 → 看剧。
+    await tester.drag(
+      find.byKey(const Key('drama_manju_grid')),
+      const Offset(260, 0),
+    );
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+  });
+
+  testWidgets('竖滑播放流里整片横滑都切频道，只剩进度条那一行调进度', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    SharedPreferences.setMockInitialValues({});
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
+
+    // 卡片中间横滑现在归切频道（以前这里是官方 `K6` 的整屏调进度，
+    // 与切频道抢同一个操作 ⇒ 同一手势在不同区域语义相反）。
+    await tester.drag(
+      find.byKey(const Key('drama_feed')),
+      const Offset(-260, 0),
+    );
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+    expect(find.byKey(const Key('drama_feed')), findsNothing);
+
+    // 往右滑回去：看剧 → 推荐，双向一致。
+    await tester.drag(
+      find.byKey(const Key('drama_episode_grid')),
+      const Offset(260, 0),
+    );
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
   });
 }
