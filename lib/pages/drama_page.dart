@@ -2479,6 +2479,22 @@ class _DramaFeedCard extends StatelessWidget {
   /// player, so only it shows a seek bar (and only it reacts to gestures).
   bool get _interactive => playback != null;
 
+  /// 这张卡还没有视频层时的封面兑底（屏上卡有 `_InlineVideoLayer`，起播前
+  /// 它内部已有同款处理；这里兑的是相邻的未上屏卡）。
+  ///
+  /// 与 `_InlineVideoLayer` 的 `_cover` 同一套口径：桌面横向窗口里 9:16
+  /// 竖版海报按宽度铺满会只剩最上面一截，改 `contain` + 黑底完整居中；
+  /// 手机上卡片是满屏竖的，保持铺满。
+  Widget _fallbackCover(int cacheWidth) => ColoredBox(
+    color: Colors.black,
+    child: StoryCover(
+      item: item,
+      cacheWidth: cacheWidth,
+      alignment: Alignment.topCenter,
+      fit: isWindowsDesktop ? BoxFit.contain : BoxFit.cover,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
@@ -2497,12 +2513,7 @@ class _DramaFeedCard extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              video ??
-                  StoryCover(
-                    item: item,
-                    cacheWidth: (size.width * pixelRatio).ceil(),
-                    alignment: Alignment.topCenter,
-                  ),
+              video ?? _fallbackCover((size.width * pixelRatio).ceil()),
               // 弹幕在视频上、其余遮罩之下（官方信息流弹幕不出画面区）。
               ?danmakuOverlay,
             ],
