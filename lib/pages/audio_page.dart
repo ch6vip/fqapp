@@ -677,26 +677,21 @@ class _AudioPageState extends State<AudioPage> {
                               valueListenable: c._position,
                               builder: (context, position, _) {
                                 final track = c._subtitles;
-                                final active = track.indexAt(position);
                                 if (track.isEmpty) {
                                   return const Center(
                                     child: Text('当前章节暂无同步字幕'),
                                   );
                                 }
-                                return ListView.builder(
-                                  itemCount: track.cues.length,
-                                  itemBuilder: (context, index) => ListTile(
-                                    selected: index == active,
-                                    title: Text(track.cues[index].text),
-                                    onTap: c._ready
-                                        ? () => c._seekTo(
-                                            Duration(
-                                              milliseconds:
-                                                  track.cues[index].startMs,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
+                                // 高亮与自动滚动都在 `AudioSubtitleList`
+                                // 里：跟着朗读进度滚到当前句并标出它。
+                                return AudioSubtitleList(
+                                  track: track,
+                                  active: track.indexAt(position),
+                                  onSeek: c._ready
+                                      ? (startMs) => c._seekTo(
+                                          Duration(milliseconds: startMs),
+                                        )
+                                      : null,
                                 );
                               },
                             ),
