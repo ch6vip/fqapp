@@ -5,9 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
-import '../services/app_log.dart';
 import '../services/backend_transport.dart';
 import '../services/home_feed_cache.dart';
+import '../services/home_page_affinity.dart';
 import '../services/user_facing_error.dart';
 
 typedef HomepageLoader =
@@ -359,69 +359,14 @@ class HomeNotifier extends Notifier<HomeState> {
     lastTabIndex: _lastTabIndex,
   );
 
-  /// 这一页能不能当成本分类的载荷。
+  /// 这一页能不能当成本分类的载荷（判定与日志都在 [homePageAffinity]）。
   ///
-  /// 三道门槛，前两道看响应的声明，第三道看区块族——全部来自实测响应形状
-  /// （推荐 `[511 排行榜, 384 猜你喜欢]`、听书 `[337]`、看剧 `[506]`、
-  /// 视频 `[407]`、漫剧 `[385]`）：
-  ///
-  /// 1. 带分类表时，被回答项必须是本分类（`tab_type` 对得上）。
-  /// 2. 带分类表但一项都不是我们的：同样拒绝。
-  /// 3. 区块族对不上：排行榜（511）与卡片流（384/385）是书籍轴的区块，只在
-  ///    书籍分类（含漫剧的 385）出现。声书类（`audio`）收到这一族，就是那一页
-  ///    不是它的——真机表现为「听书」里画出推荐/小说的排行榜与猜你喜欢。
-  ///    这一道也盖住了「响应没带分类表」的情况，因为只要区块是推荐那一族
-  ///    就会被认出来。
-  bool _answersTab(HomepagePage page, int tabType) {
-    final cells = page.cells;
-    final kind = _kindByTabType[tabType] ?? 'book';
-    if (page.tabScoped && page.answeredTabType != tabType) {
-      AppLog.w(
-        'home',
-        '丢弃不属于 tab_type=$tabType 的首页响应（回答的是 '
-            '${page.answeredTabType ?? "未声明的分类"}，'
-            'shows=${_showTypes(cells)}，items=${page.items.length}）',
-      );
-      return false;
-    }
-    final foreign = cells.where(
-      (cell) => !_blockFitsKind(cell.showType, kind),
-    );
-    if (foreign.isNotEmpty) {
-      AppLog.w(
-        'home',
-        '丢弃带别的分类区块的 tab_type=$tabType 首页响应'
-            '（shows=${_showTypes(cells)}，items=${page.items.length}）',
-      );
-      return false;
-    }
-    // 设备日志（设置 → 服务 → 日志）留一行：出问题时能直接看到上游到底
-    // 给了哪一族区块，不用再靠猜。
-    AppLog.d(
-      'home',
-      '收下 tab_type=$tabType 首页响应（回答 '
-          '${page.answeredTabType ?? "未声明"}，shows=${_showTypes(cells)}，'
-          'items=${page.items.length}，next=${page.nextOffset}）',
-    );
-    return true;
-  }
-
-  /// 区块族与分类轴对不对得上。实测：排行榜（511）与卡片流（384/385）是
-  /// **书籍轴**的区块（推荐就是 511+384）；漫剧只下发 385；听书 337、看剧
-  /// 506、视频 407 都是各自的单块。所以声书类（`audio`）收到 511/384/385
-  /// 就是别人的页——真机表现为听书里画出推荐/小说的排行榜与猜你喜欢。
-  ///
-  /// 未收录的 tab_type 与未知区块类型一律放行，不拿猜测去否决响应。
-  static bool _blockFitsKind(int showType, String kind) => switch (showType) {
-    kHomeCellRankShowType => kind == 'book',
-    kHomeCellMixedFeedShowType || kHomeCellDoubleRowFeedShowType =>
-      kind == 'book' || kind == 'manju',
-    _ => true,
-  };
-
-  static String _showTypes(List<HomeCell> cells) => cells.isEmpty
-      ? '-'
-      : cells.map((cell) => '${cell.showType}').join(',');
+  /// 上游的回答不可信时（回答别的分类、或区块族与分类轴不匹配）整页拒绝：
+  /// 拿它当自己这份，就是真机上「听书」里画出推荐/小说的排行榜与猜你喜欢，
+  /// 再经 `_forceKind` 把小说变成「听书」。
+  bool _answersTab(HomepagePage page, int tabType, String kind) =>
+      homePageAffinity(page, tabType: tabType, kind: kind) ==
+      HomePageAffinity.ours;
 
   final HomeFeedCache? _feedCache;
   final int initialTabIndex;
@@ -796,7 +741,7 @@ class HomeNotifier extends Notifier<HomeState> {
     if (tabType != null) {
       try {
         final page = await _fetchHomepage(tabType: tabType);
-        if (!_answersTab(page, tabType)) {
+        if (!_answersTab(page, tabType, kind)) {
           // 上游回答的是别的分类：这份 cells/items 不是这一页的内容。宁可退回
           // 搜索，也不要画别人的榜和书（再经 `_forceKind` 重标成本分类）。
           loaderFailure = StateError('响应不属于 tab_type=$tabType');
@@ -1022,7 +967,7 @@ class HomeNotifier extends Notifier<HomeState> {
         );
         // 追加页同样要认领归属：拿回别的分类的下一页并追加进来，就是
         // 「听书」翻页后冒出一堆推荐/小说卡片的直接渠道。
-        if (!_answersTab(page, tabType)) {
+        if (!_answersTab(page, tabType, kind)) {
           throw StateError('响应不属于 tab_type=$tabType');
         }
         final items = _forceKind(page.items, kind);
