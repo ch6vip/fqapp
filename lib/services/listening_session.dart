@@ -88,6 +88,12 @@ class ListeningSession extends ChangeNotifier {
 
   /// 跟随开关：按一次定位键开跟随，再按一次放开自由翻页。
   ///
+  /// 当前正在用的音色 id（智能朗读的音色、或真人讲书的 narrator id）。
+  ///
+  /// 阅读页「从本页播放」要沿用同一个音色重新起播 —— 之前不传，播放页只能
+  /// 拿历史记录或默认音色，于是听着真人讲书点一下就换成了内置 TTS 音色。
+  String? toneId;
+
   /// 跟随开关：按定位键开、手动翻页关。
   bool followArmed = false;
 
@@ -115,6 +121,7 @@ class ListeningSession extends ChangeNotifier {
     ({int startPara, int startOff, int endPara, int endOff, int? elemIndex, int? elemOff})? audioParaRange,
     String? cue,
     int? cueEndsAtMs,
+    String? toneId,
     SubtitleTrack? subtitles,
   }) {
     final structural =
@@ -135,6 +142,7 @@ class ListeningSession extends ChangeNotifier {
     this.textProgress = textProgress;
     this.textReplacementRevision = textReplacementRevision;
     this.sentenceRange = sentenceRange;
+    this.toneId = toneId;
     this.cue = cue;
     this.cueEndsAtMs = cueEndsAtMs;
     this.subtitles = subtitles;
@@ -161,6 +169,7 @@ class ListeningSession extends ChangeNotifier {
     sentenceRange = null;
     cue = null;
     cueEndsAtMs = null;
+    toneId = null;
     subtitles = null;
     audioParaRange = null;
     notifyListeners();

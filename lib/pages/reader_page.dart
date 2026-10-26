@@ -2859,6 +2859,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             chapters: widget.chapters,
             startIndex: chapterIndex,
             resumeSession: false,
+            // 沿用正在听的那个音色：不传的话播放页只能挑默认音色，
+            // 「从本页播放」就会把真人讲书换成内置 TTS。
+            initialToneId: _listeningToneId(),
             // A paragraph-anchored request always carries an explicit start:
             // Duration.zero means "this paragraph has no audio, begin at the
             // chapter opening" and must not fall back to saved history.
@@ -2872,6 +2875,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     } finally {
       _openingListening = false;
     }
+  }
+
+  /// 本会话正在用的音色；不在听这本书时为 null（交给播放页按历史/默认决定）。
+  String? _listeningToneId() {
+    final session = ListeningSession.instance;
+    if (session.bookId != widget.bookId) return null;
+    final tone = session.toneId;
+    return (tone == null || tone.isEmpty) ? null : tone;
   }
 
   /// 「从本页播放」的锚点：当前页第一个正文段落的段落 ID 与它的起播时间。

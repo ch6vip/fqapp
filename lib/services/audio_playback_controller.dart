@@ -737,6 +737,8 @@ class _AudioPlaybackController extends ChangeNotifier
       position: position,
       duration: _duration,
       playing: playing && !_completed,
+      // 当前音色：阅读页「从本页播放」要沿用它重新起播。
+      toneId: _toneId,
       // 音频朗读没有 TTS 那种字符范围回调，只能把字幕里当前这句报上去，
       // 由阅读页自己到正文里找位置（见 reader_page 的 _locateCue）。
       cue: cueIndex < 0 ? null : _subtitles.cues[cueIndex].text,
