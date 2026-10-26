@@ -22,6 +22,7 @@ class DramaDownloadTask {
     this.received = 0,
     this.total,
     this.error,
+    this.auto = false,
   });
 
   final String seriesId;
@@ -32,6 +33,9 @@ class DramaDownloadTask {
   final int received;
   final int? total;
   final String? error;
+
+  /// 「边看边往后缓存」自动排的任务（见 [CachedEpisode.auto]）。
+  final bool auto;
 
   double? get progress => total == null || total! <= 0
       ? null
@@ -53,6 +57,7 @@ class DramaDownloadTask {
     received: received ?? this.received,
     total: clearTotal ? null : (total ?? this.total),
     error: clearError ? null : (error ?? this.error),
+    auto: auto,
   );
 }
 
@@ -85,6 +90,10 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
 
   static final DramaDownloader instance = DramaDownloader();
 
+  /// 单个任务最多试几次（首次 + 自动重试）。CDN 偶发 5xx / 断流很常见，
+  /// 试三次基本能过；再多就只是在拖队列。
+  static const int _maxAttempts = 3;
+
   final DramaDownloadStore _store;
   final Future<EpisodeSource> Function(Chapter episode) _resolve;
   final HttpClient Function() _clientFactory;
@@ -107,6 +116,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
   Future<void> enqueue({
     required CachedDrama drama,
     required List<Chapter> episodes,
+    bool auto = false,
   }) async {
     if (episodes.isEmpty) return;
     for (final episode in episodes) {
@@ -130,6 +140,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
           title: episode.title,
           index: index,
           status: DramaDownloadStatus.waiting,
+          auto: auto,
         ),
       );
       changed = true;
@@ -311,6 +322,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
   Future<void> _run(_MutableTask task) async {
     final generation = task.generation;
     var refreshed = false;
+    var attempt = 0;
     while (true) {
       final reason = await _runOnce(task);
       if (reason == null || task.abortReason != null) break;
@@ -319,6 +331,18 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
         refreshed = true;
         continue;
       }
+      // 其余失败自动再试：断流、5xx、续传范围对不上这类都可以靠重跑
+      // （每次重跑都会重新 resolve、带 Range 续传）自己好。
+      attempt++;
+      if (attempt < _maxAttempts && _isRetryable(reason)) {
+        await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
+        if (task.abortReason != null) break;
+        continue;
+      }
+      // 落到这里才算真失败：把原因记在任务上并写进应用日志，否则用户只
+      // 看到「失败」两个字，排查时无从下手。
+      debugPrint('[drama-download] ${task.snapshot.title} 失败：$reason');
+      task.snapshot = task.snapshot.copyWith(error: reason);
       break;
     }
     _active.remove(task.snapshot.itemId);
@@ -381,6 +405,16 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       // （每次 _runOnce 都会重新 resolve，天然拿到新链）。
       if (response.statusCode == 403 || response.statusCode == 410) {
         return 'stale-url';
+      }
+      if (response.statusCode == 416 && received > 0) {
+        // 续传起点已经超出服务器认定的长度。常见成因：重取地址后拿到的是
+        // 另一条流（码率/切片不同，总长更短），或者半成品其实已经收全、只
+        // 是上次没来得及改名。这两种情况下旧的 `.part` 字节都不可信，
+        // 丢掉从头拉一遍才是对的 —— 当硬失败会让这一集永远卡在 416。
+        try {
+          await partFile.delete();
+        } catch (_) {}
+        return 'restart-from-zero';
       }
       var expectedTotal = -1;
       if (response.statusCode == 206) {
@@ -459,6 +493,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
           bytes: received,
           filePath: finalPath,
           cachedAt: DateTime.now().millisecondsSinceEpoch,
+          auto: task.snapshot.auto,
         ),
       );
       task.snapshot = task.snapshot.copyWith(
@@ -475,6 +510,13 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       client?.close(force: true);
     }
   }
+
+  /// 这个失败原因值不值得再试一次。
+  ///
+  /// 剧集 ID 不合法是永久错误（身份写错了，重试一万次也一样）；其余
+  /// 都是网络侧的偶发问题。
+  static bool _isRetryable(String reason) =>
+      reason != '无效的剧集 ID' && reason != '该集没有可下载的播放地址';
 
   /// 与官方一致的画质策略：固定取最高档；上游只有单流时用主地址。
   static EpisodeVariant? _pickVariant(EpisodeSource source) {

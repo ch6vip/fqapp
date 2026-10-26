@@ -42,6 +42,7 @@ void main() {
     int bytes = 1024,
     bool withFile = true,
     int? cachedAt,
+    bool auto = false,
   }) {
     final path =
         '${videoDir.path}${Platform.pathSeparator}$itemId.mp4';
@@ -59,6 +60,7 @@ void main() {
       bytes: bytes,
       filePath: path,
       cachedAt: cachedAt ?? DateTime.now().millisecondsSinceEpoch,
+      auto: auto,
     );
   }
 
@@ -165,5 +167,26 @@ void main() {
     expect(await store.totalBytes(), 0);
     await store.saveEpisode(episode(bytes: 4096));
     expect(await store.totalBytes(), 4096);
+  });
+
+  test('自动缓存的标记随记录落库并读回', () async {
+    // 边看边缓存排的集要能被认出来（清理时只动这一批），用户手动下的一律
+    // 不标记。老记录没有这个字段，读出来必须是 false。
+    await store.saveEpisode(episode(itemId: 'auto1', auto: true));
+    await store.saveEpisode(episode(itemId: 'manual1'));
+
+    final cached = await store.episode('auto1');
+    expect(cached?.auto, isTrue);
+    final manual = await store.episode('manual1');
+    expect(manual?.auto, isFalse);
+
+    final legacy = CachedEpisode.fromMap({
+      'seriesId': 'series1',
+      'itemId': 'old1',
+      'title': '旧记录',
+      'index': 0,
+      'filePath': '/tmp/old.mp4',
+    });
+    expect(legacy?.auto, isFalse);
   });
 }

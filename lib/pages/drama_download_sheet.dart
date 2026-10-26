@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../services/drama_cache_preferences.dart';
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
 import '../services/connectivity_status.dart';
@@ -18,6 +21,7 @@ class DramaDownloadSheet extends StatefulWidget {
     required this.title,
     required this.cover,
     required this.episodes,
+    this.currentIndex = 0,
     this.downloader,
     this.store,
     this.connectivityProbe,
@@ -27,6 +31,10 @@ class DramaDownloadSheet extends StatefulWidget {
   final String title;
   final String cover;
   final List<Chapter> episodes;
+
+  /// 播放页当前在看第几集（0 起）。给「往后 N 集」的快捷缓存定起点，
+  /// 打开面板时也直接定位到这一集所在的区间 tab。
+  final int currentIndex;
   final DramaDownloader? downloader;
   final DramaDownloadStore? store;
 
@@ -39,6 +47,7 @@ class DramaDownloadSheet extends StatefulWidget {
     required String title,
     required String cover,
     required List<Chapter> episodes,
+    int currentIndex = 0,
     DramaDownloader? downloader,
     DramaDownloadStore? store,
   }) => showModalBottomSheet<void>(
@@ -58,6 +67,7 @@ class DramaDownloadSheet extends StatefulWidget {
       title: title,
       cover: cover,
       episodes: episodes,
+      currentIndex: currentIndex,
       downloader: downloader,
       store: store,
     ),
@@ -76,11 +86,15 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
 
   final Set<String> _downloaded = {};
   final Set<String> _selected = {};
-  int _group = 0;
+
+  /// 当前所在的 30 集区间；默认落在正在看的那一集里。
+  late int _group = widget.currentIndex ~/ _groupSize;
 
   @override
   void initState() {
     super.initState();
+    if (_group < 0) _group = 0;
+    unawaited(DramaCachePreferences.instance.load());
     _downloader.addListener(_onTasksChanged);
     _store.changes.addListener(_onTasksChanged);
     _refresh();
@@ -166,6 +180,25 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     if (mounted) setState(_selected.clear);
   }
 
+  /// 从正在看的那一集往后选 [count] 集并直接开始下载。
+  ///
+  /// 小说缓存面板是「往后 20/50/100 章 + 整本」，这里按短剧的体积给了
+  /// 更小的档位；不足 [count] 集时按剩余算。已经缓存好的集跳过。
+  Future<void> _cacheAhead(int count) async {
+    final start = widget.currentIndex + 1;
+    if (start >= widget.episodes.length || count <= 0) return;
+    final end = start + count > widget.episodes.length
+        ? widget.episodes.length
+        : start + count;
+    setState(() {
+      for (final episode in widget.episodes.sublist(start, end)) {
+        if (_downloaded.contains(episode.itemId)) continue;
+        _selected.add(episode.itemId);
+      }
+    });
+    await _confirmDownload();
+  }
+
   @override
   Widget build(BuildContext context) {
     final groupEpisodes = _groupEpisodes;
@@ -235,6 +268,8 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
                   ],
                 ),
               ),
+            _aheadBar(),
+            _autoCacheBar(palette),
             Flexible(
               child: GridView.count(
                 crossAxisCount: 4,
@@ -295,6 +330,94 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     );
   }
 
+  /// 「往后 N 集」快捷缓存：起点是正在看的那一集后面，不是第 1 集。
+  Widget _aheadBar() {
+    final start = widget.currentIndex + 1;
+    final remaining = widget.episodes.length - start;
+    if (remaining <= 0) return const SizedBox.shrink();
+    final counts = <int>{
+      for (final count in const [3, 5, 10])
+        if (remaining >= count) count,
+      remaining,
+    }.toList()..sort();
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Row(
+        children: [
+          for (final count in counts)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ActionChip(
+                key: ValueKey('download-ahead-$count'),
+                label: Text(
+                  count == remaining ? '剩余 $count 集' : '往后 $count 集',
+                ),
+                onPressed: () => unawaited(_cacheAhead(count)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 边看边缓存的开关与集数档位（持久化在 [DramaCachePreferences]）。
+  ///
+  /// 与上面的「往后 N 集」是两件事：上面的是一次性手动批量，这里是每次
+  /// 播放都自动往后续存。自动缓存只在 Wi-Fi 下跑（短剧一集几十 MB）。
+  Widget _autoCacheBar(HomePalette palette) {
+    final prefs = DramaCachePreferences.instance;
+    final enabled = prefs.ahead.value > 0;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '边看边缓存',
+                  style: TextStyle(fontSize: 14, color: palette.ink),
+                ),
+                Text(
+                  enabled
+                      ? '看到哪集就自动往后续存 ${prefs.ahead.value} 集（仅 Wi-Fi）'
+                      : '已关闭，手动缓存不受影响',
+                  style: TextStyle(fontSize: 11, color: palette.muted),
+                ),
+              ],
+            ),
+          ),
+          if (enabled)
+            for (final count in const [3, 5, 10])
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: ChoiceChip(
+                  key: ValueKey('download-auto-ahead-$count'),
+                  label: Text('$count'),
+                  selected: prefs.ahead.value == count,
+                  onSelected: (_) async {
+                    await prefs.setAhead(count);
+                    if (mounted) setState(() {});
+                  },
+                ),
+              ),
+          Switch(
+            key: const ValueKey('download-auto-cache-switch'),
+            value: enabled,
+            onChanged: (value) async {
+              await prefs.setAhead(
+                value ? DramaCachePreferences.defaultAhead : 0,
+              );
+              if (mounted) setState(() {});
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   int _groupEnd(int index) {
     final end = (index + 1) * _groupSize;
     return end > widget.episodes.length ? widget.episodes.length : end;
@@ -325,7 +448,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     final task = _taskOf(itemId);
     if (task != null) {
       final progress = task.progress;
-      return _cellContainer(
+      final cell = _cellContainer(
         key: ValueKey('download-cell-$itemId'),
         label: switch (task.status) {
           DramaDownloadStatus.downloading =>
@@ -345,6 +468,17 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
             ? () => _downloader.resume(itemId)
             : null,
       );
+      // 失败原因写进 tooltip：只显示「失败」两个字，用户既不知道原因，
+      // 也不知道点一下是重试。
+      final error = task.error;
+      if (task.status == DramaDownloadStatus.failed && error != null) {
+        return Tooltip(
+          message: '$error\n点一下重试',
+          triggerMode: TooltipTriggerMode.longPress,
+          child: cell,
+        );
+      }
+      return cell;
     }
     final selected = _selected.contains(itemId);
     return _cellContainer(

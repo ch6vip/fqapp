@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/drama_download_sheet.dart';
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/drama_cache_preferences.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/drama_downloader.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
@@ -24,7 +26,9 @@ void main() {
   Future<void> pumpSheet(
     WidgetTester tester, {
     int episodeCount = 3,
+    int currentIndex = 0,
     ThemeData? theme,
+    DramaDownloader? engine,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -35,7 +39,8 @@ void main() {
             title: '测试剧',
             cover: '',
             episodes: episodes(episodeCount),
-            downloader: downloader,
+            currentIndex: currentIndex,
+            downloader: engine ?? downloader,
             store: store,
             // 测试宿主没有 connectivity 平台通道：直接给「WiFi 在线」。
             connectivityProbe: () async => (online: true, metered: false),
@@ -47,6 +52,8 @@ void main() {
   }
 
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    DramaCachePreferences.instance.resetForTest();
     store = MemoryDramaDownloadStore();
     downloader = DramaDownloader(store: store);
   });
@@ -141,5 +148,58 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('download-select-all')));
     await tester.pumpAndSettle();
     expect(find.text('下载 (0)'), findsOneWidget);
+  });
+
+  testWidgets('「往后 N 集」从当前集往后入队，不是从第 1 集', (tester) async {
+    // resolver 永不完成：任务停在下载中，不触真网。
+    final engine = DramaDownloader(
+      store: store,
+      resolve: (episode) => Completer<EpisodeSource>().future,
+    );
+    await pumpSheet(tester, episodeCount: 9, currentIndex: 2, engine: engine);
+
+    // 起点是正在看的第 3 集之后；剩余 6 集时给 3/5/剩余 三档。
+    expect(find.byKey(const ValueKey('download-ahead-3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('download-ahead-5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('download-ahead-6')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('download-ahead-3')));
+    await tester.pumpAndSettle();
+
+    expect(
+      engine.value.map((task) => task.itemId).toList(),
+      ['ep3', 'ep4', 'ep5'],
+      reason: '只从当前集往后取 3 集，且都是自动缓存之外的手动任务',
+    );
+    expect(engine.value.every((task) => !task.auto), isTrue);
+  });
+
+  testWidgets('打开面板就落在正在看的那一集的区间', (tester) async {
+    await pumpSheet(tester, episodeCount: 90, currentIndex: 35);
+    final chip = tester.widget<ChoiceChip>(
+      find.byKey(const ValueKey('download-group-1')),
+    );
+    expect(chip.selected, isTrue, reason: '第 36 集属于 31-60 这一段');
+    expect(find.text('第 36 集'), findsOneWidget);
+  });
+
+  testWidgets('窄屏（360dp）下自动缓存行与快捷 chip 不溢出', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 780));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await pumpSheet(tester, episodeCount: 9, currentIndex: 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('边看边缓存默认 5 集，关掉后写回偏好', (tester) async {
+    await pumpSheet(tester, episodeCount: 8, currentIndex: 1);
+    final prefs = DramaCachePreferences.instance;
+    expect(prefs.ahead.value, DramaCachePreferences.defaultAhead);
+    expect(find.text('边看边缓存'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('download-auto-cache-switch')));
+    await tester.pumpAndSettle();
+
+    expect(prefs.ahead.value, 0);
+    expect(find.text('已关闭，手动缓存不受影响'), findsOneWidget);
   });
 }

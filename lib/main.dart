@@ -25,6 +25,7 @@ import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
+import 'services/drama_cache_preferences.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/player_layout_preferences.dart';
@@ -170,6 +171,9 @@ Future<void> _initializeLocalData() async {
   ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
+  // 短剧「边看边往后缓存」的开关与集数：同一条装配链里读，避免播放页
+  // 起来时还没加载完、拿默认值把用户关掉的开关又打开。
+  unawaited(DramaCachePreferences.instance.load());
   // 短剧切后台悬浮窗开关（#24）：异步读取，失败退化为默认关闭。
   unawaited(PlayerPreferences.loadFloatingWindow());
   // 离线缓存的网络门（官方 onNetChangeCheck）：断网/只剩计费链路时
