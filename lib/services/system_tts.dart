@@ -80,7 +80,7 @@ class SystemTtsPreferences {
     final rate = sp.getDouble('system_tts_rate') ?? 1;
     return SystemTtsPreferences(
       engine: sp.getString('system_tts_engine'),
-      rate: rate.isFinite ? rate.clamp(0.5, 2) : 1,
+      rate: rate.isFinite ? rate.clamp(0.5, 3) : 1,
     );
   }
 

@@ -137,7 +137,7 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
             result.error("no_engine", "未找到朗读引擎，请安装或重新选择系统 TTS 引擎", null)
             return
         }
-        val rate = (call.argument<Number>("rate")?.toFloat() ?: 1f).coerceIn(0.5f, 2f)
+        val rate = (call.argument<Number>("rate")?.toFloat() ?: 1f).coerceIn(0.5f, 3f)
         pending = result
         val token = generation
         timeout = Runnable {
