@@ -15,7 +15,7 @@
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1803,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 4051,
+    "lib/pages/reader_page.dart": 4057,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
@@ -55,7 +55,6 @@
     "rust/src/api/mod.rs": 924,
     "rust/src/device/mod.rs": 901,
     "rust/src/device/register.rs": 562,
-    "rust/src/endpoints/audio.rs": 532,
     "rust/src/endpoints/book.rs": 597,
     "rust/src/endpoints/comments.rs": 957,
     "rust/src/endpoints/manga.rs": 3162,
@@ -208,7 +207,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 3929,
+      "line": 3935,
       "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
