@@ -3772,6 +3772,26 @@ class _InlineVideoLayer extends StatelessWidget {
 
   const _InlineVideoLayer({required this.item, required this.playback});
 
+  /// The cover laid over this card while nothing is playing (or before the
+  /// first frame arrives).
+  ///
+  /// The poster is a 9:16 portrait image while this card gets a landscape
+  /// window on desktop: `cover` fills by width and overflows several times,
+  /// which reads as "only the top slice of the poster". Desktop switches to
+  /// `contain` over a black backing — the same look as the video's
+  /// `VideoFit.contain` right below. Phones keep a portrait card, so they
+  /// keep filling.
+  Widget _cover(int cacheWidth) => ColoredBox(
+    color: Colors.black,
+    child: StoryCover(
+      key: ValueKey('drama_inline_cover_${item.kind}_${item.id}'),
+      item: item,
+      cacheWidth: cacheWidth,
+      alignment: Alignment.topCenter,
+      fit: isWindowsDesktop ? BoxFit.contain : BoxFit.cover,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     // The video box is measured from this card's own constraints, not from
@@ -3793,12 +3813,7 @@ class _InlineVideoLayer extends StatelessWidget {
             playback.videoSize,
           ]),
           builder: (context, _) {
-            final cover = StoryCover(
-              key: ValueKey('drama_inline_cover_${item.kind}_${item.id}'),
-              item: item,
-              cacheWidth: cacheWidth,
-              alignment: Alignment.topCenter,
-            );
+            final cover = _cover(cacheWidth);
             // A card the session is not playing (yet) shows its cover only.
             if (playback.activeId.value != item.id) return cover;
             final textureId = playback.textureId.value;

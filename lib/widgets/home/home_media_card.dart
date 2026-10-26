@@ -74,11 +74,22 @@ class StoryCover extends StatelessWidget {
   final int cacheWidth;
   final Alignment alignment;
 
+  /// How the poster fills its box.
+  ///
+  /// `cover` is the default: the grid cell itself is a tall 5:7 card, so
+  /// cropping a little is fine. A desktop feed card is a landscape window
+  /// instead — the same 9:16 poster laid out by width overflows several
+  /// times, leaving only the top slice visible. Pass `BoxFit.contain` there
+  /// so the whole poster fits (letterboxed black, matching the desktop
+  /// video's `VideoFit.contain`).
+  final BoxFit fit;
+
   const StoryCover({
     super.key,
     required this.item,
     required this.cacheWidth,
     this.alignment = Alignment.center,
+    this.fit = BoxFit.cover,
   });
 
   @override
@@ -97,7 +108,7 @@ class StoryCover extends StatelessWidget {
     return CachedNetworkImage(
       cacheManager: PosterCache.instance,
       imageUrl: item.cover,
-      fit: BoxFit.cover,
+      fit: fit,
       alignment: alignment,
       memCacheWidth: cacheWidth.clamp(1, 1200),
       fadeInDuration: MediaQuery.disableAnimationsOf(context)
