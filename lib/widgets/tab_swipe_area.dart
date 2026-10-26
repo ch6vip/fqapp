@@ -96,6 +96,17 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   final ValueNotifier<double> _offset = ValueNotifier<double>(0);
 
   late final AnimationController _anim = AnimationController(vsync: this);
+
+  /// 曲线只建一次。
+  ///
+  /// `CurvedAnimation` 构造时给 parent 挂一个 status listener，只有 `dispose()`
+  /// 会摘掉；每次补间都 new 一个会让 [_anim] 的监听器只增不减。首页是根 tab、
+  /// 永不销毁，滑几十次就积成几千个，之后每次 forward/stop 都要走完一遍。
+  late final CurvedAnimation _curve = CurvedAnimation(
+    parent: _anim,
+    curve: Curves.easeOutCubic,
+  );
+
   Animation<double>? _tween;
 
   /// 起手时量一次屏宽，动画期间不再读 `context.size`（那时可能已经不在树上）。
@@ -145,6 +156,8 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
 
   @override
   void dispose() {
+    // 先摘监听器，再销毁它监听的 controller。
+    _curve.dispose();
     _anim.dispose();
     _offset.dispose();
     super.dispose();
@@ -274,10 +287,8 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
       return;
     }
     _anim.duration = Duration(milliseconds: duration);
-    _tween = Tween<double>(
-      begin: from,
-      end: target,
-    ).animate(CurvedAnimation(parent: _anim, curve: curve));
+    _curve.curve = curve;
+    _tween = Tween<double>(begin: from, end: target).animate(_curve);
     try {
       await _anim.forward(from: 0);
     } catch (_) {
