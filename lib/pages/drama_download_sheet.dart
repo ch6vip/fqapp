@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/media_item.dart';
 import '../services/drama_cache_preferences.dart';
 import '../services/episode_source_cache.dart';
+import '../widgets/drama_group_picker.dart';
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
 import '../services/connectivity_status.dart';
@@ -101,10 +102,21 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
   /// 当前所在的 30 集区间；默认落在正在看的那一集里。
   late int _group = widget.currentIndex ~/ _groupSize;
 
+  /// 正在看的那一集的锚点：打开面板后把它滚进视野。
+  ///
+  /// 分段是 30 集一刀切的，正在看的那一集可能在段末（第 700 集在 691-720
+  /// 段的倒数第五个），不滚一下用户得自己往下找。
+  final _currentEpisodeKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
     if (_group < 0) _group = 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _currentEpisodeKey.currentContext;
+      if (!mounted || context == null) return;
+      Scrollable.ensureVisible(context, alignment: 0.25);
+    });
     unawaited(DramaCachePreferences.instance.load());
     _downloader.addListener(_onTasksChanged);
     _store.changes.addListener(_onTasksChanged);
@@ -213,6 +225,35 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     await _confirmDownload();
   }
 
+  /// 标题 + 「管理」入口。
+  Widget _header(HomePalette palette) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            '离线缓存 · ${widget.title}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: palette.ink,
+            ),
+          ),
+        ),
+        TextButton(
+          key: const ValueKey('download-open-management'),
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute<void>(builder: (_) => const CachedDramasPage()),
+          ),
+          child: const Text('管理'),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final groupEpisodes = _groupEpisodes;
@@ -231,62 +272,27 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '离线缓存 · ${widget.title}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: palette.ink,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    key: const ValueKey('download-open-management'),
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const CachedDramasPage(),
-                      ),
-                    ),
-                    child: const Text('管理'),
-                  ),
-                ],
-              ),
-            ),
+            _header(palette),
             if (_groupCount > 1)
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    for (var index = 0; index < _groupCount; index++)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: ChoiceChip(
-                          key: ValueKey('download-group-$index'),
-                          label: Text(
-                            '${index * _groupSize + 1}'
-                            '${_groupEnd(index) > 0 ? '-${_groupEnd(index)}' : ''}集',
-                          ),
-                          selected: index == _group,
-                          onSelected: (_) => setState(() => _group = index),
-                        ),
-                      ),
-                  ],
+              DramaGroupPicker(
+                groupCount: _groupCount,
+                group: _group,
+                total: widget.episodes.length,
+                rangeOf: (index) => (
+                  index * _groupSize + 1,
+                  _groupEnd(index),
                 ),
+                onSelected: _selectGroup,
               ),
             _aheadBar(),
             _qualityBar(palette),
             _autoCacheBar(palette),
             Flexible(
               child: GridView.count(
+                // 换段时换 key，让网格重建：GridView 会保留滚动位置，
+                // 不重建的话切到下一段仍停在上一段的滚动高度，看上去像
+                // 「第 9 集 排在 1-30 集 下面」。
+                key: ValueKey('download-grid-$_group'),
                 crossAxisCount: 4,
                 shrinkWrap: true,
                 padding: const EdgeInsets.all(16),
@@ -294,8 +300,19 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
                 crossAxisSpacing: 8,
                 childAspectRatio: 2.4,
                 children: [
-                  for (final episode in groupEpisodes)
-                    _episodeCell(episode, palette),
+                  // 集号直接用「段首 + 段内序号」算，不再对全表 indexWhere ——
+                  // 1000 集时那是 30 次全表扫描，且找不到会退化成「第 0 集」。
+                  for (final (index, episode) in groupEpisodes.indexed)
+                    KeyedSubtree(
+                      key: _group * _groupSize + index == widget.currentIndex
+                          ? _currentEpisodeKey
+                          : null,
+                      child: _episodeCell(
+                        episode,
+                        palette,
+                        _group * _groupSize + index + 1,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -343,6 +360,11 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
         ),
       ),
     );
+  }
+
+  void _selectGroup(int index) {
+    if (index == _group) return;
+    setState(() => _group = index);
   }
 
   /// 「往后 N 集」快捷缓存：起点是正在看的那一集后面，不是第 1 集。
@@ -506,7 +528,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     return selectable.isNotEmpty && selectable.every(_selected.contains);
   }
 
-  Widget _episodeCell(Chapter episode, HomePalette palette) {
+  Widget _episodeCell(Chapter episode, HomePalette palette, int number) {
     final itemId = episode.itemId;
     // 未选中的格子：浅色是 6% 黑，深色 / OLED 换成字段色。
     final idleBackground = palette.dark ? palette.soft : const Color(0x0F000000);
@@ -558,7 +580,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     final selected = _selected.contains(itemId);
     return _cellContainer(
       key: ValueKey('download-cell-$itemId'),
-      label: '第 ${_episodeNumber(episode)} 集',
+      label: '第 $number 集',
       foreground: selected ? const Color(0xFFFA6725) : palette.ink,
       background: selected ? const Color(0x14FA6725) : idleBackground,
       border: selected ? const Color(0xFFFA6725) : Colors.transparent,
@@ -568,9 +590,6 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
       }),
     );
   }
-
-  int _episodeNumber(Chapter episode) =>
-      widget.episodes.indexWhere((e) => e.itemId == episode.itemId) + 1;
 
   Widget _cellContainer({
     required Key key,

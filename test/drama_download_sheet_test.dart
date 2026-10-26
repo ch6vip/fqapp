@@ -185,6 +185,60 @@ void main() {
     expect(find.text('第 36 集'), findsOneWidget);
   });
 
+  testWidgets('一千集时改用下拉分段，直接落在正在看的那一段', (tester) async {
+    // 30 集一段 → 34 段。铺成一行 chip 会是一条几千像素的长条，选中项还
+    // 可能滚在屏幕外；改下拉后任何集数都能直接定位。
+    await pumpSheet(tester, episodeCount: 1000, currentIndex: 700);
+
+    expect(find.byKey(const ValueKey('download-group-picker')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('download-group-0')),
+      findsNothing,
+      reason: '段数多时不再铺 chip',
+    );
+    expect(find.text('第 691-720 集 / 共 1000 集'), findsOneWidget);
+    // 第 700 集在 691-720 段的倒数第五个，打开时要自动滚进视野。
+    expect(find.text('第 700 集'), findsOneWidget, reason: '当前集要滚进视野');
+    expect(find.text('第 800 集'), findsNothing, reason: '不该显示别的段');
+  });
+
+  testWidgets('上一段/下一段切换后网格从该段第一集开始', (tester) async {
+    await pumpSheet(tester, episodeCount: 1000, currentIndex: 700);
+
+    await tester.tap(find.byKey(const ValueKey('download-group-next')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('第 721-750 集 / 共 1000 集'), findsOneWidget);
+    expect(find.text('第 721 集'), findsOneWidget);
+    expect(find.text('第 691 集'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('download-group-prev')));
+    await tester.pumpAndSettle();
+    expect(find.text('第 691 集'), findsOneWidget);
+  });
+
+  testWidgets('网格滚动后切换分段，不会停在上一段的滚动位置', (tester) async {
+    // 真机上出现过「1-30 集」标签下第一行却是「第 9 集」：GridView 复用
+    // 了上一个分段的滚动位置。
+    await pumpSheet(tester, episodeCount: 1000, currentIndex: 0);
+
+    final grid = find.byKey(const ValueKey('download-grid-0'));
+    expect(grid, findsOneWidget);
+    await tester.drag(grid, const Offset(0, -160));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('download-group-next')));
+    await tester.pumpAndSettle();
+
+    // 新分段的网格是新建的（key 变了），滚动位置归零。
+    expect(find.byKey(const ValueKey('download-grid-1')), findsOneWidget);
+    expect(find.text('第 31 集'), findsOneWidget);
+    final scrollable = tester.widget<GridView>(
+      find.byKey(const ValueKey('download-grid-1')),
+    );
+    expect(scrollable.childrenDelegate.estimatedChildCount, 30);
+  });
+
   testWidgets('窄屏（360dp）下自动缓存行与快捷 chip 不溢出', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 780));
     addTearDown(() => tester.binding.setSurfaceSize(null));
