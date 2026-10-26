@@ -3,7 +3,7 @@
     "lib/main.dart": 752,
     "lib/models/media_item.dart": 1489,
     "lib/pages/api_service_page.dart": 601,
-    "lib/pages/audio_page.dart": 1935,
+    "lib/pages/audio_page.dart": 2000,
     "lib/pages/category_page.dart": 604,
     "lib/pages/comic_reader_page.dart": 955,
     "lib/pages/detail_page.dart": 1663,
@@ -61,7 +61,7 @@
     "rust/src/endpoints/manga.rs": 3162,
     "rust/src/endpoints/router.rs": 557,
     "rust/src/endpoints/video.rs": 3231,
-    "test/audio_page_test.dart": 994,
+    "test/audio_page_test.dart": 1000,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 750,
     "test/desktop_semantics_update_test.dart": 844,
@@ -113,12 +113,12 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/audio_page.dart::_AudioCommentsSheetState.build": {
-      "line": 1629,
+      "line": 1694,
       "lines": 131,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/audio_page.dart::_AudioPageState.build": {
-      "line": 368,
+      "line": 433,
       "lines": 224,
       "symbol": "Widget build(BuildContext context) {"
     },

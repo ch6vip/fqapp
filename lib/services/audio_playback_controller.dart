@@ -21,9 +21,6 @@ class _AudioPlaybackController extends ChangeNotifier
   /// 上限之所以能到 3.0：变速走的是 native/audio_tempo 里移植的 YAE atempo，
   /// 其接受范围是 0.5–100（`sp_atempo.c` 的 YAE_ATEMPO_MIN/MAX），不是 ffmpeg
   /// 原版那种单级 0.5–2。
-  /// 语速档位（audio_page 的面板按这个列表渲染）。
-  static const _rates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-
   static const minRate = 0.5;
   static const maxRate = 3.0;
 
