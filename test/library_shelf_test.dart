@@ -1005,6 +1005,33 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
   });
+
+  testWidgets('横向手势在书架一级 tab 之间切换', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+    expect(find.text('书架暂无书籍'), findsOneWidget);
+
+    await tester.drag(find.byType(LibraryPage), const Offset(-240, 0));
+    await tester.pumpAndSettle();
+    // 「浏览历史」的空态；书架的空态同时消失，说明确实换了 tab。
+    expect(find.text('未找到相关内容'), findsOneWidget);
+    expect(find.text('书架暂无书籍'), findsNothing);
+
+    // 往右滑回到「书架」。
+    await tester.drag(find.byType(LibraryPage), const Offset(240, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('书架暂无书籍'), findsOneWidget);
+    // 已经在首个 tab 上继续右滑：边界，不环绕到「收藏」。
+    await tester.drag(find.byType(LibraryPage), const Offset(240, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('书架暂无书籍'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 /// Waits out a write the *page* started itself (`ShelfStore.removeKeys`,

@@ -27,6 +27,7 @@ import '../widgets/bookshelf_card.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/shelf/shelf_design.dart';
 import '../widgets/shelf/shelf_empty.dart';
+import '../widgets/tab_swipe_area.dart';
 import 'cached_book_reader.dart';
 import 'cached_books_page.dart';
 import 'detail_page.dart';
@@ -720,7 +721,18 @@ class _LibraryPageState extends State<LibraryPage> {
               ),
               if (!_editing && _tab == 0) _toolbar(palette),
               if (!_editing && _tab == 2) _collectionToolbar(palette),
-              Expanded(child: _content(palette)),
+              Expanded(
+                child: TabSwipeArea(
+                  index: _tab,
+                  count: _tabTitles.length,
+                  onSelect: _selectTab,
+                  // 编辑态里横向拖动留给列表自身（多选/滑动删除的起手）。
+                  enabled: !_editing,
+                  // 只让内容跟手横移：标题栏与工具条固定在顶上，切换后立刻
+                  // 显示新的选中项。
+                  child: _content(palette),
+                ),
+              ),
             ],
           ),
         ),
