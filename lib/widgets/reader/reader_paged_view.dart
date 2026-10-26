@@ -394,8 +394,6 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   /// of it (titles, illustrations and paragraph spacing make pages hold
   /// different amounts of text), so a proportional jump parks the reader a page
   /// or two away from the sentence being read.
-  void followOffset(int offset) => followPage(widget.layout.pageForOffset(offset));
-
   void followPage(int page) {
     if (_turning || _boundaryPending || !_controller.hasClients) return;
     final pages = widget.layout.pages.length;
@@ -405,6 +403,43 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     if ((current - target).abs() < 1) return;
     _controller.jumpToPage(target);
   }
+
+  /// 把页面寻址到正文字符 [offset] 所在的那一页，供听书跟随使用。
+  ///
+  /// 这是「寻址」而不是「逐页推进」：offset 就是正在读的那个字，它属于哪一页
+  /// 就停在哪一页，前后都允许。此前的「每 tick 最多进一页 / 只跟随前进」都是
+  /// 在补偿位置算错；位置准了就该拿掉 —— 拿掉之后，双击跳读跳到很远的一句，
+  /// 页面也能一步跟过去。
+  ///
+  /// [followProgress] 拿时间比例乘页数，隐含「每页字数一样多」，长段落章节里
+  /// 会提前翻；这里用排版阶段算出来的真实区间，没有那个假设。
+  void followOffset(int offset) {
+    if (_turning || _boundaryPending || !_controller.hasClients) return;
+    final pages = widget.layout.pages;
+    if (pages.isEmpty) return;
+    final target = widget.layout.pageForOffset(offset);
+    if (target < 0 || target >= pages.length) return;
+    final current = (_attachedPage ?? _controller.initialPage.toDouble())
+        .round()
+        .clamp(0, pages.length - 1);
+    if (target == current) return;
+    // 每 200ms 一次 tick，同一个目标不重复下发，否则 jumpToPage 会连着打断
+    // 翻页过程，内容是旧的、页码已经在跳。
+    final now = DateTime.now();
+    if (_lastFollowTarget == target &&
+        _lastFollowAt != null &&
+        now.difference(_lastFollowAt!) < const Duration(milliseconds: 600)) {
+      return;
+    }
+    _lastFollowTarget = target;
+    _lastFollowAt = now;
+    final page = _attachedPage ?? _controller.initialPage.toDouble();
+    if ((page - target).abs() < 1) return;
+    _controller.jumpToPage(target);
+  }
+
+  int? _lastFollowTarget;
+  DateTime? _lastFollowAt;
 
   Future<void> _requestBoundary(int direction) async {
     if (_boundaryPending) return;

@@ -9,6 +9,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
+import '../models/audio_extra.dart';
 import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
@@ -36,6 +37,7 @@ import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
 import '../widgets/reader/reader_bubble.dart';
 import '../widgets/reader/reader_chapter_layout.dart';
+import '../widgets/reader/cue_index.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_cutout_insets.dart';
 import '../widgets/reader/reader_illustration.dart';
@@ -62,6 +64,13 @@ typedef ParagraphCommentResolver =
       ParagraphIdeas paragraph,
       String? cursor,
     );
+
+/// 朗读句高亮的底色要不要画。
+///
+/// 用户要求单独验证「双击 / 中键跳到那一段」这件事，先把暖黄底色关掉：
+/// 底色会盖住正文，也容易让人把"跳转生效"误认成"高亮亮了"。关掉之后
+/// 跳转链路（字幕 → 时间 → seek）完全不变，见 `_seekToTappedSentence`。
+const bool kReaderHighlightWash = false;
 
 class ReaderPage extends StatefulWidget {
   final String bookId;
@@ -372,6 +381,74 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 切章或未在读本章时清空。
   (int, int)? _narrationRange;
 
+  /// 双击跳读是否可用：正在听这本书就行，本章或别的章都可以（跨章跳）。
+  ///
+  /// 单独存一份是因为它得跟着会话变，而高亮没变化时不会触发重建。
+  bool _doubleTapArmed = false;
+
+  /// 10Hz 跟随轮询。见 [_followPollTick]。
+  Timer? _followPoll;
+
+  bool get _listenDoubleTapArmed =>
+      _narrationRange != null ||
+      ListeningSession.instance.bookId == widget.bookId;
+
+  /// 「正文字符位置 ↔ 音频时间」对照表，句高亮 / 跟随翻页 / 双击跳读共用。
+  ///
+  /// 排版（换字号、换分页方式）或字幕轨换了才重建；两者都用 identical 判断，
+  /// 日常 tick 不会重建。
+  CueIndex _cueIndex = CueIndex.empty;
+  Object? _cueIndexLayout;
+  SubtitleTrack? _cueIndexTrack;
+
+  /// 非当前播放章的字幕轨，键 = 章节 id。
+  ///
+  /// 会话里只存在正在播那一章的轨。停在别的章时双击跳读要先有本章字幕，
+  /// 所以按章补取一次留着，翻回来不用再请求。
+  final _cueTracks = <String, SubtitleTrack>{};
+  final _cueTrackRequests = <String, Future<SubtitleTrack>>{};
+
+  /// 本章该用哪条字幕轨：正在播的就是本章时用会话里的，否则用补取的。
+  SubtitleTrack? _cueTrackFor(String chapterId) {
+    final session = ListeningSession.instance;
+    if (session.chapterId == chapterId) return session.subtitles;
+    return _cueTracks[chapterId];
+  }
+
+  void _ensureCueIndex(ReaderChapterLayout layout) {
+    final track = _cueTrackFor(_chapter.itemId);
+    if (identical(_cueIndexLayout, layout) && identical(_cueIndexTrack, track)) {
+      return;
+    }
+    _cueIndexLayout = layout;
+    _cueIndexTrack = track;
+    _cueIndex = track == null || track.isEmpty
+        ? CueIndex.empty
+        : CueIndex.build(layout: layout, track: track);
+  }
+
+  /// 取本章字幕，取到就缓存。跨章跳读用；同章直接返回会话里的那条。
+  Future<SubtitleTrack?> _fetchCueTrack() async {
+    final chapterId = _chapter.itemId;
+    final session = ListeningSession.instance;
+    if (session.chapterId == chapterId) return session.subtitles;
+    final cached = _cueTracks[chapterId];
+    if (cached != null) return cached;
+    final pending = _cueTrackRequests[chapterId];
+    if (pending != null) return pending;
+    final future = AudioPlaybackScope.timelineForChapter(context, chapterId);
+    _cueTrackRequests[chapterId] = future;
+    try {
+      final track = await future;
+      if (track.isNotEmpty) _cueTracks[chapterId] = track;
+      return track;
+    } catch (_) {
+      return null;
+    } finally {
+      _cueTrackRequests.remove(chapterId);
+    }
+  }
+
   /// The passage being narrated, in layout coordinates, or null when this
   /// chapter is not the one on the voice.
   ///
@@ -399,13 +476,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       return translated == null ? null : (translated.start, translated.end);
     }
     final ttsRange = session.sentenceRange;
-    if (ttsRange == null ||
-        session.textReplacementRevision !=
+    if (ttsRange != null &&
+        session.textReplacementRevision ==
             (_replacement?.snapshotRevision ?? 0)) {
-      return null;
+      final translated = narrationLayoutRange(layout, ttsRange);
+      if (translated != null) return (translated.start, translated.end);
     }
-    final translated = narrationLayoutRange(layout, ttsRange);
-    return translated == null ? null : (translated.start, translated.end);
+    // 官方时间点在多源项章节会重置时间轴（`para 0` 可能从 198 秒才开始），
+    // TTS 那条又不适用于音频朗读；这时按播放位置到字幕里查当前句。字幕是
+    // 逐句连续的，位置也对得上。
+    _ensureCueIndex(layout);
+    final span = _cueIndex.spanAtPositionMs(session.position.inMilliseconds);
+    if (span != null) return (span.start, span.end);
+    // 逐句搜索兜底：句尾落到下一页这类跨页情形索引对不上，但正文里能找到。
+    return _locateCue(layout, session.cue);
   }
 
   void _syncNarrationHighlight((int, int)? narration) {
@@ -418,8 +502,80 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
   }
 
+  /// 字幕与正文之间的噪声字符：各类标点和空白。两边在全/半角、省略号写法
+  /// 上经常不一致，精确匹配失败后要靠剥掉这些再比一次。
+  ///
+  /// 与 [CueIndex.cueNoise] 是同一份规则 —— 对照表和这里的兜底搜索必须用同
+  /// 一套口径，否则一句在表里能对上、兜底却对不上。
+  static final _cueNoise = CueIndex.cueNoise;
+
+  /// 把字幕的当前句映射到本章正文的字符区间（布局坐标）。
+  ///
+  /// 先整句精确匹配；失败后把两边的标点空白都剥掉再匹配，并把命中位置换算
+  /// 回原串下标。两次都找不到返回 null —— 宁可这一拍没有高亮，也不留下上一
+  /// 句的错位底色。
+  (int, int)? _locateCue(ReaderChapterLayout layout, String? rawCue) {
+    final cue = rawCue?.trim();
+    if (cue == null || cue.isEmpty) return null;
+    for (var i = 1; i < layout.blocks.length; i++) {
+      final block = layout.blocks[i];
+      if (block.isImage || block.text.isEmpty) continue;
+      final at = block.text.indexOf(cue);
+      if (at >= 0) return (block.start + at, block.start + at + cue.length);
+    }
+    final needle = cue.replaceAll(_cueNoise, '');
+    if (needle.isEmpty) return null;
+    for (var i = 1; i < layout.blocks.length; i++) {
+      final block = layout.blocks[i];
+      if (block.isImage || block.text.isEmpty) continue;
+      final hit = _strippedIndex(block.text, needle);
+      if (hit != null) {
+        return (block.start + hit.start, block.start + hit.end);
+      }
+    }
+    // 跨页兜底：一句从页尾起头、后半句落到下一页时，新页里只有这句的尾巴
+    // （甚至只剩一两个字），整句匹配必然失败，高亮就整段消失。这里改用句尾
+    // 若干字逐个尝试，能对上多少就亮多少——亮一两个字也好过全页无高亮。
+    //
+    // 只看前几个块：残余部分一定落在新页开头，没必要全页扫一遍。
+    for (var take = 2; take <= 8; take++) {
+      if (take >= needle.length) break;
+      final tail = needle.substring(needle.length - take);
+      for (var i = 1; i < layout.blocks.length && i <= 3; i++) {
+        final block = layout.blocks[i];
+        if (block.isImage || block.text.isEmpty) continue;
+        final hit = _strippedIndex(block.text, tail);
+        if (hit != null) {
+          return (block.start + hit.start, block.start + hit.end);
+        }
+      }
+    }
+    return null;
+  }
+
+  /// 在 [text] 里找剥掉噪声后的 [needle]，返回原串的下标区间。
+  static ({int start, int end})? _strippedIndex(String text, String needle) {
+    final chars = <String>[];
+    final origin = <int>[];
+    for (var i = 0; i < text.length; i++) {
+      final ch = text[i];
+      if (_cueNoise.hasMatch(ch)) continue;
+      chars.add(ch);
+      origin.add(i);
+    }
+    final at = chars.join().indexOf(needle);
+    if (at < 0) return null;
+    return (start: origin[at], end: origin[at + needle.length - 1] + 1);
+  }
+
   void _onListeningTick() {
     if (!mounted) return;
+    // 双击跳读的开关跟会话走：高亮没变化时也要重建一次，否则刚开播时
+    // 手势没挂上（控制台看着「双击没反应」）。
+    final armed = _listenDoubleTapArmed;
+    if (armed != _doubleTapArmed) {
+      setState(() => _doubleTapArmed = armed);
+    }
     final layout = _chapterLayout;
     final narration = layout == null ? null : _narrationLayoutRange(layout);
     _syncNarrationHighlight(narration);
@@ -630,6 +786,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     VolumeKeyService.instance.setOnVolumeKey(_onVolumeKey);
     _syncVolumeKeyEnabled();
     ListeningSession.instance.addListener(_onListeningTick);
+    ListeningSession.instance.jumpToPlaybackHandler = _jumpToPlaybackPosition;
+    // 跟随用 10Hz 轮询，不走 ListeningSession 的监听（那条每秒最多通知一次，
+    // 还被 _controlsVisible 等闸门挡着）。定位键每次都准，所以轮询直接调
+    // 同一个函数。
+    _followPoll = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) => _followPollTick(),
+    );
     _replacementStore.changes.addListener(_onReplacementChanged);
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次阅读进度，避免被杀丢进度。
@@ -795,6 +959,145 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// press do literally nothing on those chapters.
   ///
   /// Note: .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
+  /// 迷你听书栏的「跳到播放位置」：把页面跳到正在读的那一句。
+  ///
+  /// 与跟随走同一条寻址链（对照表 → 句内插值 → 第几页），区别只是它是用户
+  /// 主动按的，所以不受「跟随开关」和「用户接管闩锁」限制。
+  /// 10Hz 跟随轮询：正在听本章、且用户没在主动翻页时，把页面挪到正在读的字。
+  ///
+  /// 走 [_addressToPlayback]，与迷你栏的定位键**同一段代码** —— 按键每次都准、
+  /// 跟随却不准，差别只可能在跟随那条路上的闸门（`_controlsVisible`、
+  /// `listeningFollow`、每秒一次的会话通知），所以这里不再叠加那些条件，只留
+  /// 「用户正在手动翻页就别抢」这一条。
+  void _followPollTick() {
+    if (!mounted || !_routeCurrent || !_appActive) return;
+    // 跟随开关由迷你栏那个按钮管：关着就是自由翻页，什么都不做。
+    if (!ListeningSession.instance.followArmed) return;
+    final session = ListeningSession.instance;
+    if (!session.playing) return;
+    if (session.bookId != widget.bookId) return;
+    if (session.chapterId != _chapter.itemId) return;
+    if (_loading || _changingChapter || _error != null) return;
+    // 用户刚手动翻过页：15 秒内不抢，之后再跟上。
+    if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
+    _addressToPlayback(quiet: true);
+  }
+
+  /// 把页面寻址到正在读的那个字。返回 false 表示这次没法定位。
+  ///
+  /// 迷你栏的定位键和 10Hz 跟随轮询**共用这一个函数**——按键每次都准、跟随
+  /// 却不准，说明差别不在定位而在跟随那条路上的闸门，所以两条路必须走同一段
+  /// 代码。[quiet] 为 true 时（轮询）不弹提示。
+  bool _addressToPlayback({bool quiet = false}) {
+    if (!mounted) return false;
+    final layout = _chapterLayout;
+    if (layout == null) return false;
+    final session = ListeningSession.instance;
+    if (session.bookId != widget.bookId) {
+      if (!quiet) _showMessage('没在听这本书');
+      return false;
+    }
+    // 正在听别的章：先把本页切到那一章再说，切章后轮询会接手。
+    if (session.chapterId != _chapter.itemId) {
+      if (quiet) return false;
+      final next = widget.chapters.indexWhere(
+        (c) => c.itemId == session.chapterId,
+      );
+      if (next >= 0) {
+        unawaited(_jumpToChapter(next, followListening: true));
+      } else {
+        _showMessage('正在播放别的章节');
+      }
+      return true;
+    }
+    _ensureCueIndex(layout);
+    final positionMs = session.position.inMilliseconds;
+    final span = _cueIndex.spanAtPositionMs(positionMs);
+    final offset = span?.spokenOffset(positionMs) ?? _narrationRange?.$1;
+    if (offset == null) {
+      if (!quiet) _showMessage('找不到当前朗读句');
+      return false;
+    }
+    if (_paged) {
+      _pagedKey.currentState?.followOffset(offset);
+    } else if (_scrollController.hasClients) {
+      final max = _scrollController.position.maxScrollExtent;
+      final length = layout.textLength;
+      if (max > 0) {
+        final ratio = length > 0
+            ? (offset / length).clamp(0.0, 1.0)
+            : session.progress;
+        _scrollController.jumpTo(ratio * max);
+      }
+    }
+    return true;
+  }
+
+  /// 迷你听书栏的「跳到播放位置」：按键不受任何闸门限制。
+  void _jumpToPlaybackPosition() {
+    _addressToPlayback();
+  }
+
+  /// 双击正文：把朗读跳到手指所指的那一句，可以跨章。
+  ///
+  /// 全局坐标换算成正文字符下标交给选区几何的 `chapterOffsetAt` —— 它已经在
+  /// 处理行内折行、标题占位这些偏移修正，没必要再实现一遍；拿到字符下标后去
+  /// 对照表里查出这句的起点时间，再让播放器跳过去。听的是同一本书的别的章时，
+  /// 播放器会先切到本章再按位置起播。
+  Future<void> _seekToTappedSentence(Offset globalPosition) async {
+    final layout = _chapterLayout;
+    if (layout == null) return;
+    final session = ListeningSession.instance;
+    if (session.bookId == null) {
+      _showMessage('先开始听书，再双击跳读');
+      return;
+    }
+    if (session.bookId != widget.bookId) {
+      _showMessage('正在听别的书');
+      return;
+    }
+    final offset = _marksScope?.geometry.chapterOffsetAt(globalPosition);
+    if (offset == null) return;
+    _ensureCueIndex(layout);
+    if (_cueIndex.isEmpty) {
+      // 跨章时手里的字幕轨是「正在播那一章」的，对不上本章正文。现场取本章
+      // 字幕再跳 —— 否则用户得先手动切到播放中的那章，再翻回来点。
+      final track = await _fetchCueTrack();
+      if (!mounted || !identical(_chapterLayout, layout)) return;
+      if (track == null || track.isEmpty) {
+        _showMessage('本章没有逐句字幕，无法跳读');
+        return;
+      }
+      _ensureCueIndex(layout);
+      if (_cueIndex.isEmpty) {
+        // 字幕取到了，但一句都没对上正文（章节文本被改过，或语音文本不是原文）。
+        _showMessage('本章字幕和正文对不上，无法跳读');
+        return;
+      }
+    }
+    final span = _cueIndex.spanAtChar(offset);
+    if (span == null) {
+      _showMessage('这一点没有对应字幕，换一句试试');
+      return;
+    }
+    if (!AudioPlaybackScope.jumpToChapter(
+      context,
+      _chapter.itemId,
+      span.startPosition,
+    )) {
+      _showMessage('朗读还没准备好，稍后再试');
+      return;
+    }
+    HapticFeedback.selectionClick();
+    // 立刻把高亮移到这句：下一次 tick 要等 200ms，等待期间旧句子还亮着，
+    // 看上去像点错了。跨章时本章本来没高亮，这条跳过即可。
+    if (kReaderHighlightWash &&
+        mounted &&
+        (span.start, span.end) != _narrationRange) {
+      setState(() => _narrationRange = (span.start, span.end));
+    }
+  }
+
   Future<void> _onParagraphLongPress(
     ReaderContentBlock block,
     Offset position,
@@ -1238,10 +1541,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _followPoll?.cancel();
+    _followPoll = null;
     _chapterRequest?.cancel();
     VolumeKeyService.instance.setOnVolumeKey(null);
     unawaited(VolumeKeyService.instance.setEnabled(false));
     ListeningSession.instance.removeListener(_onListeningTick);
+    // 只清自己注册的：换章重建时新实例已经接管。
+    if (ListeningSession.instance.jumpToPlaybackHandler ==
+        _jumpToPlaybackPosition) {
+      ListeningSession.instance.jumpToPlaybackHandler = null;
+    }
     _replacementStore.changes.removeListener(_onReplacementChanged);
     _replacementCancellation?.cancel();
     ++_replacementGeneration;
@@ -2371,7 +2681,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!system) {
       _openingListening = true;
       try {
-        final choice = await showModalBottomSheet<bool>(
+        // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
+        final choice = await showModalBottomSheet<int>(
           context: context,
           useSafeArea: true,
           showDragHandle: true,
@@ -2385,20 +2696,34 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   leading: const Icon(Icons.headphones),
                   title: const Text('听书'),
                   subtitle: const Text('使用作品自带音频与音色'),
-                  onTap: () => Navigator.pop(context, false),
+                  onTap: () => Navigator.pop(context, 0),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.my_location),
+                  title: const Text('从本页播放'),
+                  subtitle: const Text('从当前页第一段开始听'),
+                  onTap: () => Navigator.pop(context, 1),
                 ),
                 ListTile(
                   leading: const Icon(Icons.record_voice_over),
                   title: const Text('系统朗读'),
                   subtitle: const Text('使用手机已安装的 TTS 引擎'),
-                  onTap: () => Navigator.pop(context, true),
+                  onTap: () => Navigator.pop(context, 2),
                 ),
               ],
             ),
           ),
         );
         if (!mounted || choice == null || chapterId != _chapter.itemId) return;
-        system = choice;
+        if (choice == 1) {
+          final anchor = _currentPageAnchor();
+          await _openUpstreamListening(
+            fromMs: anchor.startMs ?? fromMs,
+            textId: anchor.textId ?? textId,
+          );
+          return;
+        }
+        system = choice == 2;
       } finally {
         _openingListening = false;
       }
@@ -2520,6 +2845,24 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     } finally {
       _openingListening = false;
     }
+  }
+
+  /// 「从本页播放」的锚点：当前页第一个正文段落的段落 ID 与它的起播时间。
+  ///
+  /// 时间取 [ReaderContentBlock.startMs]（章节自带的 `<span start_time>`），
+  /// 与「从本段听」同源。没有时间轴的章返回 startMs 为 null，调用方退回续播。
+  ({int? startMs, int? textId}) _currentPageAnchor() {
+    final layout = _chapterLayout;
+    if (layout == null || layout.pages.isEmpty) {
+      return (startMs: null, textId: null);
+    }
+    final page = layout.pages[_pageIndex.clamp(0, layout.pages.length - 1)];
+    for (final fragment in page.fragments) {
+      final block = fragment.block;
+      if (block.isTitle || block.isImage || block.text.isEmpty) continue;
+      return (startMs: block.startMs, textId: block.textId);
+    }
+    return (startMs: null, textId: null);
   }
 
   /// The spoken start of the paragraph identified by [textId], when the chapter
@@ -2957,7 +3300,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       builder: (context, constraints) {
         final layout = _prepareLayout(constraints);
         final scope = _marksScopeFor(preset, layout);
-        return GestureDetector(
+        // 桌面端用鼠标中键定位到点中的那一句。Listener 读原始指针事件，
+        // 不参与手势竞技场，所以和翻页、长按、选词都不冲突；移动端没有中键，
+        // 仍走下面的双击。
+        return Listener(
+          onPointerDown: (event) {
+            if (event.buttons != kMiddleMouseButton) return;
+            if (_doubleTapArmed) {
+              _seekToTappedSentence(event.position);
+            }
+          },
+          child: GestureDetector(
           key: const ValueKey('reader-page-surface'),
           behavior: HitTestBehavior.translucent,
           onTapUp: (details) {
@@ -2975,6 +3328,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               _handleTapZone(details.localPosition, constraints);
             }
           },
+          // 听这本书时才挂双击（同章、跨章都行）：双击识别器会把普通单击推迟到
+          // 300ms 超时后才响应，没在听书时别拖累翻页点按。
+          onDoubleTapDown: _doubleTapArmed
+              ? (details) => _seekToTappedSentence(details.globalPosition)
+              : null,
           child: Stack(
             key: _selectionOverlayKey,
             children: [
@@ -3024,6 +3382,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               ?_selectionBar(preset, windowPadding),
             ],
           ),
+        ),
         );
       },
     );

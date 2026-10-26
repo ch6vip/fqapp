@@ -16,7 +16,24 @@ class _AudioPlaybackController extends ChangeNotifier
     notifyListeners();
   }
 
+  /// 听书语速范围。滑条按 0.1 一档。
+  ///
+  /// 上限之所以能到 3.0：变速走的是 native/audio_tempo 里移植的 YAE atempo，
+  /// 其接受范围是 0.5–100（`sp_atempo.c` 的 YAE_ATEMPO_MIN/MAX），不是 ffmpeg
+  /// 原版那种单级 0.5–2。
+  /// 语速档位（audio_page 的面板按这个列表渲染）。
   static const _rates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+  static const minRate = 0.5;
+  static const maxRate = 3.0;
+
+  /// 偏好里存的、路由里传的倍速是否可用。
+  ///
+  /// 以前是拿一张固定档位表 `contains` 比对；滑条改成 0.1 步进后，1.1 / 1.6
+  /// 这种值不在表里，会被判为非法而回落到 1.0 —— 所以改成范围判断。
+  static bool isSupportedRate(double rate) =>
+      rate.isFinite && rate >= minRate && rate <= maxRate;
+
   static const _defaultVoice = AudioVoice(id: '0', label: '默认音色');
 
   late String _bookId;
@@ -58,8 +75,10 @@ class _AudioPlaybackController extends ChangeNotifier
   AudioExtras _extras = const AudioExtras();
   SubtitleTrack _subtitles = SubtitleTrack.empty;
 
-  /// 听书 → 正文的同步映射（官方 AudioTimePoint）。缺省为空，此时不发
-  /// sentenceRange，阅读页不高亮——没映射时高亮一个猜的位置比不高亮更糟。
+  /// 听书 → 正文的同步映射（官方 AudioTimePoint）。驱动阅读页的朗读高亮。
+  ///
+  /// 没有映射时是空的，此时高亮退回字幕插值那套；两者都没有就不高亮——
+  /// 猜一个位置比不高亮更糟。
   AudioTimeTrack _timeTrack = AudioTimeTrack.empty;
   // Modal routes rebuild independently of the player page. See
   // .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
@@ -234,13 +253,11 @@ class _AudioPlaybackController extends ChangeNotifier
         if (initialTone != null && initialTone.isNotEmpty) {
           _toneId = initialTone;
         }
-        if (savedRate is num &&
-            savedRate.isFinite &&
-            _rates.contains(savedRate.toDouble())) {
+        if (savedRate is num && isSupportedRate(savedRate.toDouble())) {
           _rate = savedRate.toDouble();
         }
         final initialRate = request.initialRate;
-        if (initialRate != null && _rates.contains(initialRate)) {
+        if (initialRate != null && isSupportedRate(initialRate)) {
           _rate = initialRate;
         }
       }
@@ -438,6 +455,7 @@ class _AudioPlaybackController extends ChangeNotifier
       _duration = Duration.zero;
       _seekPreview.value = null;
       _subtitles = SubtitleTrack.empty;
+      _timeTrack = AudioTimeTrack.empty;
       _wantPlay =
           autoplay &&
           (_appActive || AudioPreferences.instance.backgroundPlayback.value);
@@ -655,18 +673,6 @@ class _AudioPlaybackController extends ChangeNotifier
     }
   }
 
-  void _publishReadAlong() {
-    if (_closed || _index < 0 || _index >= _chapters.length) return;
-    final preview = _seekPreview.value;
-    _readAlong.value = (
-      chapterTitle: _chapters[_index].title,
-      track: _subtitles,
-      position: preview == null
-          ? _position.value
-          : Duration(milliseconds: preview.round()),
-    );
-  }
-
   /// Loads the 听书 → 正文 mapping for a chapter and publishes it if the
   /// chapter is still the active one.
   Future<void> _refreshTimePoints(
@@ -685,6 +691,18 @@ class _AudioPlaybackController extends ChangeNotifier
       // 没有映射不是错误：这本书没生成过时间轴，或者章节文本已变化。保留
       // 上一次的空值，阅读页就不高亮。
     }
+  }
+
+  void _publishReadAlong() {
+    if (_closed || _index < 0 || _index >= _chapters.length) return;
+    final preview = _seekPreview.value;
+    _readAlong.value = (
+      chapterTitle: _chapters[_index].title,
+      track: _subtitles,
+      position: preview == null
+          ? _position.value
+          : Duration(milliseconds: preview.round()),
+    );
   }
 
   void _publishMoreState() {
@@ -714,6 +732,7 @@ class _AudioPlaybackController extends ChangeNotifier
       _player?.position ?? _position.value,
       _duration,
     );
+    final cueIndex = _subtitles.indexAt(position);
     ListeningSession.instance.update(
       bookId: _bookId,
       chapterId: chapter.itemId,
@@ -721,8 +740,14 @@ class _AudioPlaybackController extends ChangeNotifier
       position: position,
       duration: _duration,
       playing: playing && !_completed,
-      // The time point covering this instant, in the backend's paragraph
-      // coordinates. Absent timeline → null → the reader paints nothing.
+      // 音频朗读没有 TTS 那种字符范围回调，只能把字幕里当前这句报上去，
+      // 由阅读页自己到正文里找位置（见 reader_page 的 _locateCue）。
+      cue: cueIndex < 0 ? null : _subtitles.cues[cueIndex].text,
+      // 这句读到什么时候结束：下一句的起点。阅读页据此决定翻不翻页。
+      cueEndsAtMs: cueIndex < 0 ? null : _subtitles.endMsAt(cueIndex),
+      // 整条字幕轨换个引用就行，阅读页据此建索引；同一个对象不会触发通知。
+      subtitles: _subtitles,
+      // 官方通道：当前毫秒正在读的「第几段第几个字」。有它时高亮不用猜。
       audioParaRange: _paraRangeAt(position),
     );
   }
@@ -1236,6 +1261,7 @@ class _AudioPlaybackController extends ChangeNotifier
         _position.value = Duration.zero;
         _duration = Duration.zero;
         _subtitles = SubtitleTrack.empty;
+        _timeTrack = AudioTimeTrack.empty;
       });
       _settingsReady = _prepareSettings(forceToneId: toneId);
       await _openChapter(

@@ -17,6 +17,41 @@ class AudioPlaybackScope extends StatefulWidget {
     return owner.startSystemTts(book);
   }
 
+  /// 把正在进行的朗读跳到 [position]（阅读页双击跳读用）。
+  ///
+  /// 只有智能朗读 / 真人讲书这类走播放器的会话能被跳转；系统朗读（本地 TTS）
+  /// 没有可 seek 的音频流，返回 false 让调用方提示。
+  static bool seekActive(BuildContext context, Duration position) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return owner?.seekActive(position) ?? false;
+  }
+
+  /// 把朗读切到 [chapterId]，并从 [position] 起播（双击跳读，可跨章）。
+  ///
+  /// 同章就是 seek；换章走 [_openChapter]，它会释放旧播放器、按给定位置起播，
+  /// 顺带把进度记下来。找不到这一章（书的章节列表对不上）返回 false。
+  static bool jumpToChapter(
+    BuildContext context,
+    String chapterId,
+    Duration position,
+  ) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return owner?.jumpToChapter(chapterId, position) ?? false;
+  }
+
+  /// 取指定章节的逐句字幕（阅读页跨章双击跳读用）。
+  ///
+  /// 正在播的那章直接给会话里已有的轨，不重复请求；其它章按需取一次并缓存。
+  /// 取不到（这本书没有生成语音文本）时返回空轨，不算错误。
+  static Future<SubtitleTrack> timelineForChapter(
+    BuildContext context,
+    String chapterId,
+  ) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    if (owner == null) return Future.value(SubtitleTrack.empty);
+    return owner.timelineForChapter(chapterId);
+  }
+
   @override
   State<AudioPlaybackScope> createState() => _AudioPlaybackScopeState();
 }
@@ -29,6 +64,13 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   final _views = <_AudioPageState>{};
   bool _rebuildPending = false;
   late final Future<void> Function(NativePlayer) _playGate = _beforePlay;
+
+  /// 跨章跳读要用的字幕轨缓存，键 = `音色|章节 id`。
+  ///
+  /// 会话只持有正在播那章的轨，阅读页停在别的章时拿不到字幕；这里按章补取
+  /// 一次并缓存。键里带音色，换音色后旧条目自然不再命中。
+  final _timelineCache = <String, SubtitleTrack>{};
+  final _timelinePending = <String, Future<SubtitleTrack>>{};
 
   @override
   void initState() {
@@ -45,6 +87,70 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     } else {
       await session._pauseForOtherMedia();
     }
+  }
+
+  /// 见 [AudioPlaybackScope.seekActive]。会话没就绪（还在缓冲、已关闭）时
+  /// 返回 false，不排队 —— 跳读是用户的即时动作，晚半拍就没意义了。
+  bool seekActive(Duration position) {
+    final session = _session;
+    if (session == null || session._closed || !session._ready) return false;
+    unawaited(session._seekTo(position));
+    return true;
+  }
+
+  /// 见 [AudioPlaybackScope.jumpToChapter]。换章要重新加载音频源，所以不像
+  /// [seekActive] 那样要求 _ready —— 正在缓冲中跳读也是合法操作。
+  /// 见 [AudioPlaybackScope.timelineForChapter]。
+  Future<SubtitleTrack> timelineForChapter(String chapterId) {
+    final session = _session;
+    if (session == null || session._closed) {
+      return Future.value(SubtitleTrack.empty);
+    }
+    final index = session._chapters.indexWhere((c) => c.itemId == chapterId);
+    if (index < 0) return Future.value(SubtitleTrack.empty);
+    // 正在播的就是这一章：会话里的轨最新，直接给。
+    if (index == session._index && session._subtitles.isNotEmpty) {
+      return Future.value(session._subtitles);
+    }
+    final key = '${session._toneId}|$chapterId';
+    final cached = _timelineCache[key];
+    if (cached != null) return Future.value(cached);
+    final pending = _timelinePending[key];
+    if (pending != null) return pending;
+    final future = _loadTimeline(
+      key,
+      session._loadSubtitles(chapterId, session._toneId),
+    );
+    _timelinePending[key] = future;
+    return future;
+  }
+
+  Future<SubtitleTrack> _loadTimeline(String key, Future<SubtitleTrack> load) async {
+    try {
+      final track = await load;
+      // 命中不了的章不再重复请求；超过 8 条就丢最旧的一条。
+      if (_timelineCache.length >= 8) {
+        _timelineCache.remove(_timelineCache.keys.first);
+      }
+      _timelineCache[key] = track;
+      return track;
+    } finally {
+      _timelinePending.remove(key);
+    }
+  }
+
+  bool jumpToChapter(String chapterId, Duration position) {
+    final session = _session;
+    if (session == null || session._closed) return false;
+    final index = session._chapters.indexWhere((c) => c.itemId == chapterId);
+    if (index < 0) return false;
+    if (index == session._index) {
+      if (!session._ready) return false;
+      unawaited(session._seekTo(position));
+    } else {
+      unawaited(session._openChapter(index, position: position));
+    }
+    return true;
   }
 
   Future<_AudioPlaybackController?> acquire(AudioPage request) {
@@ -324,6 +430,9 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
                         ),
                       ),
                     ),
+                    _FollowToggle(
+                      handler: ListeningSession.instance.jumpToPlaybackHandler,
+                    ),
                     IconButton(
                       key: const ValueKey('audio-mini-toggle'),
                       tooltip: session._wantPlay && !session._completed
@@ -350,6 +459,41 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// 迷你栏的「跟随」开关：按一次开跟随并跳到播放位置，再按一次放开自由翻页。
+///
+/// 状态存在 [ListeningSession.followArmed] 上，图标由本组件自己管 —— 迷你栏
+/// 整条由 OverlayEntry 重建，单独抽出来才不会被拖着整条一起刷。
+class _FollowToggle extends StatefulWidget {
+  const _FollowToggle({required this.handler});
+
+  /// 阅读页注册的「跳到播放位置」；没在阅读页时为 null，按钮置灰。
+  final void Function()? handler;
+
+  @override
+  State<_FollowToggle> createState() => _FollowToggleState();
+}
+
+class _FollowToggleState extends State<_FollowToggle> {
+  @override
+  Widget build(BuildContext context) {
+    final armed = ListeningSession.instance.followArmed;
+    return IconButton(
+      key: const ValueKey('audio-mini-jump'),
+      tooltip: armed ? '停止跟随，自由翻页' : '跳到播放位置并跟随',
+      // 阅读页注册的处理器；不在阅读页时置灰。
+      onPressed: widget.handler == null
+          ? null
+          : () {
+              final session = ListeningSession.instance;
+              setState(() => session.followArmed = !session.followArmed);
+              // 开跟随的那一下同时跳过去；关跟随不动页面。
+              if (session.followArmed) widget.handler!();
+            },
+      icon: Icon(armed ? Icons.gps_fixed : Icons.my_location),
     );
   }
 }
