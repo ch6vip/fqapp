@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/app_log.dart';
 import '../services/backend_transport.dart';
 import '../services/home_feed_cache.dart';
 import '../services/user_facing_error.dart';
@@ -357,6 +358,26 @@ class HomeNotifier extends Notifier<HomeState> {
     tabIndex: tabIndex ?? state.tabIndex,
     lastTabIndex: _lastTabIndex,
   );
+
+  /// 这一页能不能当成本分类的载荷。
+  ///
+  /// 上游的分类表只给被回答那一项带 `cell_data`，而客户端是按 `tab_type` 认领
+  /// 的。认不到（或者响应明确回答的是另一个分类）时，这份 `cells`/`items`
+  /// 就是别人的：拿它当自己这份，就会出现「听书」里画推荐榜/猜你喜欢小说
+  /// 卡片，而 `_forceKind` 还会把这些书重标成听书。没带分类表的响应（老后端、
+  /// 视频第二段）无从判断，沿用既有的「当自己的」行为。
+  bool _answersTab(HomepagePage page, int tabType) {
+    if (!page.tabScoped) return true;
+    if (page.answeredTabType == tabType) return true;
+    // 设备日志（设置 → 服务 → 日志）留一行：第二次加载后分类页变内容时，
+    // 先看这里是否被拒绝过，再看上游到底回了哪个 tab_type。
+    AppLog.w(
+      'home',
+      '丢弃不属于 tab_type=$tabType 的首页响应（回答的是 '
+          '${page.answeredTabType ?? "未声明的分类"}）',
+    );
+    return false;
+  }
 
   final HomeFeedCache? _feedCache;
   final int initialTabIndex;
@@ -730,29 +751,32 @@ class HomeNotifier extends Notifier<HomeState> {
     Object? loaderFailure;
     if (tabType != null) {
       try {
-        final page = await _fetchHomepage(
-          tabType: tabType,
-
-        );
-        final items = _forceKind(page.items, kind);
-        final nextOffset = page.nextOffset;
-        final canAdvance = nextOffset != null && nextOffset > 0;
-        // 准入条件必须包含 cells：官方书城区块（`tab_type=2`）的书全嵌在
-        // `cell_data` 里，`parseMediaItems` 不一定能拉平出 items。只看 items
-        // 会把一整页区块当成「空响应」丢掉，然后退回搜索路径，cells 全丢——
-        // 这正是真机上区块一个都不出现、首页退回旧网格的原因。
-        if (items.isNotEmpty || page.cells.isNotEmpty || canAdvance) {
-          return _FetchedFeed(
-            items: items,
-            cells: page.cells,
-            tabs: page.tabs,
-            nextOffset: canAdvance ? nextOffset : null,
-            sessionId: page.sessionId,
-            searchPage: 0,
-            recommendExhausted: !canAdvance,
-            // Search remains available after recommendations are exhausted.
-            hasMore: true,
-          );
+        final page = await _fetchHomepage(tabType: tabType);
+        if (!_answersTab(page, tabType)) {
+          // 上游回答的是别的分类：这份 cells/items 不是这一页的内容。宁可退回
+          // 搜索，也不要画别人的榜和书（再经 `_forceKind` 重标成本分类）。
+          loaderFailure = StateError('响应不属于 tab_type=$tabType');
+        } else {
+          final items = _forceKind(page.items, kind);
+          final nextOffset = page.nextOffset;
+          final canAdvance = nextOffset != null && nextOffset > 0;
+          // 准入条件必须包含 cells：官方书城区块（`tab_type=2`）的书全嵌在
+          // `cell_data` 里，`parseMediaItems` 不一定能拉平出 items。只看 items
+          // 会把一整页区块当成「空响应」丢掉，然后退回搜索路径，cells 全丢——
+          // 这正是真机上区块一个都不出现、首页退回旧网格的原因。
+          if (items.isNotEmpty || page.cells.isNotEmpty || canAdvance) {
+            return _FetchedFeed(
+              items: items,
+              cells: page.cells,
+              tabs: page.tabs,
+              nextOffset: canAdvance ? nextOffset : null,
+              sessionId: page.sessionId,
+              searchPage: 0,
+              recommendExhausted: !canAdvance,
+              // Search remains available after recommendations are exhausted.
+              hasMore: true,
+            );
+          }
         }
       } catch (loaderError) {
         // Older backends may not expose recommendations; search below keeps the
@@ -762,7 +786,18 @@ class HomeNotifier extends Notifier<HomeState> {
         loaderFailure = loaderError;
       }
     }
+    return _initialFromSearch(searchName, kind, loaderFailure);
+  }
 
+  /// 分类首页的搜索兜底（流不可用 / 回答的是别的分类时走这里）。
+  ///
+  /// [loaderFailure] 是流那边失败的原因；搜索也拿不出东西时把错误透传出去，
+  /// 而不是给一张谎报「暂无内容」的空页（流尾重试态靠它）。
+  Future<_FetchedFeed> _initialFromSearch(
+    String searchName,
+    String kind,
+    Object? loaderFailure,
+  ) async {
     final search = await _searchByType(searchName);
     final items = _searchItems(search, searchName, kind);
     if (items.isEmpty && loaderFailure != null) {
@@ -896,10 +931,7 @@ class HomeNotifier extends Notifier<HomeState> {
   /// after the first.
   Future<_AllManjuGroup> _loadAllManju() async {
     try {
-      final page = await _fetchHomepage(
-        tabType: tabTypes['漫剧']!,
-
-      );
+      final page = await _fetchHomepage(tabType: tabTypes['漫剧']!);
       final items = _forceKind(page.items, 'manju');
       if (items.isNotEmpty) {
         return (
@@ -944,6 +976,11 @@ class HomeNotifier extends Notifier<HomeState> {
           offset: feed.offset,
           sessionId: feed.sessionId,
         );
+        // 追加页同样要认领归属：拿回别的分类的下一页并追加进来，就是
+        // 「听书」翻页后冒出一堆推荐/小说卡片的直接渠道。
+        if (!_answersTab(page, tabType)) {
+          throw StateError('响应不属于 tab_type=$tabType');
+        }
         final items = _forceKind(page.items, kind);
         final nextOffset = page.nextOffset;
         final canAdvance = nextOffset != null && nextOffset > feed.offset;
@@ -1169,11 +1206,45 @@ class HomeNotifier extends Notifier<HomeState> {
           tab.title.isNotEmpty &&
           (tab.title.contains(label) || label.contains(tab.title)),
     );
-    final selected = matching.isEmpty ? searchTabs : matching;
+    // 搜索结果是按「哪一条 tab」分桶的，而桶名就是分类身份。点名了本分类就
+    // 只认那一条；一条都没点名时只能借**没有分类身份**的桶，而且只有书类
+    // （小说/推荐）可以借「综合」这种混合桶——它装的就是一般小说。
+    //
+    // 之前「没点名就借所有桶」正是分类页冒出别人的内容的渠道：搜索第 2 页
+    // 起只回综合/听书等固定几条，听书那条是空的，于是综合桶里的推荐/小说
+    // 卡片被当成了听书的内容（再经 `_forceKind` 重标成听书）。
+    final selected = matching.isNotEmpty
+        ? matching
+        : searchTabs
+              .where((tab) {
+                final namespace = _searchTabKind(tab.title);
+                // 没点名分类的混合桶（综合…）只给书籍类：它装的就是一般小说。
+                // 同一条内容轴上的桶可以互借（小说 ← 书籍），别的轴不借。
+                return namespace == null ? kind == 'book' : namespace == kind;
+              })
+              .take(1);
     return selected
         .expand((tab) => tab.items)
         .where((item) => item.kind == kind)
         .toList(growable: false);
+  }
+
+  /// 搜索桶（tab）名字点名的分类。`null` = 混合桶（综合、搜索、无标题…）。
+  static String? _searchTabKind(String title) {
+    if (title.isEmpty) return null;
+    for (final entry in const {
+      '有声': 'audio',
+      '听书': 'audio',
+      '短剧': 'video',
+      '看剧': 'video',
+      '漫剧': 'manju',
+      '漫画': 'manga',
+      '书籍': 'book',
+      '小说': 'book',
+    }.entries) {
+      if (title.contains(entry.key)) return entry.value;
+    }
+    return null;
   }
 
   // Note: 首页漫画与漫剧都保留 v1 搜索游标，重复页不等于结束；见

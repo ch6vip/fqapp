@@ -136,10 +136,15 @@ List<MediaItem> homeCellEntries(HomeCell cell) => cell.flatten();
 
 /// Parses the bookstore feed into blocks.
 ///
-/// Starts at `data.tab_item[<selected>].cell_data[]` when present — that is
-/// where `/api/v1/recommend/homepage` keeps the rows — and falls back to
+/// Starts at `data.tab_item[data.tab_index].cell_data[]` when the payload
+/// declares which tab it answered — that is where
+/// `/api/v1/recommend/homepage` keeps the rows — and falls back to
 /// `data.cell_data[]` for the second-stage video flow
 /// (`bookmall/cell/change`), which nests one `cell_view` deeper.
+///
+/// A payload with a tab table but no usable `tab_index` yields no blocks:
+/// only the answered entry carries `cell_data`, so guessing would hand the
+/// caller another category's blocks.
 ///
 /// Returns an empty list when the payload has no recognisable blocks; callers
 /// then keep using the flat item list, so an upstream shape change degrades to
@@ -151,18 +156,14 @@ List<HomeCell> parseHomeCells(Map<String, dynamic> payload) {
   dynamic blocks;
   final tabItem = data['tab_item'];
   if (tabItem is List) {
-    final index = _intOf(data['tab_index']) ?? 0;
-    if (index >= 0 && index < tabItem.length) {
+    // `data.tab_index` 指向被回答那一项——只看它。曾经在 `tab_index` 不可用时
+    // 退到「第一个带 `cell_data` 的项」，那等于拿另一个分类的区块当自己的：
+    // 上游只给被回答那一项塞 `cell_data`，所以「第一个带区块的项」就是
+    // 「别人的项」。认不出来就不给区块，宁可直接用 `items`。
+    final index = _intOf(data['tab_index']);
+    if (index != null && index >= 0 && index < tabItem.length) {
       final selected = tabItem[index];
       if (selected is Map) blocks = selected['cell_data'];
-    }
-    if (blocks == null) {
-      for (final entry in tabItem) {
-        if (entry is Map && entry['cell_data'] is List) {
-          blocks = entry['cell_data'];
-          break;
-        }
-      }
     }
   }
   // A single tab object — what the client passes after picking the tab whose
