@@ -97,8 +97,15 @@ void main() {
     await _flush(tester);
     await tester.tap(find.byKey(const ValueKey('audio-speed')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('1.5×'));
+    // 语速面板改成 0.1 一档的滑条，没有固定档位按钮可点。
+    tester
+        .widget<Slider>(find.byKey(const ValueKey('audio-speed-slider')))
+        .onChanged!(1.5);
     await _flush(tester);
+    await tester.pumpAndSettle();
+    // 滑条面板选完不会自动关，先关掉再选音色，否则点击落在遮罩上。
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
     await _chooseVoice(tester, '115');
 
     expect(session.directories, [_novelBook]);
