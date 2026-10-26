@@ -74,9 +74,10 @@ class HomepagePage {
 
   /// 响应是否被限定到单个分类（带了 `tab_item` 分类表）。
   ///
-  /// 为 false 时 [answeredTabType] 没有意义：调用方无从判断归属（老后端、
-  /// 视频第二段 `cell/change`），只能沿用既有行为。第二段由调用方按构造
-  /// 事实自己标注归属。
+  /// 为 false 时 [answeredTabType] 没有意义：调用方无从判断声明归属（老后端、
+  /// 视频第二段 `cell/change`）。第二段由调用方按构造事实自己标注归属；
+  /// 没带分类表的首页响应还会再过一道「区块族与分类轴是否匹配」的检查（见
+  /// `HomeNotifier._answersTab`）——只带推荐那一族区块的载荷入不了别的分类。
   final bool tabScoped;
 
   const HomepagePage({

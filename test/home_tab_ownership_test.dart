@@ -70,16 +70,10 @@ void main() {
 
       final state = container.read(provider);
       expect(state.tabIndex, audioIndex);
-      expect(
-        state.items.map((item) => item.id),
-        ['audio-1'],
-        reason: '别的分类的卡片一张都不能进来，听力页走搜索兜底',
-      );
-      expect(
-        state.cells,
-        isEmpty,
-        reason: '推荐流的排行榜/猜你喜欢不能画进听书',
-      );
+      expect(state.items.map((item) => item.id), [
+        'audio-1',
+      ], reason: '别的分类的卡片一张都不能进来，听力页走搜索兜底');
+      expect(state.cells, isEmpty, reason: '推荐流的排行榜/猜你喜欢不能画进听书');
     });
 
     test('分类表在但没有一项是我们的，同样拒绝', () async {
@@ -157,11 +151,9 @@ void main() {
 
       await notifier.loadMore();
       final state = container.read(provider);
-      expect(
-        state.items.map((i) => i.id),
-        ['audio-1'],
-        reason: '别的分类的下一页不能接在听书后面',
-      );
+      expect(state.items.map((i) => i.id), [
+        'audio-1',
+      ], reason: '别的分类的下一页不能接在听书后面');
       expect(state.cells.map((c) => c.showType), [337]);
     });
   });
@@ -190,6 +182,45 @@ void main() {
     await _flush();
 
     expect(container.read(provider).items.map((i) => i.id), ['audio-legacy']);
+  });
+
+  test('没有分类表、却带着推荐那一族区块的页也拒绝', () async {
+    // 靶场里另一条通道：第二次响应干脆不带 `tab_item`（一个裸的推荐页）。
+    // 没有分类表就无法证明归属，但区块族会暴露它：511 排行榜 + 384 猜你喜欢
+    // 是书籍轴的区块，听书从来只下发 337。
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      () => HomeNotifier(
+        usesLocalTabs: true,
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                tabType == 5
+                ? _page(
+                    items: [_item('novel-page')],
+                    cells: [_cell(511, '排行榜'), _cell(384, '猜你喜欢')],
+                    nextOffset: 12,
+                  )
+                : _page(items: [], cells: []),
+        searchLoader: (query, {int page = 1}) async => query == '听书'
+            ? [
+                SearchTab(
+                  title: '听书',
+                  items: [_item('audio-1', kind: 'audio')],
+                ),
+              ]
+            : const [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(provider.notifier);
+
+    await notifier.load();
+    notifier.selectTab(audioIndex);
+    await _flush();
+
+    final state = container.read(provider);
+    expect(state.items.map((i) => i.id), ['audio-1']);
+    expect(state.cells, isEmpty, reason: '推荐那一族的区块不能画进听书');
   });
 
   group('the search fallback only borrows its own bucket', () {
@@ -227,11 +258,9 @@ void main() {
       await _flush();
       await notifier.loadMore();
 
-      expect(
-        container.read(provider).items.map((i) => i.id),
-        ['audio-1'],
-        reason: '混合桶里的书不能当成听书内容',
-      );
+      expect(container.read(provider).items.map((i) => i.id), [
+        'audio-1',
+      ], reason: '混合桶里的书不能当成听书内容');
     });
 
     test('混合桶仍然可以喂书籍类（小说兜底不变）', () async {
@@ -254,10 +283,7 @@ void main() {
       notifier.selectTab(HomeNotifier.tabs.indexOf('小说'));
       await _flush();
 
-      expect(
-        container.read(provider).items.map((i) => i.id),
-        ['novel-1'],
-      );
+      expect(container.read(provider).items.map((i) => i.id), ['novel-1']);
     });
   });
 
@@ -276,11 +302,7 @@ void main() {
         ],
       },
     });
-    expect(
-      cells,
-      isEmpty,
-      reason: '不知道哪一项被回答时，宁可不给区块，也不要拿推荐流的排行榜',
-    );
+    expect(cells, isEmpty, reason: '不知道哪一项被回答时，宁可不给区块，也不要拿推荐流的排行榜');
   });
 }
 

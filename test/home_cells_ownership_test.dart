@@ -16,8 +16,10 @@ void main() {
   setUp(() => HomeFeedCache.hiveReady = false);
   tearDown(() => HomeFeedCache.hiveReady = false);
 
-  HomeCell cell(String name) => HomeCell(
-    showType: 384,
+  /// 区块族跟着分类走：推荐（`tab_type=2`）是 384「猜你喜欢」，其余分类
+  /// 各自一族（听书 337）——同族的区块才允许出现在该分类的响应里。
+  HomeCell cell(String name, int tabType) => HomeCell(
+    showType: tabType == 2 ? 384 : 337,
     name: name,
     id: '',
     style: const {},
@@ -48,7 +50,7 @@ void main() {
                 int? lastTabIndex,
               }) async => HomepagePage(
                 items: [item('t$tabType')],
-                cells: [cell('tab-$tabType')],
+                cells: [cell('tab-$tabType', tabType)],
                 nextOffset: null,
                 sessionId: null,
               ),

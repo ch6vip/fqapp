@@ -361,23 +361,67 @@ class HomeNotifier extends Notifier<HomeState> {
 
   /// 这一页能不能当成本分类的载荷。
   ///
-  /// 上游的分类表只给被回答那一项带 `cell_data`，而客户端是按 `tab_type` 认领
-  /// 的。认不到（或者响应明确回答的是另一个分类）时，这份 `cells`/`items`
-  /// 就是别人的：拿它当自己这份，就会出现「听书」里画推荐榜/猜你喜欢小说
-  /// 卡片，而 `_forceKind` 还会把这些书重标成听书。没带分类表的响应（老后端、
-  /// 视频第二段）无从判断，沿用既有的「当自己的」行为。
+  /// 三道门槛，前两道看响应的声明，第三道看区块族——全部来自实测响应形状
+  /// （推荐 `[511 排行榜, 384 猜你喜欢]`、听书 `[337]`、看剧 `[506]`、
+  /// 视频 `[407]`、漫剧 `[385]`）：
+  ///
+  /// 1. 带分类表时，被回答项必须是本分类（`tab_type` 对得上）。
+  /// 2. 带分类表但一项都不是我们的：同样拒绝。
+  /// 3. 区块族对不上：排行榜（511）与卡片流（384/385）是书籍轴的区块，只在
+  ///    书籍分类（含漫剧的 385）出现。声书类（`audio`）收到这一族，就是那一页
+  ///    不是它的——真机表现为「听书」里画出推荐/小说的排行榜与猜你喜欢。
+  ///    这一道也盖住了「响应没带分类表」的情况，因为只要区块是推荐那一族
+  ///    就会被认出来。
   bool _answersTab(HomepagePage page, int tabType) {
-    if (!page.tabScoped) return true;
-    if (page.answeredTabType == tabType) return true;
-    // 设备日志（设置 → 服务 → 日志）留一行：第二次加载后分类页变内容时，
-    // 先看这里是否被拒绝过，再看上游到底回了哪个 tab_type。
-    AppLog.w(
-      'home',
-      '丢弃不属于 tab_type=$tabType 的首页响应（回答的是 '
-          '${page.answeredTabType ?? "未声明的分类"}）',
+    final cells = page.cells;
+    final kind = _kindByTabType[tabType] ?? 'book';
+    if (page.tabScoped && page.answeredTabType != tabType) {
+      AppLog.w(
+        'home',
+        '丢弃不属于 tab_type=$tabType 的首页响应（回答的是 '
+            '${page.answeredTabType ?? "未声明的分类"}，'
+            'shows=${_showTypes(cells)}，items=${page.items.length}）',
+      );
+      return false;
+    }
+    final foreign = cells.where(
+      (cell) => !_blockFitsKind(cell.showType, kind),
     );
-    return false;
+    if (foreign.isNotEmpty) {
+      AppLog.w(
+        'home',
+        '丢弃带别的分类区块的 tab_type=$tabType 首页响应'
+            '（shows=${_showTypes(cells)}，items=${page.items.length}）',
+      );
+      return false;
+    }
+    // 设备日志（设置 → 服务 → 日志）留一行：出问题时能直接看到上游到底
+    // 给了哪一族区块，不用再靠猜。
+    AppLog.d(
+      'home',
+      '收下 tab_type=$tabType 首页响应（回答 '
+          '${page.answeredTabType ?? "未声明"}，shows=${_showTypes(cells)}，'
+          'items=${page.items.length}，next=${page.nextOffset}）',
+    );
+    return true;
   }
+
+  /// 区块族与分类轴对不对得上。实测：排行榜（511）与卡片流（384/385）是
+  /// **书籍轴**的区块（推荐就是 511+384）；漫剧只下发 385；听书 337、看剧
+  /// 506、视频 407 都是各自的单块。所以声书类（`audio`）收到 511/384/385
+  /// 就是别人的页——真机表现为听书里画出推荐/小说的排行榜与猜你喜欢。
+  ///
+  /// 未收录的 tab_type 与未知区块类型一律放行，不拿猜测去否决响应。
+  static bool _blockFitsKind(int showType, String kind) => switch (showType) {
+    kHomeCellRankShowType => kind == 'book',
+    kHomeCellMixedFeedShowType || kHomeCellDoubleRowFeedShowType =>
+      kind == 'book' || kind == 'manju',
+    _ => true,
+  };
+
+  static String _showTypes(List<HomeCell> cells) => cells.isEmpty
+      ? '-'
+      : cells.map((cell) => '${cell.showType}').join(',');
 
   final HomeFeedCache? _feedCache;
   final int initialTabIndex;

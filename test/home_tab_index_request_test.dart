@@ -43,7 +43,7 @@ void main() {
                 ));
                 return _page(
                   items: [_item('t$tabType', kind: tabType == 5 ? 'audio' : 'book')],
-                  cells: [_cell(384, 'tab-$tabType')],
+                  cells: [_cell(tabType == 2 ? 384 : 337, 'tab-$tabType')],
                 );
               },
           searchLoader: (query, {int page = 1}) async => [],
@@ -88,7 +88,7 @@ void main() {
                 ));
                 return _page(
                   items: [_item('t$tabType', kind: tabType == 5 ? 'audio' : 'book')],
-                  cells: [_cell(384, 'tab-$tabType')],
+                  cells: [_cell(tabType == 2 ? 384 : 337, 'tab-$tabType')],
                 );
               },
           searchLoader: (query, {int page = 1}) async => [],
@@ -138,7 +138,7 @@ void main() {
                 int? lastTabIndex,
               }) async => _page(
                 items: [_item('t$tabType', kind: tabType == 5 ? 'audio' : 'book')],
-                cells: [_cell(384, 'tab-$tabType')],
+                cells: [_cell(tabType == 2 ? 384 : 337, 'tab-$tabType')],
               ),
           searchLoader: (query, {int page = 1}) async => [],
         ),

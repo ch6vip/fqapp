@@ -134,6 +134,19 @@ class HomeCell {
 /// books only.
 List<MediaItem> homeCellEntries(HomeCell cell) => cell.flatten();
 
+/// 书城推荐（`tab_type=2`）独有的区块：`RankCellV3`「排行榜」。
+///
+/// 实测推荐/听书/看剧/视频/漫剧五个分类，**只有推荐**下发 511；其余分别是
+/// 337（听书）/506（看剧）/407（视频）/385（漫剧）。所以它出现在别的分类的
+/// 响应里，就是「这一页不是我们的」的直接证据。
+const int kHomeCellRankShowType = 511;
+
+/// 卡片流区块：`MultiTabMixedUnlimitedV2`(384)「猜你喜欢」包着
+/// `DoubleRowMixedUnlimitedWithFilter`(385)。实测只属于推荐（`tab_type=2`）
+/// 与漫剧（`tab_type=24`）。
+const int kHomeCellMixedFeedShowType = 384;
+const int kHomeCellDoubleRowFeedShowType = 385;
+
 /// Parses the bookstore feed into blocks.
 ///
 /// Starts at `data.tab_item[data.tab_index].cell_data[]` when the payload
