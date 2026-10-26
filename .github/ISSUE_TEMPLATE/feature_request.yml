@@ -11,6 +11,15 @@ body:
 
         另外有些功能可能**已经在最新版本里**了，请先更新到[最新版本](https://github.com/ch6vip/fqapp/releases/latest)确认。
 
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      description: 设置 → 关于，形如 1.0.123
+      placeholder: "1.0.123"
+    validations:
+      required: true
+
   - type: textarea
     id: problem
     attributes:
