@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/app_log.dart';
 import '../services/backend_transport.dart';
 import '../services/home_feed_cache.dart';
 import '../services/home_page_affinity.dart';
@@ -577,6 +578,12 @@ class HomeNotifier extends Notifier<HomeState> {
       _saveDebounce?.cancel();
       _dirtySaveTabs.clear();
       _writeSnapshot(tabIndex);
+      AppLog.d(
+        'home',
+        '整页落地 tab=$tabIndex resume=$resume items=${feed.items.length} '
+            'cells=${describeHomeCells(feed.cells)} '
+            'kinds=${_kindCounts(feed.items)}',
+      );
     } catch (error) {
       if (!ref.mounted ||
           generation != _generation ||
@@ -658,6 +665,12 @@ class HomeNotifier extends Notifier<HomeState> {
         cellsTabIndex: tabIndex,
         isLoadMore: false,
         hasMore: feed.hasMore,
+      );
+      AppLog.d(
+        'home',
+        '追加落地 tab=$tabIndex items=${feed.items.length} '
+            'cells=${describeHomeCells(feed.cells)} '
+            'kinds=${_kindCounts(feed.items)}',
       );
       _scheduleSave(tabIndex);
     } catch (error) {
@@ -948,6 +961,20 @@ class HomeNotifier extends Notifier<HomeState> {
     );
   }
 
+  /// 卡片种类的紧凑统计，给日志用（`book:12,audio:1`）。
+  ///
+  /// `_forceKind` 会把流转下来的卡片统一重标成本分类的种类，所以这一行是
+  /// 「最终会被当成本分类画出来多少张、各是什么」——听书里冒出小说时，这里
+  /// 能直接看到是不是搜索兜底追加进来的。
+  static String _kindCounts(List<MediaItem> items) {
+    if (items.isEmpty) return '-';
+    final counts = <String, int>{};
+    for (final item in items) {
+      counts.update(item.kind, (n) => n + 1, ifAbsent: () => 1);
+    }
+    return counts.entries.map((e) => '${e.key}:${e.value}').join(',');
+  }
+
   Future<_FetchedFeed> _loadNext(int tabIndex, _TabFeed feed) async {
     final identity = identityOf(tabIndex);
     final name = identity.name;
@@ -989,6 +1016,11 @@ class HomeNotifier extends Notifier<HomeState> {
         // Fall through to search. A recommendation outage should not make the
         // whole category stop paginating — unless the fallback is empty too,
         // in which case the original error surfaces (see below).
+        AppLog.w(
+          'home',
+          'tab_type=$tabType 流翻页失败（offset=${feed.offset}），'
+              '改走搜索兜底: $loaderError',
+        );
         loaderFailure = loaderError;
       }
     }
@@ -1001,6 +1033,11 @@ class HomeNotifier extends Notifier<HomeState> {
       offset: searchOffset,
     );
     final items = _searchItems(searchTabs, searchName, kind);
+    AppLog.d(
+      'home',
+      'tab=$tabIndex 搜索兜底 query=$searchName page=$pageNumber '
+          'buckets=${_searchBuckets(searchTabs)} 取到=${items.length}',
+    );
     if (items.isEmpty && loaderFailure != null) {
       throw loaderFailure;
     }
@@ -1180,6 +1217,11 @@ class HomeNotifier extends Notifier<HomeState> {
       feed.hasMore = false;
     }
   }
+
+  /// 搜索兜底的桶摘要，给日志用（`听书:0,综合:10`）。
+  static String _searchBuckets(List<SearchTab> tabs) => tabs.isEmpty
+      ? '-'
+      : tabs.map((tab) => '${tab.title}:${tab.items.length}').join(',');
 
   bool _isUnseen(_TabFeed feed, MediaItem item) =>
       item.id.isNotEmpty && !feed.seen.contains('${item.kind}:${item.id}');

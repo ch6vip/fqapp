@@ -8,8 +8,10 @@ import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
+import '../services/app_log.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/home_page_affinity.dart';
 import '../services/library_store.dart';
 import '../widgets/home/home_cell_blocks.dart';
 import '../widgets/home/home_cell_renderers.dart';
@@ -106,6 +108,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   double? _blocksTitleScale;
   double? _blocksMetaScale;
 
+  /// Last logged render shape; keeps the diagnostic to one line per change.
+  String? _loggedShape;
+
   @override
   void initState() {
     super.initState();
@@ -170,6 +175,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         .kind;
     return state.items.where((item) => item.kind == kind).toList();
   }
+
   /// 当前分类的区块，或空表示这份 `cells` 不属于这里。
   ///
   /// 归属由数据自己声明（[HomeState.cellsTabIndex]），不再靠页面猜：上游曾把
@@ -388,6 +394,16 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
     final blocks = _blockSlivers(state, gridWidth);
+    // 设备日志：分类页到底画的是区块还是卡片网格、画了多少张。听书出问题时
+    // 这一行直接说明它被画成了哪一种版式。
+    final shape = blocks != null
+        ? 'blocks tab=${state.tabIndex} '
+              'cells=${describeHomeCells(_cellsOfCurrentTab(state))}'
+        : 'grid tab=${state.tabIndex} items=${_visibleItems(state).length}';
+    if (shape != _loggedShape) {
+      _loggedShape = shape;
+      AppLog.d('home', '渲染 $shape');
+    }
     if (blocks != null) return blocks;
     final items = _visibleItems(state);
     if (items.isEmpty) {

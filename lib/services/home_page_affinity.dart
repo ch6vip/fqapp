@@ -47,7 +47,7 @@ HomePageAffinity homePageAffinity(
       'home',
       '丢弃不属于 tab_type=$tabType 的首页响应（回答的是 '
           '${page.answeredTabType ?? "未声明的分类"}，'
-          'shows=${_showTypes(page.cells)}，items=${page.items.length}）',
+          'shows=${describeHomeCells(page.cells)}，items=${page.items.length}）',
     );
     return HomePageAffinity.foreignTab;
   }
@@ -55,14 +55,14 @@ HomePageAffinity homePageAffinity(
     AppLog.w(
       'home',
       '丢弃带别的分类区块的 tab_type=$tabType 首页响应'
-          '（shows=${_showTypes(page.cells)}，items=${page.items.length}）',
+          '（shows=${describeHomeCells(page.cells)}，items=${page.items.length}）',
     );
     return HomePageAffinity.foreignBlocks;
   }
   AppLog.d(
     'home',
     '收下 tab_type=$tabType 首页响应（回答 ${page.answeredTabType ?? "未声明"}，'
-        'shows=${_showTypes(page.cells)}，items=${page.items.length}，'
+        'shows=${describeHomeCells(page.cells)}，items=${page.items.length}，'
         'next=${page.nextOffset}）',
   );
   return HomePageAffinity.ours;
@@ -81,5 +81,6 @@ bool _blockFitsKind(int showType, String kind) => switch (showType) {
   _ => true,
 };
 
-String _showTypes(List<HomeCell> cells) =>
+/// 区块类型的紧凑描述，给日志用（`511,384`，空表是 `-`）。
+String describeHomeCells(List<HomeCell> cells) =>
     cells.isEmpty ? '-' : cells.map((cell) => '${cell.showType}').join(',');
