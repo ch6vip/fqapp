@@ -33,6 +33,9 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     private var timeout: Runnable? = null
     private var generation = 0
     private var activeId: String? = null
+    // Every utterance the engine still owns. The reader queues a sentence ahead,
+    // so callbacks can arrive for more than one id at a time.
+    private val liveIds = mutableSetOf<String>()
     private var ready = false
     private var focusRequest: AudioFocusRequest? = null
     private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
@@ -84,16 +87,23 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                 "speak" -> {
                     val text = call.argument<String>("text").orEmpty()
                     val id = call.argument<String>("id").orEmpty()
+                    // Queued utterances follow the one playing; the first one of
+                    // a new position replaces whatever the engine still holds.
+                    val queue = call.argument<Boolean>("queue") == true
                     when {
                         !ready -> result.error("not_ready", "朗读引擎尚未就绪", null)
                         text.isBlank() || text.length > TextToSpeech.getMaxSpeechInputLength() || id.isEmpty() ->
                             result.error("invalid_text", "朗读片段为空或过长", null)
                         !requestFocus() -> result.error("audio_focus", "其他应用正在使用音频，请稍后继续", null)
                         else -> {
+                            if (!queue) liveIds.clear()
+                            liveIds.add(id)
                             activeId = id
-                            if (tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) == TextToSpeech.SUCCESS) {
+                            val mode = if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
+                            if (tts?.speak(text, mode, null, id) == TextToSpeech.SUCCESS) {
                                 result.success(null)
                             } else {
+                                liveIds.remove(id)
                                 stop()
                                 result.error("speak_failed", "引擎无法朗读，请检查引擎设置或网络", null)
                             }
@@ -188,9 +198,10 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
 
     private fun emit(token: Int, id: String?, type: String, start: Int = 0) {
         main.post {
-            if (token != generation || id == null || id != activeId) return@post
+            if (token != generation || id == null || !liveIds.contains(id)) return@post
             sink?.success(mapOf("type" to type, "id" to id, "start" to start))
-            if (type == "done" || type == "error" || type == "interrupted") activeId = null
+            if (type == "start") activeId = id
+            if (type == "done" || type == "error" || type == "interrupted") liveIds.remove(id)
         }
     }
 
@@ -220,6 +231,7 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     private fun stop() {
         focusEpoch++
         activeId = null
+        liveIds.clear()
         try { tts?.stop() } catch (_: Exception) { }
         try {
             if (Build.VERSION.SDK_INT >= 26) {

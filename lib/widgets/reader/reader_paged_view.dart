@@ -283,6 +283,10 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       (_attachedPage ?? _controller.initialPage.toDouble()) >=
           widget.layout.pages.length - .01;
 
+  /// The page the viewport is parked on, or null before the first layout.
+  /// Exposed so the host can verify a follow jump landed where it asked.
+  int? get currentPage => _attachedPage?.round();
+
   PageController _newController() =>
       PageController(initialPage: widget.pageIndex, keepPage: false);
 
@@ -378,10 +382,25 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   /// position. Jumps without animation — the narration keeps moving, an
   /// animated chase would lag behind forever.
   void followProgress(double progress) {
+    final pages = widget.layout.pages.length;
+    if (pages == 0) return;
+    followPage((progress * pages).floor());
+  }
+
+  /// 听书跟随翻页（精确）: lands on the page holding [offset].
+  ///
+  /// [followProgress] can only approximate this: the progress ratio is "read
+  /// characters / chapter characters", and page count is not a linear function
+  /// of it (titles, illustrations and paragraph spacing make pages hold
+  /// different amounts of text), so a proportional jump parks the reader a page
+  /// or two away from the sentence being read.
+  void followOffset(int offset) => followPage(widget.layout.pageForOffset(offset));
+
+  void followPage(int page) {
     if (_turning || _boundaryPending || !_controller.hasClients) return;
     final pages = widget.layout.pages.length;
     if (pages == 0) return;
-    final target = (progress * pages).floor().clamp(0, pages - 1);
+    final target = page.clamp(0, pages - 1);
     final current = _attachedPage ?? _controller.initialPage.toDouble();
     if ((current - target).abs() < 1) return;
     _controller.jumpToPage(target);

@@ -7,6 +7,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/listening_session.dart';
+import 'package:fqapp/services/narration_sentence.dart';
 import 'package:fqapp/services/system_tts.dart';
 import 'package:fqapp/services/text_replacement_store.dart';
 import 'package:fqapp/models/text_replacement_rule.dart';
@@ -206,15 +207,17 @@ void main() {
       final text = '${List.filled(299, '甲').join()}😀乙';
       final playback = session(text: text);
       try {
-        playback.start();
-        await tester.pump();
-        final first = spoken().single.arguments as Map;
-        expect((first['text'] as String).length, 299);
-        await event({'type': 'done', 'id': first['id']});
-        await tester.pump();
-        final second = spoken().last.arguments as Map;
-        expect(second['text'], '😀乙');
-        expect('${first['text']}${second['text']}', text);
+      playback.start();
+      await tester.pump();
+      // The next sentence is queued straight away, so the first utterance is
+      // the one at the head of the list.
+      final first = spoken().first.arguments as Map;
+      expect((first['text'] as String).length, 299);
+      await event({'type': 'done', 'id': first['id']});
+      await tester.pump();
+      final second = spoken().last.arguments as Map;
+      expect(second['text'], '😀乙');
+      expect('${first['text']}${second['text']}', text);
       } finally {
         await playback.close();
         await tester.pump();
@@ -259,4 +262,119 @@ void main() {
       playback.dispose();
     },
   );
+
+  group('sentenceRangeAt', () {
+    test('narrows to the sentence under the offset', () {
+      const text = '第一句。第二句！第三句？';
+      expect(
+        sentenceRangeAt(text, 5, lower: 0, upper: text.length),
+        (start: 4, end: 8),
+      );
+    });
+
+    test('closing marks stay with the sentence they end', () {
+      const text = '他说：「走。」然后就走了。';
+      // Offsets: 0他 1说 2： 3「 4走 5。 6」 7然 …
+      expect(
+        sentenceRangeAt(text, 8, lower: 0, upper: text.length),
+        (start: 7, end: 13),
+      );
+    });
+
+    test('a paragraph break also ends a sentence', () {
+      const text = '第一段\n第二段';
+      expect(
+        sentenceRangeAt(text, 5, lower: 0, upper: text.length),
+        (start: 4, end: 7),
+      );
+    });
+
+    test('the result never leaves the piece being spoken', () {
+      const text = '第一句。第二句。第三句。';
+      // Piece [4, 8) is exactly '第二句。'.
+      expect(sentenceRangeAt(text, 99, lower: 4, upper: 8), (start: 4, end: 8));
+    });
+
+    test('an empty range yields nothing', () {
+      expect(sentenceRangeAt('abc', 0, lower: 0, upper: 0), isNull);
+    });
+  });
+
+  group('nextSentenceRange', () {
+    test('walks a chapter one sentence at a time', () {
+      const text = '第一句。第二句！还有第三句？';
+      var cursor = 0;
+      final slices = <String>[];
+      for (
+        var range = nextSentenceRange(text, cursor, maxLength: 300);
+        range != null;
+        range = nextSentenceRange(text, cursor, maxLength: 300)
+      ) {
+        slices.add(text.substring(range.start, range.end));
+        cursor = range.end;
+      }
+      expect(slices, ['第一句。', '第二句！', '还有第三句？']);
+    });
+
+    test('a paragraph break closes the utterance and is skipped after it', () {
+      const text = '第一段\n\n第二段';
+      final first = nextSentenceRange(text, 0, maxLength: 300)!;
+      expect(text.substring(first.start, first.end), '第一段\n');
+      final second = nextSentenceRange(text, first.end, maxLength: 300)!;
+      expect(text.substring(second.start, second.end), '第二段');
+    });
+
+    test('a sentence past the engine limit is cut and continued', () {
+      final text = '${'甲' * 10}。乙';
+      final first = nextSentenceRange(text, 0, maxLength: 4)!;
+      expect(first, (start: 0, end: 4));
+      expect(text.substring(first.start, first.end), '甲甲甲甲');
+    });
+
+    test('nothing left to read yields no utterance', () {
+      expect(nextSentenceRange('甲。\n ', 2, maxLength: 300), isNull);
+    });
+  });
+
+  testWidgets('one utterance per sentence drives the highlight', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final playback = session(text: '第一句。第二句。第三句。');
+    try {
+      playback.start();
+      await tester.pump();
+      // A sentence per utterance is what lets a voice without `onRangeStart`
+      // wash one sentence: the engine can only report the slice it was given.
+      expect(
+        spoken().map((c) => (c.arguments as Map)['text']),
+        ['第一句。', '第二句。'],
+      );
+      expect((spoken().first.arguments as Map)['queue'], isFalse);
+      expect((spoken().last.arguments as Map)['queue'], isTrue);
+      final first = spoken().first.arguments as Map;
+      final second = spoken().last.arguments as Map;
+      await event({'type': 'start', 'id': first['id']});
+      await tester.pump();
+      expect(ListeningSession.instance.sentenceRange, (start: 0, end: 4));
+      // The second sentence is already in the engine's queue while the first
+      // plays; its callbacks must not move the reader.
+      await event({'type': 'range', 'id': second['id'], 'start': 0});
+      await tester.pump();
+      expect(ListeningSession.instance.sentenceRange, (start: 0, end: 4));
+      // `done` alone advances: engines without `onRangeStart` never fire more
+      // than this, and the next sentence is already playing when it lands.
+      await event({'type': 'done', 'id': first['id']});
+      await tester.pump();
+      expect(ListeningSession.instance.sentenceRange, (start: 4, end: 8));
+      expect(spoken().map((c) => (c.arguments as Map)['text']), [
+        '第一句。',
+        '第二句。',
+        '第三句。',
+      ]);
+    } finally {
+      await playback.close();
+      await tester.pump();
+    }
+  });
 }

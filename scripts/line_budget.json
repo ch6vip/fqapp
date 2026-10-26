@@ -15,7 +15,7 @@
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1803,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 3672,
+    "lib/pages/reader_page.dart": 3692,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
@@ -31,7 +31,7 @@
     "lib/services/inline_video_playback.dart": 1121,
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 746,
-    "lib/services/system_tts.dart": 540,
+    "lib/services/system_tts.dart": 650,
     "lib/widgets/audio/audio_sections.dart": 1523,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
@@ -45,7 +45,7 @@
     "lib/widgets/reader/reader_appearance_sheet.dart": 1153,
     "lib/widgets/reader/reader_chapter_layout.dart": 1194,
     "lib/widgets/reader/reader_ideas_sheet.dart": 691,
-    "lib/widgets/reader/reader_paged_view.dart": 991,
+    "lib/widgets/reader/reader_paged_view.dart": 1010,
     "lib/widgets/reader/reader_text_selection.dart": 591,
     "lib/widgets/video_player_chrome.dart": 4832,
     "native/android/jni_bridge.c": 538,
@@ -207,7 +207,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 3550,
+      "line": 3570,
       "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
@@ -462,7 +462,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/reader/reader_paged_view.dart::ReaderPageContent.build": {
-      "line": 882,
+      "line": 901,
       "lines": 108,
       "symbol": "Widget build(BuildContext context) {"
     },
