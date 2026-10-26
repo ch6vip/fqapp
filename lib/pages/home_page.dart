@@ -388,7 +388,20 @@ class _HomePageState extends ConsumerState<HomePage> {
         rendered = true;
       }
     }
-    if (!rendered) return null;
+    if (!rendered) {
+      // 这份 `cells` 一个块都没画出来（听书的 337、老后端的未知类型…）：
+      // **必须把缓存清掉**。`_blocksCells` 已经在上面改成了这份列表，
+      // 若把 `_blocksBody`（上上个分类建的那套 widget）留着，下一次带着
+      // **同一份列表实例**的重建就会命中缓存、把上一个分类的排行榜/猜你喜欢
+      // 画到当前分类上——真机上「听书第二次加载变成推荐」就是这么来的
+      // （日志：`渲染 blocks tab=5 cells=337`。
+      _blocksBody = null;
+      _blocksCells = null;
+      _blocksWidth = null;
+      _blocksTitleScale = null;
+      _blocksMetaScale = null;
+      return null;
+    }
     return _blocksBody = slivers;
   }
 
