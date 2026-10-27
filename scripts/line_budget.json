@@ -32,7 +32,7 @@
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 746,
     "lib/services/system_tts.dart": 650,
-    "lib/widgets/audio/audio_sections.dart": 1689,
+    "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
     "lib/widgets/detail/detail_hero.dart": 514,
@@ -247,17 +247,17 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/audio/audio_sections.dart::AudioRelatedRow.build": {
-      "line": 495,
+      "line": 496,
       "lines": 102,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/audio/audio_sections.dart::AudioToneSection.build": {
-      "line": 1012,
+      "line": 1076,
       "lines": 175,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/audio/audio_sections.dart::_AudioIntroCardState.build": {
-      "line": 1512,
+      "line": 1576,
       "lines": 176,
       "symbol": "Widget build(BuildContext context) {"
     },
