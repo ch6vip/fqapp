@@ -126,6 +126,9 @@ void main() {
       expect(_currentSubtitle(tester), '第二句同步字幕');
       session.players.first.emitCompleted();
       await _flush(tester);
+      // 官方连播倒计时（`te`「%s后播放下一集」）：播完要先过 3 秒窗口才换章。
+      await tester.pump(const Duration(seconds: 3));
+      await _flush(tester);
       expect(session.players, hasLength(2));
       expect(find.text('第二句同步字幕'), findsNothing);
       expect(find.text('本章暂无同步字幕'), findsOneWidget);

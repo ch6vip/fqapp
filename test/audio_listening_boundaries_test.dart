@@ -36,7 +36,12 @@ void main() {
         await _flush(tester);
         expect(player.isPlaying, isFalse);
         expect(ListeningSession.instance.playing, isFalse);
-        expect(find.text('本章已播完'), findsOneWidget);
+        // autoAdvance=true 时从末章起播：官方 `v7` 对末章给的是书末提示，
+        // 其余情况才是「本章已播完」。
+        expect(
+          find.text(autoAdvance ? '已播完最新章节，去听听其它内容吧' : '本章已播完'),
+          findsOneWidget,
+        );
       },
     );
   }
@@ -60,6 +65,10 @@ void main() {
             '${ListeningSession.instance.playing}',
       );
       player.endPlayback();
+      await _flush(tester);
+      // 连播倒计时窗口内仍是本章：会话不发布、播放器也还没释放。
+      expect(ListeningSession.instance.playing, isFalse);
+      await tester.pump(const Duration(seconds: 3));
       await _flush(tester);
       expect(player.disposed, isTrue);
       expect(ListeningSession.instance.playing, isFalse);
