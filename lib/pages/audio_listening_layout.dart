@@ -134,6 +134,16 @@ extension _AudioListeningLayout on _AudioPageState {
                           ),
                         ),
                         const SizedBox(height: 6),
+                        // 官方 `te`「%s后播放下一集」：章末给一段可取消的窗口。
+                        ValueListenableBuilder<int?>(
+                          valueListenable: c.advanceCountdown,
+                          builder: (context, seconds, _) => seconds == null
+                              ? const SizedBox.shrink()
+                              : AudioAdvanceBanner(
+                                  seconds: seconds,
+                                  onCancel: () => _cancelAdvanceCountdown(c),
+                                ),
+                        ),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
                           child: AudioTransportRow(
@@ -150,9 +160,14 @@ extension _AudioListeningLayout on _AudioPageState {
                             loading:
                                 c._loading || (c._player?.buffering ?? false),
                             ready: c._ready,
-                            sleepLabel: c._sleepRemaining == null
-                                ? null
-                                : '${c._sleepRemaining}′',
+                            // 「听完本章」显示「本章」；分钟档显示剩余分钟。
+                            // 旧写法直接把 Duration 插进字符串，会印出
+                            // `Duration(minutes: 15)′`。
+                            sleepLabel: c.sleepAtChapterEnd
+                                ? '本章'
+                                : (c._sleepRemaining == null
+                                      ? null
+                                      : '${(c._sleepRemaining!.inSeconds / 60).ceil()}′'),
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -253,8 +268,17 @@ extension _AudioListeningLayout on _AudioPageState {
       key: 'audio-speed',
       icon: LucideIcons.timer,
       label: '${_AudioPageState._rateLabel(c._rate)}x',
-      semanticLabel: '播放速度 ${_AudioPageState._rateLabel(c._rate)} 倍',
-      onTap: c._ready ? _showRates : null,
+      semanticLabel: AudioPreferences.instance.rateLocked
+          ? '播放速度 ${_AudioPageState._rateLabel(c._rate)} 倍，已锁定'
+          : '播放速度 ${_AudioPageState._rateLabel(c._rate)} 倍',
+      // 锁定后点击不再弹面板，只提示；长按才是锁定/解锁开关（官方 `a4g`）。
+      onTap: c._ready
+          ? (AudioPreferences.instance.rateLocked
+                ? _showRateLockedHint
+                : _showRates)
+          : null,
+      onLongPress: c._ready ? _toggleRateLock : null,
+      badgeIcon: AudioPreferences.instance.rateLocked ? LucideIcons.lock : null,
     ),
     AudioIconAction(
       key: 'audio_shelf',
@@ -282,4 +306,38 @@ extension _AudioListeningLayout on _AudioPageState {
       onTap: _showMore,
     ),
   ];
+
+  void _showRateLockedHint() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('倍速已锁定，长按可解锁'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// 长按倍速项：锁定当前倍速 / 解锁并恢复 1x（官方 `a4g` / `a4k`）。
+  Future<void> _toggleRateLock() async {
+    final prefs = AudioPreferences.instance;
+    if (prefs.rateLocked) {
+      await prefs.setRateLocked(false);
+      await c._setRate(1);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('已经恢复 1x 倍速'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    await prefs.setRateLocked(true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已经锁定 ${_AudioPageState._rateLabel(c._rate)}x 倍速'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 }

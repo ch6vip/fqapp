@@ -16,6 +16,8 @@ import '../services/api_client.dart';
 import '../services/audio_download_store.dart';
 import '../services/audio_history.dart';
 import '../services/audio_page_theme.dart';
+import '../services/audio_play_error.dart';
+import '../services/audio_playback_choice.dart';
 import '../services/audio_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/fair_memory.dart';
@@ -27,7 +29,9 @@ import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
 import '../widgets/audio/audio_offline_section.dart';
+import '../widgets/audio/audio_advance_banner.dart';
 import '../widgets/audio/audio_control_rows.dart';
+import '../widgets/audio/audio_skip_points_rows.dart';
 import '../widgets/audio/audio_cover_card.dart';
 import '../widgets/audio/audio_sections.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
@@ -39,6 +43,7 @@ import 'detail_page.dart';
 import 'reader_page.dart';
 
 part 'audio_listening_layout.dart';
+part '../services/audio_playback_guard.dart';
 part '../services/audio_playback_controller.dart';
 part '../widgets/audio/audio_playback_scope.dart';
 
@@ -149,7 +154,12 @@ typedef _ReadAlongSnapshot = ({
   Duration position,
 });
 
-typedef _MoreSnapshot = ({bool loading, bool autoAdvance, int? sleepMinutes});
+typedef _MoreSnapshot = ({
+  bool loading,
+  bool autoAdvance,
+  int? sleepMinutes,
+  bool sleepAtChapterEnd,
+});
 
 typedef _RoutePlayback = ({
   int index,
@@ -914,8 +924,12 @@ class _AudioPageState extends State<AudioPage> {
         ],
       );
     }
+    // 官方 `v7`「已播完最新章节，去听听其它内容吧」只在**末章**播完时出现。
+    final label = c._completed
+        ? (c.atLastChapter ? '已播完最新章节，去听听其它内容吧' : '本章已播完')
+        : (c._wantPlay ? '正在播放' : '已暂停');
     return Text(
-      c._completed ? '本章已播完' : (c._wantPlay ? '正在播放' : '已暂停'),
+      label,
       textAlign: TextAlign.center,
       style: TextStyle(color: palette.muted, fontSize: 12.5),
     );
@@ -1036,44 +1050,65 @@ class _AudioPageState extends State<AudioPage> {
     );
   }
 
-  /// Sleep timer: pauses playback when the countdown elapses.
+  /// 睡眠定时：三档（关闭 / 听完本章 / N 分钟后），官方 `cip`「听完本章」。
   Future<void> _showSleepTimer() async {
-    final palette = HomePalette.of(context);
-    // -1 is the explicit 关闭定时 choice; a null result means the sheet was
-    // dismissed and must leave any active timer untouched.
-    const options = <int>[-1, 15, 30, 60];
-    final selected = await showModalBottomSheet<int>(
+    // 当前档位：听完本章优先，其次按剩余分钟落到最接近的档，否则关闭。
+    final SleepTimerChoice current;
+    if (c.sleepAtChapterEnd) {
+      current = const SleepTimerChoice.endOfChapter();
+    } else if (c._sleepRemaining case final remaining?) {
+      final minutes = (remaining.inSeconds / 60).ceil();
+      current = SleepTimerChoice.minutes(
+        minutes >= 60 ? 60 : (minutes >= 30 ? 30 : 15),
+      );
+    } else {
+      current = const SleepTimerChoice.off();
+    }
+    const minuteOptions = <int>[15, 30, 60];
+    final picked = await showModalBottomSheet<SleepTimerChoice>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ListTile(title: Text('定时关闭')),
-            for (final minutes in options)
-              ListTile(
-                title: Text(minutes == -1 ? '关闭定时' : '$minutes 分钟后'),
-                trailing: (c._sleepMinutes ?? -1) == minutes
-                    ? const Icon(LucideIcons.check, color: HomePalette.accent)
-                    : null,
-                onTap: () => Navigator.pop(context, minutes),
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+      builder: (context) {
+        Widget tile(String label, SleepTimerChoice choice, bool selected) {
+          return ListTile(
+            title: Text(label),
+            trailing: selected
+                ? const Icon(LucideIcons.check, color: HomePalette.accent)
+                : null,
+            onTap: () => Navigator.pop(context, choice),
+          );
+        }
+
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(title: Text('定时关闭')),
+              tile('听完本章', const SleepTimerChoice.endOfChapter(),
+                  current.endOfChapter),
+              for (final minutes in minuteOptions)
+                tile(
+                  '$minutes 分钟后',
+                  SleepTimerChoice.minutes(minutes),
+                  !current.endOfChapter && current.minutes == minutes,
+                ),
+              tile('关闭定时', const SleepTimerChoice.off(), current.isOff),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
-    if (!mounted || selected == null) return;
-    c._applySleepTimer(selected == -1 ? null : selected);
+    if (!mounted || picked == null) return;
+    _applySleepTimerChoice(c, picked);
+    final message = picked.isOff
+        ? '已关闭定时'
+        : picked.endOfChapter
+        ? '本章播完后停止播放'
+        : '将在 ${picked.minutes} 分钟后停止播放';
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(selected == -1 ? '已关闭定时' : '将在 $selected 分钟后停止播放'),
-        duration: const Duration(seconds: 2),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
-    if (!mounted) return;
-    // Keep the palette referenced so the sheet inherits the theme colours.
-    assert(palette.canvas != palette.surface);
   }
 
   Future<void> _showMore() async {
@@ -1089,7 +1124,9 @@ class _AudioPageState extends State<AudioPage> {
       builder: (context) {
         final palette = HomePalette.of(context);
         return SafeArea(
-          child: Padding(
+          // 加了「跳过片头/片尾」两行后，面板在小屏上会超过 sheet 的最大高度，
+          // 必须可滚动，否则 RenderFlex 直接溢出。
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1190,6 +1227,12 @@ class _AudioPageState extends State<AudioPage> {
                               Navigator.pop(context);
                               unawaited(_showSleepTimer());
                             },
+                          ),
+                          // 官方 du/dq：跳过片头/片尾按书保存，默认关闭。
+                          AudioSkipPointsRows(
+                            points: c.skipPoints,
+                            onChanged: (points) =>
+                                unawaited(c.setSkipPoints(points)),
                           ),
                           Divider(
                             height: 1,

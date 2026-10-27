@@ -63,7 +63,7 @@
     "rust/src/endpoints/manga.rs": 3162,
     "rust/src/endpoints/router.rs": 557,
     "rust/src/endpoints/video.rs": 3231,
-    "test/audio_page_test.dart": 1000,
+    "test/audio_page_test.dart": 1028,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 750,
     "test/desktop_semantics_update_test.dart": 844,

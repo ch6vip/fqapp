@@ -88,9 +88,27 @@ class _AudioPlaybackController extends ChangeNotifier
     loading: true,
     autoAdvance: true,
     sleepMinutes: null,
+    sleepAtChapterEnd: false,
   ));
   Timer? _sleepTimer;
   Duration? _sleepRemaining;
+
+  /// 睡眠定时选的是「听完本章」而不是分钟档（官方 `cip`）。
+  bool _sleepAtChapterEnd = false;
+
+  /// 连播倒计时的 3 秒窗口（官方 `te`「%s后播放下一集」）。
+  Timer? _advanceTimer;
+  int? _advanceRemaining;
+  final ValueNotifier<int?> _advanceCountdown = ValueNotifier<int?>(null);
+
+  /// 跳过片头/片尾（按书，打开章节时读入）。
+  AudioSkipPoints _skipPoints = AudioSkipPoints.none;
+
+  /// 片尾跳过的重入闸：一次播放只允许触发一次完成。
+  bool _skipOutroFired = false;
+
+  /// 本章是否因为 NO_THIS_TONE 换过音色（决定错误文案是否带「已为你换用」）。
+  bool _toneSwitchedForChapter = false;
   bool _inShelf = false;
   bool _switchingVersion = false;
   final Map<String, AudioSource> _audioSourceCache = {};
@@ -184,6 +202,9 @@ class _AudioPlaybackController extends ChangeNotifier
         ? 0
         : request.startIndex.clamp(0, _chapters.length - 1);
     _settingsReady = _prepareSettings();
+    // 跳过片头/片尾按书存：这里预热一次，绝不放进开章关键路径——
+    // 读盘一旦挂住，_loading 会一直为真，转圈动画会让页面永远不收敛。
+    unawaited(AudioPreferences.instance.ensureSkipPoints(_bookId));
     if (_chapters.isEmpty) {
       _loading = false;
     } else {
@@ -437,6 +458,8 @@ class _AudioPlaybackController extends ChangeNotifier
     bool persistCurrent = true,
   }) async {
     if (_closed || index < 0 || index >= _chapters.length) return;
+    // 任何换章动作都意味着用户自己接管了，倒计时窗口必须作废。
+    _cancelAdvanceCountdown(this);
     final generation = ++_generation;
     ++_seekGeneration;
     _saveTimer?.cancel();
@@ -465,6 +488,8 @@ class _AudioPlaybackController extends ChangeNotifier
       await _settingsReady;
       if (!_current(generation)) return;
       if (toneId != null) _toneId = toneId;
+      _skipOutroFired = false;
+      _toneSwitchedForChapter = false;
       Map<String, dynamic>? saved;
       if (restoreHistory) {
         try {
@@ -521,7 +546,16 @@ class _AudioPlaybackController extends ChangeNotifier
           : (source.duration ?? Duration.zero) > Duration.zero
           ? source.duration!
           : savedDuration;
-      final restoredPosition = _boundedPosition(resume, duration);
+      // 跳过片头只对「从头开始」生效：带进来的 resume 位置是用户的真实进度，
+      // 不能再被片头跳点覆盖。这里同步读缓存，不 await 读盘。
+      _skipPoints = AudioSkipPoints(
+        introSeconds: AudioPreferences.instance.skipIntroSeconds(_bookId),
+        outroSeconds: AudioPreferences.instance.skipOutroSeconds(_bookId),
+      );
+      final introSeek = resume <= Duration.zero
+          ? _skipPoints.introSeek(duration)
+          : null;
+      final restoredPosition = introSeek ?? _boundedPosition(resume, duration);
       if (restoredPosition > Duration.zero) {
         await player.seek(restoredPosition);
         if (!_current(generation, player)) return;
@@ -606,6 +640,7 @@ class _AudioPlaybackController extends ChangeNotifier
       final fallback = _firstSelectableTone();
       if (fallback == null) rethrow;
       final tone = fallback;
+      _toneSwitchedForChapter = true;
       result = await retryTransient(
         () => ApiClient.instance
             .audioSource(itemId, bookId: _bookId, toneId: tone)
@@ -708,6 +743,7 @@ class _AudioPlaybackController extends ChangeNotifier
       loading: _loading,
       autoAdvance: _autoAdvance,
       sleepMinutes: _sleepRemaining?.inMinutes,
+      sleepAtChapterEnd: _sleepAtChapterEnd,
     );
   }
 
@@ -794,6 +830,14 @@ class _AudioPlaybackController extends ChangeNotifier
         // Notifier-only: the 5Hz tick rebuilds the progress row, not the page.
         _position.value = _boundedPosition(position, _duration);
         _publishReadAlong();
+        // 片尾跳过：进入尾部区间就按「本章播完」处理，复用同一条完成路径，
+        // 用 _skipOutroFired 挡住重复触发。
+        if (!_completed &&
+            !_skipOutroFired &&
+            _skipPoints.atOutro(_position.value, _duration)) {
+          _skipOutroFired = true;
+          _handleChapterCompleted(this, player, generation);
+        }
         // Publish the REAL playing state: a paused seek also fires this
         // stream, and publishing playing=true would yank the reader back to
         // the narrated page while paused.
@@ -831,28 +875,10 @@ class _AudioPlaybackController extends ChangeNotifier
       player.completedStream.listen((completed) {
         if (!_current(generation, player) ||
             _activeIndex != _index ||
-            !completed ||
-            _completed) {
+            !completed) {
           return;
         }
-        final shouldAdvance = _wantPlay && _autoAdvance;
-        _update(() {
-          _completed = true;
-          _wantPlay = false;
-          _position.value = _boundedPosition(player.position, _duration);
-        });
-        _publishReadAlong();
-        _listenTime.stop();
-        _syncForeground();
-        unawaited(_persistProgress());
-        if (shouldAdvance && _index + 1 < _chapters.length) {
-          unawaited(_openChapter(_index + 1));
-        } else {
-          unawaited(_pause(player, generation));
-        }
-        // _openChapter resets completion before its source is ready.
-        // The next player's playing event will publish the actual start.
-        _publishListeningSession(playing: false);
+        _handleChapterCompleted(this, player, generation);
       }),
       player.errorStream.listen((error) => _fail(error, generation)),
     ]);
@@ -950,9 +976,16 @@ class _AudioPlaybackController extends ChangeNotifier
       _loading = false;
       _wantPlay = false;
       // Signed URLs and backend response bodies must not appear in the UI.
-      _error = error is TimeoutException
-          ? '加载超时，请检查网络后重试。'
-          : '音频暂时无法播放，请重试或切换其他章节。';
+      // 官方对「音色下架 / 章节审核中」有专门文案（ug / uj），能识别就用它，
+      // 识别不到才回落到通用提示。
+      _error =
+          audioPlayErrorMessage(
+            error,
+            switchedTone: _toneSwitchedForChapter,
+          ) ??
+          (error is TimeoutException
+              ? '加载超时，请检查网络后重试。'
+              : '音频暂时无法播放，请重试或切换其他章节。');
     });
     _publishMoreState();
   }
@@ -973,6 +1006,7 @@ class _AudioPlaybackController extends ChangeNotifier
   }
 
   Future<void> _pause(NativePlayer player, int generation) async {
+    _cancelAdvanceCountdown(this);
     _publishListeningSession(playing: false);
     try {
       await player.pause();
@@ -1145,47 +1179,6 @@ class _AudioPlaybackController extends ChangeNotifier
     return saved?['inShelf'] == true;
   }
 
-  void _applySleepTimer(int? minutes) {
-    if (_closed) return;
-    _sleepTimer?.cancel();
-    _sleepTimer = null;
-    if (minutes == null) {
-      _sleepTimerTick?.cancel();
-      _update(() => _sleepRemaining = null);
-      _publishMoreState();
-      return;
-    }
-    _update(() => _sleepRemaining = Duration(minutes: minutes));
-    _publishMoreState();
-    _sleepTimer = Timer(Duration(minutes: minutes), () {
-      _sleepTimer = null;
-      _sleepTimerTick?.cancel();
-      if (_closed) return;
-      _update(() {
-        _sleepRemaining = null;
-        _wantPlay = false;
-      });
-      _publishMoreState();
-      final player = _player;
-      if (player != null && player.isCreated) {
-        unawaited(_pause(player, _generation));
-      }
-    });
-    _startSleepTicker();
-  }
-
-  void _startSleepTicker() {
-    _sleepTimerTick?.cancel();
-    _sleepTimerTick = Timer.periodic(const Duration(seconds: 1), (_) {
-      final remaining = _sleepRemaining;
-      if (remaining == null || _closed) return;
-      final next = remaining - const Duration(seconds: 1);
-      _update(() => _sleepRemaining = next > Duration.zero ? next : null);
-      _publishMoreState();
-      if (next <= Duration.zero) _sleepTimerTick?.cancel();
-    });
-  }
-
   /// Stop playback before a route can open another native player. The restored
   /// route stays paused at its own position until the user explicitly plays.
   /// Note: .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md
@@ -1329,13 +1322,6 @@ class _AudioPlaybackController extends ChangeNotifier
         '',
       )
       .trim();
-
-  int? get _sleepMinutes {
-    final remaining = _sleepRemaining;
-    if (remaining == null) return null;
-    final minutes = (remaining.inSeconds / 60).ceil();
-    return minutes >= 60 ? 60 : (minutes >= 30 ? 30 : 15);
-  }
 
   Future<void> close() => _closing ??= _close();
 

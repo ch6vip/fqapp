@@ -23,6 +23,7 @@ class AudioIconRow extends StatelessWidget {
               key: ValueKey(action.key),
               semanticLabel: action.semanticLabel ?? action.label,
               onTap: action.onTap ?? () {},
+              onLongPress: action.onLongPress,
               borderRadius: BorderRadius.circular(10),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
@@ -31,15 +32,28 @@ class AudioIconRow extends StatelessWidget {
                   children: [
                     Icon(action.icon, size: 24, color: theme.ink),
                     const SizedBox(height: 4),
-                    Text(
-                      action.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: action.active ? theme.accent : theme.muted,
-                        fontSize: 12,
-                        height: 1.25,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            action.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: action.active
+                                  ? theme.accent
+                                  : theme.muted,
+                              fontSize: 12,
+                              height: 1.25,
+                            ),
+                          ),
+                        ),
+                        if (action.badgeIcon case final badge?) ...[
+                          const SizedBox(width: 3),
+                          Icon(badge, size: 12, color: theme.accent),
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -57,16 +71,24 @@ class AudioIconAction {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.onLongPress,
     this.semanticLabel,
     this.active = false,
+    this.badgeIcon,
   });
 
   final String key;
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
+
+  /// 长按动作：倍速项用它做「锁定倍速」（官方 `a4g`）。
+  final VoidCallback? onLongPress;
   final String? semanticLabel;
   final bool active;
+
+  /// 标签旁的小徽标（例如倍速锁定时的锁图标）。
+  final IconData? badgeIcon;
 }
 
 /// `layout/bjg.xml` + `AudioLabelSeekBar`：`-15 s` / 轨道 / 时间药丸 / `+15 s`。
