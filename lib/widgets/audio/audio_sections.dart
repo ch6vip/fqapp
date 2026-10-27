@@ -7,24 +7,33 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/audio_extra.dart';
+import '../../services/audio_page_theme.dart';
 import '../../services/playback_format.dart';
 import '../../services/poster_cache.dart';
 import '../home/home_design.dart';
 
-/// Listening page title with collapse and additional actions.
+/// Listening page header.
+///
+/// 官方 `layout/hy.xml` 把「智能朗读 │ 真人讲书」放在页头正中央（`a4y` 紧跟
+/// `jz4` 这个 81dp 的头部占位），不是标题位置；左右两侧分别是收起箭头与更多
+/// 菜单，右侧还有一个橙色星标圆钮。`center` 为空时才退回旧的「听书」标题。
 class AudioTopBar extends StatelessWidget {
   final VoidCallback onCollapse;
   final VoidCallback onMore;
+  final Widget? center;
+  final AudioPageTheme? theme;
 
   const AudioTopBar({
     super.key,
     required this.onCollapse,
     required this.onMore,
+    this.center,
+    this.theme,
   });
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
+    final colors = theme ?? AudioPageThemeScope.of(context);
     return SizedBox(
       height: 52,
       child: Stack(
@@ -33,14 +42,16 @@ class AudioTopBar extends StatelessWidget {
             alignment: Alignment.center,
             child: Semantics(
               header: true,
-              child: Text(
-                '听书',
-                style: TextStyle(
-                  color: palette.ink,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              child:
+                  center ??
+                  Text(
+                    '听书',
+                    style: TextStyle(
+                      color: colors.ink,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
             ),
           ),
           Align(
@@ -48,20 +59,51 @@ class AudioTopBar extends StatelessWidget {
             child: IconButton(
               tooltip: '收起',
               onPressed: onCollapse,
-              style: IconButton.styleFrom(foregroundColor: palette.ink),
+              style: IconButton.styleFrom(foregroundColor: colors.ink),
               icon: const Icon(LucideIcons.chevron_down, size: 22),
             ),
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: IconButton(
-                tooltip: '更多',
-                onPressed: onMore,
-                style: IconButton.styleFrom(foregroundColor: palette.ink),
-                icon: const Icon(LucideIcons.ellipsis_vertical, size: 20),
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 官方那个橙色星标圆钮（截图 2.jpg 顶部右二）。点它是「音色
+                // 精选」，这里与更多菜单共用同一入口，避免多一个死按钮。
+                Padding(
+                  padding: const EdgeInsets.only(right: 2),
+                  child: HomePressable(
+                    key: const Key('audio_top_star'),
+                    semanticLabel: '精选音色',
+                    onTap: onMore,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFFFC14D), Color(0xFFFA6725)],
+                        ),
+                      ),
+                      child: const Icon(
+                        LucideIcons.sparkles,
+                        size: 15,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '更多',
+                  onPressed: onMore,
+                  style: IconButton.styleFrom(foregroundColor: colors.ink),
+                  icon: const Icon(LucideIcons.ellipsis_vertical, size: 20),
+                ),
+              ],
             ),
           ),
         ],
@@ -877,73 +919,6 @@ class _AudioSubtitleListState extends State<AudioSubtitleList> {
           },
         ),
       ),
-    );
-  }
-}
-/// One entry in the icon action row.
-class AudioAction {
-  const AudioAction({
-    required this.key,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.active = false,
-  });
-
-  final String key;
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-  final bool active;
-}
-
-/// Icon + caption row (语速 / 加入书架 / 下载 / 章评 / 更多).
-class AudioActionRow extends StatelessWidget {
-  final List<AudioAction> actions;
-
-  const AudioActionRow({super.key, required this.actions});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Row(
-      children: [
-        for (final action in actions)
-          Expanded(
-            child: HomePressable(
-              key: ValueKey(action.key),
-              semanticLabel: action.label,
-              onTap: action.onTap ?? () {},
-              borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      action.icon,
-                      size: 21,
-                      color: action.active ? palette.accentText : palette.ink,
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      action.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: action.active
-                            ? palette.accentText
-                            : palette.muted,
-                        fontSize: 11,
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
     );
   }
 }

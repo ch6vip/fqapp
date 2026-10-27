@@ -30,13 +30,13 @@ void main() {
       expect(find.byType(Texture), findsNothing);
       player.emitPosition(const Duration(seconds: 25));
       await tester.pump();
-      await tester.tap(find.byTooltip('后退15秒'));
+      await tester.tap(find.text('-15 s'));
       await _flush(tester);
       expect(player.position, const Duration(seconds: 10));
-      await tester.tap(find.byTooltip('后退15秒'));
+      await tester.tap(find.text('-15 s'));
       await _flush(tester);
       expect(player.position, Duration.zero);
-      await tester.tap(find.byTooltip('前进15秒'));
+      await tester.tap(find.text('+15 s'));
       await _flush(tester);
       expect(player.position, const Duration(seconds: 15));
       final slider = tester.widget<Slider>(
@@ -855,7 +855,7 @@ void main() {
     await _mount(tester, session);
     final player = session.players.single;
     expect(player.isPlaying, true);
-    await tester.tap(find.byTooltip('定时'));
+    await tester.tap(find.byKey(const Key('audio_sleep')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('15 分钟后'));
     await tester.pumpAndSettle();
