@@ -430,9 +430,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
                         ),
                       ),
                     ),
-                    _FollowToggle(
-                      handler: ListeningSession.instance.jumpToPlaybackHandler,
-                    ),
+                    const _FollowToggle(),
                     IconButton(
                       key: const ValueKey('audio-mini-toggle'),
                       tooltip: session._wantPlay && !session._completed
@@ -468,10 +466,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
 /// 状态存在 [ListeningSession.followArmed] 上，图标由本组件自己管 —— 迷你栏
 /// 整条由 OverlayEntry 重建，单独抽出来才不会被拖着整条一起刷。
 class _FollowToggle extends StatefulWidget {
-  const _FollowToggle({required this.handler});
-
-  /// 阅读页注册的「跳到播放位置」；没在阅读页时为 null，按钮置灰。
-  final void Function()? handler;
+  const _FollowToggle();
 
   @override
   State<_FollowToggle> createState() => _FollowToggleState();
@@ -499,25 +494,31 @@ class _FollowToggleState extends State<_FollowToggle> {
   @override
   Widget build(BuildContext context) {
     final armed = ListeningSession.instance.followArmed;
-    return IconButton(
-      key: const ValueKey('audio-mini-jump'),
-      // 点一次就跳到朗读处（不管之前开没开），长按才是停止跟随 ——
-      // 之前是「点一下切开关」，已经在跟随时再点只会关掉、不会重新定位，
-      // 想回到朗读处就得点两次。
-      tooltip: armed ? '跟随中，点按回到朗读处；长按停止跟随' : '点按跳到朗读处并跟随',
-      onPressed: widget.handler == null
-          ? null
-          : () {
-              ListeningSession.instance.setFollowArmed(true);
-              widget.handler!();
-            },
-      onLongPress: armed
-          ? () => ListeningSession.instance.setFollowArmed(false)
-          : null,
-      icon: Icon(
-        armed ? Icons.gps_fixed : Icons.my_location,
-        // 跟随中染主色：一眼能看出「页面正在被朗读带着走」。
-        color: armed ? Theme.of(context).colorScheme.primary : null,
+    // 处理函数由阅读页注册/注销，按钮的可点状态得跟着它走。迷你栏挂在
+    // Overlay 上、不会为这个重建，所以直接在构建里读那个 notifier：
+    // 只在真的换了函数时通知一次（同值不通知），不会变成每帧重刷。
+    return ValueListenableBuilder<void Function()?>(
+      valueListenable: ListeningSession.instance.jumpToPlaybackHandlerListenable,
+      builder: (context, handler, _) => IconButton(
+        key: const ValueKey('audio-mini-jump'),
+        // 点一次就跳到朗读处（不管之前开没开），长按才是停止跟随 ——
+        // 之前是「点一下切开关」，已经在跟随时再点只会关掉、不会重新定位，
+        // 想回到朗读处就得点两次。
+        tooltip: armed ? '跟随中，点按回到朗读处；长按停止跟随' : '点按跳到朗读处并跟随',
+        onPressed: handler == null
+            ? null
+            : () {
+                ListeningSession.instance.setFollowArmed(true);
+                handler();
+              },
+        onLongPress: armed
+            ? () => ListeningSession.instance.setFollowArmed(false)
+            : null,
+        icon: Icon(
+          armed ? Icons.gps_fixed : Icons.my_location,
+          // 跟随中染主色：一眼能看出「页面正在被朗读带着走」。
+          color: armed ? Theme.of(context).colorScheme.primary : null,
+        ),
       ),
     );
   }

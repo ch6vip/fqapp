@@ -5,12 +5,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
+import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/native_player.dart';
+import 'package:fqapp/services/reader_device.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/controlled_player.dart';
+import 'support/fakes.dart';
 
 void main() {
   setUp(() {
@@ -111,6 +114,31 @@ void main() {
   );
 
   testWidgets(
+    'opening the reader enables the follow button without a playback event',
+    (tester) async {
+      final app = await _mount(tester);
+      app.open();
+      await _flush(tester);
+      app.navigator.currentState!.pop();
+      await _flush(tester);
+      // 迷你栏这一帧就挂在 Overlay 上了，阅读页还没注册处理函数。
+      expect(
+        _followToggle(tester).onPressed,
+        isNull,
+        reason: '还没进阅读页，跟随键应置灰',
+      );
+
+      app.openReader();
+      await _flush(tester);
+      expect(
+        _followToggle(tester).onPressed,
+        isNotNull,
+        reason: '阅读页注册处理函数后立刻可用，不用等下一次播放/暂停事件',
+      );
+    },
+  );
+
+  testWidgets(
     'another media request cancels narration still waiting for its source',
     (tester) async {
       final app = await _mount(tester);
@@ -130,6 +158,9 @@ void main() {
     },
   );
 }
+
+IconButton _followToggle(WidgetTester tester) =>
+    tester.widget<IconButton>(find.byKey(const ValueKey('audio-mini-jump')));
 
 Future<_Harness> _mount(WidgetTester tester) async {
   final app = _Harness();
@@ -172,6 +203,31 @@ class _Harness {
   final players = <ControlledNativePlayer>[];
   Completer<AudioSource>? sourceGate;
 
+  /// 打开同一本书的阅读页：迷你栏留在原地，阅读页在 initState 里注册
+  /// 「跳到播放位置」。
+  void openReader({String bookId = 'book'}) {
+    unawaited(
+      navigator.currentState!.push<void>(
+        MaterialPageRoute(
+          builder: (_) => ReaderPage(
+            bookId: bookId,
+            title: bookId,
+            chapters: [
+              for (var i = 1; i <= 2; i++)
+                Chapter(itemId: '$bookId-$i', title: '第 $i 章', volumeName: ''),
+            ],
+            startIndex: 0,
+            localOnly: true,
+            readerStore: store,
+            chapterCache: MemoryChapterCache(),
+            chapterLoader: (_) async => '第一段。\n第二段。',
+            readerDevice: _NullDevice(),
+          ),
+        ),
+      ),
+    );
+  }
+
   void open({
     String bookId = 'book',
     int startIndex = 0,
@@ -208,4 +264,22 @@ class _Harness {
       ),
     );
   }
+}
+
+class _NullDevice extends ReaderDevice {
+  @override
+  Stream<ReaderDeviceStatus> get changes => const Stream.empty();
+  @override
+  Future<ReaderDeviceStatus?> start({
+    required bool followSystem,
+    required double brightness,
+  }) async => ReaderDeviceStatus(
+    time: DateTime(2026, 9, 10, 21, 16),
+    battery: 64,
+    systemBrightness: .45,
+  );
+  @override
+  Future<void> suspend() async {}
+  @override
+  Future<void> close() async {}
 }

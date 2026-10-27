@@ -476,7 +476,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         startElementIndex: audioRange.elemIndex,
         startElementOffset: audioRange.elemOff,
       );
-      return translated == null ? null : (translated.start, translated.end);
+      // 官方时间点译不出来时不能直接返回 null：下面那条字幕兜底本来就是为
+      // 这种章节写的（多源项章节会重置时间轴），提前返回等于把它跳过。
+      if (translated != null) return (translated.start, translated.end);
     }
     final ttsRange = session.sentenceRange;
     if (ttsRange != null &&
@@ -588,13 +590,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final layout = _chapterLayout;
     final narration = layout == null ? null : _narrationLayoutRange(layout);
     _syncNarrationHighlight(narration);
+    // 翻页**只**由 [_followPollTick] 负责：它按句内插值寻址到正在读的那个
+    // 字。这条 1Hz 通知原来也翻，但锚的是句首；一句跨页时两路各拽一头，
+    // 于是就出现每秒回闪一页。这里只剩「朗读读完本章 → 跟到下一章」。
     if (!_routeCurrent ||
         !_appActive ||
         !_preferences.listeningFollow ||
         // 没按过定位键就是不跟随：老逻辑只认偏好，开着重播就会自己翻页。
         !ListeningSession.instance.followArmed ||
-        _autoTurnTimer != null ||
-        _controlsVisible ||
         _loading ||
         _changingChapter ||
         _error != null) {
@@ -607,34 +610,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final next = widget.chapters.indexWhere(
         (c) => c.itemId == session.chapterId,
       );
+      // 控制栏展开 / 自动翻页中的闸门由 [_jumpToChapter] 自己再查一遍。
       if (next >= 0) unawaited(_jumpToChapter(next, followListening: true));
-      return;
-    }
-    if (!session.matches(widget.bookId, _chapter.itemId)) return;
-    // Land on the page holding the start of the sentence under the voice.
-    // The progress ratio is only a fallback: pages do not hold equal amounts
-    // of text (titles, illustrations, paragraph breaks), so a proportional
-    // jump parks the reader a page or two off the highlight.
-    final anchor = narration?.$1;
-    if (_paged) {
-      final paged = _pagedKey.currentState;
-      if (anchor != null) {
-        paged?.followOffset(anchor);
-      } else {
-        paged?.followProgress(session.progress);
-      }
-    } else if (_scrollController.hasClients) {
-      final position = _scrollController.position;
-      if (position.maxScrollExtent > 0) {
-        _scrollController.jumpTo(
-          anchor == null || layout == null
-              ? session.progress * position.maxScrollExtent
-              : layout
-                    .scrollForTextOffset(anchor)
-                    .clamp(0.0, position.maxScrollExtent)
-                    .toDouble(),
-        );
-      }
     }
   }
 
@@ -797,9 +774,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     VolumeKeyService.instance.setOnVolumeKey(_onVolumeKey);
     _syncVolumeKeyEnabled();
     ListeningSession.instance.addListener(_onListeningTick);
-    ListeningSession.instance.jumpToPlaybackHandler = _jumpToPlaybackPosition;
+    // 双击跳读的开关只在会话通知里算，而暂停的会话永远不发通知：开书前就
+    // 已经暂停（或者从未播过）时手势得先就位。initState 里不能 setState，
+    // 直接赋值。
+    _doubleTapArmed = _listenDoubleTapArmed;
+    // 迷你栏的跟随键靠这个函数决定是否可点，而它挂在 Overlay 上、不随本页
+    // 重建；initState 正处于构建阶段，同步广播会撞上 markNeedsBuild 断言，
+    // 所以推到帧后再注册。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ListeningSession.instance.jumpToPlaybackHandler =
+            _jumpToPlaybackPosition;
+      }
+    });
     // 跟随用 10Hz 轮询，不走 ListeningSession 的监听（那条每秒最多通知一次，
-    // 还被 _controlsVisible 等闸门挡着）。定位键每次都准，所以轮询直接调
+    // 只在结构性变化时才来，而且不管翻页）。定位键每次都准，所以轮询直接调
     // 同一个函数。
     _followPoll = Timer.periodic(
       const Duration(milliseconds: 100),
@@ -976,20 +965,24 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 主动按的，所以不受「跟随开关」和「用户接管闩锁」限制。
   /// 10Hz 跟随轮询：正在听本章、且用户没在主动翻页时，把页面挪到正在读的字。
   ///
-  /// 走 [_addressToPlayback]，与迷你栏的定位键**同一段代码** —— 按键每次都准、
-  /// 跟随却不准，差别只可能在跟随那条路上的闸门（`_controlsVisible`、
-  /// `listeningFollow`、每秒一次的会话通知），所以这里不再叠加那些条件，只留
-  /// 「用户正在手动翻页就别抢」这一条。
+  /// 走 [_addressToPlayback]，与迷你栏的定位键**同一段代码**。闸门只留「什么
+  /// 时候不该抢」那几条：跟随关着、工具条展开、自动翻页进行中、用户刚手动
+  /// 翻过页。
   void _followPollTick() {
     if (!mounted || !_routeCurrent || !_appActive) return;
     // 跟随开关由迷你栏那个按钮管：关着就是自由翻页，什么都不做。
     if (!ListeningSession.instance.followArmed) return;
     // 设置里的「跟随翻页」是总闸，关掉就永不跟。
     if (!_preferences.listeningFollow) return;
+    // 工具条展开时不翻页（用户正在操作页面），自动翻页进行时也不抢。
+    if (_controlsVisible || _autoTurnTimer != null) return;
     final session = ListeningSession.instance;
     if (!session.playing) return;
     if (session.bookId != widget.bookId) return;
     if (_loading || _changingChapter || _error != null) return;
+    // 用户刚手动翻过页：15 秒内不抢，之后再跟上。这一条必须在「换章」分支
+    // 前面 —— 否则被闩锁挡住的那次切章每 100ms 还会走一遍结算+存盘。
+    if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
     // 朗读已经读完本章、进了下一章：跟随就该把页面带过去。原来这里直接
     // return，于是跟着跟着停在旧章不动了（用户报的「读完一章不翻章」）。
     if (session.chapterId != _chapter.itemId) {
@@ -999,8 +992,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       if (next >= 0) unawaited(_jumpToChapter(next, followListening: true));
       return;
     }
-    // 用户刚手动翻过页：15 秒内不抢，之后再跟上。
-    if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
     _addressToPlayback(quiet: true);
   }
 
@@ -1034,7 +1025,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _ensureCueIndex(layout);
     final positionMs = session.position.inMilliseconds;
     final span = _cueIndex.spanAtPositionMs(positionMs);
-    final offset = span?.spokenOffset(positionMs) ?? _narrationRange?.$1;
+    // [_narrationRange] 是**显示**状态：某一拍没匹配上时故意留着不清，好让
+    // 高亮晚半拍而不是整页变黑。它绝不能当导航锚点 —— 字幕第一句从 3 秒才
+    // 开始（`[3025, 0]`）时，位置 0 查不到句，用它寻址会把页面停到本章最后
+    // 一句上，而且再也回不来。只有整章没有字幕表（官方时间点是唯一锚点）时
+    // 才退回它。
+    final offset = span?.spokenOffset(positionMs) ??
+        (_cueIndex.isEmpty ? _narrationRange?.$1 : null);
     if (offset == null) {
       if (!quiet) _showMessage('找不到当前朗读句');
       return false;
@@ -1056,6 +1053,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// 迷你听书栏的「跳到播放位置」：按键不受任何闸门限制。
   void _jumpToPlaybackPosition() {
+    // 按键本身就是「回到朗读处」，回来之后要继续跟。不清闩锁的话轮询还要
+    // 被挡最多 15 秒 —— 按钮点得动，跟随却是死的。
+    _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
     _addressToPlayback();
   }
 
@@ -2453,6 +2453,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// (issue #110).
   Future<void> _prev({bool startAtEnd = false}) async {
     if (_index <= 0 || _changingChapter) return;
+    // 用户主动换章 = 不想被朗读拽回去，否则轮询 100ms 后又跳回正在播的那章。
+    _pauseListenFollow();
     _changingChapter = true;
     try {
       _settleReadTime();
@@ -2472,6 +2474,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       _showMessage('已是最后一章');
       return;
     }
+    // 同 [_prev]：主动翻到下一章也要退出跟随。
+    _pauseListenFollow();
     _changingChapter = true;
     try {
       _settleReadTime();
@@ -2495,9 +2499,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
     _changingChapter = true;
     try {
-      _settleReadTime();
-      await _persistProgress();
-      if (!mounted) return;
+      // 闸门要排在结算/存盘**前面**：被闩锁挡住的这次跟随切章什么都没做，
+      // 而在后面的话轮询每 100ms 都会存一次进度。
       if (followListening &&
           (!_routeCurrent ||
               !_appActive ||
@@ -2511,6 +2514,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               ))) {
         return;
       }
+      _settleReadTime();
+      await _persistProgress();
+      if (!mounted) return;
       setState(() {
         _index = index;
         _chapterSeekValue = null;

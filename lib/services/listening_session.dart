@@ -84,7 +84,21 @@ class ListeningSession extends ChangeNotifier {
   ///
   /// 放在会话上是因为迷你栏在 AudioPlaybackScope 里，不认识阅读页；注册方
   /// 换页/退出时要负责清掉。
-  void Function()? jumpToPlaybackHandler;
+  ///
+  /// 用 [ValueNotifier] 存而不是普通字段：迷你栏挂在 Overlay 上，只随
+  /// AudioPlaybackScope 的结构性重建刷新 —— 「先起播、再打开书」时它压根
+  /// 不重建，阅读页注册完按钮还是灰的。值没变不通知，不会每帧刷。
+  final ValueNotifier<void Function()?> _jumpToPlaybackHandler =
+      ValueNotifier<void Function()?>(null);
+
+  /// 迷你栏监听这个来知道按钮该不该可点。
+  ValueListenable<void Function()?> get jumpToPlaybackHandlerListenable =>
+      _jumpToPlaybackHandler;
+
+  void Function()? get jumpToPlaybackHandler => _jumpToPlaybackHandler.value;
+
+  set jumpToPlaybackHandler(void Function()? handler) =>
+      _jumpToPlaybackHandler.value = handler;
 
   /// 跟随开关：按一次定位键开跟随，再按一次放开自由翻页。
   ///
