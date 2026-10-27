@@ -520,9 +520,12 @@ class _AudioPageState extends State<AudioPage> {
 
     // 官方整页底色/字色都取自封面（见 audio_page_theme.dart）。
     final pageDark = palette.dark;
-    final theme = (_theme ??
-            (pageDark ? AudioPageTheme.fallbackDark : AudioPageTheme.fallback))
-        .withOled(palette.oled && pageDark);
+    final theme =
+        (_theme ??
+                (pageDark
+                    ? AudioPageTheme.fallbackDark
+                    : AudioPageTheme.fallback))
+            .withOled(palette.oled && pageDark);
     return AudioPageThemeScope(
       theme: theme,
       oled: palette.oled && pageDark,

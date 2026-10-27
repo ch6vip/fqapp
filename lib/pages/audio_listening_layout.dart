@@ -27,11 +27,9 @@ extension _AudioListeningLayout on _AudioPageState {
               c._extras.tones.ttsTones.isNotEmpty
           ? true
           : false;
-      // _statusLine 读的是 HomePalette 的两档灰；取色主题下用同深度的两档，
-      // 免得暖底上突然出现一条冷灰说明文字。
-      final paletteForStatus = pageDark
-          ? HomePalette.of(context)
-          : HomePalette.of(context);
+      // _statusLine 同时被桌面版式（HomePalette）复用，所以这里不改它的签名；
+      // 它只承担一行状态说明，强调色用品牌橙在暖底上也不违和。
+      final paletteForStatus = HomePalette.of(context);
       return Scaffold(
         key: ValueKey('audio_session_${c._bookId}'),
         backgroundColor: theme.canvas,
