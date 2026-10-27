@@ -439,27 +439,25 @@ class _FloatingTimerButton extends StatelessWidget {
       key: const Key('audio_sleep'),
       semanticLabel: label ?? '定时',
       onTap: onTap ?? () {},
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(30),
       child: Container(
-        width: 48,
-        height: 48,
+        // 截图 2.jpg 实测：圆钮直径 59.7dp，底色是**纯色** #FEECD4
+        // （不是渐变），内部图形取橙红 #FF7300→#F33400 的中间值。
+        // 早先用的 #FFE2B6→#FFCB85 渐变过橙过饱和，与页面的暖粉底也不合。
+        width: 60,
+        height: 60,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          // 官方是暖黄底 + 橙色信封状图形；这里用同色系渐变圆，避免引入新资源。
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFFFFE2B6), Color(0xFFFFCB85)],
-          ),
+        decoration: const BoxDecoration(
+          color: Color(0xFFFEECD4),
           shape: BoxShape.circle,
         ),
         child: label == null
-            ? const Icon(LucideIcons.timer, size: 22, color: Color(0xFFFA6725))
+            ? const Icon(LucideIcons.timer, size: 26, color: Color(0xFFF95200))
             : Text(
                 label!,
                 style: const TextStyle(
-                  color: Color(0xFFFA6725),
-                  fontSize: 11,
+                  color: Color(0xFFF95200),
+                  fontSize: 12,
                   fontWeight: FontWeight.w700,
                 ),
               ),
