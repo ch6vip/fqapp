@@ -307,6 +307,15 @@ extension _AudioListeningLayout on _AudioPageState {
     ),
   ];
 
+  /// 面板「音色」行显示的当前音色名。
+  String get _currentToneLabel {
+    final id = c._toneId;
+    for (final tone in [...c._ttsTones, ...c._narratorTones]) {
+      if (tone.id == id && tone.title.isNotEmpty) return tone.title;
+    }
+    return '默认音色';
+  }
+
   void _showRateLockedHint() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(

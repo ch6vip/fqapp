@@ -222,6 +222,8 @@ void main() {
       );
       await _flush(tester);
       expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+      // 面板顶部多了官方的「语速/定时/音色」三行，开关可能落在视口外。
+      await tester.ensureVisible(toggle);
       await tester.tap(toggle);
       await _flush(tester);
       expect(session.store.entry?['autoAdvance'], isFalse);
@@ -235,18 +237,21 @@ void main() {
     await _mount(tester, session.app());
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('定时关闭'));
+    // 官方面板的「定时」快捷行取代了原来的「定时关闭」列表项。
+    await tester.tap(find.byKey(const Key('audio_more_timer')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('15 分钟后'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
-    String remaining() => tester.widget<Text>(find.textContaining('剩余 ')).data!;
+    // 官方 dod 口径：「剩余播放 MM:SS」。
+    String remaining() =>
+        tester.widget<Text>(find.textContaining('剩余播放 ')).data!;
     final before = remaining();
     await tester.pump(const Duration(seconds: 61));
     await _flush(tester);
     expect(remaining(), isNot(before));
-    expect(remaining(), matches(RegExp(r'^剩余 1[34] 分钟$')));
+    expect(remaining(), matches(RegExp(r'^剩余播放 1[34]:\d\d$')));
   });
 
   testWidgets(

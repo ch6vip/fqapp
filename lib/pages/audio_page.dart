@@ -31,6 +31,7 @@ import '../services/system_tts.dart';
 import '../widgets/audio/audio_offline_section.dart';
 import '../widgets/audio/audio_advance_banner.dart';
 import '../widgets/audio/audio_control_rows.dart';
+import '../widgets/audio/audio_quick_rows.dart';
 import '../widgets/audio/audio_skip_points_rows.dart';
 import '../widgets/audio/audio_cover_card.dart';
 import '../widgets/audio/audio_sections.dart';
@@ -924,12 +925,12 @@ class _AudioPageState extends State<AudioPage> {
         ],
       );
     }
+    // 走到这里只可能是「本章播完」：本卡片的渲染条件已限定
+    // error / loading / buffering / completed 四种，前三种上面都提前返回了。
+    // 原先这里还有个「正在播放 / 已暂停」的分支，永远不可达，已删除。
     // 官方 `v7`「已播完最新章节，去听听其它内容吧」只在**末章**播完时出现。
-    final label = c._completed
-        ? (c.atLastChapter ? '已播完最新章节，去听听其它内容吧' : '本章已播完')
-        : (c._wantPlay ? '正在播放' : '已暂停');
     return Text(
-      label,
+      c.atLastChapter ? '已播完最新章节，去听听其它内容吧' : '本章已播完',
       textAlign: TextAlign.center,
       style: TextStyle(color: palette.muted, fontSize: 12.5),
     );
@@ -1084,8 +1085,11 @@ class _AudioPageState extends State<AudioPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const ListTile(title: Text('定时关闭')),
-              tile('听完本章', const SleepTimerChoice.endOfChapter(),
-                  current.endOfChapter),
+              tile(
+                '听完本章',
+                const SleepTimerChoice.endOfChapter(),
+                current.endOfChapter,
+              ),
               for (final minutes in minuteOptions)
                 tile(
                   '$minutes 分钟后',
@@ -1179,54 +1183,36 @@ class _AudioPageState extends State<AudioPage> {
                       builder: (context, snapshot, _) => Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 2,
+                          // 官方 bik.xml 的面板只有三行快捷入口：
+                          // 语速(dh) / 定时(di) / 音色(aag)。
+                          AudioQuickRows(
+                            rateLabel:
+                                '${_AudioPageState._rateLabel(c._rate)}x',
+                            timerLabel: sleepTimerLabel(
+                              atChapterEnd: snapshot.sleepAtChapterEnd,
+                              remaining: c._sleepRemaining,
                             ),
-                            leading: Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF3B82F6,
-                                ).withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(
-                                LucideIcons.alarm_clock,
-                                size: 20,
-                                color: Color(0xFF3B82F6),
-                              ),
-                            ),
-                            title: Text(
-                              '定时关闭',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15,
-                                color: palette.ink,
-                              ),
-                            ),
-                            subtitle: Text(
-                              snapshot.sleepMinutes == null
-                                  ? '未开启'
-                                  : '剩余 ${snapshot.sleepMinutes} 分钟',
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: snapshot.sleepMinutes == null
-                                    ? palette.muted
-                                    : const Color(0xFF3B82F6),
-                              ),
-                            ),
-                            trailing: Icon(
-                              LucideIcons.chevron_right,
-                              size: 18,
-                              color: palette.muted,
-                            ),
-                            onTap: () {
+                            toneLabel: _currentToneLabel,
+                            // 与原来的「定时关闭」行一致：先关掉这个面板再开
+                            // 子面板，避免两个 sheet 叠在一起（叠层后遮罩会
+                            // 吃掉后续点击）。
+                            onRate: () {
+                              Navigator.pop(context);
+                              unawaited(_showRates());
+                            },
+                            onTimer: () {
                               Navigator.pop(context);
                               unawaited(_showSleepTimer());
                             },
+                            onTone: () {
+                              Navigator.pop(context);
+                              unawaited(_showVoices());
+                            },
+                          ),
+                          Divider(
+                            height: 1,
+                            indent: 16,
+                            color: palette.line.withValues(alpha: 0.5),
                           ),
                           // 官方 du/dq：跳过片头/片尾按书保存，默认关闭。
                           AudioSkipPointsRows(

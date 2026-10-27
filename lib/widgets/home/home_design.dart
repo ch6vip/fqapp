@@ -42,10 +42,12 @@ class HomePalette {
     return dark ? const Color(0xFF242427) : Colors.white;
   }
 
-  Color get ink =>
-      eink ? Colors.black : (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522));
-  Color get muted =>
-      eink ? Colors.black : (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66));
+  Color get ink => eink
+      ? Colors.black
+      : (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522));
+  Color get muted => eink
+      ? Colors.black
+      : (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66));
   Color get accentText => eink ? Colors.black : (dark ? accent : accentStrong);
 
   Color get soft {

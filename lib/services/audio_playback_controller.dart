@@ -979,13 +979,11 @@ class _AudioPlaybackController extends ChangeNotifier
       // 官方对「音色下架 / 章节审核中」有专门文案（ug / uj），能识别就用它，
       // 识别不到才回落到通用提示。
       _error =
-          audioPlayErrorMessage(
-            error,
-            switchedTone: _toneSwitchedForChapter,
-          ) ??
+          audioPlayErrorMessage(error, switchedTone: _toneSwitchedForChapter) ??
           (error is TimeoutException
               ? '加载超时，请检查网络后重试。'
-              : '音频暂时无法播放，请重试或切换其他章节。');
+              // 官方 `f4` = 「播放出错，请稍后重试」。
+              : '播放出错，请稍后重试');
     });
     _publishMoreState();
   }
