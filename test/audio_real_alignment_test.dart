@@ -70,7 +70,7 @@ void main() {
       await _mount(tester, session);
       expect(find.text('第一句同步字幕'), findsOneWidget);
       expect(find.text('第二句同步字幕'), findsOneWidget);
-      expect(find.byKey(const Key('audio_read_along')), findsOneWidget);
+      expect(find.byKey(const Key('audio_inline_subtitle')), findsOneWidget);
 
       session.players.single.emitPosition(const Duration(seconds: 5));
       await _flush(tester);
@@ -89,7 +89,7 @@ void main() {
         find.byKey(const Key('audio-inline-subtitle-current')),
         findsNothing,
       );
-      expect(find.byKey(const Key('audio_read_along')), findsNothing);
+      expect(find.byKey(const Key('audio_inline_subtitle')), findsNothing);
     },
   );
 

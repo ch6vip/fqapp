@@ -363,7 +363,11 @@ String? _currentSubtitle(WidgetTester tester) =>
     tester.widget<Text>(find.byKey(const Key('audio_subtitle_current'))).data;
 
 Future<void> _openReadAlong(WidgetTester tester) async {
-  final entry = find.byKey(const Key('audio_read_along'));
+  // 字幕槽（有内容才在）与音色卡入口都通向「边听边读」，前者缺席时退回后者。
+  final subtitle = find.byKey(const Key('audio_inline_subtitle'));
+  final entry = subtitle.evaluate().isEmpty
+      ? find.byKey(const Key('audio_read_along'))
+      : subtitle;
   await tester.ensureVisible(entry);
   await tester.tap(entry);
   await tester.pumpAndSettle();

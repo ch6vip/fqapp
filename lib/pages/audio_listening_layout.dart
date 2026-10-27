@@ -66,23 +66,26 @@ extension _AudioListeningLayout on _AudioPageState {
                           introSummary: introSummary,
                           related: related,
                         ),
-                        if (realAudio)
-                          ValueListenableBuilder<_ReadAlongSnapshot>(
-                            valueListenable: c._readAlong,
-                            builder: (context, snapshot, _) =>
-                                AudioInlineSubtitle(
-                                  track: snapshot.track,
-                                  position: snapshot.position,
-                                  onTap: _showReadAlong,
-                                ),
+                        // 官方 `fs5`/`fs6`：封面正下方是**一条字幕视图**
+                        // （`AudioPlaySubtitleView`，固定 52dp、左右 20dp、
+                        // 底部 24dp、上下 24dp 渐隐），没有内容时
+                        // `visibility="gone"` 不占位。它不是「章节试读」按钮，
+                        // 也不该把整章正文塞进无障碍标签。
+                        //
+                        // 两种模式共用同一个槽：有字幕轨显示正在朗读的那句，
+                        // 没有轨才退回章节开头摘录（真人讲书已把简介放在封面
+                        // 背面时不再重复）。
+                        ValueListenableBuilder<_ReadAlongSnapshot>(
+                          valueListenable: c._readAlong,
+                          builder: (context, snapshot, _) => AudioInlineSubtitle(
+                            track: snapshot.track,
+                            position: snapshot.position,
+                            onTap: _showReadAlong,
+                            fallbackText: realAudio && hasIntro
+                                ? ''
+                                : c._excerpt,
                           ),
-                        // 真人讲书的简介在封面背面（官方 bhi.xml），正文摘录只在
-                        // 没有简介数据时兜底，避免同一段文字出现两次。
-                        if (c._excerpt.isNotEmpty &&
-                            !(realAudio && hasIntro)) ...[
-                          const SizedBox(height: 12),
-                          AudioExcerpt(text: c._excerpt, onTap: _showExcerpt),
-                        ],
+                        ),
                         if (c._error != null ||
                             c._loading ||
                             (c._player?.buffering ?? false) ||

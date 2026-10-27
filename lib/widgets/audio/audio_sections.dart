@@ -496,15 +496,17 @@ class AudioExcerpt extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-        child: Text(
-          text,
-          key: const Key('audio_excerpt'),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: theme.ink.withValues(alpha: 0.82),
-            fontSize: 15,
-            height: 1.5,
+        child: ExcludeSemantics(
+          child: Text(
+            text,
+            key: const Key('audio_excerpt'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: theme.ink.withValues(alpha: 0.82),
+              fontSize: 15,
+              height: 1.5,
+            ),
           ),
         ),
       ),
@@ -1222,61 +1224,95 @@ class AudioInlineSubtitle extends StatelessWidget {
   final Duration position;
   final VoidCallback onTap;
 
+  /// 没有字幕轨时的兜底文本（章节开头摘录）。
+  ///
+  /// 官方 `fs6` 在没有内容时是 `visibility="gone"`，所以两者都空就不占位。
+  final String fallbackText;
+
   const AudioInlineSubtitle({
     super.key,
     required this.track,
     required this.position,
     required this.onTap,
+    this.fallbackText = '',
   });
+
+  /// 官方 `fs6` 的固定高度。
+  static const double _height = 52;
 
   @override
   Widget build(BuildContext context) {
-    if (track.isEmpty) return const SizedBox.shrink();
     final theme = AudioPageThemeScope.of(context);
     final (current, next) = track.windowAt(position);
-    final line = current ?? next;
     final following = current == null ? null : next;
-    if (line == null) return const SizedBox.shrink();
+    // 优先显示「正在朗读的那一句」；没有字幕轨才退回章节开头摘录。
+    final primary = current?.text ?? next?.text ?? '';
+    final visible = primary.isNotEmpty ? primary : fallbackText;
+    if (visible.isEmpty) return const SizedBox.shrink();
+    final secondary = primary.isEmpty ? '' : (following?.text ?? '');
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      // `fs6`：左右 20dp、底部 24dp，上沿紧贴封面。
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       child: HomePressable(
-        key: const Key('audio_read_along'),
+        // 与音色卡的「边听边读」入口区分开：两者都可能同时存在
+        // （智能朗读有字幕时），共用一个 key 会让按 key 取控件的地方歧义。
+        key: const Key('audio_inline_subtitle'),
+        // 只报角色，不把整段正文塞进无障碍标签——那会让读屏一次念完整章。
         semanticLabel: '边听边读',
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: SizedBox(
-          height: 52,
+          height: _height,
           width: double.infinity,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                line.text,
-                key: const Key('audio-inline-subtitle-current'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: theme.ink,
-                  fontSize: 14.5,
-                  height: 1.4,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (following != null) ...[
-                const SizedBox(height: 2),
-                Text(
-                  following.text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: theme.muted,
-                    fontSize: 13,
-                    height: 1.4,
-                  ),
-                ),
+          child: ShaderMask(
+            // `requiresFadingEdge="vertical"` + `fadingEdgeLength=24dip`：
+            // 上下各 24dp 渐隐，比省略号更接近官方的观感。
+            shaderCallback: (bounds) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0x00FFFFFF),
+                Color(0xFFFFFFFF),
+                Color(0xFFFFFFFF),
+                Color(0x00FFFFFF),
               ],
-            ],
+              stops: [0.0, 0.24, 0.76, 1.0],
+            ).createShader(bounds),
+            blendMode: BlendMode.dstIn,
+            child: ExcludeSemantics(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    visible,
+                    key: const Key('audio-inline-subtitle-current'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: theme.ink,
+                      fontSize: 14.5,
+                      height: 1.4,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (secondary.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      secondary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: theme.muted,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
