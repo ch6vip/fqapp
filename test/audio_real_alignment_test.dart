@@ -143,10 +143,11 @@ void main() {
 
   testWidgets('transport and progress rows follow bin/bjg', (tester) async {
     await _mount(tester, _RealSession());
-    // bin.xml: 目录带 12sp 文字，播放键 60dp，右侧是悬浮圆钮而不是「定时」文字。
+    // bin.xml: 目录(axr) 与 定时(i58) 是同构的「图标 + 12sp 文字」，
+    // 截图里那颗橙色圆钮是广告浮层，不是定时入口。
     expect(find.text('目录'), findsOneWidget);
+    expect(find.text('定时'), findsOneWidget);
     expect(find.byKey(const Key('audio_sleep')), findsOneWidget);
-    expect(find.text('定时'), findsNothing);
     expect(
       tester.getSize(find.byKey(const Key('audio_play'))),
       const Size(60, 60),

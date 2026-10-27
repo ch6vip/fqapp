@@ -160,14 +160,13 @@ extension _AudioListeningLayout on _AudioPageState {
                             loading:
                                 c._loading || (c._player?.buffering ?? false),
                             ready: c._ready,
-                            // 「听完本章」显示「本章」；分钟档显示剩余分钟。
-                            // 旧写法直接把 Duration 插进字符串，会印出
-                            // `Duration(minutes: 15)′`。
+                            // 官方 doc「剩余本章」/ dod「剩余播放」：定时开着时
+                            // 这个位置换成状态文字，没开就是「定时」。
                             sleepLabel: c.sleepAtChapterEnd
-                                ? '本章'
+                                ? '剩余本章'
                                 : (c._sleepRemaining == null
                                       ? null
-                                      : '${(c._sleepRemaining!.inSeconds / 60).ceil()}′'),
+                                      : '剩余播放'),
                           ),
                         ),
                         const SizedBox(height: 16),

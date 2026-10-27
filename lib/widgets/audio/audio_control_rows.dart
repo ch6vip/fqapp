@@ -341,10 +341,15 @@ class AudioTransportRow extends StatelessWidget {
               theme: theme,
             ),
             const Spacer(),
-            _FloatingTimerButton(
+            // 官方 `bin.xml` 的 `i58`：与左侧「目录」(`axr`) 同构的
+            // 24dp 图标 + 12sp 文字。截图里那颗橙色圆钮是广告浮层，不是定时。
+            _LabeledIcon(
+              key: const Key('audio_sleep'),
+              icon: LucideIcons.timer,
+              label: sleepLabel ?? '定时',
               onTap: onSleepTimer,
-              label: sleepLabel,
               theme: theme,
+              active: sleepLabel != null,
             ),
           ],
         );
@@ -386,11 +391,16 @@ class _LabeledIcon extends StatelessWidget {
   final VoidCallback? onTap;
   final AudioPageTheme theme;
 
+  /// 激活态（例如定时已开启）用强调色。
+  final bool active;
+
   const _LabeledIcon({
+    super.key,
     required this.icon,
     required this.label,
     required this.onTap,
     required this.theme,
+    this.active = false,
   });
 
   @override
@@ -404,15 +414,25 @@ class _LabeledIcon extends StatelessWidget {
         onTap: onTap ?? () {},
         borderRadius: BorderRadius.circular(10),
         child: SizedBox(
+          // 官方 minWidth 48dp。这里保持 56：`AudioTransportRow` 的 gap 公式
+          // 把 252(=56+40+60+40+56) 当固定宽度算，改成 64 会在 320dp 窄屏
+          // 溢出 6.7px。「剩余本章」四个汉字 12sp 约 48dp，装得下。
           width: 56,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 24, color: theme.ink),
+              Icon(icon, size: 24, color: active ? theme.accent : theme.ink),
               const SizedBox(height: 2),
               Text(
                 label,
-                style: TextStyle(color: theme.muted, fontSize: 12, height: 1.2),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: active ? theme.accent : theme.muted,
+                  fontSize: 12,
+                  height: 1.2,
+                ),
               ),
             ],
           ),
@@ -422,48 +442,5 @@ class _LabeledIcon extends StatelessWidget {
   }
 }
 
-class _FloatingTimerButton extends StatelessWidget {
-  final VoidCallback? onTap;
-  final String? label;
-  final AudioPageTheme theme;
-
-  const _FloatingTimerButton({
-    required this.onTap,
-    required this.label,
-    required this.theme,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return HomePressable(
-      key: const Key('audio_sleep'),
-      semanticLabel: label ?? '定时',
-      onTap: onTap ?? () {},
-      borderRadius: BorderRadius.circular(30),
-      child: Container(
-        // 截图 2.jpg 实测：圆钮直径 59.7dp，底色是**纯色** #FEECD4
-        // （不是渐变），内部图形取橙红 #FF7300→#F33400 的中间值。
-        // 早先用的 #FFE2B6→#FFCB85 渐变过橙过饱和，与页面的暖粉底也不合。
-        width: 60,
-        height: 60,
-        alignment: Alignment.center,
-        decoration: const BoxDecoration(
-          color: Color(0xFFFEECD4),
-          shape: BoxShape.circle,
-        ),
-        child: label == null
-            ? const Icon(LucideIcons.timer, size: 26, color: Color(0xFFF95200))
-            : Text(
-                label!,
-                style: const TextStyle(
-                  color: Color(0xFFF95200),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-      ),
-    );
-  }
-}
 
 /// 官方封面卡的整体：12dp 圆角、正方形封面、底部渐变 + 两行页脚，
