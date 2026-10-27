@@ -283,6 +283,30 @@ void main() {
     expect(engine.value.single.maxHeight, 720);
   });
 
+  testWidgets('存的上限不在本剧档位里时，高亮实际会取的那一档', (tester) async {
+    const qualities = [
+      EpisodeVariant(name: '1080P', url: 'u1080', keyHex: '', height: 1080),
+      EpisodeVariant(name: '360P', url: 'u360', keyHex: '', height: 360),
+    ];
+    ChoiceChip chip(String height) => tester.widget<ChoiceChip>(
+      find.byKey(ValueKey('download-quality-$height')),
+    );
+
+    // 上一部选了 720，这部剧只有 1080/360：下载器取「不超过上限的最高一档」
+    // = 360。高亮必须跟着这个结果，否则一个 chip 都不选中，用户以为没设上。
+    await DramaCachePreferences.instance.setDownloadHeight(720);
+    await pumpSheet(tester, episodeCount: 3, qualities: qualities);
+    expect(chip('360').selected, isTrue, reason: '720 不在档位里，实际会下 360');
+    expect(chip('1080').selected, isFalse);
+    expect(chip('0').selected, isFalse, reason: '「最高」不等于「有上限」');
+
+    // 上限比所有档位都低：退到最小一档，同样要看得出来。
+    await DramaCachePreferences.instance.setDownloadHeight(240);
+    await pumpSheet(tester, episodeCount: 3, qualities: qualities);
+    expect(chip('360').selected, isTrue);
+    expect(chip('1080').selected, isFalse);
+  });
+
   testWidgets('边看边缓存默认 5 集，关掉后写回偏好', (tester) async {
     await pumpSheet(tester, episodeCount: 8, currentIndex: 1);
     final prefs = DramaCachePreferences.instance;

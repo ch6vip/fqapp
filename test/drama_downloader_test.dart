@@ -25,6 +25,10 @@ class _FakeCdn {
 
   set shortLength(int? value) => _shortLength = value;
 
+  /// 非空时，响应体只发这么多字节且不声明长度（chunked）—— 模拟「下到
+  /// 一半流就没了」：客户端读到一个完整的短响应，于是按「下载不完整」重试。
+  int? truncateTo;
+
   int get _total => _shortLength ?? content.length;
   late final HttpServer server;
 
@@ -71,8 +75,12 @@ class _FakeCdn {
         Uint8List.fromList(content.sublist(0, _total)),
         start,
       );
-      request.response.contentLength = slice.length;
-      request.response.add(slice);
+      final limit = truncateTo;
+      final body = limit != null && limit < slice.length
+          ? Uint8List.sublistView(slice, 0, limit)
+          : slice;
+      if (identical(body, slice)) request.response.contentLength = slice.length;
+      request.response.add(body);
       await request.response.flush();
       await request.response.close();
     });
@@ -105,11 +113,8 @@ void main() {
   DramaDownloader buildDownloader({
     required Future<EpisodeSource> Function(Chapter episode) resolve,
     int concurrency = 3,
-  }) => DramaDownloader(
-    store: store,
-    resolve: resolve,
-    concurrency: concurrency,
-  );
+  }) =>
+      DramaDownloader(store: store, resolve: resolve, concurrency: concurrency);
 
   CachedDrama drama(int count) => CachedDrama(
     id: 'series1',
@@ -152,18 +157,14 @@ void main() {
     expect(File(record.filePath).existsSync(), isTrue);
     expect(File(record.filePath).readAsBytesSync(), cdn.content);
     expect(await store.isDownloaded('ep0'), isTrue);
-    expect(
-      downloader.value.single.status,
-      DramaDownloadStatus.completed,
-    );
+    expect(downloader.value.single.status, DramaDownloadStatus.completed);
     // 整文件下载：只发过一次非 Range 请求。
     expect(cdn.receivedRanges, ['full']);
   });
 
   test('半成品跨启动续传：从已有字节起 Range 请求，终稿完整', () async {
     final half = cdn.content.sublist(0, 512);
-    final partPath =
-        '${videoDir.path}${Platform.pathSeparator}ep0.mp4.part';
+    final partPath = '${videoDir.path}${Platform.pathSeparator}ep0.mp4.part';
     File(partPath).writeAsBytesSync(half);
     // 半成品比记录先存在，store 里没有记录——这正是重启后的形态。
     expect(await store.isDownloaded('ep0'), isFalse);
@@ -196,24 +197,31 @@ void main() {
     // 两个槽位都卡在 resolver：2 下载中 + 2 排队。
     await _waitFor(() {
       final statuses = downloader.value.map((task) => task.status).toList();
-      return statuses.where((s) => s == DramaDownloadStatus.downloading).length ==
+      return statuses
+                  .where((s) => s == DramaDownloadStatus.downloading)
+                  .length ==
               2 &&
           statuses.where((s) => s == DramaDownloadStatus.waiting).length == 2;
     });
     barrier.complete();
     await settle(downloader);
-    expect(downloader.value.every((t) => t.status == DramaDownloadStatus.completed), isTrue);
+    expect(
+      downloader.value.every((t) => t.status == DramaDownloadStatus.completed),
+      isTrue,
+    );
     expect(resolverCalls, 4);
   });
 
   test('直链失效自动重取：第一次 403、第二次成功', () async {
     var calls = 0;
-    final downloader = buildDownloader(resolve: (episode) async {
-      calls++;
-      return calls == 1
-          ? EpisodeSource(cdn.staleUrl, 'k', const [])
-          : EpisodeSource(cdn.url, 'abcd', const []);
-    });
+    final downloader = buildDownloader(
+      resolve: (episode) async {
+        calls++;
+        return calls == 1
+            ? EpisodeSource(cdn.staleUrl, 'k', const [])
+            : EpisodeSource(cdn.url, 'abcd', const []);
+      },
+    );
     await downloader.enqueue(drama: drama(1), episodes: drama(1).episodes);
     await settle(downloader);
     expect(calls, 2);
@@ -284,11 +292,7 @@ void main() {
     await _waitFor(
       () => downloader.value.single.status == DramaDownloadStatus.completed,
     );
-    expect(
-      await store.isDownloaded('ep0'),
-      isTrue,
-      reason: '继续之后必须真的把这一集下完',
-    );
+    expect(await store.isDownloaded('ep0'), isTrue, reason: '继续之后必须真的把这一集下完');
   });
 
   test('断网/计费链路自动暂停全部任务', () async {
@@ -314,14 +318,18 @@ void main() {
     // WiFi 恢复不自动续跑：恢复是用户的动作（官方弹续传确认）。
     downloader.updateConnectivity(online: true, metered: false);
     expect(
-      downloader.value.every((task) => task.status == DramaDownloadStatus.paused),
+      downloader.value.every(
+        (task) => task.status == DramaDownloadStatus.paused,
+      ),
       isTrue,
     );
     barrier.complete();
     // 暂停在 resolver 卡住期间已即时生效：放开后任务不得继续跑。
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(
-      downloader.value.every((task) => task.status == DramaDownloadStatus.paused),
+      downloader.value.every(
+        (task) => task.status == DramaDownloadStatus.paused,
+      ),
       isTrue,
     );
   });
@@ -369,9 +377,66 @@ void main() {
     expect(File(record!.filePath).existsSync(), isTrue);
   });
 
+  test('手动重下已自动缓存的集，记录翻成用户所有（不会被滚动清理删掉）', () async {
+    // 自动缓存已经把这集下完了，记录上是 auto: true。用户在缓存面板里手动
+    // 再点一次这集时 enqueue 会因「已下载」短路——旧行为下记录原封不动，
+    // 播放页的滚动清理于是把这集当自动缓存删掉（文件是用户明确要留的）。
+    await store.saveEpisode(
+      CachedEpisode(
+        seriesId: 'series1',
+        itemId: 'ep0',
+        title: '第1集',
+        index: 0,
+        keyHex: 'abcd',
+        height: 720,
+        variantName: '720P',
+        bytes: 1024,
+        filePath: '${videoDir.path}${Platform.pathSeparator}ep0.mp4',
+        cachedAt: 111,
+        auto: true,
+      ),
+    );
+    var resolveCalls = 0;
+    final downloader = buildDownloader(
+      resolve: (episode) async {
+        resolveCalls++;
+        return EpisodeSource(cdn.url, 'abcd', const []);
+      },
+    );
+
+    await downloader.enqueue(drama: drama(1), episodes: drama(1).episodes);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    final record = await store.episode('ep0');
+    expect(record?.auto, isFalse, reason: '手动重下后清理不得再碰这一集');
+    expect(record?.bytes, 1024, reason: '文件已在，不重拉也不改写其他字段');
+    expect(record?.cachedAt, 111);
+    expect(resolveCalls, 0, reason: '已下载的集不该重新排队');
+    expect(downloader.value, isEmpty);
+  });
+
+  test('自动缓存排的任务把 auto 标记写到记录上', () async {
+    final downloader = buildDownloader(
+      resolve: (episode) async => EpisodeSource(cdn.url, 'abcd', const []),
+    );
+    await downloader.enqueue(
+      drama: drama(1),
+      episodes: drama(1).episodes,
+      auto: true,
+    );
+    await settle(downloader);
+
+    expect((await store.episode('ep0'))?.auto, isTrue);
+  });
+
   test('画质上限：挑不超过上限的最高一档，没有更低的就用最低', () {
     final source = EpisodeSource('https://example.invalid/a.mp4', '', [
-      const EpisodeVariant(name: '1080P', url: 'u1080', keyHex: '', height: 1080),
+      const EpisodeVariant(
+        name: '1080P',
+        url: 'u1080',
+        keyHex: '',
+        height: 1080,
+      ),
       const EpisodeVariant(name: '720P', url: 'u720', keyHex: '', height: 720),
       const EpisodeVariant(name: '480P', url: 'u480', keyHex: '', height: 480),
     ]);
@@ -387,8 +452,10 @@ void main() {
 
     // 上游只给单流（没有 variants）时，任何上限都用主地址。
     final flat = EpisodeSource('https://example.invalid/b.mp4');
-    expect(DramaDownloader.pickVariant(flat, maxHeight: 480)?.url,
-        'https://example.invalid/b.mp4');
+    expect(
+      DramaDownloader.pickVariant(flat, maxHeight: 480)?.url,
+      'https://example.invalid/b.mp4',
+    );
   });
 
   test('续传越界（HTTP 416）丢掉半成品重下，不会卡在失败', () async {
@@ -406,10 +473,40 @@ void main() {
     final task = downloader.value.single;
     expect(task.status, DramaDownloadStatus.completed, reason: '${task.error}');
     expect(part.existsSync(), isFalse, reason: '越界的半成品要被丢掉');
-    final saved = File(
-      '${videoDir.path}${Platform.pathSeparator}ep0.mp4',
-    );
+    final saved = File('${videoDir.path}${Platform.pathSeparator}ep0.mp4');
     expect(saved.lengthSync(), 100);
+  });
+
+  test('续传越界丢掉半成品时，界面上的字节数跟着归零', () async {
+    // 第一次尝试下到一半断流（进度已发布为 500/1024），重取地址后拿到一条
+    // 更短的流（100 字节）→ Range 越界（416）→ 半成品被丢掉。这时快照里
+    // 还挂着旧字节数的话，重下期间进度条读到 100%，最后的硬失败还会带着
+    // 一个已经不存在的 received。
+    final part = File('${videoDir.path}${Platform.pathSeparator}ep0.mp4.part')
+      ..writeAsBytesSync(List.filled(500, 7));
+    cdn.truncateTo = 100;
+    var resolveCalls = 0;
+    final downloader = buildDownloader(
+      resolve: (episode) async {
+        resolveCalls++;
+        // 第二轮起换一条短流 → 416；第三轮直接抛错，让任务停在失败态。
+        if (resolveCalls >= 2) {
+          cdn.shortLength = 100;
+          cdn.truncateTo = null;
+        }
+        if (resolveCalls >= 3) throw const SocketException('连接被重置');
+        return EpisodeSource(cdn.url, 'abcd', const []);
+      },
+    );
+
+    await downloader.enqueue(drama: drama(1), episodes: drama(1).episodes);
+    await settle(downloader);
+
+    final task = downloader.value.single;
+    expect(task.status, DramaDownloadStatus.failed, reason: '${task.error}');
+    expect(part.existsSync(), isFalse, reason: '越界的半成品已被丢掉');
+    expect(task.received, 0, reason: '半成品没了，进度不能还挂着旧字节数');
+    expect(task.total, isNull);
   });
 
   test('取流偶发失败会自动重试，最终完成', () async {

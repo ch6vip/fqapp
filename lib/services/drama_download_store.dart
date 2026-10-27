@@ -425,7 +425,17 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
                 ),
             ],
           );
-      entry.value.sort((a, b) => a.index.compareTo(b.index));
+      // 集序以目录（`series:` 里的全集列表）的顺序为准：老记录的 index 是
+      // 「入队时的相对序号」（0..4 对应目录里的 12..16），拿它排序会把
+      // 第 13 集排到第 1 集前面。目录里查不到的记录才退回 index。
+      final order = <String, int>{
+        for (final (position, episode) in drama.episodes.indexed)
+          episode.itemId: position,
+      };
+      entry.value.sort(
+        (a, b) =>
+            (order[a.itemId] ?? a.index).compareTo(order[b.itemId] ?? b.index),
+      );
       summaries.add(CachedDramaSummary(drama, entry.value));
     }
     summaries.sort((a, b) {

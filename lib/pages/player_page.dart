@@ -161,6 +161,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   /// 待触发的调度是为哪一集排的（同一集反复出首帧不推迟截止时间）。
   int? _autoCacheTimerIndex;
+
+  /// 播放器最近一次**实际选中**的档位高度（按 [QualityMemory] 的名字套用，
+  /// 或用户在画质菜单里换档）。null = 没选过档，播的是上游默认流。
+  int? _renditionHeight;
   int? _prefetchAttemptedGeneration;
 
   /// 「左右滑动可调整进度」首次引导（每台设备一次，`of3/a`）。
@@ -1070,16 +1074,21 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       // 拿旧的 generation 判会把这一集的预缓存白白放弃掉。
       if (!mounted || !identical(player, _player)) return;
       if (_autoCacheFor == _index) return;
-      _autoCacheFor = _index;
       unawaited(_autoCacheNext());
     });
   }
 
   /// 当前实际在播的清晰度（像素高度），取不到返回 null。
   ///
-  /// `_currentSource.url` 指向的就是正在播的那一档，和 `variants` 里的
-  /// 条目按 url 对回去即可；单流（没有 variants）时无从得知，返回 null。
+  /// 优先用选档时记下的高度：`variants` 里可能有两条 url 相同、高度不同的
+  /// 别名流，按 url 反查只会拿到第一条，不一定是正在播的那条。没选过档时看
+  /// 播放器解码出来的高度——播的是上游默认流时，它到底绑到哪一档客户端并不
+  /// 知道，但解码后就有答案了。两者都取不到才退回按 url 认领。
   int? _playingHeight() {
+    final selected = _renditionHeight;
+    if (selected != null) return selected;
+    final decoded = _player?.videoHeight ?? 0;
+    if (decoded > 0) return decoded;
     final source = _currentSource;
     if (source == null) return null;
     for (final variant in source.variants) {
@@ -1090,20 +1099,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _autoCacheNext() async {
+    final index = _index;
     final prefs = DramaCachePreferences.instance;
     final ahead = prefs.ahead.value;
     if (ahead <= 0) return;
     final upcoming = autoCacheEpisodes(
       episodes: widget.eps,
-      currentIndex: _index,
+      currentIndex: index,
       ahead: ahead,
     );
     if (upcoming.isEmpty) return;
     // store 未就绪（Hive 未初始化的测试环境）直接跳过，别碰 openBox。
     if (!_downloadStore.isReady) return;
     if (prefs.wifiOnly.value) {
-      final view = await currentConnectivity();
-      if (!view.online || view.metered) return;
+      // 测不出网络形态时按「不是 Wi-Fi」处理：自动缓存没有流量确认兜底。
+      final view = await probeConnectivity();
+      if (view == null || !view.online || view.metered) return;
     }
     if (!mounted) return;
     try {
@@ -1123,6 +1134,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             ? prefs.downloadHeight.value
             : _playingHeight(),
       );
+      // 排上了才算这一集处理过：上面每条早退都不算，否则那一集永远没
+      // 机会再自动缓存（冷启动 store 未就绪、或在移动网络下起播都会）。
+      _autoCacheFor = index;
       await _trimAutoCache(ahead);
     } catch (_) {
       // 预缓存是机会性的：失败（权限、空间、解析不到地址）不能影响播放，
@@ -1183,6 +1197,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _teardownPlayer() {
+    // 这一集的调度还没到点就作废：换集/换流后的 2 秒不该再去排它。
+    _autoCacheTimer?.cancel();
+    _autoCacheTimer = null;
+    _autoCacheTimerIndex = null;
     final old = _player;
     _player = null;
     _activeIndex = null;
@@ -1252,6 +1270,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       // 文件，不请求取流接口；文件被用户清掉时静默回退在线链路。
       final offline = await _offlineSource(episode);
       final EpisodeSource source;
+      int? renditionHeight;
       if (offline != null) {
         trace.source = 'offline';
         source = offline;
@@ -1269,6 +1288,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           for (final variant in online.variants) {
             if (variant.name == chosenName) {
               online = online.withVariant(variant);
+              renditionHeight = variant.height > 0 ? variant.height : null;
               break;
             }
           }
@@ -1277,6 +1297,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
       if (!_current(generation)) return;
       _currentSource = source;
+      // 每次装载都重新认领：换集后没选过档就是 null，不留上一集的高度。
+      _renditionHeight = renditionHeight;
       final sourceUri = Uri.tryParse(source.url);
       final isRemote =
           sourceUri != null &&
@@ -1460,6 +1482,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final episode = widget.eps[_index];
     QualityMemory.remember(widget.bookId, variant.name);
     _currentSource = source.withVariant(variant);
+    _renditionHeight = variant.height > 0 ? variant.height : null;
     final release = _teardownPlayer();
     NativePlayer? candidate;
     try {

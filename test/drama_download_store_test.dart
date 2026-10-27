@@ -95,7 +95,7 @@ void main() {
     expect(await store.episode('bad'), isNull);
   });
 
-  test('dramas 按剧聚合、集按 index 排序、剧按最近缓存排序', () async {
+  test('dramas 按剧聚合、集按目录顺序排序、剧按最近缓存排序', () async {
     await store.ensureCatalogue(
       CachedDrama(
         id: 'series1',
@@ -127,8 +127,38 @@ void main() {
     expect(dramas.first.drama.id, 'series2');
     final series1 = dramas.lastWhere((item) => item.drama.id == 'series1');
     expect(series1.drama.title, '测试剧');
-    expect(series1.episodes.map((e) => e.itemId).toList(), ['ep2', 'ep1']);
+    // 记录里的 index（这里是 1 / 0）和目录（ep1 在 ep2 前）相反：集序以
+    // 目录为准，见 cached_dramas_page.dart 的同一套规则。
+    expect(series1.episodes.map((e) => e.itemId).toList(), ['ep1', 'ep2']);
     expect(series1.bytes, 2048);
+  });
+
+  test('老记录的相对序号不影响集序：按目录位置排', () async {
+    // 早期版本把「本次入队列表里的相对序号」写进了 index：目录里的第 13-17
+    // 集记成了 0-4。管理页的名字是按目录算的（第 13 集），列表顺序也必须
+    // 按目录，否则第 13 集会排到第 1 集前面。
+    await store.ensureCatalogue(
+      CachedDrama(
+        id: 'series1',
+        title: '测试剧',
+        cover: '',
+        episodes: [
+          for (var number = 1; number <= 20; number++)
+            Chapter(itemId: 'ep$number', title: '第$number集', volumeName: ''),
+        ],
+      ),
+    );
+    for (final (relative, number) in const [17, 13, 15, 14, 16].indexed) {
+      await store.saveEpisode(
+        episode(itemId: 'ep$number', index: relative, cachedAt: 1000 + relative),
+      );
+    }
+
+    final series1 = (await store.dramas()).single;
+    expect(
+      series1.episodes.map((e) => e.itemId).toList(),
+      ['ep13', 'ep14', 'ep15', 'ep16', 'ep17'],
+    );
   });
 
   test('removeEpisode 连带删除视频文件', () async {

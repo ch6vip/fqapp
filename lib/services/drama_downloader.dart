@@ -148,7 +148,12 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     var changed = false;
     for (final (index, episode) in episodes.indexed) {
       if (_tasks.containsKey(episode.itemId)) continue;
-      if (await _store.isDownloaded(episode.itemId)) continue;
+      if (await _store.isDownloaded(episode.itemId)) {
+        // 手动重下已是自动缓存的集：文件不用重拉，但记录得改成「用户的」。
+        // 留着 `auto: true` 的话，播放页的滚动清理会跟着进度把它删掉。
+        if (!auto) await _promoteToManual(episode.itemId);
+        continue;
+      }
       _tasks[episode.itemId] = _MutableTask(
         DramaDownloadTask(
           seriesId: drama.id,
@@ -164,6 +169,29 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     }
     if (changed) _publish();
     unawaited(_pump());
+  }
+
+  /// 把自动缓存的记录改成用户手动缓存（`auto: false`）。
+  ///
+  /// 文件、画质、缓存时间都照旧：这里只换「谁要的」这一个标记，滚动清理
+  /// 从此不会再碰这一集。
+  Future<void> _promoteToManual(String itemId) async {
+    final cached = await _store.episode(itemId);
+    if (cached == null || !cached.auto) return;
+    await _store.saveEpisode(
+      CachedEpisode(
+        seriesId: cached.seriesId,
+        itemId: cached.itemId,
+        title: cached.title,
+        index: cached.index,
+        keyHex: cached.keyHex,
+        height: cached.height,
+        variantName: cached.variantName,
+        bytes: cached.bytes,
+        filePath: cached.filePath,
+        cachedAt: cached.cachedAt,
+      ),
+    );
   }
 
   /// 当前剧集的在队/进行中任务（管理页与弹窗合并渲染用）。
@@ -431,6 +459,10 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
         try {
           await partFile.delete();
         } catch (_) {}
+        // 半成品已经不要了，界面上的进度也不能留着：否则重下期间进度条
+        // 卡在 100%，后续硬失败还会出现 received > total。
+        task.snapshot = task.snapshot.copyWith(received: 0, clearTotal: true);
+        _publish();
         return 'restart-from-zero';
       }
       var expectedTotal = -1;

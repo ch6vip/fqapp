@@ -93,8 +93,10 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
   /// 官方 `TabType.DOWNLOAD` 的区间粒度：每 30 集一组。
   static const _groupSize = 30;
 
-  DramaDownloader get _downloader => widget.downloader ?? DramaDownloader.instance;
-  DramaDownloadStore get _store => widget.store ?? HiveDramaDownloadStore.instance;
+  DramaDownloader get _downloader =>
+      widget.downloader ?? DramaDownloader.instance;
+  DramaDownloadStore get _store =>
+      widget.store ?? HiveDramaDownloadStore.instance;
 
   final Set<String> _downloaded = {};
   final Set<String> _selected = {};
@@ -148,10 +150,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
 
   List<Chapter> get _groupEpisodes {
     final start = _group * _groupSize;
-    return widget.episodes
-        .skip(start)
-        .take(_groupSize)
-        .toList(growable: false);
+    return widget.episodes.skip(start).take(_groupSize).toList(growable: false);
   }
 
   int get _groupCount =>
@@ -169,8 +168,8 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
         .map((itemId) => widget.episodes.firstWhere((e) => e.itemId == itemId))
         .toList(growable: false);
     if (selected.isEmpty) return;
-    final connectivity = await (widget.connectivityProbe?.call() ??
-        currentConnectivity());
+    final connectivity =
+        await (widget.connectivityProbe?.call() ?? currentConnectivity());
     if (connectivity.metered && mounted) {
       final proceed = await showDialog<bool>(
         context: context,
@@ -278,10 +277,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
                 groupCount: _groupCount,
                 group: _group,
                 total: widget.episodes.length,
-                rangeOf: (index) => (
-                  index * _groupSize + 1,
-                  _groupEnd(index),
-                ),
+                rangeOf: (index) => (index * _groupSize + 1, _groupEnd(index)),
                 onSelected: _selectGroup,
               ),
             _aheadBar(),
@@ -387,9 +383,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
               padding: const EdgeInsets.only(right: 8),
               child: ActionChip(
                 key: ValueKey('download-ahead-$count'),
-                label: Text(
-                  count == remaining ? '剩余 $count 集' : '往后 $count 集',
-                ),
+                label: Text(count == remaining ? '剩余 $count 集' : '往后 $count 集'),
                 onPressed: () => unawaited(_cacheAhead(count)),
               ),
             ),
@@ -426,19 +420,32 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
           ]
         : [
             (height: 0, label: '最高'),
-            for (final entry in (actual.entries.toList()
-              ..sort((a, b) => b.key.compareTo(a.key))))
+            for (final entry
+                in (actual.entries.toList()
+                  ..sort((a, b) => b.key.compareTo(a.key))))
               (height: entry.key, label: entry.value),
           ];
+    // 选中态按「下载器实际会取的那一档」算：存的上限可能不在这部剧的档位
+    // 里（上一部选了 720，这部剧只有 1080/360），只按相等比就会一个都不
+    // 高亮。规则同 DramaDownloader.pickVariant：不超过上限的最高一档，
+    // 没有更低的就用最低的一档。
+    final offered = [
+      for (final option in options)
+        if (option.height > 0) option.height,
+    ];
+    var effective = current;
+    if (current != 0 && offered.isNotEmpty && !offered.contains(current)) {
+      final fits = offered.where((height) => height < current);
+      effective = fits.isEmpty
+          ? offered.reduce((a, b) => a < b ? a : b)
+          : fits.reduce((a, b) => a > b ? a : b);
+    }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Row(
         children: [
-          Text(
-            '画质',
-            style: TextStyle(fontSize: 13, color: palette.muted),
-          ),
+          Text('画质', style: TextStyle(fontSize: 13, color: palette.muted)),
           const SizedBox(width: 10),
           for (final option in options)
             Padding(
@@ -446,7 +453,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
               child: ChoiceChip(
                 key: ValueKey('download-quality-${option.height}'),
                 label: Text(option.label),
-                selected: current == option.height,
+                selected: effective == option.height,
                 onSelected: (_) async {
                   await prefs.setDownloadHeight(option.height);
                   if (mounted) setState(() {});
@@ -531,7 +538,9 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
   Widget _episodeCell(Chapter episode, HomePalette palette, int number) {
     final itemId = episode.itemId;
     // 未选中的格子：浅色是 6% 黑，深色 / OLED 换成字段色。
-    final idleBackground = palette.dark ? palette.soft : const Color(0x0F000000);
+    final idleBackground = palette.dark
+        ? palette.soft
+        : const Color(0x0F000000);
     if (_downloaded.contains(itemId)) {
       return _cellContainer(
         key: ValueKey('download-cell-$itemId'),
@@ -621,8 +630,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
               style: TextStyle(fontSize: 13, color: foreground),
             ),
           ),
-          if (trailing != null)
-            Icon(trailing, size: 14, color: foreground),
+          if (trailing != null) Icon(trailing, size: 14, color: foreground),
         ],
       ),
     ),
