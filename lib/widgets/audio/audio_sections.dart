@@ -69,35 +69,8 @@ class AudioTopBar extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 官方那个橙色星标圆钮（截图 2.jpg 顶部右二）。点它是「音色
-                // 精选」，这里与更多菜单共用同一入口，避免多一个死按钮。
-                Padding(
-                  padding: const EdgeInsets.only(right: 2),
-                  child: HomePressable(
-                    key: const Key('audio_top_star'),
-                    semanticLabel: '精选音色',
-                    onTap: onMore,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      alignment: Alignment.center,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFFFFC14D), Color(0xFFFA6725)],
-                        ),
-                      ),
-                      child: const Icon(
-                        LucideIcons.sparkles,
-                        size: 15,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
+                // 官方顶部右二那颗橙色星标圆钮是**广告位**，不是功能入口。
+                // 复刻广告没有意义，这里直接不复刻（并非画不出来）。
                 IconButton(
                   tooltip: '更多',
                   onPressed: onMore,
@@ -1186,11 +1159,7 @@ class _AudioSectionCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  Icon(
-                    LucideIcons.chevron_right,
-                    size: 13,
-                    color: theme.muted,
-                  ),
+                  Icon(LucideIcons.chevron_right, size: 13, color: theme.muted),
                 ],
               ),
             ),
@@ -1590,10 +1559,7 @@ class _AudioIntroCardState extends State<AudioIntroCard> {
                           ),
                           Text(
                             related.label,
-                            style: TextStyle(
-                              color: theme.muted,
-                              fontSize: 11,
-                            ),
+                            style: TextStyle(color: theme.muted, fontSize: 11),
                           ),
                         ],
                       ),
@@ -1616,59 +1582,59 @@ class _AudioIntroCardState extends State<AudioIntroCard> {
   /// 简介卡的头部：缩略图 + 书名 + 作者 + 元信息。
   Widget _header(AudioPageTheme theme) {
     return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: SizedBox(
-                    width: 36,
-                    height: 54,
-                    child: _CoverImage(
-                      url: widget.cover,
-                      placeholder: theme.card,
-                      iconColor: theme.muted,
-                    ),
-                  ),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: SizedBox(
+            width: 36,
+            height: 54,
+            child: _CoverImage(
+              url: widget.cover,
+              placeholder: theme.card,
+              iconColor: theme.muted,
+            ),
+          ),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.title,
+                key: const Key('audio_intro_title'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: theme.ink,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
                 ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.title,
-                        key: const Key('audio_intro_title'),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: theme.ink,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          height: 1.3,
-                        ),
-                      ),
-                      if (widget.author.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          widget.author,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: theme.muted, fontSize: 12),
-                        ),
-                      ],
-                      if (widget.meta.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          widget.meta.join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: theme.muted, fontSize: 11),
-                        ),
-                      ],
-                    ],
-                  ),
+              ),
+              if (widget.author.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(
+                  widget.author,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: theme.muted, fontSize: 12),
                 ),
               ],
-            );
+              if (widget.meta.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(
+                  widget.meta.join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: theme.muted, fontSize: 11),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
