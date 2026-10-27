@@ -136,6 +136,9 @@ class MemoryDramaDownloadStore implements DramaDownloadStore {
   final Map<String, CachedDrama> _dramas = {};
 
   @override
+  bool get isReady => true;
+
+  @override
   final ValueNotifier<int> changes = ValueNotifier(0);
 
   void touch() => changes.value++;

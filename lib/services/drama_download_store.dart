@@ -30,6 +30,7 @@ class CachedEpisode {
     required this.bytes,
     required this.filePath,
     required this.cachedAt,
+    this.auto = false,
   });
 
   final String seriesId;
@@ -48,6 +49,12 @@ class CachedEpisode {
   final String filePath;
   final int cachedAt;
 
+  /// 这一集是「边看边往后缓存」自动排进来的，不是用户在缓存面板里选的。
+  ///
+  /// 只用来决定能不能删：自动缓存的旧集跟着播放进度滚动清理，用户手动下
+  /// 的一律不动。
+  final bool auto;
+
   /// Episode record as persisted. Deliberately key-less (P1-4): the content
   /// key travels separately under `key:<itemId>` in the same encrypted box.
   Map<String, dynamic> toMap() => {
@@ -60,6 +67,7 @@ class CachedEpisode {
     'bytes': bytes,
     'filePath': filePath,
     'cachedAt': cachedAt,
+    if (auto) 'auto': true,
   };
 
   /// Reassembles an episode from its record plus the separately stored key.
@@ -88,6 +96,7 @@ class CachedEpisode {
       bytes: raw['bytes'] is num ? (raw['bytes'] as num).toInt() : 0,
       filePath: filePath,
       cachedAt: raw['cachedAt'] is num ? (raw['cachedAt'] as num).toInt() : 0,
+      auto: raw['auto'] == true,
     );
   }
 
@@ -188,6 +197,10 @@ abstract interface class DramaDownloadStore {
   Future<void> removeEpisode(String itemId);
   Future<void> removeDrama(String seriesId);
 
+  /// 存储是否可用。Hive 未初始化（测试宿主、早期启动）时为 false，
+  /// 调用方据此跳过读写，别去碰没打开的 box。
+  bool get isReady;
+
   /// 视频文件目录（不存在则创建）。
   Future<Directory> directory();
 
@@ -221,6 +234,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   /// box 是否已打开。播放器的离线命中读路径用它做前置门：Hive 未初始化
   /// 时触碰 openBox 会产生无法被 try/catch 完全拦住的异步错误（openBox
   /// 内部 completer 的孪生错误），生产环境由 main 的 [warmUp] 打开。
+  @override
   bool get isReady => EncryptedHive.isBoxOpen(_hive, _boxName);
 
   /// 启动时打开 box；失败不拖启动（离线命中退化为每次都走在线）。

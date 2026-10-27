@@ -22,6 +22,8 @@ class DramaDownloadTask {
     this.received = 0,
     this.total,
     this.error,
+    this.auto = false,
+    this.maxHeight,
   });
 
   final String seriesId;
@@ -32,6 +34,15 @@ class DramaDownloadTask {
   final int received;
   final int? total;
   final String? error;
+
+  /// 「边看边往后缓存」自动排的任务（见 [CachedEpisode.auto]）。
+  final bool auto;
+
+  /// 下载画质上限（1080 / 720 / 480）；null = 取最高档。
+  ///
+  /// 每集实际可选档位由取流接口决定，所以这里存的是「我最多接受多高」，
+  /// 由 [DramaDownloader.pickVariant] 在可选集合里挑最接近的一档。
+  final int? maxHeight;
 
   double? get progress => total == null || total! <= 0
       ? null
@@ -53,6 +64,8 @@ class DramaDownloadTask {
     received: received ?? this.received,
     total: clearTotal ? null : (total ?? this.total),
     error: clearError ? null : (error ?? this.error),
+    auto: auto,
+    maxHeight: maxHeight,
   );
 }
 
@@ -85,6 +98,10 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
 
   static final DramaDownloader instance = DramaDownloader();
 
+  /// 单个任务最多试几次（首次 + 自动重试）。CDN 偶发 5xx / 断流很常见，
+  /// 试三次基本能过；再多就只是在拖队列。
+  static const int _maxAttempts = 3;
+
   final DramaDownloadStore _store;
   final Future<EpisodeSource> Function(Chapter episode) _resolve;
   final HttpClient Function() _clientFactory;
@@ -107,6 +124,8 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
   Future<void> enqueue({
     required CachedDrama drama,
     required List<Chapter> episodes,
+    bool auto = false,
+    int? maxHeight,
   }) async {
     if (episodes.isEmpty) return;
     for (final episode in episodes) {
@@ -119,6 +138,13 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       }
     }
     await _store.ensureCatalogue(drama);
+    // 集记录里的 index 必须是「在本剧里的第几集」，不是这次传入列表里的
+    // 相对序号 —— 从第 13 集往后缓存 5 集时，序号仍应是 13..17。用相对
+    // 序号会让缓存管理页把它们显示成「第 1 集 · 第13集」。
+    final positions = <String, int>{
+      for (final (position, episode) in drama.episodes.indexed)
+        episode.itemId: position,
+    };
     var changed = false;
     for (final (index, episode) in episodes.indexed) {
       if (_tasks.containsKey(episode.itemId)) continue;
@@ -128,8 +154,10 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
           seriesId: drama.id,
           itemId: episode.itemId,
           title: episode.title,
-          index: index,
+          index: positions[episode.itemId] ?? index,
           status: DramaDownloadStatus.waiting,
+          auto: auto,
+          maxHeight: maxHeight,
         ),
       );
       changed = true;
@@ -311,6 +339,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
   Future<void> _run(_MutableTask task) async {
     final generation = task.generation;
     var refreshed = false;
+    var attempt = 0;
     while (true) {
       final reason = await _runOnce(task);
       if (reason == null || task.abortReason != null) break;
@@ -319,6 +348,18 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
         refreshed = true;
         continue;
       }
+      // 其余失败自动再试：断流、5xx、续传范围对不上这类都可以靠重跑
+      // （每次重跑都会重新 resolve、带 Range 续传）自己好。
+      attempt++;
+      if (attempt < _maxAttempts && _isRetryable(reason)) {
+        await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
+        if (task.abortReason != null) break;
+        continue;
+      }
+      // 落到这里才算真失败：把原因记在任务上并写进应用日志，否则用户只
+      // 看到「失败」两个字，排查时无从下手。
+      debugPrint('[drama-download] ${task.snapshot.title} 失败：$reason');
+      task.snapshot = task.snapshot.copyWith(error: reason);
       break;
     }
     _active.remove(task.snapshot.itemId);
@@ -369,7 +410,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       );
       final source = await _resolve(episode);
       if (task.abortReason != null) return null;
-      final variant = _pickVariant(source);
+      final variant = pickVariant(source, maxHeight: task.snapshot.maxHeight);
       if (variant == null) return '该集没有可下载的播放地址';
 
       client = _clientFactory();
@@ -381,6 +422,16 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       // （每次 _runOnce 都会重新 resolve，天然拿到新链）。
       if (response.statusCode == 403 || response.statusCode == 410) {
         return 'stale-url';
+      }
+      if (response.statusCode == 416 && received > 0) {
+        // 续传起点已经超出服务器认定的长度。常见成因：重取地址后拿到的是
+        // 另一条流（码率/切片不同，总长更短），或者半成品其实已经收全、只
+        // 是上次没来得及改名。这两种情况下旧的 `.part` 字节都不可信，
+        // 丢掉从头拉一遍才是对的 —— 当硬失败会让这一集永远卡在 416。
+        try {
+          await partFile.delete();
+        } catch (_) {}
+        return 'restart-from-zero';
       }
       var expectedTotal = -1;
       if (response.statusCode == 206) {
@@ -459,6 +510,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
           bytes: received,
           filePath: finalPath,
           cachedAt: DateTime.now().millisecondsSinceEpoch,
+          auto: task.snapshot.auto,
         ),
       );
       task.snapshot = task.snapshot.copyWith(
@@ -476,8 +528,22 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     }
   }
 
+  /// 这个失败原因值不值得再试一次。
+  ///
+  /// 剧集 ID 不合法是永久错误（身份写错了，重试一万次也一样）；其余
+  /// 都是网络侧的偶发问题。
+  static bool _isRetryable(String reason) =>
+      reason != '无效的剧集 ID' && reason != '该集没有可下载的播放地址';
+
   /// 与官方一致的画质策略：固定取最高档；上游只有单流时用主地址。
-  static EpisodeVariant? _pickVariant(EpisodeSource source) {
+  /// 在一集的可选档位里挑一档下载。
+  ///
+  /// [maxHeight] 为 null 时取最高档（原来的行为）。给了上限就取「不超过
+  /// 上限的最高一档」——省流量的人要的是 720P，给他 480P 是错的；如果这集
+  /// 最小的一档也比上限高（比如只有 1080P），那就用最小的一档，总不能
+  /// 因为挑不到就失败。
+  @visibleForTesting
+  static EpisodeVariant? pickVariant(EpisodeSource source, {int? maxHeight}) {
     if (source.variants.isEmpty) {
       if (source.url.isEmpty) return null;
       return EpisodeVariant(
@@ -487,9 +553,18 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
         height: 0,
       );
     }
-    return source.variants.reduce(
-      (a, b) => a.height >= b.height ? a : b,
-    );
+    if (maxHeight == null) {
+      return source.variants.reduce((a, b) => a.height >= b.height ? a : b);
+    }
+    // height <= 0 表示上游没给高度，只能当作最差候选。
+    final known = source.variants.where((v) => v.height > 0).toList();
+    if (known.isEmpty) {
+      return source.variants.reduce((a, b) => a.height >= b.height ? a : b);
+    }
+    final fits = known.where((v) => v.height <= maxHeight).toList()
+      ..sort((a, b) => b.height.compareTo(a.height));
+    if (fits.isNotEmpty) return fits.first;
+    return known.reduce((a, b) => a.height <= b.height ? a : b);
   }
 
   static _ContentRange? _parseContentRange(String? value) {

@@ -20,7 +20,10 @@ import '../services/watched_episodes.dart';
 import 'listen_mode_page.dart';
 import '../services/episode_source_cache.dart';
 import '../services/fair_memory.dart';
+import '../services/drama_cache_preferences.dart';
 import '../services/drama_download_store.dart';
+import '../services/drama_downloader.dart';
+import '../services/connectivity_status.dart';
 import 'drama_download_sheet.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
@@ -79,6 +82,11 @@ class PlayerPage extends StatefulWidget {
   /// 靠这个参数在进页时置全屏态。
   final bool openFullScreen;
 
+  /// 离线下载引擎与缓存的注入缝（测试用）。缺省用全局单例 —— 生产环境
+  /// 下载队列就是进程级的一个，测试里换成假实现才不碰 Hive 与真网。
+  final DramaDownloader? downloader;
+  final DramaDownloadStore? store;
+
   const PlayerPage({
     super.key,
     required this.bookId,
@@ -97,6 +105,8 @@ class PlayerPage extends StatefulWidget {
     this.shortSeries = false,
     this.aiGenerated = false,
     this.openFullScreen = false,
+    this.downloader,
+    this.store,
   });
 
   @override
@@ -132,10 +142,25 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   final List<StreamSubscription<dynamic>> _subs = [];
   Future<void> _releases = Future<void>.value();
   late final EpisodeSourceCache _sources;
+
+  DramaDownloadStore get _downloadStore =>
+      widget.store ?? HiveDramaDownloadStore.instance;
+
+  DramaDownloader get _downloader =>
+      widget.downloader ?? DramaDownloader.instance;
   late final PlayerLoadDiagnostics _diagnostics;
   PlayerLoadTrace? _loadTrace;
   Timer? _prefetchTimer;
   int? _prefetchQueuedGeneration;
+
+  /// 边看边往后缓存（见 [_scheduleAutoCache]）。
+  Timer? _autoCacheTimer;
+
+  /// 已经为哪一集排过自动缓存，避免同一集反复入队。
+  int? _autoCacheFor;
+
+  /// 待触发的调度是为哪一集排的（同一集反复出首帧不推迟截止时间）。
+  int? _autoCacheTimerIndex;
   int? _prefetchAttemptedGeneration;
 
   /// 「左右滑动可调整进度」首次引导（每台设备一次，`of3/a`）。
@@ -747,6 +772,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     NativePlayer.clearRemoteCommandHandler();
     _progressTimer?.cancel();
     _prefetchTimer?.cancel();
+    _autoCacheTimer?.cancel();
     _danmakuProgressTimer?.cancel();
     _danmakuFlight?.cancel();
     _danmakuLoader.dispose();
@@ -1024,6 +1050,115 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     });
   }
 
+  /// 边看边往后缓存：这一集出画面后，把后面几集排进离线下载队列，
+  /// 断网 / 信号差的时候也能接着看。
+  ///
+  /// 与小说阅读时预取前后各一章同构，区别是短剧一集几十 MB，所以默认
+  /// 限 Wi-Fi、限 5 集，并且只保留最近的一段（见 [_trimAutoCache]）。
+  /// 用户手动下载的一律不碰：那批记录的 `auto` 是 false。
+  void _scheduleAutoCache(NativePlayer player) {
+    if (!widget.shortSeries || widget.bookId.isEmpty) return;
+    if (_autoCacheFor == _index) return;
+    // 同一集的首帧会来好几次（起播、换流、重试），别每次都把 2 秒推后。
+    if (_autoCacheTimer != null && _autoCacheTimerIndex == _index) return;
+    _autoCacheTimer?.cancel();
+    _autoCacheTimerIndex = _index;
+    _autoCacheTimer = Timer(const Duration(seconds: 2), () {
+      _autoCacheTimer = null;
+      _autoCacheTimerIndex = null;
+      // 判活用播放器实例而不是 generation：换流重试会让 generation 递增，
+      // 拿旧的 generation 判会把这一集的预缓存白白放弃掉。
+      if (!mounted || !identical(player, _player)) return;
+      if (_autoCacheFor == _index) return;
+      _autoCacheFor = _index;
+      unawaited(_autoCacheNext());
+    });
+  }
+
+  /// 当前实际在播的清晰度（像素高度），取不到返回 null。
+  ///
+  /// `_currentSource.url` 指向的就是正在播的那一档，和 `variants` 里的
+  /// 条目按 url 对回去即可；单流（没有 variants）时无从得知，返回 null。
+  int? _playingHeight() {
+    final source = _currentSource;
+    if (source == null) return null;
+    for (final variant in source.variants) {
+      if (variant.url != source.url) continue;
+      return variant.height > 0 ? variant.height : null;
+    }
+    return null;
+  }
+
+  Future<void> _autoCacheNext() async {
+    final prefs = DramaCachePreferences.instance;
+    final ahead = prefs.ahead.value;
+    if (ahead <= 0) return;
+    final upcoming = autoCacheEpisodes(
+      episodes: widget.eps,
+      currentIndex: _index,
+      ahead: ahead,
+    );
+    if (upcoming.isEmpty) return;
+    // store 未就绪（Hive 未初始化的测试环境）直接跳过，别碰 openBox。
+    if (!_downloadStore.isReady) return;
+    if (prefs.wifiOnly.value) {
+      final view = await currentConnectivity();
+      if (!view.online || view.metered) return;
+    }
+    if (!mounted) return;
+    try {
+      await _downloader.enqueue(
+        drama: CachedDrama(
+          id: widget.bookId,
+          title: _seriesTitle,
+          cover: widget.cover,
+          episodes: widget.eps,
+        ),
+        episodes: upcoming,
+        auto: true,
+        // 用户在面板里挑过画质就守那个上限；没挑过就跟**当前正在播的这一档**
+        // 保持一致 —— 播放器已经按网速/清晰度选过一次了，自动缓存再自作
+        // 主张挑最高档，只会让流量和空间白涨。
+        maxHeight: prefs.downloadHeight.value != 0
+            ? prefs.downloadHeight.value
+            : _playingHeight(),
+      );
+      await _trimAutoCache(ahead);
+    } catch (_) {
+      // 预缓存是机会性的：失败（权限、空间、解析不到地址）不能影响播放，
+      // 也不打扰用户 —— 用户手动缓存时才会看到具体错误。
+    }
+  }
+
+  /// 跟着播放进度丢掉自动缓存的旧集，只留「当前集之前 2×ahead」以后的。
+  ///
+  /// 只删 `auto == true` 的记录 —— 用户在缓存面板里手动下的集永远不动。
+  Future<void> _trimAutoCache(int ahead) async {
+    final cutoff = _index - ahead * 2;
+    if (cutoff <= 0) return;
+    final store = _downloadStore;
+    try {
+      final summaries = await store.dramas();
+      for (final summary in summaries) {
+        if (summary.drama.id != widget.bookId) continue;
+        // 集记录里的 index 是「入队时的相对序号」，不能当全集位置用；
+        // 目录 `drama.episodes` 的顺序才是权威的。
+        final order = {
+          for (final (position, episode) in summary.drama.episodes.indexed)
+            episode.itemId: position,
+        };
+        for (final episode in summary.episodes) {
+          if (!episode.auto) continue;
+          final position = order[episode.itemId];
+          if (position == null || position >= cutoff) continue;
+          await store.removeEpisode(episode.itemId);
+        }
+      }
+    } catch (_) {
+      // 清理失败只影响磁盘占用，不影响播放与已缓存内容的可用性。
+    }
+  }
+
   void _onFirstFrame(NativePlayer player, int generation) {
     if (!_current(generation, player) || !player.firstFrameRendered) return;
     _loadTrace?.firstFrame();
@@ -1044,6 +1179,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
     }
     _updatePrefetch();
+    _scheduleAutoCache(player);
   }
 
   Future<void> _teardownPlayer() {
@@ -1683,6 +1819,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       title: _seriesTitle,
       cover: widget.cover,
       episodes: widget.eps,
+      currentIndex: _index,
+      // 画质只列这部剧真实给到的档位，避免"选了 720 实际只有 360"。
+      qualities: _currentSource?.variants ?? const [],
     );
   }
 
@@ -1691,7 +1830,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   ///
   /// store 未就绪（Hive 未初始化的测试环境）直接跳过，不触碰 openBox。
   Future<EpisodeSource?> _offlineSource(Chapter episode) async {
-    final store = HiveDramaDownloadStore.instance;
+    final store = _downloadStore;
     if (!store.isReady) return null;
     try {
       final cached = await store.episode(episode.itemId);

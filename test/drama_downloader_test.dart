@@ -18,6 +18,14 @@ class _FakeCdn {
 
   final List<int> content;
   final List<String> receivedRanges = [];
+
+  /// 非空时，这个路径只提供前 [_shortLength] 字节 —— 模拟「重取地址后拿到
+  /// 另一条更短的流」，用来触发续传越界（HTTP 416）。
+  int? _shortLength;
+
+  set shortLength(int? value) => _shortLength = value;
+
+  int get _total => _shortLength ?? content.length;
   late final HttpServer server;
 
   String get url => 'http://127.0.0.1:${server.port}/video.mp4';
@@ -45,7 +53,7 @@ class _FakeCdn {
         }
       }
       receivedRanges.add(isRange ? '$start-' : 'full');
-      if (start >= content.length) {
+      if (start >= _total) {
         request.response.statusCode = 416;
         await request.response.close();
         return;
@@ -54,13 +62,13 @@ class _FakeCdn {
         request.response.statusCode = 206;
         request.response.headers.set(
           'content-range',
-          'bytes $start-${content.length - 1}/${content.length}',
+          'bytes $start-${_total - 1}/$_total',
         );
       } else {
         request.response.statusCode = 200;
       }
       final slice = Uint8List.sublistView(
-        Uint8List.fromList(content),
+        Uint8List.fromList(content.sublist(0, _total)),
         start,
       );
       request.response.contentLength = slice.length;
@@ -359,6 +367,79 @@ void main() {
     final record = await store.episode('ep0');
     expect(record, isNotNull);
     expect(File(record!.filePath).existsSync(), isTrue);
+  });
+
+  test('画质上限：挑不超过上限的最高一档，没有更低的就用最低', () {
+    final source = EpisodeSource('https://example.invalid/a.mp4', '', [
+      const EpisodeVariant(name: '1080P', url: 'u1080', keyHex: '', height: 1080),
+      const EpisodeVariant(name: '720P', url: 'u720', keyHex: '', height: 720),
+      const EpisodeVariant(name: '480P', url: 'u480', keyHex: '', height: 480),
+    ]);
+
+    // 不设上限 = 最高档（原来的行为）。
+    expect(DramaDownloader.pickVariant(source)?.name, '1080P');
+    // 720 上限：给 720，而不是 480。
+    expect(DramaDownloader.pickVariant(source, maxHeight: 720)?.name, '720P');
+    // 上限比最小档还低：退回最小档，不能因为挑不到就失败。
+    expect(DramaDownloader.pickVariant(source, maxHeight: 360)?.name, '480P');
+    // 上限高于所有档位：取最高。
+    expect(DramaDownloader.pickVariant(source, maxHeight: 2160)?.name, '1080P');
+
+    // 上游只给单流（没有 variants）时，任何上限都用主地址。
+    final flat = EpisodeSource('https://example.invalid/b.mp4');
+    expect(DramaDownloader.pickVariant(flat, maxHeight: 480)?.url,
+        'https://example.invalid/b.mp4');
+  });
+
+  test('续传越界（HTTP 416）丢掉半成品重下，不会卡在失败', () async {
+    // 半成品 500 字节，但重取地址后这条流只有 100 字节：Range 起点越界。
+    final part = File('${videoDir.path}${Platform.pathSeparator}ep0.mp4.part')
+      ..writeAsBytesSync(List.filled(500, 7));
+    cdn.shortLength = 100;
+
+    final downloader = buildDownloader(
+      resolve: (episode) async => EpisodeSource(cdn.url, 'abcd', const []),
+    );
+    await downloader.enqueue(drama: drama(1), episodes: drama(1).episodes);
+    await settle(downloader);
+
+    final task = downloader.value.single;
+    expect(task.status, DramaDownloadStatus.completed, reason: '${task.error}');
+    expect(part.existsSync(), isFalse, reason: '越界的半成品要被丢掉');
+    final saved = File(
+      '${videoDir.path}${Platform.pathSeparator}ep0.mp4',
+    );
+    expect(saved.lengthSync(), 100);
+  });
+
+  test('取流偶发失败会自动重试，最终完成', () async {
+    var calls = 0;
+    final downloader = buildDownloader(
+      resolve: (episode) async {
+        calls++;
+        // 前两次抛网络错（CDN 抽风），第三次给正常地址。
+        if (calls <= 2) throw const SocketException('连接被重置');
+        return EpisodeSource(cdn.url, 'abcd', const []);
+      },
+    );
+    await downloader.enqueue(drama: drama(1), episodes: drama(1).episodes);
+    await settle(downloader);
+
+    expect(calls, 3, reason: '失败两次后第三次应成功');
+    expect(downloader.value.single.status, DramaDownloadStatus.completed);
+    expect(downloader.value.single.error, isNull);
+  });
+
+  test('重试用尽后标失败并把原因留在任务上', () async {
+    final downloader = buildDownloader(
+      resolve: (episode) async => throw const SocketException('连接被重置'),
+    );
+    await downloader.enqueue(drama: drama(1), episodes: drama(1).episodes);
+    await settle(downloader);
+
+    final task = downloader.value.single;
+    expect(task.status, DramaDownloadStatus.failed);
+    expect(task.error, contains('SocketException'));
   });
 
   test('删除整剧同样清掉该剧的 completed 任务', () async {
