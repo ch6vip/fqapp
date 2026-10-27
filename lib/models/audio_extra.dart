@@ -189,6 +189,17 @@ class SubtitleTrack {
 
   final List<SubtitleCue> cues;
 
+  /// 第 [index] 句朗读结束的时刻（毫秒）。
+  ///
+  /// 字幕只存每句的起点，结束时间就是下一句的开始时间——听书是连续朗读，
+  /// 两句之间没有留白。最后一句没有后继，按 [fallbackMs] 估一个，
+  /// 免得「等这句读完」的判据永远不成立。
+  int endMsAt(int index, {int fallbackMs = 6000}) {
+    if (index < 0 || index >= cues.length) return -1;
+    if (index + 1 < cues.length) return cues[index + 1].startMs;
+    return cues[index].startMs + fallbackMs;
+  }
+
   bool get isEmpty => cues.isEmpty;
   bool get isNotEmpty => cues.isNotEmpty;
 

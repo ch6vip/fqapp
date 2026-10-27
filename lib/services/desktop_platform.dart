@@ -33,6 +33,22 @@ bool playbackAppIsActive(AppLifecycleState? state) =>
     state == AppLifecycleState.resumed ||
     (isWindowsDesktop && state == AppLifecycleState.inactive);
 
+/// 桌面窗口只是失焦时，是否仍算「在前台」。
+///
+/// Flutter 3.13 起桌面端有真正的生命周期：窗口失去焦点报 `inactive`，
+/// 最小化报 `hidden` / `paused`。**失焦不是退到后台** —— 窗口还在、渲染还在
+/// 跑；把它当后台会让听书跟随停止翻页（鼠标点一下别的窗口，页面就不跟了）。
+///
+/// 与 [playbackAppIsActive] 是同一件事的两处用法：那个管视频前台播放，这个
+/// 管阅读页的跟随与高亮。平台范围比它宽一点，三个桌面平台都成立。
+bool desktopInactiveStillVisible(AppLifecycleState state) =>
+    state == AppLifecycleState.resumed ||
+    ((!kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.windows ||
+                defaultTargetPlatform == TargetPlatform.macOS ||
+                defaultTargetPlatform == TargetPlatform.linux)) &&
+        state == AppLifecycleState.inactive);
+
 class DesktopPlatform with WindowListener {
   DesktopPlatform._();
   static final instance = DesktopPlatform._();

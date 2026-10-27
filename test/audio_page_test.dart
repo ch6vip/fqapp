@@ -467,9 +467,11 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('audio-speed')));
     await tester.tap(find.byKey(const ValueKey('audio-speed')));
     await tester.pumpAndSettle();
-    final speed = find.text('1.5×');
-    await tester.ensureVisible(speed);
-    await tester.tap(speed);
+    // 语速面板是可拖的滑条（0.1 一档），没有固定档位按钮可点：直接把 1.5
+    // 交给 onChanged，等价于把滑块拖到 1.5。
+    tester
+        .widget<Slider>(find.byKey(const ValueKey('audio-speed-slider')))
+        .onChanged!(1.5);
     await _flush(tester);
     await tester.pumpAndSettle();
     expect(session.players.single.rate, 1.5);
@@ -620,9 +622,13 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('audio-speed')));
       await tester.tap(find.byKey(const ValueKey('audio-speed')));
       await tester.pumpAndSettle();
-      final speed = find.text('1.5×');
-      await tester.ensureVisible(speed);
-      await tester.tap(speed);
+      tester
+          .widget<Slider>(find.byKey(const ValueKey('audio-speed-slider')))
+          .onChanged!(1.5);
+      await tester.pumpAndSettle();
+      // 新面板是即时生效的滑条，选完不会自动关；先关掉再点「下一章」，
+      // 否则点击会落在面板的遮罩上。
+      await tester.tapAt(const Offset(20, 20));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byTooltip('下一章'));
       await tester.tap(find.byTooltip('下一章'));

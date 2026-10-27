@@ -3,7 +3,7 @@
     "lib/main.dart": 756,
     "lib/models/media_item.dart": 1489,
     "lib/pages/api_service_page.dart": 601,
-    "lib/pages/audio_page.dart": 1935,
+    "lib/pages/audio_page.dart": 1995,
     "lib/pages/category_page.dart": 604,
     "lib/pages/comic_reader_page.dart": 955,
     "lib/pages/detail_page.dart": 1663,
@@ -16,7 +16,7 @@
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1965,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 3692,
+    "lib/pages/reader_page.dart": 4089,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
@@ -24,9 +24,9 @@
     "lib/services/api_client.dart": 1797,
     "lib/services/app_log.dart": 617,
     "lib/services/audio_downloader.dart": 568,
-    "lib/services/audio_playback_controller.dart": 1348,
+    "lib/services/audio_playback_controller.dart": 1373,
     "lib/services/chapter_text_formatter.dart": 690,
-    "lib/services/desktop_platform.dart": 697,
+    "lib/services/desktop_platform.dart": 713,
     "lib/services/drama_download_store.dart": 503,
     "lib/services/drama_downloader.dart": 656,
     "lib/services/imported_book_store.dart": 1098,
@@ -34,6 +34,7 @@
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 746,
     "lib/services/system_tts.dart": 650,
+    "lib/widgets/audio/audio_playback_scope.dart": 524,
     "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
@@ -47,7 +48,7 @@
     "lib/widgets/reader/reader_appearance_sheet.dart": 1153,
     "lib/widgets/reader/reader_chapter_layout.dart": 1194,
     "lib/widgets/reader/reader_ideas_sheet.dart": 691,
-    "lib/widgets/reader/reader_paged_view.dart": 1010,
+    "lib/widgets/reader/reader_paged_view.dart": 1045,
     "lib/widgets/reader/reader_text_selection.dart": 591,
     "lib/widgets/video_player_chrome.dart": 4832,
     "native/android/jni_bridge.c": 538,
@@ -60,9 +61,9 @@
     "rust/src/endpoints/book.rs": 597,
     "rust/src/endpoints/comments.rs": 957,
     "rust/src/endpoints/manga.rs": 3162,
-    "rust/src/endpoints/router.rs": 554,
+    "rust/src/endpoints/router.rs": 557,
     "rust/src/endpoints/video.rs": 3231,
-    "test/audio_page_test.dart": 994,
+    "test/audio_page_test.dart": 1000,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 750,
     "test/desktop_semantics_update_test.dart": 844,
@@ -115,12 +116,12 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/audio_page.dart::_AudioCommentsSheetState.build": {
-      "line": 1629,
+      "line": 1689,
       "lines": 131,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/audio_page.dart::_AudioPageState.build": {
-      "line": 368,
+      "line": 433,
       "lines": 224,
       "symbol": "Widget build(BuildContext context) {"
     },
@@ -210,7 +211,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 3570,
+      "line": 3967,
       "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
@@ -465,7 +466,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/reader/reader_paged_view.dart::ReaderPageContent.build": {
-      "line": 901,
+      "line": 936,
       "lines": 108,
       "symbol": "Widget build(BuildContext context) {"
     },

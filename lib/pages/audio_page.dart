@@ -229,25 +229,90 @@ class _AudioPageState extends State<AudioPage> {
   }
 
   Future<void> _showRates() async {
-    final rate = await showModalBottomSheet<double>(
+    final palette = HomePalette.of(context);
+    final minRate = _AudioPlaybackController.minRate;
+    final maxRate = _AudioPlaybackController.maxRate;
+    // Slider 在 divisions 模式下会算出 0.6000000000000001 这种尾数，直接显示
+    // 会变成一串小数，统一按 0.1 取整后再显示与应用。
+    double snap(double value) => (value * 10).roundToDouble() / 10;
+    var draft = snap(c._rate);
+
+    await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('播放速度')),
-            for (final rate in _AudioPlaybackController._rates)
-              ListTile(
-                title: Text('${_rateLabel(rate)}×'),
-                trailing: rate == c._rate ? const Icon(Icons.check) : null,
-                onTap: () => Navigator.pop(context, rate),
+      builder: (sheetContext) => SafeArea(
+        child: StatefulBuilder(
+          builder: (context, setSheetState) {
+            final muted = TextStyle(fontSize: 12, color: palette.muted);
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        '播放速度',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${_rateLabel(draft)}×',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: palette.accentText,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Slider(
+                    key: const ValueKey('audio-speed-slider'),
+                    value: draft,
+                    min: minRate,
+                    max: maxRate,
+                    divisions: ((maxRate - minRate) * 10).round(),
+                    label: '${_rateLabel(draft)}×',
+                    onChanged: (value) {
+                      final next = snap(value);
+                      if (next == draft) return;
+                      setSheetState(() => draft = next);
+                      unawaited(c._setRate(next));
+                    },
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('${_rateLabel(minRate)}×', style: muted),
+                        Text('${_rateLabel(maxRate)}×', style: muted),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Center(
+                    child: TextButton(
+                      onPressed: draft == 1
+                          ? null
+                          : () {
+                              setSheetState(() => draft = 1);
+                              unawaited(c._setRate(1));
+                            },
+                      child: const Text('恢复 1.0×'),
+                    ),
+                  ),
+                ],
               ),
-          ],
+            );
+          },
         ),
       ),
     );
-    if (mounted && rate != null) await c._setRate(rate);
   }
 
   Future<void> _showVoices() async {
