@@ -807,6 +807,9 @@ class _AudioPageState extends State<AudioPage> {
                               // `setScrollingSeekEnable(false)`，drag/fling
                               // 在本版本不可达，所以这里也不启用。
                               fontSize: 16,
+                              // 官方字段 `o` 的默认值就是 3（`getInt` 的返回值
+                              // 被丢弃后硬置 3），只有内联槽会 `setStartLine(1)`。
+                              startLine: 3,
                               currentLineKey: const Key(
                                 'audio_subtitle_current',
                               ),

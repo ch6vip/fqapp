@@ -35,6 +35,7 @@ class AudioSubtitleScroller extends StatefulWidget {
     required this.position,
     required this.viewportHeight,
     this.fontSize = 16,
+    this.startLine = 1,
     this.statusText = '',
     this.currentLineKey = const Key('audio-inline-subtitle-current'),
   });
@@ -46,17 +47,20 @@ class AudioSubtitleScroller extends StatefulWidget {
   /// 官方默认字号 16sp（`bo2.o.l()`，跟随用户字号设置）。
   final double fontSize;
 
+  /// 官方 `setStartLine`：内容起始偏移按「单行高 × (startLine-1)」算。
+  /// 内联槽传 1（base=0），文稿页保持字段默认值 3（base = 2 个单行高）。
+  final int startLine;
+
   /// 无字幕时的状态文案（官方 `setStatusText`）；空串表示不显示。
   final String statusText;
 
   /// 当前行的 key，供调用方按语义区分（内联槽 / 文稿面板）。
   final Key currentLineKey;
 
-  /// 行间距：官方 `x(i) = e + f = 10dp + 10dp`。
-  static const double lineGap = 20;
-
-  /// 官方 `y0.m()`：每行文本块顶部的固定留白。
-  static const double lineTopInset = 10;
+  /// 行间额外留白。官方 `x(i) = m(i) + k(i)`，而 `m`/`k` 来自
+  /// `UIPadding`（`c2.smali` 默认三参全 0），所以**没有额外间距**——
+  /// 行只按文本块高 `p()` 堆叠。
+  static const double lineGap = 0;
 
   /// 官方普通行色 `@color/agw` = `#66ffffff`。
   static const Color contextInk = Color(0x66FFFFFF);
@@ -96,6 +100,7 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
   }
 
   double _offset = 0;
+  double _singleLineHeight = 0;
   List<double> _heights = const [];
   double _width = 0;
   int _shownIndex = -1;
@@ -127,13 +132,19 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
     setState(() => _offset = _scroll.value);
   }
 
-  /// 行顶部在内容坐标系里的位置：`v(i) = Σ_{j<i}(块高 + 20dp)`。
+  /// 行顶部在内容坐标系里的位置：`v(i) = Σ_{j<i}(块高 + x(i))`，`x(i)=0`。
   double _offsetOf(int index) {
     var value = 0.0;
     for (var i = 0; i < index && i < _heights.length; i++) {
       value += _heights[i] + AudioSubtitleScroller.lineGap;
     }
     return value;
+  }
+
+  /// `base = (l + x(0)) * (startLine - 1)`：`l` 是单行高，`x(0)=0`。
+  double get _baseOffset {
+    if (_singleLineHeight <= 0) return 0;
+    return _singleLineHeight * (widget.startLine - 1);
   }
 
   double get _maxOffset =>
@@ -189,6 +200,9 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
   void _remeasureIfNeeded(BuildContext context, double width) {
     if (width == _width && _heights.length == widget.track.cues.length) return;
     _width = width;
+    // 官方 `V()` 用一条 "单行" 探针算出 `l`（单行高），供 base 使用。
+    _singleLineHeight = _heightOf(context, '单行', width, 
+        MediaQuery.textScalerOf(context));
     _heights = _measure(context, width);
     final index = widget.track.indexAt(widget.position);
     _shownIndex = index;
@@ -208,9 +222,7 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
           return Align(
             alignment: Alignment.topLeft,
             child: Padding(
-              padding: const EdgeInsets.only(
-                top: AudioSubtitleScroller.lineTopInset,
-              ),
+              padding: EdgeInsets.zero,
               child: Text(
                 widget.statusText,
                 key: const Key('audio-inline-subtitle-status'),
@@ -224,6 +236,7 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
         }
         _remeasureIfNeeded(context, constraints.maxWidth);
         final index = widget.track.indexAt(widget.position);
+        // `b == -1`（首句开始前）：官方不高亮任何行，`c` 停在 0。
         return ClipRect(
           child: Stack(
             children: [
@@ -232,11 +245,8 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
                 right: 0,
                 top: 0,
                 child: Transform.translate(
-                  // 官方：`y = base(=0) + v(j) + 10dp - c`。
-                  offset: Offset(
-                    0,
-                    AudioSubtitleScroller.lineTopInset - _offset,
-                  ),
+                  // 官方：`y = base + v(j) + m(j) - c`，其中 m(j)=0。
+                  offset: Offset(0, _baseOffset - _offset),
                   child: ExcludeSemantics(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -244,7 +254,7 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
                       children: [
                         for (var i = 0; i < widget.track.cues.length; i++)
                           SizedBox(
-                            // 块高之后再加 20dp 行距（官方 `x(i)`）。
+                            // 官方 `x(i) = m(i) + k(i) = 0`，行只按块高堆叠。
                             height: _heights[i] +
                                 AudioSubtitleScroller.lineGap,
                             width: double.infinity,

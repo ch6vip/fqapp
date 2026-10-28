@@ -32,7 +32,10 @@ void main() {
       final out = SubtitleSynthesis.splitSentences(long);
       expect(out.length, greaterThan(1));
       for (final line in out) {
-        expect(line.length, lessThanOrEqualTo(SubtitleSynthesis.maxSentenceChars + 1));
+        expect(
+          line.length,
+          lessThanOrEqualTo(SubtitleSynthesis.maxSentenceChars + 1),
+        );
       }
     });
 

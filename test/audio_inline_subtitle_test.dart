@@ -28,18 +28,26 @@ void main() {
     return tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: AudioInlineSubtitle(
-            track: cues,
-            position: position,
-            onTap: () {},
-            supported: supported,
+          // 固定成手机宽度：测试默认视口 800 太宽，长句不会换行。
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 393,
+              child: AudioInlineSubtitle(
+                track: cues,
+                position: position,
+                onTap: () {},
+                supported: supported,
+              ),
+            ),
           ),
         ),
       ),
     );
   }
 
-  testWidgets('pins the current line 10dp below the slot top', (tester) async {
+  testWidgets('pins the current line at the very top of the slot',
+      (tester) async {
     await mount(tester, cues: track, position: const Duration(seconds: 4));
     final current = find.byKey(const Key('audio-inline-subtitle-current'));
     expect(tester.widget<Text>(current).data, '第二句');
@@ -47,8 +55,9 @@ void main() {
       find.byKey(const Key('audio_inline_subtitle')),
     );
     final lineTop = tester.getTopLeft(current);
-    // 官方 `y = base(0) + v(j) + 10dp - c`，`c = v(j)` ⇒ 行顶落在 10dp。
-    expect(lineTop.dy - slotTop.dy, closeTo(10, 0.6));
+    // 官方 `y = base(0) + v(j) + m(j) - c`，且 `m(j)=0`、`c = v(j)`
+    // ⇒ 当前句方块顶正好落在视口 0。
+    expect(lineTop.dy - slotTop.dy, closeTo(0, 0.6));
   });
 
   testWidgets('keeps already-read lines above the viewport', (tester) async {
@@ -59,6 +68,27 @@ void main() {
     // 上一句在 `v(i) - c < 0` 处，被 ClipRect 裁到视口外（官方不居中）。
     final previous = tester.getTopLeft(find.text('第一句'));
     expect(previous.dy, lessThan(slotTop.dy));
+  });
+
+  testWidgets('lets a long cue wrap instead of ellipsizing it', (tester) async {
+    // 官方截图（2.jpg）里封面卡下方是**一条换行成两行的长句**，
+    // 行间没有额外间距，且从带顶开始排——不是单行加省略号。
+    const long = SubtitleTrack([
+      SubtitleCue(
+        startMs: 0,
+        text: '从坟地里挖出了一具尸体出来，还是真的击杀了一只相位翼龙',
+      ),
+    ]);
+    await mount(tester, cues: long, position: const Duration(seconds: 1));
+    final current = find.byKey(const Key('audio-inline-subtitle-current'));
+    final size = tester.getSize(current);
+    // 两行 16sp 文本的高度约 38dp；单行只有约 19dp。
+    expect(size.height, greaterThan(30));
+    // 从带顶起排（官方 `y = base + v(j) + m(j) - c`，三者相消后为 0）。
+    final slotTop = tester.getTopLeft(
+      find.byKey(const Key('audio_inline_subtitle')),
+    );
+    expect(tester.getTopLeft(current).dy - slotTop.dy, closeTo(0, 0.6));
   });
 
   testWidgets('uses the official 40% white for context lines', (tester) async {
