@@ -72,18 +72,14 @@ extension _AudioListeningLayout on _AudioPageState {
                         // `visibility="gone"` 不占位。它不是「章节试读」按钮，
                         // 也不该把整章正文塞进无障碍标签。
                         //
-                        // 两种模式共用同一个槽：有字幕轨显示正在朗读的那句，
-                        // 没有轨才退回章节开头摘录（真人讲书已把简介放在封面
-                        // 背面时不再重复）。
+                        // 两种模式共用同一个槽：有字幕轨就显示正在朗读的那句
+                        // 及其上下文，没有轨就是空（官方无正文兑底）。
                         ValueListenableBuilder<_ReadAlongSnapshot>(
                           valueListenable: c._readAlong,
                           builder: (context, snapshot, _) => AudioInlineSubtitle(
                             track: snapshot.track,
                             position: snapshot.position,
                             onTap: _showReadAlong,
-                            fallbackText: realAudio && hasIntro
-                                ? ''
-                                : c._excerpt,
                           ),
                         ),
                         if (c._error != null ||

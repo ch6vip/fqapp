@@ -1219,44 +1219,74 @@ class _ReadAlongBody extends StatelessWidget {
   }
 }
 
+/// `bio.xml` 的 `fs5`/`fs6`：封面下方的内联字幕。
+///
+/// 官方这里是 `AudioPlaySubtitleView`（`header/m0->T()`），一个 LRC 式的
+/// **多行滚动**字幕，不是「两行文本」：
+///
+/// * `setStartLine(1)` —— 首行留空，所以当前句永远**垂直居中**，
+///   上方是已读句、下方是未读句；
+/// * 普通行 `#66ffffff`（`@color/agw`，白 40%），当前行压 `theme.ink`；
+/// * `setScrollingSeekEnable(false)` —— 内联不可拖动，全屏文稿页才可拖；
+/// * 上下 `fadingEdgeLength=24dip` 渐隐；
+/// * **没有字幕数据就不占位**：官方没有任何正文兜底，`fs6` 由数据驱动显隐；
+/// * 点击进「AI 文稿」全屏页；该页加载失败时，这一下是重试。
 class AudioInlineSubtitle extends StatelessWidget {
   final SubtitleTrack track;
   final Duration position;
   final VoidCallback onTap;
-
-  /// 没有字幕轨时的兜底文本（章节开头摘录）。
-  ///
-  /// 官方 `fs6` 在没有内容时是 `visibility="gone"`，所以两者都空就不占位。
-  final String fallbackText;
 
   const AudioInlineSubtitle({
     super.key,
     required this.track,
     required this.position,
     required this.onTap,
-    this.fallbackText = '',
   });
 
   /// 官方 `fs6` 的固定高度。
   static const double _height = 52;
 
+  /// 三行等分：当前句落在中间那行，正好压住 52dp 的垂直中心。
+  static const double _lineHeight = _height / 3;
+
+  /// 官方普通行色：`@color/agw` = `#66ffffff`。
+  static const Color _contextInk = Color(0x66FFFFFF);
+
   @override
   Widget build(BuildContext context) {
     final theme = AudioPageThemeScope.of(context);
-    final (current, next) = track.windowAt(position);
-    final following = current == null ? null : next;
-    // 优先显示「正在朗读的那一句」；没有字幕轨才退回章节开头摘录。
-    final primary = current?.text ?? next?.text ?? '';
-    final visible = primary.isNotEmpty ? primary : fallbackText;
-    if (visible.isEmpty) return const SizedBox.shrink();
-    final secondary = primary.isEmpty ? '' : (following?.text ?? '');
+    final index = track.indexAt(position);
+    // 官方没有正文兜底，拿不到字幕就不占位，把空间还给封面。
+    if (index < 0) return const SizedBox.shrink();
+    final previous = index > 0 ? track.cues[index - 1].text : '';
+    final current = track.cues[index].text;
+    final next = index + 1 < track.cues.length ? track.cues[index + 1].text : '';
+
+    Widget line(String text, {required bool highlighted, Key? key}) => SizedBox(
+          height: _lineHeight,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              text,
+              key: key,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: highlighted ? theme.ink : _contextInk,
+                fontSize: 14,
+                height: 1.0,
+                fontWeight: highlighted ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ),
+        );
 
     return Padding(
-      // `fs6`：左右 20dp、底部 24dp，上沿紧贴封面。
+      // `fs6`：左右 20dp、底部 24dp（`V675AudioCompress.uiCompress` 开时 20dp）。
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       child: HomePressable(
-        // 与音色卡的「边听边读」入口区分开：两者都可能同时存在
-        // （智能朗读有字幕时），共用一个 key 会让按 key 取控件的地方歧义。
+        // 与音色卡的「边听边读」入口区分开：两者可能同时存在，共用一个 key
+        // 会让按 key 取控件的地方歧义。
         key: const Key('audio_inline_subtitle'),
         // 只报角色，不把整段正文塞进无障碍标签——那会让读屏一次念完整章。
         semanticLabel: '边听边读',
@@ -1266,8 +1296,7 @@ class AudioInlineSubtitle extends StatelessWidget {
           height: _height,
           width: double.infinity,
           child: ShaderMask(
-            // `requiresFadingEdge="vertical"` + `fadingEdgeLength=24dip`：
-            // 上下各 24dp 渐隐，比省略号更接近官方的观感。
+            // `requiresFadingEdge="vertical"` + `fadingEdgeLength=24dip`。
             shaderCallback: (bounds) => const LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
@@ -1285,31 +1314,13 @@ class AudioInlineSubtitle extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    visible,
+                  line(previous, highlighted: false),
+                  line(
+                    current,
+                    highlighted: true,
                     key: const Key('audio-inline-subtitle-current'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: theme.ink,
-                      fontSize: 14.5,
-                      height: 1.4,
-                      fontWeight: FontWeight.w600,
-                    ),
                   ),
-                  if (secondary.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      secondary,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: theme.muted,
-                        fontSize: 13,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
+                  line(next, highlighted: false),
                 ],
               ),
             ),

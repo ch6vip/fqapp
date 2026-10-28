@@ -193,30 +193,30 @@ extension _AudioPlaybackQueries on _AudioPlaybackController {
   }
 }
 
-  /// 没有服务端文稿时，用章节正文 + 已有时轴反推一条近似字幕轨。
-  ///
-  /// 注入 loader（测试）与离线环境直接跳过：那两种情况下没有正文来源，
-  /// 也不该在播放链路上发网络请求。
+/// 没有服务端文稿时，用章节正文 + 已有时轴反推一条近似字幕轨。
+///
+/// 注入 loader（测试）与离线环境直接跳过：那两种情况下没有正文来源，
+/// 也不该在播放链路上发网络请求。
 Future<SubtitleTrack?> _synthesizeSubtitles(
   _AudioPlaybackController c,
   String itemId,
 ) async {
-    if (c.request.sourceLoader != null ||
-        c.request.playerFactory != null ||
-        c._offline) {
-      return null;
-    }
-    final duration = c._duration;
-    if (duration <= Duration.zero) return null;
-    try {
-      final text = await ApiClient.instance.contentText(itemId);
-      if (text.trim().isEmpty) return null;
-      return SubtitleSynthesis.build(
-        text: text,
-        duration: duration,
-        anchors: c._timeTrack,
-      );
-    } catch (_) {
-      return null;
-    }
+  if (c.request.sourceLoader != null ||
+      c.request.playerFactory != null ||
+      c._offline) {
+    return null;
   }
+  final duration = c._duration;
+  if (duration <= Duration.zero) return null;
+  try {
+    final text = await ApiClient.instance.contentText(itemId);
+    if (text.trim().isEmpty) return null;
+    return SubtitleSynthesis.build(
+      text: text,
+      duration: duration,
+      anchors: c._timeTrack,
+    );
+  } catch (_) {
+    return null;
+  }
+}
