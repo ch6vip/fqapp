@@ -82,17 +82,13 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
 
   Future<void> _loadColor() async {
     final cover = widget.cover;
-    final color = await fetchCoverDominant(cover);
+    // 官方 GlobalPlayerView 取 Palette swatch 的色相，再套固定的饱和度/明度。
+    final hue = await fetchCoverPaletteHue(cover);
     if (!mounted || widget.cover != cover) return;
     setState(() {
-      _background = color == null
+      _background = hue == null
           ? const Color(0xFC666666)
-          : HSVColor.fromAHSV(
-              252 / 255,
-              HSVColor.fromColor(color).hue,
-              0.23,
-              0.54,
-            ).toColor();
+          : HSVColor.fromAHSV(252 / 255, hue, 0.23, 0.54).toColor();
     });
   }
 
@@ -210,17 +206,26 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
         ),
       ),
     );
-    return Material(
-      color: eink
-          ? Colors.white
-          : dark
-          ? const Color(0xFB4A4A4A)
-          : _background,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-        side: eink ? const BorderSide() : BorderSide.none,
+    final background = eink
+        ? Colors.white
+        : dark
+        ? const Color(0xFB4A4A4A)
+        : _background;
+    return TweenAnimationBuilder<Color?>(
+      tween: ColorTween(end: background),
+      // 官方用 TransitionDrawable 做 300ms 交叉淡入；夜间/墨水屏保持瞬切。
+      duration: eink || dark
+          ? Duration.zero
+          : const Duration(milliseconds: 300),
+      builder: (context, color, child) => Material(
+        color: color ?? background,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: eink ? const BorderSide() : BorderSide.none,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: child,
       ),
-      clipBehavior: Clip.antiAlias,
       child: Row(
         children: [
           const SizedBox(width: 4),
