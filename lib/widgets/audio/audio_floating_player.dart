@@ -174,9 +174,26 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
     ),
   );
 
-  Widget _capsule(BuildContext context) {
+  Widget _capsule(BuildContext context, {double closeProgress = 0}) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final eink = einkModeNotifier.value;
+    // Background and cover fade linearly across the 300ms dismissal; the
+    // play/close icons finish their 200ms fade earlier.
+    final fade = (1 - closeProgress).clamp(0.0, 1.0);
+    final controlFade =
+        (1 -
+                const Cubic(
+                  0.25,
+                  1,
+                  0.25,
+                  1,
+                ).transform((closeProgress * 1.5).clamp(0.0, 1.0)))
+            .clamp(0.0, 1.0);
+    final background = eink
+        ? Colors.white
+        : dark
+        ? const Color(0xFB4A4A4A)
+        : _background;
     final ink = eink
         ? Colors.black
         : const Color(0xFFF6F6F6).withValues(alpha: dark ? 0.8 : 1);
@@ -206,26 +223,24 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
         ),
       ),
     );
-    final background = eink
-        ? Colors.white
-        : dark
-        ? const Color(0xFB4A4A4A)
-        : _background;
     return TweenAnimationBuilder<Color?>(
       tween: ColorTween(end: background),
       // 官方用 TransitionDrawable 做 300ms 交叉淡入；夜间/墨水屏保持瞬切。
       duration: eink || dark
           ? Duration.zero
           : const Duration(milliseconds: 300),
-      builder: (context, color, child) => Material(
-        color: color ?? background,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: eink ? const BorderSide() : BorderSide.none,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: child,
-      ),
+      builder: (context, color, child) {
+        final tint = color ?? background;
+        return Material(
+          color: tint.withValues(alpha: tint.a * fade),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: eink ? const BorderSide() : BorderSide.none,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: child,
+        );
+      },
       child: Row(
         children: [
           const SizedBox(width: 4),
@@ -234,7 +249,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
             label: '\u6253\u5f00\u542c\u4e66\uff1a${widget.title}',
             width: 42,
             onTap: widget.onOpen,
-            child: cover,
+            child: Opacity(opacity: fade, child: cover),
           ),
           const SizedBox(width: 14),
           _button(
@@ -253,7 +268,8 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                 alignment: Alignment.center,
                 children: [
                   // Official LOADING keeps the icon and swaps the ring for a
-                  // rotating white sweep (`fa3/a.java:48-58`).
+                  // rotating white sweep (`fa3/a.java:48-58`). The ring frame
+                  // is not faded on close (`pn2/b0.java:288-314`).
                   if (widget.loading)
                     _LoadingRing(color: ink, animate: !_reducedMotion)
                   else
@@ -272,11 +288,14 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                         );
                       },
                     ),
-                  CustomPaint(
-                    size: const Size.square(18),
-                    painter: widget.playing
-                        ? _PauseGlyph(ink)
-                        : _PlayGlyph(ink),
+                  Opacity(
+                    opacity: controlFade,
+                    child: CustomPaint(
+                      size: const Size.square(18),
+                      painter: widget.playing
+                          ? _PauseGlyph(ink)
+                          : _PlayGlyph(ink),
+                    ),
                   ),
                 ],
               ),
@@ -289,9 +308,12 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
             width: 26,
             onTap: _close,
             // Official swaps `cav` for the 16dp `alh` cross in code.
-            child: CustomPaint(
-              size: const Size.square(16),
-              painter: _CloseGlyph(ink),
+            child: Opacity(
+              opacity: controlFade,
+              child: CustomPaint(
+                size: const Size.square(16),
+                painter: _CloseGlyph(ink),
+              ),
             ),
           ),
           const SizedBox(width: 10),
@@ -305,11 +327,15 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
     final media = MediaQuery.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final left = media.viewPadding.left;
-        final right = constraints.maxWidth - media.viewPadding.right - _width;
-        final top = media.viewPadding.top + 46;
+        final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
+        // Rest rect: 1dp inset on each side (still respecting safe areas),
+        // 142dp from the top, bottom margin = 18 + bottom safe area / IME.
+        final left = math.max(1.0, media.viewPadding.left);
+        final right = width - math.max(1.0, media.viewPadding.right) - _width;
+        final top = 142.0;
         final bottom =
-            constraints.maxHeight -
+            height -
             _height -
             18 -
             math.max(
@@ -317,17 +343,27 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
               media.viewInsets.bottom,
             );
         if (right < left || bottom < top) return const SizedBox.shrink();
-        Offset bounded(Offset value) =>
-            Offset(value.dx.clamp(left, right), value.dy.clamp(top, bottom));
-        final position = bounded(
-          _drag ??
-              Offset(_right ? right : left, top + (bottom - top) * _vertical),
+        final rest = Offset(
+          _right ? right : left,
+          top + (bottom - top) * _vertical,
         );
+        // While dragging the capsule may leave the rest rect: horizontally
+        // -12dp..width+12dp (folding is off) and vertically the whole container.
+        final dragLeft = -12.0;
+        final dragRight = math.max(dragLeft, width + 12 - _width);
+        final dragBottom = math.max(0.0, height - _height);
+        Offset dragBounded(Offset value) => Offset(
+          value.dx.clamp(dragLeft, dragRight),
+          value.dy.clamp(0.0, dragBottom),
+        );
+        final position = _drag == null ? rest : dragBounded(_drag!);
         void snap() {
+          final released = _drag ?? position;
           setState(() {
-            final target = bounded(_drag ?? position);
-            _right = target.dx >= (left + right) / 2;
-            _vertical = bottom == top ? 1 : (target.dy - top) / (bottom - top);
+            _right = released.dx + _width / 2 >= width / 2;
+            _vertical = bottom == top
+                ? 1
+                : ((released.dy - top) / (bottom - top)).clamp(0.0, 1.0);
             _drag = null;
           });
         }
@@ -340,8 +376,8 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
               AnimatedPositioned(
                 duration: _drag != null || _reducedMotion
                     ? Duration.zero
-                    : const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
+                    : const Duration(milliseconds: 200),
+                curve: const Cubic(0.445, 0.05, 0.55, 0.95),
                 left: position.dx,
                 top: position.dy,
                 width: _width,
@@ -351,33 +387,42 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                   child: GestureDetector(
                     onPanStart: (_) => setState(() => _drag = position),
                     onPanUpdate: (details) => setState(() {
-                      _drag = bounded((_drag ?? position) + details.delta);
+                      _drag = dragBounded((_drag ?? position) + details.delta);
                     }),
                     onPanEnd: (_) => snap(),
                     onPanCancel: snap,
                     child: TweenAnimationBuilder<double>(
                       tween: Tween(end: _closing ? 1 : 0),
                       duration: const Duration(milliseconds: 300),
-                      builder: (context, value, child) => Align(
-                        alignment: _right
-                            ? Alignment.centerRight
-                            : Alignment.centerLeft,
-                        child: ClipRect(
-                          child: Align(
-                            alignment: _right
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            widthFactor: 1 - value * 88 / _width,
-                            child: Opacity(opacity: 1 - value, child: child),
+                      builder: (context, value, child) {
+                        final shrink = const Cubic(
+                          0.25,
+                          0.1,
+                          0.25,
+                          1.0,
+                        ).transform(value);
+                        // The dismissal shrink is always anchored to the left.
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: ClipRect(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              widthFactor: 1 - shrink * (_width - 74) / _width,
+                              child: RepaintBoundary(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  child: _capsule(
+                                    context,
+                                    closeProgress: value,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                      child: RepaintBoundary(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: _capsule(context),
-                        ),
-                      ),
+                        );
+                      },
                     ),
                   ),
                 ),

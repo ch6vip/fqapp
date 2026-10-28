@@ -80,8 +80,8 @@ void main() {
             AudioFloatingPlayer(
               title: 't',
               cover: '',
-              position: position,
-              duration: const Duration(seconds: 1),
+              progress: position,
+              readProgress: () => 0,
               playing: false,
               loading: false,
               canToggle: false,
@@ -96,8 +96,7 @@ void main() {
       ),
     );
 
-    // 胶囊自己的 Material 是唯一不透明的 Material；IconButton 内部的是
-    // 透明的 InkWell 载体，过滤掉。
+    // 胶囊自己的 Material 是唯一不透明的 Material；其余透明的过滤掉。
     Color background() {
       final colors = tester
           .widgetList<Material>(
