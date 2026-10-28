@@ -555,6 +555,14 @@ class _ReaderAppearanceSheetState extends State<ReaderAppearanceSheet> {
                           ),
                         ),
                         _toggle(
+                          '显示系统状态栏',
+                          subtitle: '显示通知图标、时间与电量',
+                          value: _value.showSystemStatusBar,
+                          onChanged: (value) => _update(
+                            _value.copyWith(showSystemStatusBar: value),
+                          ),
+                        ),
+                        _toggle(
                           '阅读时保持屏幕常亮',
                           value: _value.keepScreenOn,
                           onChanged: (value) =>

@@ -100,7 +100,7 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
                 )
             }
 
-            override fun hide() {
+            override fun hide(showStatusBar: Boolean) {
                 // DEFAULT can letterbox the entire window when the status bar hides.
                 // Extend the reader background; Flutter handles content safe insets.
                 setCutoutMode(
@@ -114,7 +114,9 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
                 )
                 controller.systemBarsBehavior =
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                controller.hide(types)
+                val statusBars = WindowInsetsCompat.Type.statusBars()
+                controller.hide(if (showStatusBar) types and statusBars.inv() else types)
+                if (showStatusBar) controller.show(statusBars)
             }
 
             override fun restore(state: ReaderSystemBarsSession.State) {
@@ -194,7 +196,7 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
                         result.error("NO_ACTIVITY", "阅读界面尚未就绪", null)
                         return
                     }
-                    systemBars.open(id)
+                    systemBars.open(id, call.argument<Boolean>("showStatusBar") == true)
                 } else {
                     systemBars.close(id)
                 }

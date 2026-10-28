@@ -11,6 +11,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'support/fakes.dart';
 
@@ -38,6 +39,77 @@ void main() {
       .where((call) => call.method == 'setImmersive')
       .map((call) => call.arguments['enabled'] as bool)
       .toList();
+
+  testWidgets('status bar switch applies and persists both choices', (
+    tester,
+  ) async {
+    for (final visible in [true, false]) {
+      await tester.pumpWidget(MaterialApp(home: _reader()));
+      await tester.pumpAndSettle();
+      await tester.tapAt(tester.getRect(_surface).center);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reader-settings')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('排版'));
+      await tester.tap(find.text('排版'));
+      await tester.pumpAndSettle();
+      final row = find
+          .ancestor(of: find.text('显示系统状态栏'), matching: find.byType(Row))
+          .first;
+      final toggle = find.descendant(of: row, matching: find.byType(Switch));
+      await tester.ensureVisible(toggle);
+      expect(tester.widget<Switch>(toggle).value, !visible);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(toggle).value, visible);
+      await tester.tap(find.byTooltip('关闭排版设置'));
+      await tester.pumpAndSettle();
+      final request = calls.lastWhere((call) => call.method == 'setImmersive');
+      expect(request.arguments['enabled'], isTrue);
+      expect(request.arguments['showStatusBar'], visible);
+      expect((await ReaderPreferences.load()).showSystemStatusBar, visible);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets(
+    'saved system status bar stays visible after resume and navigation',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'reader_show_system_status_bar': true,
+      });
+      final navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(navigatorKey: navigator, home: _reader()),
+      );
+      await tester.pumpAndSettle();
+
+      void expectStatusBarVisible() {
+        final request = calls.lastWhere(
+          (call) => call.method == 'setImmersive',
+        );
+        expect(request.arguments['enabled'], isTrue);
+        expect(request.arguments['showStatusBar'], isTrue);
+      }
+
+      expectStatusBarVisible();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expectStatusBarVisible();
+      navigator.currentState!.push(
+        MaterialPageRoute<void>(builder: (_) => const Scaffold()),
+      );
+      await tester.pumpAndSettle();
+      expect(immersiveRequests().last, isFalse);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expectStatusBarVisible();
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('system bars follow reader route and foreground ownership', (
     tester,
@@ -98,35 +170,49 @@ void main() {
     expect(immersiveRequests(), hasLength(count));
   });
 
-  testWidgets('paragraph-ideas sheet keeps immersive on (#57)', (tester) async {
-    final navigator = GlobalKey<NavigatorState>();
-    await tester.pumpWidget(
-      MaterialApp(navigatorKey: navigator, home: const Scaffold()),
-    );
-    navigator.currentState!.push(
-      MaterialPageRoute<void>(builder: (_) => _readerWithIdeas()),
-    );
-    await tester.pumpAndSettle();
-    expect(immersiveRequests(), isNot(contains(false)));
-    expect(immersiveRequests().last, isTrue);
+  for (final showStatusBar in [false, true]) {
+    testWidgets(
+      'paragraph-ideas sheet preserves status bar choice $showStatusBar (#57)',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'reader_show_system_status_bar': showStatusBar,
+        });
+        final navigator = GlobalKey<NavigatorState>();
+        await tester.pumpWidget(
+          MaterialApp(navigatorKey: navigator, home: const Scaffold()),
+        );
+        navigator.currentState!.push(
+          MaterialPageRoute<void>(builder: (_) => _readerWithIdeas()),
+        );
+        await tester.pumpAndSettle();
+        expect(immersiveRequests(), isNot(contains(false)));
+        expect(immersiveRequests().last, isTrue);
 
-    // Open the ideas sheet via the paragraph bubble.
-    await tester.tap(find.text('42'));
-    await tester.pumpAndSettle();
-    expect(find.text('这段太真实了'), findsOneWidget);
-    // The sheet pushes a route; immersive must NOT be released.
-    expect(immersiveRequests(), isNot(contains(false)));
-    expect(immersiveRequests().last, isTrue);
+        // Open the ideas sheet via the paragraph bubble.
+        await tester.tap(find.text('42'));
+        await tester.pumpAndSettle();
+        expect(find.text('这段太真实了'), findsOneWidget);
+        // The sheet pushes a route; immersive must NOT be released.
+        expect(immersiveRequests(), isNot(contains(false)));
+        expect(immersiveRequests().last, isTrue);
 
-    // Close the sheet; immersive stays on with no transient release:
-    // the close used to flash the status bar for a frame (#57).
-    navigator.currentState!.pop();
-    await tester.pumpAndSettle();
-    expect(find.text('这段太真实了'), findsNothing);
-    expect(immersiveRequests(), isNot(contains(false)));
-    expect(immersiveRequests().last, isTrue);
-    expect(tester.takeException(), isNull);
-  });
+        // Close the sheet; immersive stays on with no transient release:
+        // the close used to flash the status bar for a frame (#57).
+        navigator.currentState!.pop();
+        await tester.pumpAndSettle();
+        expect(find.text('这段太真实了'), findsNothing);
+        expect(immersiveRequests(), isNot(contains(false)));
+        expect(immersiveRequests().last, isTrue);
+        expect(tester.takeException(), isNull);
+        expect(
+          calls
+              .where((call) => call.method == 'setImmersive')
+              .map((call) => call.arguments['showStatusBar']),
+          everyElement(showStatusBar),
+        );
+      },
+    );
+  }
 
   testWidgets('e-ink ideas sheet uses a transparent barrier (#57)', (
     tester,
@@ -172,10 +258,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('42'));
     await tester.pumpAndSettle();
-    expect(
-      animatedBarrierColor(),
-      Colors.black.withValues(alpha: 0.4),
-    );
+    expect(animatedBarrierColor(), Colors.black.withValues(alpha: 0.4));
     expect(tester.takeException(), isNull);
   });
 
@@ -194,6 +277,7 @@ void main() {
         SharedPreferences.setMockInitialValues({
           'reader_page_mode': mode,
           'reader_show_reading_info': false,
+          'reader_show_system_status_bar': true,
         });
         await tester.binding.setSurfaceSize(const Size(390, 800));
         addTearDown(() => tester.binding.setSurfaceSize(null));
