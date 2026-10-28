@@ -59,18 +59,16 @@ extension _AudioListeningLayout on _AudioPageState {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _coverCard(
-                          theme: theme,
                           chapter: chapter,
-                          realAudio: realAudio,
                           detail: detail,
                           introSummary: introSummary,
                           related: related,
                         ),
-                        // 官方 `fs5`/`fs6`：封面正下方是**一条字幕视图**
-                        // （`AudioPlaySubtitleView`，固定 52dp、左右 20dp、
-                        // 底部 24dp、上下 24dp 渐隐），没有内容时
-                        // `visibility="gone"` 不占位。它不是「章节试读」按钮，
-                        // 也不该把整章正文塞进无障碍标签。
+                        // 官方 `fs5`/`fs6`：封面正下方是一条多行滚动字幕
+                        // （`AudioPlaySubtitleView`，高度按字号取档再减 2dp，
+                        // 默认 50dp、左右 20dp、底部 24dp、上下 24dp 渐隐）。
+                        // 当前句**行顶贴视口 10dp**，不是居中；槽位常驻，
+                        // 没有字幕时显示状态文案，只有 NOT_SUPPORT 才收起。
                         //
                         // 两种模式共用同一个槽：有字幕轨就显示正在朗读的那句
                         // 及其上下文，没有轨就是空（官方无正文兑底）。
@@ -223,9 +221,7 @@ extension _AudioListeningLayout on _AudioPageState {
   ///
   /// 点击副行翻到简介面（`bhi.xml`），再点背面的收起按钮翻回来。
   Widget _coverCard({
-    required AudioPageTheme theme,
     required Chapter chapter,
-    required bool realAudio,
     required BookDetail? detail,
     required String introSummary,
     required RelatedWork? related,

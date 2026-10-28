@@ -1222,38 +1222,60 @@ class _ReadAlongBody extends StatelessWidget {
 
 /// `bio.xml` 的 `fs5`/`fs6`：封面下方的内联字幕。
 ///
-/// 官方这里是 `AudioPlaySubtitleView`（`header/m0->T()`），一个 LRC 式
-/// **多行滚动**字幕，不是「两行文本」：
+/// 官方这里是 `AudioPlaySubtitleView`（`header/m0`），取证结论：
 ///
-/// * `setStartLine(1)` —— 当前句永远**垂直居中**，上方是已读句、下方是未读句；
-/// * 普通行 `#66ffffff`（`@color/agw`，白 40%），当前行压 `theme.ink`；
-/// * `setScrollingSeekEnable(false)` —— 内联**不可拖动**，只有自动滚动；
-///   拖拽 + 飞滑惯性在文稿页（[AudioSubtitleScroller.seekEnabled]）；
-/// * 换句动画 `clamp(|Δpx|, 300, 600) ms` 线性（官方 `O(F,Z)`）；
-/// * 上下 `fadingEdgeLength=24dip` 渐隐；
-/// * **没有字幕数据就不占位**：官方没有任何正文兜底，`fs6` 由数据驱动显隐；
-/// * 点击进「AI 文稿」全屏页；该页加载失败时，这一下是重试。
+/// * **高度按字号取档再减 2dp**（`m0.M()` 的 `0x30/0x34/0x3a/0x42/0x4a/0x50`
+///   → 48/52/58/66/74/80，对应 14/16/18/21/24/27sp，最后 `updateHeight(h-2)`），
+///   默认 16sp ⇒ **50dp**；
+/// * 当前句**行顶贴视口 10dp**（`startLine=1` 使 `base=0`，官方没有居中公式）；
+/// * 普通行 `@color/agw` = `#66ffffff`（白 40%）；
+/// * `fadingEdgeLength=24dip` ⇒ 在 50dp 里对应渐隐比例 **0.48**；
+/// * 槽位**常驻**：`onCreate` 就 `visible`，加载中/失败用 `setStatusText`
+///   显示文案，只有 `NOT_SUPPORT` 才 `gone`；
+/// * 不可拖动（`setScrollingSeekEnable(false)`），只有自动换句动画。
 class AudioInlineSubtitle extends StatelessWidget {
   final SubtitleTrack track;
   final Duration position;
   final VoidCallback onTap;
+
+  /// 是否支持字幕。官方 `NOT_SUPPORT` 时整块 `gone`，其余状态保留槽位。
+  final bool supported;
+
+  /// 字号，官方默认 16sp 且跟随用户设置。
+  final double fontSize;
 
   const AudioInlineSubtitle({
     super.key,
     required this.track,
     required this.position,
     required this.onTap,
+    this.supported = true,
+    this.fontSize = 16,
   });
 
-  /// 官方 `fs6` 的固定高度。
-  static const double _height = 52;
+  /// 官方高度表档位：14/16/18/21/24/27sp → 48/52/58/66/74/80，再减 2dp。
+  static const List<double> _fontSteps = [14, 16, 18, 21, 24, 27];
+  static const List<double> _heightSteps = [48, 52, 58, 66, 74, 80];
+
+  static double officialHeightFor(double fontSize) {
+    var best = 0;
+    for (var i = 1; i < _fontSteps.length; i++) {
+      if ((_fontSteps[i] - fontSize).abs() <
+          (_fontSteps[best] - fontSize).abs()) {
+        best = i;
+      }
+    }
+    return _heightSteps[best] - 2;
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 官方没有正文兜底，拿不到字幕就不占位，把空间还给封面。
-    if (track.indexAt(position) < 0) return const SizedBox.shrink();
+    // NOT_SUPPORT：官方 `UIKt.gone(view)`。
+    if (!supported && track.isEmpty) return const SizedBox.shrink();
+    final height = officialHeightFor(fontSize);
     return Padding(
-      // `fs6`：左右 20dp、底部 24dp（`V675AudioCompress.uiCompress` 开时 20dp）。
+      // `fs6`：左右 20dp、底部 24dp
+      //（`V675AudioCompress.uiCompress` 为真时官方把它改成 20dp）。
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       child: HomePressable(
         // 与音色卡的「边听边读」入口区分开：两者可能同时存在，共用一个 key
@@ -1264,10 +1286,11 @@ class AudioInlineSubtitle extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: SizedBox(
-          height: _height,
+          height: height,
           width: double.infinity,
           child: ShaderMask(
-            // `requiresFadingEdge="vertical"` + `fadingEdgeLength=24dip`。
+            // `requiresFadingEdge="vertical"` + `fadingEdgeLength=24dip`：
+            // 24/50 = 0.48，官方是框架级渐隐，边缘 alpha 0 → 24dp 处 alpha 1。
             shaderCallback: (bounds) => const LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
@@ -1277,15 +1300,15 @@ class AudioInlineSubtitle extends StatelessWidget {
                 Color(0xFFFFFFFF),
                 Color(0x00FFFFFF),
               ],
-              stops: [0.0, 0.24, 0.76, 1.0],
+              stops: [0.0, 0.48, 0.52, 1.0],
             ).createShader(bounds),
             blendMode: BlendMode.dstIn,
-            child: ExcludeSemantics(
-              child: AudioSubtitleScroller(
-                track: track,
-                position: position,
-                viewportHeight: _height,
-              ),
+            child: AudioSubtitleScroller(
+              track: track,
+              position: position,
+              viewportHeight: height,
+              fontSize: fontSize,
+              statusText: '本章暂无同步字幕',
             ),
           ),
         ),

@@ -36,6 +36,20 @@ void main() {
       }
     });
 
+    test('keeps the original punctuation instead of rewriting it', () {
+      // 「他说：」里的冒号不能被改写成逗号，否则正文语义被篡改。
+      final out = SubtitleSynthesis.splitSentences('他说：走吧。然后呢；不知道。');
+      expect(out.join(), contains('：'));
+      expect(out.join(), contains('；'));
+    });
+
+    test('keeps an ellipsis run and following quote in one sentence', () {
+      final out = SubtitleSynthesis.splitSentences('他愣住……「走吧。」她说。');
+      // `……` 不能被切成两段，`」` 也不能被拎到下一句开头。
+      expect(out.any((line) => line.contains('……')), isTrue);
+      expect(out.any((line) => line.startsWith('」')), isFalse);
+    });
+
     test('returns nothing for blank input', () {
       expect(SubtitleSynthesis.splitSentences('   \n\n '), isEmpty);
     });
@@ -92,6 +106,19 @@ void main() {
       expect(track.cues, hasLength(4));
       // 第 4 句起点在 12/16 处 → 约 60 秒，而不是均摊的 75 秒。
       expect(track.cues[3].startMs, closeTo(60000, 4000));
+    });
+
+    test('refuses anchors whose paragraph ids leave holes', () {
+      // 多段落 + 段号跳号：`contentText` 会丢空段落，此时按段号当行序
+      // 会整章错位，必须退回均摊而不是硬用。
+      final track = SubtitleSynthesis.build(
+        text: '第一段。\n第二段。\n第三段。',
+        duration: const Duration(seconds: 60),
+        anchors: trackOf([(0, 0, 0), (2, 0, 30000)]),
+      );
+      expect(track.cues, hasLength(3));
+      // 退回均摊：三句等分，第二句起点约 20 秒（而不是锚点插值的结果）。
+      expect(track.cues[1].startMs, closeTo(20000, 4000));
     });
 
     test('ignores anchors that do not line up with the text', () {

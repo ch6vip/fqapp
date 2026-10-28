@@ -643,8 +643,12 @@ class _AudioPageState extends State<AudioPage> {
                               builder: (context, position, _) {
                                 final track = c._subtitles;
                                 if (track.isEmpty) {
+                                  // 官方两种空态都走 `setStatusText`，文案统一。
                                   return const Center(
-                                    child: Text('当前章节暂无同步字幕'),
+                                    child: Text(
+                                      '本章暂无同步字幕',
+                                      key: Key('audio-subtitle-page-empty'),
+                                    ),
                                   );
                                 }
                                 // 高亮与自动滚动都在 `AudioSubtitleList`
@@ -787,6 +791,7 @@ class _AudioPageState extends State<AudioPage> {
                         ? Center(
                             child: Text(
                               '本章暂无同步字幕',
+                              key: const ValueKey('audio-read-along-empty'),
                               style: TextStyle(
                                 color: palette.muted,
                                 fontSize: 13,
@@ -798,12 +803,13 @@ class _AudioPageState extends State<AudioPage> {
                               track: snapshot.track,
                               position: snapshot.position,
                               viewportHeight: box.maxHeight,
-                              // 文稿页（官方 `bj3.xml` 的 `a49`）允许拖拽 + 飞滑。
-                              seekEnabled: true,
+                              // 官方 `subtitle/x0` 对文稿页同样传
+                              // `setScrollingSeekEnable(false)`，drag/fling
+                              // 在本版本不可达，所以这里也不启用。
                               fontSize: 16,
-                              onSeek: c._seekTo,
-                              currentLineKey:
-                                  const Key('audio_subtitle_current'),
+                              currentLineKey: const Key(
+                                'audio_subtitle_current',
+                              ),
                             ),
                           ),
                   ),

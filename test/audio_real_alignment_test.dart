@@ -89,7 +89,13 @@ void main() {
         find.byKey(const Key('audio-inline-subtitle-current')),
         findsNothing,
       );
-      expect(find.byKey(const Key('audio_inline_subtitle')), findsNothing);
+      // 官方槽位常驻：换到无字幕轨的章节后，`setStatusText` 接替字幕内容，
+      // 只有 NOT_SUPPORT 才整块 gone。
+      expect(find.byKey(const Key('audio_inline_subtitle')), findsOneWidget);
+      expect(
+        find.byKey(const Key('audio-inline-subtitle-status')),
+        findsOneWidget,
+      );
     },
   );
 

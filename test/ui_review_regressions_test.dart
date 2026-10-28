@@ -104,11 +104,11 @@ void main() {
     final subtitles = Completer<SubtitleTrack>();
     await _mount(tester, _AudioSession((_, _) => subtitles.future).app());
     await _openReadAlong(tester);
-    expect(find.text('本章暂无同步字幕'), findsOneWidget);
+    expect(find.byKey(const ValueKey('audio-read-along-empty')), findsOneWidget);
     subtitles.complete(_track);
     await _flush(tester);
     expect(_currentSubtitle(tester), '第一句同步字幕');
-    expect(find.text('本章暂无同步字幕'), findsNothing);
+    expect(find.byKey(const ValueKey('audio-read-along-empty')), findsNothing);
   });
 
   testWidgets(
@@ -131,7 +131,7 @@ void main() {
       await _flush(tester);
       expect(session.players, hasLength(2));
       expect(find.text('第二句同步字幕'), findsNothing);
-      expect(find.text('本章暂无同步字幕'), findsOneWidget);
+      expect(find.byKey(const ValueKey('audio-read-along-empty')), findsOneWidget);
       expect(
         tester
             .widget<Text>(
@@ -161,7 +161,7 @@ void main() {
     );
     await _mount(tester, session.app());
     await _openReadAlong(tester);
-    expect(find.text('本章暂无同步字幕'), findsOneWidget);
+    expect(find.byKey(const ValueKey('audio-read-along-empty')), findsOneWidget);
     expect(session.players.single.isPlaying, isTrue);
     expect(tester.takeException(), isNull);
   });

@@ -9,18 +9,23 @@ import '../models/audio_time_track.dart';
 /// 这里给这类书补一条估算轨，代价是可能与声音差半句。
 ///
 /// 精度分两档：
-/// * 有 `/timepoints`（音频毫秒 → 段落 + 字符偏移）时，把字符偏移换算成时间
-///   再切句，误差通常在 1 秒内；
+/// * 有 `/timepoints`（音频毫秒 → 段落 + 字符偏移）且段号能对上时，把字符
+///   偏移换算成时间再切句，误差通常在 1 秒内；
 /// * 没有可用锚点时，按字符数把句子均摊到 `[0, duration]`。
 class SubtitleSynthesis {
   const SubtitleSynthesis._();
 
-  /// 单句最长字符数：过长的句子按逗号再切，免得一行显示不完。
+  /// 单句最长字符数：过长的句子按次要标点再切，免得一行显示不完。
   static const int maxSentenceChars = 60;
 
   /// 句末标点（中英文）。
   static final RegExp _sentenceEnd = RegExp(r'[。！？!?…]+');
-  static final RegExp _softBreak = RegExp(r'[，,、；;：:]');
+
+  /// 右引号/右括号：应当跟在句末标点后面，而不是另起一句。
+  static const String _closingQuotes = '”’」』）)]}';
+
+  /// 长句的次要切点；保留原字符，不把 `：`/`；` 改写成 `，`。
+  static const String _softChars = '，,、；;：:';
 
   /// 用 [text] 和 [duration] 合成一条字幕轨。
   ///
@@ -61,32 +66,21 @@ class SubtitleSynthesis {
     return SubtitleTrack(cues);
   }
 
-  /// 按句末标点切句；过长的句子在逗号处再切。
+  /// 按句末标点切句；过长的句子在次要标点处再切。
+  ///
+  /// 句末标点的连续串（`……`、`？！”`）连同右引号留在同一句里，
+  /// 否则 `……` 会被拆成两段、`」` 会跑到下一句开头。
   static List<String> splitSentences(String text) {
     final out = <String>[];
     final buffer = StringBuffer();
+    var pendingEnd = false;
+
     void flush() {
       final value = buffer.toString().trim();
       buffer.clear();
+      pendingEnd = false;
       if (value.isEmpty) return;
-      if (value.length <= maxSentenceChars) {
-        out.add(value);
-        return;
-      }
-      // 长句按逗号切分，尽量均匀。
-      var chunk = StringBuffer();
-      for (final part in value.split(_softBreak)) {
-        final piece = part.trim();
-        if (piece.isEmpty) continue;
-        if (chunk.isNotEmpty && chunk.length + piece.length > maxSentenceChars) {
-          out.add(chunk.toString());
-          chunk = StringBuffer();
-        }
-        if (chunk.isNotEmpty) chunk.write('，');
-        chunk.write(piece);
-      }
-      final tail = chunk.toString().trim();
-      if (tail.isNotEmpty) out.add(tail);
+      _splitLong(value, out);
     }
 
     for (final rune in text.runes) {
@@ -95,17 +89,54 @@ class SubtitleSynthesis {
         flush();
         continue;
       }
+      if (pendingEnd) {
+        if (_sentenceEnd.hasMatch(ch) || _closingQuotes.contains(ch)) {
+          buffer.write(ch);
+          continue;
+        }
+        flush();
+      }
       buffer.write(ch);
-      if (_sentenceEnd.hasMatch(ch)) flush();
+      if (_sentenceEnd.hasMatch(ch)) pendingEnd = true;
     }
     flush();
     return out;
   }
 
+  /// 把超过 [maxSentenceChars] 的句子在次要标点处切开，分隔符留在前一段。
+  static void _splitLong(String value, List<String> out) {
+    if (value.length <= maxSentenceChars) {
+      out.add(value);
+      return;
+    }
+    final chunk = StringBuffer();
+    var start = 0;
+    for (var i = 0; i < value.length; i++) {
+      if (!_softChars.contains(value[i])) continue;
+      final candidate = value.substring(start, i + 1);
+      if (chunk.isNotEmpty &&
+          chunk.length + candidate.length > maxSentenceChars) {
+        out.add(chunk.toString());
+        chunk.clear();
+      }
+      chunk.write(candidate);
+      start = i + 1;
+    }
+    final rest = value.substring(start);
+    if (chunk.isNotEmpty && chunk.length + rest.length > maxSentenceChars) {
+      out.add(chunk.toString());
+      chunk.clear();
+    }
+    chunk.write(rest);
+    final tail = chunk.toString();
+    if (tail.isNotEmpty) out.add(tail);
+  }
+
   /// 把 `/timepoints` 的「段落 + 段内偏移」换算成「整篇字符偏移 → 毫秒」。
   ///
-  /// 段落编号若不落在正文段落范围内、或换算出的偏移不是严格递增，判断为
-  /// 与正文对不上，返回空表（调用方退回均摊）。
+  /// `AudioSyncPoint.startPara` 是上游 `<p idx>` 的段号，**不是**显示行序；
+  /// 而 `contentText` 会丢掉空段落。所以只有段号恰好铺满 `0..段数-1` 时才敢
+  /// 按行序使用，否则返回空表（调用方退回均摊）——错位的时间轴比没有更糟。
   static List<({int offset, int ms})> _anchorPairs(
     String text,
     AudioTimeTrack? anchors,
@@ -116,19 +147,33 @@ class SubtitleSynthesis {
     var acc = 0;
     for (final paragraph in paragraphs) {
       starts.add(acc);
-      // +1 补回被切掉的换行，保证偏移能落到同一篇文本上。
+      // +1 补回被切掉的换行，保证偏移落在同一篇文本上。
       acc += paragraph.length + 1;
     }
+    final body = [
+      for (final point in anchors.points)
+        if (!point.isTitle) point,
+    ];
+    if (body.isEmpty) return const [];
+    // 双射检查：锚点覆盖的段号集合必须恰好是 `0..段数-1`。只比最大值不够——
+    // `contentText` 丢掉一个空段后段号会出现洞（如 0,2），按行序用仍会错位。
+    final paras = body.map((point) => point.startPara).toSet();
+    if (paras.length != paragraphs.length || !paras.contains(0)) {
+      return const [];
+    }
+
     final pairs = <({int offset, int ms})>[];
-    for (final point in anchors.points) {
-      if (point.isTitle) continue;
+    for (final point in body) {
       final para = point.startPara;
-      if (para < 0 || para >= starts.length) return const [];
-      final offset = starts[para] + point.startParaOff;
-      if (offset < 0 || offset > text.length) return const [];
+      if (para < 0 || para >= starts.length) continue;
+      // 段内偏移夹到本段长度，避免越界后静默落进后一段。
+      final offset =
+          starts[para] + point.startParaOff.clamp(0, paragraphs[para].length);
+      if (offset < 0 || offset > text.length) continue;
       final previous = pairs.isEmpty ? null : pairs.last;
-      if (previous != null && (offset <= previous.offset || point.startTime < previous.ms)) {
-        return const [];
+      if (previous != null &&
+          (offset <= previous.offset || point.startTime < previous.ms)) {
+        continue;
       }
       pairs.add((offset: offset, ms: point.startTime));
     }
@@ -161,7 +206,9 @@ class SubtitleSynthesis {
     final last = pairs.last;
     final remainingChars = totalChars - last.offset;
     final remainingMs = durationMs - last.ms;
-    if (remainingChars <= 0 || remainingMs <= 0) return last.ms.clamp(0, durationMs);
+    if (remainingChars <= 0 || remainingMs <= 0) {
+      return last.ms.clamp(0, durationMs);
+    }
     final ratio = (offset - last.offset) / remainingChars;
     return (last.ms + remainingMs * ratio).round().clamp(0, durationMs);
   }
