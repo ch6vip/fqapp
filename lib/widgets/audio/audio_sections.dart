@@ -1227,15 +1227,16 @@ class _ReadAlongBody extends StatelessWidget {
 /// * **高度按字号取档再减 2dp**（`m0.M()` 的 `0x30/0x34/0x3a/0x42/0x4a/0x50`
 ///   → 48/52/58/66/74/80，对应 14/16/18/21/24/27sp，最后 `updateHeight(h-2)`），
 ///   默认 16sp ⇒ **50dp**；
-/// * 当前句**行顶贴视口 10dp**（`startLine=1` 使 `base=0`，官方没有居中公式）；
-/// * 普通行 `@color/agw` = `#66ffffff`（白 40%）；
-/// * `fadingEdgeLength=24dip` ⇒ 在 50dp 里对应渐隐比例 **0.48**；
+/// * `b2` 先按行容量切分并分配时间，每个条目上下各 3dp；
+/// * `m0.h0` 在主题更新后将普通行设为主文字色的 40%，当前行为不透明主色；
+/// * 仅边缘非当前行使用渐隐画笔，不给整个字幕槽套透明遮罩；
 /// * 槽位**常驻**：`onCreate` 就 `visible`，加载中/失败用 `setStatusText`
 ///   显示文案，只有 `NOT_SUPPORT` 才 `gone`；
 /// * 不可拖动（`setScrollingSeekEnable(false)`），只有自动换句动画。
 class AudioInlineSubtitle extends StatelessWidget {
   final SubtitleTrack track;
   final Duration position;
+  final Duration duration;
   final VoidCallback onTap;
 
   /// 是否支持字幕。官方 `NOT_SUPPORT` 时整块 `gone`，其余状态保留槽位。
@@ -1249,6 +1250,7 @@ class AudioInlineSubtitle extends StatelessWidget {
     required this.track,
     required this.position,
     required this.onTap,
+    this.duration = Duration.zero,
     this.supported = true,
     this.fontSize = 16,
   });
@@ -1272,7 +1274,10 @@ class AudioInlineSubtitle extends StatelessWidget {
   Widget build(BuildContext context) {
     // NOT_SUPPORT：官方 `UIKt.gone(view)`。
     if (!supported && track.isEmpty) return const SizedBox.shrink();
-    final height = officialHeightFor(fontSize);
+    final height =
+        officialHeightFor(fontSize) *
+        MediaQuery.textScalerOf(context).scale(fontSize) /
+        fontSize;
     return Padding(
       // `fs6`：左右 20dp、底部 24dp
       //（`V675AudioCompress.uiCompress` 为真时官方把它改成 20dp）。
@@ -1288,28 +1293,14 @@ class AudioInlineSubtitle extends StatelessWidget {
         child: SizedBox(
           height: height,
           width: double.infinity,
-          child: ShaderMask(
-            // `requiresFadingEdge="vertical"` + `fadingEdgeLength=24dip`：
-            // 24/50 = 0.48，官方是框架级渐隐，边缘 alpha 0 → 24dp 处 alpha 1。
-            shaderCallback: (bounds) => const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0x00FFFFFF),
-                Color(0xFFFFFFFF),
-                Color(0xFFFFFFFF),
-                Color(0x00FFFFFF),
-              ],
-              stops: [0.0, 0.48, 0.52, 1.0],
-            ).createShader(bounds),
-            blendMode: BlendMode.dstIn,
-            child: AudioSubtitleScroller(
-              track: track,
-              position: position,
-              viewportHeight: height,
-              fontSize: fontSize,
-              statusText: '本章暂无同步字幕',
-            ),
+          child: AudioSubtitleScroller(
+            track: track,
+            position: position,
+            duration: duration,
+            inline: true,
+            viewportHeight: height,
+            fontSize: fontSize,
+            statusText: '本章暂无同步字幕',
           ),
         ),
       ),

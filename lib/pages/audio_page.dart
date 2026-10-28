@@ -155,6 +155,7 @@ typedef _ReadAlongSnapshot = ({
   String chapterTitle,
   SubtitleTrack track,
   Duration position,
+  Duration duration,
 });
 
 typedef _MoreSnapshot = ({

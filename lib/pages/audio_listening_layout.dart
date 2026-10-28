@@ -66,18 +66,19 @@ extension _AudioListeningLayout on _AudioPageState {
                         ),
                         // 官方 `fs5`/`fs6`：封面正下方是一条多行滚动字幕
                         // （`AudioPlaySubtitleView`，高度按字号取档再减 2dp，
-                        // 默认 50dp、左右 20dp、底部 24dp、上下 24dp 渐隐）。
-                        // 当前句**行顶贴视口 10dp**，不是居中；槽位常驻，
+                        // 默认 50dp、左右 20dp、底部 24dp）。
+                        // 按显示行分配时间，上下各 3dp；槽位常驻，
                         // 没有字幕时显示状态文案，只有 NOT_SUPPORT 才收起。
                         //
                         // 两种模式共用同一个槽：有字幕轨就显示正在朗读的那句
-                        // 及其上下文，没有轨就是空（官方无正文兑底）。
+                        // 及其上下文，没有轨则显示状态文案。
                         ValueListenableBuilder<_ReadAlongSnapshot>(
                           valueListenable: c._readAlong,
                           builder: (context, snapshot, _) =>
                               AudioInlineSubtitle(
                                 track: snapshot.track,
                                 position: snapshot.position,
+                                duration: snapshot.duration,
                                 onTap: _showReadAlong,
                               ),
                         ),

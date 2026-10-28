@@ -18,7 +18,7 @@ import 'support/controlled_player.dart';
 ///  * `bio.xml` 页脚只有两行：集标题 `b1h` + 副行 `bj2`；书名 `b1g` 官方是
 ///    `visibility="gone"`，所以不存在旧的「三段页脚 / 真人讲书・第 N 集」；
 ///  * 副行点一下翻到简介面（`bhi.xml`）再翻回；
-///  * 页头内嵌双行字幕（`fs6`），无字幕时不占位；
+///  * 页头内嵌逐行字幕（`fs6`），无字幕时保留状态槽位；
 ///  * `hy.xml` 的智能朗读 │ 真人讲书 分段放在页头中央；
 ///  * `bif.xml` 图标行首项显示当前倍速（截图里的 `1.2x`）；
 ///  * `bjg.xml` 进度行两端是 `-15 s` / `+15 s` 文字，播放头挂时间药丸；
@@ -98,6 +98,31 @@ void main() {
       );
     },
   );
+
+  testWidgets('inline final lines follow live player duration updates', (
+    tester,
+  ) async {
+    final session = _RealSession(
+      subtitles: (_, _) async => SubtitleTrack([
+        SubtitleCue(startMs: 0, text: '${'甲' * 23}${'乙' * 23}'),
+      ]),
+    );
+    await _mount(tester, session);
+    final current = find.byKey(const Key('audio-inline-subtitle-current'));
+    final player = session.players.single;
+    // The player's initial duration is two minutes, not the cue fallback 6s.
+    player.emitPosition(const Duration(seconds: 40));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 650));
+    expect(tester.widget<Text>(current).data, '甲' * 23);
+    player.emitPosition(const Duration(seconds: 80));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 650));
+    expect(tester.widget<Text>(current).data, '乙' * 23);
+    player.emitDuration(const Duration(minutes: 4));
+    await _flush(tester);
+    expect(tester.widget<Text>(current).data, '甲' * 23);
+  });
 
   testWidgets('the AI朗读/真人讲书 switch needs both voice families', (tester) async {
     await _mount(tester, _RealSession());

@@ -62,9 +62,7 @@ class _AudioPlaybackController extends ChangeNotifier
   String _excerpt = '';
   int _excerptGeneration = 0;
   double _rate = 1;
-  // The narration position ticks ~5×/s and feeds only the progress row, so
-  // both are ValueNotifiers: the 5Hz stream rebuilds that row instead of the
-  // whole page (cover image, tone cards, related-works list and all).
+  // Position ticks (~5Hz) rebuild progress/read-along listeners, not the page.
   final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
   final ValueNotifier<double?> _seekPreview = ValueNotifier(null);
   Duration _duration = Duration.zero;
@@ -86,6 +84,7 @@ class _AudioPlaybackController extends ChangeNotifier
     chapterTitle: '',
     track: SubtitleTrack.empty,
     position: Duration.zero,
+    duration: Duration.zero,
   ));
   final _moreState = ValueNotifier<_MoreSnapshot>((
     loading: true,
@@ -746,6 +745,7 @@ class _AudioPlaybackController extends ChangeNotifier
     _readAlong.value = (
       chapterTitle: _chapters[_index].title,
       track: _subtitles,
+      duration: _duration,
       position: preview == null
           ? _position.value
           : Duration(milliseconds: preview.round()),
