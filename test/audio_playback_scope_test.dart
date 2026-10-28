@@ -23,6 +23,33 @@ void main() {
   });
 
   testWidgets(
+    'reader capsule controls the retained audio session and yields to menus',
+    (tester) async {
+      final app = await _mount(tester);
+      app.open();
+      await _flush(tester);
+      final player = app.players.single;
+      app.navigator.currentState!.pop();
+      await _flush(tester);
+      app.openReader();
+      await _flush(tester);
+      final pill = find.byKey(const ValueKey('reader_player_pill'));
+      expect(pill, findsOneWidget);
+      await tester.tap(pill);
+      await _flush(tester);
+      expect(player.isPlaying, isFalse);
+      expect(find.text('继续播放'), findsOneWidget);
+      await tester.tap(pill);
+      await _flush(tester);
+      expect(player.isPlaying, isTrue);
+      final surface = find.byKey(const ValueKey('reader-page-surface'));
+      await tester.tapAt(tester.getCenter(surface));
+      await _flush(tester);
+      expect(pill, findsNothing);
+    },
+  );
+
+  testWidgets(
     'popping the audio page preserves playback and reopening reuses it',
     (tester) async {
       final app = await _mount(tester);

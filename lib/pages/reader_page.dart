@@ -24,6 +24,7 @@ import '../services/listening_session.dart';
 import '../services/reader_device.dart';
 import '../widgets/reader/eink_reading.dart';
 import '../widgets/reader/reader_player_pill.dart';
+import '../widgets/reader/reader_narration_visibility.dart';
 import '../services/eink_refresh.dart';
 import '../services/fair_memory.dart';
 import '../services/volume_key.dart';
@@ -583,8 +584,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _onListeningTick() {
     if (!mounted) return;
-    // 双击跳读的开关跟会话走：高亮没变化时也要重建一次，否则刚开播时
-    // 手势没挂上（控制台看着「双击没反应」）。
+    // 会话起停时即使高亮不变，也要重建双击跳读手势。
     final armed = _listenDoubleTapArmed;
     if (armed != _doubleTapArmed) {
       setState(() => _doubleTapArmed = armed);
@@ -3138,40 +3138,52 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                           ),
                         ),
                       Expanded(
-                        child: SizedBox.expand(
-                          key: _viewportKey,
-                          child: _buildContent(preset, windowPadding),
-                        ),
-                      ),
-                      if (_preferences.showReadingInfo)
-                        ListenableBuilder(
-                          listenable: _scrollController,
-                          builder: (context, _) => ReaderStatusBar(
-                            key: const ValueKey('reader-status-bar'),
-                            preset: preset,
-                            compact:
-                                _preferences.readingInfoMode ==
-                                ReaderInfoMode.compact,
-                            status: _deviceStatus,
-                            progress: _chapterProgress(),
-                            chapterIndex: _index,
-                            chapterCount: widget.chapters.length,
+                        child: ReaderPlayerPillHost(
+                          bookId: widget.bookId,
+                          preset: preset,
+                          animate: !einkModeNotifier.value,
+                          controlsVisible: _controlsVisible,
+                          highlightOnScreen: () => readerNarrationOnScreen(
+                            layout: _chapterLayout,
+                            range: _narrationRange,
                             paged: _paged,
-                            pageIndex: _chapterLayout == null
-                                ? null
-                                : _pageIndex,
-                            pageCount: _chapterLayout?.pages.length,
+                            pageIndex: _pageIndex,
+                            scrollController: _scrollController,
+                          ),
+                          viewportChanges: _scrollController,
+                          footerBuilder: _preferences.showReadingInfo
+                              ? (player) => ListenableBuilder(
+                                  listenable: _scrollController,
+                                  builder: (context, _) => ReaderStatusBar(
+                                    playerControl: player,
+                                    key: const ValueKey('reader-status-bar'),
+                                    preset: preset,
+                                    compact:
+                                        _preferences.readingInfoMode ==
+                                        ReaderInfoMode.compact,
+                                    status: _deviceStatus,
+                                    progress: _chapterProgress(),
+                                    chapterIndex: _index,
+                                    chapterCount: widget.chapters.length,
+                                    paged: _paged,
+                                    pageIndex: _chapterLayout == null
+                                        ? null
+                                        : _pageIndex,
+                                    pageCount: _chapterLayout?.pages.length,
+                                  ),
+                                )
+                              : null,
+                          child: SizedBox.expand(
+                            key: _viewportKey,
+                            child: _buildContent(preset, windowPadding),
                           ),
                         ),
+                      ),
                     ],
                   ),
                 ),
                 _menuEdge(top: true, child: _buildToolbar(preset)),
                 _menuEdge(top: false, child: _buildReaderControls(preset)),
-                ReaderPlayerPillOverlay(
-                  bookId: widget.bookId,
-                  highlightOnScreen: _narrationOnScreen,
-                ),
                 // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
                 if (_einkFlashVisible)
                   const Positioned.fill(child: ColoredBox(color: Colors.white)),
@@ -3181,18 +3193,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         ),
       ),
     );
-  }
-
-  /// 朗读高亮是否落在当前页内（官方 `AudioSyncReaderController.A()`）。
-  ///
-  /// 官方用它决定底部那枚播放胶囊要不要缩成图标态：播放中且高亮可见时缩小，
-  /// 免得挡住正在读的正文；暂停或高亮滚出屏幕时恢复完整胶囊。
-  bool get _narrationOnScreen {
-    final range = _narrationRange;
-    final layout = _chapterLayout;
-    if (range == null || layout == null || layout.pages.isEmpty) return false;
-    final page = layout.pages[_pageIndex.clamp(0, layout.pages.length - 1)];
-    return range.$1 < page.end && range.$2 > page.start;
   }
 
   Widget _menuEdge({required bool top, required Widget child}) => Positioned(
