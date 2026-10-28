@@ -18,6 +18,7 @@ import '../services/audio_history.dart';
 import '../services/audio_page_theme.dart';
 import '../services/audio_play_error.dart';
 import '../services/audio_playback_choice.dart';
+import '../services/audio_subtitle_synth.dart';
 import '../services/audio_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/fair_memory.dart';
@@ -769,6 +770,16 @@ class _AudioPageState extends State<AudioPage> {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: palette.ink, fontSize: 16),
                   ),
+                  // 官方只显示服务端文稿；这份是本地估算的，必须告诉用户，
+                  // 否则会被当成官方时间轴相信。
+                  if (c.subtitlesEstimated) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '字幕为本地估算，可能与声音有偏差',
+                      key: const ValueKey('audio-subtitle-estimated'),
+                      style: TextStyle(color: palette.muted, fontSize: 11.5),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Expanded(
                     child: snapshot.track.isEmpty

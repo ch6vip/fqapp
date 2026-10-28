@@ -72,6 +72,9 @@ class _AudioPlaybackController extends ChangeNotifier
   AudioExtras _extras = const AudioExtras();
   SubtitleTrack _subtitles = SubtitleTrack.empty;
 
+  /// 当前字幕轨是否由本地估算生成（服务端没有文稿时的兜底）。
+  bool _subtitlesEstimated = false;
+
   /// 听书 → 正文的同步映射（官方 AudioTimePoint）。驱动阅读页的朗读高亮。
   ///
   /// 没有映射时是空的，此时高亮退回字幕插值那套；两者都没有就不高亮——
@@ -475,6 +478,7 @@ class _AudioPlaybackController extends ChangeNotifier
       _duration = Duration.zero;
       _seekPreview.value = null;
       _subtitles = SubtitleTrack.empty;
+      _subtitlesEstimated = false;
       _timeTrack = AudioTimeTrack.empty;
       _wantPlay =
           autoplay &&
@@ -695,9 +699,20 @@ class _AudioPlaybackController extends ChangeNotifier
     String toneId,
   ) async {
     try {
-      final track = await _loadSubtitles(itemId, toneId);
+      var track = await _loadSubtitles(itemId, toneId);
+      var estimated = false;
+      if (track.isEmpty) {
+        // 官方只显示服务端文稿；这里给没有文稿的书补一条估算轨，
+        // 用正文 + `/timepoints` 反推（见 audio_subtitle_synth.dart）。
+        final synth = await _synthesizeSubtitles(this, itemId);
+        if (synth != null && synth.isNotEmpty) {
+          track = synth;
+          estimated = true;
+        }
+      }
       if (!_current(generation)) return;
       _subtitles = track;
+      _subtitlesEstimated = estimated;
       _publishReadAlong();
     } catch (_) {
       // Optional timeline failures must not escape the unawaited request or
@@ -1251,6 +1266,7 @@ class _AudioPlaybackController extends ChangeNotifier
         _position.value = Duration.zero;
         _duration = Duration.zero;
         _subtitles = SubtitleTrack.empty;
+        _subtitlesEstimated = false;
         _timeTrack = AudioTimeTrack.empty;
       });
       _settingsReady = _prepareSettings(forceToneId: toneId);
