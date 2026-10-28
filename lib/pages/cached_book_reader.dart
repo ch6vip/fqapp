@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../services/book_updates.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/connectivity_status.dart';
 import '../services/library_store.dart';
@@ -20,6 +23,7 @@ Future<bool> openRecentBook(
   MediaItem item, {
   ChapterCache? cache,
   ReaderStore? readerStore,
+  BookDirectoryLoader? directoryLoader,
 }) async {
   final kind = item.kind;
   if ((kind != 'book' && kind != 'manga') || item.id.isEmpty) return false;
@@ -79,20 +83,98 @@ Future<bool> openRecentBook(
               cache: cache,
               shelfItem: item,
             )
-          : ReaderPage(
-              bookId: item.id,
-              title: title,
-              cover: cover,
-              chapters: cachedBook.chapters,
+          : _RecentBookReader(
+              book: CachedBook(
+                id: item.id,
+                title: title,
+                cover: cover,
+                chapters: cachedBook.chapters,
+              ),
               startIndex: startIndex,
-              // 默认缓存由阅读器自行读取，保留在线段评、预取和正文刷新。
-              chapterCache: cache,
+              cache: cache,
               readerStore: baseStore,
-              shelfItem: item,
+              item: item,
+              // 注入缓存的调用方自带数据，仅显式提供 loader 时联网。
+              directoryLoader:
+                  directoryLoader ?? (cache == null ? loadBookDirectory : null),
             ),
     ),
   );
   return true;
+}
+
+/// 先显示缓存正文，目录更新不阻塞开书，也不重建阅读器的 State。
+class _RecentBookReader extends StatefulWidget {
+  final CachedBook book;
+  final int startIndex;
+  final ChapterCache? cache;
+  final ReaderStore readerStore;
+  final MediaItem item;
+  final BookDirectoryLoader? directoryLoader;
+
+  const _RecentBookReader({
+    required this.book,
+    required this.startIndex,
+    required this.cache,
+    required this.readerStore,
+    required this.item,
+    required this.directoryLoader,
+  });
+
+  @override
+  State<_RecentBookReader> createState() => _RecentBookReaderState();
+}
+
+class _RecentBookReaderState extends State<_RecentBookReader>
+    with WidgetsBindingObserver {
+  late List<Chapter> _chapters = widget.book.chapters;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_refresh());
+  }
+
+  Future<void> _refresh() async {
+    final loader = widget.directoryLoader;
+    if (loader == null || _refreshing) return;
+    _refreshing = true;
+    try {
+      final chapters = await loader(widget.book.id);
+      if (mounted && chapters.isNotEmpty) {
+        setState(() => _chapters = chapters);
+      }
+    } catch (_) {
+      // 更新检测失败不影响缓存阅读，下次回到前台重试。
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_refresh());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ReaderPage(
+    bookId: widget.book.id,
+    title: widget.book.title,
+    cover: widget.book.cover,
+    chapters: _chapters,
+    startIndex: widget.startIndex,
+    chapterCache: widget.cache,
+    readerStore: widget.readerStore,
+    shelfItem: widget.item,
+  );
 }
 
 /// 用本地缓存直接起阅读器，全程不碰网络。

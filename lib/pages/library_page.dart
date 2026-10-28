@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import '../services/desktop_platform.dart';
 // 书架页：官方免费小说书架形态的本地重设计（三 tab + 页头分层 +
 // 三档版式 + 编辑态）。设计 token、版式/排序枚举集中在
 // lib/widgets/shelf/shelf_design.dart（docs/system_design.md）。
 //
-// 不伪造能力：分组 / 云同步 / 导入图书 / 最近删除 / 连载更新提醒均无数据源，
+// 不伪造能力：分组 / 云同步 / 导入图书 / 最近删除均无数据源，
 // 不放占位控件；书架内本地搜索也刻意不做（规模小，筛选胶囊 + 排序 + 顶栏
 // 全局搜索已覆盖，详见 system_design.md §2）。被砍掉的官方能力与版式偏好
 // key 的语义迁移见
@@ -16,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/media_item.dart';
 import '../services/book_open_preferences.dart';
+import '../services/book_updates.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/connectivity_status.dart';
 import '../services/imported_book_store.dart';
@@ -86,6 +89,8 @@ class LibraryPage extends StatefulWidget {
   final ChapterCache? cacheStore;
   final ReaderStore? readerStore;
   final Future<ConnectivityView> Function()? connectivity;
+  final BookDirectoryLoader? directoryLoader;
+  final BookChapterCountLoader? chapterCountLoader;
 
   const LibraryPage({
     super.key,
@@ -94,13 +99,15 @@ class LibraryPage extends StatefulWidget {
     this.cacheStore,
     this.readerStore,
     this.connectivity,
+    this.directoryLoader,
+    this.chapterCountLoader,
   });
 
   @override
   State<LibraryPage> createState() => _LibraryPageState();
 }
 
-class _LibraryPageState extends State<LibraryPage> {
+class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   int _tab = 0;
   BookshelfLayout _layout = BookshelfLayout.grid;
   int _layoutGeneration = 0;
@@ -116,6 +123,8 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 「其他视频」，本地没有这种 kind，不放空壳胶囊）。
   String? _collectionFilter;
   bool _visible = false;
+  final Map<String, int> _latestChapterCounts = {};
+  Future<void>? _updatesFuture;
 
   /// 已完成入场动画的条目下标：HomeEntrance 只在首屏（index 0–5）播一次，
   /// 滚动回看不重放（HomeEntrance 的 animate 开关约定）。
@@ -127,6 +136,7 @@ class _LibraryPageState extends State<LibraryPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _historyChanges = LibraryStore.instance.historyListenable
       ..addListener(_storeChanged);
     _readTimeChanges = LibraryStore.instance.readTimeListenable
@@ -142,13 +152,67 @@ class _LibraryPageState extends State<LibraryPage> {
     if (_visible == visible) return;
     _visible = visible;
     // Catch up once when returning from another tab or an opaque route.
-    if (visible) _load();
+    if (visible) {
+      _load();
+      unawaited(_refreshUpdates());
+    }
   }
 
   /// Retained pages stay off the rebuild path while hidden: a write only marks
   /// them dirty and the snapshot is reloaded on the next visit.
   void _storeChanged() {
     if (_visible) _load();
+  }
+
+  Future<void> _refreshUpdates() => _updatesFuture ??= _checkUpdates()
+      .whenComplete(() => _updatesFuture = null);
+
+  Future<void> _checkUpdates() async {
+    final cache = widget.cacheStore ?? ChapterCacheStore.instance;
+    final books = [
+      for (final entry in _shelf)
+        if (entry.item.kind == 'book' &&
+            !ImportedBookStore.isLocalBookId(entry.item.id))
+          entry.item,
+    ];
+    for (final item in books) {
+      try {
+        final book = await cache.savedCatalogue(item.id);
+        if (!mounted) return;
+        if (book != null &&
+            book.chapters.length > (_latestChapterCounts[item.id] ?? 0)) {
+          _latestChapterCounts[item.id] = book.chapters.length;
+        }
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    if (_visible) _load();
+    if (widget.cacheStore != null && widget.chapterCountLoader == null) return;
+    final network = await (widget.connectivity ?? probeConnectivity)();
+    if (network?.online != true) return;
+    for (var i = 0; i < books.length; i += 3) {
+      if (!mounted || !_visible) return;
+      await Future.wait(
+        books.skip(i).take(3).map((item) async {
+          try {
+            final count = await (widget.chapterCountLoader ??
+                loadBookChapterCount)(item.id);
+            if (!mounted || count <= 0) return;
+            _latestChapterCounts[item.id] = count;
+            if (_visible) _load();
+          } catch (_) {
+            // 单本更新检测失败不清空进度或阻止其他书籍更新。
+          }
+        }),
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_visible && state == AppLifecycleState.resumed) {
+      unawaited(_refreshUpdates());
+    }
   }
 
   void _load() {
@@ -196,6 +260,7 @@ class _LibraryPageState extends State<LibraryPage> {
         _ShelfEntry.fromRecord(
           record,
           byIdentity['${record.item.kind}:${record.item.seriesId ?? record.item.id}'],
+          latestChapterCount: _latestChapterCounts[record.item.id],
         ),
     ];
   }
@@ -252,6 +317,7 @@ class _LibraryPageState extends State<LibraryPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _historyChanges.removeListener(_storeChanged);
     _readTimeChanges.removeListener(_storeChanged);
     _shelfChanges.removeListener(_storeChanged);
@@ -271,6 +337,7 @@ class _LibraryPageState extends State<LibraryPage> {
       _selected.clear();
       _entered.clear();
     });
+    if (tab == 0) unawaited(_refreshUpdates());
   }
 
   Future<void> _setLayout(BookshelfLayout layout) async {
@@ -361,6 +428,7 @@ class _LibraryPageState extends State<LibraryPage> {
           item,
           cache: widget.cacheStore,
           readerStore: widget.readerStore,
+          directoryLoader: widget.directoryLoader,
         )) {
       return;
     }
@@ -730,7 +798,10 @@ class _LibraryPageState extends State<LibraryPage> {
                   enabled: !_editing,
                   // 只让内容跟手横移：标题栏与工具条固定在顶上，切换后立刻
                   // 显示新的选中项。
-                  child: _content(palette),
+                  child: RefreshIndicator(
+                    onRefresh: _refreshUpdates,
+                    child: _content(palette),
+                  ),
                 ),
               ),
             ],
@@ -989,6 +1060,7 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget _grid(List<_ShelfEntry> entries) {
     return LayoutBuilder(
       builder: (context, constraints) => GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
         key: const Key('shelf-grid-view'),
         padding: const EdgeInsets.fromLTRB(
           ShelfTokens.screenPadding,
@@ -1035,6 +1107,7 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget _doubleGrid(List<_ShelfEntry> entries) {
     return LayoutBuilder(
       builder: (context, constraints) => GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
         key: const Key('shelf-double-view'),
         padding: const EdgeInsets.fromLTRB(
           ShelfTokens.screenPadding,
@@ -1075,6 +1148,7 @@ class _LibraryPageState extends State<LibraryPage> {
 
   Widget _list(List<_ShelfEntry> entries) {
     return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
       key: const Key('shelf-list-view'),
       padding: const EdgeInsets.only(
         top: ShelfTokens.spaceXS,
@@ -1174,7 +1248,7 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 编辑态底功能栏（amb.xml）：每个条目 24dp 图标 + 11sp 文案。
   ///
   /// 官方底栏还有找相似书 / 移动至分组 / 分享为书单 / 加入桌面 / 云同步 /
-  /// 导入图书 / 最近删除 / 连载更新提醒，这些本地都没有数据源，不伪造入口；
+  /// 导入图书 / 最近删除，这些本地都没有数据源，不伪造入口；
   /// 有数据支撑的只有「移出书架」（书架 / 收藏 tab，可撤销故直接执行）与
   /// 「删除」（浏览历史 tab，不可撤销故保留确认）。
   Widget _editBottomBar(HomePalette palette) {
@@ -1252,6 +1326,7 @@ class _ShelfEntry {
 
   /// 目录总章数。旧历史没有这个字段（null），书架回退到百分比显示。
   final int? chapterCount;
+  final int? latestChapterCount;
   final bool importedResume;
 
   const _ShelfEntry({
@@ -1263,13 +1338,15 @@ class _ShelfEntry {
     this.progress,
     this.episode,
     this.chapterCount,
+    this.latestChapterCount,
     this.importedResume = false,
   });
 
   factory _ShelfEntry.fromRecord(
     ShelfRecord record,
-    Map<String, dynamic>? history,
-  ) => _ShelfEntry(
+    Map<String, dynamic>? history, {
+    int? latestChapterCount,
+  }) => _ShelfEntry(
     item: record.item,
     selectionKey:
         '${record.item.kind}:${record.item.seriesId ?? record.item.id}',
@@ -1279,6 +1356,7 @@ class _ShelfEntry {
     progress: _progressOf(history),
     episode: _episodeOf(history),
     chapterCount: _chapterCountOf(history),
+    latestChapterCount: latestChapterCount,
     importedResume:
         record.item.kind == 'book' &&
         history?['fanqieImported'] == true &&
@@ -1320,7 +1398,7 @@ class _ShelfEntry {
   /// 四舍五入成 100%——总章数多、剩余章数少时 100% 无法区分「差一点」和
   /// 「读完了」（issue #110 第 3 条）。
   bool get _finished {
-    final total = chapterCount;
+    final total = _totalChapterCount;
     final chapter = episode;
     if (total == null || chapter == null) return false;
     if (chapter < total - 1) return false;
@@ -1328,12 +1406,13 @@ class _ShelfEntry {
     return value == null || value >= 1;
   }
 
-  /// 角标（官方是「更新」角标位）里放真实进度，没有进度时不出角标。
+  /// 新增章节优先显示「更新」，其余情况显示真实进度。
   ///
   /// 读完时不再显示 100%，让「已读完」只由 [readingText] 表达一次。
   String? get badgeText {
+    if (_hasUpdate) return '更新';
     if (_finished) return null;
-    final total = chapterCount;
+    final total = _totalChapterCount;
     final chapter = episode;
     // 有总章数时用章序号，读者能看出「还剩多少章」。
     if (total != null && chapter != null && chapter >= 0) {
@@ -1349,11 +1428,11 @@ class _ShelfEntry {
   /// 有总章数时对齐官方：“第12章 · 共84章”，读完则是“共84章·已读完”
   /// （strings `bm6`）。旧历史没有总章数，回退到原来的百分比。
   String? get readingText {
-    final total = chapterCount;
+    final total = _totalChapterCount;
     final chapter = episode;
     if (total != null && chapter != null && chapter >= 0) {
       if (_finished) return '共$total章·已读完';
-      return '第${chapter + 1}章 · 共$total章';
+      return '${_hasUpdate ? '更新 · ' : ''}第${chapter + 1}章 · 共$total章';
     }
     final parts = <String>[];
     if (chapter != null && chapter >= 0) parts.add('第${chapter + 1}章');
@@ -1363,6 +1442,17 @@ class _ShelfEntry {
     }
     return parts.isEmpty ? null : parts.join(' · ');
   }
+
+  bool get _hasUpdate =>
+      chapterCount != null &&
+      latestChapterCount != null &&
+      latestChapterCount! > chapterCount!;
+
+  int? get _totalChapterCount =>
+      chapterCount != null &&
+      (latestChapterCount == null || latestChapterCount! < chapterCount!)
+      ? chapterCount
+      : latestChapterCount;
 
   String? get metaText {
     if (item.author.trim().isNotEmpty) return item.author.trim();
