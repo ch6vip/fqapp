@@ -23,6 +23,7 @@ import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
 import '../widgets/reader/eink_reading.dart';
+import '../widgets/reader/reader_player_pill.dart';
 import '../services/eink_refresh.dart';
 import '../services/fair_memory.dart';
 import '../services/volume_key.dart';
@@ -420,7 +421,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _ensureCueIndex(ReaderChapterLayout layout) {
     final track = _cueTrackFor(_chapter.itemId);
-    if (identical(_cueIndexLayout, layout) && identical(_cueIndexTrack, track)) {
+    if (identical(_cueIndexLayout, layout) &&
+        identical(_cueIndexTrack, track)) {
       return;
     }
     _cueIndexLayout = layout;
@@ -1033,7 +1035,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 开始（`[3025, 0]`）时，位置 0 查不到句，用它寻址会把页面停到本章最后
     // 一句上，而且再也回不来。只有整章没有字幕表（官方时间点是唯一锚点）时
     // 才退回它。
-    final offset = span?.spokenOffset(positionMs) ??
+    final offset =
+        span?.spokenOffset(positionMs) ??
         (_cueIndex.isEmpty ? _narrationRange?.$1 : null);
     if (offset == null) {
       if (!quiet) _showMessage('找不到当前朗读句');
@@ -3165,6 +3168,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ),
                 _menuEdge(top: true, child: _buildToolbar(preset)),
                 _menuEdge(top: false, child: _buildReaderControls(preset)),
+                ReaderPlayerPillOverlay(bookId: widget.bookId),
                 // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
                 if (_einkFlashVisible)
                   const Positioned.fill(child: ColoredBox(color: Colors.white)),
@@ -3359,78 +3363,78 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             }
           },
           child: GestureDetector(
-          key: const ValueKey('reader-page-surface'),
-          behavior: HitTestBehavior.translucent,
-          onTapUp: (details) {
-            if (_selection != null) {
-              // A tap outside the selection cancels it without turning the
-              // page — the official reader behaves the same.
-              _closeSelectionBar(clearSelection: true);
-              return;
-            }
-            if (_autoTurnTimer != null) {
-              _stopAutoTurn();
-            } else if (_controlsVisible) {
-              _toggleControls();
-            } else {
-              _handleTapZone(details.localPosition, constraints);
-            }
-          },
-          // 听这本书时才挂双击（同章、跨章都行）：双击识别器会把普通单击推迟到
-          // 300ms 超时后才响应，没在听书时别拖累翻页点按。
-          onDoubleTapDown: _doubleTapArmed
-              ? (details) => _seekToTappedSentence(details.globalPosition)
-              : null,
-          child: Stack(
-            key: _selectionOverlayKey,
-            children: [
-              Positioned.fill(
-                child: _paged
-                    ? ReaderPagedView(
-                        key: _pagedKey,
-                        layout: layout,
-                        pageIndex: _pageIndex,
-                        hasPreviousChapter: _index > 0,
-                        hasNextChapter: _index < widget.chapters.length - 1,
-                        onPageChanged: _onPageChanged,
-                        onBoundary: _pageBoundary,
-                        onDragStart: _hideControlsOnDrag,
-                        // 墨水屏强制零动画翻页：动画帧在墨水屏上全是残影。
-                        // turnStyle == none 时章节边界动画也随之跳过。
-                        instantSwipe: einkEffectiveInstantSwipe(
-                          eink: einkModeNotifier.value,
-                          instantSwipeTurn: _preferences.instantSwipeTurn,
-                        ),
-                        turnStyle: einkEffectiveTurnStyle(
-                          eink: einkModeNotifier.value,
-                          instantSwipeTurn: _preferences.instantSwipeTurn,
-                          pageTurnStyle: _preferences.pageTurnStyle,
-                        ),
-                        backgroundColor: preset.backgroundColor,
-                        endPage: _index == widget.chapters.length - 1
-                            ? _buildChapterEndPage(preset)
-                            : null,
-                        onBookEnd: _stopAutoTurn,
-                        chapterTurn: _chapterTurnRequest,
-                        onChapterTurnCompleted: _onChapterTurnCompleted,
-                        imageProviderFactory: widget.imageProviderFactory,
-                        onParagraphLongPress: (block, position) =>
-                            unawaited(_onParagraphLongPress(block, position)),
-                        onParagraphLongPressMoveUpdate:
-                            _onParagraphLongPressMoveUpdate,
-                        onParagraphLongPressEnd: _onParagraphLongPressEnd,
-                        selectionScope: scope,
-                        selection: _selection,
-                        rangeUnderlines: _displayRangeUnderlines,
-                        narrationRange: _narrationRange,
-                      )
-                    : _buildScrollContent(layout, scope),
-              ),
-              ..._selectionHandles(scope),
-              ?_selectionBar(preset, windowPadding),
-            ],
+            key: const ValueKey('reader-page-surface'),
+            behavior: HitTestBehavior.translucent,
+            onTapUp: (details) {
+              if (_selection != null) {
+                // A tap outside the selection cancels it without turning the
+                // page — the official reader behaves the same.
+                _closeSelectionBar(clearSelection: true);
+                return;
+              }
+              if (_autoTurnTimer != null) {
+                _stopAutoTurn();
+              } else if (_controlsVisible) {
+                _toggleControls();
+              } else {
+                _handleTapZone(details.localPosition, constraints);
+              }
+            },
+            // 听这本书时才挂双击（同章、跨章都行）：双击识别器会把普通单击推迟到
+            // 300ms 超时后才响应，没在听书时别拖累翻页点按。
+            onDoubleTapDown: _doubleTapArmed
+                ? (details) => _seekToTappedSentence(details.globalPosition)
+                : null,
+            child: Stack(
+              key: _selectionOverlayKey,
+              children: [
+                Positioned.fill(
+                  child: _paged
+                      ? ReaderPagedView(
+                          key: _pagedKey,
+                          layout: layout,
+                          pageIndex: _pageIndex,
+                          hasPreviousChapter: _index > 0,
+                          hasNextChapter: _index < widget.chapters.length - 1,
+                          onPageChanged: _onPageChanged,
+                          onBoundary: _pageBoundary,
+                          onDragStart: _hideControlsOnDrag,
+                          // 墨水屏强制零动画翻页：动画帧在墨水屏上全是残影。
+                          // turnStyle == none 时章节边界动画也随之跳过。
+                          instantSwipe: einkEffectiveInstantSwipe(
+                            eink: einkModeNotifier.value,
+                            instantSwipeTurn: _preferences.instantSwipeTurn,
+                          ),
+                          turnStyle: einkEffectiveTurnStyle(
+                            eink: einkModeNotifier.value,
+                            instantSwipeTurn: _preferences.instantSwipeTurn,
+                            pageTurnStyle: _preferences.pageTurnStyle,
+                          ),
+                          backgroundColor: preset.backgroundColor,
+                          endPage: _index == widget.chapters.length - 1
+                              ? _buildChapterEndPage(preset)
+                              : null,
+                          onBookEnd: _stopAutoTurn,
+                          chapterTurn: _chapterTurnRequest,
+                          onChapterTurnCompleted: _onChapterTurnCompleted,
+                          imageProviderFactory: widget.imageProviderFactory,
+                          onParagraphLongPress: (block, position) =>
+                              unawaited(_onParagraphLongPress(block, position)),
+                          onParagraphLongPressMoveUpdate:
+                              _onParagraphLongPressMoveUpdate,
+                          onParagraphLongPressEnd: _onParagraphLongPressEnd,
+                          selectionScope: scope,
+                          selection: _selection,
+                          rangeUnderlines: _displayRangeUnderlines,
+                          narrationRange: _narrationRange,
+                        )
+                      : _buildScrollContent(layout, scope),
+                ),
+                ..._selectionHandles(scope),
+                ?_selectionBar(preset, windowPadding),
+              ],
+            ),
           ),
-        ),
         );
       },
     );

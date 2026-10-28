@@ -26,6 +26,15 @@ class AudioPlaybackScope extends StatefulWidget {
     return owner?.seekActive(position) ?? false;
   }
 
+  /// 阅读页那枚「暂停播放 / 继续播放」胶囊：切换这本书的播放状态。
+  ///
+  /// 对应官方 `ReaderPlayerButton`（`ajo.xml` 的 `TextView j53`）。没有正在
+  /// 控制这本书的会话（没在听 / 听的是别的书 / 系统朗读）时返回 false。
+  static bool togglePlayback(BuildContext context, String bookId) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return owner?.togglePlayback(bookId) ?? false;
+  }
+
   /// 把朗读切到 [chapterId]，并从 [position] 起播（双击跳读，可跨章）。
   ///
   /// 同章就是 seek；换章走 [_openChapter]，它会释放旧播放器、按给定位置起播，
@@ -95,6 +104,16 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     final session = _session;
     if (session == null || session._closed || !session._ready) return false;
     unawaited(session._seekTo(position));
+    return true;
+  }
+
+  /// 见 [AudioPlaybackScope.togglePlayback]。
+  bool togglePlayback(String bookId) {
+    final session = _session;
+    if (session == null || session._closed) return false;
+    // 只控制「正在听的那本」：阅读页可能翻到别的书，那与本会话无关。
+    if (session._bookId != bookId || !session._ready) return false;
+    unawaited(session._togglePlayback());
     return true;
   }
 
