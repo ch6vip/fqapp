@@ -17,10 +17,17 @@ class ReaderPlayerPill extends StatelessWidget {
     super.key,
     required this.playing,
     required this.onTap,
+    this.compact = false,
   });
 
   final bool playing;
   final VoidCallback onTap;
+
+  /// 官方 `ButtonType.indicator`：只有图标、没有文字。
+  ///
+  /// 触发条件是「正在播放 **且** 朗读高亮在屏幕内」（`audiosync/a.a()`
+  /// 的三条判据）；暂停或高亮滚出屏幕时回到完整胶囊。
+  final bool compact;
 
   static const double height = 32;
   static const Color _background = Color(0xFF7E6F52);
@@ -37,26 +44,32 @@ class ReaderPlayerPill extends StatelessWidget {
         onTap: onTap,
         child: SizedBox(
           height: height,
+          width: compact ? height : null,
           child: Padding(
-            padding: const EdgeInsets.only(left: 18, right: 20),
+            padding: compact
+                ? EdgeInsets.zero
+                : const EdgeInsets.only(left: 18, right: 20),
             child: Row(
               mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
                   playing ? Icons.pause : Icons.play_arrow,
                   size: 14,
                   color: _foreground,
                 ),
-                const SizedBox(width: 4),
-                Text(
-                  playing ? '暂停播放' : '继续播放',
-                  key: const ValueKey('reader_player_pill_label'),
-                  maxLines: 1,
-                  style: const TextStyle(
-                    color: _foreground,
-                    fontSize: 14,
+                if (!compact) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    playing ? '暂停播放' : '继续播放',
+                    key: const ValueKey('reader_player_pill_label'),
+                    maxLines: 1,
+                    style: const TextStyle(
+                      color: _foreground,
+                      fontSize: 14,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -70,9 +83,16 @@ class ReaderPlayerPill extends StatelessWidget {
 ///
 /// 抽成组件是为了让 [ReaderPage] 只多一行 —— 那个文件本来就在行数预算上限。
 class ReaderPlayerPillOverlay extends StatelessWidget {
-  const ReaderPlayerPillOverlay({super.key, required this.bookId});
+  const ReaderPlayerPillOverlay({
+    super.key,
+    required this.bookId,
+    this.highlightOnScreen = false,
+  });
 
   final String bookId;
+
+  /// 朗读高亮是否落在当前屏内；官方据此把按钮缩成图标态。
+  final bool highlightOnScreen;
 
   @override
   Widget build(BuildContext context) {
@@ -93,6 +113,8 @@ class ReaderPlayerPillOverlay extends StatelessWidget {
                 if (session.bookId != bookId) return const SizedBox.shrink();
                 return ReaderPlayerPill(
                   playing: session.playing,
+                  // 官方：播放中且高亮在屏内 → 缩成图标，别挡正文。
+                  compact: session.playing && highlightOnScreen,
                   onTap: () =>
                       AudioPlaybackScope.togglePlayback(context, bookId),
                 );

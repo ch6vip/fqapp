@@ -54,15 +54,46 @@ void main() {
     expect(size.width, lessThan(130));
   });
 
+  testWidgets('compact mode keeps only the icon', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: ReaderPlayerPill(
+              playing: true,
+              compact: true,
+              onTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    // 官方 `ButtonType.indicator`：没有文字，宽高都是 32dp 的圆。
+    expect(find.text('暂停播放'), findsNothing);
+    expect(find.text('继续播放'), findsNothing);
+    final size = tester.getSize(
+      find.byKey(const ValueKey('reader_player_pill')),
+    );
+    expect(size.height, 32);
+    expect(size.width, 32);
+  });
+
   group('overlay', () {
-    Future<void> mountOverlay(WidgetTester tester, {required String bookId}) {
+    Future<void> mountOverlay(
+      WidgetTester tester, {
+      required String bookId,
+      bool highlightOnScreen = false,
+    }) {
       return tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: Stack(
               children: [
                 const SizedBox.expand(),
-                ReaderPlayerPillOverlay(bookId: bookId),
+                ReaderPlayerPillOverlay(
+                  bookId: bookId,
+                  highlightOnScreen: highlightOnScreen,
+                ),
               ],
             ),
           ),
@@ -86,6 +117,25 @@ void main() {
       publish(bookId: 'other', playing: true);
       await mountOverlay(tester, bookId: 'mine');
       expect(find.byKey(const ValueKey('reader_player_pill')), findsNothing);
+    });
+
+    testWidgets('shrinks to the icon while playing with the highlight on screen',
+        (tester) async {
+      publish(bookId: 'mine', playing: true);
+      await mountOverlay(tester, bookId: 'mine', highlightOnScreen: true);
+      expect(find.text('暂停播放'), findsNothing);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('reader_player_pill'))).width,
+        32,
+      );
+    });
+
+    testWidgets('stays a full pill while paused even with the highlight visible',
+        (tester) async {
+      publish(bookId: 'mine', playing: false);
+      await mountOverlay(tester, bookId: 'mine', highlightOnScreen: true);
+      // 官方：「暂停状态下，不展示弱化效果」。
+      expect(find.text('继续播放'), findsOneWidget);
     });
 
     testWidgets('shows for the book currently being listened to',

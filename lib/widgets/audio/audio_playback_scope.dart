@@ -144,7 +144,10 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     return future;
   }
 
-  Future<SubtitleTrack> _loadTimeline(String key, Future<SubtitleTrack> load) async {
+  Future<SubtitleTrack> _loadTimeline(
+    String key,
+    Future<SubtitleTrack> load,
+  ) async {
     try {
       final track = await load;
       // 命中不了的章不再重复请求；超过 8 条就丢最旧的一条。

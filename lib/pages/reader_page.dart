@@ -3168,7 +3168,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ),
                 _menuEdge(top: true, child: _buildToolbar(preset)),
                 _menuEdge(top: false, child: _buildReaderControls(preset)),
-                ReaderPlayerPillOverlay(bookId: widget.bookId),
+                ReaderPlayerPillOverlay(
+                  bookId: widget.bookId,
+                  highlightOnScreen: _narrationOnScreen,
+                ),
                 // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
                 if (_einkFlashVisible)
                   const Positioned.fill(child: ColoredBox(color: Colors.white)),
@@ -3178,6 +3181,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  /// 朗读高亮是否落在当前页内（官方 `AudioSyncReaderController.A()`）。
+  ///
+  /// 官方用它决定底部那枚播放胶囊要不要缩成图标态：播放中且高亮可见时缩小，
+  /// 免得挡住正在读的正文；暂停或高亮滚出屏幕时恢复完整胶囊。
+  bool get _narrationOnScreen {
+    final range = _narrationRange;
+    final layout = _chapterLayout;
+    if (range == null || layout == null || layout.pages.isEmpty) return false;
+    final page = layout.pages[_pageIndex.clamp(0, layout.pages.length - 1)];
+    return range.$1 < page.end && range.$2 > page.start;
   }
 
   Widget _menuEdge({required bool top, required Widget child}) => Positioned(
