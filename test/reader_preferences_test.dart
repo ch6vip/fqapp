@@ -11,6 +11,24 @@ void main() {
   });
 
   test(
+    'system status bar defaults off and preserves explicit choices',
+    () async {
+      final defaults = await ReaderPreferences.load();
+      expect(defaults.showSystemStatusBar, isFalse);
+      await defaults.copyWith(showSystemStatusBar: true).save();
+      final restored = await ReaderPreferences.load();
+      expect(restored.showSystemStatusBar, isTrue);
+      expect(restored.copyWith(fontSize: 22).showSystemStatusBar, isTrue);
+      await restored.copyWith(showSystemStatusBar: false).save();
+      expect((await ReaderPreferences.load()).showSystemStatusBar, isFalse);
+      SharedPreferences.setMockInitialValues({
+        'reader_show_system_status_bar': 'yes',
+      });
+      expect((await ReaderPreferences.load()).showSystemStatusBar, isFalse);
+    },
+  );
+
+  test(
     'reading info migrates the old switch and remembers an explicit mode',
     () async {
       expect(

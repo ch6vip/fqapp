@@ -1,0 +1,50 @@
+name: Contributors avatar wall
+
+# Keeps .github/contributors.svg (README 「参与贡献」) in sync with GitHub's
+# contributor list. Runs the generator and commits back only when the wall
+# actually changed. The bot's own commit cannot retrigger this workflow:
+# pushes made with GITHUB_TOKEN never start workflow runs, and the SVG path
+# is ignored below as a second guard.
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '.github/contributors.svg'
+  schedule:
+    # GitHub's contributor list is cached for hours; a weekly pass catches
+    # anyone the push-triggered runs were too early to see.
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: contributors-wall
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Regenerate avatar wall
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/contributors.mjs
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- .github/contributors.svg; then
+            echo "Avatar wall unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/contributors.svg
+          git commit -m "docs: 自动更新贡献者头像墙"
+          git pull --rebase origin master
+          git push origin master

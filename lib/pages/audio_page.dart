@@ -15,6 +15,10 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/audio_download_store.dart';
 import '../services/audio_history.dart';
+import '../services/audio_page_theme.dart';
+import '../services/audio_play_error.dart';
+import '../services/audio_playback_choice.dart';
+import '../services/audio_subtitle_synth.dart';
 import '../services/audio_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/fair_memory.dart';
@@ -26,7 +30,13 @@ import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
 import '../widgets/audio/audio_offline_section.dart';
+import '../widgets/audio/audio_advance_banner.dart';
+import '../widgets/audio/audio_control_rows.dart';
+import '../widgets/audio/audio_quick_rows.dart';
+import '../widgets/audio/audio_skip_points_rows.dart';
+import '../widgets/audio/audio_cover_card.dart';
 import '../widgets/audio/audio_sections.dart';
+import '../widgets/audio/audio_subtitle_scroller.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
 import '../widgets/audio/system_tts_controls.dart';
 import '../widgets/chapter_cache_sheet.dart';
@@ -35,6 +45,8 @@ import '../widgets/home/home_design.dart';
 import 'detail_page.dart';
 import 'reader_page.dart';
 
+part 'audio_listening_layout.dart';
+part '../services/audio_playback_guard.dart';
 part '../services/audio_playback_controller.dart';
 part '../widgets/audio/audio_playback_scope.dart';
 
@@ -143,9 +155,15 @@ typedef _ReadAlongSnapshot = ({
   String chapterTitle,
   SubtitleTrack track,
   Duration position,
+  Duration duration,
 });
 
-typedef _MoreSnapshot = ({bool loading, bool autoAdvance, int? sleepMinutes});
+typedef _MoreSnapshot = ({
+  bool loading,
+  bool autoAdvance,
+  int? sleepMinutes,
+  bool sleepAtChapterEnd,
+});
 
 typedef _RoutePlayback = ({
   int index,
@@ -173,7 +191,37 @@ class _AudioPageState extends State<AudioPage> {
   bool _attaching = false;
   bool _attachFailed = false;
   bool _routeCurrent = true;
+
+  /// 封面取色得到的整页配色。null 表示还没算完或取色失败，此时用官方
+  /// 截图里那套暖棕兜底（[AudioPageTheme.fallback]）。
+  AudioPageTheme? _theme;
+  String _themeSource = '';
   _AudioPlaybackController get c => _session!;
+
+  /// 封面变了才重算，避免每次 rebuild 都读一次缓存文件。
+  void _syncCoverTheme() {
+    final session = _session;
+    if (session == null) return;
+    final cover = session._cover;
+    if (cover == _themeSource) return;
+    _themeSource = cover;
+    if (cover.isEmpty) {
+      if (_theme != null) setState(() => _theme = null);
+      return;
+    }
+    unawaited(() async {
+      final dominant = await fetchCoverDominant(cover);
+      if (!mounted || cover != _themeSource) return;
+      setState(() {
+        _theme = dominant == null
+            ? null
+            : AudioPageTheme.fromCover(
+                dominant,
+                dark: Theme.of(context).brightness == Brightness.dark,
+              );
+      });
+    }());
+  }
 
   @override
   void didChangeDependencies() {
@@ -209,11 +257,14 @@ class _AudioPageState extends State<AudioPage> {
     session.addListener(_changed);
     if (owner == null) session.start();
     owner?.viewChanged(this);
+    _syncCoverTheme();
     setState(() {});
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    _syncCoverTheme();
+    setState(() {});
   }
 
   @override
@@ -478,180 +529,30 @@ class _AudioPageState extends State<AudioPage> {
         introSummary.isNotEmpty ||
         (detail?.author.name.isNotEmpty ?? false) ||
         detail?.title.isNotEmpty == true;
-    // 官方把「AI朗读 │ 真人讲书」作为页头分段（layout/hy.xml），只在两种
-    // 音源都真的可选时出现，否则会给出一个点了没反应的开关。
-    final modeSwitch =
-        c._extras.tones.narratorTones.isNotEmpty &&
-            c._extras.tones.ttsTones.isNotEmpty
-        ? AudioModeSwitch(
-            realSelected: realAudio,
-            onSelectTts: () => _onToneSelected(c._extras.tones.ttsTones.first),
-            onSelectNarrator: () =>
-                _onToneSelected(c._extras.tones.narratorTones.first),
-          )
-        : null;
     // Windows 桌面端用独立版式；它只需要 tones，上面这些局部变量先算好并不吃亏。
     if (isWindowsDesktop) return _desktopAudio(palette, chapter, tones);
-    return Scaffold(
-      key: ValueKey('audio_session_${c._bookId}'),
-      backgroundColor: palette.canvas,
-      body: SafeArea(
-        child: Column(
-          children: [
-            AudioTopBar(
-              onCollapse: () => Navigator.maybePop(context),
-              onMore: _showMore,
-            ),
-            ?modeSwitch,
-            Expanded(
-              child: SingleChildScrollView(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const SizedBox(height: 10),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: AudioBookCard(
-                            cover: c._cover,
-                            bookTitle: c._title,
-                            chapterTitle: chapter.title,
-                            onSwitch: _showVoices,
-                            onOpenBook: _showCatalog,
-                            realAudio: realAudio,
-                            modeLabel: realAudio
-                                ? '真人讲书・第 ${c._index + 1} 集'
-                                : null,
-                            intro: realAudio
-                                ? AudioIntroCard(
-                                    cover: c._cover,
-                                    title: detail?.title.isNotEmpty == true
-                                        ? detail!.title
-                                        : c._title,
-                                    author: detail?.author.name ?? '',
-                                    meta: detail?.metaParts ?? const [],
-                                    summary: introSummary,
-                                    related: related,
-                                    onOpenRelated: _openRelated,
-                                  )
-                                : null,
-                          ),
-                        ),
-                        if (realAudio)
-                          ValueListenableBuilder<_ReadAlongSnapshot>(
-                            valueListenable: c._readAlong,
-                            builder: (context, snapshot, _) =>
-                                AudioInlineSubtitle(
-                                  track: snapshot.track,
-                                  position: snapshot.position,
-                                  onTap: _showReadAlong,
-                                ),
-                          ),
-                        // 真人讲书的简介在封面背面（官方 bhi.xml），正文摘录只在
-                        // 没有简介数据时兜底，避免同一段文字出现两次。
-                        if (c._excerpt.isNotEmpty &&
-                            !(realAudio && hasIntro)) ...[
-                          const SizedBox(height: 12),
-                          AudioExcerpt(text: c._excerpt, onTap: _showExcerpt),
-                        ],
-                        if (c._error != null ||
-                            c._loading ||
-                            (c._player?.buffering ?? false) ||
-                            c._completed) ...[
-                          const SizedBox(height: 8),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            child: _statusLine(palette),
-                          ),
-                        ],
-                        const SizedBox(height: 8),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: AudioActionRow(actions: _actions),
-                        ),
-                        const SizedBox(height: 12),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: ValueListenableBuilder<Duration>(
-                            valueListenable: c._position,
-                            builder: (context, position, _) =>
-                                ValueListenableBuilder<double?>(
-                                  valueListenable: c._seekPreview,
-                                  builder: (context, seekPreview, _) =>
-                                      AudioProgressRow(
-                                        position: position,
-                                        duration: c._duration,
-                                        preview: seekPreview,
-                                        enabled: c._ready,
-                                        onChanged: (value) =>
-                                            c._seekPreview.value = value,
-                                        onChangeEnd: (value) => c._seekTo(
-                                          Duration(milliseconds: value.round()),
-                                        ),
-                                        onBack15: c._ready
-                                            ? () => c._seekTo(
-                                                c._position.value -
-                                                    const Duration(seconds: 15),
-                                              )
-                                            : null,
-                                        onForward15: c._ready
-                                            ? () => c._seekTo(
-                                                c._position.value +
-                                                    const Duration(seconds: 15),
-                                              )
-                                            : null,
-                                      ),
-                                ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        _transport(),
-                        const SizedBox(height: 16),
-                        // 官方在真人讲书页把音色卡默认收起（bj1.xml a5h 为
-                        // gone），主播版本改由一行入口 + 声音设置面板承担。
-                        if (realAudio)
-                          AudioRealVersionRow(
-                            narrator: _narratorLabel,
-                            onTap: c._switchingVersion ? null : _showVoices,
-                          )
-                        else
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: AudioToneSection(
-                              title: '智能朗读',
-                              tones: tones,
-                              selectedId: c._extras.tones.hasFixedTone
-                                  ? c._bookId
-                                  : c._toneId,
-                              currentChapterTitle: chapter.title,
-                              onSelect: _onToneSelected,
-                              onReadAlong: _showReadAlong,
-                              onShowVoices: c._switchingVersion
-                                  ? null
-                                  : _showVoices,
-                            ),
-                          ),
-                        if (c._extras.related.isNotEmpty) ...[
-                          const SizedBox(height: 18),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: AudioRelatedRow(
-                              works: c._extras.related,
-                              onTap: _openRelated,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 28),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+
+    // 官方整页底色/字色都取自封面（见 audio_page_theme.dart）。
+    final pageDark = palette.dark;
+    final theme =
+        (_theme ??
+                (pageDark
+                    ? AudioPageTheme.fallbackDark
+                    : AudioPageTheme.fallback))
+            .withOled(palette.oled && pageDark);
+    return AudioPageThemeScope(
+      theme: theme,
+      oled: palette.oled && pageDark,
+      child: _listeningScaffold(
+        theme: theme,
+        pageDark: pageDark,
+        chapter: chapter,
+        realAudio: realAudio,
+        tones: tones,
+        detail: detail,
+        introSummary: introSummary,
+        related: related,
+        hasIntro: hasIntro,
       ),
     );
   }
@@ -691,7 +592,7 @@ class _AudioPageState extends State<AudioPage> {
                           if (c._excerpt.isNotEmpty)
                             AudioExcerpt(text: c._excerpt, onTap: _showExcerpt),
                           const SizedBox(height: 12),
-                          AudioActionRow(actions: _actions),
+                          AudioIconRow(actions: _iconActions),
                           const SizedBox(height: 24),
                           AudioToneSection(
                             title: c._mode == 'narrator' ? '真人讲书' : '智能朗读',
@@ -743,8 +644,12 @@ class _AudioPageState extends State<AudioPage> {
                               builder: (context, position, _) {
                                 final track = c._subtitles;
                                 if (track.isEmpty) {
+                                  // 官方两种空态都走 `setStatusText`，文案统一。
                                   return const Center(
-                                    child: Text('当前章节暂无同步字幕'),
+                                    child: Text(
+                                      '本章暂无同步字幕',
+                                      key: Key('audio-subtitle-page-empty'),
+                                    ),
                                   );
                                 }
                                 // 高亮与自动滚动都在 `AudioSubtitleList`
@@ -871,22 +776,44 @@ class _AudioPageState extends State<AudioPage> {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: palette.ink, fontSize: 16),
                   ),
+                  // 官方只显示服务端文稿；这份是本地估算的，必须告诉用户，
+                  // 否则会被当成官方时间轴相信。
+                  if (c.subtitlesEstimated) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '字幕为本地估算，可能与声音有偏差',
+                      key: const ValueKey('audio-subtitle-estimated'),
+                      style: TextStyle(color: palette.muted, fontSize: 11.5),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Expanded(
                     child: snapshot.track.isEmpty
                         ? Center(
                             child: Text(
                               '本章暂无同步字幕',
+                              key: const ValueKey('audio-read-along-empty'),
                               style: TextStyle(
                                 color: palette.muted,
                                 fontSize: 13,
                               ),
                             ),
                           )
-                        : SingleChildScrollView(
-                            child: AudioSubtitleView(
+                        : LayoutBuilder(
+                            builder: (context, box) => AudioSubtitleScroller(
                               track: snapshot.track,
                               position: snapshot.position,
+                              viewportHeight: box.maxHeight,
+                              // 官方 `subtitle/x0` 对文稿页同样传
+                              // `setScrollingSeekEnable(false)`，drag/fling
+                              // 在本版本不可达，所以这里也不启用。
+                              fontSize: 16,
+                              // 官方字段 `o` 的默认值就是 3（`getInt` 的返回值
+                              // 被丢弃后硬置 3），只有内联槽会 `setStartLine(1)`。
+                              startLine: 3,
+                              currentLineKey: const Key(
+                                'audio_subtitle_current',
+                              ),
                             ),
                           ),
                   ),
@@ -907,44 +834,6 @@ class _AudioPageState extends State<AudioPage> {
     }
     return c._narratorTones.isEmpty ? '' : c._narratorTones.first.title;
   }
-
-  /// Icon row: 语速 / 加入书架 / 下载 / 章评 / 更多.
-  List<AudioAction> get _actions => [
-    AudioAction(
-      key: 'audio-speed',
-      icon: LucideIcons.gauge,
-      label: '语速',
-      onTap: c._ready ? _showRates : null,
-    ),
-    AudioAction(
-      key: 'audio_shelf',
-      icon: LucideIcons.book_plus,
-      label: c._inShelf ? '已在书架' : '加入书架',
-      active: c._inShelf,
-      onTap: _toggleShelf,
-    ),
-    AudioAction(
-      key: 'audio_download',
-      icon: LucideIcons.download,
-      label: '下载',
-      onTap: _showDownload,
-    ),
-    AudioAction(
-      key: 'audio_chapter_comment',
-      icon: LucideIcons.message_circle,
-      // The official listening page labels this 章评 (chapter-end discussion).
-      // The closest sheet we have today shows the work's book reviews; the
-      // reader keeps the real chapter/paragraph ideas.
-      label: '章评',
-      onTap: _showBookReviews,
-    ),
-    AudioAction(
-      key: 'audio_more',
-      icon: LucideIcons.ellipsis,
-      label: '更多',
-      onTap: _showMore,
-    ),
-  ];
 
   /// `layout/bin.xml`: 目录 / 上一章 / 播放暂停 / 下一章 / 定时。
   ///
@@ -1065,8 +954,12 @@ class _AudioPageState extends State<AudioPage> {
         ],
       );
     }
+    // 走到这里只可能是「本章播完」：本卡片的渲染条件已限定
+    // error / loading / buffering / completed 四种，前三种上面都提前返回了。
+    // 原先这里还有个「正在播放 / 已暂停」的分支，永远不可达，已删除。
+    // 官方 `v7`「已播完最新章节，去听听其它内容吧」只在**末章**播完时出现。
     return Text(
-      c._completed ? '本章已播完' : (c._wantPlay ? '正在播放' : '已暂停'),
+      c.atLastChapter ? '已播完最新章节，去听听其它内容吧' : '本章已播完',
       textAlign: TextAlign.center,
       style: TextStyle(color: palette.muted, fontSize: 12.5),
     );
@@ -1187,44 +1080,68 @@ class _AudioPageState extends State<AudioPage> {
     );
   }
 
-  /// Sleep timer: pauses playback when the countdown elapses.
+  /// 睡眠定时：三档（关闭 / 听完本章 / N 分钟后），官方 `cip`「听完本章」。
   Future<void> _showSleepTimer() async {
-    final palette = HomePalette.of(context);
-    // -1 is the explicit 关闭定时 choice; a null result means the sheet was
-    // dismissed and must leave any active timer untouched.
-    const options = <int>[-1, 15, 30, 60];
-    final selected = await showModalBottomSheet<int>(
+    // 当前档位：听完本章优先，其次按剩余分钟落到最接近的档，否则关闭。
+    final SleepTimerChoice current;
+    if (c.sleepAtChapterEnd) {
+      current = const SleepTimerChoice.endOfChapter();
+    } else if (c._sleepRemaining case final remaining?) {
+      final minutes = (remaining.inSeconds / 60).ceil();
+      current = SleepTimerChoice.minutes(
+        minutes >= 60 ? 60 : (minutes >= 30 ? 30 : 15),
+      );
+    } else {
+      current = const SleepTimerChoice.off();
+    }
+    const minuteOptions = <int>[15, 30, 60];
+    final picked = await showModalBottomSheet<SleepTimerChoice>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ListTile(title: Text('定时关闭')),
-            for (final minutes in options)
-              ListTile(
-                title: Text(minutes == -1 ? '关闭定时' : '$minutes 分钟后'),
-                trailing: (c._sleepMinutes ?? -1) == minutes
-                    ? const Icon(LucideIcons.check, color: HomePalette.accent)
-                    : null,
-                onTap: () => Navigator.pop(context, minutes),
+      builder: (context) {
+        Widget tile(String label, SleepTimerChoice choice, bool selected) {
+          return ListTile(
+            title: Text(label),
+            trailing: selected
+                ? const Icon(LucideIcons.check, color: HomePalette.accent)
+                : null,
+            onTap: () => Navigator.pop(context, choice),
+          );
+        }
+
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(title: Text('定时关闭')),
+              tile(
+                '听完本章',
+                const SleepTimerChoice.endOfChapter(),
+                current.endOfChapter,
               ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+              for (final minutes in minuteOptions)
+                tile(
+                  '$minutes 分钟后',
+                  SleepTimerChoice.minutes(minutes),
+                  !current.endOfChapter && current.minutes == minutes,
+                ),
+              tile('关闭定时', const SleepTimerChoice.off(), current.isOff),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
-    if (!mounted || selected == null) return;
-    c._applySleepTimer(selected == -1 ? null : selected);
+    if (!mounted || picked == null) return;
+    _applySleepTimerChoice(c, picked);
+    final message = picked.isOff
+        ? '已关闭定时'
+        : picked.endOfChapter
+        ? '本章播完后停止播放'
+        : '将在 ${picked.minutes} 分钟后停止播放';
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(selected == -1 ? '已关闭定时' : '将在 $selected 分钟后停止播放'),
-        duration: const Duration(seconds: 2),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
-    if (!mounted) return;
-    // Keep the palette referenced so the sheet inherits the theme colours.
-    assert(palette.canvas != palette.surface);
   }
 
   Future<void> _showMore() async {
@@ -1240,7 +1157,9 @@ class _AudioPageState extends State<AudioPage> {
       builder: (context) {
         final palette = HomePalette.of(context);
         return SafeArea(
-          child: Padding(
+          // 加了「跳过片头/片尾」两行后，面板在小屏上会超过 sheet 的最大高度，
+          // 必须可滚动，否则 RenderFlex 直接溢出。
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1293,54 +1212,42 @@ class _AudioPageState extends State<AudioPage> {
                       builder: (context, snapshot, _) => Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 2,
+                          // 官方 bik.xml 的面板只有三行快捷入口：
+                          // 语速(dh) / 定时(di) / 音色(aag)。
+                          AudioQuickRows(
+                            rateLabel:
+                                '${_AudioPageState._rateLabel(c._rate)}x',
+                            timerLabel: sleepTimerLabel(
+                              atChapterEnd: snapshot.sleepAtChapterEnd,
+                              remaining: c._sleepRemaining,
                             ),
-                            leading: Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF3B82F6,
-                                ).withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(
-                                LucideIcons.alarm_clock,
-                                size: 20,
-                                color: Color(0xFF3B82F6),
-                              ),
-                            ),
-                            title: Text(
-                              '定时关闭',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15,
-                                color: palette.ink,
-                              ),
-                            ),
-                            subtitle: Text(
-                              snapshot.sleepMinutes == null
-                                  ? '未开启'
-                                  : '剩余 ${snapshot.sleepMinutes} 分钟',
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: snapshot.sleepMinutes == null
-                                    ? palette.muted
-                                    : const Color(0xFF3B82F6),
-                              ),
-                            ),
-                            trailing: Icon(
-                              LucideIcons.chevron_right,
-                              size: 18,
-                              color: palette.muted,
-                            ),
-                            onTap: () {
+                            toneLabel: _currentToneLabel,
+                            // 与原来的「定时关闭」行一致：先关掉这个面板再开
+                            // 子面板，避免两个 sheet 叠在一起（叠层后遮罩会
+                            // 吃掉后续点击）。
+                            onRate: () {
+                              Navigator.pop(context);
+                              unawaited(_showRates());
+                            },
+                            onTimer: () {
                               Navigator.pop(context);
                               unawaited(_showSleepTimer());
                             },
+                            onTone: () {
+                              Navigator.pop(context);
+                              unawaited(_showVoices());
+                            },
+                          ),
+                          Divider(
+                            height: 1,
+                            indent: 16,
+                            color: palette.line.withValues(alpha: 0.5),
+                          ),
+                          // 官方 du/dq：跳过片头/片尾按书保存，默认关闭。
+                          AudioSkipPointsRows(
+                            points: c.skipPoints,
+                            onChanged: (points) =>
+                                unawaited(c.setSkipPoints(points)),
                           ),
                           Divider(
                             height: 1,

@@ -104,11 +104,11 @@ void main() {
     final subtitles = Completer<SubtitleTrack>();
     await _mount(tester, _AudioSession((_, _) => subtitles.future).app());
     await _openReadAlong(tester);
-    expect(find.text('本章暂无同步字幕'), findsOneWidget);
+    expect(find.byKey(const ValueKey('audio-read-along-empty')), findsOneWidget);
     subtitles.complete(_track);
     await _flush(tester);
     expect(_currentSubtitle(tester), '第一句同步字幕');
-    expect(find.text('本章暂无同步字幕'), findsNothing);
+    expect(find.byKey(const ValueKey('audio-read-along-empty')), findsNothing);
   });
 
   testWidgets(
@@ -126,9 +126,12 @@ void main() {
       expect(_currentSubtitle(tester), '第二句同步字幕');
       session.players.first.emitCompleted();
       await _flush(tester);
+      // 官方连播倒计时（`te`「%s后播放下一集」）：播完要先过 3 秒窗口才换章。
+      await tester.pump(const Duration(seconds: 3));
+      await _flush(tester);
       expect(session.players, hasLength(2));
       expect(find.text('第二句同步字幕'), findsNothing);
-      expect(find.text('本章暂无同步字幕'), findsOneWidget);
+      expect(find.byKey(const ValueKey('audio-read-along-empty')), findsOneWidget);
       expect(
         tester
             .widget<Text>(
@@ -158,7 +161,7 @@ void main() {
     );
     await _mount(tester, session.app());
     await _openReadAlong(tester);
-    expect(find.text('本章暂无同步字幕'), findsOneWidget);
+    expect(find.byKey(const ValueKey('audio-read-along-empty')), findsOneWidget);
     expect(session.players.single.isPlaying, isTrue);
     expect(tester.takeException(), isNull);
   });
@@ -219,6 +222,8 @@ void main() {
       );
       await _flush(tester);
       expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+      // 面板顶部多了官方的「语速/定时/音色」三行，开关可能落在视口外。
+      await tester.ensureVisible(toggle);
       await tester.tap(toggle);
       await _flush(tester);
       expect(session.store.entry?['autoAdvance'], isFalse);
@@ -232,18 +237,21 @@ void main() {
     await _mount(tester, session.app());
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('定时关闭'));
+    // 官方面板的「定时」快捷行取代了原来的「定时关闭」列表项。
+    await tester.tap(find.byKey(const Key('audio_more_timer')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('15 分钟后'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
-    String remaining() => tester.widget<Text>(find.textContaining('剩余 ')).data!;
+    // 官方 dod 口径：「剩余播放 MM:SS」。
+    String remaining() =>
+        tester.widget<Text>(find.textContaining('剩余播放 ')).data!;
     final before = remaining();
     await tester.pump(const Duration(seconds: 61));
     await _flush(tester);
     expect(remaining(), isNot(before));
-    expect(remaining(), matches(RegExp(r'^剩余 1[34] 分钟$')));
+    expect(remaining(), matches(RegExp(r'^剩余播放 1[34]:\d\d$')));
   });
 
   testWidgets(
@@ -355,7 +363,11 @@ String? _currentSubtitle(WidgetTester tester) =>
     tester.widget<Text>(find.byKey(const Key('audio_subtitle_current'))).data;
 
 Future<void> _openReadAlong(WidgetTester tester) async {
-  final entry = find.byKey(const Key('audio_read_along'));
+  // 字幕槽（有内容才在）与音色卡入口都通向「边听边读」，前者缺席时退回后者。
+  final subtitle = find.byKey(const Key('audio_inline_subtitle'));
+  final entry = subtitle.evaluate().isEmpty
+      ? find.byKey(const Key('audio_read_along'))
+      : subtitle;
   await tester.ensureVisible(entry);
   await tester.tap(entry);
   await tester.pumpAndSettle();

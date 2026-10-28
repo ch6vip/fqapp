@@ -80,6 +80,14 @@
 
 </details>
 
+## 参与贡献
+
+一个人维护精力有限，欢迎提 issue、发 PR，修个小问题、补个功能都行，我都会看。参与方式见 [如何反馈](CONTRIBUTING.md)。
+
+<a href="https://github.com/ch6vip/fqapp/graphs/contributors">
+  <img src=".github/contributors.svg" alt="贡献者">
+</a>
+
 ## 支持作者
 
 如果对你有用，欢迎请我喝杯咖啡，或给项目点个 ⭐ Star。

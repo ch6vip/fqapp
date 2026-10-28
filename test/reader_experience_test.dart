@@ -248,62 +248,64 @@ void main() {
   });
 
   group('reader behaviors', () {
-    testWidgets('volume keys turn pages when the toggle is on', (tester) async {
-      SharedPreferences.setMockInitialValues({
-        'reader_page_mode': 'paged',
-        'reader_volume_key_turn': true,
-        'reader_info_mode': 'detailed',
-      });
-      await tester.binding.setSurfaceSize(const Size(400, 800));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ReaderPage(
-            bookId: 'reader-test',
-            title: '测试书籍',
-            chapters: [
-              Chapter(itemId: 'c1', title: '第一章', volumeName: '正文'),
-              Chapter(itemId: 'c2', title: '第二章', volumeName: '正文'),
-            ],
-            startIndex: 0,
-            readerStore: MemoryReaderStore(),
-            chapterCache: MemoryChapterCache(),
-            chapterLoader: (chapter) async => List.generate(
-              60,
-              (index) => '第 $index 段。这是一段用于验证音量键翻页的测试正文。',
-            ).join('\n\n'),
+    for (final style in [ReaderPageTurnStyle.slide, ReaderPageTurnStyle.curl]) {
+      testWidgets('volume keys turn pages with ${style.name}', (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'reader_page_mode': 'paged',
+          'reader_volume_key_turn': true,
+          'reader_page_turn_style': style.name,
+          'reader_info_mode': 'detailed',
+        });
+        await tester.binding.setSurfaceSize(const Size(400, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ReaderPage(
+              bookId: 'reader-test',
+              title: '测试书籍',
+              chapters: [
+                Chapter(itemId: 'c1', title: '第一章', volumeName: '正文'),
+                Chapter(itemId: 'c2', title: '第二章', volumeName: '正文'),
+              ],
+              startIndex: 0,
+              readerStore: MemoryReaderStore(),
+              chapterCache: MemoryChapterCache(),
+              chapterLoader: (chapter) async => List.generate(
+                60,
+                (index) => '第 $index 段。这是一段用于验证音量键翻页的测试正文。',
+              ).join('\n\n'),
+            ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      String pageNumber() =>
-          tester
-              .widget<Text>(find.byKey(const ValueKey('reader-page-number')))
-              .data ??
-          '';
-      expect(pageNumber(), contains('本章 1 /'));
-      // 音量键已由 HardwareKeyboard 改为原生 MethodChannel 回调
-      // （fqapp/volume-key），测试里没有原生端，改用平台通道模拟原生回调。
-      Future<void> sendVolumeKey(int direction) async {
-        await TestDefaultBinaryMessengerBinding
-            .instance
-            .defaultBinaryMessenger
-            .handlePlatformMessage(
-              'fqapp/volume-key',
-              const StandardMethodCodec().encodeMethodCall(
-                MethodCall('volumeKey', direction),
-              ),
-              (_) {},
-            );
-      }
+        );
+        await tester.pumpAndSettle();
+        String pageNumber() =>
+            tester
+                .widget<Text>(find.byKey(const ValueKey('reader-page-number')))
+                .data ??
+            '';
+        expect(pageNumber(), contains('本章 1 /'));
+        // 音量键已由 HardwareKeyboard 改为原生 MethodChannel 回调
+        // （fqapp/volume-key），测试里没有原生端，改用平台通道模拟原生回调。
+        Future<void> sendVolumeKey(int direction) async {
+          await TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .handlePlatformMessage(
+                'fqapp/volume-key',
+                const StandardMethodCodec().encodeMethodCall(
+                  MethodCall('volumeKey', direction),
+                ),
+                (_) {},
+              );
+        }
 
-      await sendVolumeKey(1);
-      await tester.pumpAndSettle();
-      expect(pageNumber(), contains('本章 2 /'));
-      await sendVolumeKey(-1);
-      await tester.pumpAndSettle();
-      expect(pageNumber(), contains('本章 1 /'));
-    });
+        for (final (direction, page) in [(1, 2), (1, 3), (-1, 2), (-1, 1)]) {
+          await sendVolumeKey(direction);
+          await tester.pumpAndSettle();
+          expect(pageNumber(), contains('本章 $page /'));
+        }
+      });
+    }
 
     testWidgets('auto turn advances on its timer and stops on tap', (
       tester,

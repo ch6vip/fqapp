@@ -25,16 +25,6 @@ class MinePage extends StatelessWidget {
         backgroundColor: palette.canvas,
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(LucideIcons.settings),
-            tooltip: '设置',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsPage()),
-            ),
-          ),
-        ],
       ),
       body: StatsPage(header: _buildProfileHeader(context, palette)),
     );
@@ -97,42 +87,6 @@ class MinePage extends StatelessWidget {
                       style: TextStyle(fontSize: 12.5, color: palette.muted),
                     ),
                   ],
-                ),
-              ),
-              GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SettingsPage()),
-                ),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 11,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: palette.soft,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: palette.line, width: 0.5),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        LucideIcons.sliders_horizontal,
-                        size: 13,
-                        color: palette.accentText,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '设置',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: palette.accentText,
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ],

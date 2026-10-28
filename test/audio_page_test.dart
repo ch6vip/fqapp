@@ -30,13 +30,13 @@ void main() {
       expect(find.byType(Texture), findsNothing);
       player.emitPosition(const Duration(seconds: 25));
       await tester.pump();
-      await tester.tap(find.byTooltip('后退15秒'));
+      await tester.tap(find.text('-15 s'));
       await _flush(tester);
       expect(player.position, const Duration(seconds: 10));
-      await tester.tap(find.byTooltip('后退15秒'));
+      await tester.tap(find.text('-15 s'));
       await _flush(tester);
       expect(player.position, Duration.zero);
-      await tester.tap(find.byTooltip('前进15秒'));
+      await tester.tap(find.text('+15 s'));
       await _flush(tester);
       expect(player.position, const Duration(seconds: 15));
       final slider = tester.widget<Slider>(
@@ -179,25 +179,53 @@ void main() {
   ) async {
     final session = _Session();
     await _mount(tester, session);
+    // 官方 `te`「%s后播放下一集」：播完先进倒计时窗口，不再立刻跳章。
     session.players.first.emitCompleted();
+    await _flush(tester);
+    expect(find.byKey(const Key('audio_advance_banner')), findsOneWidget);
+    expect(session.players, hasLength(1));
+    await tester.pump(const Duration(seconds: 3));
     await _flush(tester);
     expect(session.players, hasLength(2));
     expect(session.store.entry?['chapterId'], '2');
     expect(session.players.last.isPlaying, true);
     session.players.last.emitCompleted();
     await _flush(tester);
+    await tester.pump(const Duration(seconds: 3));
+    await _flush(tester);
     expect(session.players, hasLength(3));
+    // 末章播完：不再连播，改为官方 `v7` 的书末提示。
     session.players.last.emitCompleted();
     await _flush(tester);
     expect(session.players, hasLength(3));
     expect(session.players.last.isPlaying, false);
     expect(session.store.entry?['completed'], true);
     expect(session.store.entry?['position'], 120);
-    expect(find.text('本章已播完'), findsOneWidget);
+    expect(find.text('已播完最新章节，去听听其它内容吧'), findsOneWidget);
     await tester.tap(find.byTooltip('播放'));
     await _flush(tester);
     expect(session.players.last.position, Duration.zero);
     expect(session.players.last.isPlaying, true);
+  });
+
+  testWidgets('cancelling the advance countdown stays on the chapter', (
+    tester,
+  ) async {
+    final session = _Session();
+    await _mount(tester, session);
+    session.players.first.emitCompleted();
+    await _flush(tester);
+    expect(find.byKey(const Key('audio_advance_banner')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('audio_advance_cancel')));
+    await _flush(tester);
+    expect(find.byKey(const Key('audio_advance_banner')), findsNothing);
+
+    // 取消之后即使等过倒计时窗口，也不能自己跳章。
+    await tester.pump(const Duration(seconds: 5));
+    await _flush(tester);
+    expect(session.players, hasLength(1));
+    expect(find.text('本章已播完'), findsOneWidget);
   });
 
   testWidgets(
@@ -855,7 +883,7 @@ void main() {
     await _mount(tester, session);
     final player = session.players.single;
     expect(player.isPlaying, true);
-    await tester.tap(find.byTooltip('定时'));
+    await tester.tap(find.byKey(const Key('audio_sleep')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('15 分钟后'));
     await tester.pumpAndSettle();

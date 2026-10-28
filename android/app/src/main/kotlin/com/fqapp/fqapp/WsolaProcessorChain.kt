@@ -19,15 +19,16 @@ import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
  *
  * 编排保持与 Media3 默认一致（`DefaultAudioSink.DefaultAudioProcessorChain`）：
  *
- *   [自定义 WSOLA] -> [SilenceSkipping] -> [应用方处理器...] -> [ToInt16Pcm]
+ *   `自定义 WSOLA` -> `SilenceSkipping` -> `应用方处理器…` -> `ToInt16Pcm`
+ *
+ * 这条链用行内代码写：KDoc 会把中括号当链接解析，带省略号的中括号直接
+ * 报 `Closing bracket expected`。
  *
  * 速度只在 [applyPlaybackParameters] 里下发；音高固定 1.0，与官方
  * `PlaybackParams().setPitch(1.0f)` 一致（只变速不变调）。
  */
 @OptIn(UnstableApi::class)
-internal class WsolaProcessorChain(
-    private val tempoProcessor: SpeechTempoProcessor,
-) : DefaultAudioSink.AudioProcessorChain {
+internal class WsolaProcessorChain(private val tempoProcessor: SpeechTempoProcessor) : DefaultAudioSink.AudioProcessorChain {
 
     /**
      * 按设备原生输出采样率建链。
@@ -38,7 +39,7 @@ internal class WsolaProcessorChain(
      * 提供同一个值。
      */
     constructor(nativeOutputSampleRate: Int) : this(
-        SpeechTempoProcessor(targetSampleRate = nativeOutputSampleRate),
+        SpeechTempoProcessor(targetSampleRate = nativeOutputSampleRate)
     )
 
     private val silenceSkipping = SilenceSkippingAudioProcessor()
@@ -75,9 +76,7 @@ internal class WsolaProcessorChain(
         return mediaDurationUs
     }
 
-    override fun getSkippedOutputFrameCount(): Long =
-        if (skipSilenceEnabled) silenceSkipping.skippedFrames else 0L
-
+    override fun getSkippedOutputFrameCount(): Long = if (skipSilenceEnabled) silenceSkipping.skippedFrames else 0L
 }
 
 /**
@@ -92,21 +91,18 @@ internal class ToInt16PcmAudioProcessor : androidx.media3.common.audio.BaseAudio
     private var inputEnded = false
     private var pendingInput: java.nio.ByteBuffer = AudioProcessor.EMPTY_BUFFER
 
-    override fun onConfigure(
-        inputAudioFormat: AudioProcessor.AudioFormat,
-    ): AudioProcessor.AudioFormat {
-        return when (inputAudioFormat.encoding) {
-            androidx.media3.common.C.ENCODING_PCM_16BIT,
-            androidx.media3.common.C.ENCODING_PCM_FLOAT,
-            androidx.media3.common.C.ENCODING_PCM_24BIT,
-            androidx.media3.common.C.ENCODING_PCM_32BIT ->
-                AudioProcessor.AudioFormat(
-                    inputAudioFormat.sampleRate,
-                    inputAudioFormat.channelCount,
-                    androidx.media3.common.C.ENCODING_PCM_16BIT,
-                )
-            else -> throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
-        }
+    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat = when (inputAudioFormat.encoding) {
+        androidx.media3.common.C.ENCODING_PCM_16BIT,
+        androidx.media3.common.C.ENCODING_PCM_FLOAT,
+        androidx.media3.common.C.ENCODING_PCM_24BIT,
+        androidx.media3.common.C.ENCODING_PCM_32BIT ->
+            AudioProcessor.AudioFormat(
+                inputAudioFormat.sampleRate,
+                inputAudioFormat.channelCount,
+                androidx.media3.common.C.ENCODING_PCM_16BIT
+            )
+
+        else -> throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
     }
 
     override fun queueInput(inputBuffer: java.nio.ByteBuffer) {
