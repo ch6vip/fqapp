@@ -11,6 +11,7 @@ import '../../services/audio_page_theme.dart';
 import '../../services/playback_format.dart';
 import '../../services/poster_cache.dart';
 import '../home/home_design.dart';
+import 'audio_subtitle_scroller.dart';
 import 'audio_tone_chip.dart';
 
 /// Listening page header.
@@ -1221,13 +1222,14 @@ class _ReadAlongBody extends StatelessWidget {
 
 /// `bio.xml` 的 `fs5`/`fs6`：封面下方的内联字幕。
 ///
-/// 官方这里是 `AudioPlaySubtitleView`（`header/m0->T()`），一个 LRC 式的
+/// 官方这里是 `AudioPlaySubtitleView`（`header/m0->T()`），一个 LRC 式
 /// **多行滚动**字幕，不是「两行文本」：
 ///
-/// * `setStartLine(1)` —— 首行留空，所以当前句永远**垂直居中**，
-///   上方是已读句、下方是未读句；
+/// * `setStartLine(1)` —— 当前句永远**垂直居中**，上方是已读句、下方是未读句；
 /// * 普通行 `#66ffffff`（`@color/agw`，白 40%），当前行压 `theme.ink`；
-/// * `setScrollingSeekEnable(false)` —— 内联不可拖动，全屏文稿页才可拖；
+/// * `setScrollingSeekEnable(false)` —— 内联**不可拖动**，只有自动滚动；
+///   拖拽 + 飞滑惯性在文稿页（[AudioSubtitleScroller.seekEnabled]）；
+/// * 换句动画 `clamp(|Δpx|, 300, 600) ms` 线性（官方 `O(F,Z)`）；
 /// * 上下 `fadingEdgeLength=24dip` 渐隐；
 /// * **没有字幕数据就不占位**：官方没有任何正文兜底，`fs6` 由数据驱动显隐；
 /// * 点击进「AI 文稿」全屏页；该页加载失败时，这一下是重试。
@@ -1246,41 +1248,10 @@ class AudioInlineSubtitle extends StatelessWidget {
   /// 官方 `fs6` 的固定高度。
   static const double _height = 52;
 
-  /// 三行等分：当前句落在中间那行，正好压住 52dp 的垂直中心。
-  static const double _lineHeight = _height / 3;
-
-  /// 官方普通行色：`@color/agw` = `#66ffffff`。
-  static const Color _contextInk = Color(0x66FFFFFF);
-
   @override
   Widget build(BuildContext context) {
-    final theme = AudioPageThemeScope.of(context);
-    final index = track.indexAt(position);
     // 官方没有正文兜底，拿不到字幕就不占位，把空间还给封面。
-    if (index < 0) return const SizedBox.shrink();
-    final previous = index > 0 ? track.cues[index - 1].text : '';
-    final current = track.cues[index].text;
-    final next = index + 1 < track.cues.length ? track.cues[index + 1].text : '';
-
-    Widget line(String text, {required bool highlighted, Key? key}) => SizedBox(
-          height: _lineHeight,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              text,
-              key: key,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: highlighted ? theme.ink : _contextInk,
-                fontSize: 14,
-                height: 1.0,
-                fontWeight: highlighted ? FontWeight.w600 : FontWeight.w400,
-              ),
-            ),
-          ),
-        );
-
+    if (track.indexAt(position) < 0) return const SizedBox.shrink();
     return Padding(
       // `fs6`：左右 20dp、底部 24dp（`V675AudioCompress.uiCompress` 开时 20dp）。
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -1310,18 +1281,10 @@ class AudioInlineSubtitle extends StatelessWidget {
             ).createShader(bounds),
             blendMode: BlendMode.dstIn,
             child: ExcludeSemantics(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  line(previous, highlighted: false),
-                  line(
-                    current,
-                    highlighted: true,
-                    key: const Key('audio-inline-subtitle-current'),
-                  ),
-                  line(next, highlighted: false),
-                ],
+              child: AudioSubtitleScroller(
+                track: track,
+                position: position,
+                viewportHeight: _height,
               ),
             ),
           ),

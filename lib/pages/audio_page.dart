@@ -36,6 +36,7 @@ import '../widgets/audio/audio_quick_rows.dart';
 import '../widgets/audio/audio_skip_points_rows.dart';
 import '../widgets/audio/audio_cover_card.dart';
 import '../widgets/audio/audio_sections.dart';
+import '../widgets/audio/audio_subtitle_scroller.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
 import '../widgets/audio/system_tts_controls.dart';
 import '../widgets/chapter_cache_sheet.dart';
@@ -792,10 +793,17 @@ class _AudioPageState extends State<AudioPage> {
                               ),
                             ),
                           )
-                        : SingleChildScrollView(
-                            child: AudioSubtitleView(
+                        : LayoutBuilder(
+                            builder: (context, box) => AudioSubtitleScroller(
                               track: snapshot.track,
                               position: snapshot.position,
+                              viewportHeight: box.maxHeight,
+                              // 文稿页（官方 `bj3.xml` 的 `a49`）允许拖拽 + 飞滑。
+                              seekEnabled: true,
+                              fontSize: 16,
+                              onSeek: c._seekTo,
+                              currentLineKey:
+                                  const Key('audio_subtitle_current'),
                             ),
                           ),
                   ),

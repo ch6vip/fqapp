@@ -76,11 +76,12 @@ extension _AudioListeningLayout on _AudioPageState {
                         // 及其上下文，没有轨就是空（官方无正文兑底）。
                         ValueListenableBuilder<_ReadAlongSnapshot>(
                           valueListenable: c._readAlong,
-                          builder: (context, snapshot, _) => AudioInlineSubtitle(
-                            track: snapshot.track,
-                            position: snapshot.position,
-                            onTap: _showReadAlong,
-                          ),
+                          builder: (context, snapshot, _) =>
+                              AudioInlineSubtitle(
+                                track: snapshot.track,
+                                position: snapshot.position,
+                                onTap: _showReadAlong,
+                              ),
                         ),
                         if (c._error != null ||
                             c._loading ||
@@ -163,9 +164,7 @@ extension _AudioListeningLayout on _AudioPageState {
                             // 这个位置换成状态文字，没开就是「定时」。
                             sleepLabel: c.sleepAtChapterEnd
                                 ? '剩余本章'
-                                : (c._sleepRemaining == null
-                                      ? null
-                                      : '剩余播放'),
+                                : (c._sleepRemaining == null ? null : '剩余播放'),
                           ),
                         ),
                         const SizedBox(height: 16),
