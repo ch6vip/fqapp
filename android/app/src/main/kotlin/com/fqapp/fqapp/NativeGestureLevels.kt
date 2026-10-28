@@ -9,7 +9,7 @@ import kotlin.math.roundToInt
  */
 object NativeGestureLevels {
     /** 窗口亮度下限：0 等于关屏，官方播放器的手势也停在这里。 */
-    const val brightnessFloor = 0.02f
+    const val BRIGHTNESS_FLOOR = 0.02f
 
     /**
      * `Settings.System.SCREEN_BRIGHTNESS` 的原始值按面板量程归一化。
@@ -25,7 +25,7 @@ object NativeGestureLevels {
             value <= 2047 -> 2047f
             else -> 4095f
         }
-        return (value / scale).coerceIn(brightnessFloor, 1f)
+        return (value / scale).coerceIn(BRIGHTNESS_FLOOR, 1f)
     }
 
     /** 档位下标 → 0..1 百分比。 */
