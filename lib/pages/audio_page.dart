@@ -52,6 +52,7 @@ part 'audio_listening_layout.dart';
 part '../services/audio_playback_guard.dart';
 part '../services/audio_playback_controller.dart';
 part '../widgets/audio/audio_playback_scope.dart';
+part '../widgets/audio/audio_floating_capsule.dart';
 
 /// Foreground listening using the existing Android Media3 URL player.
 class AudioPage extends StatefulWidget {

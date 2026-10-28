@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../services/app_theme.dart';
 import '../../services/audio_page_theme.dart';
 import '../../services/poster_cache.dart';
+import 'audio_floating_glyphs.dart';
 
 /// The expanded dk5/hm.xml player; experimental edge folding stays disabled.
 class AudioFloatingPlayer extends StatefulWidget {
@@ -271,7 +272,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                   // rotating white sweep (`fa3/a.java:48-58`). The ring frame
                   // is not faded on close (`pn2/b0.java:288-314`).
                   if (widget.loading)
-                    _LoadingRing(color: ink, animate: !_reducedMotion)
+                    LoadingRing(color: ink, animate: !_reducedMotion)
                   else
                     ListenableBuilder(
                       listenable: widget.progress,
@@ -279,7 +280,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                         final value = widget.readProgress();
                         return CustomPaint(
                           size: const Size.square(32),
-                          painter: _RingPainter(
+                          painter: RingPainter(
                             progress: value.isFinite
                                 ? value.clamp(0.0, 1.0)
                                 : 0,
@@ -293,8 +294,8 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                     child: CustomPaint(
                       size: const Size.square(18),
                       painter: widget.playing
-                          ? _PauseGlyph(ink)
-                          : _PlayGlyph(ink),
+                          ? PauseGlyph(ink)
+                          : PlayGlyph(ink),
                     ),
                   ),
                 ],
@@ -312,7 +313,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
               opacity: controlFade,
               child: CustomPaint(
                 size: const Size.square(16),
-                painter: _CloseGlyph(ink),
+                painter: CloseGlyph(ink),
               ),
             ),
           ),
@@ -391,39 +392,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                     }),
                     onPanEnd: (_) => snap(),
                     onPanCancel: snap,
-                    child: TweenAnimationBuilder<double>(
-                      tween: Tween(end: _closing ? 1 : 0),
-                      duration: const Duration(milliseconds: 300),
-                      builder: (context, value, child) {
-                        final shrink = const Cubic(
-                          0.25,
-                          0.1,
-                          0.25,
-                          1.0,
-                        ).transform(value);
-                        // The dismissal shrink is always anchored to the left.
-                        return Align(
-                          alignment: Alignment.centerLeft,
-                          child: ClipRect(
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              widthFactor: 1 - shrink * (_width - 74) / _width,
-                              child: RepaintBoundary(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                  ),
-                                  child: _capsule(
-                                    context,
-                                    closeProgress: value,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                    child: _dismissal(),
                   ),
                 ),
               ),
@@ -433,201 +402,29 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
       },
     );
   }
-}
 
-/// Official `fa3/a`: 2.5dp track (#33 white) and clockwise progress (#E5)
-/// from 12 o'clock. Ours tints with the capsule's ink so e-ink stays black.
-class _RingPainter extends CustomPainter {
-  const _RingPainter({required this.progress, required this.color});
-
-  final double progress;
-  final Color color;
-
-  static const _stroke = 2.5;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromLTWH(
-      0,
-      0,
-      size.width,
-      size.height,
-    ).deflate(_stroke / 2);
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = _stroke;
-    canvas.drawOval(rect, paint..color = color.withValues(alpha: 0.2));
-    if (progress <= 0) return;
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      math.pi * 2 * progress,
-      false,
-      paint..color = color.withValues(alpha: 0.9),
-    );
-  }
-
-  @override
-  bool shouldRepaint(_RingPainter old) =>
-      old.progress != progress || old.color != color;
-}
-
-/// Official loading ring: a transparent-to-opaque sweep turning 4°/frame.
-class _LoadingRing extends StatefulWidget {
-  const _LoadingRing({required this.color, required this.animate});
-
-  final Color color;
-  final bool animate;
-
-  @override
-  State<_LoadingRing> createState() => _LoadingRingState();
-}
-
-class _LoadingRingState extends State<_LoadingRing>
-    with SingleTickerProviderStateMixin {
-  // 4° per 60Hz frame is one turn in 1.5s.
-  late final _spin = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1500),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    _sync();
-  }
-
-  @override
-  void didUpdateWidget(_LoadingRing oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _sync();
-  }
-
-  void _sync() {
-    if (widget.animate) {
-      if (!_spin.isAnimating) _spin.repeat();
-    } else {
-      _spin.stop();
-    }
-  }
-
-  @override
-  void dispose() {
-    _spin.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => RotationTransition(
-    turns: _spin,
-    child: CustomPaint(
-      size: const Size.square(32),
-      painter: _SweepPainter(widget.color),
-    ),
-  );
-}
-
-class _SweepPainter extends CustomPainter {
-  const _SweepPainter(this.color);
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromLTWH(0, 0, size.width, size.height).deflate(1.25);
-    canvas.drawOval(
-      rect,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5
-        ..shader = SweepGradient(
-          colors: [color.withValues(alpha: 0), color],
-        ).createShader(rect),
-    );
-  }
-
-  @override
-  bool shouldRepaint(_SweepPainter old) => old.color != color;
-}
-
-/// Official `csw`: a filled, slightly rounded right-pointing triangle.
-class _PlayGlyph extends CustomPainter {
-  const _PlayGlyph(this.color);
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final path = Path()
-      ..moveTo(w * 0.30, h * 0.18)
-      ..lineTo(w * 0.82, h * 0.50)
-      ..lineTo(w * 0.30, h * 0.82)
-      ..close();
-    final paint = Paint()
-      ..color = color
-      ..strokeJoin = StrokeJoin.round
-      ..strokeWidth = w * 0.08;
-    // Fill, then a round-joined stroke to soften the corners.
-    canvas.drawPath(path, paint);
-    canvas.drawPath(path, paint..style = PaintingStyle.stroke);
-  }
-
-  @override
-  bool shouldRepaint(_PlayGlyph old) => old.color != color;
-}
-
-/// Official `cax`: two rounded vertical bars.
-class _PauseGlyph extends CustomPainter {
-  const _PauseGlyph(this.color);
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final paint = Paint()..color = color;
-    final radius = Radius.circular(w * 0.06);
-    for (final left in [w * 0.26, w * 0.60]) {
-      canvas.drawRRect(
-        RRect.fromLTRBR(left, h * 0.20, left + w * 0.14, h * 0.80, radius),
-        paint,
+  /// Official close (`pn2/b0.java:288-314`): 162→74dp over 300ms, always
+  /// anchored to the left; the capsule fades its own parts inside.
+  Widget _dismissal() => TweenAnimationBuilder<double>(
+    tween: Tween(end: _closing ? 1 : 0),
+    duration: const Duration(milliseconds: 300),
+    builder: (context, value, child) {
+      final shrink = const Cubic(0.25, 0.1, 0.25, 1.0).transform(value);
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: ClipRect(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            widthFactor: 1 - shrink * (_width - 74) / _width,
+            child: RepaintBoundary(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _capsule(context, closeProgress: value),
+              ),
+            ),
+          ),
+        ),
       );
-    }
-  }
-
-  @override
-  bool shouldRepaint(_PauseGlyph old) => old.color != color;
-}
-
-/// Official `alh`: a thin round-capped cross.
-class _CloseGlyph extends CustomPainter {
-  const _CloseGlyph(this.color);
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = w * 0.1
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(w * 0.25, h * 0.25),
-      Offset(w * 0.75, h * 0.75),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(w * 0.75, h * 0.25),
-      Offset(w * 0.25, h * 0.75),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_CloseGlyph old) => old.color != color;
+    },
+  );
 }
