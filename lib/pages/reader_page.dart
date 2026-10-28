@@ -847,11 +847,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   bool _ideasSheetOpen = false;
 
   void _syncSystemBars() {
+    if (!_preferencesReady) return;
     unawaited(
       _device.setImmersive(
         _appActive &&
             (_routeCurrent || _ideasSheetOpen) &&
             widget.chapters.isNotEmpty,
+        showStatusBar: _preferences.showSystemStatusBar,
       ),
     );
   }
@@ -871,6 +873,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _dayTheme = preferences.themePreset;
       }
     });
+    _syncSystemBars();
     _syncVolumeKeyEnabled();
     await _loadFont(preferences.fontPath);
     if (mounted && _appActive) unawaited(_refreshDevice());
@@ -2612,6 +2615,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       // 刷新间隔改变时清零计数，避免沿用旧阈值导致久不刷新或立刻刷新。
       if (intervalChanged) _einkPageCounter = 0;
     });
+    _syncSystemBars();
     if (fontChanged) unawaited(_loadFont(preferences.fontPath));
   }
 

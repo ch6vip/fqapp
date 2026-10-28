@@ -99,7 +99,7 @@ void main() {
         return null;
       });
       final device = ReaderDevice();
-      await device.setImmersive(true);
+      await device.setImmersive(true, showStatusBar: true);
       await device.setImmersive(false);
       await device.setImmersive(true);
       await device.close();
@@ -118,6 +118,11 @@ void main() {
         true,
         false,
         true,
+      ]);
+      expect(calls.take(3).map((call) => call.arguments['showStatusBar']), [
+        true,
+        false,
+        false,
       ]);
     },
   );

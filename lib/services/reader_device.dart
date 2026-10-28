@@ -114,12 +114,13 @@ class ReaderDevice {
 
   // Android 16 enforces edge-to-edge; hide bars through WindowInsetsController
   // without switching the window back to a legacy full-screen layout.
-  Future<void> setImmersive(bool enabled) async {
+  Future<void> setImmersive(bool enabled, {bool showStatusBar = false}) async {
     if (_closed) return;
     try {
       await _channel.invokeMethod<void>('setImmersive', {
         'session': _session,
         'enabled': enabled,
+        'showStatusBar': showStatusBar,
       });
     } on MissingPluginException {
       // Other hosts keep the SafeArea fallback.
