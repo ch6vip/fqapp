@@ -147,6 +147,40 @@ void main() {
     expect(readAlong, 1);
   });
 
+  testWidgets('multi-role voices carry the 多角色 corner ribbon', (
+    tester,
+  ) async {
+    // 官方把「多角色」做成音色片右上角的一片丝带（截图 2.jpg）：多角色音色有、
+    // 普通音色没有。这是版式的一部分，不该只靠音色名里有没有「多角色」三个字。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AudioToneSection(
+            tones: const [
+              AudioTone(
+                id: 'multi',
+                title: '升级版',
+                description: '自然流畅',
+                isMultiTone: true,
+              ),
+              AudioTone(id: 'plain', title: '成熟大叔', description: '超自然'),
+            ],
+            selectedId: 'multi',
+            currentChapterTitle: '第113章 龙族怨魂',
+            onSelect: (_) {},
+            onReadAlong: () {},
+            onShowVoices: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('audio_tone_multi_multi')), findsOneWidget);
+    expect(find.byKey(const ValueKey('audio_tone_multi_plain')), findsNothing);
+    expect(find.text('多角色'), findsOneWidget);
+  });
+
   testWidgets('opening the panel centers the current episode in its page', (
     tester,
   ) async {

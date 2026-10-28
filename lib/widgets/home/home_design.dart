@@ -42,10 +42,12 @@ class HomePalette {
     return dark ? const Color(0xFF242427) : Colors.white;
   }
 
-  Color get ink =>
-      eink ? Colors.black : (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522));
-  Color get muted =>
-      eink ? Colors.black : (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66));
+  Color get ink => eink
+      ? Colors.black
+      : (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522));
+  Color get muted => eink
+      ? Colors.black
+      : (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66));
   Color get accentText => eink ? Colors.black : (dark ? accent : accentStrong);
 
   Color get soft {
@@ -111,6 +113,9 @@ RoundedRectangleBorder homeSheetShape(HomePalette palette, {double top = 24}) =>
 class HomePressable extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
+
+  /// 长按动作（可空）。听书页用它在倍速项上做「锁定倍速」。
+  final VoidCallback? onLongPress;
   final BorderRadius borderRadius;
   final String? semanticLabel;
 
@@ -118,6 +123,7 @@ class HomePressable extends StatefulWidget {
     super.key,
     required this.child,
     required this.onTap,
+    this.onLongPress,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.semanticLabel,
   });
@@ -164,6 +170,7 @@ class _HomePressableState extends State<HomePressable>
         color: Colors.transparent,
         child: InkWell(
           onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
           onTapDown: (_) => _press(true),
           onTapUp: (_) => _press(false),
           onTapCancel: () => _press(false),

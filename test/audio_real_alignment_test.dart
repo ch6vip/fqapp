@@ -11,21 +11,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/controlled_player.dart';
 
-/// 真人讲书页头对齐官方 7.0.9.32 的行为：
+/// 真人讲书页头对齐官方 7.0.9.32 的行为（本轮按反编译重新核对）：
 ///
-///  * `bio.xml` 三段页脚（集标题 / 书名 / `真人讲书・第 N 集`）与 72% 封面；
-///  * 封面翻转到简介面（`bhi.xml`）再翻回；
-///  * 页头内嵌双行字幕（`fs6`），无字幕时不占位；
-///  * `hy.xml` 的 AI朗读 │ 真人讲书 分段只在两族音源都存在时出现；
-///  * 真人模式用一行版本入口替代音色卡（`bj1.xml` a5h 默认 gone）；
-///  * 目录与更多面板按「集」计数。
+///  * `d2.smali` + `TTSPlayHeaderFragment.smali`：封面卡 `0.72 × 屏宽`、
+///    高度 = 宽 + 20dp，可见封面是**正方形**（`ahg` 高 = `ah7` − 15dp − 5dp）；
+///  * `bio.xml` 页脚只有两行：集标题 `b1h` + 副行 `bj2`；书名 `b1g` 官方是
+///    `visibility="gone"`，所以不存在旧的「三段页脚 / 真人讲书・第 N 集」；
+///  * 副行点一下翻到简介面（`bhi.xml`）再翻回；
+///  * 页头内嵌逐行字幕（`fs6`），无字幕时保留状态槽位；
+///  * `hy.xml` 的智能朗读 │ 真人讲书 分段放在页头中央；
+///  * `bif.xml` 图标行首项显示当前倍速（截图里的 `1.2x`）；
+///  * `bjg.xml` 进度行两端是 `-15 s` / `+15 s` 文字，播放头挂时间药丸；
+///  * `bin.xml` 控制行右侧是悬浮圆钮。
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     AudioPreferences.instance.resetForTest();
   });
 
-  testWidgets('a recording keeps the official three-line cover header', (
+  testWidgets('a recording keeps the official two-line cover footer', (
     tester,
   ) async {
     await _mount(tester, _RealSession());
@@ -33,8 +37,10 @@ void main() {
       tester.widget<Text>(find.byKey(const Key('audio_chapter_title'))).data,
       '第1章',
     );
-    expect(find.text('测试听书'), findsOneWidget);
-    expect(find.text('真人讲书・第 1 集'), findsOneWidget);
+    // 官方 bio.xml 的 b1g（书名行）是 visibility="gone"，封面页脚只有两行，
+    // 所以书书名和旧的「真人讲书・第 N 集」都不该出现。
+    expect(find.text('测试听书'), findsNothing);
+    expect(find.textContaining('真人讲书・第'), findsNothing);
   });
 
   testWidgets('the cover flips to the intro card and back', (tester) async {
@@ -64,7 +70,7 @@ void main() {
       await _mount(tester, session);
       expect(find.text('第一句同步字幕'), findsOneWidget);
       expect(find.text('第二句同步字幕'), findsOneWidget);
-      expect(find.byKey(const Key('audio_read_along')), findsOneWidget);
+      expect(find.byKey(const Key('audio_inline_subtitle')), findsOneWidget);
 
       session.players.single.emitPosition(const Duration(seconds: 5));
       await _flush(tester);
@@ -83,9 +89,40 @@ void main() {
         find.byKey(const Key('audio-inline-subtitle-current')),
         findsNothing,
       );
-      expect(find.byKey(const Key('audio_read_along')), findsNothing);
+      // 官方槽位常驻：换到无字幕轨的章节后，`setStatusText` 接替字幕内容，
+      // 只有 NOT_SUPPORT 才整块 gone。
+      expect(find.byKey(const Key('audio_inline_subtitle')), findsOneWidget);
+      expect(
+        find.byKey(const Key('audio-inline-subtitle-status')),
+        findsOneWidget,
+      );
     },
   );
+
+  testWidgets('inline final lines follow live player duration updates', (
+    tester,
+  ) async {
+    final session = _RealSession(
+      subtitles: (_, _) async => SubtitleTrack([
+        SubtitleCue(startMs: 0, text: '${'甲' * 23}${'乙' * 23}'),
+      ]),
+    );
+    await _mount(tester, session);
+    final current = find.byKey(const Key('audio-inline-subtitle-current'));
+    final player = session.players.single;
+    // The player's initial duration is two minutes, not the cue fallback 6s.
+    player.emitPosition(const Duration(seconds: 40));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 650));
+    expect(tester.widget<Text>(current).data, '甲' * 23);
+    player.emitPosition(const Duration(seconds: 80));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 650));
+    expect(tester.widget<Text>(current).data, '乙' * 23);
+    player.emitDuration(const Duration(minutes: 4));
+    await _flush(tester);
+    expect(tester.widget<Text>(current).data, '甲' * 23);
+  });
 
   testWidgets('the AI朗读/真人讲书 switch needs both voice families', (tester) async {
     await _mount(tester, _RealSession());
@@ -126,6 +163,8 @@ void main() {
     await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
 
+    // 官方书名行 `b1g` 默认 gone，但仓库一直用 `audio_book_bar` 开目录，
+    // 所以实现里它渲染为空字符串占位：看不见，但仍是目录入口。
     await tester.ensureVisible(find.byKey(const Key('audio_book_bar')));
     await tester.tap(find.byKey(const Key('audio_book_bar')));
     await tester.pumpAndSettle();
@@ -135,27 +174,31 @@ void main() {
 
   testWidgets('transport and progress rows follow bin/bjg', (tester) async {
     await _mount(tester, _RealSession());
-    // bin.xml: 只有目录/定时带 12sp 文字，播放键 60dp。
+    // bin.xml: 目录(axr) 与 定时(i58) 是同构的「图标 + 12sp 文字」，
+    // 截图里那颗橙色圆钮是广告浮层，不是定时入口。
     expect(find.text('目录'), findsOneWidget);
     expect(find.text('定时'), findsOneWidget);
+    expect(find.byKey(const Key('audio_sleep')), findsOneWidget);
     expect(
       tester.getSize(find.byKey(const Key('audio_play'))),
       const Size(60, 60),
     );
     expect(find.byTooltip('上一章'), findsOneWidget);
     expect(find.byTooltip('下一章'), findsOneWidget);
-    // bjg.xml: 24dp 图标夹细轨，官方默认不显示时间文字。
+    // bjg + AudioLabelSeekBar: 两端是 -15 s / +15 s 文字，播放头挂时间药丸。
     expect(find.byKey(const ValueKey('audio-seek')), findsOneWidget);
-    expect(find.byKey(const ValueKey('audio-position-label')), findsNothing);
-    expect(find.byTooltip('后退15秒'), findsOneWidget);
-    expect(find.byTooltip('前进15秒'), findsOneWidget);
+    expect(find.text('-15 s'), findsOneWidget);
+    expect(find.text('+15 s'), findsOneWidget);
+    expect(find.byKey(const Key('audio-time-pill')), findsOneWidget);
+    expect(find.byTooltip('后退15秒'), findsNothing);
+    expect(find.byTooltip('前进15秒'), findsNothing);
   });
 
   testWidgets('the transport row fits a narrow screen', (tester) async {
     await _mount(tester, _RealSession(), size: const Size(320, 640));
     expect(tester.takeException(), isNull);
-    expect(find.byTooltip('目录'), findsOneWidget);
-    expect(find.byTooltip('定时'), findsOneWidget);
+    expect(find.text('目录'), findsOneWidget);
+    expect(find.byKey(const Key('audio_sleep')), findsOneWidget);
     expect(
       tester.getSize(find.byKey(const Key('audio_play'))),
       const Size(60, 60),

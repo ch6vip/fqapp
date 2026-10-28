@@ -10,6 +10,16 @@ class AudioPreferences {
   static const _backgroundPlaybackKey = 'audio_background_playback_enabled';
   static const _rateEngineKey = 'audio_rate_engine';
 
+  /// 倍速锁定：锁定后点倍速项不再弹面板（官方 `a4g`「已经锁定2x倍速」）。
+  static const _rateLockedKey = 'audio_rate_locked';
+
+  /// 睡眠定时选的是「听完本章」而不是分钟档（官方 `cip`）。
+  static const _sleepAtChapterEndKey = 'audio_sleep_at_chapter_end';
+
+  /// 跳过片头 / 片尾按书存，单位秒；没有记录就是 0（不跳）。
+  static const _skipIntroPrefix = 'audio_skip_intro_';
+  static const _skipOutroPrefix = 'audio_skip_outro_';
+
   /// 是否允许后台播放与前台保活（默认 true）。
   /// 开启：切到后台或锁屏时继续播放，由 Android 前台保活服务常驻通知栏与提供控制卡片；
   /// 关闭：切到后台或锁屏时自动暂停播放并移除前台通知。
@@ -25,6 +35,16 @@ class AudioPreferences {
     AudioRateEngine.wsola,
   );
 
+  /// 倍速是否已锁定。锁定期间点倍速项只提示、不弹面板。
+  bool rateLocked = false;
+
+  /// 睡眠定时是否停在「听完本章」。与分钟档互斥。
+  bool sleepAtChapterEnd = false;
+
+  final Map<String, int> _skipIntro = <String, int>{};
+  final Map<String, int> _skipOutro = <String, int>{};
+  final Set<String> _skipLoaded = <String>{};
+
   bool _loaded = false;
 
   Future<void> load() async {
@@ -34,8 +54,10 @@ class AudioPreferences {
       final sp = await SharedPreferences.getInstance();
       backgroundPlayback.value = sp.getBool(_backgroundPlaybackKey) ?? true;
       rateEngine.value = AudioRateEngine.fromName(sp.getString(_rateEngineKey));
+      rateLocked = sp.getBool(_rateLockedKey) ?? false;
+      sleepAtChapterEnd = sp.getBool(_sleepAtChapterEndKey) ?? false;
     } catch (_) {
-      // 异常时退回默认值（后台播放开、系统变速）
+      // 异常时退回默认值（后台播放开、系统变速、未锁定、分钟档）
     }
   }
 
@@ -45,6 +67,73 @@ class AudioPreferences {
     _loaded = false;
     backgroundPlayback.value = true;
     rateEngine.value = AudioRateEngine.wsola;
+    rateLocked = false;
+    sleepAtChapterEnd = false;
+    _skipIntro.clear();
+    _skipOutro.clear();
+    _skipLoaded.clear();
+  }
+
+  /// 把这本书的跳过片头/片尾读进内存（控制器需要在开章时同步读）。
+  Future<void> ensureSkipPoints(String bookId) async {
+    if (bookId.isEmpty || _skipLoaded.contains(bookId)) return;
+    _skipLoaded.add(bookId);
+    try {
+      final sp = await SharedPreferences.getInstance();
+      _skipIntro[bookId] = sp.getInt('$_skipIntroPrefix$bookId') ?? 0;
+      _skipOutro[bookId] = sp.getInt('$_skipOutroPrefix$bookId') ?? 0;
+    } catch (_) {
+      _skipIntro[bookId] = 0;
+      _skipOutro[bookId] = 0;
+    }
+  }
+
+  int skipIntroSeconds(String bookId) => _skipIntro[bookId] ?? 0;
+
+  int skipOutroSeconds(String bookId) => _skipOutro[bookId] ?? 0;
+
+  Future<void> setSkipIntroSeconds(String bookId, int seconds) async {
+    final value = seconds < 0 ? 0 : seconds;
+    _skipIntro[bookId] = value;
+    _skipLoaded.add(bookId);
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setInt('$_skipIntroPrefix$bookId', value);
+    } catch (_) {
+      // 忽略持久化失败
+    }
+  }
+
+  Future<void> setSkipOutroSeconds(String bookId, int seconds) async {
+    final value = seconds < 0 ? 0 : seconds;
+    _skipOutro[bookId] = value;
+    _skipLoaded.add(bookId);
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setInt('$_skipOutroPrefix$bookId', value);
+    } catch (_) {
+      // 忽略持久化失败
+    }
+  }
+
+  Future<void> setRateLocked(bool value) async {
+    rateLocked = value;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setBool(_rateLockedKey, value);
+    } catch (_) {
+      // 忽略持久化失败
+    }
+  }
+
+  Future<void> setSleepAtChapterEnd(bool value) async {
+    sleepAtChapterEnd = value;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setBool(_sleepAtChapterEndKey, value);
+    } catch (_) {
+      // 忽略持久化失败
+    }
   }
 
   Future<void> setBackgroundPlayback(bool value) async {
