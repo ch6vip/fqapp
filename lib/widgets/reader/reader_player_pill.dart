@@ -87,8 +87,8 @@ class ReaderPlayerPill extends StatelessWidget {
 }
 
 /// Separate floating and page-footer hosts, as in BottomIndicatorContainer
-/// and ReaderBottomView.extraLayout. Reserve the footer throughout a session
-/// so weakening never repaginates the text under the narration highlight.
+/// and ReaderBottomView.extraLayout. Reserve the footer even without a session
+/// so starting, stopping and weakening never repaginate the current text.
 class ReaderPlayerPillHost extends StatefulWidget {
   const ReaderPlayerPillHost({
     super.key,
@@ -262,11 +262,11 @@ class _ReaderPlayerPillHostState extends State<ReaderPlayerPillHost> {
             Expanded(child: widget.child),
             if (footer != null)
               footer
-            else if (_active)
+            else
               SizedBox(
-                key: const ValueKey('reader-player-footer'),
+                key: _active ? const ValueKey('reader-player-footer') : null,
                 height: footerHeight < 32 ? 32 : footerHeight,
-                child: Center(child: _slot(floating: false)),
+                child: _active ? Center(child: _slot(floating: false)) : null,
               ),
           ],
         ),
