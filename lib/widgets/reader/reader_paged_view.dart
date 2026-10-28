@@ -356,6 +356,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       if (widget.turnStyle == ReaderPageTurnStyle.none) {
         controller.jumpToPage(target);
       } else if (widget.turnStyle == ReaderPageTurnStyle.curl) {
+        // Reset before assigning the new turn so dismissed cannot clear it.
+        _curlAnimation.reset();
         // 卷页：PageView 本身不滑动，覆盖层把去页卷到目标页上；动画跑完
         // 时状态回调完成跳页与清理。
         setState(() {
@@ -694,30 +696,19 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   @override
   Widget build(BuildContext context) {
     final turn = widget.chapterTurn;
-    Widget pager = _wrapPageDrag(_buildPager());
+    // Keep the pager mounted when overlays appear or disappear, preserving its page.
     // 章节内卷页覆盖层：IgnorePointer，不拦截跟手拖拽；覆盖层内的
     // AnimatedBuilder 只重建卷页子树，不重建整个 PageView。
-    if (_curlTurn != null) {
-      pager = Stack(
-        fit: StackFit.expand,
-        children: [
-          pager,
-          Positioned.fill(
-            child: IgnorePointer(child: _buildCurlOverlay()),
-          ),
-        ],
-      );
-    }
-    if (turn == null || !_animatesChapterTurn) {
-      return pager;
-    }
     return Stack(
       fit: StackFit.expand,
       children: [
-        pager,
-        Positioned.fill(
-          child: IgnorePointer(child: _buildChapterTurnOverlay(turn)),
-        ),
+        _wrapPageDrag(_buildPager()),
+        if (_curlTurn != null)
+          Positioned.fill(child: IgnorePointer(child: _buildCurlOverlay())),
+        if (turn != null && _animatesChapterTurn)
+          Positioned.fill(
+            child: IgnorePointer(child: _buildChapterTurnOverlay(turn)),
+          ),
       ],
     );
   }
