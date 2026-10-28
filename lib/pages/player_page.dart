@@ -1,4 +1,5 @@
 import '../services/desktop_platform.dart';
+import '../services/audio_floating_routes.dart';
 import '../services/app_log.dart';
 import 'dart:async';
 import 'dart:io';
@@ -561,6 +562,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    AudioFloatingRouteScope.configure(context, hidden: true);
     // 画面撑满的缺省值取决于竖/横屏（`FillScreenDataManager.a()` 的
     // `e.q()` 分支），因此要等 MediaQuery 可用之后才能读。
     unawaited(_loadPanelPreferences());

@@ -25,6 +25,7 @@ import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
+import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
@@ -229,9 +230,18 @@ class FqApp extends StatefulWidget {
 }
 
 class _FqAppState extends State<FqApp> {
+  final _audioRoutes = AudioFloatingRoutes();
+  // Desktop fullscreen reparents the content; keep the playback owner alive.
+  final _audioScopeKey = GlobalKey();
   final _navigatorKey = isWindowsDesktop
       ? DesktopPlatform.navigatorKey
       : GlobalKey<NavigatorState>();
+
+  @override
+  void dispose() {
+    _audioRoutes.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -248,14 +258,20 @@ class _FqAppState extends State<FqApp> {
                 final effectiveMode = eink ? ThemeMode.light : mode;
                 return MaterialApp(
                   navigatorKey: _navigatorKey,
-                  builder: (context, child) => AudioPlaybackScope(
-                    navigatorKey: _navigatorKey,
-                    child: isWindowsDesktop
-                        ? DesktopAppFrame(
-                            child: child ?? const SizedBox.shrink(),
-                          )
-                        : child ?? const SizedBox.shrink(),
-                  ),
+                  navigatorObservers: [_audioRoutes],
+                  builder: (context, child) {
+                    final playback = AudioPlaybackScope(
+                      key: _audioScopeKey,
+                      navigatorKey: _navigatorKey,
+                      child: child ?? const SizedBox.shrink(),
+                    );
+                    return AudioFloatingRouteScope(
+                      routes: _audioRoutes,
+                      child: isWindowsDesktop
+                          ? DesktopAppFrame(child: playback)
+                          : playback,
+                    );
+                  },
                   title: '什锦铺',
                   debugShowCheckedModeBanner: false,
                   // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
@@ -529,20 +545,29 @@ class _RootShellState extends State<RootShell> {
     if (isWindowsDesktop) {
       return ValueListenableBuilder<int>(
         valueListenable: desktopTab,
-        builder: (context, index, _) => LazyIndexedStack(
-          index: index,
-          children: [
-            HomePage(cueLoader: () => ApiClient.instance.searchCue()),
-            const DramaPage(),
-            LibraryPage(
-              onBrowse: () => desktopTab.value = 0,
-              onFindDrama: () => desktopTab.value = 1,
-            ),
-            const MinePage(),
-          ],
-        ),
+        builder: (context, index, _) {
+          AudioFloatingRouteScope.configure(context, hidden: index == 1);
+          return LazyIndexedStack(
+            index: index,
+            children: [
+              HomePage(cueLoader: () => ApiClient.instance.searchCue()),
+              const DramaPage(),
+              LibraryPage(
+                onBrowse: () => desktopTab.value = 0,
+                onFindDrama: () => desktopTab.value = 1,
+              ),
+              const MinePage(),
+            ],
+          );
+        },
       );
     }
+    // The floating navigation dock is 64 high, with an 8px bottom gap.
+    AudioFloatingRouteScope.configure(
+      context,
+      hidden: _index == 1,
+      bottomInset: 72,
+    );
     final palette = HomePalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isDramaTab = _index == 1;

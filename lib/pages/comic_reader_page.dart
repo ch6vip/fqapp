@@ -1,4 +1,5 @@
 import '../services/desktop_platform.dart';
+import '../services/audio_floating_routes.dart';
 import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -135,6 +136,12 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   String? _error;
 
   Chapter get _chapter => widget.chapters[_chapterIndex];
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    AudioFloatingRouteScope.configure(context, hidden: true);
+  }
 
   @override
   void initState() {

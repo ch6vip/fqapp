@@ -72,6 +72,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   Future<void> _queue = Future<void>.value();
   final _views = <_AudioPageState>{};
   bool _rebuildPending = false;
+  _AudioPlaybackController? _openingAudio;
   late final Future<void> Function(NativePlayer) _playGate = _beforePlay;
 
   /// 跨章跳读要用的字幕轨缓存，键 = `音色|章节 id`。
@@ -313,20 +314,63 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     );
   }
 
-  void viewChanged(_AudioPageState view) {
+  void registerView(_AudioPageState view) {
     _views.add(view);
-    _changed();
   }
 
-  void removeView(_AudioPageState view) {
+  void unregisterView(_AudioPageState view) {
     _views.remove(view);
-    _changed();
+  }
+
+  void _openAudio(_AudioPlaybackController session) {
+    if (!identical(_session, session) || session._closed) return;
+    final navigator = widget.navigatorKey.currentState;
+    if (navigator == null) return;
+    for (final view in _views.toList().reversed) {
+      if (!view.mounted || !identical(view._session, session)) continue;
+      final route = ModalRoute.of(view.context);
+      if (route == null || !route.isActive || route.navigator != navigator) {
+        continue;
+      }
+      navigator.popUntil((candidate) => identical(candidate, route));
+      return;
+    }
+    if (identical(_openingAudio, session)) return;
+    _openingAudio = session;
+    final request = session.request;
+    unawaited(
+      navigator
+          .push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => AudioPage(
+                bookId: session._bookId,
+                title: session._title,
+                cover: session._cover,
+                chapters: session._chapters,
+                startIndex: session._index,
+                historyStore: request.historyStore,
+                playerFactory: request.playerFactory,
+                sourceLoader: request.sourceLoader,
+                voicesLoader: request.voicesLoader,
+                extrasLoader: request.extrasLoader,
+                subtitleLoader: request.subtitleLoader,
+                timePointLoader: request.timePointLoader,
+                excerptLoader: request.excerptLoader,
+                directoryLoader: request.directoryLoader,
+                downloadStore: request.downloadStore,
+              ),
+            ),
+          )
+          .whenComplete(() {
+            if (identical(_openingAudio, session)) _openingAudio = null;
+          }),
+    );
   }
 
   void _changed() {
     if (!mounted || _rebuildPending) return;
     _rebuildPending = true;
-    // Views attach/detach while Navigator builds. Defer the ancestor rebuild.
+    // Session acquisition can notify while descendant pages attach.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _rebuildPending = false;
       if (mounted) setState(() {});
@@ -351,31 +395,47 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     super.dispose();
   }
 
-  // The bar below is a sibling of the Navigator, not a descendant,
-  // so it has no Overlay ancestor for its IconButton tooltips
-  // (the Navigator owns its own Overlay internally). Wrap the column
-  // in an Overlay so the tooltips resolve to this outer Overlay, while
-  // route content still resolves to the Navigator's inner Overlay.
-  //
-  // The entry is created once: Overlay only reads initialEntries in
-  // initState, so an entry rebuilt in build() would never be inserted
-  // and its builder would stay frozen on the first build's values
-  // (mini bars never appearing). The builder below reads live state,
-  // so each scope rebuild re-renders the bars with current values.
-  late final OverlayEntry _entry = OverlayEntry(builder: _buildEntry);
-
   @override
   Widget build(BuildContext context) {
-    return Overlay(initialEntries: [_entry]);
+    // The controls are Navigator siblings. Overlay.wrap supplies their tooltip
+    // overlay and updates its entry when the session or route policy changes.
+    return Overlay.wrap(child: _buildContent(context));
   }
 
-  Widget _buildEntry(BuildContext context) {
+  Widget _buildContent(BuildContext context) {
     final tts = _tts;
+    final session = _session;
+    final routes = AudioFloatingRouteScope.of(context);
     return Column(
       children: [
-        Expanded(child: widget.child),
-        // 官方 7.0.9.32 没有任何迷你播放器产物（id/layout/smali 全量搜过都是 0），
-        // 离开听书页后只由通知栏控制，所以这里不再挂听书迷你栏。
+        Expanded(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              widget.child,
+              if (session != null && !session._closed)
+                AudioFloatingPlayer(
+                  key: ObjectKey(session),
+                  title: session._title,
+                  cover: session._cover,
+                  position: session._position,
+                  duration: session._duration,
+                  playing:
+                      (session._player?.playing ?? false) &&
+                      session._wantPlay &&
+                      !session._completed,
+                  loading:
+                      session._loading || (session._player?.buffering ?? false),
+                  canToggle: session._ready,
+                  visible: routes?.visible ?? false,
+                  bottomInset: routes?.bottomInset ?? 0,
+                  onOpen: () => _openAudio(session),
+                  onToggle: () => unawaited(session._togglePlayback()),
+                  onClose: () => unawaited(stop(session)),
+                ),
+            ],
+          ),
+        ),
         if (tts != null && !tts.closed)
           SystemTtsMiniBar(
             session: tts,
