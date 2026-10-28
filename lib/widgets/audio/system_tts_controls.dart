@@ -3,60 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../pages/system_tts_settings_page.dart';
+import '../../services/audio_floating_routes.dart';
 import '../../services/system_tts.dart';
-
-class SystemTtsMiniBar extends StatelessWidget {
-  const SystemTtsMiniBar({
-    super.key,
-    required this.session,
-    required this.onOpen,
-    required this.onClose,
-  });
-  final SystemTtsPlayback session;
-  final VoidCallback onOpen;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) => Material(
-    color: Theme.of(context).colorScheme.surfaceContainer,
-    child: SafeArea(
-      top: false,
-      child: Row(
-        children: [
-          Expanded(
-            child: ListTile(
-              title: Text(
-                session.book.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                session.error != null
-                    ? '朗读失败，查看详情'
-                    : session.loading
-                    ? '正在准备朗读…'
-                    : '系统朗读 · ${session.chapter.title}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              onTap: onOpen,
-            ),
-          ),
-          IconButton(
-            tooltip: session.wantPlay ? '暂停朗读' : '继续朗读',
-            onPressed: () => unawaited(session.toggle()),
-            icon: Icon(session.wantPlay ? Icons.pause : Icons.play_arrow),
-          ),
-          IconButton(
-            tooltip: '关闭朗读',
-            onPressed: onClose,
-            icon: const Icon(Icons.close),
-          ),
-        ],
-      ),
-    ),
-  );
-}
 
 class SystemTtsPlaybackPage extends StatelessWidget {
   const SystemTtsPlaybackPage({
@@ -68,7 +16,13 @@ class SystemTtsPlaybackPage extends StatelessWidget {
   final VoidCallback onClose;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    // The TTS counterpart of AudioPlayActivity hides the capsule.
+    AudioFloatingRouteScope.configure(context, hidden: true);
+    return _buildPage(context);
+  }
+
+  Widget _buildPage(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: const Text('系统朗读'),
       actions: [

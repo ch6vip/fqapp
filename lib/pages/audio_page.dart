@@ -25,6 +25,7 @@ import '../services/chapter_cache_store.dart';
 import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
+import '../services/media_history_store.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/shelf_store.dart';

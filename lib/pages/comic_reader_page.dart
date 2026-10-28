@@ -927,7 +927,13 @@ class _ComicImageViewer extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    // Official PreviewImageActivity hides the capsule.
+    AudioFloatingRouteScope.configure(context, hidden: true);
+    return _buildViewer(context);
+  }
+
+  Widget _buildViewer(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: Text('第 $pageNumber 页'),
       leading: IconButton(

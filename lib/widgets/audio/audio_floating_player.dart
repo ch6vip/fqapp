@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/app_theme.dart';
@@ -15,8 +14,8 @@ class AudioFloatingPlayer extends StatefulWidget {
     super.key,
     required this.title,
     required this.cover,
-    required this.position,
-    required this.duration,
+    required this.progress,
+    required this.readProgress,
     required this.playing,
     required this.loading,
     required this.canToggle,
@@ -29,8 +28,12 @@ class AudioFloatingPlayer extends StatefulWidget {
 
   final String title;
   final String cover;
-  final ValueListenable<Duration> position;
-  final Duration duration;
+
+  /// Notifies when [readProgress] changes, without rebuilding the capsule.
+  final Listenable progress;
+
+  /// Played fraction of the current item, 0..1 (official `fa3/a` ring).
+  final double Function() readProgress;
   final bool playing;
   final bool loading;
   final bool canToggle;
@@ -152,23 +155,26 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
     super.dispose();
   }
 
+  // Officially plain click targets: no ripple, no tooltip.
   Widget _button({
+    required Key key,
     required String label,
     required double width,
     required VoidCallback? onTap,
     required Widget child,
-  }) => SizedBox(
-    width: width,
-    height: _height,
-    child: IconButton(
-      tooltip: label,
-      onPressed: onTap,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(),
-      style: IconButton.styleFrom(
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  }) => Semantics(
+    key: key,
+    button: true,
+    enabled: onTap != null,
+    label: label,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(
+        width: width,
+        height: _height,
+        child: Center(child: ExcludeSemantics(child: child)),
       ),
-      icon: child,
     ),
   );
 
@@ -178,9 +184,9 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
     final ink = eink
         ? Colors.black
         : const Color(0xFFF6F6F6).withValues(alpha: dark ? 0.8 : 1);
+    // Official skin_loading_book_cover_light: a flat grey cover, no glyph.
     final placeholder = ColoredBox(
-      color: Colors.white24,
-      child: Center(child: Icon(Icons.headphones, size: 22, color: ink)),
+      color: dark ? const Color(0xFF3A3A3A) : const Color(0xFFE8E8E8),
     );
     final cover = ClipOval(
       child: SizedBox.square(
@@ -219,6 +225,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
         children: [
           const SizedBox(width: 4),
           _button(
+            key: const ValueKey('audio-floating-open'),
             label: '\u6253\u5f00\u542c\u4e66\uff1a${widget.title}',
             width: 42,
             onTap: widget.onOpen,
@@ -226,55 +233,61 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
           ),
           const SizedBox(width: 14),
           _button(
+            key: const ValueKey('audio-floating-toggle'),
             label: widget.loading
                 ? '\u6b63\u5728\u52a0\u8f7d'
                 : widget.playing
                 ? '\u6682\u505c\u64ad\u653e'
                 : '\u7ee7\u7eed\u64ad\u653e',
             width: 32,
-            onTap: widget.canToggle && !widget.loading ? widget.onToggle : null,
+            // Buffering keeps the button live, as on the listening page.
+            onTap: widget.canToggle ? widget.onToggle : null,
             child: SizedBox.square(
               dimension: 32,
-              child: ValueListenableBuilder<Duration>(
-                valueListenable: widget.position,
-                builder: (context, position, _) {
-                  final duration = widget.duration.inMilliseconds;
-                  final progress = duration <= 0
-                      ? 0.0
-                      : (position.inMilliseconds / duration).clamp(0.0, 1.0);
-                  return Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      SizedBox.expand(
-                        child: CircularProgressIndicator(
-                          value: widget.loading && !_reducedMotion
-                              ? null
-                              : progress,
-                          strokeWidth: 2.5,
-                          trackGap: 0,
-                          color: ink,
-                          backgroundColor: ink.withValues(alpha: 0.18),
-                          padding: EdgeInsets.zero,
-                        ),
-                      ),
-                      if (!widget.loading)
-                        Icon(
-                          widget.playing ? Icons.pause : Icons.play_arrow,
-                          color: ink,
-                          size: 18,
-                        ),
-                    ],
-                  );
-                },
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Official LOADING keeps the icon and swaps the ring for a
+                  // rotating white sweep (`fa3/a.java:48-58`).
+                  if (widget.loading)
+                    _LoadingRing(color: ink, animate: !_reducedMotion)
+                  else
+                    ListenableBuilder(
+                      listenable: widget.progress,
+                      builder: (context, _) {
+                        final value = widget.readProgress();
+                        return CustomPaint(
+                          size: const Size.square(32),
+                          painter: _RingPainter(
+                            progress: value.isFinite
+                                ? value.clamp(0.0, 1.0)
+                                : 0,
+                            color: ink,
+                          ),
+                        );
+                      },
+                    ),
+                  CustomPaint(
+                    size: const Size.square(18),
+                    painter: widget.playing
+                        ? _PauseGlyph(ink)
+                        : _PlayGlyph(ink),
+                  ),
+                ],
               ),
             ),
           ),
           const SizedBox(width: 10),
           _button(
+            key: const ValueKey('audio-floating-close'),
             label: '\u5173\u95ed\u64ad\u653e',
             width: 26,
             onTap: _close,
-            child: Icon(Icons.close, size: 18, color: ink),
+            // Official swaps `cav` for the 16dp `alh` cross in code.
+            child: CustomPaint(
+              size: const Size.square(16),
+              painter: _CloseGlyph(ink),
+            ),
           ),
           const SizedBox(width: 10),
         ],
@@ -370,4 +383,201 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
       },
     );
   }
+}
+
+/// Official `fa3/a`: 2.5dp track (#33 white) and clockwise progress (#E5)
+/// from 12 o'clock. Ours tints with the capsule's ink so e-ink stays black.
+class _RingPainter extends CustomPainter {
+  const _RingPainter({required this.progress, required this.color});
+
+  final double progress;
+  final Color color;
+
+  static const _stroke = 2.5;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(
+      0,
+      0,
+      size.width,
+      size.height,
+    ).deflate(_stroke / 2);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _stroke;
+    canvas.drawOval(rect, paint..color = color.withValues(alpha: 0.2));
+    if (progress <= 0) return;
+    canvas.drawArc(
+      rect,
+      -math.pi / 2,
+      math.pi * 2 * progress,
+      false,
+      paint..color = color.withValues(alpha: 0.9),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter old) =>
+      old.progress != progress || old.color != color;
+}
+
+/// Official loading ring: a transparent-to-opaque sweep turning 4°/frame.
+class _LoadingRing extends StatefulWidget {
+  const _LoadingRing({required this.color, required this.animate});
+
+  final Color color;
+  final bool animate;
+
+  @override
+  State<_LoadingRing> createState() => _LoadingRingState();
+}
+
+class _LoadingRingState extends State<_LoadingRing>
+    with SingleTickerProviderStateMixin {
+  // 4° per 60Hz frame is one turn in 1.5s.
+  late final _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1500),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(_LoadingRing oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _sync();
+  }
+
+  void _sync() {
+    if (widget.animate) {
+      if (!_spin.isAnimating) _spin.repeat();
+    } else {
+      _spin.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => RotationTransition(
+    turns: _spin,
+    child: CustomPaint(
+      size: const Size.square(32),
+      painter: _SweepPainter(widget.color),
+    ),
+  );
+}
+
+class _SweepPainter extends CustomPainter {
+  const _SweepPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height).deflate(1.25);
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..shader = SweepGradient(
+          colors: [color.withValues(alpha: 0), color],
+        ).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SweepPainter old) => old.color != color;
+}
+
+/// Official `csw`: a filled, slightly rounded right-pointing triangle.
+class _PlayGlyph extends CustomPainter {
+  const _PlayGlyph(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final path = Path()
+      ..moveTo(w * 0.30, h * 0.18)
+      ..lineTo(w * 0.82, h * 0.50)
+      ..lineTo(w * 0.30, h * 0.82)
+      ..close();
+    final paint = Paint()
+      ..color = color
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = w * 0.08;
+    // Fill, then a round-joined stroke to soften the corners.
+    canvas.drawPath(path, paint);
+    canvas.drawPath(path, paint..style = PaintingStyle.stroke);
+  }
+
+  @override
+  bool shouldRepaint(_PlayGlyph old) => old.color != color;
+}
+
+/// Official `cax`: two rounded vertical bars.
+class _PauseGlyph extends CustomPainter {
+  const _PauseGlyph(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final paint = Paint()..color = color;
+    final radius = Radius.circular(w * 0.06);
+    for (final left in [w * 0.26, w * 0.60]) {
+      canvas.drawRRect(
+        RRect.fromLTRBR(left, h * 0.20, left + w * 0.14, h * 0.80, radius),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PauseGlyph old) => old.color != color;
+}
+
+/// Official `alh`: a thin round-capped cross.
+class _CloseGlyph extends CustomPainter {
+  const _CloseGlyph(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = w * 0.1
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(w * 0.25, h * 0.25),
+      Offset(w * 0.75, h * 0.75),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(w * 0.75, h * 0.25),
+      Offset(w * 0.25, h * 0.75),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CloseGlyph old) => old.color != color;
 }

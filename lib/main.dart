@@ -230,7 +230,11 @@ class FqApp extends StatefulWidget {
 }
 
 class _FqAppState extends State<FqApp> {
-  final _audioRoutes = AudioFloatingRoutes();
+  // Official tabbar + 18dp applies on every page. Our floating dock is 64
+  // high with an 8px gap; the desktop shell has no bottom bar.
+  final _audioRoutes = AudioFloatingRoutes(
+    defaultBottomInset: isWindowsDesktop ? 0 : 72,
+  );
   // Desktop fullscreen reparents the content; keep the playback owner alive.
   final _audioScopeKey = GlobalKey();
   final _navigatorKey = isWindowsDesktop
@@ -263,6 +267,7 @@ class _FqAppState extends State<FqApp> {
                     final playback = AudioPlaybackScope(
                       key: _audioScopeKey,
                       navigatorKey: _navigatorKey,
+                      recentListen: loadRecentListen,
                       child: child ?? const SizedBox.shrink(),
                     );
                     return AudioFloatingRouteScope(
@@ -562,12 +567,7 @@ class _RootShellState extends State<RootShell> {
         },
       );
     }
-    // The floating navigation dock is 64 high, with an 8px bottom gap.
-    AudioFloatingRouteScope.configure(
-      context,
-      hidden: _index == 1,
-      bottomInset: 72,
-    );
+    AudioFloatingRouteScope.configure(context, hidden: _index == 1);
     final palette = HomePalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isDramaTab = _index == 1;
