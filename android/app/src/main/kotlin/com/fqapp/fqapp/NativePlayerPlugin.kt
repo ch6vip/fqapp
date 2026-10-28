@@ -13,10 +13,10 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.net.Uri
-import android.provider.Settings
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.ActivityCompat
@@ -39,8 +39,8 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.example.shortplay.CryptoNative
 import com.example.shortplay.HttpBridge
@@ -57,24 +57,27 @@ import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
+/** 播放器日志 tag：类内与顶层 [buildPlayer] 共用，避免两处字面量漂移。 */
+internal const val PLAYER_LOG_TAG = "NativePlayerPlugin"
+
 /**
  * Native ExoPlayer host for DRM (CENC) short dramas and audiobook audio playback.
  * Decrypted plaintext is served to ExoPlayer through a [CryptoDataSource] backed
  * by the C crypto core; events are pushed to Flutter over an EventChannel.
  */
-/** 播放器日志 tag：类内与顶层 [buildPlayer] 共用，避免两处字面量漂移。 */
-internal const val PLAYER_LOG_TAG = "NativePlayerPlugin"
-
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerPlugin internal constructor(
     private val cryptoStream: CryptoStream = JniCryptoStream,
     private val playerFactory: (Context, PlayerBuildOptions) -> ExoPlayer = ::buildPlayer
-) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
+) : FlutterPlugin,
+    MethodChannel.MethodCallHandler,
+    ActivityAware,
     PluginRegistry.RequestPermissionsResultListener {
 
     companion object {
         private const val TAG = PLAYER_LOG_TAG
         private const val POST_NOTIFICATIONS_REQUEST = 7412
+
         @Volatile private var instance: NativePlayerPlugin? = null
 
         fun dispatchNotificationAction(action: String) {
@@ -95,6 +98,7 @@ class NativePlayerPlugin internal constructor(
     private lateinit var eventChannel: EventChannel
     private lateinit var textureRegistry: TextureRegistry
     private lateinit var flutterBinding: FlutterPlugin.FlutterPluginBinding
+
     @Volatile private var attachedToEngine = false
 
     private var activity: Activity? = null
@@ -194,22 +198,23 @@ class NativePlayerPlugin internal constructor(
         originalWindowBrightness = null
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ): Boolean = requestCode == POST_NOTIFICATIONS_REQUEST
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean =
+        requestCode == POST_NOTIFICATIONS_REQUEST
 
     private fun requestNotificationPermissionIfNeeded() {
         val currentActivity = activity ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             currentActivity.applicationInfo.targetSdkVersion < Build.VERSION_CODES.TIRAMISU
-        ) return
+        ) {
+            return
+        }
         if (ContextCompat.checkSelfPermission(
                 currentActivity,
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED || notificationPermissionRequested
-        ) return
+        ) {
+            return
+        }
         notificationPermissionRequested = true
         try {
             ActivityCompat.requestPermissions(
@@ -296,7 +301,7 @@ class NativePlayerPlugin internal constructor(
         return try {
             val windowBrightness = currentActivity.window.attributes.screenBrightness
             val brightness = if (windowBrightness >= 0f) {
-                windowBrightness.coerceIn(NativeGestureLevels.brightnessFloor, 1f)
+                windowBrightness.coerceIn(NativeGestureLevels.BRIGHTNESS_FLOOR, 1f)
             } else {
                 val raw = Settings.System.getInt(
                     currentActivity.contentResolver,
@@ -333,7 +338,7 @@ class NativePlayerPlugin internal constructor(
         if (originalWindowBrightness == null) {
             originalWindowBrightness = attributes.screenBrightness
         }
-        attributes.screenBrightness = value.coerceIn(NativeGestureLevels.brightnessFloor, 1f)
+        attributes.screenBrightness = value.coerceIn(NativeGestureLevels.BRIGHTNESS_FLOOR, 1f)
         currentActivity.window.attributes = attributes
     }
 
@@ -388,66 +393,82 @@ class NativePlayerPlugin internal constructor(
                     result
                 )
             }
+
             "play" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 players[id]?.player?.play()
                 result.success(null)
             }
+
             "pause" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 players[id]?.player?.pause()
                 result.success(null)
             }
+
             "seek" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
-                val positionMs = call.requiredArgument<Number>("positionMs", result)?.toLong() ?: return
+                val positionMs =
+                    call.requiredArgument<Number>("positionMs", result)?.toLong() ?: return
                 players[id]?.player?.seekTo(positionMs)
                 result.success(null)
             }
+
             "setVolume" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 val volume = call.requiredArgument<Number>("volume", result)?.toFloat() ?: return
                 players[id]?.player?.volume = volume
                 result.success(null)
             }
+
             // 分屏播放页上下滑手势：左半窗口亮度、右半媒体音量。都是设备级
             // 档位，不属于某个播放器实例，所以不带 id。
             "gestureLevels" -> result.success(gestureLevels())
+
             "setScreenBrightness" -> {
                 val value = call.requiredArgument<Number>("value", result)?.toFloat() ?: return
                 applyWindowBrightness(value)
                 result.success(null)
             }
+
             "resetScreenBrightness" -> {
                 resetWindowBrightness()
                 result.success(null)
             }
+
             "setMediaVolume" -> {
                 val value = call.requiredArgument<Number>("value", result)?.toFloat() ?: return
                 applyMediaVolume(value)
                 result.success(null)
             }
+
             "setRate" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 val rate = call.requiredArgument<Number>("rate", result)?.toFloat() ?: return
                 players[id]?.player?.playbackParameters = PlaybackParameters(rate)
                 result.success(null)
             }
+
             "dispose" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 disposePlayer(id)
                 result.success(null)
             }
+
             "setKeepScreenOn" -> {
                 val on = call.argument<Boolean>("on") ?: false
                 handler.post {
                     activity?.window?.let { w ->
-                        if (on) w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                        else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        if (on) {
+                            w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
                     }
                 }
                 result.success(null)
             }
+
             "startListenForeground" -> {
                 val context = activity ?: flutterBinding.applicationContext
                 requestNotificationPermissionIfNeeded()
@@ -458,23 +479,32 @@ class NativePlayerPlugin internal constructor(
                     // 服务退回应用图标。
                     putExtra(
                         ListenKeepAliveService.EXTRA_COVER_URL,
-                        call.argument<String>("coverUrl"),
+                        call.argument<String>("coverUrl")
                     )
-                    putExtra(ListenKeepAliveService.EXTRA_PLAYING, call.argument<Boolean>("playing") ?: true)
-                    putExtra(ListenKeepAliveService.EXTRA_HAS_PREV, call.argument<Boolean>("hasPrev") ?: true)
-                    putExtra(ListenKeepAliveService.EXTRA_HAS_NEXT, call.argument<Boolean>("hasNext") ?: true)
+                    putExtra(
+                        ListenKeepAliveService.EXTRA_PLAYING,
+                        call.argument<Boolean>("playing") ?: true
+                    )
+                    putExtra(
+                        ListenKeepAliveService.EXTRA_HAS_PREV,
+                        call.argument<Boolean>("hasPrev") ?: true
+                    )
+                    putExtra(
+                        ListenKeepAliveService.EXTRA_HAS_NEXT,
+                        call.argument<Boolean>("hasNext") ?: true
+                    )
                     // 进度条与两侧时间全靠这三个值；漏传就等于永远上报 0/0。
                     putExtra(
                         ListenKeepAliveService.EXTRA_POSITION_MS,
-                        call.argument<Number>("positionMs")?.toLong() ?: 0L,
+                        call.argument<Number>("positionMs")?.toLong() ?: 0L
                     )
                     putExtra(
                         ListenKeepAliveService.EXTRA_DURATION_MS,
-                        call.argument<Number>("durationMs")?.toLong() ?: 0L,
+                        call.argument<Number>("durationMs")?.toLong() ?: 0L
                     )
                     putExtra(
                         ListenKeepAliveService.EXTRA_SPEED,
-                        call.argument<Number>("speed")?.toFloat() ?: 1f,
+                        call.argument<Number>("speed")?.toFloat() ?: 1f
                     )
                 }
                 try {
@@ -498,17 +528,21 @@ class NativePlayerPlugin internal constructor(
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                             error is ForegroundServiceStartNotAllowedException ->
                             "FOREGROUND_SERVICE_NOT_ALLOWED"
+
                         error is SecurityException -> "FOREGROUND_SERVICE_SECURITY"
+
                         error is IllegalStateException -> "FOREGROUND_SERVICE_STATE"
+
                         else -> "FOREGROUND_SERVICE_FAILED"
                     }
                     result.error(
                         code,
                         "Failed to start listen foreground service: ${error.javaClass.simpleName}",
-                        null,
+                        null
                     )
                 }
             }
+
             "stopListenForeground" -> {
                 val context = activity ?: flutterBinding.applicationContext
                 try {
@@ -519,6 +553,7 @@ class NativePlayerPlugin internal constructor(
                 }
                 result.success(null)
             }
+
             "canDrawOverlays" -> {
                 val context = activity ?: flutterBinding.applicationContext
                 result.success(
@@ -526,9 +561,10 @@ class NativePlayerPlugin internal constructor(
                         Settings.canDrawOverlays(context)
                     } else {
                         true
-                    },
+                    }
                 )
             }
+
             "requestOverlayPermission" -> {
                 val currentActivity = activity
                 if (currentActivity == null ||
@@ -540,7 +576,7 @@ class NativePlayerPlugin internal constructor(
                 try {
                     val intent = Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${currentActivity.packageName}"),
+                        Uri.parse("package:${currentActivity.packageName}")
                     )
                     currentActivity.startActivity(intent)
                     result.success(true)
@@ -549,6 +585,7 @@ class NativePlayerPlugin internal constructor(
                     result.success(false)
                 }
             }
+
             "startFloating" -> {
                 val id = call.argument<Int>("playerId")
                 val instance = id?.let { players[it] }
@@ -588,12 +625,12 @@ class NativePlayerPlugin internal constructor(
                     FloatingVideoService.EXTRA_VIDEO_WIDTH to
                         (call.argument<Number>("videoWidth")?.toInt() ?: 0),
                     FloatingVideoService.EXTRA_VIDEO_HEIGHT to
-                        (call.argument<Number>("videoHeight")?.toInt() ?: 0),
+                        (call.argument<Number>("videoHeight")?.toInt() ?: 0)
                 )
                 try {
                     FloatingVideoService.start(
                         activity ?: flutterBinding.applicationContext,
-                        extras,
+                        extras
                     )
                     result.success(null)
                 } catch (error: Throwable) {
@@ -602,6 +639,7 @@ class NativePlayerPlugin internal constructor(
                     result.error("FLOATING_START_FAILED", "悬浮窗启动失败", null)
                 }
             }
+
             "showFloating" -> {
                 try {
                     FloatingVideoService.show(activity ?: flutterBinding.applicationContext)
@@ -610,6 +648,7 @@ class NativePlayerPlugin internal constructor(
                 }
                 result.success(null)
             }
+
             "updateFloating" -> {
                 val extras = mapOf<String, Any?>(
                     FloatingVideoService.EXTRA_TITLE to call.argument<String>("title"),
@@ -622,22 +661,24 @@ class NativePlayerPlugin internal constructor(
                     FloatingVideoService.EXTRA_DURATION_MS to
                         call.argument<Number>("durationMs")?.toLong(),
                     FloatingVideoService.EXTRA_SPEED to
-                        call.argument<Number>("speed")?.toFloat(),
+                        call.argument<Number>("speed")?.toFloat()
                 )
                 try {
                     FloatingVideoService.update(
                         activity ?: flutterBinding.applicationContext,
-                        extras,
+                        extras
                     )
                 } catch (error: Throwable) {
                     Log.w(TAG, "floating update failed", error)
                 }
                 result.success(null)
             }
+
             "stopFloating" -> {
                 stopFloatingInternal()
                 result.success(null)
             }
+
             "swapFloatingPlayer" -> {
                 // 后台自动切集：旧播放器已销毁，新播放器接手悬浮窗。服务不重启，
                 // 避免在后台触发前台服务启动限制；只换 surface 绑定。
@@ -659,16 +700,12 @@ class NativePlayerPlugin internal constructor(
                     result.error("FLOATING_SWAP_FAILED", "悬浮窗接手失败", null)
                 }
             }
+
             else -> result.notImplemented()
         }
     }
 
-    private fun handleCreate(
-        cdnUrl: String,
-        keyHex: String,
-        options: PlayerBuildOptions,
-        result: MethodChannel.Result
-    ) {
+    private fun handleCreate(cdnUrl: String, keyHex: String, options: PlayerBuildOptions, result: MethodChannel.Result) {
         // Note: deferred CDN I/O — see .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
         val playerId = nextId.getAndIncrement()
         pendingPlayerIds.add(playerId)
@@ -699,22 +736,13 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    private fun createPlayerWithUri(
-        playerId: Int,
-        uri: String,
-        options: PlayerBuildOptions
-    ) {
+    private fun createPlayerWithUri(playerId: Int, uri: String, options: PlayerBuildOptions) {
         createPlayer(playerId, options) { player ->
             player.setMediaItem(MediaItem.fromUri(uri))
         }
     }
 
-    private fun createPlayerWithCrypto(
-        playerId: Int,
-        cdnUrl: String,
-        keyHex: String,
-        options: PlayerBuildOptions
-    ) {
+    private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String, options: PlayerBuildOptions) {
         cryptoStream.clearHttpStatus(cdnUrl)
         createPlayer(playerId, options, cdnUrl) { player ->
             val dataSourceFactory = DataSource.Factory {
@@ -726,12 +754,7 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    private fun createPlayer(
-        playerId: Int,
-        options: PlayerBuildOptions,
-        diagnosticUrl: String? = null,
-        configure: (ExoPlayer) -> Unit
-    ) {
+    private fun createPlayer(playerId: Int, options: PlayerBuildOptions, diagnosticUrl: String? = null, configure: (ExoPlayer) -> Unit) {
         if (!attachedToEngine || !pendingPlayerIds.remove(playerId)) return
         var producer: TextureRegistry.SurfaceProducer? = null
         var player: ExoPlayer? = null
@@ -807,6 +830,7 @@ class NativePlayerPlugin internal constructor(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
                     Player.STATE_BUFFERING -> sendEvent(playerId, "buffering", true)
+
                     Player.STATE_READY -> {
                         sendEvent(playerId, "buffering", false)
                         // 时长此刻常常还没拿到（C.TIME_UNSET）；真拿到才发，Dart 侧才认。
@@ -814,12 +838,14 @@ class NativePlayerPlugin internal constructor(
                             sendEvent(playerId, "duration", player.duration)
                         }
                     }
+
                     Player.STATE_ENDED -> {
                         // The periodic updater stops with isPlaying. Publish
                         // the exact end position before saving stop-at-end history.
                         sendEvent(playerId, "position", player.currentPosition)
                         sendEvent(playerId, "completed", true)
                     }
+
                     Player.STATE_IDLE -> {}
                 }
             }
@@ -847,18 +873,20 @@ class NativePlayerPlugin internal constructor(
                     val rotation = instance.videoOutput.rotationCorrection(formatRotation)
                     handler.post {
                         if (!attachedToEngine || players[playerId] !== instance) return@post
-                        eventSink?.success(mapOf(
-                            "playerId" to playerId,
-                            "type" to "videoSize",
-                            "width" to videoSize.width,
-                            "height" to videoSize.height,
-                            "rotationCorrection" to rotation,
-                            // 诊断（issue #11）：区分「producer 已代理旋转」与
-                            // 「需要 Flutter 自己转」两条路径，避免靠猜。
-                            "formatRotation" to formatRotation,
-                            "handlesCropAndRotation" to
-                                instance.videoOutput.handlesCropAndRotation()
-                        ))
+                        eventSink?.success(
+                            mapOf(
+                                "playerId" to playerId,
+                                "type" to "videoSize",
+                                "width" to videoSize.width,
+                                "height" to videoSize.height,
+                                "rotationCorrection" to rotation,
+                                // 诊断（issue #11）：区分「producer 已代理旋转」与
+                                // 「需要 Flutter 自己转」两条路径，避免靠猜。
+                                "formatRotation" to formatRotation,
+                                "handlesCropAndRotation" to
+                                    instance.videoOutput.handlesCropAndRotation()
+                            )
+                        )
                     }
                 }
             }
@@ -884,8 +912,10 @@ class NativePlayerPlugin internal constructor(
                     mapOf(
                         "message" to "Playback failed",
                         "errorCode" to error.errorCode,
-                        "httpStatusCode" to (httpError?.responseCode
-                            ?: diagnosticUrl?.let(cryptoStream::lastHttpStatus)),
+                        "httpStatusCode" to (
+                            httpError?.responseCode
+                                ?: diagnosticUrl?.let(cryptoStream::lastHttpStatus)
+                            ),
                         "decoder" to decoderDiagnostics(error)
                     )
                 )
@@ -1039,9 +1069,10 @@ class NativePlayerPlugin internal constructor(
                     }
                     FloatingVideoService.update(
                         context,
-                        mapOf(FloatingVideoService.EXTRA_PLAYING to false),
+                        mapOf(FloatingVideoService.EXTRA_PLAYING to false)
                     )
                 }
+
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                     if (floatingVolumeBeforeDuck == null) {
                         floatingVolumeBeforeDuck = instance.player.volume
@@ -1052,6 +1083,7 @@ class NativePlayerPlugin internal constructor(
                         }
                     }
                 }
+
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     floatingVolumeBeforeDuck?.let { volume ->
                         floatingVolumeBeforeDuck = null
@@ -1070,7 +1102,7 @@ class NativePlayerPlugin internal constructor(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                        .build(),
+                        .build()
                 )
                 .setOnAudioFocusChangeListener(listener)
                 .build()
@@ -1082,7 +1114,7 @@ class NativePlayerPlugin internal constructor(
             audioManager.requestAudioFocus(
                 listener,
                 AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN,
+                AudioManager.AUDIOFOCUS_GAIN
             ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
     }
@@ -1147,6 +1179,7 @@ class NativePlayerPlugin internal constructor(
         private var uri: Uri? = null
         private var bytesRemaining: Long = C.LENGTH_UNSET.toLong()
         private var opened = false
+
         // Reused across read() calls so the hot path doesn't allocate a fresh
         // buffer for every chunk.
         private var readBuffer: ByteArray? = null
@@ -1161,9 +1194,17 @@ class NativePlayerPlugin internal constructor(
                 }
                 val totalSize = stream.size(streamHandle)
                 if (totalSize > 0 && dataSpec.position > totalSize) {
-                    throw DataSourceException(PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE)
+                    throw DataSourceException(
+                        PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE
+                    )
                 }
-                val available = if (totalSize > 0) totalSize - dataSpec.position else C.LENGTH_UNSET.toLong()
+                val available = if (totalSize >
+                    0
+                ) {
+                    totalSize - dataSpec.position
+                } else {
+                    C.LENGTH_UNSET.toLong()
+                }
                 bytesRemaining = when {
                     dataSpec.length == C.LENGTH_UNSET.toLong() -> available
                     available == C.LENGTH_UNSET.toLong() -> dataSpec.length
@@ -1247,11 +1288,12 @@ internal fun isSoftwareDecoder(decoderName: String): Boolean =
 
 /** 用户选择的视频解码器策略（与 Dart 侧 `VideoDecoderPreference` 同名）。 */
 internal enum class VideoDecoderPreference {
-    AUTOMATIC, HARDWARE, SOFTWARE;
+    AUTOMATIC,
+    HARDWARE,
+    SOFTWARE;
 
     companion object {
-        fun fromName(value: String?): VideoDecoderPreference =
-            entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: AUTOMATIC
+        fun fromName(value: String?): VideoDecoderPreference = entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: AUTOMATIC
     }
 }
 
@@ -1274,8 +1316,7 @@ internal enum class AudioRateEngine(val wireName: String) {
     BUILT_IN("builtIn");
 
     companion object {
-        fun fromName(value: String?): AudioRateEngine =
-            entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: WSOLA
+        fun fromName(value: String?): AudioRateEngine = entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: WSOLA
     }
 }
 
@@ -1297,10 +1338,6 @@ internal data class PlayerBuildOptions(
 }
 
 /**
- * 播放器工厂。解码器偏好与变速引擎都是 builder 期定型，事后无法改，
- * 不过两者都会影响 renderer 集合。
- */
-/**
  * 设备原生输出采样率，等价于官方 TTPlayer 里的 `getNativeOutputSampleRate`。
  *
  * 官方在 atempo 之前用 FFSampleFilter/aformat 把 PCM 统一到这个速率
@@ -1308,17 +1345,19 @@ internal data class PlayerBuildOptions(
  * 这样 AudioTrack 不必再做一次隐式重采样。拿不到时退回 48 kHz 这个
  * Android 音频输出的通用速率。
  */
-internal fun nativeOutputSampleRate(): Int {
-    return try {
-        AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
-            .takeIf { it > 0 } ?: FALLBACK_SAMPLE_RATE
-    } catch (_: Throwable) {
-        FALLBACK_SAMPLE_RATE
-    }
+internal fun nativeOutputSampleRate(): Int = try {
+    AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
+        .takeIf { it > 0 } ?: FALLBACK_SAMPLE_RATE
+} catch (_: Throwable) {
+    FALLBACK_SAMPLE_RATE
 }
 
 private const val FALLBACK_SAMPLE_RATE = 48_000
 
+/**
+ * 播放器工厂。解码器偏好与变速引擎都是 builder 期定型，事后无法改，
+ * 不过两者都会影响 renderer 集合。
+ */
 internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlayer {
     // Note: decoder init fallback and 206 diagnostics — see
     // .agents/notes/implemented/bug-fix/2026-10-15-issue2-decoder-initialization-fallback.md.
@@ -1341,12 +1380,8 @@ internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlay
     val wsola = options.effectiveRateEngine == AudioRateEngine.WSOLA
     val factory = if (wsola) {
         object : DefaultRenderersFactory(context) {
-            override fun buildAudioSink(
-                context: Context,
-                enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean
-            ): AudioSink {
-                return DefaultAudioSink.Builder(context)
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+                DefaultAudioSink.Builder(context)
                     .setAudioProcessorChain(
                         WsolaProcessorChain(nativeOutputSampleRate())
                     )
@@ -1354,7 +1389,6 @@ internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlay
                     // 时伸缩已由 WSOLA 完成，AudioTrack 不能再做一次。
                     .setEnableAudioTrackPlaybackParams(false)
                     .build()
-            }
         }
     } else {
         DefaultRenderersFactory(context)
@@ -1417,6 +1451,7 @@ internal object HardwareFirstCodecSelector : MediaCodecSelector {
             all.filter { isSoftwareDecoder(it.name) }
     }
 }
+
 /** Injectable JNI boundary for creation and DataSource range/error checks on the JVM. */
 internal interface CryptoStream {
     fun ensureInitialized()
@@ -1434,8 +1469,7 @@ private object JniCryptoStream : CryptoStream {
     override fun open(url: String, keyHex: String) = CryptoNative.nativePlayerStreamOpen(url, keyHex)
     override fun size(handle: Long) = CryptoNative.nativePlayerStreamSize(handle)
     override fun seek(handle: Long, position: Long) = CryptoNative.nativePlayerStreamSeek(handle, position)
-    override fun read(handle: Long, buffer: ByteArray, length: Int) =
-        CryptoNative.nativePlayerStreamRead(handle, buffer, length)
+    override fun read(handle: Long, buffer: ByteArray, length: Int) = CryptoNative.nativePlayerStreamRead(handle, buffer, length)
     override fun close(handle: Long) = CryptoNative.nativePlayerStreamClose(handle)
     override fun lastHttpStatus(url: String) = com.example.shortplay.HttpBridge.lastHttpStatus(url)
     override fun clearHttpStatus(url: String) = com.example.shortplay.HttpBridge.clearHttpStatus(url)

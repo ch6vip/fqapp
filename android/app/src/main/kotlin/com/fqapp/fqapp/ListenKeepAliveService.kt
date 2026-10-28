@@ -14,20 +14,23 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
-// androidx.media:media 1.7.0 把这两个类只发在 android.support.v4.media.session 下
+
+// androidx.media:media 1.7.0 把这三个类只发在 android.support.v4.media 下
 // （androidx/media/session/ 里只有 MediaButtonReceiver）。写成 androidx.media.session
 // 会直接编译不过——别照直觉"修正"回 androidx。
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
-import android.support.v4.media.MediaMetadataCompat
-import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
-import androidx.media.app.NotificationCompat.MediaStyle
+// 它们留在 import 块里会被 ktlint 的 import-ordering 判违规（注释阻住自动修复），
+// 所以把说明放在导入之后，导入本身按字典序排：android.* → androidx.* → java.*。
 
 /**
  * 听书 / 听视频（listen mode）的前台保活服务：
@@ -100,7 +103,7 @@ class ListenKeepAliveService : Service() {
                 val channel = NotificationChannel(
                     CHANNEL_ID,
                     getString(R.string.listen_channel_name),
-                    NotificationManager.IMPORTANCE_LOW,
+                    NotificationManager.IMPORTANCE_LOW
                 ).apply {
                     description = getString(R.string.listen_channel_name)
                     setShowBadge(false)
@@ -119,14 +122,17 @@ class ListenKeepAliveService : Service() {
                     NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
                     return START_NOT_STICKY
                 }
+
                 ACTION_PREV -> {
                     NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PREV)
                     return START_NOT_STICKY
                 }
+
                 ACTION_NEXT -> {
                     NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_NEXT)
                     return START_NOT_STICKY
                 }
+
                 ACTION_STOP -> {
                     NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_STOP)
                     stopSelf()
@@ -169,7 +175,7 @@ class ListenKeepAliveService : Service() {
                 this,
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
@@ -177,13 +183,7 @@ class ListenKeepAliveService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(
-        title: String,
-        episode: String,
-        playing: Boolean,
-        hasPrev: Boolean,
-        hasNext: Boolean,
-    ): Notification {
+    private fun buildNotification(title: String, episode: String, playing: Boolean, hasPrev: Boolean, hasNext: Boolean): Notification {
         val text = episode.ifBlank { getString(R.string.listen_notification_text) }
 
         val contentPendingIntent = contentIntent()
@@ -205,7 +205,7 @@ class ListenKeepAliveService : Service() {
             .setStyle(
                 MediaStyle()
                     .setMediaSession(ensureMediaSession().sessionToken)
-                    .setShowActionsInCompactView(0, 1, 2),
+                    .setShowActionsInCompactView(0, 1, 2)
             )
 
         // 大图 = 当前作品封面。没封面（或还没下载完）时不设，系统会用应用
@@ -217,13 +217,13 @@ class ListenKeepAliveService : Service() {
             this,
             REQUEST_PREV,
             Intent(this, ListenKeepAliveService::class.java).apply { action = ACTION_PREV },
-            flags,
+            flags
         )
         builder.addAction(
             NotificationCompat.Action.Builder(
                 android.R.drawable.ic_media_previous,
                 getString(R.string.listen_prev),
-                prevIntent,
+                prevIntent
             ).build()
         )
 
@@ -234,13 +234,13 @@ class ListenKeepAliveService : Service() {
             this,
             REQUEST_PLAY_PAUSE,
             Intent(this, ListenKeepAliveService::class.java).apply { action = ACTION_PLAY_PAUSE },
-            flags,
+            flags
         )
         builder.addAction(
             NotificationCompat.Action.Builder(
                 playPauseIcon,
                 playPauseText,
-                playPauseIntent,
+                playPauseIntent
             ).build()
         )
 
@@ -249,13 +249,13 @@ class ListenKeepAliveService : Service() {
             this,
             REQUEST_NEXT,
             Intent(this, ListenKeepAliveService::class.java).apply { action = ACTION_NEXT },
-            flags,
+            flags
         )
         builder.addAction(
             NotificationCompat.Action.Builder(
                 android.R.drawable.ic_media_next,
                 getString(R.string.listen_next),
-                nextIntent,
+                nextIntent
             ).build()
         )
 
@@ -264,13 +264,13 @@ class ListenKeepAliveService : Service() {
             this,
             REQUEST_STOP,
             Intent(this, ListenKeepAliveService::class.java).apply { action = ACTION_STOP },
-            flags,
+            flags
         )
         builder.addAction(
             NotificationCompat.Action.Builder(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 getString(R.string.listen_stop),
-                stopIntent,
+                stopIntent
             ).build()
         )
 
@@ -305,7 +305,7 @@ class ListenKeepAliveService : Service() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(
             NOTIFICATION_ID,
-            buildNotification(currentTitle, currentEpisode, isPlaying, hasPrev, hasNext),
+            buildNotification(currentTitle, currentEpisode, isPlaying, hasPrev, hasNext)
         )
         syncPlaybackState(isPlaying, positionMs, durationMs, speed)
     }
@@ -346,7 +346,7 @@ class ListenKeepAliveService : Service() {
             this,
             0,
             launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }
 
@@ -359,20 +359,15 @@ class ListenKeepAliveService : Service() {
         mediaSession?.let { return it }
         val session = MediaSessionCompat(this, MEDIA_SESSION_TAG)
         session.setCallback(object : MediaSessionCompat.Callback() {
-            override fun onPlay() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
+            override fun onPlay() = NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
 
-            override fun onPause() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
+            override fun onPause() = NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
 
-            override fun onSkipToPrevious() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PREV)
+            override fun onSkipToPrevious() = NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PREV)
 
-            override fun onSkipToNext() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_NEXT)
+            override fun onSkipToNext() = NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_NEXT)
 
-            override fun onStop() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_STOP)
+            override fun onStop() = NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_STOP)
         })
         session.setSessionActivity(contentIntent())
         session.isActive = true
@@ -387,19 +382,14 @@ class ListenKeepAliveService : Service() {
      * 经过时间 × speed），所以不必按帧刷新，只在播放/暂停、切章、拖动、倍速变化时同步即可。
      * 总时长必须放进 [MediaMetadataCompat]，否则卡片两侧都是 00:00。
      */
-    private fun syncPlaybackState(
-        playing: Boolean,
-        positionMs: Long,
-        durationMs: Long,
-        speed: Float,
-    ) {
+    private fun syncPlaybackState(playing: Boolean, positionMs: Long, durationMs: Long, speed: Float) {
         val session = ensureMediaSession()
         val metadata = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentEpisode)
             .putLong(
                 MediaMetadataCompat.METADATA_KEY_DURATION,
-                durationMs.coerceAtLeast(0L),
+                durationMs.coerceAtLeast(0L)
             )
         // 系统媒体卡片 / 锁屏的封面来自这里（官方 `w06/a.java` 的
         // `METADATA_KEY_ALBUM_ART`）。通知的 setLargeIcon 与它是同一张 Bitmap。
@@ -431,9 +421,9 @@ class ListenKeepAliveService : Service() {
                 .setState(
                     state,
                     positionMs.coerceAtLeast(0L),
-                    if (speed > 0f) speed else 1f,
+                    if (speed > 0f) speed else 1f
                 )
-                .build(),
+                .build()
         )
     }
 

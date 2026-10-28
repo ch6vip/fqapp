@@ -3,6 +3,7 @@
 package com.example.shortplay
 
 import android.content.Context
+import android.os.Build
 import android.os.Environment
 import android.util.Log
 import androidx.annotation.Keep
@@ -11,6 +12,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.Proxy
+import java.nio.file.NoSuchFileException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -56,9 +58,13 @@ object CryptoNative {
 
     // ExoPlayer DataSource stream methods
     @JvmStatic external fun nativePlayerStreamOpen(url: String, keyHex: String): Long
+
     @JvmStatic external fun nativePlayerStreamRead(handle: Long, buf: ByteArray, len: Int): Int
+
     @JvmStatic external fun nativePlayerStreamSeek(handle: Long, offset: Long): Long
+
     @JvmStatic external fun nativePlayerStreamSize(handle: Long): Long
+
     @JvmStatic external fun nativePlayerStreamClose(handle: Long)
 }
 
@@ -77,18 +83,20 @@ object HttpBridge {
     private val streamIds = AtomicLong(1L)
     private val playbackHttpStatus = ConcurrentHashMap<String, Int>()
 
-    private val bridge = HttpRangeClient(okhttp3.OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .callTimeout(45, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        // Bypass the system/WiFi HTTP proxy and hit the CDN directly. OkHttp
-        // defaults to ProxySelector.getDefault(), which picks up a per-network
-        // proxy and breaks playback when that proxy is unreachable.
-        .proxy(Proxy.NO_PROXY)
-        .build(),
+    private val bridge = HttpRangeClient(
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            // Bypass the system/WiFi HTTP proxy and hit the CDN directly. OkHttp
+            // defaults to ProxySelector.getDefault(), which picks up a per-network
+            // proxy and breaks playback when that proxy is unreachable.
+            .proxy(Proxy.NO_PROXY)
+            .build(),
         nextId = streamIds,
-        onHttpStatus = { url, status -> playbackHttpStatus[url] = status })
+        onHttpStatus = { url, status -> playbackHttpStatus[url] = status }
+    )
 
     private val fileBridge = OfflineFileBridge(streamIds)
 
@@ -111,36 +119,45 @@ object HttpBridge {
     }
 
     @JvmStatic
-    fun httpRange(url: String, start: Long, end: Long): ByteArray? =
-        if (url.startsWith("file://")) fileBridge.httpRange(url, start, end)
-        else bridge.httpRange(url, start, end)
+    fun httpRange(url: String, start: Long, end: Long): ByteArray? = if (url.startsWith("file://")) {
+        fileBridge.httpRange(url, start, end)
+    } else {
+        bridge.httpRange(url, start, end)
+    }
 
     @JvmStatic
-    fun httpSize(url: String): Long =
-        if (url.startsWith("file://")) fileBridge.httpSize(url)
-        else bridge.httpSize(url)
+    fun httpSize(url: String): Long = if (url.startsWith("file://")) {
+        fileBridge.httpSize(url)
+    } else {
+        bridge.httpSize(url)
+    }
 
     @JvmStatic
-    fun streamPrepare(url: String, start: Long, expectedSize: Long): Long =
-        if (url.startsWith("file://")) fileBridge.streamPrepare(url, start, expectedSize)
-        else bridge.streamPrepare(url, start, expectedSize)
+    fun streamPrepare(url: String, start: Long, expectedSize: Long): Long = if (url.startsWith("file://")) {
+        fileBridge.streamPrepare(url, start, expectedSize)
+    } else {
+        bridge.streamPrepare(url, start, expectedSize)
+    }
 
     @JvmStatic
-    fun streamConnect(id: Long): Boolean =
-        if (fileBridge.owns(id)) fileBridge.streamConnect(id) else bridge.streamConnect(id)
+    fun streamConnect(id: Long): Boolean = if (fileBridge.owns(id)) fileBridge.streamConnect(id) else bridge.streamConnect(id)
 
     @JvmStatic
-    fun streamOpen(url: String, start: Long): Long =
-        if (url.startsWith("file://")) fileBridge.streamOpen(url, start)
-        else bridge.streamOpen(url, start)
+    fun streamOpen(url: String, start: Long): Long = if (url.startsWith("file://")) {
+        fileBridge.streamOpen(url, start)
+    } else {
+        bridge.streamOpen(url, start)
+    }
 
     @JvmStatic
     fun streamRead(id: Long, buf: ByteArray): Int = streamRead(id, buf, buf.size)
 
     @JvmStatic
-    fun streamRead(id: Long, buf: ByteArray, length: Int): Int =
-        if (fileBridge.owns(id)) fileBridge.streamRead(id, buf, length)
-        else bridge.streamRead(id, buf, length)
+    fun streamRead(id: Long, buf: ByteArray, length: Int): Int = if (fileBridge.owns(id)) {
+        fileBridge.streamRead(id, buf, length)
+    } else {
+        bridge.streamRead(id, buf, length)
+    }
 
     @JvmStatic
     fun streamClose(id: Long) {
@@ -218,7 +235,11 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
     }
 
     fun streamPrepare(url: String, start: Long, expectedSize: Long): Long {
-        if (start < 0 || expectedSize < -1 || (expectedSize >= 0 && start >= expectedSize)) return 0L
+        if (start < 0 || expectedSize < -1 ||
+            (expectedSize >= 0 && start >= expectedSize)
+        ) {
+            return 0L
+        }
         val file = fileOf(url) ?: return 0L
         val total = file.length()
         if (total <= 0L || (expectedSize >= 0 && total != expectedSize)) return 0L
@@ -236,7 +257,10 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
             val raf = try {
                 java.io.RandomAccessFile(s.file, "r").apply { seek(s.start) }
             } catch (t: Throwable) {
-                android.util.Log.e("sp_crypto", "file streamConnect threw: ${t.javaClass.simpleName}")
+                android.util.Log.e(
+                    "sp_crypto",
+                    "file streamConnect threw: ${t.javaClass.simpleName}"
+                )
                 return false
             }
             s.raf = raf
@@ -263,7 +287,9 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
                 val read = raf.read(buf, 0, toRead)
                 when {
                     read < 0 -> if (s.remaining > 0L) -1 else 0
+
                     read == 0 -> -1
+
                     else -> {
                         s.remaining -= read
                         read
@@ -271,7 +297,10 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
                 }
             } catch (t: Throwable) {
                 streamClose(id)
-                android.util.Log.e("sp_crypto", "file streamRead threw id=$id: ${t.javaClass.simpleName}")
+                android.util.Log.e(
+                    "sp_crypto",
+                    "file streamRead threw id=$id: ${t.javaClass.simpleName}"
+                )
                 -1
             }
         }
@@ -292,17 +321,71 @@ private class OfflineFileBridge(streamIds: AtomicLong) {
 
 /**
  * Pure containment check: [file] must canonicalize to an allowed root
- * itself or to a descendant of one. Canonicalization resolves `..` and
- * symlinks, so neither traversal nor a symlink hop can escape a root.
- * The separator suffix keeps `/data/app-x` from matching root `/data/app`.
+ * itself or to a descendant of one, and its *real* path must still be inside
+ * that root. Canonicalization alone is not enough: it resolves `..` on every
+ * platform, but only POSIX resolves symlinks — Windows
+ * `File.getCanonicalPath()` maps to `GetFullPathName`, which keeps a reparse
+ * point as-is, so a link inside the root pointing outside would pass. The
+ * separator suffix keeps `/data/app-x` from matching root `/data/app`.
  */
 internal fun isFileWithinRoots(file: File, roots: List<File>): Boolean {
     val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return false
     return roots.any { root ->
         val canonicalRoot = runCatching { root.canonicalFile }.getOrNull() ?: return@any false
-        canonical == canonicalRoot ||
+        val insideCanonical = canonical == canonicalRoot ||
             canonical.path.startsWith(canonicalRoot.path + File.separator)
+        insideCanonical && realPathStaysInside(file, canonicalRoot)
     }
+}
+
+/**
+ * Second gate behind [isFileWithinRoots]: `Path.toRealPath()` follows symlinks
+ * and Windows reparse points on every platform, so a link that hops out of the
+ * root is rejected even where canonicalization does not see through it.
+ *
+ * The gate is only *needed* where canonicalization does not resolve links —
+ * Windows, where `File.getCanonicalPath()` is `GetFullPathName`; on
+ * Android/Linux `getCanonicalPath` is already `realpath(3)`. That is also what
+ * makes skipping it on API 24/25 safe: `java.nio.file` (and `File.toPath()`)
+ * only exists from API 26 although `minSdk = 24`, and calling it there throws
+ * `NoSuchMethodError` — a `Throwable`, so the fail-closed branch below would
+ * reject **every** offline file on Android 7.x. `Build.VERSION.SDK_INT` is 0
+ * under the JVM unit tests (AGP's mockable android.jar), i.e. exactly the
+ * desktop environment this gate exists for, hence the range `1..25` instead of
+ * `>= 26`.
+ *
+ * Fail-closed by design: only a file that genuinely does not exist yet stands
+ * this gate down (there is no link to follow, the canonical comparison still
+ * catches the hop, and callers require the file to exist). A symlink loop, an
+ * access-denied or an unparsable path is exactly what an attacker wants waved
+ * through, so anything else throws -> reject. When the *root* cannot be
+ * resolved (external storage not mounted yet) the canonical verdict stands,
+ * otherwise a transient mount issue would silently break offline playback.
+ */
+private fun realPathStaysInside(file: File, canonicalRoot: File): Boolean {
+    if (Build.VERSION.SDK_INT in 1..25) return true
+    val real = try {
+        realPathOf(file) ?: return true
+    } catch (_: Throwable) {
+        return false
+    }
+    val realRoot = runCatching { realPathOf(canonicalRoot) }.getOrNull() ?: return true
+    return real == realRoot || real.startsWith(realRoot + File.separator)
+}
+
+/**
+ * Absolute path with every link resolved, or `null` when the file does not
+ * exist yet. Deliberately a separate function so the `java.nio.file` references
+ * it needs stay out of [realPathStaysInside]'s body: that package is absent on
+ * API 24/25, and a verifier resolving those types inside a method that does run
+ * on those devices is a risk with nothing to gain. The caller's SDK range check
+ * is the guard this suppression relies on.
+ */
+@Suppress("NewApi")
+private fun realPathOf(file: File): String? = try {
+    file.toPath().toRealPath().normalize().toString()
+} catch (_: NoSuchFileException) {
+    null
 }
 
 /** Decode valid %XX sequences as raw bytes; leave malformed `%` literal. */
@@ -332,8 +415,12 @@ internal fun percentDecodePath(raw: String): String {
 /**
  * Windows 的 JVM 单测会把 `file:///C:/...` 解析成 `/C:/...`；Java 的 [File]
  * 会把这个前导 `/` 当成「当前驱动器的根」，得到 `E:\C:\...`，于是根内文件也
- * 被判为越界。Android 下发的都是 POSIX 路径，剥离盘符斜杠只影响本地单测，
- * 安全性仍由 [isFileWithinRoots] 的规范化比较保证。
+ * 被判为越界。
+ *
+ * 注意它在生产路径上也是**无条件执行**的（`fileOf` 里就调）：措辞说"只影响本地
+ * 单测"指的是实际效果——Android 只会下发 POSIX 路径，`/字母:斜杠` 这种形态不出现，
+ * 于是这里等于原样返回。真要出现该形态，剥完变成相对路径，反而更容易被
+ * [isFileWithinRoots] 拒绝，不会放宽边界。
  */
 internal fun stripWindowsDriveSlash(path: String): String {
     if (path.length < 4 || path[0] != '/' || path[2] != ':') return path
@@ -379,14 +466,14 @@ internal fun appPrivateFileRoots(context: Context): List<File> {
         runCatching { context.noBackupFilesDir }.getOrNull(),
         context.externalCacheDir,
         context.getExternalFilesDir(null),
-        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
     )
     roots += context.getExternalFilesDirs(null)?.filterNotNull().orEmpty()
     roots += context.externalCacheDirs?.filterNotNull().orEmpty()
     roots += listOfNotNull(
         runCatching {
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        }.getOrNull(),
+        }.getOrNull()
     )
     return roots.distinct()
 }
@@ -397,7 +484,7 @@ internal class HttpRangeClient(
     private val logError: (String) -> Unit = { Log.e("sp_crypto", it) },
     // Shared with OfflineFileBridge so both maps never hand out the same id.
     private val nextId: AtomicLong = AtomicLong(1L),
-    private val onHttpStatus: (String, Int) -> Unit = { _, _ -> },
+    private val onHttpStatus: (String, Int) -> Unit = { _, _ -> }
 ) {
     private data class ResponseRange(val length: Long, val total: Long?)
     private val contentRange = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", RegexOption.IGNORE_CASE)
@@ -418,17 +505,26 @@ internal class HttpRangeClient(
             return if (start == 0L) {
                 val length = body.contentLength()
                 ResponseRange(length, length.takeIf { it >= 0 })
-            } else null
+            } else {
+                null
+            }
         }
         if (resp.code != 206) return null
-        val match = contentRange.matchEntire(resp.header("Content-Range")?.trim() ?: "") ?: return null
+        val match =
+            contentRange.matchEntire(resp.header("Content-Range")?.trim() ?: "") ?: return null
         val first = match.groupValues[1].toLongOrNull() ?: return null
         val last = match.groupValues[2].toLongOrNull() ?: return null
         if (first != start || last < first || last - first == Long.MAX_VALUE) return null
         val totalText = match.groupValues[3]
         val total = if (totalText == "*") null else totalText.toLongOrNull() ?: return null
         if (total != null && total <= last) return null
-        val expectedEnd = if (total == null) end else if (end == null) total - 1 else minOf(end, total - 1)
+        val expectedEnd = if (total == null) {
+            end
+        } else if (end == null) {
+            total - 1
+        } else {
+            minOf(end, total - 1)
+        }
         if (expectedEnd != null && last != expectedEnd) return null
         val length = last - first + 1
         if (body.contentLength() >= 0 && body.contentLength() != length) return null
@@ -447,7 +543,9 @@ internal class HttpRangeClient(
                 onHttpStatus(url, resp.code)
                 val range = responseRange(resp, 0, 0)
                 val total = range?.total
-                if (resp.code != 206 || range == null || range.length != 1L || total == null || total <= 0L) {
+                if (resp.code != 206 || range == null || range.length != 1L || total == null ||
+                    total <= 0L
+                ) {
                     logError("httpSize requires a complete byte-range size in HTTP 206")
                     return -1L
                 }
@@ -496,12 +594,7 @@ internal class HttpRangeClient(
     // An open-ended `Range: bytes=start-` request whose body is read chunk by
     // chunk, so the native producer can hand each arriving TCP segment to the
     // player immediately.
-    private class Stream(
-        val url: String,
-        val call: okhttp3.Call,
-        val start: Long,
-        val expectedSize: Long,
-    ) {
+    private class Stream(val url: String, val call: okhttp3.Call, val start: Long, val expectedSize: Long) {
         // Close only takes the short state monitor. It never waits for the
         // readLock, so it can interrupt a thread blocked in read/execute.
         val readLock = Any()
@@ -516,7 +609,11 @@ internal class HttpRangeClient(
 
     /** Register the request before execute so native close can cancel response headers too. */
     fun streamPrepare(url: String, start: Long, expectedSize: Long): Long {
-        if (start < 0 || expectedSize < -1 || (expectedSize >= 0 && start >= expectedSize)) return 0L
+        if (start < 0 || expectedSize < -1 ||
+            (expectedSize >= 0 && start >= expectedSize)
+        ) {
+            return 0L
+        }
         return try {
             val req = okhttp3.Request.Builder()
                 .url(url)
@@ -602,12 +699,22 @@ internal class HttpRangeClient(
                     available = s.remaining
                 }
                 if (length == 0 || available == 0L) return 0
-                val toRead = if (available < 0) length else minOf(length.toLong(), available).toInt()
+                val toRead = if (available <
+                    0
+                ) {
+                    length
+                } else {
+                    minOf(length.toLong(), available).toInt()
+                }
                 val read = input.read(buf, 0, toRead)
                 synchronized(s) {
                     if (s.closed) return -1
                     if (read < 0) {
-                        if (s.remaining > 0) throw EOFException("HTTP stream ended before its declared range")
+                        if (s.remaining >
+                            0
+                        ) {
+                            throw EOFException("HTTP stream ended before its declared range")
+                        }
                         0
                     } else {
                         if (s.remaining >= 0) s.remaining -= read
@@ -631,7 +738,7 @@ internal class HttpRangeClient(
         }
         s.call.cancel() // Interrupt an in-flight read before closing its body.
         try {
-            response?.close()  // also closes the body / underlying stream
+            response?.close() // also closes the body / underlying stream
         } catch (_: Throwable) {
         }
     }

@@ -1,6 +1,6 @@
 package com.fqapp.fqapp
 
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
@@ -26,7 +26,7 @@ class VideoDecoderPreferenceTest {
         // Dart 侧用 `name` 序列化，两个枚举必须逐字对齐，否则设置静默失效。
         assertEquals(
             listOf("automatic", "hardware", "software"),
-            VideoDecoderPreference.entries.map { it.name.lowercase() },
+            VideoDecoderPreference.entries.map { it.name.lowercase() }
         )
     }
 
@@ -35,7 +35,7 @@ class VideoDecoderPreferenceTest {
             "OMX.MTK.VIDEO.DECODER.AVC",
             "OMX.google.h264.decoder",
             "c2.qti.hevc.decoder",
-            "c2.android.hevc.decoder",
+            "c2.android.hevc.decoder"
         )
         val software = all.filter { isSoftwareDecoder(it) }
         assertEquals(listOf("OMX.google.h264.decoder", "c2.android.hevc.decoder"), software)
@@ -44,7 +44,7 @@ class VideoDecoderPreferenceTest {
     @Test fun `hardware first keeps every candidate`() {
         val all = listOf(
             "OMX.google.h264.decoder",
-            "OMX.MTK.VIDEO.DECODER.AVC",
+            "OMX.MTK.VIDEO.DECODER.AVC"
         )
         // 硬解优先只是排序：硬解不可用时仍要能回落到软解，不能删候选。
         val ordered = all.filterNot { isSoftwareDecoder(it) } + all.filter { isSoftwareDecoder(it) }

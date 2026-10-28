@@ -1,12 +1,11 @@
 package com.fqapp.fqapp
 
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ReaderSystemBarsSessionTest {
-    private class Window(
-        var state: ReaderSystemBarsSession.State = ReaderSystemBarsSession.State(3, 1, 0),
-    ) : ReaderSystemBarsSession.Window {
+    private class Window(var state: ReaderSystemBarsSession.State = ReaderSystemBarsSession.State(3, 1, 0)) :
+        ReaderSystemBarsSession.Window {
         var restores = 0
         override fun snapshot() = state
         override fun hide(showStatusBar: Boolean) {
