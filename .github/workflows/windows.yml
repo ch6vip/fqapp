@@ -8,7 +8,8 @@ on:
         type: boolean
         default: false
   pull_request:
-    paths:
+    # 与 android-apk.yml 同理：路径列表只定义一次，push 引用同一份。
+    paths: &windows_paths
       - 'lib/**'
       - 'test/**'
       - 'rust/**'
@@ -24,16 +25,7 @@ on:
     # tag 一起构建并上传为 artifact，Release 直接取用，不必再靠 master
     # 推送的产物。v1.0.133 预发布曾因缺这条而没有 Windows 版。
     tags: ['v*']
-    paths:
-      - 'lib/**'
-      - 'test/**'
-      - 'rust/**'
-      - 'native/**'
-      - 'windows/**'
-      - 'third_party/**'
-      - 'pubspec.*'
-      - 'scripts/*windows*'
-      - '.github/workflows/windows.yml'
+    paths: *windows_paths
 
 permissions:
   contents: read
@@ -62,12 +54,8 @@ jobs:
         run: flutter pub get
       - name: Analyze application
         run: flutter analyze --no-pub
-      # AGENTS.md caps files at 500 lines and functions at 80. The codebase is
-      # already over that in many places, so this gate freezes today's debt
-      # instead of pretending it is clean: a listed file may shrink but not grow.
-      - name: Check size budget
-        shell: bash
-        run: ./scripts/check_line_budget.sh
+      # 行数预算门禁在 android-apk.yml 的 dart-gate 里跑：它只读源码，不依赖
+      # Windows 工具链，放在这里只会排在联网装 ffmpeg 之后。
       - name: Test layout and playback lifecycle
         run: >-
           flutter test --no-pub
@@ -124,7 +112,7 @@ jobs:
           Copy-Item WINDOWS.md "$src/使用说明.md"
           Compress-Archive -Path "$src/*" -DestinationPath 'fqapp-windows-x64-preview.zip'
           Get-FileHash fqapp-windows-x64-preview.zip -Algorithm SHA256 | Format-List
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fqapp-windows-x64-preview
           path: |
@@ -132,7 +120,7 @@ jobs:
             build/validation/windows-media/*.json
             build/validation/windows-player/*.json
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: windows-build-logs

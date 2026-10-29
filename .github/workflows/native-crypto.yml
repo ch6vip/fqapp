@@ -2,7 +2,10 @@ name: Native crypto
 
 on:
   push:
-    paths:
+    # 只在 master 上跑：以前 push 没有分支过滤，仓库里任何分支每次推送都会
+    # 跑一遍 ASan，而同一次提交的 PR 还会再跑一遍。
+    branches: [master]
+    paths: &native_paths
       - 'native/**'
       - 'test/native_*'
       - 'scripts/verify_audio_cenc.cjs'
@@ -15,18 +18,7 @@ on:
       - 'android/app/src/main/kotlin/com/example/shortplay/CryptoNative.kt'
       - '.github/workflows/native-crypto.yml'
   pull_request:
-    paths:
-      - 'native/**'
-      - 'test/native_*'
-      - 'scripts/verify_audio_cenc.cjs'
-      - 'test/verify_audio_cenc_test.cjs'
-      - 'test/support/cenc_fixture.cjs'
-      - 'test/support/native_compile.cjs'
-      # The Kotlin JNI wrapper declares the external funs the C bridge
-      # implements (native/android/jni_bridge.c); changing its signatures
-      # without re-running the JNI tests would silently break the bridge.
-      - 'android/app/src/main/kotlin/com/example/shortplay/CryptoNative.kt'
-      - '.github/workflows/native-crypto.yml'
+    paths: *native_paths
   workflow_dispatch:
 
 permissions:

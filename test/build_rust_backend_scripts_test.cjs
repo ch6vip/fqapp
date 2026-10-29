@@ -305,3 +305,56 @@ test('the APK job keeps the measured Gradle worker limits', () => {
     'CMAKE_BUILD_PARALLEL_LEVEL=4 regressed the APK build; keep 2',
   );
 });
+
+test('workflow path filters are defined once and referenced by anchor', () => {
+  // push 和 pull_request 下各抄一份 paths 时，加一条路径要改两处，漏一处就会
+  // 变成「PR 跑、master 不跑」，而没有任何测试能发现。两个 workflow 现在都
+  // 只在 push 下定义 &anchor，pull_request 用 *anchor 引用。
+  const cases = [
+    { file: 'android-apk.yml', anchor: 'app_paths' },
+    { file: 'windows.yml', anchor: 'windows_paths' },
+    { file: 'native-crypto.yml', anchor: 'native_paths' },
+  ];
+  for (const { file, anchor } of cases) {
+    const workflow = fs.readFileSync(
+      path.join(appDir, '.github', 'workflows', file),
+      'utf8',
+    );
+    // 用 split 数出现次数而不是正则：模板字符串里写 \b 会变成退格符。
+    const definitions = workflow.split(`paths: &${anchor}`).length - 1;
+    assert.equal(definitions, 1, `${file} must define paths once as &${anchor}`);
+    const references = workflow.split(`paths: *${anchor}`).length - 1;
+    assert.equal(
+      references,
+      1,
+      `${file} must reference the same list with *${anchor}`,
+    );
+    assert.ok(
+      workflow.indexOf(`&${anchor}`) < workflow.indexOf(`*${anchor}`),
+      `${file} must define &${anchor} before referencing it`,
+    );
+  }
+});
+
+test('the size budget gate runs in the Dart gate, not the Windows build', () => {
+  // 行数预算只读源码，不依赖 Windows 工具链；绑在 windows.yml 上就要排在
+  // ffmpeg 下载后面。它必须留在 dart-gate，否则这个门禁会随 Windows job 一起
+  // 被跳过或拖慢。
+  const apk = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    'utf8',
+  );
+  const dartGate = apk.slice(apk.lastIndexOf('dart-gate:'));
+  assert.ok(
+    dartGate.includes('bash scripts/check_line_budget.sh'),
+    'the dart-gate job must run scripts/check_line_budget.sh',
+  );
+  const windows = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'windows.yml'),
+    'utf8',
+  );
+  assert.ok(
+    !windows.includes('check_line_budget'),
+    'the Windows job must not run the size budget again',
+  );
+});

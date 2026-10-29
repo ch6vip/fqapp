@@ -8,7 +8,9 @@ on:
     # 所以加 tags 后推 v* 就会触发一次完整构建，APK 在 Artifacts 里，
     # 不用建 Release 也能拿到安装包。
     tags: ['v*']
-    paths:
+    # 这个列表曾经在 push 和 pull_request 下各抄一份，加一条路径要改两处，
+    # 漏一处就会变成「PR 跑、master 不跑」。现在只有一个定义，PR 直接引用。
+    paths: &app_paths
       - 'lib/**'
       - 'android/**'
       - 'native/**'
@@ -33,27 +35,7 @@ on:
     # Fork PRs receive no signing secrets, so the signing step degrades to an
     # unsigned build instead of failing; the same paths filter keeps
     # unrelated PRs from running the full build.
-    paths:
-      - 'lib/**'
-      - 'android/**'
-      - 'native/**'
-      - 'rust/**'
-      - 'assets/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - 'analysis_options.yaml'
-      - 'test/**'
-      - 'flutter_rust_bridge.yaml'
-      - 'scripts/build_rust_backend.sh'
-      - 'scripts/build_rust_backend.ps1'
-      - 'scripts/run_rust_host_tests.sh'
-      - 'scripts/run_rust_host_tests.ps1'
-      - 'scripts/check_native_alignment.cjs'
-      - 'scripts/generate_app_icons.py'
-      - 'scripts/verify_android_apk.py'
-      - 'scripts/verify_audio_cenc.cjs'
-      - '.github/workflows/android-apk.yml'
-      - '.cargo/config.toml'
+    paths: *app_paths
   workflow_dispatch:
 
 permissions:
@@ -680,6 +662,15 @@ jobs:
 
       - name: Analyze
         run: flutter analyze --no-pub
+
+      # AGENTS.md caps files at 500 lines and functions at 80. The codebase is
+      # already over that in many places, so this gate freezes today's debt
+      # instead of pretending it is clean: a listed file may shrink but not grow.
+      # It lives here rather than in windows.yml: it only reads source, and the
+      # Windows job additionally downloads ffmpeg over the network, so a format
+      # gate should not be blocked behind that.
+      - name: Check size budget
+        run: bash scripts/check_line_budget.sh
 
       # --reporter compact prints progress ticks instead of one line per
       # passing test: passing tests whose names contain "failed"/"error"
