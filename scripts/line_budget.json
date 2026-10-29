@@ -1,7 +1,7 @@
 {
   "files": {
     "lib/main.dart": 756,
-    "lib/models/media_item.dart": 1489,
+    "lib/models/media_item.dart": 1509,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_page.dart": 1995,
     "lib/pages/category_page.dart": 604,
@@ -77,7 +77,7 @@
     "test/imported_book_store_test.dart": 527,
     "test/library_shelf_test.dart": 1095,
     "test/library_store_test.dart": 657,
-    "test/media_item_test.dart": 906,
+    "test/media_item_test.dart": 965,
     "test/native_player_test.dart": 517,
     "test/playback_guest_regression_test.dart": 744,
     "test/player_page_loading_test.dart": 669,
