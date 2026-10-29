@@ -40,7 +40,6 @@ import '../widgets/player/playlet_danmaku_layer.dart';
 import '../widgets/player/playlet_danmaku_loader.dart';
 import '../widgets/player/playlet_danmaku_settings.dart';
 import '../widgets/player/story_player_panel.dart';
-import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
 import '../widgets/player/player_split_panel.dart';
 import '../widgets/player/player_toast.dart';
@@ -1320,19 +1319,45 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       trace.stage('pagingBeforeCreate');
       if (!await _waitForPaging(generation)) return;
       if (saved?['kind'] == 'manju') _historyKind = 'manju';
+      // 起播位置要在 create 之前算：原生把它当初始播放位置，在 prepare() 之前
+      // 应用，避免「先按 0 开流、再 seek 到存档进度」多出来的一次开流往返。
+      // 锚点等 create 成功后再消费：创建失败重试时它是唯一比历史存档新的进度。
+      final pendingResume = _listenResume;
+      final listenResumeMs = pendingResume != null && pendingResume.$1 == index
+          ? pendingResume.$2.inMilliseconds
+          : -1;
+      final rawPosition = saved?['position'];
+      final savedPosition = rawPosition is num ? rawPosition.toDouble() : 0.0;
+      final rawDuration = saved?['duration'];
+      final savedDuration = rawDuration is num && rawDuration.isFinite
+          ? rawDuration.toDouble()
+          : 0.0;
+      final requestedMs = listenResumeMs >= 0
+          ? listenResumeMs.toDouble()
+          : savedPosition * 1000;
+      // 记录已播到末尾的不给起播位置（从头播）；记录没时长时由首个时长事件再校正。
+      final startMs =
+          (listenResumeMs >= 0 ||
+                  resumeEpisodeIndex(saved, widget.eps) == index) &&
+              requestedMs.isFinite &&
+              requestedMs > 0 &&
+              requestedMs < 0x7fffffffffffffff &&
+              (savedDuration <= 0 || requestedMs < savedDuration * 1000)
+          ? requestedMs.round()
+          : null;
       trace.stage('create');
       final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
       _player = player;
-      await player.create(source.url, source.keyHex);
+      await player.create(source.url, source.keyHex, startMs: startMs);
       if (!_current(generation, player)) {
         await player.dispose();
         return;
       }
       if (player.lastError case final Object error) throw error;
+      if (_listenResume == pendingResume) _listenResume = null;
       trace.stage('initialize');
-      _subscribe(player, generation);
+      _subscribe(player, generation, startMs: startMs);
       _onFirstFrame(player, generation);
-      // Keep the texture mounted beneath the cover while rate/seek initialize.
       setState(() {});
       var rate = 1.0;
       try {
@@ -1341,9 +1366,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (!_current(generation, player)) return;
       await player.setRate(rate);
       if (!_current(generation, player)) return;
-      // 官方「默认静音」是**起播音量**（`tm3/b.java:17-20` 的静态标志），
-      // 每次新建播放器都要重新套一遍。音量失败不能拖垮播放：
-      // 官方音量只是表现层，起播照旧。
+      // 官方「默认静音」是**起播音量**（`tm3/b.java:17-20` 的静态标志），每次新建
+      // 播放器都要重新套一遍。音量失败不能拖垮播放：官方音量只是表现层。
       try {
         await player.setVolume(_defaultMute ? 0 : 1);
       } catch (_) {
@@ -1351,45 +1375,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
       if (!_current(generation, player)) return;
 
-      final savedIndex = resumeEpisodeIndex(saved, widget.eps);
-      final rawPosition = saved?['position'];
-      final savedPosition = rawPosition is num ? rawPosition.toDouble() : 0.0;
-      final rawDuration = saved?['duration'];
-      final savedDuration = rawDuration is num && rawDuration.isFinite
-          ? rawDuration.toDouble()
-          : 0.0;
-      final durationSeconds = player.duration > Duration.zero
-          ? player.duration.inMilliseconds / 1000
-          : savedDuration;
-      // 听书回传的锚点优先于历史存档（更「新」）；只消费一次，非本集
-      // （load 被抢先换到别的集）则丢弃。
-      final pendingResume = _listenResume;
-      _listenResume = null;
-      final listenResumeMs = pendingResume != null && pendingResume.$1 == index
-          ? pendingResume.$2.inMilliseconds.toDouble()
-          : -1.0;
-      final requestedMs = listenResumeMs >= 0
-          ? listenResumeMs
-          : savedPosition * 1000;
-      final resumeSeconds = requestedMs / 1000;
-      if ((listenResumeMs >= 0 || savedIndex == index) &&
-          requestedMs.isFinite &&
-          requestedMs > 0 &&
-          requestedMs < 0x7fffffffffffffff &&
-          (durationSeconds <= 0 || resumeSeconds < durationSeconds)) {
-        // Completed/out-of-range entries restart instead of immediately
-        // reaching the end again. Unknown duration must not erase a valid seek.
-        final targetMs = requestedMs.round();
-        // chrome 的 onSeeked 只覆盖手势。恢复进度是直接 seek，不通知的话
-        // 调度器仍停在 0ms，首批 hasMore=false 后目标位置补不到。
-        _rememberDanmakuResume(index, targetMs);
-        await player.seek(Duration(milliseconds: targetMs));
+      final knownMs = player.duration.inMilliseconds;
+      if (startMs != null && knownMs > 0 && startMs >= knownMs) {
+        await player.seek(Duration.zero);
         if (!_current(generation, player)) return;
+      }
+      if (startMs != null && (knownMs == 0 || startMs < knownMs)) {
+        // chrome 的 onSeeked 只覆盖手势；恢复进度不通知的话，首批 hasMore=false 后
+        // 调度器仍停在 0ms，目标位置补不到。越界（已 seek 到 0）时不设锚点。
+        _rememberDanmakuResume(index, startMs);
         if (widget.shortSeries &&
             _danmakuLoader.videoId == widget.eps[index].itemId) {
-          _danmakuResumeIndex = null;
-          _danmakuResumeMs = null;
-          _onDanmakuSeek(Duration(milliseconds: targetMs));
+          _danmakuResumeIndex = _danmakuResumeMs = null;
+          _onDanmakuSeek(Duration(milliseconds: startMs));
         }
       }
 
@@ -1499,13 +1497,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       // Note: 换档清空 `_activeIndex` 引发的四个后果与本位置的取值依据 —
       // 见 .agents/notes/implemented/bug-fix/2026-10-14-quality-switch-clears-active-index.md
       _activeIndex = _index;
-      await fresh.create(variant.url, variant.keyHex);
+      await fresh.create(variant.url, variant.keyHex, startMs: resumeMs);
       if (!_current(generation, fresh)) {
         await fresh.dispose();
         return;
       }
       if (fresh.lastError case final Object error) throw error;
-      _subscribe(fresh, generation);
+      _subscribe(fresh, generation, startMs: resumeMs > 0 ? resumeMs : null);
       _onFirstFrame(fresh, generation);
       setState(() {});
       var rate = 1.0;
@@ -1521,11 +1519,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (!_current(generation, fresh)) return;
       if (resumeMs > 0) {
         _rememberDanmakuResume(_index, resumeMs);
-        await fresh.seek(resume);
-        if (!_current(generation, fresh)) return;
         if (widget.shortSeries && _danmakuLoader.videoId == episode.itemId) {
-          _danmakuResumeIndex = null;
-          _danmakuResumeMs = null;
+          _danmakuResumeIndex = _danmakuResumeMs = null;
           _onDanmakuSeek(resume);
         }
       }
@@ -1543,7 +1538,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
-  void _subscribe(NativePlayer player, int generation) {
+  void _subscribe(NativePlayer player, int generation, {int? startMs}) {
     _subs.addAll([
       player.bufferingStream.listen((_) {
         if (!_current(generation, player)) return;
@@ -1563,9 +1558,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         setState(() {});
       }),
       player.durationStream.listen((duration) {
-        if (_current(generation, player) && _duration != duration) {
-          setState(() => _duration = duration);
+        if (!_current(generation, player)) return;
+        // 起播时还不知道时长（MP4 头没解析完）：首个时长事件里退回从头，
+        // 否则一进页面就停在片尾、play() 也推不动。
+        if (startMs != null && startMs! >= duration.inMilliseconds) {
+          startMs = null; // 只校正一次，后面的时长更新不再 seek。
+          _danmakuResumeIndex = _danmakuResumeMs = null;
+          unawaited(player.seek(Duration.zero));
         }
+        if (_duration != duration) setState(() => _duration = duration);
       }),
       player.playingStream.listen((playing) {
         if (!_current(generation, player)) return;
@@ -1919,6 +1920,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
     final player = _player;
     final texture = player?.textureId;
+    // 加载期不铺封面：封面是竖图，铺进 16:9 盒里会被裁成一条，也容易让人
+    // 以为盒子尺寸来自封面（实际是屏幕/解码尺寸）。这里只留黑底 + 加载圈。
     final waiting =
         _initVideo ||
         texture == null ||
@@ -1941,11 +1944,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     key: const ValueKey('player-texture'),
                     textureId: texture,
                   ),
-          ),
-        if (waiting || _error != null)
-          PlayerCover(
-            key: const ValueKey('player-cover'),
-            url: ApiClient.instance.absoluteUrl(widget.cover),
           ),
         if (_error != null)
           PlayerErrorFeedback(
