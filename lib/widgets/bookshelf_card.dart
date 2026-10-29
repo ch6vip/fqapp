@@ -78,8 +78,8 @@ class _ShelfCover extends StatelessWidget {
 
 /// 右上角进度角标：accent 渐变小胶囊，贴边内嵌 4dp。
 ///
-/// 官方角标文案是「更新」；本地没有章节版本数据可以判定更新，因此角标里放
-/// 真实的阅读进度百分比。白字是品牌渐变上的固定前景，允许硬编码。
+/// 角标显示调用方检测到的「更新」或阅读进度。
+/// 白字是品牌渐变上的固定前景，允许硬编码。
 class _ProgressBadge extends StatelessWidget {
   final String text;
 

@@ -12,11 +12,11 @@
     "lib/pages/fanqie_history_import_page.dart": 624,
     "lib/pages/home_page.dart": 622,
     "lib/pages/home_provider.dart": 1362,
-    "lib/pages/library_page.dart": 1685,
+    "lib/pages/library_page.dart": 1775,
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1982,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 4118,
+    "lib/pages/reader_page.dart": 4134,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
@@ -210,7 +210,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 3996,
+      "line": 4012,
       "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
