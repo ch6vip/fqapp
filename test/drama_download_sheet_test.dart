@@ -85,6 +85,36 @@ void main() {
     expect(find.text('下载 (2)'), findsOneWidget);
   });
 
+  testWidgets('管理页删掉已缓存集后弹窗重新核对，格子和全选都跟着更新', (tester) async {
+    await store.saveEpisode(
+      CachedEpisode(
+        seriesId: 'series1',
+        itemId: 'ep0',
+        title: '第一集',
+        index: 0,
+        keyHex: 'k',
+        height: 1080,
+        variantName: '1080P',
+        bytes: 1,
+        filePath: '/tmp/x.mp4',
+        cachedAt: 0,
+      ),
+    );
+    await pumpSheet(tester, episodeCount: 3);
+    expect(find.text('已缓存'), findsOneWidget);
+    expect(find.text('第 1 集'), findsNothing);
+
+    // 在缓存管理页删掉这一集，弹窗还开着：store.changes 会通知它。
+    await store.removeEpisode('ep0');
+    await tester.pumpAndSettle();
+
+    expect(find.text('已缓存'), findsNothing, reason: '删掉的集不能再显示已缓存');
+    expect(find.text('第 1 集'), findsOneWidget, reason: '格子恢复可选');
+    await tester.tap(find.byKey(const ValueKey('download-select-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('下载 (3)'), findsOneWidget, reason: '全选按删除后的状态算');
+  });
+
   testWidgets('深色下集数格用浅色字与浮层底', (tester) async {
     await pumpSheet(tester, theme: AppTheme.createTheme(Brightness.dark));
 
@@ -183,6 +213,14 @@ void main() {
     );
     expect(chip.selected, isTrue, reason: '第 36 集属于 31-60 这一段');
     expect(find.text('第 36 集'), findsOneWidget);
+  });
+
+  testWidgets('currentIndex 超出目录集数时钳到最后一组，不出现空网格', (tester) async {
+    // 播放页可能拿着旧目录（剧集上下架后集数变少），当前集算出来的区间会
+    // 越界；不钳到最后一组的话网格一个格子都没有。
+    await pumpSheet(tester, episodeCount: 3, currentIndex: 99);
+    expect(find.text('第 1 集'), findsOneWidget);
+    expect(find.text('第 3 集'), findsOneWidget);
   });
 
   testWidgets('一千集时改用下拉分段，直接落在正在看的那一段', (tester) async {

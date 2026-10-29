@@ -113,6 +113,10 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
   @override
   void initState() {
     super.initState();
+    // 目录可能比播放页手里的旧（剧集上下架后集数变少），当前集算出的
+    // 区间会越界；钳到最后一组，否则网格是空的。
+    final lastGroup = _groupCount > 0 ? _groupCount - 1 : 0;
+    if (_group > lastGroup) _group = lastGroup;
     if (_group < 0) _group = 0;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final context = _currentEpisodeKey.currentContext;
@@ -121,14 +125,14 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     });
     unawaited(DramaCachePreferences.instance.load());
     _downloader.addListener(_onTasksChanged);
-    _store.changes.addListener(_onTasksChanged);
+    _store.changes.addListener(_onStoreChanged);
     _refresh();
   }
 
   @override
   void dispose() {
     _downloader.removeListener(_onTasksChanged);
-    _store.changes.removeListener(_onTasksChanged);
+    _store.changes.removeListener(_onStoreChanged);
     super.dispose();
   }
 
@@ -136,16 +140,35 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     if (mounted) setState(() {});
   }
 
+  /// 管理页删集后重新核对已缓存集。
+  ///
+  /// `_downloaded` 只在 [initState] 里载入过一次；只 setState 不重扫的话，
+  /// 删掉的集仍显示「已缓存」且点不了，全选也还按旧状态算。
+  void _onStoreChanged() {
+    unawaited(_refresh());
+  }
+
+  /// 重新核对哪些集已缓存。
+  ///
+  /// 用代号丢弃过期结果：下载完成会连续触发多次通知，较早的一次扫描可能
+  /// 在新扫描之后才结束，把刚删掉的集又加回 `_downloaded`。
+  int _refreshGeneration = 0;
+
   Future<void> _refresh() async {
+    final generation = ++_refreshGeneration;
+    final downloaded = <String>{};
     for (final episode in widget.episodes) {
       if (await _store.isDownloaded(episode.itemId)) {
-        _downloaded.add(episode.itemId);
-      } else {
-        _downloaded.remove(episode.itemId);
-        _selected.remove(episode.itemId);
+        downloaded.add(episode.itemId);
       }
     }
-    if (mounted) setState(() {});
+    if (!mounted || generation != _refreshGeneration) return;
+    setState(() {
+      _downloaded
+        ..clear()
+        ..addAll(downloaded);
+      _selected.removeWhere(downloaded.contains);
+    });
   }
 
   List<Chapter> get _groupEpisodes {

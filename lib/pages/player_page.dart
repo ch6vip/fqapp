@@ -67,6 +67,11 @@ class PlayerPage extends StatefulWidget {
   final Future<PlayletCommentPage> Function(DanmakuFetchRequest request)?
   danmakuFetcher;
 
+  /// 热评取数的可注入实现（默认走 ApiClient.playletHotComments），参数是
+  /// 剧集 id 与当前集 vid。测试注入用，与 [danmakuFetcher] 同一套缝。
+  final Future<PlayletCommentPage> Function(String seriesId, String vid)?
+  hotCommentsLoader;
+
   /// 官方短剧播放页形态（`apf.xml`）：竖屏无运输条、单击=播放/暂停。
   /// 详情页的电影/电视剧走通用形态（默认 false）。
   final bool shortSeries;
@@ -101,6 +106,7 @@ class PlayerPage extends StatefulWidget {
     this.seriesLoader,
     this.initialSeriesDetail,
     this.danmakuFetcher,
+    this.hotCommentsLoader,
     this.shortSeries = false,
     this.aiGenerated = false,
     this.openFullScreen = false,
@@ -520,14 +526,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 热评数据：官方与评论计数同源（`comment/list` 的
   /// `comment_source=4/count=20` 那次请求，`a13/w.java:563-599`），
   /// 本地筛出 `dataType in {4,9}` 的条目。best-effort：失败就不显示胶囊。
+  ///
+  /// 请求按**当前集**的 vid 取（官方 `groupID = jVar.y()` 是单集 vid），
+  /// 切集重拉；晚到的旧集响应按 vid 丢弃。
   Future<void> _loadHotComments() async {
     if (!widget.shortSeries || widget.bookId.isEmpty) return;
+    final vid = widget.eps.isEmpty ? '' : widget.eps[_index].itemId;
     try {
-      final page = await ApiClient.instance.playletHotComments(
-        widget.bookId,
-        vid: widget.eps.isEmpty ? '' : widget.eps.first.itemId,
-      );
-      if (!mounted) return;
+      final loader = widget.hotCommentsLoader;
+      final page = loader != null
+          ? await loader(widget.bookId, vid)
+          : await ApiClient.instance.playletHotComments(
+              widget.bookId,
+              vid: vid,
+            );
+      final current = widget.eps.isEmpty ? '' : widget.eps[_index].itemId;
+      if (!mounted || current != vid) return;
       setState(() {
         if (page.totalCount > 0) _commentCount = page.totalCount;
         _hotComments = page.hotComments;
@@ -1684,8 +1698,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _index = index;
       // 切集：官方清时间线整池重灌（container/l.java:1496-1528）。
       _danmaku.reset();
+      // 热评按集取：先撤掉上一集的，免得新集画面上挂着旧热评。
+      _hotComments = const [];
     });
     _loadDanmaku();
+    unawaited(_loadHotComments());
     // _loadVideo invalidates prior work synchronously; no network or history
     // operation may delay recording the user's newest target.
     return _loadVideo();

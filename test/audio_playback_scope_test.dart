@@ -23,6 +23,33 @@ void main() {
   });
 
   testWidgets(
+    'reader capsule controls the retained audio session and yields to menus',
+    (tester) async {
+      final app = await _mount(tester);
+      app.open();
+      await _flush(tester);
+      final player = app.players.single;
+      app.navigator.currentState!.pop();
+      await _flush(tester);
+      app.openReader();
+      await _flush(tester);
+      final pill = find.byKey(const ValueKey('reader_player_pill'));
+      expect(pill, findsOneWidget);
+      await tester.tap(pill);
+      await _flush(tester);
+      expect(player.isPlaying, isFalse);
+      expect(find.text('继续播放'), findsOneWidget);
+      await tester.tap(pill);
+      await _flush(tester);
+      expect(player.isPlaying, isTrue);
+      final surface = find.byKey(const ValueKey('reader-page-surface'));
+      await tester.tapAt(tester.getCenter(surface));
+      await _flush(tester);
+      expect(pill, findsNothing);
+    },
+  );
+
+  testWidgets(
     'popping the audio page preserves playback and reopening reuses it',
     (tester) async {
       final app = await _mount(tester);
@@ -37,21 +64,13 @@ void main() {
       expect(player.disposed, isFalse);
       expect(player.isPlaying, isTrue);
       expect(ListeningSession.instance.playing, isTrue);
-      expect(find.byKey(const ValueKey('audio-mini-open')), findsOneWidget);
+      // 官方没有迷你播放条：离开听书页后只保活，不另挂控制条。
+      expect(find.byKey(const ValueKey('audio-mini-open')), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('audio-mini-open')));
+      app.open();
       await _flush(tester);
       expect(app.players, hasLength(1));
       expect(player.position, const Duration(seconds: 37));
-      expect(find.byKey(const ValueKey('audio-mini-open')), findsNothing);
-
-      app.navigator.currentState!.pop();
-      await _flush(tester);
-      await tester.tap(find.byKey(const ValueKey('audio-mini-close')));
-      await _flush(tester);
-      expect(player.disposed, isTrue);
-      expect(ListeningSession.instance.bookId, isNull);
-      expect(find.byKey(const ValueKey('audio-mini-open')), findsNothing);
     },
   );
 
@@ -105,36 +124,8 @@ void main() {
         ),
       );
       await _flush(tester);
+      // 换路由不影响播放；迷你栏已移除，这里只验证播放状态本身。
       expect(app.players.last.isPlaying, isTrue);
-      expect(find.byKey(const ValueKey('audio-mini-toggle')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('audio-mini-toggle')));
-      await _flush(tester);
-      expect(app.players.last.isPlaying, isFalse);
-    },
-  );
-
-  testWidgets(
-    'opening the reader enables the follow button without a playback event',
-    (tester) async {
-      final app = await _mount(tester);
-      app.open();
-      await _flush(tester);
-      app.navigator.currentState!.pop();
-      await _flush(tester);
-      // 迷你栏这一帧就挂在 Overlay 上了，阅读页还没注册处理函数。
-      expect(
-        _followToggle(tester).onPressed,
-        isNull,
-        reason: '还没进阅读页，跟随键应置灰',
-      );
-
-      app.openReader();
-      await _flush(tester);
-      expect(
-        _followToggle(tester).onPressed,
-        isNotNull,
-        reason: '阅读页注册处理函数后立刻可用，不用等下一次播放/暂停事件',
-      );
     },
   );
 
@@ -158,9 +149,6 @@ void main() {
     },
   );
 }
-
-IconButton _followToggle(WidgetTester tester) =>
-    tester.widget<IconButton>(find.byKey(const ValueKey('audio-mini-jump')));
 
 Future<_Harness> _mount(WidgetTester tester) async {
   final app = _Harness();

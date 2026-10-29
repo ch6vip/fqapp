@@ -190,7 +190,6 @@ class _AudioPageState extends State<AudioPage> {
   _AudioPlaybackScopeState? _owner;
   bool _attaching = false;
   bool _attachFailed = false;
-  bool _routeCurrent = true;
 
   /// 封面取色得到的整页配色。null 表示还没算完或取色失败，此时用官方
   /// 截图里那套暖棕兜底（[AudioPageTheme.fallback]）。
@@ -226,7 +225,6 @@ class _AudioPageState extends State<AudioPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _routeCurrent = ModalRoute.isCurrentOf(context) ?? true;
     if (!_attaching) {
       _attaching = true;
       _owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();

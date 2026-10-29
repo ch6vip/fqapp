@@ -179,6 +179,41 @@ void main() {
     expect(await store.isDownloaded('ep2'), isFalse);
   });
 
+  test('删掉某剧最后一集时一并清掉目录，不留孤儿', () async {
+    await store.ensureCatalogue(
+      CachedDrama(
+        id: 'series1',
+        title: '测试剧',
+        cover: '',
+        episodes: [
+          Chapter(itemId: 'ep1', title: '第一集', volumeName: ''),
+          Chapter(itemId: 'ep2', title: '第二集', volumeName: ''),
+        ],
+      ),
+    );
+    await store.ensureCatalogue(
+      CachedDrama(
+        id: 'series2',
+        title: '别的剧',
+        cover: '',
+        episodes: [Chapter(itemId: 'ep9', title: '第一集', volumeName: '')],
+      ),
+    );
+    await store.saveEpisode(episode(itemId: 'ep1'));
+    await store.saveEpisode(episode(itemId: 'ep2', index: 1));
+    await store.saveEpisode(episode(itemId: 'ep9', seriesId: 'series2'));
+
+    // 同剧还有别的集：目录必须留着（管理页的剧名与集序都靠它）。
+    await store.removeEpisode('ep1');
+    expect(await store.hasCatalogue('series1'), isTrue);
+
+    // 最后一集删掉后，目录再没有集可聚合，管理页永远读不到它。
+    await store.removeEpisode('ep2');
+    expect(await store.hasCatalogue('series1'), isFalse);
+    expect(await store.hasCatalogue('series2'), isTrue);
+    expect((await store.dramas()).single.drama.id, 'series2');
+  });
+
   test('目录记录在集全无时不被 dramas 丢弃（下载中状态可见）', () async {
     await store.ensureCatalogue(
       CachedDrama(
