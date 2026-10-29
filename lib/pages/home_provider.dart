@@ -529,11 +529,11 @@ class HomeNotifier extends Notifier<HomeState> {
         }
       }
       if (snapshot.cells.isNotEmpty) {
-        // Seed the block structure too, so the first frame renders the block
-        // layout. Without it the page falls back to the legacy spotlight+grid
-        // pipeline and flips to blocks only once the network answers — the
-        // flash of the old homepage on every cold start. Older snapshots have
-        // no cells and keep the previous behaviour.
+        // Seed the block structure too, so the first frame renders the
+        // shelf (rank block + book grid). Without it the page can only draw
+        // the flat `items` grid and flips to blocks once the network answers
+        // — a flash of a different layout on every cold start. Older
+        // snapshots have no cells and keep that previous behaviour.
         feed.cells = snapshot.cells;
       }
     }
@@ -689,6 +689,19 @@ class HomeNotifier extends Notifier<HomeState> {
         hasMore: false,
       );
     }
+  }
+
+  /// 重试上一页失败的追加。
+  ///
+  /// [loadMore] 失败时会把 `feed.hasMore` 与 `state.hasMore` 一起置 false（免得
+  /// 滚动到底反复自动重试）。流尾的「加载失败，点击重试」是用户的显式动作，
+  /// 必须先把游标恢复，否则 [loadMore] 会以「没有下一页」直接返回，按钮成了
+  /// 摆设。
+  Future<void> retryLoadMore() async {
+    if (state.isLoading || state.isLoadMore) return;
+    _feedFor(state.tabIndex).hasMore = true;
+    state = state.copyWith(hasMore: true, clearError: true);
+    await loadMore();
   }
 
   /// Writes one tab's current feed to the snapshot store, fire-and-forget.
@@ -1314,8 +1327,14 @@ class HomeNotifier extends Notifier<HomeState> {
   List<MediaItem> _forceKind(List<MediaItem> items, String kind) {
     // copyWith rather than a hand-written rebuild: rebuilding by hand dropped
     // the cover badge (and would drop any future field) on every home tab.
+    //
+    // 书类分类（推荐/小说/经典…）只看书：上游的小说流里混着短剧、漫画和
+    // 听书卡，过去这里把它们统统改标成「小说」再画出来，首页因此以混排为主。
+    // 现在以书为主，别的媒介留在自己的分类，这里直接滤掉；过滤必须发生在
+    // 重标之前，否则卡片一旦被改成 book，页面就再也分不出来了。
     return items
         .where((item) => item.kind != 'manju' || kind == 'manju')
+        .where((item) => kind != 'book' || item.kind == 'book')
         .map((item) => item.copyWith(kind: kind))
         .toList(growable: false);
   }

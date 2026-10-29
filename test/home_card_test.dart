@@ -1,23 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/home/home_cell_blocks.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
+import 'package:fqapp/widgets/home/home_media_card.dart';
+import 'package:fqapp/widgets/home/home_reading_row.dart';
+import 'package:fqapp/widgets/home/home_shelf.dart';
 
-/// `b8w.xml` and `av1.xml` measure a rank row and a feed card differently from
-/// the shapes fqapp shipped before: the rank row carries the `secondary_info_
-/// list` tags under its title (the TagLayout `o$g$a.b2` revives), the card has
-/// no author line and only one title line, and the card's score sits on the
-/// title row. These tests pin the parts a layout regression would silently
-/// undo.
+/// 首页卡片的版式回归。
+///
+/// 首页重做后卡片只剩三行字：书名、作者/推荐理由/评分。这里钉住三件容易被
+/// 后续改动悄悄改回去的事：书卡不再有白色卡面和封面角标、推荐理由不再画成
+/// 彩色 chip、榜单的名次是真实名次而不是装饰序号。
 void main() {
   MediaItem book({
     String id = 'b1',
     String title = '书一',
     String author = '',
+    String kind = 'book',
+    String ep = '',
     String intro = '',
     double? score,
+    MediaTag? tag,
     List<String> rankTags = const [],
     List<MediaRecTag> recTags = const [],
   }) => MediaItem(
@@ -26,16 +33,17 @@ void main() {
     cover: '',
     author: author,
     badge: '',
-    ep: '',
-    kind: 'book',
+    ep: ep,
+    kind: kind,
     intro: intro,
     score: score,
+    tag: tag,
     rankTags: rankTags,
     recTags: recTags,
   );
 
   Future<void> pump(WidgetTester tester, Widget child) async {
-    await tester.binding.setSurfaceSize(const Size(400, 600));
+    await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(
@@ -45,95 +53,290 @@ void main() {
     );
   }
 
-  group('HomeRankRow', () {
-    testWidgets('keeps a title to one line and shows no author', (
+  group('HomeMediaCard', () {
+    testWidgets('is cover + two-line title + one meta line, no white card', (
       tester,
     ) async {
       await pump(
         tester,
         SizedBox(
-          width: 360,
-          child: HomeRankRow(
-            item: book(title: '一个非常非常长的书名用来验证它只占一行', author: '某作者'),
-            index: 0,
+          width: 160,
+          child: HomeMediaCard(
+            item: book(title: '一个非常非常长的书名用来验证它占两行', author: '某作者', score: 9.3),
             onTap: () {},
           ),
         ),
       );
 
-      final title = tester.widget<Text>(find.text('一个非常非常长的书名用来验证它只占一行'));
-      // `b8w.xml` 的 `ftb` 是 `android:lines="1"`。
-      expect(title.maxLines, 1);
-      // 作者不在行副标题的数据源里（那是 secondary_info_list），无处显示。
-      expect(find.text('某作者'), findsNothing);
+      final title = tester.widget<Text>(find.text('一个非常非常长的书名用来验证它占两行'));
+      expect(title.maxLines, 2);
+      expect(title.style!.fontSize, 15);
+      expect(title.style!.fontWeight, FontWeight.w600);
+
+      // 作者、评分同一行灰字，中间用分隔点；评分不再是封面上的白色角标。
+      final meta = tester.widget<Text>(find.text('某作者 · 9.3分'));
+      expect(meta.maxLines, 1);
+      expect(meta.style!.fontSize, 11);
+      expect(meta.style!.color, const HomePalette(false).muted);
     });
 
-    testWidgets('renders the secondary info tags under the title', (
+    testWidgets('carries the recommend reason as text, not a coloured chip', (
       tester,
     ) async {
       await pump(
         tester,
         SizedBox(
-          width: 360,
-          child: HomeRankRow(
-            item: book(rankTags: const ['多人二刷', '9320万热度']),
-            index: 0,
-            onTap: () {},
-          ),
-        ),
-      );
-
-      // `o$g$a.b2` → `bindRankTags`：一行 TagLayout，条目间是分隔点。
-      final subtitle = tester.widget<Text>(find.text('多人二刷 · 9320万热度'));
-      // `e44`/TagLayout 文字：12sp（@dimen/qy），#66000000（gray_40）。
-      expect(subtitle.style!.fontSize, 12);
-      expect(subtitle.style!.color, const Color(0x66000000));
-      expect(subtitle.maxLines, 1);
-    });
-
-    testWidgets('keeps a single title line when the payload has no tags', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        SizedBox(
-          width: 360,
-          child: HomeRankRow(item: book(), index: 0, onTap: () {}),
-        ),
-      );
-
-      expect(find.textContaining('·'), findsNothing);
-    });
-
-    testWidgets('paints the top three indices gold and the rest black', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        SizedBox(
-          width: 360,
-          child: Column(
-            children: [
-              for (var i = 0; i < 4; i++)
-                HomeRankRow(
-                  item: book(id: 'b$i'),
-                  index: i,
-                  onTap: () {},
+          width: 160,
+          child: HomeMediaCard(
+            item: book(
+              recTags: const [
+                MediaRecTag(
+                  text: '16个老书虫在看',
+                  textColor: '#D7A461FF',
+                  bgColor: '#D7A4611A',
                 ),
-            ],
+              ],
+            ),
+            onTap: () {},
           ),
         ),
       );
 
-      Color colorOf(String label) =>
-          tester.widget<Text>(find.text(label)).style!.color!;
+      final tag = tester.widget<Text>(find.text('16个老书虫在看'));
+      // 理由退到灰色副标题里，不再用服务端的番茄金配色。
+      expect(tag.style!.color, const HomePalette(false).muted);
+      expect(find.byKey(const Key('home_card_tag')), findsNothing);
+    });
 
-      // `SkinDelegate.setTextColor(view, 2131561676)` = #FFDCAD6D for i + 1 <= 3.
-      expect(colorOf('1'), const Color(0xFFDCAD6D));
-      expect(colorOf('3'), const Color(0xFFDCAD6D));
-      // 其余是 `@color/abd` = skin_color_black_light (#FF000000)；本客户端用
-      // 自己的墨色 palette.ink 代替纯黑，与全站正文一致。
-      expect(colorOf('4'), const HomePalette(false).ink);
+    testWidgets(
+      'keeps the upstream badge on the cover and drops the kind chip',
+      (tester) async {
+        await pump(
+          tester,
+          SizedBox(
+            width: 160,
+            child: HomeMediaCard(
+              item: book(
+                tag: const MediaTag(text: '上新', lightColors: ['#00B876']),
+              ),
+              onTap: () {},
+            ),
+          ),
+        );
+
+        expect(find.byKey(const Key('home_card_tag')), findsOneWidget);
+        expect(find.text('上新'), findsOneWidget);
+        // 分类标签只在非书卡片缺信息时兜底，书卡上不再重复「小说」。
+        expect(find.text(homeKindLabel('book')), findsNothing);
+      },
+    );
+
+    testWidgets('shows the episode count on a video cover', (tester) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 160,
+          child: HomeMediaCard(
+            item: book(kind: 'video', ep: '第12集'),
+            onTap: () {},
+          ),
+        ),
+      );
+
+      expect(find.text('第12集'), findsOneWidget);
+    });
+
+    testWidgets('drops the score when the payload has none', (tester) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 160,
+          child: HomeMediaCard(item: book(), onTap: () {}),
+        ),
+      );
+
+      expect(find.text('暂无评分'), findsNothing);
+      expect(find.textContaining('分'), findsNothing);
+    });
+  });
+
+  group('HomeContinueRow', () {
+    testWidgets('is one line: action, book · chapter, percent, close', (
+      tester,
+    ) async {
+      var taps = 0;
+      await pump(
+        tester,
+        SizedBox(
+          width: 368,
+          child: HomeContinueRow(
+            now: ReadingNow(
+              item: book(title: '在读的书'),
+              verb: '继续阅读',
+              detail: '读到 第32章',
+              progress: 0.78,
+            ),
+            onOpen: () => taps++,
+            onDismiss: () {},
+          ),
+        ),
+      );
+
+      expect(find.text('继续阅读'), findsOneWidget);
+      expect(find.text('在读的书 · 读到 第32章'), findsOneWidget);
+      expect(find.text('78%'), findsOneWidget);
+
+      await tester.tap(find.text('继续阅读'));
+      expect(taps, 1);
+    });
+
+    testWidgets('the close button hides the row without opening the book', (
+      tester,
+    ) async {
+      var opened = 0;
+      var dismissed = 0;
+      await pump(
+        tester,
+        SizedBox(
+          width: 368,
+          child: HomeContinueRow(
+            now: ReadingNow(
+              item: book(title: '在读的书'),
+              verb: '继续阅读',
+              detail: '读到 第32章',
+              progress: 0.5,
+            ),
+            onOpen: () => opened++,
+            onDismiss: () => dismissed++,
+          ),
+        ),
+      );
+
+      await tester.tap(find.byIcon(LucideIcons.x));
+      expect(dismissed, 1);
+      expect(opened, 0);
+    });
+
+    testWidgets('drops the percent when there is no progress', (tester) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 368,
+          child: HomeContinueRow(
+            now: ReadingNow(
+              item: book(title: '在读的书'),
+              verb: '继续阅读',
+              detail: '上次阅读',
+              progress: 0,
+            ),
+            onOpen: () {},
+            onDismiss: () {},
+          ),
+        ),
+      );
+
+      expect(find.textContaining('%'), findsNothing);
+      expect(find.text('在读的书 · 上次阅读'), findsOneWidget);
+    });
+
+    test('fromHistory turns an audiobook entry into listen wording', () {
+      final now = ReadingNow.fromHistory({
+        'id': 'a1',
+        'title': '在听的书',
+        'kind': 'audio',
+        'lastChapterTitle': '第9集',
+        'progress': 0.4,
+      });
+      expect(now.verb, '继续收听');
+      expect(now.detail, '听到 第9集');
+      expect(now.progress, closeTo(0.4, 1e-9));
+      expect(now.item.id, 'a1');
+    });
+  });
+
+
+  group('HomeSectionHeader', () {
+    testWidgets('is a bare title with an optional trailing action', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        const SizedBox(
+          width: 368,
+          child: HomeSectionHeader(
+            title: '为你推荐',
+            action: SizedBox(width: 10, height: 10),
+          ),
+        ),
+      );
+
+      final title = tester.widget<Text>(find.text('为你推荐'));
+      expect(title.style!.fontSize, 19);
+      expect(title.style!.fontWeight, FontWeight.w700);
+      expect(find.text('更多'), findsNothing);
+    });
+  });
+
+  group('HomeRankCell rail', () {
+    HomeCell cellWith(List<MediaItem> books) => HomeCell(
+      showType: 511,
+      name: '排行榜',
+      id: '',
+      style: const {},
+      items: const [],
+      children: [
+        for (final item in books)
+          HomeCell(
+            showType: 512,
+            name: '',
+            id: '',
+            style: const {},
+            items: [item],
+            children: const [],
+          ),
+      ],
+    );
+
+    testWidgets('badges only the top three covers, with real ranks', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        HomeRankCell(
+          cell: cellWith([
+            for (var i = 1; i <= 4; i++) book(id: 'b$i', title: '榜书$i'),
+          ]),
+          onOpen: (_) {},
+          onMore: () {},
+        ),
+      );
+
+      expect(find.text('排行榜'), findsOneWidget);
+      expect(find.text('榜书1'), findsOneWidget);
+      for (final rank in [1, 2, 3]) {
+        final badge = tester.widget<Text>(find.text('TOP $rank'));
+        expect(badge.style!.fontSize, 10);
+        expect(badge.style!.color, Colors.white);
+      }
+      // 第四名以后不标数字，封面保持干净。
+      expect(find.text('TOP 4'), findsNothing);
+    });
+
+    testWidgets('puts the rank subtitle under the title', (tester) async {
+      await pump(
+        tester,
+        HomeRankCell(
+          cell: cellWith([
+            book(title: '榜书一', rankTags: const ['多人二刷', '9320万热度']),
+          ]),
+          onOpen: (_) {},
+          onMore: () {},
+        ),
+      );
+
+      final subtitle = tester.widget<Text>(find.text('多人二刷'));
+      expect(subtitle.maxLines, 1);
+      expect(subtitle.style!.fontSize, 11);
     });
   });
 
@@ -155,104 +358,5 @@ void main() {
     expect(tags.first.text, '16个老书虫在看');
     expect(tags.first.textColor, '#D7A461FF');
     expect(tags.first.bgColor, '#D7A4611A');
-  });
-
-  group('HomeBookCard', () {
-    testWidgets('writes the score as a white badge on the cover', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        SizedBox(
-          width: 360,
-          child: HomeBookCard(item: book(score: 9.3), onTap: () {}),
-        ),
-      );
-
-      final score = tester.widget<Text>(find.text('9.3分'));
-      // 服务端模板 single_book_v0.0.2：评分是封面左下角的白色 12sp Medium
-      // 角标（带阴影），不是橙色横排。
-      expect(score.style!.fontSize, 12);
-      expect(score.style!.color, Colors.white);
-      // 角标左下 10/8：比封面底部高 8dp 以上。
-      expect(
-        tester.getBottomLeft(find.text('9.3分')).dy,
-        lessThan(tester.getBottomLeft(find.byType(HomeBookCard)).dy - 7),
-      );
-    });
-
-    testWidgets('renders the recommend-reason chips under the abstract', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        SizedBox(
-          width: 360,
-          child: HomeBookCard(
-            item: book(
-              intro: '简介',
-              recTags: const [
-                MediaRecTag(
-                  text: '16个老书虫在看',
-                  textColor: '#D7A461FF',
-                  bgColor: '#D7A4611A',
-                ),
-              ],
-            ),
-            onTap: () {},
-          ),
-        ),
-      );
-
-      final chip = tester.widget<Text>(find.text('16个老书虫在看'));
-      // 服务端配色：番茄金文字。
-      expect(chip.style!.color, const Color(0xFFD7A461));
-      // chip 在简介之下（y 更大）。
-      expect(
-        tester.getTopLeft(find.text('16个老书虫在看')).dy,
-        greaterThan(tester.getTopLeft(find.text('简介')).dy),
-      );
-    });
-
-    testWidgets('drops the score when the payload has none', (tester) async {
-      await pump(
-        tester,
-        SizedBox(
-          width: 360,
-          child: HomeBookCard(item: book(), onTap: () {}),
-        ),
-      );
-
-      // `j6` 在分数为空时写「暂无评分」，而 `av1.xml` 的 `ajr` 位官方默认在
-      // 无分数时也是隐藏的，所以这里判空即可。
-      expect(find.text('暂无评分'), findsNothing);
-      expect(find.textContaining('分'), findsNothing);
-    });
-
-    testWidgets(
-      'shows one title line, no author line and a two-line abstract',
-      (tester) async {
-        await pump(
-          tester,
-          SizedBox(
-            width: 360,
-            child: HomeBookCard(
-              item: book(
-                title: '一个小说的书名',
-                author: '某作者',
-                intro: '书摘内容，用来验证摘要占两行。',
-              ),
-              onTap: () {},
-            ),
-          ),
-        );
-
-        // Vertical card (S0): the title gets two lines, not one.
-        expect(tester.widget<Text>(find.text('一个小说的书名')).maxLines, 2);
-        // 模板：14sp Medium。
-        expect(find.text('某作者'), findsNothing);
-        expect(tester.widget<Text>(find.text('书摘内容，用来验证摘要占两行。')).maxLines, 2);
-      },
-    );
   });
 }

@@ -1,29 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'home_design.dart';
+import 'home_shelf.dart';
 
-/// First-load skeleton, ported from `res/layout/cmc.xml`.
+/// First-load skeleton, shaped like the shelf it is standing in for.
 ///
-/// The official bookstore paints three stacked placeholder groups while the
-/// first page is in flight (`alx.xml` points `SkeletonLayout` at `cmc`):
-///
-/// ```
-/// cmc  (root: skin_color_bg_f6_light, i.e. #F6F6F6)
-/// ├─ cn   clr : one row of six 12dp bars, equal width, 12dp apart
-/// │             (the category strip placeholder), 12dp side margins
-/// ├─ ggj  clm : a white card, 24dp top / 20dp bottom / 16dp side padding
-/// │   ├─ 64x12 title bar + 40x12 bar on the right (title + 「更多」)
-/// │   └─ two columns × four rows, each row 44x62 cover + two text bars
-/// │      (cm1.xml), 18dp apart
-/// └─ e17  cli : two side-by-side 355dp-tall white cards (clh.xml)
-/// ```
-///
-/// Upstream breathes via `SkeletonLayout`, not a shimmer sweep, so the pulse is
-/// an opacity cycle in `[0.6, 1.0]`.
-///
-/// This replaces the spinners that used to sit here. A spinner tells the user
-/// nothing about what is coming; the official skeleton at least keeps the page
-/// from jumping when the real blocks land.
+/// 首页改成「继续阅读一行字 / 榜单 / 书籍网格」之后，旧版照 `cmc.xml` 画的
+/// 「白色区块 + 四行榜单」已经对不上真实版式：骨架屏价值在于让真卡片落位
+/// 时不跳，形状错了反而更跳。这里只留一行字条、一个分区头、两行三列的书封。
 class HomeSkeleton extends StatefulWidget {
   const HomeSkeleton({super.key});
 
@@ -54,38 +38,77 @@ class _HomeSkeletonState extends State<HomeSkeleton>
   Widget build(BuildContext context) {
     // Respect the OS "remove animations" setting: no pulse, just the shapes.
     final animate = !MediaQuery.disableAnimationsOf(context);
-    final body = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
-        _CategoryRow(),
-        _BlockSkeleton(),
-        _CardPairSkeleton(),
-      ],
+    final body = const Padding(
+      padding: EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ContinueSkeleton(),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              homeGutter,
+              homeSectionGap,
+              homeGutter,
+              homeHeaderGap,
+            ),
+            child: _Bar(width: 96, height: 18, radius: 4),
+          ),
+          _GridSkeleton(),
+        ],
+      ),
     );
     if (!animate) return body;
     return FadeTransition(
-      // 0.6 -> 1.0, matching SkeletonLayout's breathing alpha.
-      opacity: Tween<double>(begin: 0.6, end: 1).animate(
-        CurvedAnimation(parent: _pulse, curve: Curves.easeInOut),
-      ),
+      // 0.6 -> 1.0：官方 SkeletonLayout 的呼吸透明度。
+      opacity: Tween<double>(
+        begin: 0.6,
+        end: 1,
+      ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
       child: body,
     );
   }
 }
 
-/// `clr.xml` — six equal bars standing in for the category strip.
-class _CategoryRow extends StatelessWidget {
-  const _CategoryRow();
+/// 「继续阅读」那一行字：左侧动作 + 一条书名。
+class _ContinueSkeleton extends StatelessWidget {
+  const _ContinueSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(homeGutter, 10, homeGutter, 10),
+      child: Row(
+        children: [
+          _Bar(width: 52, height: 11, radius: 4),
+          SizedBox(width: 8),
+          Expanded(child: _Bar(height: 12, radius: 4)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 两行三列的书封，与真网格的 5:7 比例、12dp 列距一致。
+class _GridSkeleton extends StatelessWidget {
+  const _GridSkeleton();
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
+      padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+      child: Column(
         children: [
-          for (var i = 0; i < 6; i++) ...[
-            if (i > 0) const SizedBox(width: 12),
-            const Expanded(child: _Bar(height: 12)),
+          for (var row = 0; row < 2; row++) ...[
+            if (row > 0) const SizedBox(height: 20),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var column = 0; column < 3; column++) ...[
+                  if (column > 0) const SizedBox(width: homeGridGap),
+                  const Expanded(child: _CardSkeleton()),
+                ],
+              ],
+            ),
           ],
         ],
       ),
@@ -93,126 +116,52 @@ class _CategoryRow extends StatelessWidget {
   }
 }
 
-/// `clm.xml` — the block card: title bars, then two columns × four rows.
-class _BlockSkeleton extends StatelessWidget {
-  const _BlockSkeleton();
+class _CardSkeleton extends StatelessWidget {
+  const _CardSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Container(
-      margin: const EdgeInsets.only(top: 18, left: 12, right: 12),
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 20),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: const [
-              _Bar(width: 64, height: 12),
-              Spacer(),
-              _Bar(width: 40, height: 12),
-            ],
-          ),
-          const SizedBox(height: 28),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var column = 0; column < 2; column++) ...[
-                if (column > 0) const SizedBox(width: 26),
-                const Expanded(child: _SkeletonRows()),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Four `cm1.xml` rows: 44x62 cover plus two text bars, 18dp apart.
-class _SkeletonRows extends StatelessWidget {
-  const _SkeletonRows();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (var row = 0; row < 4; row++) ...[
-          if (row > 0) const SizedBox(height: 18),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              _Bar(width: 44, height: 62),
-              SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _Bar(height: 12),
-                    SizedBox(height: 8),
-                    FractionallySizedBox(
-                      widthFactor: 0.5,
-                      alignment: Alignment.centerLeft,
-                      child: _Bar(height: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
+        AspectRatio(aspectRatio: 5 / 7, child: _Bar(radius: 12)),
+        SizedBox(height: 8),
+        _Bar(height: 14, radius: 4),
+        SizedBox(height: 6),
+        FractionallySizedBox(
+          widthFactor: 0.55,
+          alignment: Alignment.centerLeft,
+          child: _Bar(height: 14, radius: 4),
+        ),
+        SizedBox(height: 6),
+        FractionallySizedBox(
+          widthFactor: 0.4,
+          alignment: Alignment.centerLeft,
+          child: _Bar(height: 10, radius: 4),
+        ),
       ],
     );
   }
 }
 
-/// `cli.xml` + `clh.xml` — two 355dp white cards side by side, 8dp apart.
-class _CardPairSkeleton extends StatelessWidget {
-  const _CardPairSkeleton();
+/// One placeholder bar. Colour comes from the palette so the skeleton sits on
+/// the canvas and on OLED the same way the real cards do.
+class _Bar extends StatelessWidget {
+  const _Bar({this.height, this.width, this.radius = 3});
+
+  final double? height;
+  final double? width;
+  final double radius;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    Widget card() => Container(
-      height: 355,
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(8),
-      ),
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-      child: Row(
-        children: [
-          Expanded(child: card()),
-          const SizedBox(width: 8),
-          Expanded(child: card()),
-        ],
-      ),
-    );
-  }
-}
-
-/// One placeholder bar. Colour is a fixed light grey rather than a palette
-/// token: the official rects are neutral grey at low alpha on a white card.
-class _Bar extends StatelessWidget {
-  const _Bar({required this.height, this.width});
-
-  final double height;
-  final double? width;
-
-  @override
-  Widget build(BuildContext context) {
     return Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: const Color(0xFFEDEDED),
-        borderRadius: BorderRadius.circular(3),
+        color: palette.soft,
+        borderRadius: BorderRadius.circular(radius),
       ),
     );
   }

@@ -150,15 +150,15 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  group('preview paging', () {
-    HomeCell sixteenBookCell() => HomeCell(
+  group('rank rail', () {
+    HomeCell twelveBookCell() => HomeCell(
       showType: 511,
       name: '排行榜',
       id: '',
       style: const {},
       items: const [],
       children: [
-        for (var i = 1; i <= 16; i++)
+        for (var i = 1; i <= 12; i++)
           HomeCell(
             showType: 512,
             name: '',
@@ -170,9 +170,7 @@ void main() {
       ],
     );
 
-    testWidgets('pages are wrap-width, so two sit side by side', (
-      tester,
-    ) async {
+    testWidgets('the rail scrolls sideways to later ranks', (tester) async {
       await tester.binding.setSurfaceSize(const Size(400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -181,7 +179,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: HomeRankCell(
-              cell: sixteenBookCell(),
+              cell: twelveBookCell(),
               onOpen: (_) {},
               onMore: () {},
             ),
@@ -189,19 +187,15 @@ void main() {
         ),
       );
 
-      // cbs.xml：页 = 16dp 起 + 内容 173dp + 4dp 止 = 193dp，四行一页。
-      final list = tester.widget<ListView>(find.byType(ListView));
-      expect(list.scrollDirection, Axis.horizontal);
-      expect(list.itemExtent, 193);
+      // 100dp 封面 + 12dp 列距：400dp 视口先露前三本，后段还没构建。
+      expect(find.text('榜书1').hitTestable(), findsOneWidget);
+      expect(find.text('榜书9'), findsNothing);
 
-      // 400dp 视口内两页并排：第 1、5 两本的序号同屏可见（第二页第一行）。
-      expect(find.text('榜书1'), findsOneWidget);
-      expect(find.text('榜书5'), findsOneWidget);
-
-      // 横滑后第二屏露出第三页的 9 号书。
-      await tester.drag(find.byType(ListView), const Offset(-193, 0));
+      // 大封面轨道横滑到后段名次。
+      await tester.drag(find.byType(ListView), const Offset(-700, 0));
       await tester.pumpAndSettle();
-      expect(find.text('榜书9'), findsOneWidget);
+      expect(find.text('榜书9').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 }

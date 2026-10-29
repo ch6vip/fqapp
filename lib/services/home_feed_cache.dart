@@ -12,10 +12,10 @@ class HomeFeedSnapshot {
   final List<MediaItem> items;
 
   /// The page's block structure (see [HomeCell]), when the rendered page had
-  /// one. Without it a cold start seeds only [items], the home page falls
-  /// back to the old spotlight+grid pipeline, and flips to the block layout a
-  /// second later when the network answers. Empty for older records written
-  /// before cells were cached.
+  /// one. Without it a cold start seeds only [items], the home page can only
+  /// draw that flat grid, and flips to the block layout a second later when
+  /// the network answers. Empty for older records written before cells were
+  /// cached.
   final List<HomeCell> cells;
 
   final bool hasMore;

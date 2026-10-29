@@ -8,6 +8,10 @@ import 'home_design.dart';
 
 /// 官方书城顶栏（`res/layout/alx.xml` 的 `fua` 搜索行）。
 ///
+/// 2026-10-26 首页重做后不再逐像素对齐官方：搜索框从 36dp / 6dp 圆角改成
+/// 40dp / 20dp 的胶囊，右端「分类」入口同高同圆角。下面是官方的原尺寸，
+/// 留作对照（文案与热搜轮换仍与官方一致）。
+///
 /// 官方在这一层是一条 51dp 的搜索行：`SearchWordDisplayView`（`h21`）占
 /// 剩余宽度，左 16dp 右 16dp；右上角是「分类」入口 `i_y`（默认 gone，由
 /// AB 位 `hasCategoryTab()==false` 时打开）——14dp 分类图 + 2dp 间隔 +
@@ -20,8 +24,8 @@ import 'home_design.dart';
 /// 热搜词驱动（`SearchWordDisplayView` + `VerticalFlipper`，间隔取响应的
 /// `rotate_interval_ms`）；没有词时回退静态提示语 `@string/duw`。
 class HomeHero extends StatefulWidget {
-  static const double searchBarHeight = 36;
-  static const double searchBarRadius = 6;
+  static const double searchBarHeight = 40;
+  static const double searchBarRadius = 20;
 
   /// 官方 `@string/duw`：`SearchWordDisplayView` 的默认文案。
   static const String searchHint = '请输入书名或作者名';
@@ -98,7 +102,7 @@ class _HomeHeroState extends State<HomeHero> {
     final animate = !MediaQuery.disableAnimationsOf(context);
     return Padding(
       // 官方 fua：paddingTop 6dp / paddingBottom 9dp，左右 16dp。
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 9),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
       child: Row(
         children: [
           Expanded(
@@ -109,20 +113,15 @@ class _HomeHeroState extends State<HomeHero> {
               semanticLabel: HomeHero.searchHint,
               child: Container(
                 height: HomeHero.searchBarHeight,
-                padding: const EdgeInsets.only(left: 16, right: 12),
+                padding: const EdgeInsets.only(left: 16, right: 14),
                 decoration: BoxDecoration(
                   color: palette.searchBar,
                   borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
                 ),
                 child: Row(
                   children: [
-                    // 官方 c8：11×11dp 放大镜。
-                    Icon(
-                      LucideIcons.search,
-                      size: 11,
-                      color: palette.searchBarText,
-                    ),
-                    const SizedBox(width: 9),
+                    Icon(LucideIcons.search, size: 15, color: palette.muted),
+                    const SizedBox(width: 10),
                     Expanded(child: _cueText(palette, animate)),
                   ],
                 ),
@@ -146,7 +145,7 @@ class _HomeHeroState extends State<HomeHero> {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       key: ValueKey<String>(text),
-      style: TextStyle(fontSize: 14, color: palette.searchBarText),
+      style: TextStyle(fontSize: 13.5, color: palette.searchBarText),
     );
     if (!animate) return word;
     return AnimatedSwitcher(
@@ -161,7 +160,7 @@ class _HomeHeroState extends State<HomeHero> {
     );
   }
 
-  /// 官方 `i_y`：36dp 高的白色 8dp 圆角胶囊，14dp 图标 + 14sp 文案。
+  /// 搜索行右端的「分类」入口：与搜索框同高同圆角的 40dp 胶囊。
   Widget _categoryPill(HomePalette palette) {
     return GestureDetector(
       key: const Key('home_category_button'),
@@ -172,15 +171,15 @@ class _HomeHeroState extends State<HomeHero> {
         padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
           color: palette.searchBar,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
         ),
         child: Row(
           children: [
-            Icon(LucideIcons.layout_grid, size: 14, color: palette.ink),
-            const SizedBox(width: 2),
+            Icon(LucideIcons.layout_grid, size: 15, color: palette.ink),
+            const SizedBox(width: 5),
             Text(
               HomeHero.categoryLabel,
-              style: TextStyle(fontSize: 14, color: palette.ink),
+              style: TextStyle(fontSize: 13, color: palette.ink),
             ),
           ],
         ),
