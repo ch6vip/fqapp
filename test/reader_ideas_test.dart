@@ -7,7 +7,9 @@ import 'package:fqapp/models/chapter_ideas.dart';
 import 'package:fqapp/models/comment_reply.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/eink_refresh.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_ideas_sheet.dart';
 import 'package:fqapp/widgets/reader/reader_illustration.dart';
@@ -602,6 +604,29 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ReaderIdeasSheet), findsNothing);
       expect(find.byType(ReaderPage), findsOneWidget);
+    });
+
+    testWidgets('closing the sheet in e-ink mode does not blank the page',
+        (tester) async {
+      // #172: on devices without the vendor EPD channel the sheet-close
+      // refresh used to fall back to the software white flash, blanking the
+      // body behind the closing sheet. E-ink sheet close must never flash.
+      einkModeNotifier.value = true;
+      addTearDown(() => einkModeNotifier.value = false);
+      final flash = EinkRefreshService.instance.flashRequest;
+      final before = flash.value;
+      await pumpReader(
+        tester,
+        ideasLoader: (_) async => _ideas(),
+        commentResolver: (_, _, _) async => const BookCommentPage(),
+      );
+      await tester.tap(find.text('12'));
+      await tester.pumpAndSettle();
+      expect(find.text('12条评论'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('reader-ideas-close')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReaderIdeasSheet), findsNothing);
+      expect(flash.value, before);
     });
 
     testWidgets('the control menu has no ideas entry any more', (tester) async {
