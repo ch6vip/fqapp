@@ -11,6 +11,7 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/widgets/player/playlet_danmaku_layer.dart';
 import 'package:fqapp/widgets/player/playlet_danmaku_loader.dart';
+import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/controlled_player.dart';
 
@@ -22,6 +23,19 @@ class _DanmakuFetch {
 
   Future<PlayletCommentPage> call(DanmakuFetchRequest request) {
     requests.add(request);
+    final completer = Completer<PlayletCommentPage>();
+    calls.add(completer);
+    return completer.future;
+  }
+}
+
+/// 热评取数缝：记下每次请求的 vid，响应由用例手动放行。
+class _HotFetch {
+  final vids = <String>[];
+  final calls = <Completer<PlayletCommentPage>>[];
+
+  Future<PlayletCommentPage> call(String seriesId, String vid) {
+    vids.add(vid);
     final completer = Completer<PlayletCommentPage>();
     calls.add(completer);
     return completer.future;
@@ -94,6 +108,7 @@ void main() {
     required List<ControlledNativePlayer> players,
     Map<String, Object> prefs = const {},
     Map<String, dynamic>? history,
+    _HotFetch? hot,
   }) async {
     SharedPreferences.setMockInitialValues(prefs);
     tester.view.devicePixelRatio = 1;
@@ -121,6 +136,7 @@ void main() {
           },
           playerFactory: () => players.removeAt(0),
           danmakuFetcher: fetch.call,
+          hotCommentsLoader: (hot ?? _HotFetch()).call,
         ),
       ),
     );
@@ -248,6 +264,49 @@ void main() {
     expect(layer.entries.map((e) => e.id), ['fresh']);
     await unmount(tester);
   });
+
+  testWidgets(
+    'hot comments follow the current episode and drop stale replies',
+    (tester) async {
+      // 回归：热评曾固定按第 1 集的 vid 取、切集不重拉，每一集都挂着
+      // 第 1 集的热评与计数。官方 groupID 是单集 vid（a13/w.java:577）。
+      final fetch = _DanmakuFetch();
+      final hot = _HotFetch();
+      final first = ControlledNativePlayer()
+        ..totalDuration = const Duration(minutes: 2);
+      final second = ControlledNativePlayer()
+        ..totalDuration = const Duration(minutes: 2);
+      await mount(tester, fetch: fetch, players: [first, second], hot: hot);
+      expect(hot.vids, ['v1']);
+
+      first.emitCompleted();
+      await _flush(tester);
+      expect(hot.vids, ['v1', 'v2']);
+
+      hot.calls[1].complete(
+        PlayletCommentPage(
+          totalCount: 7,
+          hotComments: [PlayletComment(id: 'fresh', text: '新集热评')],
+        ),
+      );
+      await _flush(tester);
+      // 第 1 集的响应最后才到：不能盖掉第 2 集的热评与计数。
+      hot.calls[0].complete(
+        PlayletCommentPage(
+          totalCount: 99,
+          hotComments: [PlayletComment(id: 'stale', text: '旧集热评')],
+        ),
+      );
+      await _flush(tester);
+
+      final chrome = tester.widget<VideoPlayerChrome>(
+        find.byType(VideoPlayerChrome),
+      );
+      expect(chrome.hotComments.map((c) => c.id), ['fresh']);
+      expect(chrome.commentCount, 7);
+      await unmount(tester);
+    },
+  );
 
   testWidgets('danmaku switch gates all requests until re-enabled', (
     tester,

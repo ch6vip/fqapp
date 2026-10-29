@@ -699,6 +699,18 @@ class Chapter {
     title: _entryTitle(m, index: index),
     volumeName: (m['volume_name'] ?? m['volumeName'] ?? '').toString(),
     version: (m['version'] ?? '').toString(),
+    // 目录行可能带同一批官方选集字段（见 [Episode.fromRaw]）。不在这里
+    // 读出来，`_withVersion` 和分卷归一化重建 Chapter 时「预告 / 不可播 /
+    // 新」角标就全没了。
+    trailer: _flag(m, const [
+      'is_preview_material',
+      'isPreviewMaterial',
+      'is_trailer',
+    ]),
+    disabled:
+        _flag(m, const ['disable_play', 'disablePlay']) ||
+        (_asInt(m['item_status']) ?? 0) != 0,
+    newlyUpdate: _flag(m, const ['is_newly_update', 'isNewlyUpdate']),
   );
 }
 
@@ -824,6 +836,10 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
                 ? volumeName
                 : chapter.volumeName,
             version: _withVersion(chapter, versions).version,
+            trailer: chapter.trailer,
+            highlight: chapter.highlight,
+            disabled: chapter.disabled,
+            newlyUpdate: chapter.newlyUpdate,
           ),
         );
       }
@@ -865,6 +881,10 @@ Chapter _withVersion(Chapter chapter, Map<String, String> versions) =>
         title: chapter.title,
         volumeName: chapter.volumeName,
         version: versions[chapter.itemId]!,
+        trailer: chapter.trailer,
+        highlight: chapter.highlight,
+        disabled: chapter.disabled,
+        newlyUpdate: chapter.newlyUpdate,
       )
     : chapter;
 

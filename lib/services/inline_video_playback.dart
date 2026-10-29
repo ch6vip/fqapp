@@ -175,11 +175,25 @@ class InlineVideoPlayback {
   int _generation = 0;
   bool _hasDisplayed = false;
   bool _wantsPlay = true;
+  bool _playIssued = false;
   bool _disposed = false;
   bool _reusedFromPool = false;
 
   /// True while a player instance exists (playing or paused).
   bool get hasPlayer => _player != null;
+
+  /// Whether the session intends to play once the current activation or
+  /// resume finishes. A manual [pause] clears it; [resume] sets it again.
+  bool get wantsPlay => _wantsPlay;
+
+  /// True while an activation still intends to play but has not issued `play`
+  /// yet: the player does not exist, is still being created, or exists but the
+  /// activation has not reached its play step.
+  ///
+  /// A viewer who pauses the created player directly (the desktop chrome does
+  /// exactly that) leaves [wantsPlay] true but has already been past the play
+  /// step, so this is false for them.
+  bool get awaitingPlayback => _wantsPlay && !_playIssued;
 
   /// Shared desktop transport; ownership remains with this session.
   NativePlayer? get player => _player;
@@ -296,6 +310,7 @@ class InlineVideoPlayback {
     _active = series;
     _hasDisplayed = false;
     _wantsPlay = true;
+    _playIssued = false;
     _reusedFromPool = false;
     activeId.value = series.id;
     firstFrame.value = false;
@@ -447,6 +462,7 @@ class InlineVideoPlayback {
       }
       if (player.firstFrameRendered) _onFirstFrame(player, generation);
       if (_wantsPlay) {
+        _playIssued = true;
         await player.play();
         if (!_current(generation, player)) return;
         playing.value = _playbackRequested(player);
@@ -586,6 +602,7 @@ class InlineVideoPlayback {
     await _applyPlaybackPrefs(player);
     if (!_current(generation, player)) return;
     if (!_wantsPlay) return;
+    _playIssued = true;
     try {
       await player.play();
     } catch (failure) {
@@ -630,6 +647,7 @@ class InlineVideoPlayback {
     final player = _player;
     if (player == null || !player.isCreated || error.value != null) return;
     final generation = _generation;
+    _playIssued = true;
     try {
       await player.play();
     } catch (failure) {
