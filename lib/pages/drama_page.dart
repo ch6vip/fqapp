@@ -682,13 +682,16 @@ class _DramaPageState extends ConsumerState<DramaPage>
     } else if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      // 只在确实在播时把这次暂停记到可见性头上：用户已经手动暂停的，
-      // 回来时不许被当成可见性暂停恢复。「在播」现读播放器，不用会话的
-      // playing 通知器：桌面 chrome 是直接暂停播放器的，通知器靠
-      // playWhenReady 事件重算，可能还停在暂停前的值。
+      // 只在会话「打算播」时把这次暂停记到可见性头上：用户已经手动暂停
+      // 的，回来时不许被当成可见性暂停恢复。判断有两种来源：激活还没走到
+      // 起播那一步（播放器未建、或已建但尚未 play，此时 pause() 会把意图
+      // 置假，不记账回前台就没人续播），以及播放器自身——桌面 chrome 是
+      // 直接暂停播放器的，会话意图仍为真，只能读播放器状态分辨。
       final player = _inline.player;
-      if (player != null &&
-          (player.playing || (player.playWhenReady && !player.completed))) {
+      if (_inline.awaitingPlayback ||
+          (player != null &&
+              (player.playing ||
+                  (player.playWhenReady && !player.completed)))) {
         _inlineVisibilityPaused = true;
       }
       // `inactive` 只是瞬态打断（下拉通知栏/控制中心）：feed 继续播；

@@ -8,7 +8,7 @@
     "lib/pages/comic_reader_page.dart": 955,
     "lib/pages/detail_page.dart": 1663,
     "lib/pages/drama_download_sheet.dart": 661,
-    "lib/pages/drama_page.dart": 4982,
+    "lib/pages/drama_page.dart": 4985,
     "lib/pages/fanqie_history_import_page.dart": 624,
     "lib/pages/home_page.dart": 622,
     "lib/pages/home_provider.dart": 1362,
@@ -30,7 +30,7 @@
     "lib/services/drama_download_store.dart": 512,
     "lib/services/drama_downloader.dart": 656,
     "lib/services/imported_book_store.dart": 1098,
-    "lib/services/inline_video_playback.dart": 1121,
+    "lib/services/inline_video_playback.dart": 1139,
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 746,
     "lib/services/system_tts.dart": 650,
@@ -71,7 +71,7 @@
     "test/discovery_pages_test.dart": 690,
     "test/drama_downloader_test.dart": 563,
     "test/drama_inline_playback_test.dart": 1204,
-    "test/drama_page_test.dart": 2030,
+    "test/drama_page_test.dart": 2092,
     "test/home_page_test.dart": 770,
     "test/home_provider_test.dart": 1122,
     "test/imported_book_store_test.dart": 527,
@@ -151,37 +151,37 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaFeedCard.build": {
-      "line": 2502,
+      "line": 2505,
       "lines": 158,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaPageState.build": {
-      "line": 1362,
+      "line": 1365,
       "lines": 177,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_HistoryCard.build": {
-      "line": 4027,
+      "line": 4030,
       "lines": 155,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_InfoPanelState.build": {
-      "line": 3288,
+      "line": 3291,
       "lines": 153,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_LocalListState.build": {
-      "line": 4472,
+      "line": 4475,
       "lines": 105,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_SeekTrackState.build": {
-      "line": 3087,
+      "line": 3090,
       "lines": 138,
       "symbol": "Widget build(BuildContext context) => LayoutBuilder("
     },
     "lib/pages/drama_page.dart::_TopBarState.build": {
-      "line": 2192,
+      "line": 2195,
       "lines": 87,
       "symbol": "Widget build(BuildContext context) {"
     },
