@@ -43,7 +43,8 @@ void main() {
   testWidgets('status bar switch applies and persists both choices', (
     tester,
   ) async {
-    for (final visible in [true, false]) {
+    // 默认显示状态栏：先关再开。
+    for (final visible in [false, true]) {
       await tester.pumpWidget(MaterialApp(home: _reader()));
       await tester.pumpAndSettle();
       await tester.tapAt(tester.getRect(_surface).center);
