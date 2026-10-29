@@ -489,6 +489,13 @@ internal class HttpRangeClient(
     private data class ResponseRange(val length: Long, val total: Long?)
     private val contentRange = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", RegexOption.IGNORE_CASE)
 
+    // 探长度记忆的容量与有效期：一集通常只有 1 个地址，一条剧也就十几集，
+    // 16 条足够跨集复用；TTL 只覆盖「一次起播里的重复 open」，过期重探一次。
+    private companion object {
+        const val SIZE_CACHE_ENTRIES = 16
+        const val SIZE_CACHE_TTL_MS = 60_000L
+    }
+
     // A read timeout runs only while an actual read is blocked. Pausing the
     // native consumer does not need an infinite read timeout, which would also
     // leave response headers and stalled downloads waiting forever. Streaming
@@ -531,8 +538,36 @@ internal class HttpRangeClient(
         return ResponseRange(length, total)
     }
 
+    /**
+     * 探长度结果的短时记忆：`CryptoDataSource.open` 每次都要先问总长，而每次
+     * seek / 重开流都会重新 open。签名 CDN 地址指向的内容不可变，若不记就会
+     * 每次多一条 `Range: bytes=0-0` 串行往返（一个 RTT 全花在起播上）。
+     *
+     * 失败（-1）永远不记：瞬时 403、断网、CDN 回源都可能自行恢复，必须能重试。
+     */
+    private data class CachedSize(val bytes: Long, val atMs: Long)
+
+    private val sizeCache = object : LinkedHashMap<String, CachedSize>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedSize>): Boolean =
+            size > SIZE_CACHE_ENTRIES
+    }
+
     /** Prove byte-range support and get the total size without downloading the movie. */
     fun httpSize(url: String): Long {
+        val nowMs = System.nanoTime() / 1_000_000
+        synchronized(sizeCache) {
+            val cached = sizeCache[url]
+            if (cached != null) {
+                if (nowMs - cached.atMs < SIZE_CACHE_TTL_MS) return cached.bytes
+                sizeCache.remove(url)
+            }
+        }
+        return probeSize(url).also { size ->
+            if (size > 0L) synchronized(sizeCache) { sizeCache[url] = CachedSize(size, nowMs) }
+        }
+    }
+
+    private fun probeSize(url: String): Long {
         return try {
             val req = okhttp3.Request.Builder()
                 .url(url)
