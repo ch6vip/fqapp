@@ -117,6 +117,11 @@ class VideoPlayerChrome extends StatefulWidget {
   /// `_landscapeBar`）。详情页的电影/电视剧仍走通用形态（默认 false）。
   final bool shortSeries;
 
+  /// 当前集的服务端方向（官方 `VideoInfo.vertical`）。为 null 时退回
+  /// [episodes] 里当集的 [Chapter.vertical]；仍未知则保持旧行为（显示
+  /// 「全屏观看」）。显隐判据见 `_hideFullscreenPill`。
+  final bool? currentEpisodeVertical;
+
   /// 「作者声明：内容由AI生成」行（`video_detail.ai_usage_type`）。
   final bool aiGenerated;
 
@@ -250,6 +255,7 @@ class VideoPlayerChrome extends StatefulWidget {
     required this.onSelectEpisode,
     required this.onError,
     this.shortSeries = false,
+    this.currentEpisodeVertical,
     this.aiGenerated = false,
     this.showSeekHint = false,
     this.onSeekHintConsumed,
@@ -556,6 +562,22 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       : widget.episodes[widget.currentIndex].title;
   String get _seriesTitle =>
       widget.title.isEmpty ? _episodeTitle : widget.title;
+
+  /// 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon`：
+  /// `saasVideoData != null && !saasVideoData.isVertical()`。竖屏剧集
+  /// （`vertical == true`）整颗「全屏观看」不渲染；`vertical` 未知时保持
+  /// 显示——官方 `EpisodeInfo.vertical` 是 primitive boolean，Gson 缺字段
+  /// 即 false，所以「未知即显示」与官方一致。只影响短剧播放页。
+  bool get _hideFullscreenPill {
+    if (!widget.shortSeries) return false;
+    final vertical =
+        widget.currentEpisodeVertical ??
+        (widget.currentIndex >= 0 &&
+                widget.currentIndex < widget.episodes.length
+            ? widget.episodes[widget.currentIndex].vertical
+            : null);
+    return vertical == true;
+  }
 
   @override
   void initState() {
@@ -3799,7 +3821,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             ],
           ),
         ),
-        if (controls)
+        if (controls && !_hideFullscreenPill)
           LayoutId(id: _PortraitSlot.fullscreen, child: _fullscreenPill()),
         if (controls && widget.onComments != null)
           LayoutId(id: _PortraitSlot.comments, child: _commentButton()),
@@ -3982,8 +4004,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (showPill) Center(child: _fullscreenPill()),
-          if (showPill) const SizedBox(height: 12),
+          if (showPill && !_hideFullscreenPill)
+            Center(child: _fullscreenPill()),
+          if (showPill && !_hideFullscreenPill) const SizedBox(height: 12),
           // 官方标题行整行可点（ql3/v0 `a1()`，埋点 enter_from="title"），
           // 落点是剧集详情页。
           GestureDetector(
@@ -4790,12 +4813,18 @@ class _PortraitControlsLayout extends MultiChildLayoutDelegate {
       Offset(insets.left, informationTop),
     );
 
-    if (!hasChild(_PortraitSlot.fullscreen)) return;
-    final pill = layoutChild(
-      _PortraitSlot.fullscreen,
-      BoxConstraints(maxWidth: math.max(0.0, width - 144)),
-    );
-    final comments = hasChild(_PortraitSlot.comments)
+    // 竖版剧集不渲染全屏胶囊（`_hideFullscreenPill`），但评论钮可能仍在：
+    // 两个 slot 各自独立判断，缺一个不能把另一个也丢掉。
+    final hasPill = hasChild(_PortraitSlot.fullscreen);
+    final hasComments = hasChild(_PortraitSlot.comments);
+    if (!hasPill && !hasComments) return;
+    final pill = hasPill
+        ? layoutChild(
+            _PortraitSlot.fullscreen,
+            BoxConstraints(maxWidth: math.max(0.0, width - 144)),
+          )
+        : Size.zero;
+    final comments = hasComments
         ? layoutChild(
             _PortraitSlot.comments,
             const BoxConstraints(maxWidth: 64),
@@ -4804,11 +4833,13 @@ class _PortraitControlsLayout extends MultiChildLayoutDelegate {
     final actionHeight = math.max(pill.height, comments.height - 4);
     final maximumTop = math.max(minimumTop, informationTop - actionHeight - 16);
     final top = math.min(math.max(videoBottom + 20, minimumTop), maximumTop);
-    positionChild(
-      _PortraitSlot.fullscreen,
-      Offset(insets.left + (width - pill.width) / 2, top),
-    );
-    if (hasChild(_PortraitSlot.comments)) {
+    if (hasPill) {
+      positionChild(
+        _PortraitSlot.fullscreen,
+        Offset(insets.left + (width - pill.width) / 2, top),
+      );
+    }
+    if (hasComments) {
       positionChild(
         _PortraitSlot.comments,
         Offset(size.width - insets.right - 4 - comments.width, top - 4),

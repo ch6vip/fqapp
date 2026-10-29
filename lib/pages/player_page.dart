@@ -1310,6 +1310,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
       if (!_current(generation)) return;
       _currentSource = source;
+      // 取流响应携带的分集方向：目录里没有时由它补上「全屏观看」的判据。
+      if (source.vertical case final bool vertical) {
+        _episodeVerticals[episode.itemId] = vertical;
+      }
       // 每次装载都重新认领：换集后没选过档就是 null，不留上一集的高度。
       _renditionHeight = renditionHeight;
       final sourceUri = Uri.tryParse(source.url);
@@ -1470,6 +1474,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// engine for the session only; no cross-launch preference exists there,
   /// so none is stored here either.
   EpisodeSource? _currentSource;
+
+  /// 按集记住的 `vertical`（官方 `VideoInfo.vertical`）。目录回包若已带该
+  /// 字段，[Chapter.vertical] 优先；这里兜住「目录没有、取流响应才有」的
+  /// 情况——播放页「全屏观看」的显隐只看当前集。
+  final Map<String, bool> _episodeVerticals = {};
 
   /// 听书页回传的续看锚点 (集号, 进度)：[_openListenMode] 在自动连播跨集
   /// 时设置，只对匹配集的下一次 [_loadVideo] 生效一次——此时本地历史
@@ -1733,6 +1742,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       duration: _duration,
       playing: _playing,
       shortSeries: widget.shortSeries,
+      currentEpisodeVertical: widget.eps.isEmpty
+          ? null
+          : widget.eps[_index].vertical ??
+                _episodeVerticals[widget.eps[_index].itemId],
       openFullScreen: widget.openFullScreen,
       watchedEpisodes: watchedIndexes(_watchedIds, widget.eps),
       interactionBlocked: _externalPanelOpen || _switchingSeries,

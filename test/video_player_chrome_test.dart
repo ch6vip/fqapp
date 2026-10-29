@@ -120,6 +120,93 @@ void main() {
     },
   );
 
+  testWidgets('vertical short-series episodes drop the 全屏观看 pill', (
+    tester,
+  ) async {
+    // 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon`：
+    // `saasVideoData != null && !saasVideoData.isVertical()`。竖屏剧集
+    // 整颗按钮不渲染；`vertical == false` 与字段未知（旧缓存/离线）都保留。
+    // 通用播放页不在本次门控范围内。
+    final cases = <(String, bool, bool?, Matcher)>[
+      ('vertical portrait episode', true, true, findsNothing),
+      ('landscape episode', true, false, findsOneWidget),
+      ('unknown vertical', true, null, findsOneWidget),
+      ('generic player', false, true, findsOneWidget),
+    ];
+    for (final (label, shortSeries, vertical, expected) in cases) {
+      final player = FakeNativePlayer()..isPlaying = true;
+      await tester.pumpWidget(
+        _app(
+          player,
+          shortSeries: shortSeries,
+          episodes: [
+            Chapter(
+              itemId: '1',
+              title: '第一集',
+              volumeName: '',
+              vertical: vertical,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('player-fullscreen-pill')),
+        expected,
+        reason: label,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    }
+  });
+
+  testWidgets(
+    'vertical episodes keep the comment slot while the pill is gone',
+    (tester) async {
+      // #187 的竖屏浏览态有两条渲染路径：目录态把「全屏观看」与评论钮放进同一个
+      // `_PortraitControlsLayout`，旧栏则走 `_information` 的入口。竖版剧集摘掉
+      // 全屏槽位后，评论槽位仍要单独布局（两个 `hasChild` 各自判断），否则会留下
+      // 未布局的子节点；旧栏的胶囊也必须跟着消失。
+      for (final catalogStyle in [true, false]) {
+        final player = FakeNativePlayer()..isPlaying = true;
+        await tester.pumpWidget(
+          _app(
+            player,
+            shortSeries: true,
+            newPlayerBottomStyle: catalogStyle,
+            // 旧底栏进页会自动清屏（o.W7），清屏态本来就压掉评论钮与胶囊；
+            // reverse 配置挡下自动清屏，才看得到竖屏浏览态的常驻形态。
+            reverseClearScreen: !catalogStyle,
+            episodes: [
+              Chapter(
+                itemId: '1',
+                title: '第一集',
+                volumeName: '',
+                vertical: true,
+              ),
+            ],
+            onComments: () {},
+          ),
+        );
+        // 旧栏的右缘评论钮挂在 `controls` 上，3 秒后会随控件收起；这里只取
+        // 首帧的常驻形态，不等自动收起。
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          find.byKey(const ValueKey('player-fullscreen-pill')),
+          findsNothing,
+          reason: 'catalogStyle=$catalogStyle',
+        );
+        expect(
+          find.byKey(const ValueKey('player-comment-button')),
+          findsOneWidget,
+          reason: 'catalogStyle=$catalogStyle',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await player.dispose();
+      }
+    },
+  );
+
   testWidgets(
     'portrait fullscreen hides the chrome and a tap brings it back (#59)',
     (tester) async {
@@ -2071,6 +2158,8 @@ Widget _app(
   TextScaler textScaler = TextScaler.noScaling,
   EdgeInsets padding = EdgeInsets.zero,
   bool shortSeries = false,
+  List<Chapter>? episodes,
+  bool? currentEpisodeVertical,
   String title = '',
   VoidCallback? onComments,
   List<PlayletComment> hotComments = const [],
@@ -2106,11 +2195,14 @@ Widget _app(
       title: title,
       onComments: onComments,
       hotComments: hotComments,
-      episodes: [
-        Chapter(itemId: '1', title: '第一集', volumeName: ''),
-        Chapter(itemId: '2', title: '第二集', volumeName: ''),
-      ],
+      episodes:
+          episodes ??
+          [
+            Chapter(itemId: '1', title: '第一集', volumeName: ''),
+            Chapter(itemId: '2', title: '第二集', volumeName: ''),
+          ],
       currentIndex: currentIndex,
+      currentEpisodeVertical: currentEpisodeVertical,
       duration: player.duration,
       playing: playing.data!,
       onSelectEpisode: (index) async {
