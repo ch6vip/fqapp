@@ -363,10 +363,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// 内联播放器当前这次暂停是不是生命周期可见性分支（hidden/paused）造成
   /// 的，而不是用户手动暂停的。只有可见性暂停可以被随后的「回到 active」
-  /// 撤销；手动暂停是用户意图，焦点/生命周期噪声不许推翻——Windows 上点
-  /// 一下别的窗口只发 inactive，而桌面端把 inactive 算作 active，不分开
-  /// 记账的话用户一暂停、一切窗视频就自己播回来。仅 Windows 路径读写，
-  /// Android 的回前台续播语义不变。
+  /// 撤销；手动暂停是用户意图，生命周期噪声不许推翻——Windows 上点一下别
+  /// 的窗口只发 inactive，而桌面端把 inactive 算作 active，不分开记账的话
+  /// 用户一暂停、一切窗视频就自己播回来；Android 退到后台再回前台同样会走
+  /// active 分支，无条件续播也会把手动暂停拉起。
   bool _inlineVisibilityPaused = false;
 
   /// 长按中带打开的更多面板还在屏上（面板不销毁 inline 播放器，视频在
@@ -672,23 +672,26 @@ class _DramaPageState extends ConsumerState<DramaPage>
       if (_tickerEnabled && !_modalOpen) {
         // Windows 上「切到别的窗口」只发 inactive，而 playbackAppIsActive
         // 在桌面端把 inactive 算作 active：无条件续播会把用户手动暂停的
-        // 视频在焦点刚丢时就拉起来。所以桌面端只有可见性分支自己暂停过
-        // 的那一次才许在这里恢复，手动暂停不许被焦点变化推翻。Android
-        // 没有「可见但失焦」态，保持原有的回前台续播。
-        if (isWindowsDesktop && !_inlineVisibilityPaused) return;
+        // 视频在焦点刚丢时就拉起来。Android 从后台回来同样会发 active，
+        // 无条件续播也会推翻手动暂停。两端一致：只有可见性分支自己暂停过
+        // 的那一次才许在这里恢复。
+        if (!_inlineVisibilityPaused) return;
         _resumeInline();
         _scheduleInlineSync();
       }
     } else if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      // 只在确实在播时把这次暂停记到可见性头上：用户已经手动暂停的，
-      // 回来时不许被当成可见性暂停恢复。「在播」现读播放器，不用会话的
-      // playing 通知器：桌面 chrome 是直接暂停播放器的，通知器靠
-      // playWhenReady 事件重算，可能还停在暂停前的值。
+      // 只在会话「打算播」时把这次暂停记到可见性头上：用户已经手动暂停
+      // 的，回来时不许被当成可见性暂停恢复。判断有两种来源：激活还没走到
+      // 起播那一步（播放器未建、或已建但尚未 play，此时 pause() 会把意图
+      // 置假，不记账回前台就没人续播），以及播放器自身——桌面 chrome 是
+      // 直接暂停播放器的，会话意图仍为真，只能读播放器状态分辨。
       final player = _inline.player;
-      if (player != null &&
-          (player.playing || (player.playWhenReady && !player.completed))) {
+      if (_inline.awaitingPlayback ||
+          (player != null &&
+              (player.playing ||
+                  (player.playWhenReady && !player.completed)))) {
         _inlineVisibilityPaused = true;
       }
       // `inactive` 只是瞬态打断（下拉通知栏/控制中心）：feed 继续播；
@@ -1158,6 +1161,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
         title: item.title,
         cover: item.cover,
         episodes: episodes,
+        // 与播放页同源：「往后N集」与默认分组从正在播的那集算，画质只列
+        // 本集真实给到的档位。
+        currentIndex: (_inline.activeEpisodeIndex ?? 0).clamp(
+          0,
+          episodes.length - 1,
+        ),
+        qualities: _inline.variants,
       );
     } finally {
       _modalOpen = false;

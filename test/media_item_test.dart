@@ -232,6 +232,65 @@ void main() {
     });
   });
 
+  group('directory episode flags', () {
+    // 「预告 / 不可播 / 新」来自 `EpisodeInfo`：目录行带同一批字段时，
+    // `Chapter.fromRaw`、`_withVersion` 与分卷归一化都不能把它们丢掉。
+    test('bridge chapters keep the flags while the version is merged', () {
+      final chapters = parseDirectory({
+        'code': 0,
+        'data': {
+          // 版本在分卷列表之外的原生目录里。
+          'item_data_list': [
+            {'item_id': 'e1', 'title': '第1集', 'version': 'v1'},
+          ],
+          'data': {
+            'chapterListWithVolume': [
+              [
+                {
+                  'itemId': 'e1',
+                  'title': '第1集',
+                  'is_preview_material': true,
+                  'disable_play': 1,
+                  'is_newly_update': true,
+                },
+              ],
+            ],
+          },
+        },
+      }).expand((volume) => volume).toList();
+      final chapter = chapters.single;
+      expect(chapter.version, 'v1');
+      expect(chapter.trailer, isTrue);
+      expect(chapter.disabled, isTrue);
+      expect(chapter.newlyUpdate, isTrue);
+    });
+
+    test('episodes keep the flags when _withVersion fills the version', () {
+      final chapters = parseDirectory({
+        'data': {
+          'episodes': [
+            {
+              'item_id': 'e1',
+              'title': '第1集',
+              'is_preview_material': true,
+              'disable_play': 1,
+              'is_newly_update': true,
+            },
+          ],
+          // `_directoryVersions` 从这里取版本，促使 _withVersion 重建 Chapter。
+          'item_data_list': [
+            {'item_id': 'e1', 'title': '第1集', 'version': 'v1'},
+          ],
+        },
+      }).expand((volume) => volume).toList();
+      final chapter = chapters.single;
+      expect(chapter.version, 'v1');
+      expect(chapter.trailer, isTrue);
+      expect(chapter.disabled, isTrue);
+      expect(chapter.newlyUpdate, isTrue);
+    });
+  });
+
   test('omits non-addressable rows from every supported directory shape', () {
     final entries = [
       {'title': '缺失 ID'},

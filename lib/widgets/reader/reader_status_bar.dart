@@ -15,6 +15,7 @@ class ReaderStatusBar extends StatelessWidget {
   final int? pageIndex;
   final int? pageCount;
   final bool compact;
+  final Widget? playerControl;
 
   const ReaderStatusBar({
     super.key,
@@ -27,6 +28,7 @@ class ReaderStatusBar extends StatelessWidget {
     this.pageIndex,
     this.pageCount,
     this.compact = false,
+    this.playerControl,
   });
 
   @override
@@ -57,43 +59,62 @@ class ReaderStatusBar extends StatelessWidget {
               ),
               const SizedBox(height: 4),
             ],
-            Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 12,
-              runSpacing: 4,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(time, key: const ValueKey('reader-clock')),
-                    if (!compact && status.battery != null) ...[
-                      const SizedBox(width: 5),
-                      Icon(
-                        status.charging
-                            ? LucideIcons.battery_charging
-                            : LucideIcons.battery_medium,
-                        size: 13,
-                        color: preset.mutedTextColor,
-                      ),
-                      Text(
-                        '${status.battery}%',
-                        key: const ValueKey('reader-battery'),
-                      ),
-                    ],
-                  ],
-                ),
-                if (!compact && !paged)
-                  Text('${chapterIndex + 1} / $chapterCount 章'),
-                Text(
-                  '全书 ${(progress.clamp(0, 1) * 100).toStringAsFixed(1)}%',
-                  key: const ValueKey('reader-progress'),
-                ),
-              ],
-            ),
+            _statusLine(context, time),
           ],
         ),
       ),
     );
   }
+
+  // Starting/stopping narration must not resize the viewport mid-page-turn.
+  Widget _statusLine(BuildContext context, String time) => SizedBox(
+    height:
+        MediaQuery.textScalerOf(context).scale(20).clamp(20, double.infinity) +
+        12,
+    child: LayoutBuilder(
+      builder: (context, constraints) => Row(
+        children: [
+          Expanded(child: _playerClock(time)),
+          if (playerControl != null)
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: constraints.maxWidth * 0.65,
+              ),
+              child: playerControl,
+            )
+          else if (!compact && !paged)
+            Flexible(child: Text('${chapterIndex + 1} / $chapterCount 章')),
+          Expanded(
+            child: Text(
+              '全书 ${(progress.clamp(0, 1) * 100).toStringAsFixed(1)}%',
+              key: const ValueKey('reader-progress'),
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _playerClock(String time) => LayoutBuilder(
+    builder: (context, constraints) => Row(
+      children: [
+        Flexible(child: Text(time, key: const ValueKey('reader-clock'))),
+        if (!compact &&
+            status.battery != null &&
+            constraints.maxWidth >=
+                MediaQuery.textScalerOf(context).scale(80)) ...[
+          const SizedBox(width: 5),
+          Icon(
+            status.charging
+                ? LucideIcons.battery_charging
+                : LucideIcons.battery_medium,
+            size: 13,
+            color: preset.mutedTextColor,
+          ),
+          Text('${status.battery}%', key: const ValueKey('reader-battery')),
+        ],
+      ],
+    ),
+  );
 }
