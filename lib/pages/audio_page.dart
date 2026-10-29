@@ -15,6 +15,7 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/audio_download_store.dart';
 import '../services/audio_history.dart';
+import '../services/audio_floating_routes.dart';
 import '../services/audio_page_theme.dart';
 import '../services/audio_play_error.dart';
 import '../services/audio_playback_choice.dart';
@@ -24,12 +25,14 @@ import '../services/chapter_cache_store.dart';
 import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
+import '../services/media_history_store.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
 import '../widgets/audio/audio_offline_section.dart';
+import '../widgets/audio/audio_floating_player.dart';
 import '../widgets/audio/audio_advance_banner.dart';
 import '../widgets/audio/audio_control_rows.dart';
 import '../widgets/audio/audio_quick_rows.dart';
@@ -49,6 +52,7 @@ part 'audio_listening_layout.dart';
 part '../services/audio_playback_guard.dart';
 part '../services/audio_playback_controller.dart';
 part '../widgets/audio/audio_playback_scope.dart';
+part '../widgets/audio/audio_floating_capsule.dart';
 
 /// Foreground listening using the existing Android Media3 URL player.
 class AudioPage extends StatefulWidget {
@@ -225,12 +229,12 @@ class _AudioPageState extends State<AudioPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    AudioFloatingRouteScope.configure(context, hidden: true);
     if (!_attaching) {
       _attaching = true;
       _owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
       unawaited(_attach());
     }
-    _owner?.viewChanged(this);
   }
 
   Future<void> _attach() async {
@@ -254,7 +258,7 @@ class _AudioPageState extends State<AudioPage> {
     _session = session;
     session.addListener(_changed);
     if (owner == null) session.start();
-    owner?.viewChanged(this);
+    owner?.registerView(this);
     _syncCoverTheme();
     setState(() {});
   }
@@ -272,7 +276,7 @@ class _AudioPageState extends State<AudioPage> {
     if (session != null && !session._closed) {
       unawaited(session._persistProgress());
     }
-    _owner?.removeView(this);
+    _owner?.unregisterView(this);
     if (_owner == null && session != null) unawaited(session.close());
     super.dispose();
   }

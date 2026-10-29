@@ -6,10 +6,14 @@ class AudioPlaybackScope extends StatefulWidget {
     super.key,
     required this.navigatorKey,
     required this.child,
+    this.recentListen,
   });
 
   final GlobalKey<NavigatorState> navigatorKey;
   final Widget child;
+
+  /// Supplies the cold-start idle capsule. Null disables it.
+  final RecentListenLoader? recentListen;
 
   static Future<void> startSystemTts(BuildContext context, SystemTtsBook book) {
     final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
@@ -72,7 +76,16 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   Future<void> _queue = Future<void>.value();
   final _views = <_AudioPageState>{};
   bool _rebuildPending = false;
+  _AudioPlaybackController? _openingAudio;
   late final Future<void> Function(NativePlayer) _playGate = _beforePlay;
+
+  /// Rebuilds the capsule, which lives in the Navigator's Overlay instead of
+  /// under this widget.
+  final _tick = ValueNotifier<int>(0);
+  AudioFloatingRoutes? _routes;
+  RecentListen? _recent;
+  bool _resuming = false;
+  Object? _toastedError;
 
   /// 跨章跳读要用的字幕轨缓存，键 = `音色|章节 id`。
   ///
@@ -85,6 +98,32 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   void initState() {
     super.initState();
     NativePlayer.beforePlay = _playGate;
+    unawaited(_loadRecent());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final routes = AudioFloatingRouteScope.read(context);
+    if (identical(routes, _routes)) return;
+    _routes?.unmount();
+    _routes = routes;
+    routes?.mount(_buildCapsule);
+  }
+
+  Future<void> _loadRecent() async {
+    final loader = widget.recentListen;
+    if (loader == null) return;
+    RecentListen? recent;
+    try {
+      recent = await loader();
+    } catch (_) {
+      // The idle capsule is a convenience; history read failures hide it.
+      return;
+    }
+    if (!mounted || recent == null || _session != null || _tts != null) return;
+    _recent = recent;
+    _changed();
   }
 
   Future<void> _beforePlay(NativePlayer player) async {
@@ -221,6 +260,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
       if (!mounted) return null;
       final session = _AudioPlaybackController(request);
       _session = session;
+      _recent = null;
       session.onStop = () => unawaited(stop(session));
       session.addListener(_changed);
       session.start();
@@ -244,6 +284,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     _session = null;
     session?.removeListener(_changed);
     _changed();
+    if (session != null) _retireViews(session);
     await session?.close();
   }
 
@@ -264,6 +305,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
         onStop: () => unawaited(stopTts(session)),
       );
       _tts = session;
+      _recent = null;
       session.addListener(_changed);
       session.start();
       _changed();
@@ -313,23 +355,23 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     );
   }
 
-  void viewChanged(_AudioPageState view) {
+  void registerView(_AudioPageState view) {
     _views.add(view);
-    _changed();
   }
 
-  void removeView(_AudioPageState view) {
+  void unregisterView(_AudioPageState view) {
     _views.remove(view);
-    _changed();
   }
 
   void _changed() {
     if (!mounted || _rebuildPending) return;
     _rebuildPending = true;
-    // Views attach/detach while Navigator builds. Defer the ancestor rebuild.
+    // Session acquisition can notify while descendant pages attach.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _rebuildPending = false;
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _tick.value++;
+      _toastNewError();
     });
     WidgetsBinding.instance.ensureVisualUpdate();
   }
@@ -348,41 +390,12 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     _tts = null;
     tts?.removeListener(_changed);
     if (tts != null) unawaited(Future<void>.microtask(tts.close));
+    _routes?.unmount();
+    _routes = null;
+    _tick.dispose();
     super.dispose();
   }
 
-  // The bar below is a sibling of the Navigator, not a descendant,
-  // so it has no Overlay ancestor for its IconButton tooltips
-  // (the Navigator owns its own Overlay internally). Wrap the column
-  // in an Overlay so the tooltips resolve to this outer Overlay, while
-  // route content still resolves to the Navigator's inner Overlay.
-  //
-  // The entry is created once: Overlay only reads initialEntries in
-  // initState, so an entry rebuilt in build() would never be inserted
-  // and its builder would stay frozen on the first build's values
-  // (mini bars never appearing). The builder below reads live state,
-  // so each scope rebuild re-renders the bars with current values.
-  late final OverlayEntry _entry = OverlayEntry(builder: _buildEntry);
-
   @override
-  Widget build(BuildContext context) {
-    return Overlay(initialEntries: [_entry]);
-  }
-
-  Widget _buildEntry(BuildContext context) {
-    final tts = _tts;
-    return Column(
-      children: [
-        Expanded(child: widget.child),
-        // 官方 7.0.9.32 没有任何迷你播放器产物（id/layout/smali 全量搜过都是 0），
-        // 离开听书页后只由通知栏控制，所以这里不再挂听书迷你栏。
-        if (tts != null && !tts.closed)
-          SystemTtsMiniBar(
-            session: tts,
-            onOpen: () => _openTts(tts),
-            onClose: () => unawaited(stopTts(tts)),
-          ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => widget.child;
 }

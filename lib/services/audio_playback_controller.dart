@@ -937,6 +937,8 @@ class _AudioPlaybackController extends ChangeNotifier
       'chapterId': _chapters[index].itemId,
       'episodeId': _chapters[index].itemId,
       'episode': index,
+      // Lets the cold-start capsule show whole-book progress.
+      'chapterCount': _chapters.length,
       'position': position.inMilliseconds / 1000,
       'duration': duration.inMilliseconds / 1000,
       'maxScroll': duration.inMilliseconds / 1000,

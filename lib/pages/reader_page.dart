@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import '../services/desktop_platform.dart';
+import '../services/audio_floating_routes.dart';
 import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:collection';
@@ -843,6 +844,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    AudioFloatingRouteScope.configure(context, hidden: true);
     final current = ModalRoute.isCurrentOf(context) ?? true;
     if (_routeCurrent == current) return;
     _routeCurrent = current;

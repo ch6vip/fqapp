@@ -1,11 +1,11 @@
 {
   "files": {
-    "lib/main.dart": 756,
+    "lib/main.dart": 781,
     "lib/models/media_item.dart": 1549,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_page.dart": 1995,
     "lib/pages/category_page.dart": 604,
-    "lib/pages/comic_reader_page.dart": 955,
+    "lib/pages/comic_reader_page.dart": 968,
     "lib/pages/detail_page.dart": 1663,
     "lib/pages/drama_download_sheet.dart": 661,
     "lib/pages/drama_page.dart": 4985,
@@ -16,7 +16,7 @@
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1995,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 4134,
+    "lib/pages/reader_page.dart": 4136,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
@@ -24,7 +24,7 @@
     "lib/services/api_client.dart": 1797,
     "lib/services/app_log.dart": 617,
     "lib/services/audio_downloader.dart": 568,
-    "lib/services/audio_playback_controller.dart": 1373,
+    "lib/services/audio_playback_controller.dart": 1375,
     "lib/services/chapter_text_formatter.dart": 690,
     "lib/services/desktop_platform.dart": 713,
     "lib/services/drama_download_store.dart": 512,
@@ -95,8 +95,8 @@
   },
   "functions": {
     "lib/main.dart::_RootShellState.build": {
-      "line": 477,
-      "lines": 278,
+      "line": 498,
+      "lines": 282,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/about_page.dart::AboutPage.build": {
@@ -133,11 +133,6 @@
       "line": 131,
       "lines": 251,
       "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/pages/comic_reader_page.dart::_ComicImageTileState.build": {
-      "line": 791,
-      "lines": 83,
-      "symbol": "Widget build(BuildContext context) => Semantics("
     },
     "lib/pages/detail_page.dart::_DetailPageState.build": {
       "line": 479,
@@ -210,7 +205,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 4012,
+      "line": 4014,
       "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
