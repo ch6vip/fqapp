@@ -7,6 +7,7 @@ import '../../models/book_comment.dart';
 import '../../models/chapter_ideas.dart';
 import '../../models/comment_reply.dart';
 import '../../services/reader_preferences.dart';
+import '../comment_emoji.dart';
 import '../comment_images.dart';
 import '../home/home_design.dart';
 import 'reader_theme.dart';
@@ -375,6 +376,10 @@ class _CommentRowState extends State<_CommentRow> {
   Color get textColor => widget.textColor;
   Color get mutedColor => widget.mutedColor;
 
+  /// Zero-reply comments get no collapsible footer (issue #173); the official
+  /// list only appends one when replies remain.
+  bool get _hasReplies => (_replies?.totalCount ?? comment.replyCount) > 0;
+
   Future<void> _toggleReplies() async {
     if (_loading) return;
     // A second tap collapses; the page is kept so reopening is instant.
@@ -525,8 +530,8 @@ class _CommentRowState extends State<_CommentRow> {
                 ),
                 const SizedBox(height: 6),
                 if (comment.text.isNotEmpty)
-                  Text(
-                    comment.text,
+                  CommentEmojiText(
+                    text: comment.text,
                     style: TextStyle(
                       color: textColor,
                       fontSize: 16,
@@ -562,7 +567,7 @@ class _CommentRowState extends State<_CommentRow> {
                         runSpacing: 4,
                         children: [
                           if (time.isNotEmpty) Text(time, style: metaStyle),
-                          _replyCounter(metaStyle),
+                          if (_hasReplies) _replyCounter(metaStyle),
                         ],
                       ),
                     ),
@@ -618,12 +623,7 @@ class _ReplyList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (page.isEmpty) {
-      return Text(
-        '暂无回复',
-        style: TextStyle(color: mutedColor, fontSize: 12.5),
-      );
-    }
+    if (page.isEmpty) return const SizedBox.shrink();
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
       decoration: BoxDecoration(
@@ -682,7 +682,7 @@ class _ReplyTile extends StatelessWidget {
                 text: '  $time',
                 style: TextStyle(color: mutedColor, fontSize: 11.5),
               ),
-            TextSpan(text: '\n${reply.text}'),
+            ...commentEmojiSpans('\n${reply.text}', fontSize: 13.5),
           ],
         ),
       ),
