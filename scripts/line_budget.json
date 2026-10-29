@@ -27,7 +27,7 @@
     "lib/services/audio_playback_controller.dart": 1373,
     "lib/services/chapter_text_formatter.dart": 690,
     "lib/services/desktop_platform.dart": 713,
-    "lib/services/drama_download_store.dart": 503,
+    "lib/services/drama_download_store.dart": 512,
     "lib/services/drama_downloader.dart": 656,
     "lib/services/imported_book_store.dart": 1098,
     "lib/services/inline_video_playback.dart": 1121,
