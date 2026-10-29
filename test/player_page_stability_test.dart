@@ -219,7 +219,8 @@ void main() {
     },
   );
 
-  for (final operation in ['create', 'rate', 'seek', 'play']) {
+  // 恢复进度已并入 create（原生 prepare 前定位），装载期能卡住的只剩三处。
+  for (final operation in ['create', 'rate', 'play']) {
     testWidgets(
       'switching during $operation never activates the stale player',
       (tester) async {
@@ -227,7 +228,6 @@ void main() {
         final first = ControlledNativePlayer(
           createGate: operation == 'create' ? gate : null,
           rateGate: operation == 'rate' ? gate : null,
-          seekGate: operation == 'seek' ? gate : null,
           playGate: operation == 'play' ? gate : null,
         );
         var created = 0;

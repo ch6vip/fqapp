@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -33,6 +34,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -59,6 +61,14 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** 播放器日志 tag：类内与顶层 [buildPlayer] 共用，避免两处字面量漂移。 */
 internal const val PLAYER_LOG_TAG = "NativePlayerPlugin"
+
+/**
+ * 起播诊断日志开关：只在 debuggable 包上打开，release 的 logcat 不该被每次
+ * open 刷一条。由 [NativePlayerPlugin.onAttachedToEngine] 按 ApplicationInfo 设置；
+ * 默认关闭也顺带保住 JVM 单测（`android.util.Log` 没有桩）。
+ */
+@Volatile
+internal var playerDiagnosticsEnabled = false
 
 /**
  * Native ExoPlayer host for DRM (CENC) short dramas and audiobook audio playback.
@@ -157,6 +167,11 @@ class NativePlayerPlugin internal constructor(
         attachedToEngine = true
         instance = this
         flutterBinding = binding
+        // applicationInfo 在 JVM 单测里是 null（Context 是 mock），这里必须容忍；
+        // 生产环境的 applicationContext 由 Flutter 引擎给出，不受影响。
+        playerDiagnosticsEnabled =
+            ((binding.applicationContext.applicationInfo?.flags ?: 0) and
+                ApplicationInfo.FLAG_DEBUGGABLE) != 0
         // The offline-file bridge only serves file:// URLs inside the app's
         // download/cache trees; configure it before any playback can occur.
         HttpBridge.configure(binding.applicationContext)
@@ -390,6 +405,9 @@ class NativePlayerPlugin internal constructor(
                     cdnUrl,
                     keyHex,
                     PlayerBuildOptions(decoder, audioOnly, rateEngine),
+                    // 起播位置：在 prepare() 之前交给 ExoPlayer，等于「初始播放
+                    // 位置」而不是「已准备完再 seek」。负值/缺省当 0。
+                    call.argument<Number>("startPositionMs")?.toLong()?.coerceAtLeast(0L) ?: 0L,
                     result
                 )
             }
@@ -705,7 +723,7 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    private fun handleCreate(cdnUrl: String, keyHex: String, options: PlayerBuildOptions, result: MethodChannel.Result) {
+    private fun handleCreate(cdnUrl: String, keyHex: String, options: PlayerBuildOptions, startPositionMs: Long, result: MethodChannel.Result) {
         // Note: deferred CDN I/O — see .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
         val playerId = nextId.getAndIncrement()
         pendingPlayerIds.add(playerId)
@@ -713,7 +731,7 @@ class NativePlayerPlugin internal constructor(
 
         if (keyHex.isEmpty()) {
             handler.post {
-                createPlayerWithUri(playerId, cdnUrl, options)
+                createPlayerWithUri(playerId, cdnUrl, options, startPositionMs)
             }
         } else {
             try {
@@ -722,7 +740,7 @@ class NativePlayerPlugin internal constructor(
                 // A separate probe repeats all metadata I/O and cannot be
                 // cancelled while the native open is still obtaining a handle.
                 handler.post {
-                    createPlayerWithCrypto(playerId, cdnUrl, keyHex, options)
+                    createPlayerWithCrypto(playerId, cdnUrl, keyHex, options, startPositionMs)
                 }
             } catch (_: Throwable) {
                 failCreation(playerId)
@@ -736,13 +754,13 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    private fun createPlayerWithUri(playerId: Int, uri: String, options: PlayerBuildOptions) {
+    private fun createPlayerWithUri(playerId: Int, uri: String, options: PlayerBuildOptions, startPositionMs: Long) {
         createPlayer(playerId, options) { player ->
-            player.setMediaItem(MediaItem.fromUri(uri))
+            player.setMediaItem(MediaItem.fromUri(uri), startPositionMs)
         }
     }
 
-    private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String, options: PlayerBuildOptions) {
+    private fun createPlayerWithCrypto(playerId: Int, cdnUrl: String, keyHex: String, options: PlayerBuildOptions, startPositionMs: Long) {
         cryptoStream.clearHttpStatus(cdnUrl)
         createPlayer(playerId, options, cdnUrl) { player ->
             val dataSourceFactory = DataSource.Factory {
@@ -750,7 +768,9 @@ class NativePlayerPlugin internal constructor(
             }
             val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
                 .createMediaSource(MediaItem.fromUri("crypto://$cdnUrl"))
-            player.setMediaSource(mediaSource)
+            // 起点直接作为 media source 的初始位置：Media3 在时间线就绪后从
+            // 这里开始装载，不会先按 0 拉一段再丢掉重开。
+            player.setMediaSource(mediaSource, startPositionMs)
         }
     }
 
@@ -1187,6 +1207,8 @@ class NativePlayerPlugin internal constructor(
         override fun open(dataSpec: DataSpec): Long {
             uri = dataSpec.uri
             transferInitializing(dataSpec)
+            // 起播诊断：一次 open 要先探长度再开流，每次 seek 还会重新 open。
+            val openedAtMs = System.nanoTime() / 1_000_000
             try {
                 streamHandle = stream.open(cdnUrl, keyHex)
                 if (streamHandle == 0L) {
@@ -1217,6 +1239,21 @@ class NativePlayerPlugin internal constructor(
                 }
                 opened = true
                 transferStarted(dataSpec)
+                if (playerDiagnosticsEnabled) {
+                    // 只记数字：地址/密钥不能进日志，但「open 花了多久、从哪个偏移、
+                    // 总长多少」足够把「转圈」归到开流还是解码/起播门槛。日记账是旁路：
+                    // android.util.Log 在 JVM 单测里没有桩会抛，且这里抛出去还会被下面的
+                    // catch 当成开流失败，所以单独兜住。
+                    try {
+                        Log.d(
+                            PLAYER_LOG_TAG,
+                            "crypto open ${System.nanoTime() / 1_000_000 - openedAtMs}ms " +
+                                "at=${dataSpec.position} size=$totalSize remaining=$bytesRemaining"
+                        )
+                    } catch (_: Throwable) {
+                        // 日志不可用不影响播放。
+                    }
+                }
                 return bytesRemaining
             } catch (error: Throwable) {
                 close()
@@ -1407,7 +1444,17 @@ internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlay
             }
         )
         .setEnableAudioTrackPlaybackParams(platformRate)
-    return ExoPlayer.Builder(context, renderers).build()
+    // 默认 LoadControl 要攒够 2.5 秒媒体数据才开始播放（重缓冲门槛 5 秒）：短剧
+    // 一集只有几十秒，这个门槛就是「点开转圈」的一部分固定成本。只降起播门槛，
+    // 第 4 个参数（重缓冲）保持默认——降到 1.5 秒会在吞吐贴着码率时反复
+    // resume→stall。前两个是 DefaultLoadControl 的默认缓冲深度，显式写出只为
+    // 了让「只改了起播门槛」一眼可见；升级 Media3 时需按新默认值核对。
+    val loadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(50_000, 50_000, 800, 5_000)
+        .build()
+    return ExoPlayer.Builder(context, renderers)
+        .setLoadControl(loadControl)
+        .build()
 }
 
 /**

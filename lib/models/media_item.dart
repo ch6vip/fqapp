@@ -683,6 +683,14 @@ class Chapter {
   final bool disabled;
   final bool newlyUpdate;
 
+  /// 服务端分集方向（官方 `EpisodeInfo.vertical` / `VideoInfo.vertical`）。
+  ///
+  /// 播放页「全屏观看」只在 `!isVertical()` 时出现（`wp3/o1.java:301-347`）。
+  /// `null` = 回包没有该字段（旧缓存/离线）：与官方一致按「不竖屏」处理，
+  /// 保留按钮。官方字段是 primitive `boolean`，Gson 缺字段即为 false，
+  /// 所以这里的 null 与 false 在展示上等价，但保留 null 让「未知」可区分。
+  final bool? vertical;
+
   Chapter({
     required this.itemId,
     required this.title,
@@ -692,6 +700,7 @@ class Chapter {
     this.highlight = false,
     this.disabled = false,
     this.newlyUpdate = false,
+    this.vertical,
   });
 
   factory Chapter.fromRaw(Map<String, dynamic> m, {int? index}) => Chapter(
@@ -711,6 +720,7 @@ class Chapter {
         _flag(m, const ['disable_play', 'disablePlay']) ||
         (_asInt(m['item_status']) ?? 0) != 0,
     newlyUpdate: _flag(m, const ['is_newly_update', 'isNewlyUpdate']),
+    vertical: _optionalFlag(m, const ['vertical']),
   );
 }
 
@@ -725,6 +735,9 @@ class Episode {
   final bool disabled;
   final bool newlyUpdate;
 
+  /// 服务端分集方向（官方 `EpisodeInfo.vertical`）。见 [Chapter.vertical]。
+  final bool? vertical;
+
   Episode({
     required this.itemId,
     required this.title,
@@ -734,6 +747,7 @@ class Episode {
     this.highlight = false,
     this.disabled = false,
     this.newlyUpdate = false,
+    this.vertical,
   });
 
   factory Episode.fromRaw(Map<String, dynamic> m, {int index = 0}) => Episode(
@@ -762,6 +776,9 @@ class Episode {
     // 官方 `EpisodeInfo.is_newly_update`（`th3/e.java:133` 映射到
     // `SaasVideoData.isNewlyUpdate`，选集格子的「新」角标就看它）。
     newlyUpdate: _flag(m, const ['is_newly_update', 'isNewlyUpdate']),
+    // 官方 `EpisodeInfo.vertical`（`th3/e.java:95`）原样透传；
+    // 缺字段为 null，播放页据此保持「显示全屏观看」的旧行为。
+    vertical: _optionalFlag(m, const ['vertical']),
   );
 
   Chapter toChapter() => Chapter(
@@ -772,6 +789,7 @@ class Episode {
     highlight: highlight,
     disabled: disabled,
     newlyUpdate: newlyUpdate,
+    vertical: vertical,
   );
 }
 
@@ -840,6 +858,7 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
             highlight: chapter.highlight,
             disabled: chapter.disabled,
             newlyUpdate: chapter.newlyUpdate,
+            vertical: chapter.vertical,
           ),
         );
       }
@@ -885,6 +904,7 @@ Chapter _withVersion(Chapter chapter, Map<String, String> versions) =>
         highlight: chapter.highlight,
         disabled: chapter.disabled,
         newlyUpdate: chapter.newlyUpdate,
+        vertical: chapter.vertical,
       )
     : chapter;
 
@@ -1316,6 +1336,26 @@ bool _flag(Map<String, dynamic> m, List<String> keys) {
     }
   }
   return false;
+}
+
+/// 与 [_flag] 同源，但把「字段缺失」保留为 null。
+///
+/// 官方 `EpisodeInfo.vertical` 是 primitive boolean：Gson 缺字段读成 false。
+/// 因此调用方把 null 与 false 都当作「不竖屏」（保留「全屏观看」），
+/// 同时仍能区分这是一次真实下发还是老缓存/老后端。
+bool? _optionalFlag(Map<String, dynamic> m, List<String> keys) {
+  for (final key in keys) {
+    if (!m.containsKey(key)) continue;
+    final value = m[key];
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final text = value.trim().toLowerCase();
+      if (text == 'true' || text == '1') return true;
+      if (text == 'false' || text == '0') return false;
+    }
+  }
+  return null;
 }
 
 /// 排行行副标题（`secondary_info_list`，`SecondaryInfo.java` 的 wire 格式）。

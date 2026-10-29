@@ -41,8 +41,15 @@ class PlayerVideoLayout {
   /// width instead (`cq3/o.java:201-226`, logged as 「DisplayMode@横版片源」).
   static const double landscapeRatio = 1.666;
 
+  /// 横版片源的视频盒一律按 16:9 排，不跟 20:9 / 4:3 的真实比例走：否则每条
+  /// 剧的盒子高矮不一，分屏上下两块还跟着跳。尺寸未知时也按它占位。
+  /// 这只管**分屏盒子**的形状；整屏画面在尺寸未知时铺满视口（见 [calculate]），
+  /// 两者口径不同，不是同一层兜底。
+  static const double landscapeBoxRatio = 16 / 9;
+
   /// The size to lay out with: the decoder's own once it is known, otherwise
-  /// the 9:16 preview the card shows its cover at.
+  /// the 9:16 fallback the feed card shows its cover at. Only [fillsFrame]
+  /// still asks for it; the boxes no longer do (see [splitTopHeight]).
   static Size sourceSize(Size videoSize) =>
       videoSize.width > 0 && videoSize.height > 0
       ? videoSize
@@ -52,7 +59,9 @@ class PlayerVideoLayout {
   ///
   /// A wide source is demoted to fit-width, so the whole picture — including
   /// its burnt in captions — stays visible. An unknown size resolves to 9:16
-  /// through [sourceSize], exactly like [PlayerVideoLayout.calculate] does.
+  /// through [sourceSize]: until the decoder reports its own geometry the source
+  /// is assumed portrait, which only decides *this* predicate (the stage box in
+  /// [calculate] still fills the viewport).
   static bool fillsFrame(Size videoSize) {
     final source = sourceSize(videoSize);
     return source.width / source.height < landscapeRatio;
@@ -71,18 +80,20 @@ class PlayerVideoLayout {
     required bool fullScreen,
   }) => !fillScreen || fullScreen ? VideoFit.contain : VideoFit.fillFrame;
 
+  /// 面板展开时占整窗的比例。未知尺寸按 16:9 占位，所以跟横版一样给 .64。
   static double panelFractionFor(Size videoSize) =>
       videoSize.width <= 0 ||
           videoSize.height <= 0 ||
-          videoSize.height > videoSize.width
-      ? .55
-      : .64;
+          videoSize.height <= videoSize.width
+      ? .64
+      : .55;
 
   /// 上下分屏时上半区（视频盒）的高度。
   ///
-  /// 横屏片源按「宽度 / 宽高比」得到自然高度（宽高比夹在 1.2–2.2，避免
-  /// 超宽片源把视频压成一条）；竖屏片源最多 4:3，给下半区留出足够空间。
-  /// 最终再夹到可用高度的 22%–50%，保证画面和面板都可用。
+  /// 横版片源（含尺寸未知）一律按 [landscapeBoxRatio] 排：盒高只取决于
+  /// 宽度，20:9 与 4:3 的片子也落在同一个盒里（画面自己留黑边），不会
+  /// 因为真实比例不同而高矮不一。竖屏片源最多 4:3，给下半区留出足够
+  /// 空间。最终再夹到可用高度的 22%–50%，保证画面和面板都可用。
   static double splitTopHeight({
     required Size window,
     required EdgeInsets insets,
@@ -94,10 +105,12 @@ class PlayerVideoLayout {
       window.height - insets.top - insets.bottom,
     );
     if (availableWidth <= 0 || availableHeight <= 0) return 0;
-    final source = sourceSize(videoSize);
-    final aspect = source.width / source.height;
+    final known = videoSize.width > 0 && videoSize.height > 0;
+    final aspect = known
+        ? videoSize.width / videoSize.height
+        : landscapeBoxRatio;
     final desired = aspect >= 1
-        ? availableWidth / aspect.clamp(1.2, 2.2)
+        ? availableWidth / landscapeBoxRatio
         : math.min(availableWidth * 4 / 3, availableHeight * .42);
     final minimum = math.min(
       availableHeight * .5,
@@ -160,7 +173,12 @@ class PlayerVideoLayout {
       window.width,
       math.max(0.0, window.height - top - bottom),
     );
-    final source = sourceSize(videoSize);
+    // 尺寸未知时画面直接铺满视口：盒子的形状改由屏幕决定，封面按 cover
+    // 铺进去就是整块，而不是一条 9:16 的竖图。首帧到达后再按解码尺寸。
+    if (videoSize.width <= 0 || videoSize.height <= 0) {
+      return PlayerVideoLayout._(viewport, viewport, availableHeight);
+    }
+    final source = videoSize;
     // Filling scales until both axes cover the frame, so the caller has to clip
     // the overflow; fitting keeps the whole picture inside instead.
     final scale = fit == VideoFit.fillFrame && fillsFrame(source)

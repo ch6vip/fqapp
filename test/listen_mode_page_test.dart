@@ -217,7 +217,7 @@ void main() {
 /// 建播放器必失败的假播放器：用来验证失败路径的资源释放与提示。
 class _FailingPlayer extends FakeNativePlayer {
   @override
-  Future<int> create(String cdnUrl, String keyHex) async {
+  Future<int> create(String cdnUrl, String keyHex, {int? startMs}) async {
     calls.add('create:$cdnUrl');
     createdKeys.add(keyHex);
     throw StateError('create failed');

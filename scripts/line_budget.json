@@ -1,7 +1,7 @@
 {
   "files": {
     "lib/main.dart": 756,
-    "lib/models/media_item.dart": 1509,
+    "lib/models/media_item.dart": 1549,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_page.dart": 1995,
     "lib/pages/category_page.dart": 604,
@@ -14,7 +14,7 @@
     "lib/pages/home_provider.dart": 1362,
     "lib/pages/library_page.dart": 1775,
     "lib/pages/log_viewer_page.dart": 757,
-    "lib/pages/player_page.dart": 1982,
+    "lib/pages/player_page.dart": 1995,
     "lib/pages/rank_page.dart": 543,
     "lib/pages/reader_page.dart": 4134,
     "lib/pages/search_page.dart": 1115,
@@ -49,7 +49,7 @@
     "lib/widgets/reader/reader_ideas_sheet.dart": 691,
     "lib/widgets/reader/reader_paged_view.dart": 1045,
     "lib/widgets/reader/reader_text_selection.dart": 591,
-    "lib/widgets/video_player_chrome.dart": 4832,
+    "lib/widgets/video_player_chrome.dart": 4863,
     "native/android/jni_bridge.c": 538,
     "native/audio_tempo/sp_atempo.c": 885,
     "native/crypto_core/mp4_cenc.c": 1117,
@@ -61,7 +61,7 @@
     "rust/src/endpoints/comments.rs": 957,
     "rust/src/endpoints/manga.rs": 3162,
     "rust/src/endpoints/router.rs": 557,
-    "rust/src/endpoints/video.rs": 3231,
+    "rust/src/endpoints/video.rs": 3338,
     "test/audio_page_test.dart": 1028,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 750,
@@ -76,7 +76,7 @@
     "test/imported_book_store_test.dart": 527,
     "test/library_shelf_test.dart": 1095,
     "test/library_store_test.dart": 657,
-    "test/media_item_test.dart": 965,
+    "test/media_item_test.dart": 1016,
     "test/native_player_test.dart": 517,
     "test/playback_guest_regression_test.dart": 744,
     "test/player_page_loading_test.dart": 669,
@@ -91,7 +91,7 @@
     "test/reader_paragraph_actions_test.dart": 964,
     "test/search_page_test.dart": 865,
     "test/series_detail_page_test.dart": 865,
-    "test/video_player_chrome_test.dart": 2140
+    "test/video_player_chrome_test.dart": 2232
   },
   "functions": {
     "lib/main.dart::_RootShellState.build": {

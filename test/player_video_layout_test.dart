@@ -60,11 +60,11 @@ void main() {
     expect(above.video.height, lessThan(below.viewport.height));
   });
 
-  test('an unknown source size falls back to 9:16 and still fills', () {
+  test('an unknown size covers the viewport until the decoder reports', () {
+    // 首帧前没有解码尺寸：盒子按屏幕排（封面铺满整块），不能按 9:16 兜底
+    // 先摆一条竖图——那样横版剧一进页就按竖版排，出画面再改大小。
     final result = layout(Size.zero);
-    expect(result.video.width / result.video.height, closeTo(9 / 16, .0001));
-    expect(result.video.width, greaterThanOrEqualTo(result.viewport.width));
-    expect(result.video.height, greaterThanOrEqualTo(result.viewport.height));
+    expect(result.video, result.viewport);
   });
   test('fit contain always keeps the picture inside', () {
     // The full page player keeps this behaviour: its panel shrinks the
@@ -94,13 +94,12 @@ void main() {
   });
 
   test('an unknown size answers fill the same way in both entry points', () {
-    // `calculate` lays an unknown size out as 9:16, so `fillsFrame` has to
-    // agree — a caller using it to decide "clip or not" must not be told
-    // otherwise during the first frames.
+    // `calculate` 把未知尺寸直接铺满视口（= fill），所以 `fillsFrame` 的
+    // 9:16 兜底不能反着答：调用方用它判「要不要裁切」时两者得一致。
     expect(PlayerVideoLayout.fillsFrame(Size.zero), isTrue);
     expect(PlayerVideoLayout.sourceSize(Size.zero), const Size(9, 16));
     final result = layout(Size.zero);
-    expect(result.video.width, greaterThanOrEqualTo(result.viewport.width));
+    expect(result.video.width, result.viewport.width);
   });
 
   test('the square source fills like any other non-wide source', () {
@@ -176,17 +175,33 @@ void main() {
     const phone = Size(407, 904);
     const phoneInsets = EdgeInsets.only(top: 39, bottom: 16);
 
-    test('a wide source sizes the top half by its own aspect', () {
+    test('a wide source always gets the same 16:9 box', () {
+      // 16:9、20:9、4:3 都落进同一个盒子：画面自己留黑边，盒子不跟着真实
+      // 比例高矮不一（用户抱怨的「20:9 / 4:3 大小看着不美观」）。
+      for (final source in [
+        const Size(1920, 1080),
+        const Size(2560, 1080),
+        const Size(1440, 1080),
+      ]) {
+        final height = PlayerVideoLayout.splitTopHeight(
+          window: phone,
+          insets: phoneInsets,
+          videoSize: source,
+        );
+        expect(height, closeTo(407 / (16 / 9), .5), reason: '$source');
+      }
+    });
+
+    test('an unknown source assumes the 16:9 box', () {
+      // 首次进入还没有解码尺寸：直接按横版占位，横版剧首帧到达时盒子不动
+      // （竖版剧会从这里收到 4:3 一次）。
       final height = PlayerVideoLayout.splitTopHeight(
         window: phone,
         insets: phoneInsets,
-        videoSize: const Size(1920, 1080),
+        videoSize: Size.zero,
       );
-      final available = 904 - phoneInsets.vertical;
-      // 407 / (16/9) ≈ 228.9：横屏片源按宽度铺满，上半区自然高度。
       expect(height, closeTo(407 / (16 / 9), .5));
-      expect(height, greaterThanOrEqualTo(available * .22));
-      expect(height, lessThanOrEqualTo(available * .5));
+      expect(PlayerVideoLayout.panelFractionFor(Size.zero), .64);
     });
 
     test('a portrait source leaves at least half the height to the panel', () {
