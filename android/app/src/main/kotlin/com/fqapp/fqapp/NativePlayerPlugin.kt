@@ -167,8 +167,10 @@ class NativePlayerPlugin internal constructor(
         attachedToEngine = true
         instance = this
         flutterBinding = binding
+        // applicationInfo 在 JVM 单测里是 null（Context 是 mock），这里必须容忍；
+        // 生产环境的 applicationContext 由 Flutter 引擎给出，不受影响。
         playerDiagnosticsEnabled =
-            (binding.applicationContext.applicationInfo.flags and
+            ((binding.applicationContext.applicationInfo?.flags ?: 0) and
                 ApplicationInfo.FLAG_DEBUGGABLE) != 0
         // The offline-file bridge only serves file:// URLs inside the app's
         // download/cache trees; configure it before any playback can occur.
