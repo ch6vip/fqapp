@@ -18,6 +18,7 @@ import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/connectivity_status.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/widgets/home/home_reading_row.dart';
 import 'package:fqapp/widgets/lazy_indexed_stack.dart';
 
 import 'support/fakes.dart';
@@ -788,9 +789,14 @@ void main() {
                 ),
         );
         await tester.pumpAndSettle();
-        await tester.ensureVisible(find.text('最近读过的书'));
+        // 首页把在读的书收进顶部「继续阅读」一行（书名和章节在同一段文案里），
+        // 书架仍是带封面的条目；两边各自点进阅读页。
+        final recent = entry == '书架'
+            ? find.text('最近读过的书')
+            : find.byType(HomeContinueRow);
+        await tester.ensureVisible(recent);
         await tester.pumpAndSettle();
-        await tester.tap(find.text('最近读过的书'));
+        await tester.tap(recent);
         await tester.pumpAndSettle();
         final reader = tester.widget<ReaderPage>(find.byType(ReaderPage));
         expect(reader.startIndex, 1);

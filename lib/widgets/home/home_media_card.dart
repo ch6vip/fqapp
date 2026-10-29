@@ -1,12 +1,11 @@
-import '../../services/desktop_platform.dart';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
-import '../../services/poster_cache.dart';
 import '../../models/media_item.dart';
+import '../../services/poster_cache.dart';
 import '../cover_tag_chip.dart';
 import 'home_design.dart';
 
@@ -26,48 +25,10 @@ IconData homeKindIcon(String kind) => switch (kind) {
   _ => LucideIcons.book_open,
 };
 
-/// Fixed cover proportions, with a measured text allowance for large fonts.
-int _homeColumns(BuildContext context, double width) {
-  final scaler = MediaQuery.textScalerOf(context);
-  final largeType = scaler.scale(14) > 21;
-  if (isWindowsDesktop) {
-    return (width / (largeType ? 220 : 170)).floor().clamp(2, 9);
-  }
-  return largeType && width < 560
-      ? 2
-      : width < 300
-      ? 2
-      : width < 560
-      ? 3
-      : width < 740
-      ? 4
-      : 5;
-}
-
-/// The laid-out width of one cover cell. Shared with the cards so the decoded
-/// cover size matches the cell exactly, which lets a card skip a
-/// [LayoutBuilder] of its own.
-double homeCardWidth(BuildContext context, double width) {
-  final columns = _homeColumns(context, width);
-  return (width - (columns - 1) * 14) / columns;
-}
-
-SliverGridDelegate homeGridDelegate(BuildContext context, double width) {
-  final scaler = MediaQuery.textScalerOf(context);
-  final cardWidth = homeCardWidth(context, width);
-  return SliverGridDelegateWithFixedCrossAxisCount(
-    crossAxisCount: _homeColumns(context, width),
-    crossAxisSpacing: 14,
-    mainAxisSpacing: 22,
-    mainAxisExtent:
-        cardWidth * 1.4 +
-        8 +
-        scaler.scale(14) * 1.35 * 2 +
-        5 +
-        scaler.scale(11) * 1.3 +
-        2,
-  );
-}
+/// 评分文案：整数不带小数位（`9.3分` / `9分`）。
+String homeScoreText(double score) => score == score.roundToDouble()
+    ? '${score.toStringAsFixed(0)}分'
+    : '${score.toStringAsFixed(1)}分';
 
 class StoryCover extends StatelessWidget {
   final MediaItem item;
@@ -79,7 +40,7 @@ class StoryCover extends StatelessWidget {
   /// `cover` is the default: the grid cell itself is a tall 5:7 card, so
   /// cropping a little is fine. A desktop feed card is a landscape window
   /// instead — the same 9:16 poster laid out by width overflows several
-  /// times, leaving only the top slice visible. Pass `BoxFit.contain` there
+  /// times, leaving only the top slice visible. Pass [BoxFit.contain] there
   /// so the whole poster fits (letterboxed black, matching the desktop
   /// video's `VideoFit.contain`).
   final BoxFit fit;
@@ -169,6 +130,14 @@ class _CoverArtwork extends CustomPainter {
   bool shouldRepaint(_CoverArtwork oldDelegate) => oldDelegate.kind != kind;
 }
 
+/// The one book card on the shelf.
+///
+/// 旧版是「白卡 + 阴影 + 评分角标 + 两行简介 + 彩色 chip 行」的模板卡，信息
+/// 密度高但每一层都在抢注意力。新版把封面直接铺在画布上、只留三行字：
+/// 书名、作者/评分/一句推荐理由。封面自己就是卡片，阴影和描边都不要——
+/// 画布是 #F6F6F6，封面的色块已经足够把它和背景分开。
+///
+/// 简介不进网格：网格负责扫，主视觉负责读。
 class HomeMediaCard extends StatelessWidget {
   final MediaItem item;
   final VoidCallback onTap;
@@ -189,188 +158,122 @@ class HomeMediaCard extends StatelessWidget {
     final palette = HomePalette.of(context);
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final scaler = MediaQuery.textScalerOf(context);
+    final meta = _metaText(item);
     return _CardWidth(
       width: coverWidth,
       builder: (width) => HomePressable(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
+        semanticLabel: item.title,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AspectRatio(
               aspectRatio: 5 / 7,
               child: RepaintBoundary(
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: palette.line.withValues(alpha: 0.55),
-                      width: 0.6,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: palette.dark ? 0.28 : 0.05,
-                        ),
-                        blurRadius: 8,
-                        offset: const Offset(0, 3),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      StoryCover(
+                        item: item,
+                        cacheWidth: (width * pixelRatio).ceil(),
                       ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(11.4),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        StoryCover(
-                          item: item,
-                          cacheWidth: (width * pixelRatio).ceil(),
-                        ),
+                      // 只有带配色的角标才是促销标签；没有颜色的 tag 是
+                      // 搜索结果里的分类文字，不在封面上重复。
+                      if (item.tag case final MediaTag tag when tag.hasColors)
                         Positioned(
-                          left: 7,
-                          top: 7,
-                          right: 7,
-                          child: Row(
-                            children: [
-                              CoverTagChip(label: homeKindLabel(item.kind)),
-                              // Only coloured tags are badges; see MediaTag.hasColors.
-                              if (item.tag case final MediaTag tag
-                                  when tag.hasColors) ...[
-                                const SizedBox(width: 4),
-                                // Flexible so a long upstream label ellipsizes
-                                // instead of overflowing the cover.
-                                Flexible(
-                                  child: CoverTagChip(
-                                    key: const Key('home_card_tag'),
-                                    label: tag.text,
-                                    colors: tag.colorsFor(dark: palette.dark),
-                                  ),
-                                ),
-                              ],
-                            ],
+                          left: 8,
+                          top: 8,
+                          right: 8,
+                          child: Align(
+                            alignment: Alignment.topLeft,
+                            child: CoverTagChip(
+                              key: const Key('home_card_tag'),
+                              label: tag.text,
+                              colors: tag.colorsFor(dark: palette.dark),
+                            ),
                           ),
                         ),
-                        if (item.ep.isNotEmpty)
-                          Positioned(
-                            left: 7,
-                            right: 7,
-                            bottom: 7,
-                            child: Align(
-                              alignment: Alignment.bottomRight,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF1C1B1A,
-                                  ).withValues(alpha: 0.72),
-                                  borderRadius: BorderRadius.circular(5),
-                                ),
-                                child: Text(
-                                  item.ep,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9,
-                                    height: 1.2,
+                      if (item.ep.isNotEmpty && isVideoKind(item.kind))
+                        Positioned(
+                          left: 8,
+                          right: 8,
+                          bottom: 8,
+                          child: Align(
+                            alignment: Alignment.bottomRight,
+                            child: Text(
+                              item.ep,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                height: 1.2,
+                                fontWeight: FontWeight.w600,
+                                shadows: [
+                                  Shadow(
+                                    color: Color(0xCC000000),
+                                    blurRadius: 2,
                                   ),
-                                ),
+                                ],
                               ),
                             ),
                           ),
-                      ],
-                    ),
+                        ),
+                    ],
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: scaler.scale(14) * 1.35 * 2,
+              height: scaler.scale(15) * 1.35 * 2,
               child: Text(
                 item.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 15,
                   height: 1.35,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w600,
                   color: palette.ink,
                 ),
               ),
             ),
-            const SizedBox(height: 5),
-            Text(
-              item.author.isNotEmpty
-                  ? item.author
-                  : item.badge.isNotEmpty
-                  ? item.badge
-                  : homeKindLabel(item.kind),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, height: 1.3, color: palette.muted),
-            ),
+            if (meta.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                meta,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.3,
+                  color: palette.muted,
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
-}
 
-class HomeSectionHeader extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  const HomeSectionHeader({
-    super.key,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 4,
-                height: 18,
-                decoration: BoxDecoration(
-                  color: HomePalette.accent,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 20,
-                    height: 1.2,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.4,
-                    color: palette.ink,
-                  ),
-                ),
-              ),
-              Icon(LucideIcons.compass, size: 19, color: palette.muted),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: TextStyle(fontSize: 12, height: 1.3, color: palette.muted),
-          ),
-        ],
-      ),
-    );
+  /// 作者 · 第一条推荐理由 · 评分。都是 11sp 的一行灰字，不抢书名。
+  static String _metaText(MediaItem item) {
+    final score = item.score;
+    return [
+      if (item.author.isNotEmpty) item.author,
+      if (item.recTags.isNotEmpty) item.recTags.first.text,
+      if (score != null) homeScoreText(score),
+      if (item.author.isEmpty &&
+          item.recTags.isEmpty &&
+          score == null &&
+          item.kind != 'book')
+        homeKindLabel(item.kind),
+    ].join(' · ');
   }
 }
 

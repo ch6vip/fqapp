@@ -1,18 +1,22 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fqapp/widgets/home/home_cell_blocks.dart';
+import 'package:fqapp/widgets/home/home_shelf.dart';
 
-// `homeColumnCount`：书卡网格列数（`us3.a.q()` 直译，平板断点）。
-// 其余 S1 白卡断言已随白卡管线删除（流区块改为裸网格对齐官方）。
-
+// `homeShelfColumns`：书架网格的列数。手机 3 列（≥360dp 内容宽），小屏和
+// 大字号退回 2 列；平板/桌面按宽度放宽。
 void main() {
   late BuildContext context;
 
-  Future<void> pump(WidgetTester tester) async {
+  Future<void> pump(WidgetTester tester, {double textScale = 1}) async {
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
         home: Builder(
           builder: (inner) {
             context = inner;
@@ -23,29 +27,27 @@ void main() {
     );
   }
 
-  testWidgets('phone keeps 2 columns, pads follow the breakpoints', (
+  testWidgets('a phone holds three columns, a narrow one holds two', (
     tester,
   ) async {
     await pump(tester);
 
-    // `b()` 平板适配开关关着，手机恒 2 列。
-    expect(homeColumnCount(context), 2);
-    // 默认测试面 800×600：短边 600 落在 [516, 1024)。
-    expect(homeColumnCount(context, padAdapt: true), 3);
+    // 400dp 屏减去 16dp 栏距后内容宽 368。
+    expect(homeShelfColumns(context, 368), 3);
+    // 320dp 屏内容宽 288：三列时书名只剩四五个字，退到两列。
+    expect(homeShelfColumns(context, 288), 2);
   });
 
-  testWidgets('windows desktop widens the stream instead of 2 columns', (
+  testWidgets('large type drops a 400-wide phone to two columns', (
     tester,
   ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    try {
-      await pump(tester);
-      // 平板适配开关不覆盖桌面：桌面窗口若死守 2 列，1280 宽下每张卡
-      // 570dp、封面 1.4 高，两张卡就吃掉一整屏。桌面按同一套断点走。
-      expect(homeColumnCount(context), greaterThan(2));
-      expect(homeColumnCount(context), 3);
-    } finally {
-      debugDefaultTargetPlatformOverride = null;
-    }
+    await pump(tester, textScale: 1.8);
+    expect(homeShelfColumns(context, 368), 2);
+  });
+
+  testWidgets('tablets and desktop widen the grid', (tester) async {
+    await pump(tester);
+    expect(homeShelfColumns(context, 700), 4);
+    expect(homeShelfColumns(context, 950), 5);
   });
 }

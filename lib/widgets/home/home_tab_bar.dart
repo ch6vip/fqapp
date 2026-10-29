@@ -18,17 +18,20 @@ const homeCategories = [
   HomeCategory('听书', Icons.circle),
 ];
 
-/// 官方书城顶部 tab 条（`res/layout/alx.xml` 的 `SlidingTabLayout aj0`）。
+/// 书城顶部 tab 条。官方对照（`res/layout/alx.xml` 的 `SlidingTabLayout
+/// aj0`）留在这里，当前实现已经按首页重做时的方向改过：
 ///
-/// 尺寸取自反编译布局，只有左右内边距按用户要求收口：
+/// 官方尺寸如下，只有左右内边距按用户要求收口：
 /// * 高度 38dp，paddingBottom 10dp；
-/// * 选中字号 `av5` = 24sp，未选中字号 `avq` = 16sp；
+/// * 选中字号 `av5` = 24sp，未选中字号 `avq` = 16sp（现为 17/15）；
 /// * 选中色 `aui` 与未选中色 `avn` 都是 `skin_color_black_light`(#000000)
 ///   —— 官方不靠颜色区分，只靠字号、字重（两态都粗体）和未选中 0.4 透明度；
+///   现版改用墨色 / 次级灰两级；
 /// * tab 间距 `avb` = 20dp（`SlidingTabLayout.O()` 里
 ///   `setMargins(0, 0, this.K, 0)`，`this.K` 就是 `avb`），tab 高 `avc` = 34dp；
 /// * 指示器：`aup` = 0dp（高度 0）。`onDraw` 里 `if (this.s > 0.0f)` 才绘制，
-///   所以官方书城顶栏**没有下划线**。`auw` = 16dp 是宽度，高度为 0 时无效。
+///   所以官方书城顶栏**没有下划线**。`auw` = 16dp 是宽度，高度为 0 时无效；
+///   现版取其 16dp 宽，补一条 2.5dp 的墨色短线。
 ///
 /// 左右内边距官方是 `paddingStart` 20dp / `paddingEnd` 13dp——**本来就不对称**，
 /// 贴上去后「推荐」左侧的空隙明显大于末位 tab 右侧（用户 2026-10-25 指出）。
@@ -41,13 +44,17 @@ const homeCategories = [
 /// 条竖线上。
 ///
 /// 上一版是圆角胶囊 + 图标 + 橙色选中底，和官方完全不是一种东西。
+///
+/// 2026-10-26 首页重做：字号从官方的 24/16 收到 17/15，未选中不再是同一
+/// 墨色的 40% 透明，而是次级灰；选中项下方补一条 16×2.5dp 的墨色短线。
+/// 字号跳变太大时条带会「一顿一顿」地变宽，这是新版的另一处改动。
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
-  static const double barHeight = 38;
+  static const double barHeight = 40;
   // `alx.xml` 为 10dp；2026-10-24 用户拍板不对齐官方——顶栏与排行榜条
   // 的距离按视觉收紧（与区块头 margin 联动，见 _rankStripTopMargin）。
-  static const double bottomPadding = 4;
-  static const double selectedSize = 24;
-  static const double unselectedSize = 16;
+  static const double bottomPadding = 6;
+  static const double selectedSize = 17;
+  static const double unselectedSize = 15;
   static const double tabSpacing = 20;
 
   /// 条带的左右栏距：与 [HomeHero] 搜索框一致（官方 20/13 的不对称见类注释）。
@@ -56,9 +63,6 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   /// 放得下时每个间隔最多再撑这么多：桌面宽窗里若按富余等比摊开，六个分类会被
   /// 摊到整屏两端，比留白更难看。
   static const double maxExtraSpacing = 12;
-
-  /// 未选中项的透明度 `avr`（`SlidingTabLayout.a6`，`L2048 getFloat(55, 0.4f)`）。
-  static const double unselectedAlpha = 0.4;
 
   final int selectedIndex;
   final ValueChanged<int> onSelect;
@@ -176,8 +180,8 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
 
   TextStyle _labelStyle(bool selected, HomePalette palette) => TextStyle(
     fontSize: selected ? selectedSize : unselectedSize,
-    fontWeight: FontWeight.w700,
-    color: palette.ink.withValues(alpha: selected ? 1 : unselectedAlpha),
+    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+    color: selected ? palette.ink : palette.muted,
     height: 1,
   );
 
@@ -207,13 +211,27 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
         // `alpha = a6` = 0.4（`avr`，`L2048 getFloat(55, 0.4f)`）。
         child: SizedBox(
           height: rowHeight,
-          child: Center(
-            child: AnimatedDefaultTextStyle(
-              duration: duration,
-              curve: Curves.easeOutCubic,
-              style: _labelStyle(selected, palette),
-              child: Text(category.label),
-            ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedDefaultTextStyle(
+                duration: duration,
+                curve: Curves.easeOutCubic,
+                style: _labelStyle(selected, palette),
+                child: Text(category.label),
+              ),
+              const SizedBox(height: 5),
+              AnimatedContainer(
+                duration: duration,
+                curve: Curves.easeOutCubic,
+                width: 16,
+                height: 2.5,
+                decoration: BoxDecoration(
+                  color: selected ? palette.ink : Colors.transparent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ],
           ),
         ),
       ),

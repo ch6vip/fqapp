@@ -11,6 +11,7 @@ import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/home/home_hero.dart';
+import 'package:fqapp/widgets/home/home_shelf.dart';
 import 'package:fqapp/widgets/home/home_skeleton.dart';
 
 void main() {
@@ -68,7 +69,6 @@ void main() {
         await tester.tap(tab);
         await tester.pumpAndSettle();
         expect(find.text('$label 作品'), findsOneWidget);
-        if (label == '漫剧') expect(find.text('观看漫剧'), findsOneWidget);
         expect(tester.takeException(), isNull);
       }
     },
@@ -218,12 +218,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 排行榜标题在；卡片流的标题按 m0.java case 82 强制隐藏。
+    // 排行榜标题在；卡片流合并进一个「为你推荐」段落，上游的「猜你喜欢」
+    // 这个名字不再出现。
     expect(find.text('排行榜'), findsWidgets);
     expect(find.text('猜你喜欢'), findsNothing);
-    // 排行榜预览：序号 1、2 都渲染出来（官方 b7d.xml 的序号列）。
-    expect(find.text('1'), findsWidgets);
-    expect(find.text('2'), findsWidgets);
+    expect(find.text('为你推荐'), findsOneWidget);
+    // 排行榜预览：前三名戴 TOP 角标，名次来自榜单顺序。
+    expect(find.text('TOP 1'), findsWidgets);
+    expect(find.text('TOP 2'), findsWidgets);
     // 卡片都在（榜单书 + 书卡流，流无标题、无话题卡）。
     expect(find.text('榜单书一'), findsWidgets);
     expect(find.text('猜你喜欢一'), findsWidgets);
@@ -299,7 +301,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('home_category_1')));
     await tester.pumpAndSettle();
 
-    // 无限流（384/385）不渲染自己的标题，只有卡片。
+    // 区块的卡片并进当前分类的书架，标题用分类名，不用区块名。
+    expect(
+      tester.widget<HomeSectionHeader>(find.byType(HomeSectionHeader)).title,
+      '经典',
+    );
     expect(find.text('经典必读'), findsNothing);
     expect(find.text('经典书一'), findsWidgets);
     // 旧管线的东西不该出现。
@@ -471,9 +477,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(message), findsOneWidget);
     expect(tester.takeException(), isNull);
-    final scrollable = find.descendant(
-      of: find.byType(SingleChildScrollView),
-      matching: find.byType(Scrollable),
+    // 冷启动失败不再整页替换：搜索行和分类条还在，用户可以直接换个分类。
+    expect(find.text(HomeHero.searchHint), findsOneWidget);
+    expect(find.byKey(const ValueKey('home_category_0')), findsOneWidget);
+    final scrollable = find.byWidgetPredicate(
+      (widget) =>
+          widget is Scrollable && widget.axisDirection == AxisDirection.down,
     );
     expect(
       tester.state<ScrollableState>(scrollable).position.maxScrollExtent,

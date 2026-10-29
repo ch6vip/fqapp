@@ -9,7 +9,6 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
-import 'package:fqapp/widgets/home/home_cell_blocks.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 
@@ -208,123 +207,119 @@ void main() {
     expect(find.text('第一条'), findsOneWidget);
   });
 
-  testWidgets('a pagination state flip does not rebuild the mounted block cards', (
-    tester,
-  ) async {
-    // The block pipeline (rank strip + staggered stream) must reuse its
-    // content slivers across the `isLoadMore` flip the same way the legacy
-    // grid short-circuits through `_gridSliverFor`: the flip publishes a new
-    // state carrying the same cells instance, and rebuilding the block list
-    // with a fresh child delegate would rebuild every mounted card twice per
-    // page load (`SliverChildBuilderDelegate.shouldRebuild` is always true).
-    await tester.binding.setSurfaceSize(const Size(400, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+  testWidgets(
+    'a pagination state flip does not rebuild the mounted block cards',
+    (tester) async {
+      // The block pipeline (rank strip + staggered stream) must reuse its
+      // content slivers across the `isLoadMore` flip the same way the legacy
+      // grid short-circuits through `_gridSliverFor`: the flip publishes a new
+      // state carrying the same cells instance, and rebuilding the block list
+      // with a fresh child delegate would rebuild every mounted card twice per
+      // page load (`SliverChildBuilderDelegate.shouldRebuild` is always true).
+      await tester.binding.setSurfaceSize(const Size(400, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 
-    MediaItem book(String id) => MediaItem(
-      id: id,
-      title: id,
-      cover: '',
-      author: '',
-      badge: '',
-      ep: '',
-      kind: 'book',
-    );
+      MediaItem book(String id) => MediaItem(
+        id: id,
+        title: id,
+        cover: '',
+        author: '',
+        badge: '',
+        ep: '',
+        kind: 'book',
+      );
 
-    final releasePage2 = Completer<void>();
-    final container = ProviderContainer(
-      overrides: [
-        homeProvider.overrideWith(
-          () => HomeNotifier(
-            homepageLoader:
-                ({
-                  int tabType = 2,
-                  int offset = 0,
-                  String? sessionId,
-                }) async {
-                  if (offset == 0) {
+      final releasePage2 = Completer<void>();
+      final container = ProviderContainer(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              homepageLoader:
+                  ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                    if (offset == 0) {
+                      return HomepagePage(
+                        items: const [],
+                        cells: [
+                          HomeCell(
+                            showType: 384,
+                            name: '猜你喜欢',
+                            id: '',
+                            style: const {},
+                            items: const [],
+                            children: [
+                              HomeCell(
+                                showType: 385,
+                                name: '',
+                                id: '',
+                                style: const {},
+                                items: [
+                                  for (var i = 0; i < 8; i++) book('p1-$i'),
+                                ],
+                                children: const [],
+                              ),
+                            ],
+                          ),
+                        ],
+                        nextOffset: 1,
+                        sessionId: null,
+                      );
+                    }
+                    await releasePage2.future;
                     return HomepagePage(
-                      items: const [],
-                      cells: [
-                        HomeCell(
-                          showType: 384,
-                          name: '猜你喜欢',
-                          id: '',
-                          style: const {},
-                          items: const [],
-                          children: [
-                            HomeCell(
-                              showType: 385,
-                              name: '',
-                              id: '',
-                              style: const {},
-                              items: [for (var i = 0; i < 8; i++) book('p1-$i')],
-                              children: const [],
-                            ),
-                          ],
-                        ),
-                      ],
-                      nextOffset: 1,
+                      items: [book('p2-0'), book('p2-1')],
+                      nextOffset: null,
                       sessionId: null,
                     );
-                  }
-                  await releasePage2.future;
-                  return HomepagePage(
-                    items: [book('p2-0'), book('p2-1')],
-                    nextOffset: null,
-                    sessionId: null,
-                  );
-                },
-            searchLoader: (query, {int page = 1}) async => const [],
+                  },
+              searchLoader: (query, {int page = 1}) async => const [],
+            ),
           ),
-        ),
-      ],
-    );
-    addTearDown(container.dispose);
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp(home: HomePage(scrollController: controller)),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    Map<Key, HomeBookCard> cards() => {
-      for (final element in find.byType(HomeBookCard).evaluate())
-        if ((element.widget as HomeBookCard).key case final Key key)
-          key: element.widget as HomeBookCard,
-    };
-    final before = cards();
-    expect(before, isNotEmpty);
-
-    // Page 2 hangs on the completer, so the `isLoadMore: true` frame — the
-    // state flip this test protects — is observable on its own.
-    unawaited(container.read(homeProvider.notifier).loadMore());
-    await tester.pump();
-
-    final during = cards();
-    final stayed = before.keys.toSet().intersection(during.keys.toSet());
-    expect(stayed, isNotEmpty, reason: 'the flip must leave cards mounted');
-    for (final key in stayed) {
-      expect(
-        identical(before[key], during[key]),
-        isTrue,
-        reason: '$key was rebuilt by a pagination state flip alone',
+        ],
       );
-    }
+      addTearDown(container.dispose);
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(home: HomePage(scrollController: controller)),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    releasePage2.complete();
-    await tester.pumpAndSettle();
-    // The append is a new cells instance, so the stream must grow: jumping to
-    // the bottom lays the second page's cards in and scrolls them on screen.
-    controller.jumpTo(controller.position.maxScrollExtent);
-    await tester.pumpAndSettle();
-    expect(find.text('p2-0'), findsOneWidget);
-    // The bottom jump started another pagination cycle; let its 500ms poll
-    // timer and the 2s snapshot debounce expire so none stays pending.
-    await tester.pump(const Duration(seconds: 3));
-  });
+      Map<Key, HomeEntrance> cards() => entrances(tester);
+      final before = cards();
+      expect(before, isNotEmpty);
 
+      // Page 2 hangs on the completer, so the `isLoadMore: true` frame — the
+      // state flip this test protects — is observable on its own.
+      unawaited(container.read(homeProvider.notifier).loadMore());
+      await tester.pump();
+
+      final during = cards();
+      final stayed = before.keys.toSet().intersection(during.keys.toSet());
+      expect(stayed, isNotEmpty, reason: 'the flip must leave cards mounted');
+      for (final key in stayed) {
+        expect(
+          identical(before[key], during[key]),
+          isTrue,
+          reason: '$key was rebuilt by a pagination state flip alone',
+        );
+      }
+
+      releasePage2.complete();
+      await tester.pumpAndSettle();
+      // The append is a new cells instance, so the stream must grow: jumping to
+      // the bottom lays the second page's cards in and scrolls them on screen.
+      controller.jumpTo(controller.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      // 第二页第一张是主视觉（页面顶部已滚出视口），网格里能确认的
+      // 是它的第二张。
+      expect(find.text('p2-1'), findsOneWidget);
+      // The bottom jump started another pagination cycle; let its 500ms poll
+      // timer and the 2s snapshot debounce expire so none stays pending.
+      await tester.pump(const Duration(seconds: 3));
+    },
+  );
 }

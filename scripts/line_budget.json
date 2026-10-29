@@ -10,8 +10,8 @@
     "lib/pages/drama_download_sheet.dart": 661,
     "lib/pages/drama_page.dart": 4985,
     "lib/pages/fanqie_history_import_page.dart": 624,
-    "lib/pages/home_page.dart": 622,
-    "lib/pages/home_provider.dart": 1362,
+    "lib/pages/home_page.dart": 654,
+    "lib/pages/home_provider.dart": 1381,
     "lib/pages/library_page.dart": 1775,
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1995,
@@ -40,7 +40,6 @@
     "lib/widgets/detail/detail_hero.dart": 514,
     "lib/widgets/detail/detail_reviews.dart": 566,
     "lib/widgets/detail/detail_sections.dart": 641,
-    "lib/widgets/home/home_cell_blocks.dart": 1054,
     "lib/widgets/player/player_split_panel.dart": 618,
     "lib/widgets/player/playlet_danmaku_layer.dart": 569,
     "lib/widgets/player/story_player_panel.dart": 1082,
@@ -71,10 +70,10 @@
     "test/drama_downloader_test.dart": 563,
     "test/drama_inline_playback_test.dart": 1204,
     "test/drama_page_test.dart": 2092,
-    "test/home_page_test.dart": 770,
+    "test/home_page_test.dart": 779,
     "test/home_provider_test.dart": 1122,
     "test/imported_book_store_test.dart": 527,
-    "test/library_shelf_test.dart": 1095,
+    "test/library_shelf_test.dart": 1101,
     "test/library_store_test.dart": 657,
     "test/media_item_test.dart": 1016,
     "test/native_player_test.dart": 517,
@@ -352,16 +351,6 @@
     "lib/widgets/detail/detail_sections.dart::DetailAuthorRow.build": {
       "line": 28,
       "lines": 92,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/home/home_cell_blocks.dart::HomeBookCard.build": {
-      "line": 507,
-      "lines": 145,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/home/home_cell_blocks.dart::_HomeRankCellState.build": {
-      "line": 851,
-      "lines": 82,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/home/home_media_card.dart::HomeMediaCard.build": {
