@@ -263,33 +263,32 @@ class NativePlayer {
 
   final _createdCompleter = Completer<int>();
 
-  Future<int> create(String cdnUrl, String keyHex) {
+  /// 起播位置（毫秒）：> 0 才下发；原生在 prepare() 前应用，不是装载后再 seek。
+  Future<int> create(String cdnUrl, String keyHex, {int? startMs}) {
     if (_disposed) {
       return Future<int>.error(StateError('NativePlayer is disposed'));
     }
-    return _createFuture ??= _create(cdnUrl, keyHex);
+    return _createFuture ??= _create(cdnUrl, keyHex, startMs);
   }
 
-  Future<int> _create(String cdnUrl, String keyHex) async {
+  Future<int> _create(String cdnUrl, String keyHex, int? startMs) async {
     _ensureGlobalListener();
-    // Disposal or an early native error can finish this future before the
-    // method reply supplies an id. Observe errors now; the await below still
-    // propagates them to create's caller.
+    // An early native error can finish this future before the reply supplies an
+    // id; observe it now, the await below still rethrows to create's caller.
     _createdCompleter.future.ignore();
     try {
       final reply = _channel
           .invokeMapMethod<String, dynamic>('create', {
             'cdnUrl': cdnUrl,
             'keyHex': keyHex,
-            // 解码器偏好必须是**已解析的值**，不能在这里 await 读盘：create 位于
-            // 起播的关键路径上，等 SharedPreferences 会让没有初始化插件的测试
-            // （以及冷启动）一直挂住。偏好由 `DecoderPreferenceCache` 在启动和
-            // 设置变更时维护。
+            // 起播位置：原生在 prepare() 前应用，省一次「先按 0 开流再 seek」。
+            if (startMs != null && startMs > 0) 'startPositionMs': startMs,
+            // 解码器偏好必须是**已解析的值**：create 在起播关键路径上，await 读盘会让没有
+            // 初始化插件的测试与冷启动挂住；由 `DecoderPreferenceCache` 在启动/变更时维护。
             'videoDecoder': DecoderPreferenceCache.current.name,
-            // 纯音频播放器才带上变速引擎：视频用内建 Sonic（音频处理与视频
-            // 渲染必须同步计时），只有听书能选系统混音器变速（issue #129）。
-            // 值取内存里的偏好（启动时 load 过），理由与解码器偏好相同：
-            // 起播路径上不能 await 读盘。
+            // 纯音频播放器才带上变速引擎：视频用内建 Sonic（音频与视频必须同步计时），
+            // 只有听书能选系统混音器变速（issue #129）。值同样取内存里的偏好（启动时
+            // load 过），理由与解码器偏好相同：起播路径上不能 await 读盘。
             if (audioOnly) ...{
               'audioOnly': true,
               'audioRateEngine': AudioRateEngineCache.current.name,
@@ -327,13 +326,15 @@ class NativePlayer {
       if (_disposed) {
         throw StateError('NativePlayer was disposed during creation');
       }
-      // _textureId is maintained by the event handler, not by the completer's
-      // value: a textureChanged that arrived with the pending replay (native
-      // posts created → decoderInitialized → textureChanged in order) already
-      // superseded the created id, and assigning the completer's stale value
-      // here would resurrect the dead texture.
+      // _textureId comes from the event handler, not the completer: a replayed
+      // textureChanged already superseded the created id, so assigning the stale
+      // completer value here would resurrect the dead texture.
       if (_textureId == null) {
         throw StateError('Native player returned no texture id');
+      }
+      if (startMs != null && startMs > 0) {
+        _position = Duration(milliseconds: startMs);
+        _positionCtrl.add(_position);
       }
       return _textureId!;
     } catch (_) {
@@ -374,9 +375,8 @@ class NativePlayer {
   Future<void> seek(Duration position) async {
     final generation = ++_seekGeneration;
     await _invoke('seek', {'positionMs': position.inMilliseconds});
-    // Record every natively acknowledged seek, not just the newest call. If a
-    // later overlapping seek fails, the position ExoPlayer actually accepted
-    // must survive instead of reverting to the stale pre-seek value.
+    // Record every acknowledged seek: if a later overlapping seek fails, the
+    // position ExoPlayer actually accepted must survive the stale pre-seek value.
     if (_disposed || generation <= _appliedSeekGeneration) return;
     _appliedSeekGeneration = generation;
     // ExoPlayer acknowledges seek before its next position tick. Preserve the

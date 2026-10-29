@@ -276,6 +276,38 @@ void main() {
     expect(legacy.keyHex, isEmpty);
     expect(() => EpisodeSource.fromResponse({}), throwsA(isA<ApiException>()));
   });
+
+  test('source parsing carries the episode vertical flag', () {
+    // 官方 `VideoInfo.vertical` 随取流响应下发；缺字段必须是 null，
+    // 播放页才会保持旧行为（显示「全屏观看」）。
+    final vertical = EpisodeSource.fromResponse({
+      'video_url': 'https://example.invalid/a.mp4',
+      'vertical': true,
+    });
+    expect(vertical.vertical, isTrue);
+    final horizontal = EpisodeSource.fromResponse({
+      'video_url': 'https://example.invalid/a.mp4',
+      'vertical': 0,
+    });
+    expect(horizontal.vertical, isFalse);
+    final unknown = EpisodeSource.fromResponse({
+      'video_url': 'https://example.invalid/a.mp4',
+    });
+    expect(unknown.vertical, isNull);
+    expect(
+      vertical
+          .withVariant(
+            const EpisodeVariant(
+              name: '720P',
+              url: 'u',
+              keyHex: 'k',
+              height: 720,
+            ),
+          )
+          .vertical,
+      isTrue,
+    );
+  });
 }
 
 Chapter _chapter(String id) => Chapter(itemId: id, title: id, volumeName: '');

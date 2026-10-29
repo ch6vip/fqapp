@@ -95,6 +95,57 @@ void main() {
     expect(chapters.map((c) => c.title), ['第1集', '第2集']);
   });
 
+  test('keeps the episode vertical flag through every directory shape', () {
+    // 官方 `EpisodeInfo.vertical`：缺字段 = null，播放页仍显示「全屏观看」；
+    // 显式 true 才是竖屏，播放页隐藏该按钮。
+    final chapter = Chapter.fromRaw({'item_id': 'v1', 'vertical': true});
+    expect(chapter.vertical, isTrue);
+    expect(
+      Chapter.fromRaw({'item_id': 'v2', 'vertical': false}).vertical,
+      isFalse,
+    );
+    expect(Chapter.fromRaw({'item_id': 'v3'}).vertical, isNull);
+    expect(
+      Chapter.fromRaw({'item_id': 'v4', 'vertical': 'true'}).vertical,
+      isTrue,
+    );
+
+    final episode = Episode.fromRaw({
+      'item_id': 'e1',
+      'vertical': true,
+    }, index: 0);
+    expect(episode.vertical, isTrue);
+    expect(episode.toChapter().vertical, isTrue);
+
+    final dramas = parseDirectory({
+      'data': {
+        'episodes': [
+          {'item_id': 'e1', 'vertical': true},
+          {'item_id': 'e2', 'vertical': false},
+          {'item_id': 'e3'},
+        ],
+      },
+    }).expand((v) => v).toList();
+    expect(dramas.map((c) => c.vertical), [true, false, null]);
+
+    // `_withVersion` 的复制路径也必须带上该字段（目录的
+    // chapterListWithVolume 条目从 item_data_list 补 version）。
+    final withVersion = parseDirectory({
+      'data': {
+        'chapterListWithVolume': [
+          [
+            {'item_id': 'c1', 'title': '第1集', 'vertical': true},
+          ],
+        ],
+        'item_data_list': [
+          {'item_id': 'c1', 'version': 'v_1'},
+        ],
+      },
+    }).expand((v) => v).toList();
+    expect(withVersion.single.version, 'v_1');
+    expect(withVersion.single.vertical, isTrue);
+  });
+
   test('parses a direct array directory response', () {
     final payload = {
       'code': 200,

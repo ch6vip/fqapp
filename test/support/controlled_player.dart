@@ -55,12 +55,18 @@ class ControlledNativePlayer extends FakeNativePlayer {
   }
 
   @override
-  Future<int> create(String cdnUrl, String keyHex) async {
+  Future<int> create(String cdnUrl, String keyHex, {int? startMs}) async {
     calls.add('create:$cdnUrl');
     await createGate?.future;
     if (disposed) throw StateError('Player disposed during creation');
     _created = true;
     calls.add('created');
+    // 原生把 startMs 当初始播放位置：位置事件得跟着走，否则「进度恢复」
+    // 一类断言会看到 0。
+    if (startMs != null && startMs > 0) {
+      createdStartMs.add(startMs);
+      emitPosition(Duration(milliseconds: startMs));
+    }
     return 1;
   }
 

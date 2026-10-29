@@ -318,18 +318,22 @@ void main() {
     });
   }
 
-  testWidgets('the full-page texture stays covered until its size is known', (
+  testWidgets('an unknown size fills the screen until the decoder reports', (
     tester,
   ) async {
     final player = await _mount(tester, videoSize: Size.zero, settle: false);
-    expect(find.byKey(const ValueKey('player-cover')), findsOneWidget);
+    // 首帧前没有解码尺寸：盒子直接铺满（= 屏幕分辨率），不再盖封面。
+    expect(find.byKey(const ValueKey('player-cover')), findsNothing);
+    final texture = find.byKey(const ValueKey('player-texture'));
+    final before = tester.getRect(texture);
 
     // Native playback may report its first frame before the video-size event.
-    // The cover must remain until the layout has the real rendition geometry.
+    // 尺寸到达后画面按真实比例收窄，仍不出现封面。
     player.emitVideoSize(1920, 1080);
     await tester.pump();
     expect(find.byKey(const ValueKey('player-cover')), findsNothing);
-    expect(find.byKey(const ValueKey('player-texture')), findsOneWidget);
+    expect(texture, findsOneWidget);
+    expect(tester.getRect(texture).height, lessThan(before.height));
     expect(tester.takeException(), isNull);
   });
 
