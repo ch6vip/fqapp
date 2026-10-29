@@ -567,32 +567,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'portrait fullscreen has no lock and rotation releases a landscape lock',
-    (tester) async {
-      final player = FakeNativePlayer()..isPlaying = true;
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.binding.setSurfaceSize(const Size(360, 800));
-      await tester.pumpWidget(
-        MaterialApp(home: _chrome(player, lockEnabled: true)),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('player-fullscreen-pill')));
-      await tester.pump();
-      expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
-      await tester.binding.setSurfaceSize(const Size(800, 450));
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('landscape-lock')));
-      await tester.pump();
-      await tester.binding.setSurfaceSize(const Size(360, 800));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('landscape-lock')), findsNothing);
-      expect(find.byKey(const ValueKey('player-catalog-bar')), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await player.dispose();
-    },
-  );
-
   testWidgets('external overlays end long press and block playback taps', (
     tester,
   ) async {

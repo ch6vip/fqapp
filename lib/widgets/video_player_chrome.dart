@@ -20,12 +20,15 @@ import '../services/player_style_config.dart';
 import '../services/short_series_font_scale.dart';
 import '../models/playlet_comment.dart';
 import 'home/home_design.dart';
+import 'player/playlet_clear_screen_button.dart';
 import 'player/playlet_danmaku_layer.dart';
 import 'player/playlet_danmaku_settings.dart';
 import 'player/playlet_font_scale_sheet.dart';
+import 'player/playlet_fullscreen_pill.dart';
 import 'player/story_player_panel.dart';
 import 'player/playlet_hot_comment_bar.dart';
 import 'player/playlet_more_panel.dart';
+import 'player/playlet_split_status_bar.dart';
 import 'player/playlet_more_panel_light.dart';
 import 'player/playlet_more_panel_side.dart';
 import 'player/playlet_option_sheet.dart';
@@ -334,7 +337,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 两边都没有倍速入口。分屏（compact）走自己的紧凑条，这里恒为 false。
   bool get _bottomRateTextVisible {
     final landscape = _windowLandscape;
-    final catalogStyle = _catalogStyle && !landscape;
+    final catalogStyle = _catalogStyle && _portraitBrowse;
     return !_splitActive &&
         widget.shortSeries &&
         !_panelOpen &&
@@ -362,6 +365,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _panelWasVisible = false;
   bool _panelHeaderDragging = false;
   bool _fullScreen = false;
+
+  /// 从 feed 的「横屏钮」进来（[VideoPlayerChrome.openFullScreen]）时，
+  /// 首次全屏按横屏处理。用户之后自己切全屏就不再沿用：`openFullScreen`
+  /// 是整个页面的入场标记，恒为 true，拿它当方向判据会把竖版片源也
+  /// 永久锁成横屏。
+  bool _entryLandscape = false;
   Size _viewportSize = Size.zero;
 
   /// 退出全屏后把窗口钉在竖屏：返回键要回到原来的竖屏分屏页（简介 /
@@ -389,6 +398,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   /// 本次 build 是否走了分屏（手势/面板入口在 build 之后读取）。
   bool _splitActive = false;
+
+  /// 上次确定的片源取向（宽 > 高）：换集时新播放器先是 0×0，auto 档靠它沿用。
+  bool? _lastSourceWide;
 
   /// 用户拖过分隔条后的视频区占比（含分隔条，0..1）。null = 用布局默认值。
   ///
@@ -471,14 +483,17 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _splitHintVisible = false;
   Timer? _splitHintTimer;
 
-  /// 官方全屏的方向集合：manifest 把 `ShortSeriesLandActivity` 锁成
-  /// `userLandscape`，所以进全屏就请求这一组，不看片源尺寸。
+  /// 横版片源的全屏方向：manifest 把 `ShortSeriesLandActivity` 锁成
+  /// `userLandscape`，横版片源照旧横过来。
   ///
   /// Note: .agents/notes/implemented/bug-fix/2026-10-19-fullscreen-landscape-alignment.md
-  static const _fullScreenOrientations = [
+  static const _fullScreenLandscapeOrientations = [
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ];
+
+  /// 竖版片源（短剧主流形态）的全屏方向：铺满竖屏，不强行横过来。
+  static const _fullScreenPortraitOrientations = [DeviceOrientation.portraitUp];
 
   double get _panelFraction => _panelExtent.value;
 
@@ -499,15 +514,43 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   bool get _ready => widget.enabled && (widget.player?.isCreated ?? false);
+
+  /// 片源尺寸是否已就绪。切集瞬间新播放器报 0×0，此时任何「按宽高比」
+  /// 的判定都必须沿用现状：`sourceSize` 的 9:16 兜底会把横版片源判成
+  /// 竖版，分屏/方向就会在每集开头来回翻一次。
+  bool get _sourceKnown {
+    final width = widget.player?.videoWidth ?? 0;
+    final height = widget.player?.videoHeight ?? 0;
+    return width > 0 && height > 0;
+  }
+
   bool get _overlayOpen => _modalOpen || widget.interactionBlocked;
   bool get _playbackRequested =>
       widget.playing ||
       ((widget.player?.playWhenReady ?? false) &&
           !(widget.player?.completed ?? false));
+
   Size get _videoSize => Size(
-    (widget.player?.videoWidth ?? 9).toDouble(),
-    (widget.player?.videoHeight ?? 16).toDouble(),
+    (widget.player?.videoWidth ?? 0).toDouble(),
+    (widget.player?.videoHeight ?? 0).toDouble(),
   );
+
+  /// 全屏请求的方向：feed 的「横屏钮」进来（[openFullScreen]）一律横屏；
+  /// 其余按片源宽高比，竖版片源铺满竖屏。
+  ///
+  /// 尺寸未知时返回 null，即不发新请求、保持当前方向。未知在连播切集时
+  /// 最常见（新播放器还没解码）：无论按哪边兜底，都会让正在看的方向突然
+  /// 翻一下（issue #59 是竖屏兜底造成的回弹）。
+  List<DeviceOrientation>? get _fullScreenOrientationsForSource {
+    if (_entryLandscape) return _fullScreenLandscapeOrientations;
+    final width = widget.player?.videoWidth ?? 0;
+    final height = widget.player?.videoHeight ?? 0;
+    if (width <= 0 || height <= 0) return null;
+    return height > width
+        ? _fullScreenPortraitOrientations
+        : _fullScreenLandscapeOrientations;
+  }
+
   String get _episodeTitle => widget.episodes.isEmpty
       ? '暂无剧集'
       : widget.episodes[widget.currentIndex].title;
@@ -548,6 +591,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         !widget.reverseClearScreen) {
       _clearScreen = true;
     }
+    // feed 的「横屏钮」只在入场这一次生效；用户之后自己切全屏时不能再
+    // 沿用（见 `_entryLandscape`）。
+    _entryLandscape = widget.openFullScreen;
     if (widget.openFullScreen) {
       // 官方横屏钮进的是独立横屏 Activity，页面一起来就是横屏全屏，没有
       // 「先竖屏、再点一次」的中间态。这里同等：进页即置全屏态并请求
@@ -2072,14 +2118,24 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _endBoost();
     _cancelSeek();
     _doubleTapGuard?.cancel();
+    // 用户手动切形态后，入场时的「强制横屏」不再生效。
+    _entryLandscape = false;
     // 官方在 Activity 退出横屏时无条件解锁（`EXIST_LAND_ACTIVITY`）。
     if (_fullScreen) _releaseLock();
     final leavingFullScreen = _fullScreen;
-    setState(() => _fullScreen = !_fullScreen);
+    setState(() {
+      _fullScreen = !_fullScreen;
+      // 全屏里控件会 3 秒收起；退出后回到竖屏浏览态，`_scheduleHide` 的
+      // 常驻分支不再排计时，`_visible` 停在 false 就是「半套 UI」：顶栏、
+      // 右栏与「全屏观看」入口全都不见了。退出时把控件带回来。
+      if (leavingFullScreen) _visible = true;
+    });
     // 收起计时必须排在系统 UI / 转向请求之前：`setPreferredOrientations`
     // 在设备拒绝转向或平台通道没响应时可能长期不返回，排在后面就等于永不
     // 收起——issue #59 的症状正是「点了全屏观看，控件一直钉在画面上」。
     _scheduleHide();
+    // 只有返回键会钉竖屏：它的语义是「回到原来的竖屏页」。点「退出全屏」
+    // 则回到浏览态，设备仍横握时就该留在横屏（横屏浏览 UI），不抢方向。
     await _applySystemUi(pinPortrait: leavingFullScreen && backToPortrait);
     if (mounted) setState(() {});
   }
@@ -2093,11 +2149,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         _portraitPinned = false;
         _portraitPinSuspended = false;
         await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-        // 官方「全屏观看」= 起一个独立 `ShortSeriesLandActivity`，manifest 里
-        // `android:screenOrientation="userLandscape"`：全屏**一律横屏**，与片源
-        // 是横版还是竖版无关，视频尺寸未知时也一样。不再按尺寸猜方向，也就
-        // 不会再有「未知尺寸被当成竖屏」的连播回弹问题（issue #59）。
-        await SystemChrome.setPreferredOrientations(_fullScreenOrientations);
+        // 全屏方向跟片源走：竖版片源铺满竖屏（点「全屏」不该把 9:16 的画面
+        // 转成横屏、留一圈黑边），横版片源沿用官方 `ShortSeriesLandActivity`
+        // 的 `userLandscape`。尺寸未知（连播切集的新播放器）时不发请求，
+        // 免得把正在看的方向翻一下（issue #59）。
+        final orientations = _fullScreenOrientationsForSource;
+        if (orientations != null) {
+          await SystemChrome.setPreferredOrientations(orientations);
+        }
       } else if (pinPortrait) {
         _portraitPinned = true;
         await _restoreSystemUi();
@@ -2118,6 +2177,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 同源：设备横置就算横屏，不要求用户点过「全屏观看」。
   bool get _windowLandscape => _viewportSize.width > _viewportSize.height;
 
+  /// 「竖屏浏览态」：竖窗口 + 未进全屏 + 未分屏。
+  ///
+  /// 竖屏目录件（右栏评论、信息层、选集条、全屏观看）与底栏文字操作行都
+  /// 只属于这个形态；竖屏全屏是沉浸态，设备没转向也不例外（issue #59 的
+  /// 「全屏后按钮还在」）。只能在这里派生一次：各处自己拼 `!landscape &&
+  /// !_fullScreen`，漏拼一处就是一层目录 UI 钉在画面上。
+  bool get _portraitBrowse =>
+      !_splitActive && !_windowLandscape && !_fullScreen;
+
   /// 右缘锁定按钮此刻是否占位（与 [_lockButton] 同门，但不看淡出动画与
   /// 锁定态）：「下一集」卡叠在画面上时要按它让出命中区，否则点卡片会
   /// 点到锁上。
@@ -2129,6 +2197,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       !_panelOpen &&
       !_overlayOpen &&
       _ready;
+
+  /// 竖屏顶栏行高：返回键与集数那一行。顶栏容器与弹幕层顶部让位共用
+  /// 这一份，写两份就会滞。
+  static const _portraitTopBarHeight = 44.0;
 
   /// 横屏顶栏行高：两行标题随系统字号长高时顶栏一起长高。右缘「下一集」卡
   /// 挂在顶栏下沿，必须用同一份高度——写死 56 时，大字号 + 极扁窗口下卡片
@@ -2324,14 +2396,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     // 短剧竖屏双击点赞按用户要求移除；单击仍控制播放。
     // 横屏单击切换控件，双击播放继续由横屏配置控制。
     final portraitSeries = widget.shortSeries && !compact && !landscape;
-    final catalogStyle = !compact && _catalogStyle && !landscape;
+    // 「竖屏浏览态」= 竖窗口 + 未进全屏（见 [_portraitBrowse]）。所有竖屏
+    // 常驻件统一读这一个判据，不再各自拼 `!landscape && !_fullScreen`。
+    final portraitBrowse = _portraitBrowse;
+    final catalogStyle = portraitBrowse && _catalogStyle;
     // 竖屏「常驻」形态下单击切播放（官方行为）；但竖屏里进了全屏后控件
     // 会收起，单击必须能把控件叫回来——否则是一个没有出口的隐藏态。
     // 分屏视频盒单击只切控件，播放/暂停交给命中更准的紧凑条。
     final tapTogglesPlayback =
-        !compact &&
-        widget.shortSeries &&
-        ((!landscape && !_fullScreen) || _clearScreen);
+        !compact && widget.shortSeries && (portraitBrowse || _clearScreen);
     final canPage =
         !compact &&
         unobstructed &&
@@ -2346,17 +2419,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     // 竖屏全屏例外：用户点「全屏观看」要的是整块画面，收起后连信息带
     // 一起隐藏（否则剧名/选集/全屏按钮会一直钉在画面上，issue #59）。
     final bandVisible =
-        !compact &&
+        portraitBrowse &&
         widget.shortSeries &&
-        !landscape &&
-        !_fullScreen &&
         _ready &&
         !_visible &&
         !_seeking &&
         showChrome;
     // 热评只在信息区可见时出现；新栏采用截图中的无底色信息行。
     final hotBar =
-        !compact &&
+        portraitBrowse &&
         widget.shortSeries &&
         !_locked &&
         !_clearScreen &&
@@ -2365,7 +2436,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         (controls || bandVisible);
     // 底栏当前档（「倍速」文字）是否在场：判据与视频设置的入口行共用
     // [_bottomRateTextVisible]，不再各自维护一份、也不跨帧缓存。
-    final showTextActions = _bottomRateTextVisible;
+    // 竖屏全屏是沉浸态：文字操作行随控件一起收起，否则 3 秒后仍钉在
+    // 画面上（issue #59 的另一半症状）。横屏全屏不能挡——那里没有
+    // `_portraitControls`，清屏后「恢复」只剩这一处出口；清屏态本身也
+    // 必须留出口（见 [_toggleControls] 的同一条不变量）。
+    final showTextActions =
+        _bottomRateTextVisible &&
+        (!_fullScreen || landscape || _clearScreen || controls);
     // 旧底栏清屏/还原只在 pad 配置开启时出现（`jj3/i.java:620-637`）。
     // 手机旧栏项序「清晰度 / 倍速」（bom.xml），清晰度仅多档流在场。
     return Stack(
@@ -2505,8 +2582,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             ),
           ),
         ),
-        // Note: 缓冲转圈由宿主（PlayerPage 的 `PlayerLoadingFeedback`）统一
-        // 渲染；chrome 里再加一层会叠出两个转圈。
+        // 缓冲转圈由宿主（PlayerPage 的 `PlayerLoadingFeedback`）统一渲染，再加会叠两个。
         // 弹幕层：官方在竖屏画面内滚动，锁屏/清屏时隐藏
         // （container/l.java 的渲染参数未取证，这里只放已证时间轴语义）。
         if (widget.shortSeries &&
@@ -2514,7 +2590,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             !_locked &&
             !_clearScreen &&
             widget.danmaku.isNotEmpty)
-          Positioned.fill(
+          Positioned(
+            // 竖屏顶栏（返回键 / 集数那一行）压在画面上：整层从它下沿
+            // 开始，第一轨才不会盖住返回键（SafeArea 会再叠状态栏）。
+            // 横屏弹幕铺满整窗、轨道按屏高排密度，不让位；分屏的视频
+            // 盒不是竖屏浏览态，同样保持原样。
+            left: 0,
+            right: 0,
+            top: landscape || compact ? 0 : _portraitTopBarHeight,
+            bottom: 0,
             child: SafeArea(
               // 横屏画面按整窗居中，弹幕轨道也铺满整窗：让开左挖孔会把整条
               // 轨道（包括居中的弹幕）右移一截，和画面中线错开。
@@ -2588,7 +2672,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           ),
         if (controls) ...[
           _topBar(insets, landscape: landscape),
-          if (!compact && !landscape && !catalogStyle) _rightBar(insets),
+          if (portraitBrowse && !catalogStyle) _rightBar(insets),
         ],
         if (catalogStyle && (controls || bandVisible))
           _portraitControls(
@@ -2612,7 +2696,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!landscape && (controls || bandVisible))
+                if (portraitBrowse && (controls || bandVisible))
                   _information(showPill: controls, showBook: bandVisible),
                 // 官方热评胶囊在信息面板下方（\`e0.java:2136-2161\` 的
                 // "below_abstract" 位），只在有热评时出现。
@@ -2638,8 +2722,21 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               ],
             ),
           ),
-        if (!compact && !landscape && (controls || bandVisible))
+        if (portraitBrowse && (controls || bandVisible))
           _catalogBar(insets, compact: catalogStyle),
+        // 短剧竖屏全屏没有横屏底条，出口只剩顶栏返回（3 秒后随控件收起）；
+        // 补一个控件可见时的显式「退出全屏」，位置沿用进度条下方那条贴底的
+        // 窄带（`insets.bottom + 8`）。通用播放器的运输条自带同名按钮，排除。
+        if (widget.shortSeries &&
+            !landscape &&
+            _fullScreen &&
+            controls &&
+            _ready)
+          Positioned(
+            right: insets.right + 16,
+            bottom: insets.bottom + 8,
+            child: _fullscreenPill(),
+          ),
         // 官方播放页（`apf.xml`）竖屏没有运输条；运输条只剩通用
         // 播放器（详情页影视）在用，短剧两个朝向都不走它。
         if (!compact && controls && _ready && !widget.shortSeries)
@@ -2736,9 +2833,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
               child: IgnorePointer(child: Chip(label: Text('2× 加速中'))),
             ),
           ),
-        if (_panelOpen && _panelDrawer) ...[
-          // 横屏右侧抽屉（官方截图第二十三轮）：200ms 滑入滑出 +
-          // 0.5 遮罩，点遮罩/✕/返回键关闭。
+        // 分屏盒没有面板语义（见 `_buildStage` 开头）：不拦会随 stage 换父级重建、双 attach。
+        if (_panelOpen && _panelDrawer && !compact) ...[
+          // 横屏右侧抽屉（官方截图第二十三轮）：200ms 滑入滑出 + 0.5 遮罩，点遮罩/✕/返回键关闭。
           Positioned.fill(
             child: TweenAnimationBuilder<double>(
               tween: Tween(end: _panelDrawerClosing ? 0.0 : 1.0),
@@ -2786,7 +2883,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             ),
           ),
         ],
-        if (_panelOpen && !_panelDrawer) ...[
+        if (_panelOpen && !_panelDrawer && !compact) ...[
           // 官方弹层遮罩：dim 0.5、随面板开合淡入淡出、点遮罩关闭
           // （`AnimationBottomDialog.java:312-316,604`）。
           Positioned.fill(
@@ -2806,13 +2903,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             ),
           ),
           Positioned(
+            // 兄弟层增删会让无 key 的面板层同帧重建，controller 被 attach 两次。
+            key: const ValueKey('story-panel-layer'),
             top: insets.top,
             left: insets.left,
             right: insets.right,
             bottom: 0,
-            // 官方进出场 200ms 位移+淡入（`:268-337`）：位移由 sheet 的
-            // extent 动画承担，透明度跟随同一进度。child 提升避免每个
-            // extent tick 重建面板子树（渲染测试的 0-rebuild 断言）。
+            // 官方进出场 200ms 位移+淡入（`:268-337`）：位移由 sheet extent 承担，
+            // 透明度跟随进度；child 提升避免每个 extent tick 重建面板子树（0-rebuild 断言）。
             child: NotificationListener<ScrollNotification>(
               onNotification: _onPanelScroll,
               child: ListenableBuilder(
@@ -2948,6 +3046,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (widget.splitPanel == null || !widget.shortSeries || _fullScreen) {
       return false;
     }
+    if (_sourceKnown) _lastSourceWide = _videoSize.width > _videoSize.height;
     switch (widget.layoutMode) {
       case PlayerLayoutMode.immersive:
         return false;
@@ -2955,8 +3054,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         return true;
       case PlayerLayoutMode.auto:
         if (window.width >= window.height) return false;
-        final source = PlayerVideoLayout.sourceSize(_videoSize);
-        return source.width > source.height;
+        // 尺寸未知沿用上次判定：按固定方向猜会让竖版剧每集先闪一次分屏。
+        return _lastSourceWide ?? false;
     }
   }
 
@@ -3051,103 +3150,121 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
-          statusBarIconBrightness: palette.dark
-              ? Brightness.light
-              : Brightness.dark,
-          statusBarBrightness: palette.dark
+          // 顶部那条已铺成深色（见下方 [splitStatusBarColor]），图标
+          // 必须转白；墨水屏仍走白底黑图标。
+          statusBarIconBrightness: palette.eink
               ? Brightness.dark
               : Brightness.light,
+          statusBarBrightness: palette.eink
+              ? Brightness.light
+              : Brightness.dark,
           systemNavigationBarColor: palette.canvas,
           systemNavigationBarIconBrightness: palette.dark
               ? Brightness.light
               : Brightness.dark,
           systemNavigationBarDividerColor: palette.canvas,
         ),
-        child: SafeArea(
-          child: MediaQuery(
-            // 面板是普通页面文字：还原外层字号档，不跟短剧 UI 一起放大。
-            data: MediaQuery.of(context).copyWith(textScaler: outerScaler),
-            // 拖动分隔条只重排这一层：视频盒按新尺寸重建，面板与分隔条
-            // 复用同一个实例，不会重跑内部 build。
-            child: ValueListenableBuilder<double?>(
-              valueListenable: _splitRatio,
-              builder: (context, dragged, _) {
-                // 换轴后旧比例作废：竖屏 0.28 当成横屏宽度比例会把画面
-                // 缩成一条，回落到该轴自己的默认值。
-                final draggedRatio = _splitRatioSideBySide == sideBySide
-                    ? dragged
-                    : null;
-                final ratio = _splitCollapsed
-                    ? 1.0
-                    : (draggedRatio ?? defaultRatio).clamp(.25, .85);
-                final videoWidth = sideBySide
-                    ? (_splitCollapsed
-                          ? availableWidth
-                          : math.max(
-                              120.0,
-                              availableWidth * ratio - dividerExtent,
-                            ))
-                    : availableWidth;
-                final videoHeight = sideBySide
-                    ? availableHeight
-                    : (_splitCollapsed
-                          ? availableHeight
-                          : math.max(
-                              96.0,
-                              availableHeight * ratio - dividerExtent,
-                            ));
-                // 视频盒单独成层：弹幕 / 控件动画只重绘上半区，不带着
-                // 下半区选集列表一起重绘。
-                final stage = RepaintBoundary(
-                  child: SizedBox(
-                    key: const ValueKey('player-split-stage'),
-                    width: videoWidth,
-                    height: videoHeight,
-                    child: _buildStage(
-                      context,
-                      window: Size(videoWidth, videoHeight),
-                      insets: EdgeInsets.zero,
-                      compact: true,
-                      outerScaler: outerScaler,
-                    ),
-                  ),
-                );
-                // 折叠后视频盒占满可用区域，右下角留一个「选集」按钮恢复
-                // 面板；竖屏抬高一点避开底部紧凑控制条。
-                final stageLayer = Stack(
-                  children: [
-                    stage,
-                    if (_splitCollapsed)
-                      Positioned(
-                        right: 12,
-                        bottom: sideBySide ? 12 : 64,
-                        child: _splitExpandButton(),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // 只铺状态栏这一条：面板仍是浅色画布，只有压在黑视频上
+            // 的那条要跟视频同色（判据见 [splitStatusBarColor]）。
+            if (insets.top > 0)
+              Positioned(
+                key: const ValueKey('player-split-status-bar'),
+                left: 0,
+                right: 0,
+                top: 0,
+                height: insets.top,
+                child: ColoredBox(color: splitStatusBarColor(palette)),
+              ),
+            SafeArea(
+              child: MediaQuery(
+                // 面板是普通页面文字：还原外层字号档，不跟短剧 UI 一起放大。
+                data: MediaQuery.of(context).copyWith(textScaler: outerScaler),
+                // 拖动分隔条只重排这一层：视频盒按新尺寸重建，面板与分隔条
+                // 复用同一个实例，不会重跑内部 build。
+                child: ValueListenableBuilder<double?>(
+                  valueListenable: _splitRatio,
+                  builder: (context, dragged, _) {
+                    // 换轴后旧比例作废：竖屏 0.28 当成横屏宽度比例会把画面
+                    // 缩成一条，回落到该轴自己的默认值。
+                    final draggedRatio = _splitRatioSideBySide == sideBySide
+                        ? dragged
+                        : null;
+                    final ratio = _splitCollapsed
+                        ? 1.0
+                        : (draggedRatio ?? defaultRatio).clamp(.25, .85);
+                    final videoWidth = sideBySide
+                        ? (_splitCollapsed
+                              ? availableWidth
+                              : math.max(
+                                  120.0,
+                                  availableWidth * ratio - dividerExtent,
+                                ))
+                        : availableWidth;
+                    final videoHeight = sideBySide
+                        ? availableHeight
+                        : (_splitCollapsed
+                              ? availableHeight
+                              : math.max(
+                                  96.0,
+                                  availableHeight * ratio - dividerExtent,
+                                ));
+                    // 视频盒单独成层：弹幕 / 控件动画只重绘上半区，不带着
+                    // 下半区选集列表一起重绘。
+                    final stage = RepaintBoundary(
+                      child: SizedBox(
+                        key: const ValueKey('player-split-stage'),
+                        width: videoWidth,
+                        height: videoHeight,
+                        child: _buildStage(
+                          context,
+                          window: Size(videoWidth, videoHeight),
+                          insets: EdgeInsets.zero,
+                          compact: true,
+                          outerScaler: outerScaler,
+                        ),
                       ),
-                  ],
-                );
-                // stretch：左右分栏时右侧面板要撑满高度，上下分栏时下半区
-                // 要撑满宽度；否则面板若没有内在尺寸会缩成 0。
-                return sideBySide
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          stageLayer,
-                          // 分隔条可拖比例、点击收起；收起后隐藏面板。
-                          if (!_splitCollapsed) divider,
-                          if (!_splitCollapsed) Expanded(child: axisPanel),
-                        ],
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          stageLayer,
-                          if (!_splitCollapsed) divider,
-                          if (!_splitCollapsed) Expanded(child: axisPanel),
-                        ],
-                      );
-              },
+                    );
+                    // 折叠后视频盒占满可用区域，右下角留一个「选集」按钮恢复
+                    // 面板；竖屏抬高一点避开底部紧凑控制条。
+                    final stageLayer = Stack(
+                      children: [
+                        stage,
+                        if (_splitCollapsed)
+                          Positioned(
+                            right: 12,
+                            bottom: sideBySide ? 12 : 64,
+                            child: _splitExpandButton(),
+                          ),
+                      ],
+                    );
+                    // stretch：左右分栏时右侧面板要撑满高度，上下分栏时下半区
+                    // 要撑满宽度；否则面板若没有内在尺寸会缩成 0。
+                    return sideBySide
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              stageLayer,
+                              // 分隔条可拖比例、点击收起；收起后隐藏面板。
+                              if (!_splitCollapsed) divider,
+                              if (!_splitCollapsed) Expanded(child: axisPanel),
+                            ],
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              stageLayer,
+                              if (!_splitCollapsed) divider,
+                              if (!_splitCollapsed) Expanded(child: axisPanel),
+                            ],
+                          );
+                  },
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -3484,7 +3601,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Widget _topBar(EdgeInsets insets, {required bool landscape}) {
     // 两行标题在系统大字号下会超过 56dp：按当前字号先量一遍，宁可把顶栏
     // 连同渐变一起长高，也不让 Column 溢出。高度与右缘元素同源。
-    final rowHeight = landscape ? _landscapeTopBarHeight : 44.0;
+    final rowHeight = landscape
+        ? _landscapeTopBarHeight
+        : _portraitTopBarHeight;
     return Positioned(
       // 渐变底色铺满整宽（只让控件本身避开挖孔），否则横握带摄像头的
       // 一侧会出现一条没有压暗的亮缝，跟底条的通栏渐变成两截。
@@ -3505,9 +3624,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            // 两行标题需要更实的底色才压得住画面；竖屏保持原来的浅压暗。
-            stops: landscape ? const [0, .55, 1] : null,
-            colors: landscape
+            // 两行标题需要更实的底色才压得住画面；竖屏全屏同理——弹幕会
+            // 铺到顶栏那块，原有的浅压暗看不清标题。
+            stops: landscape || _fullScreen ? const [0, .55, 1] : null,
+            colors: landscape || _fullScreen
                 ? const [
                     Color(0xB3000000),
                     Color(0x80000000),
@@ -3838,49 +3958,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         ),
       );
 
-  /// 当前短剧截图使用 `aqh.xml` 的 5dp 纵向内边距；通用播放器保留
-  /// `aqi.xml` 的 8dp。官方存在配置分支，不能把其中一套当作唯一规格。
-  Widget _fullscreenPill() => Semantics(
-    button: true,
-    child: GestureDetector(
-      key: const ValueKey('player-fullscreen-pill'),
-      onTap: _toggleFullScreen,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: widget.shortSeries ? 5 : 8,
-        ),
-        decoration: BoxDecoration(
-          color: const Color(0xB3262626),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset(
-              'assets/images/drama/fullscreen.webp',
-              width: 20,
-              height: 20,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(width: 4),
-            const Flexible(
-              child: Text(
-                '全屏观看',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
+  /// 胶囊本体见 [PlayletFullscreenPill]：竖屏目录态、竖屏全屏的贴底出口
+  /// 与通用播放器共用同一份文案与内边距。
+  Widget _fullscreenPill() => PlayletFullscreenPill(
+    fullScreen: _fullScreen,
+    shortSeries: widget.shortSeries,
+    onTap: _toggleFullScreen,
   );
 
   /// 新栏由 `_portraitControls` 分开定位全屏按钮与信息区；旧栏和通用
@@ -4097,32 +4180,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     );
   }
 
-  Widget _clearScreenIcon() => Semantics(
-    label: '清屏',
-    button: true,
-    child: GestureDetector(
-      key: const ValueKey('player-clear-screen'),
-      onTap: () => _setClearScreen(true),
-      behavior: HitTestBehavior.opaque,
-      child: const SizedBox(
-        width: 48,
-        height: 48,
-        child: Center(
-          child: SizedBox(
-            key: ValueKey('player-clear-icon'),
-            width: 28,
-            height: 28,
-            child: Center(
-              child: CustomPaint(
-                size: Size(20, 23),
-                painter: _ClearScreenIconPainter(),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
+  Widget _clearScreenIcon() =>
+      PlayletClearScreenButton(onTap: () => _setClearScreen(true));
 
   Widget _transport(EdgeInsets insets, bool landscape) => Positioned(
     left: insets.left + 8,
@@ -4760,65 +4819,6 @@ class _PortraitControlsLayout extends MultiChildLayoutDelegate {
   @override
   bool shouldRelayout(_PortraitControlsLayout oldDelegate) =>
       insets != oldDelegate.insets || videoBottom != oldDelegate.videoBottom;
-}
-
-class _ClearScreenIconPainter extends CustomPainter {
-  const _ClearScreenIconPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final scale = size.width / 24;
-    canvas.save();
-    canvas.scale(1, size.height / size.width);
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.7 * scale
-      ..strokeCap = StrokeCap.round
-      ..color = Colors.white;
-    const badge = Offset(17.9, 17.6);
-    final page = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(3.2 * scale, 3.2 * scale, 16.3 * scale, 17.6 * scale),
-          Radius.circular(4 * scale),
-        ),
-      );
-    final center = Offset(badge.dx * scale, badge.dy * scale);
-    final cut = Path()
-      ..addOval(Rect.fromCircle(center: center, radius: 6.1 * scale));
-    canvas.save();
-    canvas.clipPath(
-      Path.combine(
-        PathOperation.difference,
-        Path()..addRect(Offset.zero & size),
-        cut,
-      ),
-    );
-    canvas.drawPath(page, stroke);
-    canvas.restore();
-    canvas.drawLine(
-      Offset(7.8 * scale, 9 * scale),
-      Offset(16.4 * scale, 9 * scale),
-      stroke..strokeWidth = 1.5 * scale,
-    );
-    canvas.drawLine(
-      Offset(7.8 * scale, 13 * scale),
-      Offset(15.2 * scale, 13 * scale),
-      stroke,
-    );
-    final radius = 4.4 * scale;
-    canvas.drawCircle(center, radius, stroke);
-    final diagonal = radius / math.sqrt2;
-    canvas.drawLine(
-      Offset(center.dx - diagonal, center.dy + diagonal),
-      Offset(center.dx + diagonal, center.dy - diagonal),
-      stroke,
-    );
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_ClearScreenIconPainter oldDelegate) => false;
 }
 
 /// 官方倍速文案（`SingleVideoHolder.java:1155-1171`）：1.0 显示「倍速」，

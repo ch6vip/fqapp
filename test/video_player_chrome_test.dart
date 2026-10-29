@@ -159,17 +159,18 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
       // 进全屏后整层控件（含「全屏观看」按钮与剧名/选集信息带）都收起。
       expect(find.text('全屏观看'), findsNothing);
-      // 官方全屏 = 独立横屏 Activity：一进全屏就请求横屏。
+      // 横版片源（本用例的默认尺寸 1920x1080）进全屏请求横屏。
       expect(rotations.last, [
         'DeviceOrientation.landscapeLeft',
         'DeviceOrientation.landscapeRight',
       ]);
 
-      // 单击画面把控件叫回来，而不是像浏览态那样切成暂停。
+      // 单击画面把控件叫回来，而不是像浏览态那样切成暂停。竖屏全屏不是目录态。
       final paused = player.calls.where((call) => call == 'pause').length;
       await tester.tap(find.byKey(const ValueKey('video-surface')));
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('全屏观看'), findsOneWidget);
+      expect(find.text('退出全屏'), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-catalog-bar')), findsNothing);
       expect(player.calls.where((call) => call == 'pause').length, paused);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -178,12 +179,10 @@ void main() {
   );
 
   testWidgets(
-    'fullscreen always requests landscape, whatever the video shape (#59)',
+    'fullscreen follows the source shape, unknown stays landscape (#59)',
     (tester) async {
-      // 官方 `ShortSeriesLandActivity` 在 manifest 里是
-      // `android:screenOrientation="userLandscape"`：全屏一律横屏，竖版片源
-      // 与「尺寸还没到」都不例外。修复前竖版片源会请求 portrait、尺寸未知则
-      // 干脆不请求，于是停在竖屏全屏里。
+      // 竖版片源进全屏铺满竖屏；横版片源请求横屏；尺寸还没到时不发方向
+      // 请求（未知尺寸无论按哪边兜底都会翻一下，issue #59）。
       final rotations = <List<Object?>>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -204,15 +203,16 @@ void main() {
         'DeviceOrientation.landscapeLeft',
         'DeviceOrientation.landscapeRight',
       ];
+      const portrait = ['DeviceOrientation.portraitUp'];
 
-      for (final size in [
-        const Size(1080, 1920), // 竖版片源
-        Size.zero, // 尺寸还没到（新播放器）
-        const Size(1920, 1080), // 横版片源
+      for (final scenario in [
+        (name: '竖版片源', size: const Size(1080, 1920), expected: portrait),
+        (name: '尺寸还没到', size: Size.zero, expected: null),
+        (name: '横版片源', size: const Size(1920, 1080), expected: landscape),
       ]) {
         final player = FakeNativePlayer()
-          ..width = size.width.toInt()
-          ..height = size.height.toInt();
+          ..width = scenario.size.width.toInt()
+          ..height = scenario.size.height.toInt();
         rotations.clear();
         await tester.pumpWidget(_app(player, shortSeries: true));
         await tester.pumpAndSettle();
@@ -220,9 +220,9 @@ void main() {
         await tester.pump();
         await tester.pump();
         expect(
-          rotations.last,
-          landscape,
-          reason: '${size.width}x${size.height} 的片源进全屏也必须请求横屏',
+          rotations.isEmpty ? null : rotations.last,
+          scenario.expected,
+          reason: '${scenario.name} ${scenario.size}',
         );
         await tester.pumpWidget(const SizedBox.shrink());
         await player.dispose();
