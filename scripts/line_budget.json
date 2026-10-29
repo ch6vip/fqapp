@@ -71,7 +71,7 @@
     "test/discovery_pages_test.dart": 690,
     "test/drama_downloader_test.dart": 563,
     "test/drama_inline_playback_test.dart": 1204,
-    "test/drama_page_test.dart": 1975,
+    "test/drama_page_test.dart": 2030,
     "test/home_page_test.dart": 770,
     "test/home_provider_test.dart": 1122,
     "test/imported_book_store_test.dart": 527,

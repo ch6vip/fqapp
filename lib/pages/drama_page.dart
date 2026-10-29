@@ -363,10 +363,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// 内联播放器当前这次暂停是不是生命周期可见性分支（hidden/paused）造成
   /// 的，而不是用户手动暂停的。只有可见性暂停可以被随后的「回到 active」
-  /// 撤销；手动暂停是用户意图，焦点/生命周期噪声不许推翻——Windows 上点
-  /// 一下别的窗口只发 inactive，而桌面端把 inactive 算作 active，不分开
-  /// 记账的话用户一暂停、一切窗视频就自己播回来。仅 Windows 路径读写，
-  /// Android 的回前台续播语义不变。
+  /// 撤销；手动暂停是用户意图，生命周期噪声不许推翻——Windows 上点一下别
+  /// 的窗口只发 inactive，而桌面端把 inactive 算作 active，不分开记账的话
+  /// 用户一暂停、一切窗视频就自己播回来；Android 退到后台再回前台同样会走
+  /// active 分支，无条件续播也会把手动暂停拉起。
   bool _inlineVisibilityPaused = false;
 
   /// 长按中带打开的更多面板还在屏上（面板不销毁 inline 播放器，视频在
@@ -672,10 +672,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
       if (_tickerEnabled && !_modalOpen) {
         // Windows 上「切到别的窗口」只发 inactive，而 playbackAppIsActive
         // 在桌面端把 inactive 算作 active：无条件续播会把用户手动暂停的
-        // 视频在焦点刚丢时就拉起来。所以桌面端只有可见性分支自己暂停过
-        // 的那一次才许在这里恢复，手动暂停不许被焦点变化推翻。Android
-        // 没有「可见但失焦」态，保持原有的回前台续播。
-        if (isWindowsDesktop && !_inlineVisibilityPaused) return;
+        // 视频在焦点刚丢时就拉起来。Android 从后台回来同样会发 active，
+        // 无条件续播也会推翻手动暂停。两端一致：只有可见性分支自己暂停过
+        // 的那一次才许在这里恢复。
+        if (!_inlineVisibilityPaused) return;
         _resumeInline();
         _scheduleInlineSync();
       }

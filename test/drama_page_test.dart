@@ -418,6 +418,61 @@ void main() {
     await _flush(tester);
   });
 
+  // 与上面同一条生命周期链，但起点是**用户手动暂停**：退到后台再回来
+  // 不许把这次暂停当成可见性暂停撤销。桌面端已有同款用例；Android 的回
+  // 前台续播此前无条件执行，同样会推翻手动暂停。
+  testWidgets('feed：手动暂停后切后台再回来不许自动续播', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+
+    final seams = _Seams(failContent: false);
+    await tester.pumpWidget(
+      _scope(
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集')],
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final player = seams.players.single;
+    expect(player.isPlaying, true);
+
+    // 用户手动暂停（单击暂停 / 桌面 chrome 暂停钮都落到播放器上）。
+    await player.pause();
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    final playsAfterManualPause = player.calls
+        .where((call) => call == 'play')
+        .length;
+
+    // 退到后台（hidden）再回前台（resumed）：手动暂停必须保持。
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    expect(
+      player.calls.where((call) => call == 'play').length,
+      playsAfterManualPause,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('the feed shows the official chrome and one full-screen card', (
     tester,
   ) async {
