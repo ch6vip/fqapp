@@ -388,6 +388,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   Widget _continueRow(ReadingNow now) => SliverToBoxAdapter(
     child: HomeContinueRow(
+      key: const Key('home_continue_row'),
       now: now,
       onOpen: () => _resumeItem(now.item),
       onDismiss: () => HomeContinuePreferences.instance.dismiss(now.item),

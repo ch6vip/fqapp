@@ -788,9 +788,14 @@ void main() {
                 ),
         );
         await tester.pumpAndSettle();
-        await tester.ensureVisible(find.text('最近读过的书'));
+        // 首页把在读的书收进顶部「继续阅读」一行（书名和章节同一行文案），
+        // 书架仍是带封面的条目；两边用各自的入口点进阅读页。
+        final recent = entry == '书架'
+            ? find.text('最近读过的书')
+            : find.byKey(const Key('home_continue_row'));
+        await tester.ensureVisible(recent);
         await tester.pumpAndSettle();
-        await tester.tap(find.text('最近读过的书'));
+        await tester.tap(recent);
         await tester.pumpAndSettle();
         final reader = tester.widget<ReaderPage>(find.byType(ReaderPage));
         expect(reader.startIndex, 1);
