@@ -78,11 +78,7 @@ void main() {
     // 播放位置前进到后面几页；工具条还开着，跟随必须让位。
     _seed(positionMs: 36000, track: _track(), cue: '长句');
     await tester.pump(const Duration(milliseconds: 300));
-    expect(
-      _pager(tester).pageIndex,
-      0,
-      reason: '工具条展开时不该翻页（用户正在操作页面）',
-    );
+    expect(_pager(tester).pageIndex, 0, reason: '工具条展开时不该翻页（用户正在操作页面）');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -105,11 +101,7 @@ void main() {
     _seed(positionMs: 0, track: track, cue: '最后一段很短。');
     ListeningSession.instance.setFollowArmed(true);
     await tester.pump(const Duration(milliseconds: 250));
-    expect(
-      _pager(tester).pageIndex,
-      0,
-      reason: '位置在首句之前时不该导航，更不能挪到章末并停在那里',
-    );
+    expect(_pager(tester).pageIndex, 0, reason: '位置在首句之前时不该导航，更不能挪到章末并停在那里');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -136,11 +128,10 @@ void main() {
       layout: layout,
       track: _track(),
     ).spanAtPositionMs(36000)!;
-    expect(
-      _pager(tester).narrationRange,
-      (fallback.start, fallback.end),
-      reason: '官方时间点译不出来时应退到字幕兜底，而不是整段没有高亮',
-    );
+    expect(_pager(tester).narrationRange, (
+      fallback.start,
+      fallback.end,
+    ), reason: '官方时间点译不出来时应退到字幕兜底，而不是整段没有高亮');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -170,11 +161,10 @@ void main() {
       track: track,
     ).spanAtPositionMs(36000)!;
     expect(official.start, isNot(fallback.start), reason: '两套来源必须指向不同处');
-    expect(
-      _pager(tester).narrationRange,
-      (official.start, official.end),
-      reason: '官方区间译得出来时不能被字幕兜底顶掉',
-    );
+    expect(_pager(tester).narrationRange, (
+      official.start,
+      official.end,
+    ), reason: '官方区间译得出来时不能被字幕兜底顶掉');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -203,11 +193,7 @@ void main() {
     final target = layout.pageForOffset(span.spokenOffset(36000));
     expect(target, greaterThan(0));
     await tester.pump(const Duration(milliseconds: 250));
-    expect(
-      _pager(tester).pageIndex,
-      target,
-      reason: '点过定位键就该继续跟随，闩锁不能还挡着',
-    );
+    expect(_pager(tester).pageIndex, target, reason: '点过定位键就该继续跟随，闩锁不能还挡着');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -215,8 +201,9 @@ void main() {
   testWidgets('被闩锁挡住的跟随换章不再每 100ms 存一次进度', (tester) async {
     final store = ControlledReaderStore();
     await _mount(tester, store: store);
-    // 播放器已经读完第 1 章进到第 2 章，人还停在第 1 章里。
-    _seed(positionMs: 5000, chapterId: 'c2', track: _track(), cue: '长句');
+    // 先在第一种里起播，默认跟随把页面带到朗读处。
+    _seed(positionMs: 0, track: _track(), cue: '长句');
+    await tester.pump(const Duration(milliseconds: 150));
     // 手动翻页制造闩锁（15 秒内不跟随）。
     final rect = tester.getRect(_surface);
     await tester.tapAt(Offset(rect.left + rect.width * .9, rect.center.dy));
@@ -225,18 +212,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(_lastBlock(tester), _lastParagraph, reason: '闩锁期间仍留在第 1 章');
 
-    // 再把跟随开回来：闩锁与「跟随中」同时成立，比的纯是轮询里两条分支的
-    // 先后（闩锁在换章分支之前 → 一次都不请求；在后面 → 每 100ms 请求一次）。
+    // 播放器已经读完第 1 章进到第 2 章；把跟随开回来（手动翻页后已关掉，
+    // 这里不再经过「起播」那条自动路径，闩锁不会因此被清）。
+    _seed(positionMs: 5000, chapterId: 'c2', track: _track(), cue: '长句');
     ListeningSession.instance.setFollowArmed(true);
+    expect(ListeningSession.instance.followArmed, isTrue);
     await tester.pump(const Duration(milliseconds: 600)); // 等防抖存盘落完
     final before = store.writes.length;
 
     await tester.pump(const Duration(milliseconds: 1000));
-    expect(
-      store.writes.length,
-      before,
-      reason: '闩锁期间的换章请求一次都不该落地，更不该每秒存十次进度',
-    );
+    expect(store.writes.length, before, reason: '闩锁期间的换章请求一次都不该落地，更不该每秒存十次进度');
     expect(
       _lastBlock(tester),
       _lastParagraph,

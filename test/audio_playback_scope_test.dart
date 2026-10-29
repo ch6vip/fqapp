@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
@@ -242,6 +243,11 @@ class _Harness {
                     toneId: toneId ?? '0',
                   ),
             voicesLoader: () async => const [],
+            // The reader only shows the play/pause capsule while the spoken
+            // sentence is on screen; give this session a cue that exists in
+            // the reader's text.
+            subtitleLoader: (id, toneId) async =>
+                SubtitleTrack([SubtitleCue(startMs: 0, text: '第一段。')]),
             playerFactory: () {
               final player = ControlledNativePlayer();
               players.add(player);
