@@ -3,7 +3,9 @@ package com.fqapp.fqapp;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -35,6 +37,7 @@ import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.view.TextureRegistry;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -112,8 +115,18 @@ public class NativePlayerCreationTest {
         }
 
         void create(String key) {
+            create(key, null);
+        }
+
+        void create(String key, Long startPositionMs) {
+            Map<String, Object> args = new HashMap<>();
+            args.put("cdnUrl", URL);
+            args.put("keyHex", key);
+            if (startPositionMs != null) {
+                args.put("startPositionMs", startPositionMs);
+            }
             MethodChannel.Result result = mock(MethodChannel.Result.class);
-            plugin.onMethodCall(new MethodCall("create", Map.of("cdnUrl", URL, "keyHex", key)), result);
+            plugin.onMethodCall(new MethodCall("create", args), result);
             verify(result).success(Map.of("playerId", 1, "textureId", -1));
         }
 
@@ -252,9 +265,27 @@ public class NativePlayerCreationTest {
             f.create("");
             f.drain();
             assertEquals(List.of("created"), f.eventTypes());
-            verify(f.player).setMediaItem(any(MediaItem.class));
+            verify(f.player).setMediaItem(any(MediaItem.class), anyLong());
             verify(f.player).prepare();
             verifyNoInteractions(f.stream);
+        }
+    }
+
+    @Test
+    public void plainCreationStartsAtTheRequestedPosition() {
+        try (Fixture f = new Fixture()) {
+            f.create("", 37_000L);
+            f.drain();
+            verify(f.player).setMediaItem(any(MediaItem.class), eq(37_000L));
+        }
+    }
+
+    @Test
+    public void plainCreationClampsANegativeStartPositionToZero() {
+        try (Fixture f = new Fixture()) {
+            f.create("", -5L);
+            f.drain();
+            verify(f.player).setMediaItem(any(MediaItem.class), eq(0L));
         }
     }
 }

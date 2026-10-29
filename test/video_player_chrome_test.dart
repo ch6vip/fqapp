@@ -120,6 +120,93 @@ void main() {
     },
   );
 
+  testWidgets('vertical short-series episodes drop the 全屏观看 pill', (
+    tester,
+  ) async {
+    // 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon`：
+    // `saasVideoData != null && !saasVideoData.isVertical()`。竖屏剧集
+    // 整颗按钮不渲染；`vertical == false` 与字段未知（旧缓存/离线）都保留。
+    // 通用播放页不在本次门控范围内。
+    final cases = <(String, bool, bool?, Matcher)>[
+      ('vertical portrait episode', true, true, findsNothing),
+      ('landscape episode', true, false, findsOneWidget),
+      ('unknown vertical', true, null, findsOneWidget),
+      ('generic player', false, true, findsOneWidget),
+    ];
+    for (final (label, shortSeries, vertical, expected) in cases) {
+      final player = FakeNativePlayer()..isPlaying = true;
+      await tester.pumpWidget(
+        _app(
+          player,
+          shortSeries: shortSeries,
+          episodes: [
+            Chapter(
+              itemId: '1',
+              title: '第一集',
+              volumeName: '',
+              vertical: vertical,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('player-fullscreen-pill')),
+        expected,
+        reason: label,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await player.dispose();
+    }
+  });
+
+  testWidgets(
+    'vertical episodes keep the comment slot while the pill is gone',
+    (tester) async {
+      // #187 的竖屏浏览态有两条渲染路径：目录态把「全屏观看」与评论钮放进同一个
+      // `_PortraitControlsLayout`，旧栏则走 `_information` 的入口。竖版剧集摘掉
+      // 全屏槽位后，评论槽位仍要单独布局（两个 `hasChild` 各自判断），否则会留下
+      // 未布局的子节点；旧栏的胶囊也必须跟着消失。
+      for (final catalogStyle in [true, false]) {
+        final player = FakeNativePlayer()..isPlaying = true;
+        await tester.pumpWidget(
+          _app(
+            player,
+            shortSeries: true,
+            newPlayerBottomStyle: catalogStyle,
+            // 旧底栏进页会自动清屏（o.W7），清屏态本来就压掉评论钮与胶囊；
+            // reverse 配置挡下自动清屏，才看得到竖屏浏览态的常驻形态。
+            reverseClearScreen: !catalogStyle,
+            episodes: [
+              Chapter(
+                itemId: '1',
+                title: '第一集',
+                volumeName: '',
+                vertical: true,
+              ),
+            ],
+            onComments: () {},
+          ),
+        );
+        // 旧栏的右缘评论钮挂在 `controls` 上，3 秒后会随控件收起；这里只取
+        // 首帧的常驻形态，不等自动收起。
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          find.byKey(const ValueKey('player-fullscreen-pill')),
+          findsNothing,
+          reason: 'catalogStyle=$catalogStyle',
+        );
+        expect(
+          find.byKey(const ValueKey('player-comment-button')),
+          findsOneWidget,
+          reason: 'catalogStyle=$catalogStyle',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await player.dispose();
+      }
+    },
+  );
+
   testWidgets(
     'portrait fullscreen hides the chrome and a tap brings it back (#59)',
     (tester) async {
@@ -159,17 +246,18 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
       // 进全屏后整层控件（含「全屏观看」按钮与剧名/选集信息带）都收起。
       expect(find.text('全屏观看'), findsNothing);
-      // 官方全屏 = 独立横屏 Activity：一进全屏就请求横屏。
+      // 横版片源（本用例的默认尺寸 1920x1080）进全屏请求横屏。
       expect(rotations.last, [
         'DeviceOrientation.landscapeLeft',
         'DeviceOrientation.landscapeRight',
       ]);
 
-      // 单击画面把控件叫回来，而不是像浏览态那样切成暂停。
+      // 单击画面把控件叫回来，而不是像浏览态那样切成暂停。竖屏全屏不是目录态。
       final paused = player.calls.where((call) => call == 'pause').length;
       await tester.tap(find.byKey(const ValueKey('video-surface')));
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('全屏观看'), findsOneWidget);
+      expect(find.text('退出全屏'), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-catalog-bar')), findsNothing);
       expect(player.calls.where((call) => call == 'pause').length, paused);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -178,12 +266,10 @@ void main() {
   );
 
   testWidgets(
-    'fullscreen always requests landscape, whatever the video shape (#59)',
+    'fullscreen follows the source shape, unknown stays landscape (#59)',
     (tester) async {
-      // 官方 `ShortSeriesLandActivity` 在 manifest 里是
-      // `android:screenOrientation="userLandscape"`：全屏一律横屏，竖版片源
-      // 与「尺寸还没到」都不例外。修复前竖版片源会请求 portrait、尺寸未知则
-      // 干脆不请求，于是停在竖屏全屏里。
+      // 竖版片源进全屏铺满竖屏；横版片源请求横屏；尺寸还没到时不发方向
+      // 请求（未知尺寸无论按哪边兜底都会翻一下，issue #59）。
       final rotations = <List<Object?>>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -204,15 +290,16 @@ void main() {
         'DeviceOrientation.landscapeLeft',
         'DeviceOrientation.landscapeRight',
       ];
+      const portrait = ['DeviceOrientation.portraitUp'];
 
-      for (final size in [
-        const Size(1080, 1920), // 竖版片源
-        Size.zero, // 尺寸还没到（新播放器）
-        const Size(1920, 1080), // 横版片源
+      for (final scenario in [
+        (name: '竖版片源', size: const Size(1080, 1920), expected: portrait),
+        (name: '尺寸还没到', size: Size.zero, expected: null),
+        (name: '横版片源', size: const Size(1920, 1080), expected: landscape),
       ]) {
         final player = FakeNativePlayer()
-          ..width = size.width.toInt()
-          ..height = size.height.toInt();
+          ..width = scenario.size.width.toInt()
+          ..height = scenario.size.height.toInt();
         rotations.clear();
         await tester.pumpWidget(_app(player, shortSeries: true));
         await tester.pumpAndSettle();
@@ -220,9 +307,9 @@ void main() {
         await tester.pump();
         await tester.pump();
         expect(
-          rotations.last,
-          landscape,
-          reason: '${size.width}x${size.height} 的片源进全屏也必须请求横屏',
+          rotations.isEmpty ? null : rotations.last,
+          scenario.expected,
+          reason: '${scenario.name} ${scenario.size}',
         );
         await tester.pumpWidget(const SizedBox.shrink());
         await player.dispose();
@@ -2071,6 +2158,8 @@ Widget _app(
   TextScaler textScaler = TextScaler.noScaling,
   EdgeInsets padding = EdgeInsets.zero,
   bool shortSeries = false,
+  List<Chapter>? episodes,
+  bool? currentEpisodeVertical,
   String title = '',
   VoidCallback? onComments,
   List<PlayletComment> hotComments = const [],
@@ -2106,11 +2195,14 @@ Widget _app(
       title: title,
       onComments: onComments,
       hotComments: hotComments,
-      episodes: [
-        Chapter(itemId: '1', title: '第一集', volumeName: ''),
-        Chapter(itemId: '2', title: '第二集', volumeName: ''),
-      ],
+      episodes:
+          episodes ??
+          [
+            Chapter(itemId: '1', title: '第一集', volumeName: ''),
+            Chapter(itemId: '2', title: '第二集', volumeName: ''),
+          ],
       currentIndex: currentIndex,
+      currentEpisodeVertical: currentEpisodeVertical,
       duration: player.duration,
       playing: playing.data!,
       onSelectEpisode: (index) async {

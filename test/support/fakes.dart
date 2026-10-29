@@ -240,6 +240,9 @@ class FakeNativePlayer extends NativePlayer {
   /// create 收到的 keyHex（按序）：用来断言「档位的 key」而非主地址的
   /// key 被传进播放器。
   final createdKeys = <String>[];
+
+  /// create 收到的起播位置（毫秒，按序）：原生把它当初始播放位置。
+  final createdStartMs = <int>[];
   Duration currentPosition = const Duration(seconds: 20);
   Duration totalDuration = const Duration(minutes: 2);
   bool isPlaying = false;
@@ -303,9 +306,15 @@ class FakeNativePlayer extends NativePlayer {
   }
 
   @override
-  Future<int> create(String cdnUrl, String keyHex) async {
+  Future<int> create(String cdnUrl, String keyHex, {int? startMs}) async {
     calls.add('create:$cdnUrl');
     createdKeys.add(keyHex);
+    // 与生产一致：只有正数才下发 startPositionMs，0 等同于从头播。
+    if (startMs != null && startMs > 0) {
+      createdStartMs.add(startMs);
+      // 原生在 prepare() 之前就定位到这个位置，等效于「起手即此处」。
+      currentPosition = Duration(milliseconds: startMs);
+    }
     return 1;
   }
 
