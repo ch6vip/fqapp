@@ -16,7 +16,7 @@
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1995,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 4192,
+    "lib/pages/reader_page.dart": 4061,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
@@ -202,11 +202,6 @@
     "lib/pages/rank_page.dart::_RankRow.build": {
       "line": 435,
       "lines": 107,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 4070,
-      "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/search_page.dart::_SearchPageState.build": {
@@ -452,6 +447,11 @@
     "lib/widgets/reader/reader_appearance_sheet.dart::_ReaderAppearanceSheetState.build": {
       "line": 150,
       "lines": 602,
+      "symbol": "Widget build(BuildContext context) {"
+    },
+    "lib/widgets/reader/reader_directory_sheet.dart::_ReaderDirectorySheetState.build": {
+      "line": 93,
+      "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/reader/reader_ideas_sheet.dart::_CommentRowState.build": {

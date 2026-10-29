@@ -182,7 +182,7 @@ void main() {
       tester,
     ) async {
       publish(bookId: 'mine', playing: false);
-      await mountOverlay(tester, bookId: 'mine');
+      await mountOverlay(tester, bookId: 'mine', highlightOnScreen: true);
       expect(find.byKey(const ValueKey('reader_player_pill')), findsOneWidget);
       expect(find.text('继续播放'), findsOneWidget);
     });
@@ -226,9 +226,11 @@ void main() {
       viewportChanges.value++;
       await tester.pump();
       await tester.pump(const Duration(seconds: 6));
+      // 高亮离开屏内：同步胶囊接班，播放胶囊不再残留。
+      expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('reader-player-indicator')),
-        findsOneWidget,
+        findsNothing,
       );
       visible = true;
       viewportChanges.value++;
@@ -240,9 +242,10 @@ void main() {
       viewportChanges.value++;
       await tester.pump();
       await tester.pump();
+      expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('reader-player-indicator')),
-        findsOneWidget,
+        findsNothing,
       );
     });
 
@@ -320,7 +323,7 @@ void main() {
       'missing controller reports failure instead of silently doing nothing',
       (tester) async {
         publish(bookId: 'mine', playing: false);
-        await mountOverlay(tester, bookId: 'mine');
+        await mountOverlay(tester, bookId: 'mine', highlightOnScreen: true);
         await tester.tap(find.byKey(const ValueKey('reader_player_pill')));
         await tester.pump();
         expect(find.text('当前播放尚未就绪，请稍后重试'), findsOneWidget);

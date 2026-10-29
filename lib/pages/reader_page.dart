@@ -26,6 +26,7 @@ import '../services/reader_device.dart';
 import '../widgets/reader/eink_reading.dart';
 import '../widgets/reader/reader_player_pill.dart';
 import '../widgets/reader/reader_narration_visibility.dart';
+import '../widgets/reader/reader_sync_pill.dart';
 import '../services/eink_refresh.dart';
 import '../services/fair_memory.dart';
 import '../services/volume_key.dart';
@@ -43,6 +44,7 @@ import '../widgets/reader/reader_chapter_layout.dart';
 import '../widgets/reader/cue_index.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_cutout_insets.dart';
+import '../widgets/reader/reader_directory_sheet.dart';
 import '../widgets/reader/reader_illustration.dart';
 import '../widgets/reader/reader_ideas_sheet.dart';
 import '../widgets/reader/reader_paged_view.dart';
@@ -331,7 +333,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         !_paged) {
       return;
     }
-    _pauseListenFollow();
+    _takeOverListening();
     _stopAutoTurn();
     unawaited(_turnPage(direction));
   }
@@ -372,25 +374,45 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// page holding the estimated playback position. Instant jumps — the
   /// narration keeps moving and an animated chase would always lag.
   ///
-  /// 用户接管闩锁: a manual page turn pauses following briefly, so the reader
-  /// does not yank the page back within a second.
+  /// 用户接管闩锁：手动翻页后短时间内不跟随。
+  ///
+  /// 官方对普通翻页的处理见 `AudioSyncReaderController.java:1242-1295`
+  /// （`handlePlayWhenPageChange`）：置 `C=true`、暂停播放并亮出「原进度 /
+  /// 从本页听」。跟随并不会自己恢复，直到用户点「原进度」（`K()`，:768）。
+  /// 这里同样在 [_pauseListenFollow] 里直接关掉跟随；闩锁只是兜住「又在
+  /// 15 秒内被重新打开」的路径，恢复播放时由 [_onListeningTick] 清掉。
   DateTime _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _pauseListenFollow() {
     _listenFollowPausedUntil = DateTime.now().add(const Duration(seconds: 15));
-    // 用户自己翻页 = 不想被拽回去，直接退出跟随（图标变回空心）。以前只
-    // 暂停 15 秒，按钮还显示「跟随中」，看着像坏了。
+    // 用户自己翻页 = 不想被拽回去，直接退出跟随。以前只暂停 15 秒，按钮还
+    // 显示「跟随中」，看着像坏了。
     ListeningSession.instance.setFollowArmed(false);
   }
 
-  /// 朗读句高亮：与跟随翻页独立同步，跟随关闭时高亮仍可显示；暂停、
-  /// 切章或未在读本章时清空。
+  /// 手动翻页 = 接管播放：退出跟随并暂停朗读。
+  ///
+  /// 官方 `handlePlayWhenPageChange`（`AudioSyncReaderController.java:1242-1295`）
+  /// 在同章翻页时 `pausePlayer()`，然后亮出「原进度 / 从本页听」。换章
+  /// （目录、上一章/下一章）不走这里：官方那条分支只置 `C`，不暂停播放。
+  void _takeOverListening() {
+    _pauseListenFollow();
+    AudioPlaybackScope.pauseIfPlaying(context, widget.bookId);
+  }
+
+  /// 朗读句高亮：与跟随翻页独立同步，跟随关闭时高亮仍可显示；切章、关闭
+  /// 或未在读本章时清空。暂停保留（官方暂停时朗读标记仍在正文上）。
   (int, int)? _narrationRange;
 
   /// 双击跳读是否可用：正在听这本书就行，本章或别的章都可以（跨章跳）。
   ///
   /// 单独存一份是因为它得跟着会话变，而高亮没变化时不会触发重建。
   bool _doubleTapArmed = false;
+
+  /// 上一拍这本书是否在播。用来识别「暂停后继续播放」：官方
+  /// `AudioSyncReaderController.java:381` `onPlayResume` 会立刻恢复跟随，
+  /// 不受手动翻页那 15 秒闩锁影响。
+  bool _listenWasPlaying = false;
 
   /// 10Hz 跟随轮询。见 [_followPollTick]。
   Timer? _followPoll;
@@ -506,8 +528,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 还在读本章、只是这一拍没匹配上（字幕与正文偶有标点差异）时保留上一拍
     // 的区间：清空会让整页突然变黑，观感比「晚半拍」差得多。确实不在读本章
     // 才清。
+    //
+    // 暂停也保留：官方暂停时朗读标记仍留在正文上（`AudioSyncReaderController`
+    // `onPlayPause` 只改播放态，不停同步服务），阅读页据此继续显示「继续播放」。
     final session = ListeningSession.instance;
-    final active = session.matches(widget.bookId, _chapter.itemId);
+    final active =
+        session.bookId == widget.bookId && session.chapterId == _chapter.itemId;
     final held = narration ?? (active ? _narrationRange : null);
     // The follow anchor still uses [narration] when the wash is switched off;
     // only painting depends on the preference.
@@ -585,6 +611,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _onListeningTick() {
     if (!mounted) return;
+    final session = ListeningSession.instance;
+    final playing = session.playing && session.bookId == widget.bookId;
+    if (playing && !_listenWasPlaying) {
+      // 官方 onPlayResume（AudioSyncReaderController.java:381）恢复播放时
+      // 立刻恢复跟随，不受手动翻页那 15 秒闩锁影响。
+      _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
+    }
+    _listenWasPlaying = playing;
     // 会话起停时即使高亮不变，也要重建双击跳读手势。
     final armed = _listenDoubleTapArmed;
     if (armed != _doubleTapArmed) {
@@ -600,14 +634,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         !_appActive ||
         !_preferences.listeningFollow ||
         // 没按过定位键就是不跟随：老逻辑只认偏好，开着重播就会自己翻页。
-        !ListeningSession.instance.followArmed ||
+        !session.followArmed ||
         _loading ||
         _changingChapter ||
         _error != null) {
       return;
     }
     if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
-    final session = ListeningSession.instance;
     if (!session.playing || session.bookId != widget.bookId) return;
     if (session.chapterId != _chapter.itemId) {
       final next = widget.chapters.indexWhere(
@@ -776,6 +809,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     super.initState();
     VolumeKeyService.instance.setOnVolumeKey(_onVolumeKey);
     _syncVolumeKeyEnabled();
+    // 官方默认跟随：起播时（d.java:143-151）页面会自动同步到朗读处。阅读页
+    // 可能是在起播之后才打开的，补上这一次。
+    ListeningSession.instance.followIfPlaying(widget.bookId);
     ListeningSession.instance.addListener(_onListeningTick);
     // 双击跳读的开关只在会话通知里算，而暂停的会话永远不发通知：开书前就
     // 已经暂停（或者从未播过）时手势得先就位。initState 里不能 setState，
@@ -1081,6 +1117,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 被挡最多 15 秒 —— 按钮点得动，跟随却是死的。
     _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
     _addressToPlayback();
+  }
+
+  /// 同步胶囊「原进度」：回到朗读处并重新跟随。
+  ///
+  /// 官方 `AudioSyncReaderController.K()`（:768）：手动翻页后点它，重启同步
+  /// 服务并回到正在播的进度。手动翻页在这里已经关掉跟随，所以先开回来。
+  void _returnToOriginalProgress() {
+    ListeningSession.instance.setFollowArmed(true);
+    _jumpToPlaybackPosition();
   }
 
   /// 双击正文：把朗读跳到手指所指的那一句，可以跨章。
@@ -2239,6 +2284,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             scroll: layout.scrollForTextOffset(_textOffset),
           );
     _chapterLayout = layout;
+    // 阅读页可能在起播之后才打开：会话的结构性通知早于这份排版到达，若只等
+    // 下一次通知，高亮（以及「高亮在屏」这条判据）会晚一拍。排版一就位就
+    // 直接算一次，构建阶段不能 setState，所以只赋值。
+    final narration = _narrationLayoutRange(layout);
+    _narrationRange = _preferences.narrationHighlight ? narration : null;
     _layoutMode = _preferences.pageMode;
     _textOffset = restored.textOffset;
     _pageIndex = layout.pageForOffset(_textOffset);
@@ -2609,10 +2659,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       case ReaderTapZoneAction.menu:
         _toggleControls();
       case ReaderTapZoneAction.prevPage:
-        _pauseListenFollow();
+        _takeOverListening();
         unawaited(_turnPage(-1));
       case ReaderTapZoneAction.nextPage:
-        _pauseListenFollow();
+        _takeOverListening();
         unawaited(_turnPage(1));
       case ReaderTapZoneAction.prevChapter:
         unawaited(_prev());
@@ -2717,7 +2767,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 (MediaQuery.sizeOf(context).height -
                     MediaQuery.viewInsetsOf(context).bottom) *
                 0.78,
-            child: _ChapterDirectorySheet(
+            child: ReaderDirectorySheet(
               chapters: widget.chapters,
               currentIndex: _index,
               cachedIds: cachedIds,
@@ -2732,11 +2782,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   /// Local books use system TTS; online books offer both available sources.
-  Future<void> _openListening({int? fromMs, int? textId}) async {
+  ///
+  /// [fromPage] skips the source sheet and starts from this page directly —
+  /// the sync pill's 「从本页听」 (`AudioSyncReaderController.L()`, :702).
+  Future<void> _openListening({
+    int? fromMs,
+    int? textId,
+    bool fromPage = false,
+  }) async {
     if (_openingListening || _loading || _error != null) return;
+    if (fromPage) {
+      final anchor = _currentPageAnchor();
+      fromMs ??= anchor.startMs;
+      textId ??= anchor.textId;
+    }
     final chapterId = _chapter.itemId;
     var system = widget.localOnly;
     if (!system) {
+      if (fromPage) {
+        await _openUpstreamListening(fromMs: fromMs, textId: textId);
+        return;
+      }
       _openingListening = true;
       try {
         // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
@@ -3068,6 +3134,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final now = DateTime.now();
       if (now.difference(_desktopWheelAt).inMilliseconds < 180) return;
       _desktopWheelAt = now;
+      _takeOverListening();
       unawaited(_turnPage(signal.scrollDelta.dy > 0 ? 1 : -1));
     });
   }
@@ -3224,6 +3291,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                             pageIndex: _pageIndex,
                             scrollController: _scrollController,
                           ),
+                          normalPage: () => readerSyncPillNormalPage(
+                            layout: _chapterLayout,
+                            paged: _paged,
+                            pageIndex: _pageIndex,
+                          ),
+                          onReturnOriginalProgress: _returnToOriginalProgress,
+                          onListenFromPage: () =>
+                              unawaited(_openListening(fromPage: true)),
                           viewportChanges: _scrollController,
                           footerBuilder: _preferences.showReadingInfo
                               ? (player) => ListenableBuilder(
@@ -3760,7 +3835,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _hideControlsOnDrag() {
     _stopAutoTurn();
-    _pauseListenFollow();
+    _takeOverListening();
     if (_controlsVisible) setState(() => _controlsVisible = false);
   }
 
@@ -3983,210 +4058,4 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       ),
     ),
   );
-}
-
-class _ChapterDirectorySheet extends StatefulWidget {
-  final List<Chapter> chapters;
-  final int currentIndex;
-  final Set<String> cachedIds;
-
-  const _ChapterDirectorySheet({
-    required this.chapters,
-    required this.currentIndex,
-    required this.cachedIds,
-  });
-
-  @override
-  State<_ChapterDirectorySheet> createState() => _ChapterDirectorySheetState();
-}
-
-class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
-  static const _itemExtent = 58.0;
-
-  final TextEditingController _searchController = TextEditingController();
-  late final ScrollController _scrollController;
-  bool _reversed = false;
-  String _query = '';
-  // The directory can hold thousands of chapters; filtering on every keystroke
-  // re-scans them all and rebuilds the sheet. Coalesce the input instead.
-  Timer? _searchDebounce;
-
-  @override
-  void initState() {
-    super.initState();
-    final initialOffset = (widget.currentIndex * _itemExtent - 120).clamp(
-      0.0,
-      double.infinity,
-    );
-    _scrollController = ScrollController(initialScrollOffset: initialOffset);
-  }
-
-  @override
-  void dispose() {
-    _searchDebounce?.cancel();
-    _searchController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _onSearchChanged(String value) {
-    _searchDebounce?.cancel();
-    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
-      if (!mounted) return;
-      setState(() => _query = value);
-    });
-  }
-
-  List<int> get _visibleIndexes {
-    Iterable<int> indexes = Iterable<int>.generate(widget.chapters.length);
-    if (_reversed) indexes = indexes.toList(growable: false).reversed;
-    final query = _query.trim().toLowerCase();
-    if (query.isNotEmpty) {
-      indexes = indexes.where((index) {
-        final chapter = widget.chapters[index];
-        return chapter.title.toLowerCase().contains(query) ||
-            '${index + 1}'.contains(query);
-      });
-    }
-    return indexes.toList(growable: false);
-  }
-
-  void _toggleOrder() {
-    setState(() => _reversed = !_reversed);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients || _query.isNotEmpty) return;
-      final displayIndex = _reversed
-          ? widget.chapters.length - 1 - widget.currentIndex
-          : widget.currentIndex;
-      final target = (displayIndex * _itemExtent - 120).clamp(
-        0.0,
-        _scrollController.position.maxScrollExtent,
-      );
-      _scrollController.jumpTo(target);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final indexes = _visibleIndexes;
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 8, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '目录 · ${widget.chapters.length} 章',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
-              IconButton(
-                tooltip: _reversed ? '切换为正序' : '切换为倒序',
-                onPressed: _toggleOrder,
-                icon: Icon(
-                  _reversed ? LucideIcons.arrow_up : LucideIcons.arrow_down,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: TextField(
-            controller: _searchController,
-            textInputAction: TextInputAction.search,
-            onChanged: _onSearchChanged,
-            decoration: InputDecoration(
-              hintText: '搜索章节名或序号',
-              prefixIcon: const Icon(LucideIcons.search),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: '清空',
-                      onPressed: () {
-                        _searchDebounce?.cancel();
-                        _searchController.clear();
-                        setState(() => _query = '');
-                      },
-                      icon: const Icon(LucideIcons.x),
-                    ),
-              filled: true,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: indexes.isEmpty
-              ? Center(
-                  child: Text(
-                    '没有匹配的章节',
-                    style: TextStyle(color: scheme.onSurface),
-                  ),
-                )
-              : ListView.builder(
-                  controller: _scrollController,
-                  itemExtent: _itemExtent,
-                  itemCount: indexes.length,
-                  itemBuilder: (context, position) {
-                    final index = indexes[position];
-                    final chapter = widget.chapters[index];
-                    final current = index == widget.currentIndex;
-                    return Material(
-                      color: current
-                          ? scheme.primaryContainer.withValues(alpha: 0.72)
-                          : Colors.transparent,
-                      child: ListTile(
-                        dense: true,
-                        selected: current,
-                        onTap: () => Navigator.pop(context, index),
-                        leading: SizedBox(
-                          width: 42,
-                          child: Text(
-                            '${index + 1}',
-                            textAlign: TextAlign.end,
-                            style: TextStyle(
-                              color: current
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant,
-                              fontWeight: current
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                        ),
-                        title: Text(
-                          chapter.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (widget.cachedIds.contains(chapter.itemId))
-                              const Tooltip(
-                                message: '已缓存',
-                                child: Icon(LucideIcons.circle_check, size: 18),
-                              ),
-                            if (current)
-                              Icon(
-                                LucideIcons.locate_fixed,
-                                color: scheme.primary,
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
 }

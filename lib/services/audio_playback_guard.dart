@@ -155,6 +155,9 @@ void _handleChapterCompleted(
   // _openChapter resets completion before its source is ready.
   // The next player's playing event will publish the actual start.
   c._publishListeningSession(playing: false);
+  // 官方 onPlayCompletion（d.java:92-100）收起播放/同步按钮；阅读页据此
+  // 停止显示，下一章起播时由 update(playing:true) 清掉。
+  ListeningSession.instance.markCompleted();
 }
 
 /// 控制器对外的只读查询与跳过配置写入。
