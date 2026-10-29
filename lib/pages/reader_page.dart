@@ -333,7 +333,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         !_paged) {
       return;
     }
-    _pauseListenFollow();
+    _takeOverListening();
     _stopAutoTurn();
     unawaited(_turnPage(direction));
   }
@@ -388,6 +388,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 用户自己翻页 = 不想被拽回去，直接退出跟随。以前只暂停 15 秒，按钮还
     // 显示「跟随中」，看着像坏了。
     ListeningSession.instance.setFollowArmed(false);
+  }
+
+  /// 手动翻页 = 接管播放：退出跟随并暂停朗读。
+  ///
+  /// 官方 `handlePlayWhenPageChange`（`AudioSyncReaderController.java:1242-1295`）
+  /// 在同章翻页时 `pausePlayer()`，然后亮出「原进度 / 从本页听」。换章
+  /// （目录、上一章/下一章）不走这里：官方那条分支只置 `C`，不暂停播放。
+  void _takeOverListening() {
+    _pauseListenFollow();
+    AudioPlaybackScope.pauseIfPlaying(context, widget.bookId);
   }
 
   /// 朗读句高亮：与跟随翻页独立同步，跟随关闭时高亮仍可显示；切章、关闭
@@ -2649,10 +2659,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       case ReaderTapZoneAction.menu:
         _toggleControls();
       case ReaderTapZoneAction.prevPage:
-        _pauseListenFollow();
+        _takeOverListening();
         unawaited(_turnPage(-1));
       case ReaderTapZoneAction.nextPage:
-        _pauseListenFollow();
+        _takeOverListening();
         unawaited(_turnPage(1));
       case ReaderTapZoneAction.prevChapter:
         unawaited(_prev());
@@ -3124,6 +3134,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final now = DateTime.now();
       if (now.difference(_desktopWheelAt).inMilliseconds < 180) return;
       _desktopWheelAt = now;
+      _takeOverListening();
       unawaited(_turnPage(signal.scrollDelta.dy > 0 ? 1 : -1));
     });
   }
@@ -3824,7 +3835,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _hideControlsOnDrag() {
     _stopAutoTurn();
-    _pauseListenFollow();
+    _takeOverListening();
     if (_controlsVisible) setState(() => _controlsVisible = false);
   }
 

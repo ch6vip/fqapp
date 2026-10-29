@@ -149,7 +149,41 @@ void main() {
       await video.dispose();
     },
   );
+
+  testWidgets('a manual page turn pauses playback like the official reader', (
+    tester,
+  ) async {
+    final app = await _mount(tester);
+    app.open();
+    await _flush(tester);
+    final player = app.players.single;
+    expect(player.isPlaying, isTrue);
+
+    app.navigator.currentState!.pop();
+    await _flush(tester);
+    // 这一章撑到多页，右侧点按才真的换页而不是换章。
+    app.openReader(text: _multiPageChapter);
+    await _flush(tester);
+    expect(ListeningSession.instance.playing, isTrue);
+
+    final rect = tester.getRect(
+      find.byKey(const ValueKey('reader-page-surface')),
+    );
+    await tester.tapAt(Offset(rect.right - 16, rect.center.dy));
+    await _flush(tester);
+
+    // 官方 handlePlayWhenPageChange：同章翻页 pausePlayer()，随后亮出同步胶囊。
+    expect(player.isPlaying, isFalse, reason: '手动翻页要暂停播放');
+    expect(ListeningSession.instance.playing, isFalse);
+    expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
+  });
 }
+
+/// 多页正文：每段都足够长，430×932 的阅读页至少排出两页。
+final String _multiPageChapter = List.generate(
+  40,
+  (i) => '第${i + 1}段，山风从窗边吹进来，把桌上的纸页翻得沙沙作响。',
+).join('\n');
 
 Future<_Harness> _mount(WidgetTester tester) async {
   final app = _Harness();
@@ -194,7 +228,10 @@ class _Harness {
 
   /// 打开同一本书的阅读页：迷你栏留在原地，阅读页在 initState 里注册
   /// 「跳到播放位置」。
-  void openReader({String bookId = 'book'}) {
+  void openReader({
+    String bookId = 'book',
+    String text = '第一段。\n第二段。',
+  }) {
     unawaited(
       navigator.currentState!.push<void>(
         MaterialPageRoute(
@@ -209,7 +246,7 @@ class _Harness {
             localOnly: true,
             readerStore: store,
             chapterCache: MemoryChapterCache(),
-            chapterLoader: (_) async => '第一段。\n第二段。',
+            chapterLoader: (_) async => text,
             readerDevice: _NullDevice(),
           ),
         ),

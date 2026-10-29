@@ -39,6 +39,18 @@ class AudioPlaybackScope extends StatefulWidget {
     return owner?.togglePlayback(bookId) ?? false;
   }
 
+  /// 阅读页手动翻页：把这本书的播放暂停。
+  ///
+  /// 官方 `handlePlayWhenPageChange`（`AudioSyncReaderController.java:1242-1295`）
+  /// 在同章翻页时 `pausePlayer()` 并亮出「原进度 / 从本页听」。和
+  /// [togglePlayback] 不同，这里只在正在播时暂停；已经是暂停态时调用不会反着
+  /// 播起来。
+  static void pauseIfPlaying(BuildContext context, String bookId) {
+    context
+        .findAncestorStateOfType<_AudioPlaybackScopeState>()
+        ?.pauseIfPlaying(bookId);
+  }
+
   /// 把朗读切到 [chapterId]，并从 [position] 起播（双击跳读，可跨章）。
   ///
   /// 同章就是 seek；换章走 [_openChapter]，它会释放旧播放器、按给定位置起播，
@@ -159,6 +171,19 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     if (session._bookId != bookId || !session._ready) return false;
     unawaited(session._togglePlayback());
     return true;
+  }
+
+  /// 见 [AudioPlaybackScope.pauseIfPlaying]。
+  void pauseIfPlaying(String bookId) {
+    final tts = _tts;
+    if (tts != null && !tts.closed && tts.book.bookId == bookId) {
+      if (tts.wantPlay || tts.loading) unawaited(tts.pause());
+      return;
+    }
+    final session = _session;
+    if (session == null || session._closed) return;
+    if (session._bookId != bookId || !session._ready) return;
+    if (session._wantPlay) unawaited(session._pauseForOtherMedia());
   }
 
   /// 见 [AudioPlaybackScope.jumpToChapter]。换章要重新加载音频源，所以不像
