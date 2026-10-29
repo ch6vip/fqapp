@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/library_store.dart';
 
 void main() {
@@ -124,6 +125,26 @@ void main() {
     await tester.pump();
     expect(tester.widget<Text>(readout).data, endsWith(' · 未阅读'));
     expect(find.text('今天 · 1分钟'), findsNothing);
+  });
+
+  testWidgets('e-ink empty days stay lighter than days with reading', (
+    tester,
+  ) async {
+    final original = einkModeNotifier.value;
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = original);
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(const MaterialApp(home: MinePage()));
+    await tester.pumpAndSettle();
+    final empty = tester.widget<DecoratedBox>(
+      find.descendant(
+        of: find.byKey(const ValueKey('reading-heatmap-cell-0')),
+        matching: find.byType(DecoratedBox),
+      ),
+    );
+    final decoration = empty.decoration as BoxDecoration;
+    expect(decoration.color, Colors.transparent);
+    expect(decoration.border, isNotNull, reason: 'empty days are outlined');
   });
 
   for (final media in const {'audio': '听书', 'manga': '漫画'}.entries) {

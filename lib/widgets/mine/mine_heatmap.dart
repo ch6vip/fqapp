@@ -144,14 +144,18 @@ class _MineHeatmapState extends State<MineHeatmap> {
     final date = dates[index];
     final future = date.isAfter(today);
     final level = future ? 0 : readingHeatLevel(widget.stats.minutesOn(date));
+    // 墨水屏的 line 是纯黑，空格子若照用会比读过的格子还深：改成白底黑边，
+    // 读过的格子用黑色深浅分级。
+    final heat = palette.eink ? Colors.black : HomePalette.accent;
     final color = switch (level) {
-      1 => HomePalette.accent.withValues(alpha: 0.18),
-      2 => HomePalette.accent.withValues(alpha: 0.4),
-      3 => HomePalette.accent.withValues(alpha: 0.65),
-      4 => HomePalette.accent,
-      _ => future ? Colors.transparent : palette.line,
+      1 => heat.withValues(alpha: 0.18),
+      2 => heat.withValues(alpha: 0.4),
+      3 => heat.withValues(alpha: 0.65),
+      4 => heat,
+      _ => future || palette.eink ? Colors.transparent : palette.line,
     };
     final selected = !future && date == shown;
+    final outline = palette.eink && level == 0 && !future;
     return GestureDetector(
       key: ValueKey('reading-heatmap-cell-$index'),
       behavior: HitTestBehavior.opaque,
@@ -166,6 +170,8 @@ class _MineHeatmapState extends State<MineHeatmap> {
               borderRadius: BorderRadius.circular(3),
               border: selected
                   ? Border.all(color: palette.ink, width: 1.2)
+                  : outline
+                  ? Border.all(color: Colors.black, width: 0.6)
                   : null,
             ),
           ),
