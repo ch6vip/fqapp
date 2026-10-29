@@ -33,7 +33,7 @@
     "lib/services/inline_video_playback.dart": 1139,
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 746,
-    "lib/services/system_tts.dart": 650,
+    "lib/services/system_tts.dart": 708,
     "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,

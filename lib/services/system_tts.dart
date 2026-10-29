@@ -556,13 +556,18 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// 用户主动暂停（阅读页胶囊、听书面板的暂停钮）。
+  ///
+  /// 和被打断不一样：用户按停之后可能去放音乐、打游戏，这时还占着音频焦点
+  /// 会让蓝牙播放键、媒体通知都指向这个已经停下的朗读。所以这里照旧 `stop()`，
+  /// 把焦点交还；`_pauseForInterruption` 才保留焦点等系统交还后自动续播。
   Future<void> pause() async {
     if (closed) return;
     // 用户（或任何非焦点路径）主动暂停：清掉「挂断后自动续播」的意图，
     // 电话里自己按停的，挂断后不会被复活。
     _resumeOnFocusGain = false;
     _pendingFocusResume = false;
-    await _halt();
+    await _halt(keepFocus: false);
   }
 
   /// 焦点被临时抢走（来电、导航提示）造成的暂停：记下打断前是否在播，
@@ -570,12 +575,13 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _pauseForInterruption() async {
     if (closed || (!wantPlay && !loading)) return;
     if (wantPlay) _resumeOnFocusGain = true;
-    await _halt();
+    await _halt(keepFocus: true);
   }
 
-  /// 停朗读但**不放弃音频焦点**。只有关闭会话（shutdown）才弃焦点：
-  /// 一旦弃了，系统在对方说完后就不会再发 GAIN，自动续播永远等不到。
-  Future<void> _halt() async {
+  /// [keepFocus] 为真时停朗读但**不放弃音频焦点**：一旦弃了，系统在对方
+  /// 说完后就不会再发 GAIN，自动续播永远等不到。只有「被打断」这一种暂停
+  /// 需要它；用户手动暂停与出错停下都交还焦点。
+  Future<void> _halt({required bool keepFocus}) async {
     ++_generation;
     _loadRequest?.cancel();
     _resetQueue(_offset);
@@ -583,7 +589,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     loading = false;
     _publish();
     try {
-      await SystemTts.pause();
+      await (keepFocus ? SystemTts.pause() : SystemTts.stop());
     } catch (_) {}
   }
 
