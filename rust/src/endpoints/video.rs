@@ -106,6 +106,13 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             (fetch_phoenix_video_model(ctx, &video_id).await?, None)
         };
 
+        // 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon` 按服务端
+        // `vertical` 决定竖屏剧集是否给「全屏观看」（竖屏不给）。该字段随
+        // 每集的 `VideoInfo.vertical` 下发，合成的取流响应原先把它丢了；
+        // 这里透传出去，缺字段时为 null（Dart 侧保持旧行为，见 player_page）。
+        let vertical =
+            episode_vertical(&raw).or_else(|| phoenix_raw.as_deref().and_then(episode_vertical));
+
         let (video_url, content_key) = match resolve_video_source(ctx, &raw).await {
             VideoSourceResolution::Found(url, key) => (url, key),
             VideoSourceResolution::CodecRejected => {
@@ -122,6 +129,9 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             "video_url": video_url,
             "key_hex": hex::encode(&content_key),
             "video_id": video_id,
+            // 分集方向（官方 `VideoInfo.vertical`）：缺字段时 null，客户端
+            // 据此保持旧行为（显示「全屏观看」）。
+            "vertical": vertical,
             // 全量兼容档（高→低）。官方面板按该列表渲染清晰度行；空数组
             // 表示单流，客户端隐藏清晰度入口。
             "variants": extract_stream_variants(ctx, &raw, phoenix_raw.as_deref()).await,
@@ -136,6 +146,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 Ok(json!({
                     "video_url": local_path,
                     "video_id": video_id,
+                    "vertical": vertical,
                     "video_info": {
                         "data": {
                             "video_list": {
@@ -261,6 +272,55 @@ fn extract_video_info_list_map_url(data: &Map<String, Value>) -> VideoSourceReso
         return VideoSourceResolution::NotFound;
     };
     extract_video_list_source(play_info_list)
+}
+
+/// The episode's `vertical` flag from a multi_video_model response.
+///
+/// Official models it as `com.bytedance.rpc.model.VideoInfo.vertical` (a
+/// `short`) on each entry of `data.video_info_list_map`; the short-drama page
+/// shows 「全屏观看」 only when `!saasVideoData.isVertical()`
+/// (`wp3/o1.java:301-347`, data copied from `EpisodeInfo.vertical` in
+/// `th3/e.java:95`). `None` means the response carried no field at all — the
+/// caller then leaves the client's old behaviour alone.
+fn episode_vertical(raw: &[u8]) -> Option<bool> {
+    let resp: Value = serde_json::from_slice(raw).ok()?;
+    let data = resp.get("data")?.as_object()?;
+    if let Some(found) = data.get("vertical").and_then(vertical_flag) {
+        return Some(found);
+    }
+    if let Some(video_map) = data.get("video_info_list_map").and_then(|v| v.as_object()) {
+        for list in video_map.values() {
+            let Some(arr) = list.as_array() else { continue };
+            for entry in arr {
+                if let Some(found) = entry.get("vertical").and_then(vertical_flag) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    // Shortplay shape: `data.<vid>` is the VideoInfo itself (beside its
+    // `video_model` string), so the flag sits one level up from the quality
+    // list rather than in `video_info_list_map`.
+    for value in data.values() {
+        if let Some(found) = value.get("vertical").and_then(vertical_flag) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Lenient `vertical` decoding: upstream may send bool, 0/1, or "true"/"1".
+fn vertical_flag(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(flag) => Some(*flag),
+        Value::Number(number) => number.as_i64().map(|v| v != 0),
+        Value::String(text) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(true),
+            "false" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 async fn resolve_video_source(ctx: &Ctx, raw: &[u8]) -> VideoSourceResolution {
@@ -2430,6 +2490,53 @@ mod spade_vectors {
     fn derives_the_short_drama_content_key() {
         let key = derive_spade_content_key("kbwf80+1N+V9nwHQSp431GWvLeBlqizTYJ0o5FOrHuZhqimysg==");
         assert_eq!(hex::encode(key), "4990a92de837e29e18031a370ab744e6");
+    }
+
+    #[test]
+    fn reads_the_episode_vertical_flag() {
+        // 官方 `VideoInfo.vertical` 挂在 `data.video_info_list_map` 的每集
+        // 条目上（`com.bytedance.rpc.model.VideoInfo`）。
+        let vertical = |body: Value| episode_vertical(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(
+            vertical(json!({
+                "data": { "video_info_list_map": {
+                    "1004": [{ "vertical": true, "video_model": "{}" }]
+                } }
+            })),
+            Some(true)
+        );
+        assert_eq!(
+            vertical(json!({
+                "data": { "video_info_list_map": {
+                    "1004": [{ "vertical": false }]
+                } }
+            })),
+            Some(false)
+        );
+        // 缺字段 = None：客户端保持旧行为，不是「默认不竖屏」的猜测。
+        assert_eq!(
+            vertical(json!({
+                "data": { "video_info_list_map": {
+                    "1004": [{ "video_model": "{}" }]
+                } }
+            })),
+            None
+        );
+        assert_eq!(vertical(json!({ "data": {} })), None);
+        // 上游可能给 0/1 或字符串。
+        assert_eq!(
+            vertical(json!({
+                "data": { "video_info_list_map": { "1004": [{ "vertical": 1 }] } }
+            })),
+            Some(true)
+        );
+        // shortplay 形状：VideoInfo 在 `data.<vid>` 上，与 video_model 并列。
+        assert_eq!(
+            vertical(json!({
+                "data": { "vid1": { "video_model": "{}", "vertical": true } }
+            })),
+            Some(true)
+        );
     }
 
     #[test]
