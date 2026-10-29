@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
+import 'package:fqapp/models/audio_time_track.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
@@ -304,6 +305,138 @@ void main() {
       expect(session.players.single.isPlaying, true);
     },
   );
+
+  // 从本段听 on a plain-text chapter (no `<span start_time>`): the reader
+  // hands over the paragraph, the player resolves the spoken start from the
+  // chapter's own /timepoints timeline. Wins over a completed history entry.
+  testWidgets('a paragraph anchor resolves its spoken start from timepoints', (
+    tester,
+  ) async {
+    final session = _Session(
+      startPosition: Duration.zero,
+      startParagraph: (paraIndex: null, ordinal: 2),
+      timePoints: const AudioTimeTrack([
+        AudioSyncPoint(
+          startTime: 0,
+          startPara: 0,
+          startParaOff: 0,
+          endPara: 0,
+          endParaOff: 9,
+        ),
+        AudioSyncPoint(
+          startTime: 3000,
+          startPara: 1,
+          startParaOff: 0,
+          endPara: 1,
+          endParaOff: 9,
+        ),
+        AudioSyncPoint(
+          startTime: 8000,
+          startPara: 2,
+          startParaOff: 0,
+          endPara: 2,
+          endParaOff: 9,
+        ),
+      ]),
+      store: ControlledReaderStore(
+        entry: {
+          'id': 'book',
+          'kind': 'audio',
+          'chapterId': '1',
+          'position': 120,
+          'duration': 120,
+          'completed': true,
+        },
+      ),
+    );
+    await _mount(tester, session);
+    await _flush(tester);
+    expect(session.players.single.position, const Duration(milliseconds: 8000));
+    expect(tester.takeException(), isNull);
+  });
+
+  // A paragraph the timeline cannot match falls back to the explicit zero the
+  // reader hands in — never to saved history, which would be a place nobody
+  // asked for.
+  testWidgets('an unresolvable paragraph anchor starts at the chapter opening', (
+    tester,
+  ) async {
+    final session = _Session(
+      startPosition: Duration.zero,
+      startParagraph: (paraIndex: null, ordinal: 9),
+      timePoints: const AudioTimeTrack([
+        AudioSyncPoint(
+          startTime: 0,
+          startPara: 0,
+          startParaOff: 0,
+          endPara: 0,
+          endParaOff: 9,
+        ),
+      ]),
+      store: ControlledReaderStore(
+        entry: {
+          'id': 'book',
+          'kind': 'audio',
+          'chapterId': '1',
+          'position': 100,
+          'duration': 120,
+        },
+      ),
+    );
+    await _mount(tester, session);
+    await _flush(tester);
+    expect(session.players.single.position, Duration.zero);
+    expect(tester.takeException(), isNull);
+  });
+
+  // 阅读页还会递上「这一段在正文里的比例」。时间轴查不到时按比例折算时长：
+  // 折算不精确，但锚定请求落到章首是用户看到的最坏结果。
+  testWidgets('an unresolvable anchor falls back to the read fraction', (
+    tester,
+  ) async {
+    final session = _Session(
+      startPosition: Duration.zero,
+      startParagraph: (paraIndex: null, ordinal: 9),
+      startFraction: 0.5,
+      timePoints: const AudioTimeTrack([]),
+      store: ControlledReaderStore(
+        entry: {
+          'id': 'book',
+          'kind': 'audio',
+          'chapterId': '1',
+          'position': 100,
+          'duration': 120,
+        },
+      ),
+    );
+    await _mount(tester, session);
+    await _flush(tester);
+    // 假片长 2 分钟，读到一半 ⇒ 1 分钟。
+    expect(session.players.single.position, const Duration(minutes: 1));
+    expect(tester.takeException(), isNull);
+  });
+
+  // 时间轴命中时比例不得抢先：精确锚点永远优先于折算。
+  testWidgets('a resolved anchor ignores the read fraction', (tester) async {
+    final session = _Session(
+      startPosition: Duration.zero,
+      startParagraph: (paraIndex: 2, ordinal: 2),
+      startFraction: 0.5,
+      timePoints: const AudioTimeTrack([
+        AudioSyncPoint(
+          startTime: 8000,
+          startPara: 2,
+          startParaOff: 0,
+          endPara: 2,
+          endParaOff: 9,
+        ),
+      ]),
+    );
+    await _mount(tester, session);
+    await _flush(tester);
+    expect(session.players.single.position, const Duration(seconds: 8));
+    expect(tester.takeException(), isNull);
+  });
 
   // 从本段听 hands in a paragraph's timeline position. It is a deliberate
   // start point, so a chapter already marked as played-to-the-end must neither
@@ -985,6 +1118,9 @@ class _Session {
   final _AudioPlayer Function()? factory;
   final List<Chapter> chapters;
   final Duration? startPosition;
+  final ({int? paraIndex, int ordinal})? startParagraph;
+  final double? startFraction;
+  final AudioTimeTrack? timePoints;
   final players = <_AudioPlayer>[];
   final requests = <String>[];
   _Session({
@@ -994,6 +1130,9 @@ class _Session {
     this.extras,
     this.factory,
     this.startPosition,
+    this.startParagraph,
+    this.startFraction,
+    this.timePoints,
     List<Chapter>? chapters,
   }) : store = store ?? ControlledReaderStore(),
        chapters =
@@ -1010,7 +1149,12 @@ class _Session {
       title: '测试听书',
       chapters: chapters,
       startPosition: startPosition,
+      startParagraph: startParagraph,
+      startFraction: startFraction,
       historyStore: store,
+      timePointLoader: timePoints == null
+          ? null
+          : (id, toneId) async => timePoints!,
       sourceLoader: (id, {toneId}) {
         requests.add('$id:$toneId');
         return loader?.call(id, toneId: toneId) ??
