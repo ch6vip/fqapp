@@ -254,6 +254,81 @@ void main() {
     },
   );
 
+  testWidgets('a temporary focus loss resumes once the focus comes back', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final playback = session(text: '第一句。第二句。第三句。');
+    try {
+      playback.start();
+      await tester.pump();
+      final before = spoken().length;
+      expect(before, greaterThan(0));
+      // 来电：焦点被临时抢走，只能停朗读，不能交还焦点——交还了就再没有
+      // GAIN，挂断后永远停在暂停态。
+      await event({'type': 'interrupted', 'id': null});
+      await tester.pump();
+      expect(playback.wantPlay, isFalse);
+      await event({'type': 'focus_resume'});
+      await tester.pump();
+      expect(playback.wantPlay, isTrue);
+      expect(spoken().length, greaterThan(before));
+    } finally {
+      await playback.close();
+      await tester.pump();
+    }
+  });
+
+  testWidgets('a focus gain does not undo a pause pressed inside the call', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final playback = session(text: '第一句。第二句。');
+    try {
+      playback.start();
+      await tester.pump();
+      await event({'type': 'interrupted', 'id': null});
+      await tester.pump();
+      // 用户在通话里主动按停：挂断不该替他开播。
+      await playback.pause();
+      await tester.pump();
+      await event({'type': 'focus_resume'});
+      await tester.pump();
+      expect(playback.wantPlay, isFalse);
+    } finally {
+      await playback.close();
+      await tester.pump();
+    }
+  });
+
+  testWidgets('a focus gain in the background waits for the app', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await AudioPreferences.instance.setBackgroundPlayback(false);
+    final playback = session(text: '第一句。第二句。');
+    try {
+      playback.start();
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      await event({'type': 'interrupted', 'id': null});
+      await tester.pump();
+      // 挂断那一下人还在通话界面：此刻不许出声，回到前台再补。
+      await event({'type': 'focus_resume'});
+      await tester.pump();
+      expect(playback.wantPlay, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(playback.wantPlay, isTrue);
+    } finally {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await AudioPreferences.instance.setBackgroundPlayback(true);
+      await playback.close();
+      await tester.pump();
+    }
+  });
+
   test(
     'local books without a loader fail instead of falling back to an API',
     () async {
