@@ -16,7 +16,7 @@
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 1965,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 4099,
+    "lib/pages/reader_page.dart": 4118,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
@@ -34,7 +34,6 @@
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 746,
     "lib/services/system_tts.dart": 650,
-    "lib/widgets/audio/audio_playback_scope.dart": 525,
     "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
@@ -211,7 +210,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 3977,
+      "line": 3996,
       "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },
