@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/audio_floating_routes.dart';
 import '../services/system_tts.dart';
 
 class SystemTtsSettingsPage extends StatefulWidget {
@@ -18,6 +19,13 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
   bool _saving = false;
   String? _error;
   int _generation = 0;
+
+  // Official AudioPlaySettingActivity hides the capsule.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    AudioFloatingRouteScope.configure(context, hidden: true);
+  }
 
   @override
   void initState() {

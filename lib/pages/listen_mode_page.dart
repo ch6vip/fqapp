@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
+import '../services/audio_floating_routes.dart';
 import '../services/audio_preferences.dart';
 import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
@@ -60,8 +61,16 @@ class _ListenModePageState extends State<ListenModePage>
 
   static const _rates = <double>[0.75, 1.0, 1.25, 1.5, 2.0];
   double _rate = 1.0;
+
   /// 拖动进度条时用于合并回写：只有最后一次拖动落地才同步通知。
   int _seekSyncGeneration = 0;
+
+  // Official listen mode is ShortSeriesActivity, which hides the capsule.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    AudioFloatingRouteScope.configure(context, hidden: true);
+  }
 
   @override
   void initState() {
@@ -270,140 +279,139 @@ class _ListenModePageState extends State<ListenModePage>
         if (!didPop) _exitWithResult();
       },
       child: Scaffold(
-      key: const ValueKey('listen-page'),
-      // 全屏听书页是整块大底色：OLED 纯黑生效时降到 #000000 省电，
-      // 其余深色模式保持官方 #121212。AppBar / 按钮本来就是透明 + 白字。
-      backgroundColor: oledActive()
-          ? Colors.black
-          : const Color(0xFF121212),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          key: const ValueKey('listen-page-back'),
-          onPressed: _exitWithResult,
-          icon: const Icon(Icons.arrow_back),
+        key: const ValueKey('listen-page'),
+        // 全屏听书页是整块大底色：OLED 纯黑生效时降到 #000000 省电，
+        // 其余深色模式保持官方 #121212。AppBar / 按钮本来就是透明 + 白字。
+        backgroundColor: oledActive() ? Colors.black : const Color(0xFF121212),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            key: const ValueKey('listen-page-back'),
+            onPressed: _exitWithResult,
+            icon: const Icon(Icons.arrow_back),
+          ),
+          title: Text(
+            widget.seriesTitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
-        title: Text(
-          widget.seriesTitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: Center(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  // 系列海报全应用都是竖版：信息流卡与官方详情页封面
-                  // 都是 5/7。这里给出明确框，而不是只给宽度——只给宽度时
-                  // 高度由图片自身撑，受限时 BoxFit.cover 会裁掉海报；失败
-                  // 占位也从正方形改成同一比例（issue #85）。
-                  child: SizedBox(
-                    width: 220,
-                    height: 308,
-                    child: Image.network(
-                      ApiClient.instance.absoluteUrl(widget.coverUrl),
-                      key: const ValueKey('listen-cover'),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const SizedBox.expand(),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    // 系列海报全应用都是竖版：信息流卡与官方详情页封面
+                    // 都是 5/7。这里给出明确框，而不是只给宽度——只给宽度时
+                    // 高度由图片自身撑，受限时 BoxFit.cover 会裁掉海报；失败
+                    // 占位也从正方形改成同一比例（issue #85）。
+                    child: SizedBox(
+                      width: 220,
+                      height: 308,
+                      child: Image.network(
+                        ApiClient.instance.absoluteUrl(widget.coverUrl),
+                        key: const ValueKey('listen-cover'),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const SizedBox.expand(),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    '第 ${_index + 1} 集 · ${_episodeTitle(_index)}',
-                    key: const ValueKey('listen-episode-title'),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${_fmt(position)} / ${_fmt(duration)}',
-                    key: const ValueKey('listen-time'),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0x99FFFFFF),
-                    ),
-                  ),
-                  Slider(
-                    key: const ValueKey('listen-seek'),
-                    value: duration.inMilliseconds <= 0
-                        ? 0
-                        : (position.inMilliseconds / duration.inMilliseconds)
-                              .clamp(0.0, 1.0),
-                    onChanged: duration.inMilliseconds <= 0 ? null : _seekTo,
-                    activeColor: const Color(0xFFFA6725),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        key: const ValueKey('listen-prev'),
-                        onPressed: _index > 0 ? () => unawaited(_step(-1)) : null,
-                        icon: const Icon(Icons.skip_previous, size: 40),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '第 ${_index + 1} 集 · ${_episodeTitle(_index)}',
+                      key: const ValueKey('listen-episode-title'),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
                         color: Colors.white,
-                        disabledColor: const Color(0x33FFFFFF),
                       ),
-                      const SizedBox(width: 24),
-                      IconButton(
-                        key: const ValueKey('listen-play'),
-                        onPressed: player == null
-                            ? null
-                            : () => unawaited(_togglePlay()),
-                        icon: Icon(
-                          playing
-                              ? Icons.pause_circle_filled
-                              : Icons.play_circle_filled,
-                          size: 64,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_fmt(position)} / ${_fmt(duration)}',
+                      key: const ValueKey('listen-time'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0x99FFFFFF),
+                      ),
+                    ),
+                    Slider(
+                      key: const ValueKey('listen-seek'),
+                      value: duration.inMilliseconds <= 0
+                          ? 0
+                          : (position.inMilliseconds / duration.inMilliseconds)
+                                .clamp(0.0, 1.0),
+                      onChanged: duration.inMilliseconds <= 0 ? null : _seekTo,
+                      activeColor: const Color(0xFFFA6725),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          key: const ValueKey('listen-prev'),
+                          onPressed: _index > 0
+                              ? () => unawaited(_step(-1))
+                              : null,
+                          icon: const Icon(Icons.skip_previous, size: 40),
+                          color: Colors.white,
+                          disabledColor: const Color(0x33FFFFFF),
                         ),
-                        color: const Color(0xFFFA6725),
-                      ),
-                      const SizedBox(width: 24),
-                      IconButton(
-                        key: const ValueKey('listen-next'),
-                        onPressed: _index < widget.episodes.length - 1
-                            ? () => unawaited(_step(1))
-                            : null,
-                        icon: const Icon(Icons.skip_next, size: 40),
-                        color: Colors.white,
-                        disabledColor: const Color(0x33FFFFFF),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 8,
-                    children: [
-                      for (final rate in _rates)
-                        _ratePill(context, rate),
-                    ],
-                  ),
-                ],
+                        const SizedBox(width: 24),
+                        IconButton(
+                          key: const ValueKey('listen-play'),
+                          onPressed: player == null
+                              ? null
+                              : () => unawaited(_togglePlay()),
+                          icon: Icon(
+                            playing
+                                ? Icons.pause_circle_filled
+                                : Icons.play_circle_filled,
+                            size: 64,
+                          ),
+                          color: const Color(0xFFFA6725),
+                        ),
+                        const SizedBox(width: 24),
+                        IconButton(
+                          key: const ValueKey('listen-next'),
+                          onPressed: _index < widget.episodes.length - 1
+                              ? () => unawaited(_step(1))
+                              : null,
+                          icon: const Icon(Icons.skip_next, size: 40),
+                          color: Colors.white,
+                          disabledColor: const Color(0x33FFFFFF),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 8,
+                      children: [
+                        for (final rate in _rates) _ratePill(context, rate),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-          ],
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }

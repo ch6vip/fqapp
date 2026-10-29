@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'cover_palette.dart';
 import 'poster_cache.dart';
 
 /// 听书页的整页配色，由当前书籍封面推出来。
@@ -128,6 +129,11 @@ class AudioPageTheme {
     );
   }
 
+  /// Hue for the official audio capsule; see [coverPaletteHueFromRgba]. The
+  /// page theme above keeps using [dominantFromRgba].
+  static double? paletteHueFromRgba(Uint8List rgba, {int stride = 1}) =>
+      coverPaletteHueFromRgba(rgba, stride: stride);
+
   /// 由封面主色推出整页六档颜色。
   ///
   /// 官方画布 `#F3E9E8` 与封面主色相比是「同色相、压到很高的明度」：把主色
@@ -169,11 +175,23 @@ class AudioPageTheme {
 ///
 /// 失败一律返回 null，调用方保留 [AudioPageTheme.fallback]。
 Future<Color?> coverDominantColor(Uint8List bytes) async {
+  final rgba = await _decodeCoverRgba(bytes);
+  return rgba == null ? null : AudioPageTheme.dominantFromRgba(rgba);
+}
+
+/// 把一张封面的字节解成官方播放胶囊要用的色相。失败返回 null。
+Future<double?> coverPaletteHue(Uint8List bytes) async {
+  final rgba = await _decodeCoverRgba(bytes);
+  return rgba == null ? null : AudioPageTheme.paletteHueFromRgba(rgba);
+}
+
+/// 共享的解码路径：缩到长边 64 再读 RGBA。风格与 [dominantFromRgba] 相同，
+/// 解码由引擎的异步 codec 完成，不阻塞首帧。
+Future<Uint8List?> _decodeCoverRgba(Uint8List bytes) async {
   if (bytes.isEmpty) return null;
   try {
     final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
     final descriptor = await ui.ImageDescriptor.encoded(buffer);
-    // 缩到长边 64 再读像素：主色不需要分辨率，小图还能把解码成本压到最低。
     const target = 64;
     final scale = math.min(
       target / descriptor.width,
@@ -191,8 +209,7 @@ Future<Color?> coverDominantColor(Uint8List bytes) async {
     codec.dispose();
     descriptor.dispose();
     buffer.dispose();
-    if (data == null) return null;
-    return AudioPageTheme.dominantFromRgba(data.buffer.asUint8List());
+    return data?.buffer.asUint8List();
   } catch (_) {
     return null;
   }
@@ -200,11 +217,22 @@ Future<Color?> coverDominantColor(Uint8List bytes) async {
 
 /// 取封面主色：优先读 [PosterCache]，网络失败时返回 null。
 Future<Color?> fetchCoverDominant(String url) async {
+  final bytes = await _coverBytes(url);
+  return bytes == null ? null : coverDominantColor(bytes);
+}
+
+/// 取封面 Palette 色相（0..360）：优先读 [PosterCache]，失败时返回 null。
+Future<double?> fetchCoverPaletteHue(String url) async {
+  final bytes = await _coverBytes(url);
+  return bytes == null ? null : coverPaletteHue(bytes);
+}
+
+Future<Uint8List?> _coverBytes(String url) async {
   if (url.isEmpty) return null;
   try {
     final file = await PosterCache.instance.getSingleFile(url);
     if (!await file.exists()) return null;
-    return await coverDominantColor(await file.readAsBytes());
+    return await file.readAsBytes();
   } catch (_) {
     return null;
   }

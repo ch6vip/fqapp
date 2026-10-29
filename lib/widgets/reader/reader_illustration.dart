@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/app_theme.dart';
+import '../../services/audio_floating_routes.dart';
 import '../../services/chapter_text_formatter.dart';
 import '../../services/poster_cache.dart';
 import 'eink_image_provider.dart';
@@ -30,6 +31,14 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
   late ImageProvider<Object> _provider = _createProvider();
   int _attempt = 0;
   bool _retrying = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!widget.allowFullscreen) {
+      AudioFloatingRouteScope.configure(context, hidden: true);
+    }
+  }
 
   @override
   void initState() {
