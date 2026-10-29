@@ -1158,6 +1158,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
         title: item.title,
         cover: item.cover,
         episodes: episodes,
+        // 与播放页同源：「往后N集」与默认分组从正在播的那集算，画质只列
+        // 本集真实给到的档位。
+        currentIndex: (_inline.activeEpisodeIndex ?? 0).clamp(
+          0,
+          episodes.length - 1,
+        ),
+        qualities: _inline.variants,
       );
     } finally {
       _modalOpen = false;

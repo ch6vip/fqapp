@@ -8,7 +8,7 @@
     "lib/pages/comic_reader_page.dart": 955,
     "lib/pages/detail_page.dart": 1663,
     "lib/pages/drama_download_sheet.dart": 638,
-    "lib/pages/drama_page.dart": 4975,
+    "lib/pages/drama_page.dart": 4982,
     "lib/pages/fanqie_history_import_page.dart": 624,
     "lib/pages/home_page.dart": 622,
     "lib/pages/home_provider.dart": 1362,
@@ -70,7 +70,7 @@
     "test/detail_page_test.dart": 740,
     "test/discovery_pages_test.dart": 690,
     "test/drama_downloader_test.dart": 563,
-    "test/drama_inline_playback_test.dart": 1166,
+    "test/drama_inline_playback_test.dart": 1204,
     "test/drama_page_test.dart": 1975,
     "test/home_page_test.dart": 770,
     "test/home_provider_test.dart": 1122,
@@ -151,37 +151,37 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaFeedCard.build": {
-      "line": 2495,
+      "line": 2502,
       "lines": 158,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_DramaPageState.build": {
-      "line": 1355,
+      "line": 1362,
       "lines": 177,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_HistoryCard.build": {
-      "line": 4020,
+      "line": 4027,
       "lines": 155,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_InfoPanelState.build": {
-      "line": 3281,
+      "line": 3288,
       "lines": 153,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_LocalListState.build": {
-      "line": 4465,
+      "line": 4472,
       "lines": 105,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_page.dart::_SeekTrackState.build": {
-      "line": 3080,
+      "line": 3087,
       "lines": 138,
       "symbol": "Widget build(BuildContext context) => LayoutBuilder("
     },
     "lib/pages/drama_page.dart::_TopBarState.build": {
-      "line": 2185,
+      "line": 2192,
       "lines": 87,
       "symbol": "Widget build(BuildContext context) {"
     },
