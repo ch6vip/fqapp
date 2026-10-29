@@ -237,11 +237,9 @@ void main() {
     ListeningSession.instance.setFollowArmed(true);
     await tester.pump(const Duration(milliseconds: 150));
 
-    // 打开工具条 → 展开「设置」里的章节行 → 点「下一章」→ 收起工具条。
+    // 打开工具条 → 点常驻章节行的「下一章」→ 收起工具条。
     await tester.tapAt(tester.getRect(_surface).center);
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('reader-settings')));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('下一章'));
     await tester.pumpAndSettle();

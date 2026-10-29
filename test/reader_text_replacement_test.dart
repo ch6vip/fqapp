@@ -108,9 +108,7 @@ void main() {
         tester.getCenter(find.byKey(const ValueKey('reader-page-surface'))),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('reader-settings')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('缓存'));
+      await tester.tap(find.byTooltip('缓存'));
       await tester.pumpAndSettle();
       final sheet = tester.widget<ChapterCacheSheet>(
         find.byType(ChapterCacheSheet),
@@ -223,9 +221,7 @@ void main() {
       tester.getCenter(find.byKey(const ValueKey('reader-page-surface'))),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('reader-settings')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('缓存'));
+    await tester.tap(find.byTooltip('缓存'));
     await tester.pumpAndSettle();
     final sheet = tester.widget<ChapterCacheSheet>(
       find.byType(ChapterCacheSheet),

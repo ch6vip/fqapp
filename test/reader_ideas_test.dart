@@ -519,9 +519,6 @@ void main() {
     Future<void> openControls(WidgetTester tester) async {
       await tester.tapAt(const Offset(200, 400));
       await tester.pumpAndSettle();
-      // Secondary actions (缓存/排版) live inside 设置.
-      await tester.tap(find.byKey(const ValueKey('reader-settings')));
-      await tester.pumpAndSettle();
     }
 
     testWidgets('opens the sheet from the in-text bubble', (tester) async {
@@ -562,7 +559,7 @@ void main() {
       // Bubbles replaced the menu row; the four primary actions remain.
       expect(find.text('段评'), findsNothing);
       expect(find.text('目录'), findsOneWidget);
-      expect(find.text('缓存'), findsOneWidget);
+      expect(find.byTooltip('缓存'), findsOneWidget);
     });
 
     testWidgets('a failed idea load leaves the reader usable', (tester) async {
@@ -575,7 +572,7 @@ void main() {
       expect(tester.takeException(), isNull);
       // The four primary actions stay available.
       expect(find.text('目录'), findsOneWidget);
-      expect(find.text('缓存'), findsOneWidget);
+      expect(find.byTooltip('缓存'), findsOneWidget);
     });
 
     testWidgets('refetches ideas for the next chapter', (tester) async {

@@ -50,11 +50,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-settings')));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('排版'));
-      await tester.tap(find.text('排版'));
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('reader-more-appearance')),
+      );
+      await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
       await tester.pumpAndSettle();
       final row = find
-          .ancestor(of: find.text('显示系统状态栏'), matching: find.byType(Row))
+          .ancestor(of: find.text('系统状态栏'), matching: find.byType(Row))
           .first;
       final toggle = find.descendant(of: row, matching: find.byType(Switch));
       await tester.ensureVisible(toggle);
@@ -62,6 +64,8 @@ void main() {
       await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect(tester.widget<Switch>(toggle).value, visible);
+      await tester.tap(find.byTooltip('关闭更多设置'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('关闭排版设置'));
       await tester.pumpAndSettle();
       final request = calls.lastWhere((call) => call.method == 'setImmersive');

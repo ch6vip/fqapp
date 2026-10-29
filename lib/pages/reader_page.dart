@@ -2698,31 +2698,37 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   );
 
   Future<void> _showAppearanceSettings() async {
-    setState(() => _controlsVisible = false);
-    await showModalBottomSheet<void>(
+    // 设置面板不再收起阅读菜单：关闭后底部工具条仍在，用户不用再点一次。
+    await showReaderSettingsSheet(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      clipBehavior: Clip.antiAlias,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => ReaderAppearanceSheet(
-        initialValue: _preferences,
-        einkOverride: einkModeNotifier.value,
-        oledOverride: oledActive(),
-        onChanged: _previewPreferences,
-        onPickFont: _pickFont,
-        onTextReplacement: () {
-          Navigator.pop(context);
-          unawaited(_showTextReplacement());
-        },
-      ),
+      initialValue: _preferences,
+      onChanged: _previewPreferences,
+      onPickFont: _pickFont,
+      deviceAvailable: _deviceAvailable,
+      systemBrightness: _deviceStatus.systemBrightness,
+      onBrightness: _changeBrightness,
+      onBrightnessEnd: () => unawaited(_savePreferences()),
+      onFollowSystem: _followSystemBrightness,
+      autoTurnActive: _autoTurnTimer != null,
+      onAutoTurn: _toggleAutoTurn,
+      einkOverride: einkModeNotifier.value,
+      oledOverride: oledActive(),
+      onTextReplacement: _showTextReplacement,
     );
     // 墨水屏：排版面板关闭后刷一次，清掉面板残影。
     _maybeEinkRefresh();
     await _savePreferences();
+  }
+
+  /// 跟随系统：在跟随与手动之间切换，亮度取当前系统值或用户值。
+  void _followSystemBrightness() {
+    _changeBrightness(
+      _preferences.followSystemBrightness
+          ? _deviceStatus.systemBrightness ?? _preferences.brightness
+          : _preferences.brightness,
+      followSystem: !_preferences.followSystemBrightness,
+    );
+    unawaited(_savePreferences());
   }
 
   void _toggleNightTheme() {
@@ -3419,6 +3425,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ],
               ),
             ),
+            if (!widget.localOnly)
+              ReaderCacheButton(preset: preset, onTap: _showCache),
             if (!_loading &&
                 _error == null &&
                 _ideas.total > 0 &&
@@ -4004,8 +4012,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       chapterCount: widget.chapters.length,
       chapterTitle: widget.chapters[previewIndex].title,
       seekValue: seekValue,
-      deviceAvailable: _deviceAvailable,
-      systemBrightness: _deviceStatus.systemBrightness,
       onPrevious: _index > 0 ? _prev : null,
       onNext: _index < widget.chapters.length - 1 ? _next : null,
       onSeek: (value) => setState(() => _chapterSeekValue = value),
@@ -4013,26 +4019,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         setState(() => _chapterSeekValue = null);
         _jumpToChapter(value.round());
       },
-      onBrightness: _changeBrightness,
-      onBrightnessEnd: () => unawaited(_savePreferences()),
-      onFollowSystem: () {
-        _changeBrightness(
-          _preferences.followSystemBrightness
-              ? _deviceStatus.systemBrightness ?? _preferences.brightness
-              : _preferences.brightness,
-          followSystem: !_preferences.followSystemBrightness,
-        );
-        unawaited(_savePreferences());
-      },
       onDirectory: _showDirectory,
       onNight: _toggleNightTheme,
       onAppearance: _showAppearanceSettings,
-      onCache: _showCache,
       onListen: () => unawaited(_openListening()),
       showListening: true,
-      showCache: !widget.localOnly,
-      autoTurnActive: _autoTurnTimer != null,
-      onAutoTurn: _toggleAutoTurn,
     );
   }
 

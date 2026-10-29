@@ -397,7 +397,7 @@ void main() {
         await _tapSide(tester, 1);
         expect(_pager(tester).pageIndex, 1);
         await _openAppearance(tester);
-        expect(find.text('阅读方式'), findsOneWidget);
+        expect(find.text('翻页'), findsOneWidget);
         await tester.tap(find.byTooltip('关闭排版设置'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
@@ -419,7 +419,7 @@ void main() {
         await _tapSide(tester, 1);
         await _capture(tester, 'paged-second');
         await _openAppearance(tester);
-        expect(find.text('阅读方式'), findsOneWidget);
+        expect(find.text('翻页'), findsOneWidget);
         await _capture(tester, 'mode-choice');
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -507,10 +507,7 @@ Future<void> _swipe(WidgetTester tester, int direction) async {
 Future<void> _openAppearance(WidgetTester tester) async {
   await tester.tapAt(tester.getRect(_surface).center);
   await tester.pumpAndSettle();
-  await _openSettings(tester);
-  await tester.ensureVisible(find.text('排版'));
-  await _openSettings(tester);
-  await tester.tap(find.text('排版'));
+  await tester.tap(find.byKey(const ValueKey('reader-settings')));
   await tester.pumpAndSettle();
 }
 
@@ -588,10 +585,4 @@ Future<void> _capture(WidgetTester tester, String name) async {
   });
 }
 
-/// Expands the 设置 section of the reading menu. The section keeps its state
-/// across chapter changes, so this is a no-op while it is already open.
-Future<void> _openSettings(WidgetTester tester) async {
-  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
-  await tester.tap(find.byKey(const ValueKey('reader-settings')));
-  await tester.pumpAndSettle();
-}
+

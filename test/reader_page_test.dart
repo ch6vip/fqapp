@@ -67,8 +67,7 @@ void main() {
       expect(ideaRequests, 0);
       await _openMenu(tester);
       expect(find.text('听书'), findsOneWidget);
-      await _openSettings(tester);
-      expect(find.text('缓存'), findsNothing);
+      expect(find.byTooltip('缓存'), findsNothing);
       expect(find.byKey(const ValueKey('reader-action-listen')), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -133,7 +132,6 @@ void main() {
     controller.jumpTo(300);
     await tester.pump();
     await _openMenu(tester);
-    await _openSettings(tester);
     await tester.tap(find.byTooltip('下一章'));
     await tester.pump();
     final saved = Map<String, dynamic>.of(store.entry!);
@@ -164,8 +162,7 @@ void main() {
       expect(find.text('重试'), findsNothing);
       if (operation == 'update progress') store.failHistoryWrite = true;
       await _openMenu(tester);
-      await _openSettings(tester);
-      await tester.tap(find.byTooltip('下一章'));
+        await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
       expect(find.text('重试'), findsNothing);
@@ -552,13 +549,10 @@ void main() {
     await tester.pumpWidget(_readerApp(textScaler: const TextScaler.linear(2)));
     await tester.pumpAndSettle();
     await _openMenu(tester);
-    await _openSettings(tester);
-    await tester.ensureVisible(find.text('排版'));
-    await _openSettings(tester);
-    await tester.tap(find.text('排版'));
+    await tester.tap(find.byKey(const ValueKey('reader-settings')));
     await tester.pumpAndSettle();
 
-    expect(find.text('排版设置'), findsOneWidget);
+    expect(find.text('阅读设置'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -732,10 +726,4 @@ class _FakeReaderStore implements ReaderStore {
   Future<void> forgetWatchedEpisodes(String id) async {}
 }
 
-/// Expands the 设置 section of the reading menu. The section keeps its state
-/// across chapter changes, so this is a no-op while it is already open.
-Future<void> _openSettings(WidgetTester tester) async {
-  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
-  await tester.tap(find.byKey(const ValueKey('reader-settings')));
-  await tester.pumpAndSettle();
-}
+

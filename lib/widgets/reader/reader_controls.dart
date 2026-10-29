@@ -4,35 +4,25 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../services/reader_preferences.dart';
 import 'reader_theme.dart';
 
-/// Official-shape reading menu. Local-only books omit online listening and
-/// chapter-cache actions; brightness, seek and secondary actions stay concise.
-class ReaderControls extends StatefulWidget {
+/// Reading menu. 章节进度行始终显示，下面只有四个主操作：目录 / 夜间 /
+/// 听书 / 设置；排版项由 设置 直接打开阅读设置面板。
+class ReaderControls extends StatelessWidget {
   final ReaderPreferences preferences;
   final int chapterIndex;
   final int chapterCount;
   final String chapterTitle;
   final double seekValue;
-  final bool deviceAvailable;
-  final double? systemBrightness;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
   final ValueChanged<double> onSeek;
   final ValueChanged<double> onSeekEnd;
-  final ValueChanged<double> onBrightness;
-  final VoidCallback onBrightnessEnd;
-  final VoidCallback onFollowSystem;
   final VoidCallback onDirectory;
   final VoidCallback onNight;
   final VoidCallback onAppearance;
-  final VoidCallback onCache;
 
   /// 听书: opens the listening page for this book.
   final VoidCallback onListen;
   final bool showListening;
-  final bool showCache;
-
-  final bool autoTurnActive;
-  final VoidCallback onAutoTurn;
 
   const ReaderControls({
     super.key,
@@ -41,39 +31,20 @@ class ReaderControls extends StatefulWidget {
     required this.chapterCount,
     required this.chapterTitle,
     required this.seekValue,
-    required this.deviceAvailable,
-    required this.systemBrightness,
     required this.onPrevious,
     required this.onNext,
     required this.onSeek,
     required this.onSeekEnd,
-    required this.onBrightness,
-    required this.onBrightnessEnd,
-    required this.onFollowSystem,
     required this.onDirectory,
     required this.onNight,
     required this.onAppearance,
-    required this.onCache,
     required this.onListen,
     this.showListening = true,
-    this.showCache = true,
-    this.autoTurnActive = false,
-    required this.onAutoTurn,
   });
 
   @override
-  State<ReaderControls> createState() => _ReaderControlsState();
-}
-
-class _ReaderControlsState extends State<ReaderControls> {
-  bool _settingsOpen = false;
-
-  @override
   Widget build(BuildContext context) {
-    final preset = widget.preferences.themePreset;
-    final level = widget.preferences.followSystemBrightness
-        ? widget.systemBrightness ?? widget.preferences.brightness
-        : widget.preferences.brightness;
+    final preset = preferences.themePreset;
     return Theme(
       data: preset.theme(Theme.of(context)),
       child: Material(
@@ -104,39 +75,33 @@ class _ReaderControlsState extends State<ReaderControls> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_settingsOpen) ...[
-                      _chapterSeek(preset),
-                      if (widget.deviceAvailable) _brightness(preset, level),
-                      _extraActions(preset),
-                      const SizedBox(height: 6),
-                    ],
+                    _chapterSeek(preset),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
                         _Action(
                           icon: LucideIcons.book_open,
                           label: '目录',
-                          onTap: widget.onDirectory,
+                          onTap: onDirectory,
                         ),
                         _Action(
                           icon: preset.isDark
                               ? LucideIcons.sun
                               : LucideIcons.moon,
                           label: preset.isDark ? '日间' : '夜间',
-                          onTap: widget.onNight,
+                          onTap: onNight,
                         ),
-                        if (widget.showListening)
+                        if (showListening)
                           _Action(
                             icon: LucideIcons.headphones,
                             label: '听书',
-                            onTap: widget.onListen,
+                            onTap: onListen,
                           ),
                         _Action(
                           key: const ValueKey('reader-settings'),
                           icon: LucideIcons.sliders_horizontal,
                           label: '设置',
-                          selected: _settingsOpen,
-                          onTap: () =>
-                              setState(() => _settingsOpen = !_settingsOpen),
+                          onTap: onAppearance,
                         ),
                       ],
                     ),
@@ -151,7 +116,7 @@ class _ReaderControlsState extends State<ReaderControls> {
   }
 
   Widget _chapterSeek(ReaderThemePreset preset) {
-    final max = (widget.chapterCount - 1).toDouble();
+    final max = (chapterCount - 1).toDouble();
     final upper = max < 0 ? 0.0 : max;
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
@@ -161,7 +126,7 @@ class _ReaderControlsState extends State<ReaderControls> {
             children: [
               Expanded(
                 child: Text(
-                  widget.chapterTitle,
+                  chapterTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: preset.textColor, fontSize: 13),
@@ -169,7 +134,7 @@ class _ReaderControlsState extends State<ReaderControls> {
               ),
               const SizedBox(width: 8),
               Text(
-                '${widget.chapterIndex + 1} / ${widget.chapterCount}',
+                '${chapterIndex + 1} / $chapterCount',
                 style: TextStyle(color: preset.mutedTextColor, fontSize: 12),
               ),
             ],
@@ -178,7 +143,7 @@ class _ReaderControlsState extends State<ReaderControls> {
             children: [
               IconButton(
                 tooltip: '上一章',
-                onPressed: widget.onPrevious,
+                onPressed: onPrevious,
                 icon: const Icon(LucideIcons.skip_back, size: 20),
               ),
               Expanded(
@@ -186,116 +151,17 @@ class _ReaderControlsState extends State<ReaderControls> {
                   key: const ValueKey('reader-chapter-seek'),
                   min: 0,
                   max: upper,
-                  value: widget.seekValue.clamp(0, upper),
-                  onChanged: widget.chapterCount > 1 ? widget.onSeek : null,
-                  onChangeEnd: widget.chapterCount > 1
-                      ? widget.onSeekEnd
-                      : null,
+                  value: seekValue.clamp(0, upper),
+                  onChanged: chapterCount > 1 ? onSeek : null,
+                  onChangeEnd: chapterCount > 1 ? onSeekEnd : null,
                   semanticFormatterCallback: (value) =>
                       '第 ${value.round() + 1} 章',
                 ),
               ),
               IconButton(
                 tooltip: '下一章',
-                onPressed: widget.onNext,
+                onPressed: onNext,
                 icon: const Icon(LucideIcons.skip_forward, size: 20),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _brightness(ReaderThemePreset preset, double level) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
-      child: Row(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Icon(
-              LucideIcons.sun_medium,
-              size: 20,
-              color: preset.mutedTextColor,
-            ),
-          ),
-          Expanded(
-            child: Slider(
-              key: const ValueKey('reader-brightness'),
-              value: level.clamp(0.02, 1),
-              min: 0.02,
-              max: 1,
-              onChanged: widget.onBrightness,
-              onChangeEnd: (_) => widget.onBrightnessEnd(),
-              semanticFormatterCallback: (value) =>
-                  '亮度 ${(value * 100).round()}%',
-            ),
-          ),
-          Semantics(
-            toggled: widget.preferences.followSystemBrightness,
-            child: TextButton(
-              key: const ValueKey('reader-follow-system'),
-              style: TextButton.styleFrom(
-                foregroundColor: widget.preferences.followSystemBrightness
-                    ? preset.accentColor
-                    : preset.mutedTextColor,
-                backgroundColor: widget.preferences.followSystemBrightness
-                    ? preset.accentColor.withValues(alpha: 0.09)
-                    : null,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-              ),
-              onPressed: widget.onFollowSystem,
-              child: const Text('跟随系统', style: TextStyle(fontSize: 12)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _extraActions(ReaderThemePreset preset) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextButton.icon(
-                  key: const ValueKey('reader-auto-turn'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: widget.autoTurnActive
-                        ? preset.accentColor
-                        : preset.textColor,
-                  ),
-                  onPressed: widget.onAutoTurn,
-                  icon: Icon(
-                    widget.autoTurnActive
-                        ? LucideIcons.circle_pause
-                        : LucideIcons.circle_play,
-                    size: 18,
-                  ),
-                  label: Text(
-                    widget.autoTurnActive ? '停止自动翻页' : '自动翻页',
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              if (widget.showCache)
-                _Action(
-                  icon: LucideIcons.download,
-                  label: '缓存',
-                  onTap: widget.onCache,
-                ),
-              _Action(
-                icon: LucideIcons.type,
-                label: '排版',
-                onTap: widget.onAppearance,
               ),
             ],
           ),
@@ -305,29 +171,44 @@ class _ReaderControlsState extends State<ReaderControls> {
   }
 }
 
+/// 阅读页顶栏的缓存入口：分成阅读菜单后，缓存不再占底部一行。
+class ReaderCacheButton extends StatelessWidget {
+  const ReaderCacheButton({
+    super.key,
+    required this.preset,
+    required this.onTap,
+  });
+
+  final ReaderThemePreset preset;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: const ValueKey('reader-cache'),
+    tooltip: '缓存',
+    onPressed: onTap,
+    icon: Icon(LucideIcons.download, color: preset.textColor),
+  );
+}
+
 class _Action extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  final bool selected;
 
   const _Action({
     super.key,
     required this.icon,
     required this.label,
     required this.onTap,
-    this.selected = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = selected
-        ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.onSurface;
     return Expanded(
       child: TextButton(
         style: TextButton.styleFrom(
-          foregroundColor: color,
+          foregroundColor: Theme.of(context).colorScheme.onSurface,
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
