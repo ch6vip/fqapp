@@ -58,6 +58,10 @@ class SystemTts {
   static Future<void> speak(String text, String id, {bool queue = false}) =>
       _call<void>('speak', {'text': text, 'id': id, 'queue': queue});
   static Future<void> stop() => _call<void>('stop');
+  /// Stops the engine but **keeps** the audio focus: a pause must not abandon
+  /// the focus, or the system never sends the GAIN that follows a call, and
+  /// `focus_resume` can never bring the narration back.
+  static Future<void> pause() => _call<void>('pause');
   static Future<void> shutdown() => _call<void>('shutdown');
   static Future<void> openSettings() => _call<void>('settings');
 
@@ -200,6 +204,13 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   int index;
   bool loading = false;
   bool wantPlay = false;
+  // 上次暂停是被系统临时抢焦点（来电、导航）造成的：焦点交还时收到
+  // focus_resume 就自动续播。用户手动暂停会清掉它，电话里自己停下的
+  // 不会被误恢复。
+  bool _resumeOnFocusGain = false;
+  // 焦点已交还（收到 focus_resume），但当时 app 还在后台、不允许出声：
+  // 记下来等回到前台再补。否则 resume() 的 _allowed 闸会把它直接吞掉。
+  bool _pendingFocusResume = false;
   bool closed = false;
   bool completed = false;
   String? error;
@@ -456,8 +467,21 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
 
   void _event(dynamic value) {
     if (closed || value is! Map) return;
-    if (value['type'] == 'interrupted' && value['id'] == null) {
-      unawaited(pause());
+    if (value['type'] == 'interrupted') {
+      // 焦点被临时抢走（来电、导航提示）：停朗读但**不弃焦点**，等系统
+      // 交还焦点时的 focus_resume 自动续播。带不带 id 都一样处理。
+      unawaited(_pauseForInterruption());
+      return;
+    }
+    if (value['type'] == 'focus_resume') {
+      if (!_resumeOnFocusGain) return;
+      if (_allowed) {
+        _resumeOnFocusGain = false;
+        unawaited(resume());
+      } else {
+        // 挂断那一下人还在通话界面或锁屏上：等回到前台再补。
+        _pendingFocusResume = true;
+      }
       return;
     }
     final id = value['id'];
@@ -505,8 +529,6 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
         _schedulePump(_generation);
       case 'error':
         unawaited(_fail(StateError('引擎朗读失败，请检查音色或网络后重试')));
-      case 'interrupted':
-        unawaited(pause());
     }
   }
 
@@ -514,6 +536,8 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> resume() async {
     if (closed || wantPlay || !_allowed) return;
+    _pendingFocusResume = false;
+    _resumeOnFocusGain = false;
     if (_text.isEmpty) {
       await openChapter(index, offset: _offset);
       return;
@@ -532,8 +556,32 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// 用户主动暂停（阅读页胶囊、听书面板的暂停钮）。
+  ///
+  /// 和被打断不一样：用户按停之后可能去放音乐、打游戏，这时还占着音频焦点
+  /// 会让蓝牙播放键、媒体通知都指向这个已经停下的朗读。所以这里照旧 `stop()`，
+  /// 把焦点交还；`_pauseForInterruption` 才保留焦点等系统交还后自动续播。
   Future<void> pause() async {
     if (closed) return;
+    // 用户（或任何非焦点路径）主动暂停：清掉「挂断后自动续播」的意图，
+    // 电话里自己按停的，挂断后不会被复活。
+    _resumeOnFocusGain = false;
+    _pendingFocusResume = false;
+    await _halt(keepFocus: false);
+  }
+
+  /// 焦点被临时抢走（来电、导航提示）造成的暂停：记下打断前是否在播，
+  /// 焦点交还（focus_resume）时据此续播。用户手动暂停会清掉这个意图。
+  Future<void> _pauseForInterruption() async {
+    if (closed || (!wantPlay && !loading)) return;
+    if (wantPlay) _resumeOnFocusGain = true;
+    await _halt(keepFocus: true);
+  }
+
+  /// [keepFocus] 为真时停朗读但**不放弃音频焦点**：一旦弃了，系统在对方
+  /// 说完后就不会再发 GAIN，自动续播永远等不到。只有「被打断」这一种暂停
+  /// 需要它；用户手动暂停与出错停下都交还焦点。
+  Future<void> _halt({required bool keepFocus}) async {
     ++_generation;
     _loadRequest?.cancel();
     _resetQueue(_offset);
@@ -541,7 +589,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     loading = false;
     _publish();
     try {
-      await SystemTts.stop();
+      await (keepFocus ? SystemTts.pause() : SystemTts.stop());
     } catch (_) {}
   }
 
@@ -614,7 +662,17 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appActive = state == AppLifecycleState.resumed;
-    if (!_allowed) unawaited(pause());
+    if (!_allowed) {
+      // 切后台不是用户想停朗读（电话期间几乎必然走这一条）：按系统打断
+      // 处理，等回到前台时若有欠下的 focus_resume 就补上续播。
+      unawaited(_pauseForInterruption());
+    } else if (_pendingFocusResume) {
+      _pendingFocusResume = false;
+      if (_resumeOnFocusGain) {
+        _resumeOnFocusGain = false;
+        unawaited(resume());
+      }
+    }
   }
 
   Future<void> close() => _closeFuture ??= _close();
