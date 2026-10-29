@@ -25,14 +25,15 @@ class AudioPreferences {
   /// 关闭：切到后台或锁屏时自动暂停播放并移除前台通知。
   final ValueNotifier<bool> backgroundPlayback = ValueNotifier<bool>(true);
 
-  /// 听书倍速的变速实现（issue #129）。
+  /// 听书倍速的变速实现（issue #129 / #170）。
   ///
-  /// 默认 [AudioRateEngine.wsola]：番茄官方听书倍速走的也是 FFmpeg
-  /// `atempo`（见 `dn2`/`libttmplayer.so` 的取证），本仓库用移植后的同一份
-  /// 算法，因此听感最接近官方。另有 [AudioRateEngine.platform]（系统混音器）
-  /// 与 [AudioRateEngine.builtIn]（Media3 Sonic）两个回退档。
+  /// 默认 [AudioRateEngine.builtIn]（Media3 内建 Sonic），也就是 1.0.121
+  /// 及更早版本的行为。1.0.133 把默认改成 [AudioRateEngine.wsola]（移植的
+  /// FFmpeg `atempo`）后，部分设备听书一直停在「缓冲中」没有任何声音
+  /// （issue #170）；在真机验证 WSOLA 之前先退回内建实现，用户仍可在
+  /// 设置 → 听书里手动选 WSOLA 获得更接近官方的听感。
   final ValueNotifier<AudioRateEngine> rateEngine = ValueNotifier(
-    AudioRateEngine.wsola,
+    AudioRateEngine.builtIn,
   );
 
   /// 倍速是否已锁定。锁定期间点倍速项只提示、不弹面板。
@@ -66,7 +67,7 @@ class AudioPreferences {
   void resetForTest() {
     _loaded = false;
     backgroundPlayback.value = true;
-    rateEngine.value = AudioRateEngine.wsola;
+    rateEngine.value = AudioRateEngine.builtIn;
     rateLocked = false;
     sleepAtChapterEnd = false;
     _skipIntro.clear();
@@ -176,7 +177,8 @@ class AudioRateEngineCache {
 /// `name`（platform / builtIn）就是跨端的协议名：Kotlin 侧 `AudioRateEngine`
 /// 用 `wireName` 逐字解析（BUILT_IN 这个常量名不上线），改一处必须同步另一处。
 enum AudioRateEngine {
-  /// 移植自官方 FFmpeg `af_atempo` 的 WSOLA（默认）。
+  /// 移植自官方 FFmpeg `af_atempo` 的 WSOLA（可选，1.0.133 起默认开启过，
+  /// 因 issue #170 的静音问题暂时退回内建实现）。
   ///
   /// 番茄 7.0.9.32 的听书倍速走的就是这条路：native 层
   /// `avfilter_get_by_name("atempo")`、参数 `tempo=%1.2f`。窗口
@@ -186,7 +188,7 @@ enum AudioRateEngine {
   /// 系统混音器变速（AudioTrack/APM）。不依赖我们的 native 库。
   platform('系统'),
 
-  /// Media3 内建 Sonic 变速。最后的保底项（改动前的行为）。
+  /// Media3 内建 Sonic 变速。默认项（1.0.121 及更早的行为）。
   builtIn('兼容');
 
   const AudioRateEngine(this.label);
@@ -196,6 +198,6 @@ enum AudioRateEngine {
 
   static AudioRateEngine fromName(String? name) => values.firstWhere(
     (value) => value.name == name,
-    orElse: () => AudioRateEngine.wsola,
+    orElse: () => AudioRateEngine.builtIn,
   );
 }

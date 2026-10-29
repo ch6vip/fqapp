@@ -126,8 +126,12 @@ internal class SpeechTempoProcessor(
                 SpeechTempo.destroy(handle)
                 handle = 0
             }
-            openHandle()
         }
+        // onReset() 会销毁句柄但保留 sampleRateHz/channelCount；下一段音频只要
+        // 格式相同，上面的分支就不会再建链，之后每次 nativeProcess 都返回 -1、
+        // 输入被整块丢弃，表现为「一直缓冲中、没有声音」（issue #170）。
+        // 句柄缺失就补建，与格式是否变化无关。
+        if (handle == 0) openHandle()
         /*
          * 输出采样率 = 设备原生输出率（native 侧第一级重采样到此），必须如实
          * 报告给下游——AudioTrack 会按它初始化，报错就是变调/变速。
