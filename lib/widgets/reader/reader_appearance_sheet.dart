@@ -537,7 +537,7 @@ class _FontSizeStepper extends StatelessWidget {
                 ? null
                 : () => onChanged(next.clamp(_min, _max).toDouble()),
             child: Container(
-              constraints: const BoxConstraints(minHeight: 40),
+              constraints: const BoxConstraints(minHeight: 36),
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: preset.fieldColor,

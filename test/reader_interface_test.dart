@@ -168,8 +168,8 @@ void main() {
       await tester.ensureVisible(find.byTooltip('增大字距'));
       await tester.tap(find.byTooltip('增大字距'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('标题居中'));
-      await tester.tap(find.text('标题居中'));
+      await tester.ensureVisible(find.text('居中'));
+      await tester.tap(find.text('居中'));
       await tester.pumpAndSettle();
       // 上下边距 默认 16，每次 +4，三次到 28。
       for (var i = 0; i < 3; i++) {
@@ -226,7 +226,9 @@ void main() {
     await tester.pumpWidget(_app(_reader()));
     await tester.pumpAndSettle();
     await _openAppearance(tester);
-    await tester.ensureVisible(find.byKey(const ValueKey('reader-font-picker')));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('reader-font-picker')),
+    );
     await tester.tap(find.byKey(const ValueKey('reader-font-picker')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('导入字体'));

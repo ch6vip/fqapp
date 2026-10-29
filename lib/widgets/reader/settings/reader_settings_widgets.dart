@@ -157,21 +157,26 @@ class ReaderSettingsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    // 标签列统一按四个字宽（「左右边距」）留位，各行控件起点对齐；
+    // 大字号时最多占行宽 35%，超出部分换行而不是挤压控件。
+    final labelWidth = MediaQuery.textScalerOf(context).scale(13) * 4 + 4;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 48, maxWidth: 96),
-            child: Text(
-              label,
-              style: TextStyle(color: preset.textColor, fontSize: 13),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: labelWidth.clamp(0.0, constraints.maxWidth * 0.35),
+              child: Text(
+                label,
+                style: TextStyle(color: preset.textColor, fontSize: 13),
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: child),
-        ],
+            const SizedBox(width: 12),
+            Expanded(child: child),
+          ],
+        ),
       ),
     );
   }
@@ -204,17 +209,26 @@ class ReaderSettingsChip extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 32),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            alignment: Alignment.center,
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: selected ? preset.accentColor : preset.mutedTextColor,
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          // 不用 Container.alignment：带 alignment 的 Container 会撑满可用宽度，
+          // 在 Wrap 里每个 chip 都会独占一行。
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 34),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Center(
+                widthFactor: 1,
+                heightFactor: 1,
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: selected
+                        ? preset.accentColor
+                        : preset.mutedTextColor,
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
               ),
             ),
           ),
@@ -224,18 +238,48 @@ class ReaderSettingsChip extends StatelessWidget {
   }
 }
 
-/// chip 组：换行排列，窄屏不溢出。
+/// chip 组：放得下时一行等分，放不下（窄屏、大字号）才换行。
 class ReaderSettingsChipRow extends StatelessWidget {
   const ReaderSettingsChipRow({super.key, required this.children});
 
   final List<Widget> children;
 
+  static const _gap = 6.0;
+
+  /// 一个 chip 不被截断所需的最小宽度：最长标签按当前字号估算 + 左右内边距。
+  double _minChipWidth(BuildContext context) {
+    var longest = 2;
+    for (final child in children) {
+      if (child is ReaderSettingsChip && child.label.length > longest) {
+        longest = child.label.length;
+      }
+    }
+    return MediaQuery.textScalerOf(context).scale(12) * longest + 24;
+  }
+
   @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: 6,
-    runSpacing: 6,
-    crossAxisAlignment: WrapCrossAlignment.center,
-    children: children,
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final needed =
+          _minChipWidth(context) * children.length +
+          _gap * (children.length - 1);
+      if (needed <= constraints.maxWidth) {
+        return Row(
+          children: [
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) const SizedBox(width: _gap),
+              Expanded(child: children[i]),
+            ],
+          ],
+        );
+      }
+      return Wrap(
+        spacing: _gap,
+        runSpacing: _gap,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: children,
+      );
+    },
   );
 }
 
@@ -295,32 +339,50 @@ class ReaderSettingsStepper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
-    return Row(
-      children: [
-        IconButton(
-          tooltip: decreaseTooltip,
-          visualDensity: VisualDensity.compact,
-          onPressed: onDecrease,
-          icon: const Icon(LucideIcons.minus, size: 16),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: preset.accentColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
+    // 紧凑的胶囊步进器靠右放：− 值 + 挨在一起，不再横跨整行留大片空白。
+    return Align(
+      alignment: Alignment.centerRight,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 168),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: preset.fieldColor,
+            borderRadius: BorderRadius.circular(90),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: decreaseTooltip,
+                visualDensity: VisualDensity.compact,
+                onPressed: onDecrease,
+                icon: const Icon(LucideIcons.minus, size: 16),
+              ),
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 44),
+                  child: Text(
+                    value,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: preset.accentColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: increaseTooltip,
+                visualDensity: VisualDensity.compact,
+                onPressed: onIncrease,
+                icon: const Icon(LucideIcons.plus, size: 16),
+              ),
+            ],
           ),
         ),
-        IconButton(
-          tooltip: increaseTooltip,
-          visualDensity: VisualDensity.compact,
-          onPressed: onIncrease,
-          icon: const Icon(LucideIcons.plus, size: 16),
-        ),
-      ],
+      ),
     );
   }
 }

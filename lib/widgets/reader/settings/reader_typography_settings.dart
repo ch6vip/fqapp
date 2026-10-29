@@ -258,7 +258,7 @@ class ReaderTypographySettings extends StatelessWidget {
         for (final alignment in ReaderTitleAlignment.values)
           ReaderSettingsChip(
             key: ValueKey('reader-title-alignment-${alignment.name}'),
-            label: alignment == ReaderTitleAlignment.start ? '标题居左' : '标题居中',
+            label: alignment == ReaderTitleAlignment.start ? '居左' : '居中',
             selected: value.titleAlignment == alignment,
             onTap: () =>
                 _apply((prefs) => prefs.copyWith(titleAlignment: alignment)),

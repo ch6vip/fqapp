@@ -232,6 +232,36 @@ void main() {
       });
     }
 
+    // 回归：chip 曾因 Container.alignment 撑满宽度，在手机上每个选项独占一行。
+    testWidgets('option chips share one line on a normal phone', (
+      tester,
+    ) async {
+      await _openSheet(tester);
+      for (final group in const [
+        ['仿真', '覆盖', '平移', '滚动'],
+        ['紧凑', '标准', '宽松'],
+      ]) {
+        final top = tester.getCenter(find.text(group.first)).dy;
+        for (final label in group.skip(1)) {
+          expect(
+            tester.getCenter(find.text(label)).dy,
+            closeTo(top, 0.5),
+            reason: '$label must sit on the same line as ${group.first}',
+          );
+        }
+      }
+      await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
+      await tester.pumpAndSettle();
+      final weightTop = tester.getCenter(find.text('细')).dy;
+      for (final label in const ['适中', '偏粗', '粗']) {
+        expect(tester.getCenter(find.text(label)).dy, closeTo(weightTop, 0.5));
+      }
+      expect(
+        tester.getCenter(find.text('居左')).dy,
+        closeTo(tester.getCenter(find.text('居中')).dy, 0.5),
+      );
+    });
+
     testWidgets('the main sheet fits a normal phone without scrolling', (
       tester,
     ) async {
