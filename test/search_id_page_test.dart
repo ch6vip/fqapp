@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/services/search_history_store.dart';
-import 'package:fqapp/widgets/media_card.dart';
+import 'package:fqapp/widgets/home/home_media_card.dart';
 
 const _id = '7677801492920667198';
 
@@ -37,12 +37,12 @@ void main() {
       expect(find.text('没有更多了'), findsNothing);
       await tester.tap(find.widgetWithText(ChoiceChip, '短剧'));
       await tester.pumpAndSettle();
-      expect(find.byType(MediaCard), findsNothing);
+      expect(find.byType(HomeMediaCard), findsNothing);
       expect(find.text('该分类下没有匹配的作品'), findsOneWidget);
       await tester.tap(find.widgetWithText(ChoiceChip, '漫剧'));
       await tester.pumpAndSettle();
       expect(
-        tester.widget<MediaCard>(find.byType(MediaCard)).item.kind,
+        tester.widget<HomeMediaCard>(find.byType(HomeMediaCard)).item.kind,
         'manju',
       );
       expect(ids, [_id]);
@@ -117,7 +117,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('未找到该 ID 对应的作品'), findsOneWidget);
-      expect(find.byType(MediaCard), findsNothing);
+      expect(find.byType(HomeMediaCard), findsNothing);
       expect(keywords, isEmpty);
       await tester.tap(find.text('按关键词搜索'));
       await tester.pumpAndSettle();

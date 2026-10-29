@@ -7,6 +7,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../models/media_item.dart';
 import '../../services/poster_cache.dart';
 import '../cover_tag_chip.dart';
+import '../media_card.dart' show mediaLengthLabel;
 import 'home_design.dart';
 
 String homeKindLabel(String kind) => switch (kind) {
@@ -146,11 +147,16 @@ class HomeMediaCard extends StatelessWidget {
   /// delegate with it), and passing it in avoids a [LayoutBuilder] per card.
   final double? coverWidth;
 
+  /// 副标题里带作品长度（「200万字」「共103集」）。首页的推荐卡不需要它，
+  /// 搜索结果需要——长度是判断一本书能不能读下去的关键信息。
+  final bool showLength;
+
   const HomeMediaCard({
     super.key,
     required this.item,
     required this.onTap,
     this.coverWidth,
+    this.showLength = false,
   });
 
   @override
@@ -158,7 +164,7 @@ class HomeMediaCard extends StatelessWidget {
     final palette = HomePalette.of(context);
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final scaler = MediaQuery.textScalerOf(context);
-    final meta = _metaText(item);
+    final meta = _metaText(item, showLength: showLength);
     return _CardWidth(
       width: coverWidth,
       builder: (width) => HomePressable(
@@ -262,11 +268,13 @@ class HomeMediaCard extends StatelessWidget {
   }
 
   /// 作者 · 第一条推荐理由 · 评分。都是 11sp 的一行灰字，不抢书名。
-  static String _metaText(MediaItem item) {
+  static String _metaText(MediaItem item, {bool showLength = false}) {
     final score = item.score;
+    final length = showLength ? mediaLengthLabel(item) : '';
     return [
       if (item.author.isNotEmpty) item.author,
       if (item.recTags.isNotEmpty) item.recTags.first.text,
+      if (length.isNotEmpty) length,
       if (score != null) homeScoreText(score),
       if (item.author.isEmpty &&
           item.recTags.isEmpty &&
