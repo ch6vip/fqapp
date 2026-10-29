@@ -7,7 +7,7 @@ import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/library_page.dart';
-import 'package:fqapp/pages/stats_page.dart';
+import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/widgets/lazy_indexed_stack.dart';
 
@@ -42,7 +42,7 @@ void main() {
             index: value,
             children: const [
               LibraryPage(),
-              Scaffold(body: StatsPage()),
+              MinePage(),
               SizedBox.expand(child: Text('其他页面')),
             ],
           ),
@@ -75,7 +75,7 @@ void main() {
     index.value = 1;
     await tester.pumpAndSettle();
     expect(find.text('10分钟'), findsWidgets);
-    await _showRecentBook(tester, '最新记录 9');
+    await _showRankedBook(tester, '最新记录 9');
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -86,10 +86,7 @@ void main() {
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     final navigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
-      MaterialApp(
-        navigatorKey: navigator,
-        home: const Scaffold(body: StatsPage()),
-      ),
+      MaterialApp(navigatorKey: navigator, home: const MinePage()),
     );
     await tester.pumpAndSettle();
     await _saveProgress(tester, 0);
@@ -114,19 +111,19 @@ void main() {
     navigator.currentState!.pop();
     await tester.pumpAndSettle();
     expect(find.text('2分钟'), findsWidgets);
-    await _showRecentBook(tester, '最新记录 1');
+    await _showRankedBook(tester, '最新记录 1');
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
 
-Future<void> _showRecentBook(WidgetTester tester, String title) async {
+Future<void> _showRankedBook(WidgetTester tester, String title) async {
   await tester.scrollUntilVisible(
-    find.text('最近阅读'),
+    find.text(title),
     200,
     scrollable: find
         .descendant(
-          of: find.byType(StatsPage),
+          of: find.byType(MinePage),
           matching: find.byType(Scrollable),
         )
         .first,
@@ -152,7 +149,7 @@ Future<void> _saveProgress(WidgetTester tester, int update) async {
 Map<String, int> _recordBuilds() {
   final builds = <String, int>{};
   debugOnRebuildDirtyWidget = (element, builtOnce) {
-    if (element.widget is LibraryPage || element.widget is StatsPage) {
+    if (element.widget is LibraryPage || element.widget is MinePage) {
       final name = element.widget.runtimeType.toString();
       builds.update(name, (count) => count + 1, ifAbsent: () => 1);
     }
