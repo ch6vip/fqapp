@@ -130,6 +130,20 @@ void main() {
   }
 
   testWidgets(
+    'portrait danmaku flies below the top bar instead of over the back key',
+    (tester) async {
+      // 竖屏顶栏（返回键/集数）压在画面上：第一轨道必须从它下沿开始，
+      // 否则弹幕丝正好盖住返回键。
+      await portrait(tester);
+      await tester.pumpWidget(app(danmaku: const [entry], onToggle: () {}));
+      await tester.pump();
+      expect(find.byTooltip('返回'), findsOneWidget);
+      final bar = tester.getRect(find.byKey(const ValueKey('player-top-bar')));
+      expect(tester.getRect(moving).top, greaterThanOrEqualTo(bar.bottom));
+    },
+  );
+
+  testWidgets(
     'playback state, buffering, hidden background and readiness stop scrolling; inactive keeps scrolling',
     (tester) async {
       await portrait(tester);

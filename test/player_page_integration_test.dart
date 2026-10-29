@@ -61,7 +61,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(player.calls, contains('seek:37'));
+      // 存档进度不再是「prepare 完再 seek」，而是随 create 当起播位置。
+      expect(player.createdStartMs, [37000]);
       expect(player.isPlaying, isTrue);
       expect(store.entry?['kind'], 'manju');
       expect(store.entry?['id'], 'manju-series');

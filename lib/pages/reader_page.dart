@@ -825,6 +825,22 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   @override
+  void didUpdateWidget(covariant ReaderPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.chapters, widget.chapters) ||
+        widget.chapters.isEmpty ||
+        oldWidget.chapters.isEmpty) {
+      return;
+    }
+    final chapterId = oldWidget.chapters[_index].itemId;
+    final next = widget.chapters.indexWhere((c) => c.itemId == chapterId);
+    _index = next < 0 ? _index.clamp(0, widget.chapters.length - 1) : next;
+    _catalogFuture = null;
+    if (!widget.localOnly) unawaited(_ensureCatalog().catchError((_) {}));
+    if (next < 0) unawaited(_load());
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final current = ModalRoute.isCurrentOf(context) ?? true;
