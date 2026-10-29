@@ -216,6 +216,8 @@ class _AudioPlaybackController extends ChangeNotifier
           restoreHistory: true,
           autoplay: request.autoplay,
           position: request.startPosition,
+          paragraph: request.startParagraph,
+          fraction: request.startFraction,
         ),
       );
     }
@@ -454,6 +456,8 @@ class _AudioPlaybackController extends ChangeNotifier
     int index, {
     bool restoreHistory = false,
     Duration? position,
+    ({int? paraIndex, int ordinal})? paragraph,
+    double? fraction,
     String? toneId,
     bool autoplay = true,
     bool? completed,
@@ -558,7 +562,36 @@ class _AudioPlaybackController extends ChangeNotifier
       final introSeek = resume <= Duration.zero
           ? _skipPoints.introSeek(duration)
           : null;
-      final restoredPosition = introSeek ?? _boundedPosition(resume, duration);
+      // 段落锚定（从本段听/从本页播放，正文没有 `<span start_time>` 的章）：
+      // 阅读页算不出毫秒，把段落交给这里，用本章 /timepoints 换算起播点。
+      // 拉到的轨直接喂给朗读高亮，下面的高亮刷新就不必重复请求。换算失败
+      // 保持外部传入的位置（阅读页会传 Duration.zero = 从章首开始），绝不
+      // 回退到历史进度——锚定请求要的正是"这一段"，不是"上次听到的地方"。
+      var timeTrackReady = false;
+      Duration? anchorPosition;
+      if (paragraph != null && paragraph.ordinal >= 0) {
+        try {
+          final track = await _loadTimePoints(itemId, source.toneId).timeout(
+            const Duration(seconds: 8),
+          );
+          if (!_current(generation)) return;
+          _timeTrack = track;
+          timeTrackReady = true;
+          final ms = startMsForParagraph(
+            track,
+            paraIndex: paragraph.paraIndex,
+            ordinal: paragraph.ordinal,
+          );
+          if (ms != null) anchorPosition = Duration(milliseconds: ms);
+        } catch (_) {
+          // 没有映射不是错误：这本书没生成过时间轴，或请求超时。
+        }
+      }
+      final restoredPosition =
+          anchorPosition ??
+          _estimatedFromFraction(fraction, duration) ??
+          introSeek ??
+          _boundedPosition(resume, duration);
       if (restoredPosition > Duration.zero) {
         await player.seek(restoredPosition);
         if (!_current(generation, player)) return;
@@ -578,7 +611,12 @@ class _AudioPlaybackController extends ChangeNotifier
       // speech text and are ignored otherwise.
       unawaited(_refreshSubtitles(generation, itemId, source.toneId));
       // 同步映射决定阅读页的朗读高亮；与字幕同时拉取，两个请求互不依赖。
-      unawaited(_refreshTimePoints(generation, itemId, source.toneId));
+      // 段落锚定已经拉过并且命中时跳过，避免同一章重复请求。
+      if (!timeTrackReady) {
+        unawaited(_refreshTimePoints(generation, itemId, source.toneId));
+      } else {
+        _publishListeningSession(playing: _player?.playing ?? false);
+      }
       if (_wantPlay) await _play(player, generation);
       if (!_current(generation, player)) return;
       _syncForeground();
@@ -836,6 +874,25 @@ class _AudioPlaybackController extends ChangeNotifier
     return duration > Duration.zero && position > duration
         ? duration
         : position;
+  }
+
+  /// 段落锚点查不到时间轴时，按正文读进度折算起播位置。
+  ///
+  /// [fraction] 是阅读页给的比例（该段在本章正文里的字符位置 / 全章字数）。
+  /// 折算假设音频平均语速，误差随章节长度增长；它的价值不在精度，而在
+  /// **不落到章首** —— 精确时间轴拿不到时，「差几十秒」远好于「整章重播」。
+  /// 时长未知（源没报 duration）或比例无效时返回 null，交给原有回落链。
+  static Duration? _estimatedFromFraction(double? fraction, Duration duration) {
+    if (fraction == null || !fraction.isFinite) return null;
+    if (duration <= Duration.zero) return null;
+    final clamped = fraction <= 0
+        ? 0.0
+        : (fraction >= 1 ? 1.0 : fraction);
+    if (clamped <= 0) return null;
+    return _boundedPosition(
+      Duration(milliseconds: (duration.inMilliseconds * clamped).round()),
+      duration,
+    );
   }
 
   void _subscribe(NativePlayer player, int generation) {
