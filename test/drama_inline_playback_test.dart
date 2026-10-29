@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
+import 'package:fqapp/pages/drama_download_sheet.dart';
 import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/pages/player_page.dart';
@@ -74,6 +75,9 @@ class _Session {
   /// 内容回包附带的多档流名（官方清晰度行的数据源；空 = 单流，行隐藏）。
   List<String> variantNames = [];
 
+  /// 每部剧的目录集数（缺省单集）。续播到第 N 集的用例调大它。
+  int episodeCount = 1;
+
   /// The two notifiers the page's providers resolve to; kept as fields so a
   /// test can re-load the feed without a gesture.
   late final HomeNotifier home = _notifierFor(this);
@@ -112,7 +116,10 @@ class _Session {
           directoryLoader: (id, tab) async {
             directoryCalls.add('$id:$tab');
             return [
-              [Chapter(itemId: '$id-1', title: '第 1 集', volumeName: '剧集')],
+              [
+                for (var n = 1; n <= episodeCount; n++)
+                  Chapter(itemId: '$id-$n', title: '第 $n 集', volumeName: '剧集'),
+              ],
             ];
           },
           contentLoader: (itemId, tab) async {
@@ -1121,6 +1128,37 @@ void main() {
     await _flush(tester);
     expect(find.byKey(const ValueKey('player-more-light-panel')), findsNothing);
     expect(find.byKey(const ValueKey('download-sheet')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('feed 下载弹窗从续播的那集算起，并带上本集真实画质', (tester) async {
+    // 回归：feed 入口曾不传 currentIndex/qualities，「往后N集」从第 1 集
+    // 算、默认分组停在第一组、画质只剩预设档位（播放页入口是对的）。
+    SharedPreferences.setMockInitialValues({});
+    final session = _Session(hasFirstFrame: true)
+      ..episodeCount = 3
+      ..variantNames = ['1080P', '540P'];
+    // 内存仓库对任何剧都回这条记录：按集序号续播到第 3 集。
+    session.store.entry = {'episode': 2};
+    await _mount(tester, session);
+    session.players.single.emitDuration(const Duration(minutes: 2));
+    await _flush(tester);
+    expect(session.contentCalls.first, contains('-3:'));
+
+    await tester.longPress(find.byKey(const Key('drama_card_gestures')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await _flush(tester);
+    await tester.tap(find.byKey(const ValueKey('player-more-light-download')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
+
+    final sheet = tester.widget<DramaDownloadSheet>(
+      find.byType(DramaDownloadSheet),
+    );
+    expect(sheet.currentIndex, 2);
+    expect(sheet.qualities.map((variant) => variant.name), ['1080P', '540P']);
     expect(tester.takeException(), isNull);
   });
 

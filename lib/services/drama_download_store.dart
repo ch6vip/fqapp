@@ -476,6 +476,15 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
       }
     }
     await box.deleteAll([_episodeKey(itemId), _keyKey(itemId)]);
+    // 最后一集删掉后目录再没有集可聚合，管理页永远读不到它；不清掉的话
+    // 每按集清理一次就在加密箱里留下一条孤儿。
+    final seriesId = raw is Map ? raw['seriesId'] : null;
+    if (seriesId is String && seriesId.isNotEmpty) {
+      final hasSiblings = box.values.any(
+        (value) => _isEpisode(value) && value['seriesId'] == seriesId,
+      );
+      if (!hasSiblings) await box.delete('series:$seriesId');
+    }
     changes.value++;
   });
 

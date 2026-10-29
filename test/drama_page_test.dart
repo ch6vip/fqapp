@@ -135,11 +135,15 @@ Future<void> _swipeUp(WidgetTester tester) async {
 /// player and an address loader: a case that is not about inline playback must
 /// neither reach the real backend nor allocate a real native player.
 class _Seams {
-  _Seams({this.failContent = true});
+  _Seams({this.failContent = true, this.createGate});
 
   /// Whether the injected address loader refuses, which is the cheapest way to
   /// keep a card from creating a player.
   final bool failContent;
+
+  /// When set, the injected player's `create` waits for it, which keeps an
+  /// activation pending across a lifecycle change.
+  final Completer<void>? createGate;
   final players = <ControlledNativePlayer>[];
   final contentCalls = <String>[];
   final store = ControlledReaderStore();
@@ -163,7 +167,7 @@ class _Seams {
     },
     historyStore: store,
     playerFactory: () {
-      final player = ControlledNativePlayer();
+      final player = ControlledNativePlayer(createGate: createGate);
       players.add(player);
       return player;
     },
@@ -416,6 +420,119 @@ void main() {
     expect(seams.players.single.isPlaying, true);
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);
+  });
+
+  // 与上面同一条生命周期链，但起点是**用户手动暂停**：退到后台再回来
+  // 不许把这次暂停当成可见性暂停撤销。桌面端已有同款用例；Android 的回
+  // 前台续播此前无条件执行，同样会推翻手动暂停。
+  testWidgets('feed：手动暂停后切后台再回来不许自动续播', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+
+    final seams = _Seams(failContent: false);
+    await tester.pumpWidget(
+      _scope(
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集')],
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final player = seams.players.single;
+    expect(player.isPlaying, true);
+
+    // 用户手动暂停（单击暂停 / 桌面 chrome 暂停钮都落到播放器上）。
+    await player.pause();
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    final playsAfterManualPause = player.calls
+        .where((call) => call == 'play')
+        .length;
+
+    // 退到后台（hidden）再回前台（resumed）：手动暂停必须保持。
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(player.isPlaying, false);
+    expect(
+      player.calls.where((call) => call == 'play').length,
+      playsAfterManualPause,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  // 激活还没完成（播放器已建、create 还没返回）时切到后台：hidden 分支的
+  // pause() 会把会话意图置假，但当时没有在播的播放器可记账。此前 Android
+  // 回前台无条件续播掩盖了这个空洞；只认「可见性暂停」后，若不把激活中的
+  // 意图也记账，回前台就没人把意图置真，激活收尾时跳过 play，卡片冻住。
+  testWidgets('feed：激活未完成时切后台，回来仍自动续播', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+
+    final gate = Completer<void>();
+    final seams = _Seams(failContent: false, createGate: gate);
+    await tester.pumpWidget(
+      _scope(
+        child: MaterialApp(
+          home: seams.page(
+            directoryLoader: (id, tab) async => [
+              [Chapter(itemId: '$id-1', title: '第1集', volumeName: '剧集')],
+            ],
+          ),
+        ),
+      ),
+    );
+    // 停在 create 门前：播放器对象已交给会话，但解码器还没建好。
+    for (var i = 0; i < 20 && seams.players.isEmpty; i++) {
+      await _flush(tester);
+    }
+    final player = seams.players.single;
+    expect(player.calls, contains(startsWith('create:')));
+    expect(player.isCreated, false);
+    expect(player.isPlaying, false);
+
+    // 退到后台（hidden）再回前台，此时激活仍未完成。
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await _flush(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _flush(tester);
+    expect(player.isPlaying, false);
+
+    // 激活收尾：回前台时恢复的意图必须让它起播。
+    gate.complete();
+    for (var i = 0; i < 20 && !player.isPlaying; i++) {
+      await _flush(tester);
+    }
+    expect(player.isPlaying, true);
+    expect(player.calls, contains('play'));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('the feed shows the official chrome and one full-screen card', (
