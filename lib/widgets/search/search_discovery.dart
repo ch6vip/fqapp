@@ -134,9 +134,13 @@ class _SuggestionText extends StatelessWidget {
 
 /// The hot search board, shown when the query is empty.
 ///
-/// 与首页的分区同一个语法：19sp 标题 + 16dp 栏距 + 可点的胶囊。前三名的
-/// 名次是一个强调色数字，不是带底色的圆点。
+/// 榜单来自官方 472 热搜榜（最多 50 条），空查询页只铺前十：名次、词、
+/// 角标（巅峰榜/热聊…）、热搜值。前三名的名次用强调色，其余用次级色，
+/// 不画圆点底、不套白卡，和首页的分区同一个语法。
 class HotSearchBoard extends StatelessWidget {
+  /// How many rows the empty search screen shows.
+  static const maxRows = 10;
+
   final HotSearch hot;
   final ValueChanged<String> onSelect;
 
@@ -145,22 +149,21 @@ class HotSearchBoard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (hot.isEmpty) return const SizedBox.shrink();
+    final entries = hot.entries.take(maxRows).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const HomeSectionHeader(title: '热搜榜'),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-          child: Wrap(
+          child: Column(
             key: const Key('search_hot_words'),
-            spacing: 8,
-            runSpacing: 8,
             children: [
-              for (var i = 0; i < hot.words.length; i++)
-                _HotChip(
-                  word: hot.words[i],
+              for (var i = 0; i < entries.length; i++)
+                _HotRow(
+                  entry: entries[i],
                   rank: i + 1,
-                  onTap: () => onSelect(hot.words[i]),
+                  onTap: () => onSelect(entries[i].title),
                 ),
             ],
           ),
@@ -170,54 +173,98 @@ class HotSearchBoard extends StatelessWidget {
   }
 }
 
-class _HotChip extends StatelessWidget {
-  final String word;
+class _HotRow extends StatelessWidget {
+  final HotSearchEntry entry;
   final int rank;
   final VoidCallback onTap;
 
-  const _HotChip({required this.word, required this.rank, required this.onTap});
+  const _HotRow({required this.entry, required this.rank, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final hot = rank <= 3;
+    final top = rank <= 3;
     return HomePressable(
-      key: ValueKey('search_hot_$word'),
-      semanticLabel: '搜索 $word',
+      key: ValueKey('search_hot_${entry.title}'),
+      semanticLabel: '搜索 ${entry.title}',
       onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: palette.soft,
-          borderRadius: BorderRadius.circular(999),
-        ),
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        height: 36,
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            if (hot) ...[
-              Text(
+            SizedBox(
+              width: 22,
+              child: Text(
                 '$rank',
-                style: const TextStyle(
-                  color: HomePalette.accent,
-                  fontSize: 12,
+                style: TextStyle(
+                  color: top ? HomePalette.accent : palette.muted,
+                  fontSize: top ? 14 : 12.5,
                   height: 1.1,
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  fontWeight: top ? FontWeight.w800 : FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
-              const SizedBox(width: 5),
-            ],
-            Text(
-              word,
-              style: TextStyle(
-                color: palette.ink,
-                fontSize: 13,
-                height: 1.3,
-                fontWeight: hot ? FontWeight.w600 : FontWeight.w400,
+            ),
+            Expanded(
+              child: Text(
+                entry.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: palette.ink,
+                  fontSize: 13.5,
+                  height: 1.3,
+                  fontWeight: top ? FontWeight.w600 : FontWeight.w500,
+                ),
               ),
             ),
+            if (entry.badge.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              _HotBadge(text: entry.badge),
+            ],
+            if (entry.hotValue.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Text(
+                entry.hotValue,
+                style: TextStyle(
+                  color: palette.muted,
+                  fontSize: 11,
+                  height: 1.2,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 榜单角标（巅峰榜 / 热聊 / 新 …）。统一的次级底色，不给每种角标配一套
+/// 颜色——官方那套渐变在这里只会变成噪音。
+class _HotBadge extends StatelessWidget {
+  final String text;
+
+  const _HotBadge({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: palette.soft,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: palette.muted,
+          fontSize: 9.5,
+          height: 1.2,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );

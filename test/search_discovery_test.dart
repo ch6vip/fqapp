@@ -129,6 +129,41 @@ void main() {
       expect(hot.words, ['重复', '新词']);
     });
 
+    test('reads the 热搜榜 fields from the 472 rank list', () {
+      // Recorded from the official client's `/reading/bookapi/search/rank_list/v`
+      // (`show_type=472`) response, 2026-10-30: one cell, 50 tags, each with a
+      // 热搜值 and (sometimes) a 榜单角标. Trimmed to three rows.
+      final hot = HotSearch.fromPayload({
+        'code': 0,
+        'data': [
+          {
+            'cell_name': '番茄热搜榜',
+            'cell_alias': '榜单更新于 2026年10月30日',
+            'search_tag_data': [
+              {
+                'tag_title': '神通者',
+                'tag_attached': '183.8万热搜值',
+                'display_tag': [
+                  {'text': '巅峰榜'},
+                ],
+              },
+              {
+                'tag_title': '9.9高分的小说！！！！',
+                'tag_attached': '110.2万热搜值',
+                'display_tag': [
+                  {'text': '热聊'},
+                ],
+              },
+              {'tag_title': '传奇', 'tag_attached': '好故事相聚，热爱不散场'},
+            ],
+          },
+        ],
+      });
+      expect(hot.entries.map((e) => e.title), ['神通者', '9.9高分的小说！！！！', '传奇']);
+      expect(hot.entries.map((e) => e.hotValue), ['183.8万', '110.2万', '']);
+      expect(hot.entries.map((e) => e.badge), ['巅峰榜', '热聊', '']);
+    });
+
     test('a malformed payload yields an empty board', () {
       expect(HotSearch.fromPayload({'code': 0}).isEmpty, isTrue);
       expect(HotSearch.fromPayload({'code': 0, 'data': 'x'}).isEmpty, isTrue);
