@@ -113,6 +113,10 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
   @override
   void initState() {
     super.initState();
+    // 目录可能比播放页手里的旧（剧集上下架后集数变少），当前集算出的
+    // 区间会越界；钳到最后一组，否则网格是空的。
+    final lastGroup = _groupCount > 0 ? _groupCount - 1 : 0;
+    if (_group > lastGroup) _group = lastGroup;
     if (_group < 0) _group = 0;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final context = _currentEpisodeKey.currentContext;

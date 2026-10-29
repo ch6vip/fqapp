@@ -215,6 +215,14 @@ void main() {
     expect(find.text('第 36 集'), findsOneWidget);
   });
 
+  testWidgets('currentIndex 超出目录集数时钳到最后一组，不出现空网格', (tester) async {
+    // 播放页可能拿着旧目录（剧集上下架后集数变少），当前集算出来的区间会
+    // 越界；不钳到最后一组的话网格一个格子都没有。
+    await pumpSheet(tester, episodeCount: 3, currentIndex: 99);
+    expect(find.text('第 1 集'), findsOneWidget);
+    expect(find.text('第 3 集'), findsOneWidget);
+  });
+
   testWidgets('一千集时改用下拉分段，直接落在正在看的那一段', (tester) async {
     // 30 集一段 → 34 段。铺成一行 chip 会是一条几千像素的长条，选中项还
     // 可能滚在屏幕外；改下拉后任何集数都能直接定位。
