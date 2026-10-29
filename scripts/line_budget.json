@@ -73,7 +73,7 @@
     "test/home_page_test.dart": 779,
     "test/home_provider_test.dart": 1122,
     "test/imported_book_store_test.dart": 527,
-    "test/library_shelf_test.dart": 1095,
+    "test/library_shelf_test.dart": 1101,
     "test/library_store_test.dart": 657,
     "test/media_item_test.dart": 1016,
     "test/native_player_test.dart": 517,
