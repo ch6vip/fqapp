@@ -77,6 +77,26 @@ void main() {
       expect(session.completed, isFalse);
       expect(session.followArmed, isFalse);
     });
+
+    test('an auto-advanced chapter does not drag a reader who turned away', () {
+      final session = ListeningSession.instance;
+      _publish(session, playing: true);
+      expect(session.followArmed, isTrue, reason: '起播默认跟随');
+
+      // 用户手动翻页走开（`AudioSyncReaderController` `C=true`），然后本章
+      // 自然播完：guard 先发 playing:false，再标记完成，下一章接着播。
+      session.setFollowArmed(false);
+      _publish(session, playing: false);
+      session.markCompleted();
+      _publish(session, playing: true, chapterId: 'c2');
+
+      expect(
+        session.followArmed,
+        isFalse,
+        reason: '连播换章不是用户重新起播，不能把翻页走开的人拽回新章',
+      );
+      expect(session.completed, isFalse, reason: '新章起播后完成标记要清掉');
+    });
   });
 
   group('ReaderSyncPill', () {
@@ -287,10 +307,11 @@ void _publish(
   ListeningSession session, {
   required bool playing,
   String bookId = 'b1',
+  String chapterId = 'c1',
 }) {
   session.update(
     bookId: bookId,
-    chapterId: 'c1',
+    chapterId: chapterId,
     chapterTitle: '第一章',
     position: Duration.zero,
     duration: const Duration(seconds: 60),

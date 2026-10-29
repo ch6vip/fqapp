@@ -178,6 +178,7 @@ class ListeningSession extends ChangeNotifier {
     SubtitleTrack? subtitles,
   }) {
     final wasPlaying = this.playing;
+    final wasCompleted = completed;
     final switchedBook = this.bookId != bookId;
     final structural =
         this.bookId != bookId ||
@@ -196,7 +197,13 @@ class ListeningSession extends ChangeNotifier {
     this.playing = playing;
     // 官方默认跟随：播放开始 / 继续播放 / 换了一本正在播的书，都重新开跟随。
     // 同一段播放里的 tick 不会重开，手动翻页退出跟随才站得住。
-    if (playing && (!wasPlaying || switchedBook)) followArmed = true;
+    //
+    // 自动连播的换章不算起播：那一拍 `playing` 也是从 false 翻上来的（本章
+    // 播完 guard 先发过 playing:false），但用户早前已经手动翻页走开，跟随
+    // 不该在换章时把人拽回新章章首。`completed` 正好标出这条路径。
+    if (playing && ((!wasPlaying && !wasCompleted) || switchedBook)) {
+      followArmed = true;
+    }
     if (playing) completed = false;
     this.textProgress = textProgress;
     this.textReplacementRevision = textReplacementRevision;
