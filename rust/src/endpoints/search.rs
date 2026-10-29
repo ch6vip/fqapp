@@ -153,7 +153,7 @@ fn hot_search<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<V
         p.set("show_type", show_type);
         let spec = UpstreamRequestSpec {
             mode: UpstreamMode::DeviceSigned,
-            host: crate::endpoints::base::HOST_FQNOVEL.to_string(),
+            host: crate::endpoints::base::HOST_FQNOVELC.to_string(),
             path: "/reading/bookapi/search/rank_list/v:version/".to_string(),
             params: p.to_pairs(),
             headers: dragon_read_headers(),
