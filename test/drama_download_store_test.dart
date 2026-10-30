@@ -193,6 +193,17 @@ void main() {
     expect(await store.isDownloaded('evil'), isFalse);
   });
 
+  test('removeEpisode 不被根内路径里的 .. 绕过', () async {
+    final sep = Platform.pathSeparator;
+    final outside = File('${temp.path}${sep}secret.txt')
+      ..writeAsStringSync('keep me');
+    final sneaky = '${videoDir.path}$sep..${sep}secret.txt';
+    await store.saveEpisode(episode(itemId: 'evil', filePath: sneaky));
+    await store.removeEpisode('evil');
+    expect(outside.existsSync(), isTrue);
+    expect(await store.isDownloaded('evil'), isFalse);
+  });
+
   test('removeDrama 只删根内文件，根外路径保留', () async {
     final inside = episode(itemId: 'ep1');
     final outside = File('${temp.path}${Platform.pathSeparator}secret.txt')
