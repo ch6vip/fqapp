@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:hive_ce/hive.dart';
 
+import 'app_log.dart';
 import 'secure_key_provider.dart';
 
 /// Opens every Hive box encrypted (hive_ce, AES-256 `HiveAesCipher`).
@@ -14,8 +15,9 @@ import 'secure_key_provider.dart';
 /// next launch retries instead of losing records.
 ///
 /// Key loss: when secure storage returns a key that cannot open an existing
-/// encrypted box (Keystore wiped, entry replaced), the unreadable box is
-/// deleted and recreated empty — treated as empty, never silently downgraded
+/// encrypted box (Keystore wiped, entry replaced), the unreadable box files
+/// are renamed to `<name>.unreadable-<timestamp>` and kept for recovery, and
+/// a fresh empty box is opened — treated as empty, never silently downgraded
 /// to plaintext. Callers that must never write plaintext pass
 /// [requireEncryption]: when no key can be obtained at all (secure storage
 /// unavailable) they fail closed instead of opening the legacy box.
@@ -42,15 +44,46 @@ class EncryptedHive {
   /// (CRIT-014 in docs/规范/踩坑判据.md).
   static bool _encryptedBoxOnDisk(String encName) {
     if (Hive.isBoxOpen(encName)) return true;
-    // `Hive` is typed as `HiveInterface`, which exposes no path accessor; the
-    // concrete implementation that the global always is carries `homePath`.
-    final home = (Hive as dynamic).homePath as String?;
-    if (home == null || home.isEmpty) return false;
-    final delimiter = Platform.isWindows ? '\\' : '/';
-    final base = '$home$delimiter${encName.toLowerCase()}';
+    final base = _boxFileBase(encName);
+    if (base == null) return false;
     return File('$base.hive').existsSync() ||
         File('$base.hivec').existsSync() ||
         File('$base.lock').existsSync();
+  }
+
+  /// `<homePath>/<lowercased name>`, the base of a box's on-disk files:
+  /// `<base>.hive` plus optional `.hivec` / `.lock` siblings
+  /// (hive_ce `BackendManager`).
+  static String? _boxFileBase(String name) {
+    // `Hive` is typed as `HiveInterface`, which exposes no path accessor; the
+    // concrete implementation that the global always is carries `homePath`.
+    final home = (Hive as dynamic).homePath as String?;
+    if (home == null || home.isEmpty) return null;
+    final delimiter = Platform.isWindows ? '\\' : '/';
+    return '$home$delimiter${name.toLowerCase()}';
+  }
+
+  /// Renames every on-disk file of [encName] to
+  /// `<base>.unreadable-<timestamp><extension>`, so Hive no longer sees the
+  /// unreadable box while its ciphertext stays on disk for recovery.
+  ///
+  /// Never deletes. A rename that fails bubbles up (leaving the box as it
+  /// was), so an I/O error can never be mistaken for a wiped box. Synchronous
+  /// on purpose, like [_encryptedBoxOnDisk]: this can run inside a widget
+  /// test's fake-async zone, where real async file operations never complete.
+  static List<File> _quarantineUnreadableBox(String encName) {
+    final base = _boxFileBase(encName);
+    if (base == null) return const [];
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final preserved = <File>[];
+    for (final extension in const ['.hive', '.hivec', '.lock']) {
+      final file = File('$base$extension');
+      if (!file.existsSync()) continue;
+      final target = File('$base.unreadable-$stamp$extension');
+      file.renameSync(target.path);
+      preserved.add(target);
+    }
+    return preserved;
   }
 
   /// The open box, preferring the encrypted one. Callers must check
@@ -109,8 +142,20 @@ class EncryptedHive {
         return box;
       } on HiveError catch (e) {
         if (!_looksLikeDecryptionFailure(e)) rethrow;
-        // Key lost or encrypted file corrupt: treat the box as empty.
-        await hive.deleteBoxFromDisk(encName);
+        // Key lost or encrypted file corrupt. Secure storage can transiently
+        // answer with a key that no longer matches (entry wiped or replaced);
+        // deleting the box would turn that hiccup into permanent data loss.
+        // Move the unreadable files out of Hive's lookup names instead, keep
+        // them for recovery, then continue with a fresh empty box.
+        final preserved = _quarantineUnreadableBox(encName);
+        if (preserved.isEmpty) {
+          AppLog.w('hive', '加密箱 $encName 无法解密，且未找到可保留的箱文件');
+        } else {
+          final names = preserved
+              .map((file) => file.uri.pathSegments.last)
+              .join('、');
+          AppLog.w('hive', '加密箱 $encName 无法解密，原文件已保留：$names');
+        }
       }
     }
 
