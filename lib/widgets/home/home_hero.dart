@@ -113,40 +113,50 @@ class _HomeHeroState extends State<HomeHero> {
       // 只剩一条灰带，「分类」还被推到窗口最右端。工具栏收到
       // [HomeHero.maxToolbarWidth]——约等于 6 张卡片的宽度，左端仍与网格、
       // 分区头同一条 16dp 竖线。
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: HomeHero.maxToolbarWidth),
-        child: Row(
-          children: [
-            Expanded(
-              child: HomePressable(
-                key: const Key('home_search_button'),
-                onTap: widget.onSearch,
-                borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
-                semanticLabel: HomeHero.searchHint,
-                child: Container(
-                  height: HomeHero.searchBarHeight,
-                  padding: const EdgeInsets.only(left: 16, right: 14),
-                  decoration: BoxDecoration(
-                    color: palette.searchBar,
-                    borderRadius: BorderRadius.circular(
-                      HomeHero.searchBarRadius,
+      //
+      // 必须先过一层 [Align]：本 widget 挂在 `SliverToBoxAdapter` 里，sliver
+      // 给的是**紧**的横向约束，`ConstrainedBox` 的 maxWidth 会被父约束用
+      // `enforce` 抬回去（min=max=窗口宽），等于没封顶——实测 2560 的窗口里
+      // 搜索胶囊仍是 2445.5 宽。`Align` 先把紧约束松成 0..宽，封顶才生效。
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: HomeHero.maxToolbarWidth,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: HomePressable(
+                  key: const Key('home_search_button'),
+                  onTap: widget.onSearch,
+                  borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
+                  semanticLabel: HomeHero.searchHint,
+                  child: Container(
+                    height: HomeHero.searchBarHeight,
+                    padding: const EdgeInsets.only(left: 16, right: 14),
+                    decoration: BoxDecoration(
+                      color: palette.searchBar,
+                      borderRadius: BorderRadius.circular(
+                        HomeHero.searchBarRadius,
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(LucideIcons.search, size: 15, color: palette.muted),
-                      const SizedBox(width: 10),
-                      Expanded(child: _cueText(palette, animate)),
-                    ],
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.search, size: 15, color: palette.muted),
+                        const SizedBox(width: 10),
+                        Expanded(child: _cueText(palette, animate)),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (widget.onCategory != null) ...[
-              const SizedBox(width: 16),
-              _categoryPill(palette),
+              if (widget.onCategory != null) ...[
+                const SizedBox(width: 16),
+                _categoryPill(palette),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
