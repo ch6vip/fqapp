@@ -30,8 +30,10 @@ class FanqieLibraryImportService {
   Future<FanqieImportPreview> prepare(
     FanqieLibraryCapture capture,
     BackendRequest request,
-    void Function(String) progress,
-  ) async {
+    void Function(String) progress, {
+    // 仅测试注入；生产缺省走 ApiClient.directoryChapters。
+    Future<List<List<Chapter>>> Function(String bookId)? directoryLoader,
+  }) async {
     final parser = FanqieLibraryImport();
     void checkCancelled() {
       if (request.isCancelled) throw BackendRequestAborted('请求已取消');
@@ -74,29 +76,46 @@ class FanqieLibraryImportService {
     var matched = 0;
     var unresolved = 0;
     var done = 0;
+    final load = directoryLoader ?? ApiClient.instance.directoryChapters;
     await ApiClient.instance.withCancellation(request, () async {
-      // Sequential requests respect the shared transport's concurrency budget.
-      for (final record in records) {
-        checkCancelled();
-        progress('解析小说 ${++done}/${records.length}，已匹配 $matched 个章节');
-        final chapterId = record['chapterId'];
-        if (chapterId == null) continue;
-        try {
-          final chapters = (await ApiClient.instance.directoryChapters(
-            record['id'] as String,
-          )).expand((volume) => volume).toList();
-          if (resolveFanqieChapter(record, chapters)) {
-            matched++;
-          } else {
+      // 有界并发：最多 4 个目录请求同时在途，避免对一万本书一次性发起请求
+      // 风暴，同时比原来的串行快一个数量级。第一个请求失败（取消或超时）后
+      // 不再领取新书，等在途请求收尾再把错误抛给调用方。
+      const maxConcurrent = 4;
+      var next = 0;
+      (Object, StackTrace)? failure;
+      Future<void> worker() async {
+        while (failure == null) {
+          final index = next++;
+          if (index >= records.length) return;
+          try {
+            checkCancelled();
+            final record = records[index];
+            progress('解析小说 ${++done}/${records.length}，已匹配 $matched 个章节');
+            final chapterId = record['chapterId'];
+            if (chapterId == null) continue;
+            final chapters = (await load(
+              record['id'] as String,
+            )).expand((volume) => volume).toList();
+            if (resolveFanqieChapter(record, chapters)) {
+              matched++;
+            } else {
+              unresolved++;
+            }
+          } on BackendRequestAborted catch (error, stack) {
+            failure ??= (error, stack);
+            return;
+          } on Exception {
+            // Keep the stable chapter ID. The normal reader resolves it again
+            // against the current directory when this book is opened.
             unresolved++;
           }
-        } on BackendRequestAborted {
-          rethrow;
-        } on Exception {
-          // Keep the stable chapter ID. The normal reader resolves it again
-          // against the current directory when this book is opened.
-          unresolved++;
         }
+      }
+
+      await Future.wait([for (var i = 0; i < maxConcurrent; i++) worker()]);
+      if (failure case (final error, final stack)) {
+        Error.throwWithStackTrace(error, stack);
       }
     });
     checkCancelled();
