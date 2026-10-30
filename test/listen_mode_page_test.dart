@@ -252,6 +252,38 @@ void main() {
     );
     expect(slider.value, closeTo(42 / 120, 1e-9));
   });
+
+  testWidgets('拖动进度条只在松手时 seek 一次', (tester) async {
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    final player = created.single;
+    int seeks() => player.calls.where((call) => call.startsWith('seek:')).length;
+    expect(seeks(), 0);
+
+    final slider = find.byKey(const ValueKey('listen-seek'));
+    final rect = tester.getRect(slider);
+    final gesture = await tester.startGesture(
+      Offset(rect.left + rect.width * 0.3, rect.center.dy),
+    );
+    await tester.pump();
+    for (var i = 0; i < 4; i++) {
+      await gesture.moveBy(Offset(rect.width * 0.1, 0));
+      await tester.pump();
+    }
+
+    // 拖动中只做本地预览，滑块已经跟手，但一次原生 seek 都没发。
+    expect(seeks(), 0, reason: '拖动过程不该逐帧 seek');
+    expect(
+      tester.widget<Slider>(slider).value,
+      greaterThan(0.5),
+      reason: '拖动中滑块要跟手',
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(seeks(), 1, reason: '松手只提交一次 seek');
+    expect(player.currentPosition.inMilliseconds, greaterThan(60 * 1000));
+  });
 }
 
 /// 建播放器必失败的假播放器：用来验证失败路径的资源释放与提示。
