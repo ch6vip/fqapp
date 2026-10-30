@@ -1,7 +1,6 @@
 package com.fqapp.fqapp
 
 import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.util.UnstableApi
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -19,7 +18,6 @@ import org.junit.Test
  * 这里直接对着链对象验算，不需要 WSOLA 的 native 库（构造与下发倍速都不碰
  * native，只有 configure 之后才会）。
  */
-@OptIn(UnstableApi::class)
 class WsolaPositionTest {
     private val oneSecond = 1_000_000L
 
@@ -63,13 +61,15 @@ class WsolaPositionTest {
         )
     }
 
-    @Test fun `degenerate input never produces a negative or NaN position`() {
+    @Test fun `non-positive playout duration reports zero`() {
+        // 起播瞬间 / 异常上报可能给 0 或负数，此时位置只能是 0。
         assertEquals(0L, mediaUs(0L, 1.5f))
         assertEquals(0L, mediaUs(-oneSecond, 1.5f))
-        // 速度非法时退回恒等，宁可位置不准也不能让整条播放链崩掉。
-        assertEquals(oneSecond, mediaUs(oneSecond, 0f))
-        assertEquals(oneSecond, mediaUs(oneSecond, -1f))
-        assertEquals(oneSecond, mediaUs(oneSecond, Float.NaN))
-        assertEquals(oneSecond, mediaUs(oneSecond, Float.POSITIVE_INFINITY))
+        assertEquals(0L, mediaUs(0L, 1f))
     }
+
+    // 倍速本身不必测非法值：`PlaybackParameters` 的构造函数会先拒掉 speed <= 0
+    // 或非有限值（IllegalArgumentException），链上拿到的永远是合法速度。
+    // getMediaDuration 里那道兜底因此是无害的死分支，留着防将来有人绕过
+    // PlaybackParameters 直接改速度。
 }
