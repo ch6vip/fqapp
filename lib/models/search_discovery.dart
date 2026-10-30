@@ -72,27 +72,50 @@ class SearchSuggestion {
   }
 }
 
+/// One row of the 热搜榜.
+class HotSearchEntry {
+  const HotSearchEntry({
+    required this.title,
+    this.hotValue = '',
+    this.badge = '',
+  });
+
+  /// The word to search for (`tag_title`).
+  final String title;
+
+  /// 热搜值 without the trailing 「热搜值」, e.g. `183.8万`. Empty when the
+  /// upstream put something else in `tag_attached` (an editorial line).
+  final String hotValue;
+
+  /// 榜单角标: 巅峰榜 / 热聊 / 霸榜 / 新 / 神作 … (`display_tag[0].text`).
+  final String badge;
+}
+
 /// The hot search board.
 ///
-/// The payload nests the words two levels deep
-/// (`data[].search_tag_data[].tag_title`) and includes cells without words, so
-/// empty entries are skipped rather than surfaced.
+/// Upstream is the 热搜榜 rank list (`search/rank_list/v`, `show_type=472`):
+/// one cell with up to 50 tags, each carrying `tag_title`, `tag_attached` and
+/// `display_tag`. The payload nests them two levels deep
+/// (`data[].search_tag_data[]`) and can include cells without tags, so empty
+/// entries are skipped rather than surfaced.
 class HotSearch {
-  const HotSearch({this.words = const []});
+  const HotSearch({this.entries = const []});
 
   static const empty = HotSearch();
 
-  final List<String> words;
+  final List<HotSearchEntry> entries;
 
-  bool get isEmpty => words.isEmpty;
-  bool get isNotEmpty => words.isNotEmpty;
+  List<String> get words => [for (final entry in entries) entry.title];
+
+  bool get isEmpty => entries.isEmpty;
+  bool get isNotEmpty => entries.isNotEmpty;
 
   static HotSearch fromPayload(Map<String, dynamic> payload) {
     final code = payload['code'];
     if (code != null && code != 0 && code != 200) return empty;
     final data = payload['data'];
     if (data is! List) return empty;
-    final words = <String>[];
+    final entries = <HotSearchEntry>[];
     final seen = <String>{};
     for (final cell in data) {
       if (cell is! Map) continue;
@@ -102,10 +125,34 @@ class HotSearch {
         if (tag is! Map) continue;
         final title = _string(tag['tag_title']);
         if (title.isEmpty || !seen.add(title)) continue;
-        words.add(title);
+        entries.add(
+          HotSearchEntry(
+            title: title,
+            hotValue: _hotValue(_string(tag['tag_attached'])),
+            badge: _badge(tag['display_tag']),
+          ),
+        );
       }
     }
-    return HotSearch(words: List.unmodifiable(words));
+    return HotSearch(entries: List.unmodifiable(entries));
+  }
+
+  /// `183.8万热搜值` -> `183.8万`; anything else stays empty rather than
+  /// leaking an editorial sentence into the number column.
+  static String _hotValue(String attached) {
+    const suffix = '热搜值';
+    if (!attached.endsWith(suffix)) return '';
+    return attached.substring(0, attached.length - suffix.length).trim();
+  }
+
+  static String _badge(dynamic displayTag) {
+    if (displayTag is! List) return '';
+    for (final entry in displayTag) {
+      if (entry is! Map) continue;
+      final text = _string(entry['text']);
+      if (text.isNotEmpty) return text;
+    }
+    return '';
   }
 }
 

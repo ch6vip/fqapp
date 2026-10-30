@@ -3,6 +3,13 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/search_discovery.dart';
 import '../home/home_design.dart';
+import '../home/home_shelf.dart';
+
+// 搜索页的发现区：联想词、热搜榜、搜索历史。
+//
+// 2026-10-30 与首页统一：不再用「白卡 + 描边 + 阴影」的模板盒子，改成分区
+// 头 + 16dp 栏距的裸排；热搜仍是可点的胶囊，但去掉彩色图标底和边框，
+// 前三名只留一个强调色数字。
 
 /// Suggestion list shown while the query is being typed.
 ///
@@ -22,47 +29,43 @@ class SearchSuggestionList extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     if (suggestions.isEmpty) return const SizedBox.shrink();
-    return Material(
-      color: palette.surface,
-      child: ListView.separated(
-        key: const Key('search_suggestions'),
-        shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        itemCount: suggestions.length,
-        separatorBuilder: (context, _) =>
-            Divider(height: 1, color: palette.line, indent: 52),
-        itemBuilder: (context, index) {
-          final suggestion = suggestions[index];
-          return InkWell(
-            key: ValueKey('search_suggestion_${suggestion.text}'),
-            onTap: () => onSelect(suggestion.text),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                children: [
-                  Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: palette.soft,
-                      shape: BoxShape.circle,
-                    ),
-                    alignment: Alignment.center,
-                    child: Icon(LucideIcons.search, size: 13, color: palette.muted),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _SuggestionText(
-                      suggestion: suggestion,
-                      palette: palette,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
+    return ListView.separated(
+      key: const Key('search_suggestions'),
+      shrinkWrap: true,
+      padding: const EdgeInsets.only(top: 4),
+      itemCount: suggestions.length,
+      separatorBuilder: (context, _) => Divider(
+        height: 1,
+        thickness: 0.5,
+        color: palette.line,
+        indent: homeGutter + 24,
+        endIndent: homeGutter,
       ),
+      itemBuilder: (context, index) {
+        final suggestion = suggestions[index];
+        return InkWell(
+          key: ValueKey('search_suggestion_${suggestion.text}'),
+          onTap: () => onSelect(suggestion.text),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: homeGutter,
+              vertical: 13,
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.search, size: 14, color: palette.muted),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _SuggestionText(
+                    suggestion: suggestion,
+                    palette: palette,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -130,7 +133,14 @@ class _SuggestionText extends StatelessWidget {
 }
 
 /// The hot search board, shown when the query is empty.
+///
+/// 榜单来自官方 472 热搜榜（最多 50 条），空查询页只铺前十：名次、词、
+/// 角标（巅峰榜/热聊…）、热搜值。前三名的名次用强调色，其余用次级色，
+/// 不画圆点底、不套白卡，和首页的分区同一个语法。
 class HotSearchBoard extends StatelessWidget {
+  /// How many rows the empty search screen shows.
+  static const maxRows = 10;
+
   final HotSearch hot;
   final ValueChanged<String> onSelect;
 
@@ -138,66 +148,93 @@ class HotSearchBoard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
     if (hot.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: palette.line,
-            width: 0.6,
+    final entries = hot.entries.take(maxRows).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const HomeSectionHeader(title: '热搜榜'),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+          child: Column(
+            key: const Key('search_hot_words'),
+            children: [
+              for (var i = 0; i < entries.length; i++)
+                _HotRow(
+                  entry: entries[i],
+                  rank: i + 1,
+                  onTap: () => onSelect(entries[i].title),
+                ),
+            ],
           ),
-          boxShadow: [
-            BoxShadow(
-              color: palette.ink.withValues(alpha: palette.dark ? 0.12 : 0.03),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      ],
+    );
+  }
+}
+
+class _HotRow extends StatelessWidget {
+  final HotSearchEntry entry;
+  final int rank;
+  final VoidCallback onTap;
+
+  const _HotRow({required this.entry, required this.rank, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final top = rank <= 3;
+    return HomePressable(
+      key: ValueKey('search_hot_${entry.title}'),
+      semanticLabel: '搜索 ${entry.title}',
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        height: 36,
+        child: Row(
           children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: HomePalette.accent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(LucideIcons.flame, size: 15, color: HomePalette.accent),
+            SizedBox(
+              width: 22,
+              child: Text(
+                '$rank',
+                style: TextStyle(
+                  color: top ? HomePalette.accent : palette.muted,
+                  fontSize: top ? 14 : 12.5,
+                  height: 1.1,
+                  fontWeight: top ? FontWeight.w800 : FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  '热搜榜',
-                  style: TextStyle(
-                    color: palette.ink,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                entry.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: palette.ink,
+                  fontSize: 13.5,
+                  height: 1.3,
+                  fontWeight: top ? FontWeight.w600 : FontWeight.w500,
                 ),
-              ],
+              ),
             ),
-            const SizedBox(height: 12),
-            Wrap(
-              key: const Key('search_hot_words'),
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (var i = 0; i < hot.words.length; i++)
-                  _HotChip(
-                    word: hot.words[i],
-                    rank: i + 1,
-                    hot: i < 3,
-                    onTap: () => onSelect(hot.words[i]),
-                  ),
-              ],
-            ),
+            if (entry.badge.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              _HotBadge(text: entry.badge),
+            ],
+            if (entry.hotValue.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Text(
+                entry.hotValue,
+                style: TextStyle(
+                  color: palette.muted,
+                  fontSize: 11,
+                  height: 1.2,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -205,75 +242,186 @@ class HotSearchBoard extends StatelessWidget {
   }
 }
 
-class _HotChip extends StatelessWidget {
-  final String word;
-  final int rank;
-  final bool hot;
-  final VoidCallback onTap;
+/// 榜单角标（巅峰榜 / 热聊 / 新 …）。统一的次级底色，不给每种角标配一套
+/// 颜色——官方那套渐变在这里只会变成噪音。
+class _HotBadge extends StatelessWidget {
+  final String text;
 
-  const _HotChip({
-    required this.word,
-    required this.rank,
+  const _HotBadge({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: palette.soft,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: palette.muted,
+          fontSize: 9.5,
+          height: 1.2,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// 空查询时的发现区：热搜榜 + 搜索历史，两段裸排，不套白卡。
+class SearchDiscoveryView extends StatelessWidget {
+  final HotSearch hot;
+  final List<String> history;
+  final bool historyLoading;
+
+  /// 输入框里的文字（已归一化成小写），用来过滤历史。
+  final String filter;
+  final ValueChanged<String> onSearch;
+  final VoidCallback onClearHistory;
+  final ValueChanged<String> onRemoveHistory;
+
+  const SearchDiscoveryView({
+    super.key,
     required this.hot,
-    required this.onTap,
+    required this.history,
+    required this.historyLoading,
+    required this.filter,
+    required this.onSearch,
+    required this.onClearHistory,
+    required this.onRemoveHistory,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return HomePressable(
-      key: ValueKey('search_hot_$word'),
-      semanticLabel: '搜索 $word',
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: hot
-              ? HomePalette.accent.withValues(alpha: palette.dark ? 0.16 : 0.08)
-              : palette.soft,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: hot
-                ? HomePalette.accent.withValues(alpha: 0.28)
-                : palette.line,
-            width: 0.5,
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      children: [
+        if (hot.isNotEmpty) HotSearchBoard(hot: hot, onSelect: onSearch),
+        HomeSectionHeader(
+          title: '搜索历史',
+          action: history.isEmpty
+              ? null
+              : TextButton(
+                  onPressed: onClearHistory,
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
+                    ),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: palette.muted,
+                  ),
+                  child: const Text(
+                    '清空',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+          child: _historyBody(context),
+        ),
+      ],
+    );
+  }
+
+  Widget _historyBody(BuildContext context) {
+    final visible = filter.isEmpty
+        ? history
+        : history
+              .where((item) => item.toLowerCase().contains(filter))
+              .toList(growable: false);
+    if (historyLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: SizedBox.square(
+            dimension: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (hot) ...[
-              Container(
-                width: 15,
-                height: 15,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: HomePalette.accent,
-                  shape: BoxShape.circle,
-                ),
+      );
+    }
+    if (history.isEmpty) return _message(context, '暂无搜索历史');
+    if (visible.isEmpty) return _message(context, '没有匹配的搜索记录');
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [for (final query in visible) _historyChip(context, query)],
+    );
+  }
+
+  /// 一条搜索记录：整块可点重新搜索，右端 × 只删这一条。
+  Widget _historyChip(BuildContext context, String query) {
+    final palette = HomePalette.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.soft,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => onSearch(query),
+            borderRadius: const BorderRadius.horizontal(
+              left: Radius.circular(999),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 220),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
                 child: Text(
-                  '$rank',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w700,
-                    height: 1,
+                  query,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.2,
+                    color: palette.ink,
                   ),
                 ),
               ),
-              const SizedBox(width: 5),
-            ],
-            Text(
-              word,
-              style: TextStyle(
-                color: hot ? palette.accentText : palette.ink,
-                fontSize: 12.5,
-                fontWeight: hot ? FontWeight.w600 : FontWeight.w400,
-                height: 1.3,
+            ),
+          ),
+          Tooltip(
+            message: '删除 $query',
+            child: InkWell(
+              onTap: () => onRemoveHistory(query),
+              customBorder: const CircleBorder(),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(2, 8, 10, 8),
+                child: Icon(LucideIcons.x, size: 13, color: palette.muted),
               ),
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _message(BuildContext context, String text) {
+    return SizedBox(
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12.5,
+            color: HomePalette.of(context).muted,
+          ),
         ),
       ),
     );

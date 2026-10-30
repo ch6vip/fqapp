@@ -148,37 +148,6 @@ void main() {
     });
   });
 
-  group('HotSearchBoard', () {
-    testWidgets('renders words and reports selection', (tester) async {
-      String? picked;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: HotSearchBoard(
-              hot: const HotSearch(words: ['洞房夜，摸到了老婆的狐狸耳朵', '看过的书']),
-              onSelect: (value) => picked = value,
-            ),
-          ),
-        ),
-      );
-      expect(find.byKey(const Key('search_hot_words')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('search_hot_看过的书')));
-      await tester.pump();
-      expect(picked, '看过的书');
-    });
-
-    testWidgets('an empty board renders nothing', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: HotSearchBoard(hot: HotSearch.empty, onSelect: (_) {}),
-          ),
-        ),
-      );
-      expect(find.byKey(const Key('search_hot_words')), findsNothing);
-    });
-  });
-
   group('SearchPage discovery', () {
     Future<void> pump(
       WidgetTester tester, {
@@ -200,7 +169,8 @@ void main() {
       await pump(
         tester,
         suggest: (_) async => const [],
-        hot: () async => const HotSearch(words: ['热搜词']),
+        hot: () async =>
+            const HotSearch(entries: [HotSearchEntry(title: '热搜词')]),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('search_hot_words')), findsOneWidget);
@@ -243,7 +213,8 @@ void main() {
             suggestLoader: (_) async => const [
               SearchSuggestion(text: '修仙精品小说'),
             ],
-            hotSearchLoader: () async => const HotSearch(words: ['热搜词']),
+            hotSearchLoader: () async =>
+                const HotSearch(entries: [HotSearchEntry(title: '热搜词')]),
           ),
         ),
       );
@@ -433,18 +404,17 @@ void main() {
       final requests = <({int algo, int categoryId})>[];
       await pump(
         tester,
-        catalogLoader:
-            () async => const RankCatalog(
-              rankId: '7098235271900037133',
-              tabs: [
-                RankTab(name: '巅峰榜', algo: 200),
-                RankTab(name: '短剧榜', algo: 502),
-              ],
-              categories: [
-                RankCategory(name: '全部', id: 0),
-                RankCategory(name: '穿越', id: 37),
-              ],
-            ),
+        catalogLoader: () async => const RankCatalog(
+          rankId: '7098235271900037133',
+          tabs: [
+            RankTab(name: '巅峰榜', algo: 200),
+            RankTab(name: '短剧榜', algo: 502),
+          ],
+          categories: [
+            RankCategory(name: '全部', id: 0),
+            RankCategory(name: '穿越', id: 37),
+          ],
+        ),
         pageLoader:
             ({
               required rankId,

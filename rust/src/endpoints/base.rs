@@ -11,6 +11,8 @@ use crate::upstream::{ClientError, PinnedDevice, UpstreamClient, UpstreamRequest
 pub const HOST_FQNOVEL: &str = "https://api5-normal-sinfonlineb.fqnovel.com";
 pub const HOST_FQNOVELA: &str = "https://api5-normal-sinfonlinea.fqnovel.com";
 pub const HOST_FQNOVELB: &str = "https://api5-normal-sinfonlineb.fqnovel.com";
+// 官方 7.0.9.32 抓包里搜索页走 c 域（plan/v、rank_list）；同集群，返回同构。
+pub const HOST_FQNOVELC: &str = "https://api5-normal-sinfonlinec.fqnovel.com";
 pub const HOST_NOVEL_SNSSDK: &str = "https://novel.snssdk.com";
 pub const HOST_READING_SNSSDK: &str = "https://reading.snssdk.com";
 pub const HOST_FANQIENOVEL: &str = "https://fanqienovel.com";

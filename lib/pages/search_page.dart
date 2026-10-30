@@ -12,6 +12,8 @@ import '../services/backend_transport.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_shelf.dart';
 import '../widgets/media_card.dart';
 import '../widgets/search/search_discovery.dart';
 import 'detail_page.dart';
@@ -541,31 +543,21 @@ class _SearchPageState extends State<SearchPage> {
         elevation: 0,
         scrolledUnderElevation: 0,
         title: Container(
-          height: 42,
-          margin: const EdgeInsets.only(right: 16),
+          height: 40,
+          margin: const EdgeInsets.only(right: homeGutter),
           decoration: BoxDecoration(
             color: palette.surface,
-            borderRadius: BorderRadius.circular(21),
-            border: Border.all(color: palette.line, width: 0.6),
-            boxShadow: [
-              BoxShadow(
-                color: palette.ink.withValues(
-                  alpha: palette.dark ? 0.12 : 0.03,
-                ),
-                blurRadius: 6,
-                offset: const Offset(0, 1.5),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(20),
           ),
           child: TextField(
             controller: _ctrl,
             autofocus: false,
             textInputAction: TextInputAction.search,
-            style: TextStyle(fontSize: 14.5, color: palette.ink),
+            style: TextStyle(fontSize: 14, color: palette.ink),
             decoration: InputDecoration(
               isDense: true,
               hintText: '搜索名称或作品 ID',
-              hintStyle: TextStyle(fontSize: 14, color: palette.muted),
+              hintStyle: TextStyle(fontSize: 13.5, color: palette.muted),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 16,
                 vertical: 10,
@@ -584,7 +576,7 @@ class _SearchPageState extends State<SearchPage> {
                         tooltip: '清空',
                         icon: Icon(
                           LucideIcons.x,
-                          size: 17,
+                          size: 16,
                           color: palette.muted,
                         ),
                         onPressed: _clearSearchInput,
@@ -593,7 +585,7 @@ class _SearchPageState extends State<SearchPage> {
                       tooltip: '搜索',
                       icon: Icon(
                         LucideIcons.search,
-                        size: 18,
+                        size: 17,
                         color: HomePalette.accent,
                       ),
                       onPressed: () => _search(_ctrl.text),
@@ -610,43 +602,35 @@ class _SearchPageState extends State<SearchPage> {
       body: Column(
         children: [
           SizedBox(
-            height: 46,
+            height: 44,
             child: ListView(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(horizontal: homeGutter - 4),
               children: List.generate(_categories.length, (i) {
                 final category = _categories[i];
                 final isSelected = i == _tabIndex;
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: ChoiceChip(
-                    label: Text(category.title),
-                    selected: isSelected,
-                    onSelected: (_) => _selectTab(i),
-                    showCheckmark: false,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    side: BorderSide(
-                      color: isSelected
-                          ? HomePalette.accent.withValues(alpha: 0.45)
-                          : palette.line,
-                      width: 0.5,
-                    ),
-                    backgroundColor: palette.surface,
-                    selectedColor: HomePalette.accent.withValues(
-                      alpha: palette.dark ? 0.2 : 0.12,
-                    ),
-                    labelStyle: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: isSelected
-                          ? FontWeight.w700
-                          : FontWeight.w500,
-                      color: isSelected ? palette.accentText : palette.ink,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
+                  child: Center(
+                    child: ChoiceChip(
+                      label: Text(category.title),
+                      selected: isSelected,
+                      onSelected: (_) => _selectTab(i),
+                      showCheckmark: false,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      shape: const StadiumBorder(),
+                      side: BorderSide.none,
+                      backgroundColor: palette.soft,
+                      selectedColor: palette.ink,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      labelStyle: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                        color: isSelected ? palette.canvas : palette.ink,
+                      ),
                     ),
                   ),
                 );
@@ -656,13 +640,37 @@ class _SearchPageState extends State<SearchPage> {
           if (!_showSuggestions) _resultControls(context),
           if (_idQuery != null)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.fromLTRB(homeGutter, 2, homeGutter, 4),
               child: Row(
                 children: [
-                  const Expanded(child: Text('按作品 ID 查找')),
+                  Expanded(
+                    child: Text(
+                      '按作品 ID 查找',
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.2,
+                        color: palette.muted,
+                      ),
+                    ),
+                  ),
                   TextButton(
                     onPressed: () => _search(_query, asKeyword: true),
-                    child: const Text('按关键词搜索'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: palette.accentText,
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 4,
+                      ),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      '按关键词搜索',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -674,20 +682,7 @@ class _SearchPageState extends State<SearchPage> {
                     onSelect: _search,
                   )
                 : _query.isEmpty
-                ? Column(
-                    children: [
-                      if (_hot.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        HotSearchBoard(hot: _hot, onSelect: _search),
-                        const SizedBox(height: 4),
-                        Divider(
-                          height: 24,
-                          color: HomePalette.of(context).line,
-                        ),
-                      ],
-                      Expanded(child: _historyView(context)),
-                    ],
-                  )
+                ? _discoveryView(context)
                 : _resultsView(context, feed),
           ),
         ],
@@ -747,19 +742,36 @@ class _SearchPageState extends State<SearchPage> {
 
   // Note: 小说来源、评分范围与分页见 .agents/notes/implemented/feature/2026-10-15-search-filters-and-list.md
   Widget _resultControls(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final active = _idQuery == null && _minimumScore > 0;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(homeGutter, 2, homeGutter - 8, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Expanded(
+              DropdownButtonHideUnderline(
                 child: DropdownButton<double>(
                   key: const Key('search-minimum-score'),
                   value: _idQuery != null ? 0 : _minimumScore,
-                  isExpanded: true,
-                  underline: const SizedBox.shrink(),
+                  isDense: true,
+                  borderRadius: BorderRadius.circular(14),
+                  dropdownColor: palette.surface,
+                  icon: Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Icon(
+                      LucideIcons.chevron_down,
+                      size: 14,
+                      color: active ? palette.accentText : palette.muted,
+                    ),
+                  ),
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.2,
+                    fontWeight: FontWeight.w600,
+                    color: active ? palette.accentText : palette.muted,
+                  ),
                   items: const [
                     DropdownMenuItem(value: 0, child: Text('评分不限')),
                     DropdownMenuItem(value: 8, child: Text('8 分及以上')),
@@ -774,11 +786,13 @@ class _SearchPageState extends State<SearchPage> {
                         },
                 ),
               ),
-              const SizedBox(width: 12),
+              const Spacer(),
               IconButton(
                 key: const Key('search-layout-toggle'),
                 tooltip: _listView ? '切换为封面视图' : '切换为无封面列表',
                 onPressed: _toggleLayout,
+                iconSize: 19,
+                color: palette.ink,
                 icon: Icon(_listView ? Icons.grid_view : Icons.view_list),
               ),
             ],
@@ -788,10 +802,7 @@ class _SearchPageState extends State<SearchPage> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 '筛选已加载结果，未评分作品不计入；可继续加载更多。',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: HomePalette.of(context).muted,
-                ),
+                style: TextStyle(fontSize: 11.5, color: palette.muted),
               ),
             ),
         ],
@@ -799,174 +810,62 @@ class _SearchPageState extends State<SearchPage> {
     );
   }
 
-  Widget _historyView(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final filter = normalizeSearchQuery(_ctrl.text).toLowerCase();
-    final visible = filter.isEmpty
-        ? _history
-        : _history
-              .where((item) => item.toLowerCase().contains(filter))
-              .toList(growable: false);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: palette.line, width: 0.6),
-            boxShadow: [
-              BoxShadow(
-                color: palette.ink.withValues(
-                  alpha: palette.dark ? 0.12 : 0.03,
-                ),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: palette.soft,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      LucideIcons.clock,
-                      size: 15,
-                      color: palette.muted,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '搜索历史',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: palette.ink,
-                      ),
-                    ),
-                  ),
-                  if (_history.isNotEmpty)
-                    TextButton.icon(
-                      onPressed: _confirmClearHistory,
-                      icon: Icon(
-                        LucideIcons.trash,
-                        size: 15,
-                        color: palette.muted,
-                      ),
-                      label: Text(
-                        '清空',
-                        style: TextStyle(fontSize: 13, color: palette.muted),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (_historyLoading)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              else if (_history.isEmpty)
-                _historyMessage(context, '暂无搜索历史')
-              else if (visible.isEmpty)
-                _historyMessage(context, '没有匹配的搜索记录')
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final query in visible)
-                      InputChip(
-                        label: Text(query),
-                        avatar: Icon(
-                          LucideIcons.clock,
-                          size: 14,
-                          color: palette.muted,
-                        ),
-                        onPressed: () => _search(query),
-                        onDeleted: () => _removeHistory(query),
-                        deleteButtonTooltipMessage: '删除 $query',
-                        deleteIcon: Icon(
-                          LucideIcons.x,
-                          size: 14,
-                          color: palette.muted,
-                        ),
-                        backgroundColor: palette.soft,
-                        side: BorderSide(color: palette.line, width: 0.5),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        labelStyle: TextStyle(
-                          fontSize: 12.5,
-                          color: palette.ink,
-                        ),
-                      ),
-                  ],
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _historyMessage(BuildContext context, String text) {
-    return SizedBox(
-      width: double.infinity,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Theme.of(context).colorScheme.outline),
-        ),
-      ),
-    );
-  }
+  /// 空查询时的发现区：热搜榜 + 搜索历史（版式在 [SearchDiscoveryView]）。
+  Widget _discoveryView(BuildContext context) => SearchDiscoveryView(
+    hot: _hot,
+    history: _history,
+    historyLoading: _historyLoading,
+    filter: normalizeSearchQuery(_ctrl.text).toLowerCase(),
+    onSearch: _search,
+    onClearHistory: _confirmClearHistory,
+    onRemoveHistory: _removeHistory,
+  );
 
   Widget _resultItems(
     BuildContext context,
     _SearchFeed feed,
     List<MediaItem> items,
   ) {
-    return CustomScrollView(
-      key: ValueKey((_requestGeneration, _tabIndex, _minimumScore, _listView)),
-      controller: _scrollController,
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          sliver: _listView
-              ? SliverList.builder(
-                  itemCount: items.length,
-                  itemBuilder: (context, i) => _resultRow(context, items[i]),
-                )
-              : SliverGrid(
-                  gridDelegate: mediaGridDelegateFor(context),
-                  delegate: SliverChildBuilderDelegate((context, i) {
-                    final item = items[i];
-                    return MediaCard(
-                      item: item,
-                      showScore: true,
-                      onTap: () => _openItem(item),
-                    );
-                  }, childCount: items.length),
-                ),
-        ),
-        if (_idQuery == null)
-          SliverToBoxAdapter(child: _paginationFooter(context, feed)),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 网格与首页同一套：16dp 栏距、12dp 列距、HomeMediaCard。
+        final width = constraints.maxWidth - homeGutter * 2;
+        return CustomScrollView(
+          key: ValueKey((
+            _requestGeneration,
+            _tabIndex,
+            _minimumScore,
+            _listView,
+          )),
+          controller: _scrollController,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(homeGutter, 12, homeGutter, 0),
+              sliver: _listView
+                  ? SliverList.builder(
+                      itemCount: items.length,
+                      itemBuilder: (context, i) =>
+                          _resultRow(context, items[i]),
+                    )
+                  : SliverGrid(
+                      gridDelegate: homeShelfDelegate(context, width),
+                      delegate: SliverChildBuilderDelegate((context, i) {
+                        final item = items[i];
+                        return HomeMediaCard(
+                          item: item,
+                          coverWidth: homeShelfCardWidth(context, width),
+                          showLength: true,
+                          onTap: () => _openItem(item),
+                        );
+                      }, childCount: items.length),
+                    ),
+            ),
+            if (_idQuery == null)
+              SliverToBoxAdapter(child: _paginationFooter(context, feed)),
+          ],
+        );
+      },
     );
   }
 
@@ -977,7 +876,7 @@ class _SearchPageState extends State<SearchPage> {
       child: InkWell(
         onTap: () => _openItem(item),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 13),
           decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: palette.line, width: 0.5)),
           ),
@@ -1010,7 +909,7 @@ class _SearchPageState extends State<SearchPage> {
                   else
                     '暂无评分',
                 ].join(' · '),
-                style: TextStyle(color: palette.muted, fontSize: 12),
+                style: TextStyle(color: palette.muted, fontSize: 11.5),
               ),
             ],
           ),
@@ -1019,45 +918,69 @@ class _SearchPageState extends State<SearchPage> {
     );
   }
 
+  /// 流尾三态：加载中 / 失败可重试 / 没有更多了。文案与首页流尾一致，字号
+  /// 按搜索页的次级信息降到 12sp。
   Widget _paginationFooter(BuildContext context, _SearchFeed feed) {
+    final palette = HomePalette.of(context);
+    final style = TextStyle(fontSize: 12, height: 1.2, color: palette.body);
     if (feed.loading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 18),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
         child: Center(
           child: SizedBox.square(
-            dimension: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            dimension: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: palette.muted,
+            ),
           ),
         ),
       );
     }
     if (feed.error != null) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Center(
-          child: TextButton.icon(
-            onPressed: _loadMore,
-            icon: const Icon(LucideIcons.rotate_ccw, size: 16),
-            label: const Text('加载失败，点击重试'),
+        padding: const EdgeInsets.only(top: 16, bottom: 24),
+        child: GestureDetector(
+          onTap: _loadMore,
+          behavior: HitTestBehavior.opaque,
+          child: Center(
+            child: Text('加载失败，点击重试', style: style),
           ),
         ),
       );
     }
     if (!feed.hasMore) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        child: Center(
-          child: Text(
-            '没有更多了',
-            style: TextStyle(color: Theme.of(context).colorScheme.outline),
-          ),
+        padding: const EdgeInsets.only(top: 16, bottom: 32),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(width: 12, height: 0.5, color: palette.body),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text('没有更多了', style: style),
+            ),
+            Container(width: 12, height: 0.5, color: palette.body),
+          ],
         ),
       );
     }
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
       child: Center(
-        child: TextButton(onPressed: _loadMore, child: const Text('加载更多')),
+        child: TextButton(
+          onPressed: _loadMore,
+          style: TextButton.styleFrom(
+            foregroundColor: palette.muted,
+            minimumSize: Size.zero,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: const Text(
+            '加载更多',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+          ),
+        ),
       ),
     );
   }

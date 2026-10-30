@@ -138,61 +138,23 @@ fn search_cue<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<V
 
 /// The hot search board for the empty search screen.
 ///
-/// Upstream is the search landing plan (`/reading/bookapi/plan/v`, scene 10),
-/// passed through unchanged so the `data[].search_tag_data[].tag_title`
-/// aggregation shape reaches the client parser intact — the same contract the
-/// Go endpoint shipped. Parameter set ported verbatim from
-/// `fqapi/internal/endpoints/hot_search.go`.
+/// Upstream is the 热搜榜 rank list (`/reading/bookapi/search/rank_list/v:version/`,
+/// `show_type=472`), passed through unchanged. A 2026-10-30 HAR capture of the
+/// official client shows this endpoint returns one cell with 50 tags
+/// (`tag_title` plus `tag_attached` 热搜值 and `display_tag` 巅峰榜/热聊…),
+/// while the search landing plan used before (`/reading/bookapi/plan/v`,
+/// scene 10) returns only two `tag_title`s — which is why the board looked
+/// truncated. `:version` is the literal path segment the official client
+/// sends, not a placeholder.
 fn hot_search<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value>> {
     Box::pin(async move {
-        let offset = crate::endpoints::util::default_val(&params.get_str("offset"), "0");
-        let scene = crate::endpoints::util::default_val(&params.get_str("scene"), "10");
+        let show_type = crate::endpoints::util::default_val(&params.get_str("show_type"), "472");
         let mut p = crate::endpoints::home::reading724_params();
-        // Go 的 reading724LargeScreenParams：同表不同分辨率。
-        p.set("resolution", "1280*2772");
-        p.set("total_chapter_num", "0");
-        p.set("offset", offset);
-        p.set("current_chapter_num", "0");
-        p.set("search_middle_page_version", "2");
-        p.set("user_is_login", "1");
-        p.set("bookstore_tab", "2");
-        p.set("bookstore_tab_type", "2");
-        p.set("cue_context", "");
-        p.set("search_source", "1");
-        p.set("scene", scene);
-        p.set("new_search_middle_page", "true");
-        p.set("search_histories", "");
-        p.set("hot_word_exchange", "false");
-        p.set("last_search_page_interval", "0");
-        p.set("last_book_consume_time", "0");
-        p.set("limit", "0");
-        p.set("pad_column_detail", "0");
-        p.set("tab_name", "store");
-        p.set("last_consume_interval", "0");
-        p.set("from", "search_input_page");
-        p.set("query_history_removed", "false");
-        p.set("normal_session_cnt_in_day", "58");
-        p.set("gender", "2");
-        p.set("cold_start_session_cnt_in_day", "3");
-        p.set("sys_mini_window", "1");
-        p.set("app_mini_window", "0");
-        p.set("har_status", "0");
-        p.set("cold_start_session_cnt_in_life", "3");
-        p.set("charging", "0");
-        p.set("normal_session_cnt_in_life", "58");
-        p.set("is_power_save_mode", "0");
-        p.set("app_dark_mode", "0");
-        p.set("screen_brightness", "40");
-        p.set("battery_pct", "7");
-        p.set("down_speed", "51434");
-        p.set("sys_dark_mode", "0");
-        p.set("font_scale", "100");
-        p.set("network_type", "4");
-        p.set("current_volume", "0");
+        p.set("show_type", show_type);
         let spec = UpstreamRequestSpec {
             mode: UpstreamMode::DeviceSigned,
-            host: crate::endpoints::base::HOST_FQNOVEL.to_string(),
-            path: "/reading/bookapi/plan/v".to_string(),
+            host: crate::endpoints::base::HOST_FQNOVELC.to_string(),
+            path: "/reading/bookapi/search/rank_list/v:version/".to_string(),
             params: p.to_pairs(),
             headers: dragon_read_headers(),
             ..Default::default()
