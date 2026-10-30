@@ -167,12 +167,16 @@ class SeriesRelateBook {
     this.title = '',
     this.cover = '',
     this.status = '',
+    this.wordCount = 0,
   });
 
   final String id;
   final String title;
   final String cover;
   final String status;
+
+  /// `word_number`（字符数）；书籍页的「186万字」就是它。
+  final int wordCount;
 }
 
 SeriesRelateBook? _relateBook(dynamic raw) {
@@ -187,6 +191,7 @@ SeriesRelateBook? _relateBook(dynamic raw) {
     title: title,
     cover: _string(info['thumb_url']),
     status: _string(info['creation_status']),
+    wordCount: _int(info['word_number']),
   );
 }
 
