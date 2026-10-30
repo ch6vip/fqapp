@@ -297,6 +297,31 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('跟随滚动模式按固定周期落盘进度', (tester) async {
+    SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+    final store = ControlledReaderStore();
+    await _mount(tester, store: store);
+    // 起播：默认跟随，轮询把页面挪到朗读处。
+    _seed(positionMs: 0, track: _track(), cue: '长句');
+    await tester.pump(const Duration(milliseconds: 150));
+    // 等一次「像是滚动停下」的 500ms 防抖有机会落完，再取基线。
+    await tester.pump(const Duration(milliseconds: 700));
+    final before = store.writes.length;
+
+    // 播放位置持续推进：页面每 100ms 被程序化跳转一次，滚动防抖被不断重置。
+    for (var i = 1; i <= 12; i++) {
+      _seed(positionMs: i * 3000, track: _track(), cue: '长句');
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+    expect(
+      store.writes.length,
+      greaterThan(before),
+      reason: '跟随期间滚动防抖永远等不到，必须按固定周期补存',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 final _surface = find.byKey(const ValueKey('reader-page-surface'));

@@ -1052,7 +1052,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       if (next >= 0) unawaited(_jumpToChapter(next, followListening: true));
       return;
     }
-    _addressToPlayback(quiet: true);
+    // 跟随每 20 拍（≈2s）补一次落盘：跟随期间滚动防抖永远等不到。
+    if (_addressToPlayback(quiet: true) && _followPoll.saveDue()) {
+      _settleReadTime();
+      unawaited(_persistProgress());
+    }
   }
 
   /// 把页面寻址到正在读的那个字。返回 false 表示这次没法定位。
