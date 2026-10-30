@@ -429,3 +429,24 @@ test('the Rust build and host-test scripts always honor Cargo.lock', () => {
   assert.ok(hostLine.includes('--locked'),
     `run_rust_host_tests.ps1: cargo build must use --locked: ${hostLine.trim()}`);
 });
+
+test('the Windows workflow resolves dependencies against the lockfile', () => {
+  // 不带 --enforce-lockfile 时 flutter pub get 会静默改锁文件，CI 测的
+  // 就不是仓库里提交的依赖版本了。
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'windows.yml'),
+    'utf8',
+  );
+  const commands = workflow
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+  assert.ok(
+    /^\s*run: flutter pub get --enforce-lockfile\s*$/m.test(commands),
+    'windows.yml must resolve dependencies with --enforce-lockfile',
+  );
+  assert.ok(
+    !/^\s*run: flutter pub get\s*$/m.test(commands),
+    'a bare flutter pub get would silently update the lockfile',
+  );
+});
