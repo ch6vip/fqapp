@@ -4,9 +4,9 @@ import '../home/home_design.dart';
 
 /// 短剧详情页的配色换算。
 ///
-/// 2026-10-30 改版：页面不再套 `ThemeData.dark`，全部跟随应用主题
-/// （浅色 / 深色 / OLED / 墨水屏），颜色一律从 [HomePalette] 取。
-/// 剧集自己的 `series_color_hex` 只留作顶部一条淡色带，见 [seriesBandTint]。
+/// 页面跟随应用主题（浅色 / 深色 / OLED / 墨水屏），颜色一律从
+/// [HomePalette] 取。剧集自己的 `series_color_hex` 只留作顶部一条淡色带，
+/// 见 [seriesBandTint]。
 
 /// 主行动钮与当前集描边用强调色。
 ///
