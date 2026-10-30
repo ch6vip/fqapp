@@ -358,3 +358,43 @@ test('the size budget gate runs in the Dart gate, not the Windows build', () => 
     'the Windows job must not run the size budget again',
   );
 });
+
+test('the shell build script keeps the cargo profile arguments in scope for --host-lib', () => {
+  // 函数里的 local 变量在函数返回后就不存在了，而 --host-lib 分支在脚本
+  // 作用域；set -u 下引用未定义变量会直接退出。macOS 自带的 bash 3.2 在
+  // set -u 下展开空数组同样会报未绑定变量，所以展开还要带 +"..." 保护。
+  const source = readScript('build_rust_backend.sh');
+  assert.match(source, /^PROFILE_ARGS=\(\)$/m,
+    'PROFILE_ARGS must be assigned at script scope, not inside the function');
+  assert.ok(!/\blocal\s+profile_args\b/.test(source),
+    'a function-local profile_args cannot be seen by the --host-lib branch');
+
+  const references = (source.match(/\$\{PROFILE_ARGS\[@\]/g) || []).length;
+  const guarded = (source.match(
+    /\$\{PROFILE_ARGS\[@\]\+"\$\{PROFILE_ARGS\[@\]\}"/g,
+  ) || []).length;
+  assert.ok(guarded > 0, 'cargo build must receive the profile flags');
+  assert.equal(references, guarded * 2,
+    'every PROFILE_ARGS expansion must use the bash 3.2-safe ${a[@]+"${a[@]}"} form');
+});
+
+test('the PowerShell build script keeps the profile arguments in scope for -HostLib', () => {
+  // PowerShell 函数内的赋值是局部作用域：脚本层的 -HostLib 分支读不到
+  // $ProfileArgs / $ProfileDir，会让宿主库静默按 debug 构建。
+  const source = readScript('build_rust_backend.ps1');
+  const functionStart = source.indexOf('function Build-AndroidTarget');
+  assert.ok(functionStart > 0, 'Build-AndroidTarget must exist');
+  for (const variable of ['$ProfileArgs =', '$ProfileDir =']) {
+    const assignment = source.indexOf(variable);
+    assert.ok(
+      assignment > 0 && assignment < functionStart,
+      `${variable} must be assigned at script scope before Build-AndroidTarget`,
+    );
+  }
+  const hostLib = source.indexOf('if ($HostLib)');
+  assert.ok(hostLib > functionStart, 'the -HostLib branch must exist');
+  assert.ok(
+    source.slice(hostLib).includes('$ProfileArgs'),
+    'the -HostLib branch must pass the profile flags to cargo',
+  );
+});
