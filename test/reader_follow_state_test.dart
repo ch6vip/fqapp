@@ -278,6 +278,25 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('后台起播的会话在回到前台后开始跟随', (tester) async {
+    await _mount(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    _seed(positionMs: 36000, track: _track(), cue: '长句');
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(_pager(tester).pageIndex, 0, reason: '后台不该轮询翻页');
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      _pager(tester).pageIndex,
+      greaterThan(0),
+      reason: '回到前台后应重新启动轮询并跟上朗读处',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 final _surface = find.byKey(const ValueKey('reader-page-surface'));
