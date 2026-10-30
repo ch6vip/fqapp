@@ -604,7 +604,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// 标记一集已看（按剧集 id）。同一集只写一次存储：进度保存点里
-  /// 含 2 秒定时器，不去重会反复落盘。
+  /// 含 5 秒定时器，不去重会反复落盘。
   Future<void> _markWatched(int index) async {
     if (!widget.shortSeries ||
         widget.bookId.isEmpty ||
@@ -1429,8 +1429,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _onFirstFrame(player, generation);
       _updatePrefetch();
       _syncWatchClock();
-      _progressTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _progressTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         // A paused episode must not keep re-stamping its history record.
+        // 5s 心跳与听书页一致：暂停/切集/退出都另有即时保存，只在这里兜底。
         if (_playing) unawaited(_persistProgress());
       });
     } catch (error) {
@@ -1595,6 +1596,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }),
       player.playingStream.listen((playing) {
         if (!_current(generation, player)) return;
+        // 官方在暂停时写 video_progress：心跳改成 5s 后不能只靠它兜底。
+        if (_playing && !playing) unawaited(_persistProgress());
         if (_playing != playing) setState(() => _playing = playing);
         _syncWatchClock();
         _updatePrefetch();
