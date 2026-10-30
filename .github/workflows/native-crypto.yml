@@ -54,6 +54,13 @@ jobs:
           test/native_aes_test.cjs
           test/native_crypto_test.cjs
           test/native_crypto_media_test.cjs
+      # Host-side atempo/resample regressions (issue #129). The test compiles
+      # its own drivers from native/tests with -Werror, so it needs the clang
+      # installed above rather than the Android NDK toolchain.
+      - name: Time-stretch, resample, and flush host regressions
+        env:
+          NATIVE_CC: clang
+        run: node --test test/native_atempo_test.cjs
       - name: Execute the real JNI bridge with JDK checks
         env:
           NATIVE_CC: clang
