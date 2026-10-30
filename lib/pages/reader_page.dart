@@ -23,6 +23,7 @@ import '../services/text_replacement_store.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
+import '../services/reader_follow_poll.dart';
 import '../widgets/reader/eink_reading.dart';
 import '../widgets/reader/reader_player_pill.dart';
 import '../widgets/reader/reader_narration_visibility.dart';
@@ -414,8 +415,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 不受手动翻页那 15 秒闩锁影响。
   bool _listenWasPlaying = false;
 
-  /// 10Hz 跟随轮询。见 [_followPollTick]。
-  Timer? _followPoll;
+  /// 10Hz 跟随轮询，只在有本书的听书会话且前台时运行。见 [_followPollTick]。
+  late final ReaderFollowPoll _followPoll = ReaderFollowPoll(
+    _followPollTick,
+    () => _appActive && ListeningSession.instance.bookId == widget.bookId,
+  );
 
   bool get _listenDoubleTapArmed =>
       _narrationRange != null ||
@@ -619,6 +623,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
     }
     _listenWasPlaying = playing;
+    _followPoll.sync();
     // 会话起停时即使高亮不变，也要重建双击跳读手势。
     final armed = _listenDoubleTapArmed;
     if (armed != _doubleTapArmed) {
@@ -826,13 +831,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             _jumpToPlaybackPosition;
       }
     });
-    // 跟随用 10Hz 轮询，不走 ListeningSession 的监听（那条每秒最多通知一次，
-    // 只在结构性变化时才来，而且不管翻页）。定位键每次都准，所以轮询直接调
-    // 同一个函数。
-    _followPoll = Timer.periodic(
-      const Duration(milliseconds: 100),
-      (_) => _followPollTick(),
-    );
+    // 跟随用 10Hz 轮询，不走 ListeningSession 的 1Hz 通知（只在结构性变化时
+    // 才来，而且不管翻页）；会话/前台变化时由 [_followPoll.sync] 启停定时器。
     _replacementStore.changes.addListener(_onReplacementChanged);
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次阅读进度，避免被杀丢进度。
@@ -841,6 +841,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _followPoll.sync();
     _index = widget.chapters.isEmpty
         ? 0
         : widget.startIndex.clamp(0, widget.chapters.length - 1);
@@ -1631,8 +1632,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    _followPoll?.cancel();
-    _followPoll = null;
+    _followPoll.dispose();
     _chapterRequestHandles.cancelAll();
     VolumeKeyService.instance.setOnVolumeKey(null);
     unawaited(VolumeKeyService.instance.setEnabled(false));
@@ -1699,6 +1699,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
     // 前台/后台切换不影响原生层音量键拦截（在 Activity 层，与 Flutter 生命周期
     // 无关），故此处无需重挂监听；仅同步一次状态即可。
+    _followPoll.sync();
     _syncVolumeKeyEnabled();
   }
 
