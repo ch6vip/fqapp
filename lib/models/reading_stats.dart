@@ -131,13 +131,18 @@ List<ReadingRankItem> _rankOf(
   Map<String, String> readTimeKinds,
 ) {
   final byBook = <String, ReadingRankItem>{};
+  // One index instead of scanning the whole history for every read-time row.
+  // putIfAbsent keeps the first matching entry, like the old firstWhere.
+  final historyById = <String, Map<String, dynamic>>{};
+  for (final entry in history) {
+    historyById.putIfAbsent(historyStatisticsId(entry), () => entry);
+  }
   readTime.forEach((bookId, days) {
     final minutes = days.values.fold<double>(0, (a, b) => a + b) / 60;
     if (minutes <= 0) return;
-    final entry = history.firstWhere(
-      (e) => historyStatisticsId(e) == bookId,
-      orElse: () => _historyForStatisticsId(bookId, readTimeKinds[bookId]),
-    );
+    final entry =
+        historyById[bookId] ??
+        _historyForStatisticsId(bookId, readTimeKinds[bookId]);
     byBook[bookId] = ReadingRankItem(entry: entry, minutes: minutes);
   });
   for (final entry in history) {
