@@ -156,6 +156,26 @@ void main() {
     expect(await current.length(), lessThan(60));
   });
 
+  test('FileLogWriter 按 UTF-8 字节数轮换，中文日志不拖到三倍上限', () async {
+    final dir = await Directory.systemTemp.createTemp('fqapp-log-utf8-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+
+    // 每行 27 个 UTF-8 字节 + 换行；按 UTF-16 码元（11+1）计数时当前文件
+    // 会长到 140 字节才轮换。
+    final writer = FileLogWriter(dir, maxBytes: 60, maxBackups: 1);
+    await writer.open();
+    for (var i = 0; i < 15; i++) {
+      await writer.append('中文日志-$i-中文中文');
+    }
+    await writer.close();
+
+    final current = File('${dir.path}/app.log');
+    expect(await current.length(), lessThanOrEqualTo(60));
+    expect(File('${dir.path}/app.log.1').existsSync(), isTrue);
+  });
+
   test('api 日志只含路由模板：不含主机、query 与数值 id', () async {
     AppLog.instance.install();
     final client = ApiClient(
