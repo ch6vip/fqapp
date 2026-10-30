@@ -284,15 +284,29 @@ fn handle_play<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<
             ..Default::default()
         };
 
+        let upstream = Upstream::new(ctx.up.clone());
         let mut v = Value::Null;
+        let mut last_err: Option<ApiError> = None;
         // 这里用 Signed 模式，根本不经过设备池，所以重试无法换设备（旧注释
-        // 写成 pooled devices 是失实的）。保留重试只是为了上游偶发抖动。
+        // 写成 pooled devices 是失实的）。保留重试只是为了上游偶发抖动：
+        // 网络错误、非 200 响应和截断的 JSON 都属于可能自愈的失败，重试到
+        // AUDIO_PLAY_ATTEMPTS 用尽后返回最后一次错误。拿到响应体（哪怕被
+        // 上游按设备拒绝）就不再算失败，沿用下面的 code:0 封套。
         for _ in 0..AUDIO_PLAY_ATTEMPTS {
-            let raw = Upstream::new(ctx.up.clone()).raw(&spec).await?;
-            v = raw_json(&raw)?;
-            if !audio_play_device_rejected(&v) {
-                break;
+            match upstream.raw(&spec).await.and_then(|raw| raw_json(&raw)) {
+                Ok(value) => {
+                    v = value;
+                    last_err = None;
+                    if !audio_play_device_rejected(&v) {
+                        break;
+                    }
+                }
+                Err(err) if err.is_retryable() => last_err = Some(err),
+                Err(err) => return Err(err),
             }
+        }
+        if let Some(err) = last_err {
+            return Err(err);
         }
         // 桥接封套恒为 code:0 是既定设计（上游封套嵌在 video_info 里，消费方
         // 在那里自查），所以这里不改成错误，只补一条痕迹：全部尝试都被拒绝时
