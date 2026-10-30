@@ -137,8 +137,10 @@ void main() {
     final observer = _Observer();
     await _pump(tester, const Size(1366, 768), observer: observer);
     expect(find.byKey(const Key('detail_description_text')), findsOneWidget);
-    expect(find.byIcon(Icons.star_rounded), findsNWidgets(4));
-    expect(find.byIcon(Icons.star_half_rounded), findsOneWidget);
+    // 评分只在左栏 hero 出现一次，旧的统计卡与书评评分卡都已移除。
+    expect(find.byKey(const Key('detail_rating_line')), findsOneWidget);
+    expect(find.text('9.5'), findsOneWidget);
+    expect(find.byKey(const Key('detail_score_card')), findsNothing);
     await tester.tap(find.byKey(const Key('detail_section_2')));
     await tester.pumpAndSettle();
     expect(find.text('还没有读者评论'), findsOneWidget);

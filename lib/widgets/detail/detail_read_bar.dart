@@ -2,21 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../home/home_design.dart';
+import 'detail_style.dart';
 
 /// Bottom action bar: secondary actions (听书 / 下载) on the left and the
 /// primary read / play call to action as a filled pill on the right.
+///
+/// The bar itself is always mounted — while loading it renders disabled
+/// instead of disappearing, so the page never jumps when data arrives.
 class DetailReadBar extends StatelessWidget {
   final String label;
-  final String? resumeTitle;
   final IconData icon;
   final bool opening;
+
+  /// False while the catalogue is loading, empty or failed.
+  final bool enabled;
   final VoidCallback onRead;
 
   /// Opens the listening page. Hidden when the work has no audio version.
   final VoidCallback? onListen;
 
-  /// Starts (or stops) the whole-book download. The range sheet stays with the
-  /// reader, where picking a batch size still makes sense.
+  /// Starts (or stops) the whole-book download.
   final VoidCallback? onDownload;
 
   /// Running whole-book batch: its progress replaces the static download icon.
@@ -28,7 +33,7 @@ class DetailReadBar extends StatelessWidget {
     required this.icon,
     required this.opening,
     required this.onRead,
-    this.resumeTitle,
+    this.enabled = true,
     this.onListen,
     this.onDownload,
     this.download,
@@ -38,6 +43,7 @@ class DetailReadBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final largeType = MediaQuery.textScalerOf(context).scale(16) > 24;
+    final active = enabled && !opening;
     final secondary = <_Secondary>[
       if (onListen != null)
         (
@@ -62,21 +68,7 @@ class DetailReadBar extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: palette.surface,
-          border: Border(
-            top: BorderSide(
-              color: palette.line,
-              width: 0.6,
-            ),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(
-                alpha: palette.dark ? 0.28 : 0.04,
-              ),
-              blurRadius: 16,
-              offset: const Offset(0, -4),
-            ),
-          ],
+          border: Border(top: BorderSide(color: palette.line, width: 0.6)),
         ),
         child: SafeArea(
           top: false,
@@ -85,145 +77,97 @@ class DetailReadBar extends StatelessWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 840),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (resumeTitle != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Row(
-                        children: [
-                          Icon(
-                            LucideIcons.clock_arrow_up,
-                            size: 13,
-                            color: palette.muted,
-                          ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                              '上次读到：$resumeTitle',
-                              key: const Key('detail_resume_label'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: palette.muted,
-                                fontSize: 11,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                child: Row(
+                  children: [
+                    for (final action in secondary) ...[
+                      _SecondaryAction(
+                        icon: action.icon,
+                        label: action.label,
+                        keyName: action.keyName,
+                        onTap: action.onTap,
+                        progress: action.progress,
+                        compact: largeType,
+                        enabled: enabled,
                       ),
-                    ),
-                  Row(
-                    children: [
-                      for (final action in secondary) ...[
-                        _SecondaryAction(
-                          icon: action.icon,
-                          label: action.label,
-                          keyName: action.keyName,
-                          onTap: action.onTap,
-                          progress: action.progress,
-                          compact: largeType,
-                        ),
-                        Container(
-                          width: 0.5,
-                          height: 22,
-                          color: palette.line,
-                          margin: const EdgeInsets.symmetric(horizontal: 14),
-                        ),
-                      ],
-                      Expanded(
-                        child: Semantics(
-                          enabled: !opening,
-                          child: IgnorePointer(
-                            ignoring: opening,
-                            child: HomePressable(
-                              key: const Key('detail_read_button'),
-                              onTap: onRead,
-                              borderRadius: BorderRadius.circular(999),
-                              child: Container(
-                                constraints: const BoxConstraints(
-                                  minHeight: 48,
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 13,
-                                ),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: opening
-                                        ? [palette.muted, palette.muted]
-                                        : const [
-                                            HomePalette.accent,
-                                            Color(0xFFE4432E),
-                                          ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(999),
-                                  boxShadow: opening
-                                      ? null
-                                      : [
-                                          BoxShadow(
-                                            color: HomePalette.accent
-                                                .withValues(alpha: 0.20),
-                                            blurRadius: 14,
-                                            offset: const Offset(0, 5),
-                                          ),
-                                        ],
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    if (!largeType) ...[
-                                      if (opening)
-                                        const SizedBox.square(
-                                          dimension: 17,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      else
-                                        Icon(
-                                          icon,
-                                          color: Colors.white,
-                                          size: 19,
+                      const SizedBox(width: 6),
+                    ],
+                    Expanded(
+                      child: Semantics(
+                        enabled: active,
+                        button: true,
+                        child: IgnorePointer(
+                          ignoring: !active,
+                          child: HomePressable(
+                            key: const Key('detail_read_button'),
+                            onTap: onRead,
+                            borderRadius: BorderRadius.circular(999),
+                            child: Container(
+                              constraints: const BoxConstraints(minHeight: 46),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: active
+                                    ? detailAccentFill(palette)
+                                    : palette.soft,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  if (!largeType) ...[
+                                    if (opening)
+                                      SizedBox.square(
+                                        dimension: 17,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: detailOnAccent(palette),
                                         ),
-                                      const SizedBox(width: 8),
-                                    ],
-                                    Flexible(
-                                      child: Text(
-                                        opening ? '正在打开' : label,
-                                        textAlign: TextAlign.center,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15.5,
-                                          fontWeight: FontWeight.w700,
-                                          height: 1.4,
-                                        ),
+                                      )
+                                    else
+                                      Icon(
+                                        icon,
+                                        color: active
+                                            ? detailOnAccent(palette)
+                                            : palette.muted,
+                                        size: 18,
+                                      ),
+                                    const SizedBox(width: 7),
+                                  ],
+                                  Flexible(
+                                    child: Text(
+                                      opening ? '正在打开' : label,
+                                      textAlign: TextAlign.center,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: active
+                                            ? detailOnAccent(palette)
+                                            : palette.muted,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                        height: 1.4,
                                       ),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 class _SecondaryAction extends StatelessWidget {
@@ -235,6 +179,7 @@ class _SecondaryAction extends StatelessWidget {
   final String keyName;
   final VoidCallback onTap;
   final bool compact;
+  final bool enabled;
 
   /// 0..1 while a whole-book batch runs; null falls back to [icon].
   final double? progress;
@@ -245,6 +190,7 @@ class _SecondaryAction extends StatelessWidget {
     required this.keyName,
     required this.onTap,
     required this.compact,
+    required this.enabled,
     this.progress,
   });
 
@@ -252,39 +198,39 @@ class _SecondaryAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final progress = this.progress;
-    return HomePressable(
-      key: Key('detail_action_$keyName'),
-      semanticLabel: label,
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (progress == null)
-              Icon(icon, size: 19, color: palette.ink)
-            else
-              SizedBox.square(
-                dimension: 19,
-                child: CircularProgressIndicator(
-                  value: progress.clamp(0.0, 1.0).toDouble(),
-                  strokeWidth: 2,
-                  color: palette.ink,
+    final color = enabled ? palette.ink : palette.muted;
+    return IgnorePointer(
+      ignoring: !enabled,
+      child: HomePressable(
+        key: Key('detail_action_$keyName'),
+        semanticLabel: label,
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (progress == null)
+                Icon(icon, size: 19, color: color)
+              else
+                SizedBox.square(
+                  dimension: 19,
+                  child: CircularProgressIndicator(
+                    value: progress.clamp(0.0, 1.0).toDouble(),
+                    strokeWidth: 2,
+                    color: color,
+                  ),
                 ),
-              ),
-            if (!compact) ...[
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: TextStyle(
-                  color: palette.ink,
-                  fontSize: 10.5,
-                  height: 1.25,
+              if (!compact) ...[
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(color: color, fontSize: 10.5, height: 1.25),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

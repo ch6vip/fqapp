@@ -39,8 +39,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('摘要一'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('detail_refresh_button')));
+      // 改版去掉了标题栏的刷新按钮：下拉刷新是唯一的重新加载入口。
+      await tester.fling(
+        find.byKey(const Key('detail_scroll')),
+        const Offset(0, 400),
+        1500,
+      );
       await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();
       expect(find.text('摘要一'), findsNothing);
 

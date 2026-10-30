@@ -71,15 +71,10 @@ void main() {
     expect(find.text('评论内容 2'), findsOneWidget);
     expect(find.text('评论内容 3'), findsNothing);
 
-    // Bottom "查看全部 42 条书评" button rendered
-    expect(find.text('查看全部 42 条书评'), findsOneWidget);
+    // 改版后只保留头部一个「全部」入口，不再在底部重复一个按钮。
+    expect(find.text('查看全部 42 条书评'), findsNothing);
+    expect(find.textContaining('42 条 · 全部'), findsOneWidget);
 
-    // Tapping bottom button triggers onOpenAll
-    await tester.tap(find.text('查看全部 42 条书评'));
-    expect(opened, isTrue);
-
-    // Tapping top button with key detail_reviews_more also triggers onOpenAll
-    opened = false;
     await tester.tap(find.byKey(const Key('detail_reviews_more')));
     expect(opened, isTrue);
   });

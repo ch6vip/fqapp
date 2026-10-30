@@ -33,9 +33,7 @@ class DetailChapterRow extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 17),
             decoration: BoxDecoration(
-              color: current
-                  ? HomePalette.accent.withValues(alpha: 0.065)
-                  : null,
+              color: current ? palette.soft : null,
               border: divider
                   ? Border(bottom: BorderSide(color: palette.line))
                   : null,

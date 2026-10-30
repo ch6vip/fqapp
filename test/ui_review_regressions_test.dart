@@ -14,7 +14,6 @@ import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/widgets/audio/audio_sections.dart';
 import 'package:fqapp/widgets/detail/detail_reviews.dart';
-import 'package:fqapp/widgets/detail/detail_sections.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_status_bar.dart';
 
@@ -337,9 +336,8 @@ void main() {
     );
   }
 
-  testWidgets('a six out of ten aggregate rating renders three filled stars', (
-    tester,
-  ) async {
+  testWidgets('书评区不再重复汇总评分', (tester) async {
+    // 改版后评分只在 hero 出现一次；书评区不再放「轻点评分」卡。
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
@@ -350,12 +348,8 @@ void main() {
         ),
       ),
     );
-    final stars = find.descendant(
-      of: find.byKey(const Key('detail_score_card')),
-      matching: find.byType(DetailStarRow),
-    );
-    expect(tester.widget<DetailStarRow>(stars).stars, 3);
-    expect(find.text('6.0'), findsOneWidget);
+    expect(find.byKey(const Key('detail_score_card')), findsNothing);
+    expect(find.text('6.0'), findsNothing);
   });
 }
 

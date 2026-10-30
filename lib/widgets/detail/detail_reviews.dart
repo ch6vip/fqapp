@@ -10,7 +10,9 @@ import '../../models/book_detail.dart';
 import '../../models/comment_reply.dart';
 import '../comment_images.dart';
 import '../home/home_design.dart';
+import '../home/home_shelf.dart';
 import 'detail_sections.dart';
+import 'detail_states.dart';
 
 /// Loads the replies to one review.
 ///
@@ -18,9 +20,11 @@ import 'detail_sections.dart';
 /// .agents/notes/implemented/feature/2026-09-11-discovery-pages.md
 typedef ReviewReplyLoader = Future<CommentReplyPage> Function(String commentId);
 
-/// Review block: header, the book's aggregate rating card, then the newest
-/// reviews. Renders nothing at all when the backend returns no reviews, so the
-/// detail page does not grow an empty section.
+/// Review block: section heading with the single 「全部」 entry, then the
+/// newest three reviews, each clamped to four lines.
+///
+/// The aggregate rating card is gone: the detail page shows the rating once,
+/// in the hero. Renders nothing when there are no reviews at all.
 class DetailReviews extends StatelessWidget {
   final BookCommentPage page;
   final BookDetail? detail;
@@ -50,144 +54,64 @@ class DetailReviews extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     if (page.isEmpty && page.totalCount == 0) return const SizedBox.shrink();
-    final score = detail?.scoreValue;
-    final totalCount = page.totalCount > 0 ? page.totalCount : page.comments.length;
-    final displayedComments =
-        onOpenAll != null ? page.comments.take(3).toList() : page.comments;
-    final hasMoreAffordance =
-        onOpenAll != null || (page.hasMore && onLoadMore != null);
-
+    final totalCount = page.totalCount > 0
+        ? page.totalCount
+        : page.comments.length;
+    final displayed = onOpenAll != null
+        ? page.comments.take(3).toList()
+        : page.comments;
+    final action = onOpenAll ?? (loadingMore ? null : onLoadMore);
+    final countLabel = '${formatCount(totalCount)} 条';
+    final actionLabel = action == null ? countLabel : '$countLabel · 全部 ›';
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Text(
-              page.headerLabel,
-              key: const Key('detail_reviews_header'),
-              style: TextStyle(
-                color: palette.ink,
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
-            ),
-            const Spacer(),
-            if (hasMoreAffordance)
-              TextButton(
-                key: const Key('detail_reviews_more'),
-                onPressed: onOpenAll ?? (loadingMore ? null : onLoadMore),
-                style: TextButton.styleFrom(
-                  foregroundColor: palette.muted,
-                  minimumSize: const Size(48, 44),
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
+        DetailSectionHeader(
+          key: const Key('detail_reviews_header'),
+          title: '书评',
+          action: action == null
+              ? Text(
+                  actionLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: palette.muted, fontSize: 12),
+                )
+              : HomePressable(
+                  key: const Key('detail_reviews_more'),
+                  semanticLabel: '查看全部书评',
+                  onTap: action,
+                  borderRadius: BorderRadius.circular(6),
+                  child: loadingMore
+                      ? const SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(
+                          actionLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: palette.muted, fontSize: 12),
+                        ),
                 ),
-                child: loadingMore
-                    ? const SizedBox.square(
-                        dimension: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('全部书评', style: TextStyle(fontSize: 12)),
-                          const SizedBox(width: 3),
-                          const Icon(LucideIcons.chevron_right, size: 15),
-                        ],
-                      ),
-              ),
-          ],
         ),
-        const SizedBox(height: 12),
-        _ScoreCard(score: score, label: page.scoreLabel),
-        if (page.comments.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          for (final comment in displayedComments)
-            DetailCommentTile(
-              key: ValueKey('detail_review_${comment.id}'),
-              comment: comment,
-              replyLoader: replyLoader,
-            ),
-          if (onOpenAll != null && totalCount > displayedComments.length) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                onPressed: onOpenAll,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: palette.ink,
-                  side: BorderSide(color: palette.line),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+        if (page.comments.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+            child: Column(
+              children: [
+                for (var i = 0; i < displayed.length; i++) ...[
+                  if (i > 0) Divider(height: 1, color: palette.line),
+                  DetailCommentTile(
+                    key: ValueKey('detail_review_${displayed[i].id}'),
+                    comment: displayed[i],
+                    replyLoader: replyLoader,
+                    maxTextLines: 4,
                   ),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '查看全部 $totalCount 条书评',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Icon(LucideIcons.chevron_right, size: 14),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ],
-    );
-  }
-}
-
-/// Aggregate rating. Shows the book's own score when it has one, otherwise the
-/// empty out-of-five prompt the official page uses.
-class _ScoreCard extends StatelessWidget {
-  final double? score;
-  final String label;
-
-  const _ScoreCard({required this.score, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Container(
-      key: const Key('detail_score_card'),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: BoxDecoration(
-        color: palette.soft,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Text(
-            '轻点评分',
-            style: TextStyle(
-              color: palette.ink,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+                ],
+              ],
             ),
           ),
-          const Spacer(),
-          if (score != null) ...[
-            Text(
-              score!.toStringAsFixed(1),
-              style: TextStyle(
-                color: palette.accentText,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
-          DetailStarRow(stars: (score ?? 0) / 2, size: 17),
-        ],
-      ),
+      ],
     );
   }
 }
@@ -196,7 +120,15 @@ class DetailCommentTile extends StatefulWidget {
   final BookComment comment;
   final ReviewReplyLoader? replyLoader;
 
-  const DetailCommentTile({super.key, required this.comment, this.replyLoader});
+  /// Clamp for the review body; null shows the full text (the sheet).
+  final int? maxTextLines;
+
+  const DetailCommentTile({
+    super.key,
+    required this.comment,
+    this.replyLoader,
+    this.maxTextLines,
+  });
 
   @override
   State<DetailCommentTile> createState() => _DetailCommentTileState();
@@ -244,43 +176,14 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
     final time = comment.relativeTime();
     final readLabel = comment.readDurationLabel;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14),
+      padding: const EdgeInsets.symmetric(vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              ClipOval(
-                child: SizedBox.square(
-                  dimension: 30,
-                  child: comment.userAvatar.isEmpty
-                      ? ColoredBox(
-                          color: palette.soft,
-                          child: Icon(
-                            LucideIcons.user,
-                            size: 15,
-                            color: palette.muted,
-                          ),
-                        )
-                      : CachedNetworkImage(
-                          cacheManager: PosterCache.instance,
-                          imageUrl: comment.userAvatar,
-                          fit: BoxFit.cover,
-                          // 30dp avatar; decode at 2×. CachedNetworkImage also
-                          // adds the disk cache a bare Image.network lacks.
-                          memCacheWidth: 64,
-                          errorWidget: (context, _, _) => ColoredBox(
-                            color: palette.soft,
-                            child: Icon(
-                              LucideIcons.user,
-                              size: 15,
-                              color: palette.muted,
-                            ),
-                          ),
-                        ),
-                ),
-              ),
-              const SizedBox(width: 9),
+              _avatar(palette),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,7 +198,7 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: palette.ink,
-                              fontSize: 13,
+                              fontSize: 12.5,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -323,17 +226,21 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
             ],
           ),
           if (readLabel.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               readLabel,
               style: TextStyle(color: palette.muted, fontSize: 11, height: 1.3),
             ),
           ],
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           if (comment.text.isNotEmpty)
             Text(
               comment.text,
               key: ValueKey('detail_review_text_${comment.id}'),
+              maxLines: widget.maxTextLines,
+              overflow: widget.maxTextLines == null
+                  ? TextOverflow.visible
+                  : TextOverflow.ellipsis,
               style: TextStyle(
                 color: palette.ink,
                 fontSize: 13.5,
@@ -345,7 +252,7 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
             CommentImages(imageUrls: comment.imageUrls),
           ],
           if (comment.diggCount > 0 || comment.replyCount > 0) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Row(
               children: [
                 if (comment.diggCount > 0) ...[
@@ -376,6 +283,31 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
               page: loaded,
             ),
         ],
+      ),
+    );
+  }
+
+  /// 26dp reviewer avatar; falls back to a neutral person glyph.
+  Widget _avatar(HomePalette palette) {
+    final fallback = ColoredBox(
+      color: palette.soft,
+      child: Icon(LucideIcons.user, size: 14, color: palette.muted),
+    );
+    final avatar = widget.comment.userAvatar;
+    return ClipOval(
+      child: SizedBox.square(
+        dimension: 26,
+        child: avatar.isEmpty
+            ? fallback
+            : CachedNetworkImage(
+                cacheManager: PosterCache.instance,
+                imageUrl: avatar,
+                fit: BoxFit.cover,
+                // Decode at 2×; CachedNetworkImage also adds the disk cache a
+                // bare Image.network lacks.
+                memCacheWidth: 56,
+                errorWidget: (context, _, _) => fallback,
+              ),
       ),
     );
   }
@@ -451,6 +383,7 @@ class _ReplyList extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.soft,
         borderRadius: BorderRadius.circular(10),
+        border: palette.eink ? Border.all(color: palette.line) : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

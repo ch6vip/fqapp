@@ -201,8 +201,9 @@ void main() {
         entry: {'kind': 'book', 'chapterId': 'chapter-23', 'episode': 0},
       ),
     );
-    expect(find.text('继续阅读'), findsOneWidget);
-    expect(find.text('上次读到：第23章 故事的另一种可能'), findsOneWidget);
+    expect(find.textContaining('继续阅读'), findsOneWidget);
+    // 上次读到从底栏小字改到 hero 下方的软色行，正文里写明章节名。
+    expect(find.text('上次读到 第23章 故事的另一种可能'), findsOneWidget);
     await _openDirectory(tester);
     await tester.enterText(
       find.byKey(const Key('detail_directory_search')),

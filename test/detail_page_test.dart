@@ -59,7 +59,8 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(requests, ['短剧:series', '短剧:series']);
-        expect(find.text('继续观看'), findsOneWidget);
+        // 主按钮现在写明要读的集数（`继续观看 · 第2集`）。
+        expect(find.textContaining('继续观看'), findsOneWidget);
         final context = tester.element(find.byType(DetailPage));
         await tester.tap(find.byKey(const Key('detail_read_button')));
         await tester.idle();
@@ -200,9 +201,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('整本下载跳过已缓存章节，从第一个缺口继续（issue #108）', (
-    tester,
-  ) async {
+  testWidgets('整本下载跳过已缓存章节，从第一个缺口继续（issue #108）', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final cache = MemoryChapterCache();
     // 「缓存到一半被网络中断」：前 2 章已在磁盘上，剩下 2 章没下。
@@ -320,6 +319,9 @@ void main() {
     }
     expect(find.text('正在加载书籍与目录'), findsOneWidget);
     expect(find.text('从缓存阅读'), findsOneWidget);
+    // 底栏常驻后正文视口变矮，先滚到入口再点。
+    await tester.ensureVisible(find.byKey(const Key('detail_read_cached')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('detail_read_cached')));
     for (var i = 0; i < 5; i++) {
       await tester.pump();
@@ -332,9 +334,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('optional metadata failure keeps a usable directory visible', (
-    tester,
-  ) async {
+  testWidgets('metadata failure keeps the directory usable', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: DetailPage(
@@ -348,12 +348,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('第一章'), findsOneWidget);
     expect(find.byKey(const Key('detail_read_button')), findsOneWidget);
-    expect(find.text('重试'), findsNothing);
+    // 简介自己失败、目录仍在：简介区给出自己的内联重试，不再整页静默。
+    expect(find.text('重试'), findsOneWidget);
   });
 
-  testWidgets('continue follows the saved chapter ID after directory reorder', (
-    tester,
-  ) async {
+  testWidgets('continue follows the saved chapter ID', (tester) async {
     final observer = _RouteObserver();
     await tester.pumpWidget(
       MaterialApp(
