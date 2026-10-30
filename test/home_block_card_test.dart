@@ -51,20 +51,27 @@ void main() {
     expect(homeShelfColumns(context, 950), 5);
   });
 
-  testWidgets('宽屏按目标卡宽反推列数，卡片不会被拉胖', (tester) async {
+  testWidgets('宽屏由六列长到九列封顶，再多出的宽度给卡片', (tester) async {
     await pump(tester);
 
-    // 840 的上限被拆掉之后，2560 的窗口里内容宽约 2528：13 列，一张卡
-    // 186dp。旧断点在 900dp 之后就到顶（5 列），这个宽度下会给出 5 列、
-    // 一张封面 500dp 宽。
-    expect(homeShelfColumns(context, 2528), 13);
+    // 与短剧页同一口径（一格 190dp）：默认窗口六列，全屏九列封顶。
+    // 内容宽 = 窗口宽 - 32dp 栏距。
+    expect(homeShelfColumns(context, 1172), 6);
+    expect(homeShelfColumns(context, 1376), 7);
+    expect(homeShelfColumns(context, 1900), 9);
+    expect(homeShelfColumns(context, 2528), 9);
+    // 3808（5K 全屏）也不超过九列——宽度增长归卡片，不再往格子里塞书。
+    expect(homeShelfColumns(context, 3808), 9);
 
-    // 无论窗口多宽，卡片都停在 180dp 上下——这是「可读」的那条线：
-    // 再窄书名只剩三四个字，再胖封面就变成海报。
-    for (final width in <double>[900, 1408, 2528, 3808]) {
-      final card = homeShelfCardWidth(context, width);
-      expect(card, greaterThan(165), reason: '$width 宽时卡片被压窄');
-      expect(card, lessThan(195), reason: '$width 宽时卡片被拉胖');
-    }
+    // 列数封顶后卡片随窗口变大：全屏一张 ≈ 270dp，是默认窗口的 1.4 倍。
+    final standard = homeShelfCardWidth(context, 1172);
+    final fullscreen = homeShelfCardWidth(context, 2528);
+    expect(standard, greaterThan(178));
+    expect(standard, lessThan(192));
+    expect(fullscreen, greaterThan(standard * 1.4));
+
+    // 900–1130 这一段还没到六列的宽度，保持平板五列，否则一张卡只剩 140dp。
+    expect(homeShelfColumns(context, 900), 5);
+    expect(homeShelfColumns(context, 1100), 5);
   });
 }

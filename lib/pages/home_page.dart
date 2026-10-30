@@ -249,10 +249,10 @@ class _HomePageState extends ConsumerState<HomePage> {
         alignment: Alignment.topCenter,
         // 阅读宽度：手机/平板压 840（一屏三到五列，再宽眼睛就散）。
         //
-        // 桌面不再吃固定 1440：2560 的窗口里 1440 只占一半多，两侧各空出
-        // 560dp，全屏看着像没铺开。桌面把宽度交给窗口本身，能铺几列由
-        // homeShelfColumns 按卡宽反推（见 `widgets/home/home_shelf.dart`），
-        // 所以窗口再宽也只是多几列，不会把封面拉成海报，也不会留下大片空白。
+        // 桌面不吃固定 1440：2560 的窗口里只占一半多，两侧各空 560dp。
+        // 宽度交给窗口后，列数由 homeShelfColumns 按「一格 190dp，钳 6–9 列」
+        // 反推（见 `widgets/home/home_shelf.dart`）：默认六列、全屏九列，
+        // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: isWindowsDesktop ? double.infinity : 840,

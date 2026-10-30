@@ -29,7 +29,8 @@ class HomeHero extends StatefulWidget {
 
   /// 搜索行在宽屏上的最大宽度。手机与平板永远吃不满这一档，只有桌面需要
   /// 它兜住：没有上限时窗口多宽、那条空胶囊就多宽，「分类」被挤到最右。
-  /// 1120 ≈ 6 列书卡（6×180 + 5×12 + 32 栏距），与网格左端同一条竖线。
+  /// 1120 ≈ 默认窗口的六列书卡宽（6×186 + 5×12 ≈ 1176，取整收一点），
+  /// 左端与网格、分区头同一条 16dp 竖线。
   static const double maxToolbarWidth = 1120;
 
   /// 官方 `@string/duw`：`SearchWordDisplayView` 的默认文案。
