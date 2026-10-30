@@ -37,8 +37,15 @@ void main() {
       episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
     );
     expect(find.byKey(const ValueKey('series-detail-page')), findsOneWidget);
-    // 顶栏（滚动态常驻，透明但仍在树里）与头部各一份。
-    expect(find.text('抽象三国第一季'), findsNWidgets(2));
+    // 顶栏只有返回箭头，标题只出现一次（头部）。
+    expect(find.text('抽象三国第一季'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('series-detail-topbar')),
+        matching: find.text('抽象三国第一季'),
+      ),
+      findsNothing,
+    );
     // 实机取证：封面不带状态角标，状态走状态行与选集区头部。
     expect(
       find.byKey(const ValueKey('series-detail-cover-badge')),
@@ -55,59 +62,13 @@ void main() {
     expect(find.text('搞笑'), findsOneWidget);
   });
 
-  testWidgets('tab 结构照实机：基本信息/剧评，无选集；有原著时出现原著小说', (tester) async {
-    await pumpSeriesDetail(
-      tester,
-      detail: seriesDetailFixture(),
-      episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
-    );
-    final tabs = find.byKey(const ValueKey('series-detail-tabs'));
-    expect(
-      find.descendant(of: tabs, matching: find.text('基本信息')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: tabs, matching: find.text('剧评')),
-      findsOneWidget,
-    );
-    // 官方 tab 没有「选集」（选集区在剧评与原著之间，无自己的 tab）。
-    expect(find.descendant(of: tabs, matching: find.text('选集')), findsNothing);
-    expect(
-      find.descendant(of: tabs, matching: find.text('原著小说')),
-      findsNothing,
-    );
-
-    // 有关联原著时出现第三个 tab，锚到原著小说区块。
-    await pumpSeriesDetail(
-      tester,
-      detail: seriesDetailFixture(
-        originalBook: const SeriesRelateBook(
-          id: 'book-1',
-          title: '三国：他们的武将技不太对劲',
-        ),
-      ),
-      episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
-    );
-    final tabs2 = find.byKey(const ValueKey('series-detail-tabs'));
-    expect(
-      find.descendant(of: tabs2, matching: find.text('原著小说')),
-      findsOneWidget,
-    );
-    await tester.tap(find.descendant(of: tabs2, matching: find.text('原著小说')));
-    await tester.pumpAndSettle();
-    // 书区在列表底部，懒加载要先滚过去（区块未构建时锚点滚动无 context）。
-    await scrollToWidget(tester, find.text('立即阅读'));
-    expect(find.text('三国：他们的武将技不太对劲'), findsOneWidget);
-    expect(find.text('立即阅读'), findsOneWidget);
-  });
-
   testWidgets('选集区头部右侧带完结状态（实机：已完结 共105集 ›）', (tester) async {
     await pumpSeriesDetail(
       tester,
       detail: seriesDetailFixture(),
       episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
     );
-    // 选集区在首屏之下（基本信息/剧评在前），懒加载列表要先滚过去。
+    // 选集区就在播放钮下方，滚过去仍可达。
     await scrollToWidget(
       tester,
       find.byKey(const ValueKey('series-episode-status')),
@@ -143,7 +104,8 @@ void main() {
     );
     final shape = currentTile.shape! as RoundedRectangleBorder;
     expect(shape.side.color, HomePalette.accent);
-    expect(currentTile.color, HomePalette.accent.withValues(alpha: 0.08));
+    // 版式稿当前集底色 #FDECE8（浅色）。
+    expect(currentTile.color, const Color(0xFFFDECE8));
     final current = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
@@ -151,7 +113,7 @@ void main() {
       ),
     );
     expect(current.style?.color, HomePalette.accentStrong);
-    expect(current.style?.fontWeight, FontWeight.bold);
+    expect(current.style?.fontWeight, FontWeight.w500);
     // 已看集（第 1 格）灰字 #706C66（浅色 palette.muted）。
     final watched = tester.widget<Text>(
       find.descendant(
@@ -233,7 +195,7 @@ void main() {
     expect(find.byKey(const ValueKey('series-detail-more')), findsNothing);
   });
 
-  testWidgets('长简介折叠 3 行：灰色展开钮，点开展开全文并出现收起', (tester) async {
+  testWidgets('长简介折叠 3 行且没有展开链接：点正文本身展开 / 收起', (tester) async {
     const longIntro =
         '被公司开除的范理拒绝内耗，转身开起下午才营业的早餐店。凭真材实料和'
         '极致手艺，他把冷清侧门变成烟火聚场，也让邻里看见认真做事的人，终会被'
@@ -248,48 +210,58 @@ void main() {
       detail: seriesDetailFixture(intro: longIntro),
       episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
     );
-    // 折叠态：正文截断出「…」，右下角灰色「展开」（palette.muted）。
+    // 折叠态：3 行截断，没有「展开」链接（版式稿里点正文展开）。
+    await scrollToWidget(
+      tester,
+      find.byKey(const ValueKey('series-detail-intro')),
+    );
     final collapsed = tester.widget<Text>(
       find.byKey(const ValueKey('series-detail-intro')),
     );
-    expect(collapsed.data, endsWith('…'));
-    final expand = tester.widget<Text>(find.text('展开'));
-    expect(expand.style?.color, const Color(0xFF706C66));
-    // 展开后全文 + 「收起」。
+    expect(collapsed.data, longIntro);
+    expect(collapsed.maxLines, 3);
+    expect(find.text('展开'), findsNothing);
+    // 点正文展开，再点收回。
     await tester.tap(find.byKey(const ValueKey('series-detail-intro')));
     await tester.pumpAndSettle();
     final expanded = tester.widget<Text>(
       find.byKey(const ValueKey('series-detail-intro')),
     );
-    expect(expanded.data, longIntro);
-    expect(find.text('收起'), findsOneWidget);
+    expect(expanded.maxLines, isNull);
+    expect(find.text('收起'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('series-detail-intro')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('series-detail-intro')))
+          .maxLines,
+      3,
+    );
   });
 
-  testWidgets('剧评区：头部计数 + 全部剧评入口 + 横滑卡片；锚点滚动可达', (tester) async {
+  testWidgets('剧评区：头部计数 + 全部入口 + 竖排评论行', (tester) async {
     await pumpSeriesDetail(
       tester,
       detail: seriesDetailFixture(),
       episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
       comments: commentsFixture(),
     );
-    // tab 行固定在顶栏下（官方 AppBarLayout 行为）；点「剧评」滚动锚点。
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const ValueKey('series-detail-tabs')),
-        matching: find.text('剧评'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    // 头部：剧评 + 计数 + 右侧「全部剧评」（「剧评」另有 tab 一份）。
-    expect(find.text('剧评'), findsOneWidget);
+    // 头部：`剧评 · 952` + 右侧「全部 ›」。
     expect(find.text('剧评 · 952'), findsOneWidget);
+    expect(find.text('剧评'), findsNothing);
     expect(
       find.byKey(const ValueKey('series-detail-comments-all')),
       findsOneWidget,
     );
-    // 横滑卡片渲染两条评论。
+    expect(find.text('全部'), findsOneWidget);
+    // 竖排评论行渲染两条。
+    await scrollToWidget(
+      tester,
+      find.byKey(const ValueKey('series-detail-comment-list')),
+    );
     expect(find.text('这剧可以看'), findsOneWidget);
     expect(find.text('武将技不太对劲'), findsOneWidget);
+    expect(find.text('观众甲'), findsOneWidget);
     expect(find.text('期待你的第一条剧评'), findsNothing);
   });
 
@@ -377,6 +349,14 @@ void main() {
     expect(selectedEpisodes, episodes);
     // 当前集在第 2 段（51–100），分段条跟到当前段。
     expect(find.text('51–100').hitTestable(), findsOneWidget);
+    // 一段先给 24 格，第 96 集要展开后才在树里。
+    await scrollToWidget(
+      tester,
+      find.byKey(const ValueKey('series-episodes-expand')),
+    );
+    expect(find.text('展开 75–100 集'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('series-episodes-expand')));
+    await tester.pumpAndSettle();
     await scrollToWidget(
       tester,
       find.byKey(const ValueKey('series-episode-95')),
@@ -589,6 +569,12 @@ void main() {
     expect(find.text('201–250').hitTestable(), findsOneWidget);
     await scrollToWidget(
       tester,
+      find.byKey(const ValueKey('series-episodes-expand')),
+    );
+    await tester.tap(find.byKey(const ValueKey('series-episodes-expand')));
+    await tester.pumpAndSettle();
+    await scrollToWidget(
+      tester,
       find.byKey(const ValueKey('series-episode-245')),
     );
     expect(
@@ -597,7 +583,7 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
-  testWidgets('背景铺满宽度：顶部淡色带平滑淡出，返回栏与吸顶导航没有异色横条', (tester) async {
+  testWidgets('背景铺满宽度：顶部淡色带只在顶栏后面，向下淡出到画布', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final captureKey = GlobalKey();
@@ -642,10 +628,12 @@ void main() {
       expect(pixels, isNotNull);
       int channel(int x, int y, int c) =>
           pixels!.getUint8((y * 360 + x) * 4 + c);
-      // 右边缘没有文字/封面：同时覆盖状态栏、返回栏上下边界、tab 和色带尾部。
+      // 右边缘没有文字/封面：同时覆盖状态栏、返回栏与色带淡出后的画布。
       expect(channel(358, 0, 0), closeTo(bandTop.r * 255, 2));
+      // 色带高度 = 安全区顶 32 + 顶栏 44，到这里已经是纯画布。
+      expect(channel(358, 80, 0), closeTo(0xF6, 2));
       expect(channel(358, 300, 0), closeTo(0xF6, 2));
-      // 相邻行不跳变：顶栏与吸顶 tab 的边界都不能出现横条。
+      // 相邻行不跳变：顶栏边界也不能出现横条。
       for (var y = 1; y < 420; y++) {
         expect(
           (channel(358, y, 0) - channel(358, y - 1, 0)).abs(),

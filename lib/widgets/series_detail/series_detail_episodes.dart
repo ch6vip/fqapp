@@ -5,14 +5,15 @@ import 'package:flutter/material.dart';
 import '../../models/media_item.dart' show Chapter;
 import '../home/home_cell_blocks.dart' show HomeBlockMore;
 import '../home/home_design.dart';
-import '../home/home_shelf.dart' show HomeSectionHeader, homeGutter;
 import '../player/story_player_panel.dart' show episodeTileLabel;
 import 'series_detail_common.dart';
 import 'series_detail_theme.dart';
 
 /// 选集：紧贴播放钮下方，50 集一段、可倒序，6 列格子。
 ///
-/// 目录失败只在本区块内联重试，播放钮保持自己的状态（不再变成「重试加载」）。
+/// 版式稿：区块头 15sp + 右端 12sp 状态；分段胶囊 12sp；格子高 34、
+/// 圆角 8、间距 6；一段先给 24 格，下面居中的「展开 25–50 集」再放全部。
+/// 目录失败只在本区块内联重试，播放钮保持自己的状态。
 class SeriesDetailEpisodes extends StatefulWidget {
   const SeriesDetailEpisodes({
     super.key,
@@ -29,6 +30,9 @@ class SeriesDetailEpisodes extends StatefulWidget {
     required this.onRetry,
     required this.onSelect,
   });
+
+  /// 一段先展示的格子数（版式稿 4 行 × 6 列）。
+  static const collapsedCount = 24;
 
   final List<Chapter> episodes;
   final int currentIndex;
@@ -54,6 +58,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
 
   late int _range = widget.initialRange;
   bool _reversed = false;
+  bool _expanded = false;
   int? _revealedRange;
   final ScrollController _rangeScroll = ScrollController();
   final GlobalKey _selectedRangeKey = GlobalKey();
@@ -68,6 +73,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     if (widget.initialRange != oldWidget.initialRange ||
         widget.episodes.length != oldWidget.episodes.length) {
       _range = widget.initialRange;
+      _expanded = false;
     }
   }
 
@@ -82,17 +88,16 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     final palette = HomePalette.of(context);
     final rangeCount = _rangeCount;
     final range = rangeCount == 0 ? 0 : _range.clamp(0, rangeCount - 1);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        HomeSectionHeader(title: '选集', action: _headerAction(palette)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-          child: widget.episodes.isEmpty
+    return SeriesSection(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SeriesSectionHeader(title: '选集', action: _headerAction(palette)),
+          widget.episodes.isEmpty
               ? _emptyBody(palette)
               : _catalogBody(palette, range, rangeCount),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -173,8 +178,6 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
   Widget _catalogBody(HomePalette palette, int range, int rangeCount) {
     final start = range * widget.pageSize;
     final end = (start + widget.pageSize).clamp(0, widget.episodes.length);
-    final order = [for (var i = start; i < end; i++) i];
-    if (_reversed) order.setAll(0, order.reversed.toList());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -182,10 +185,39 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
           _rangeStrip(palette, range, rangeCount),
           const SizedBox(height: 10),
         ],
-        _grid(palette, order),
+        _grid(palette, _order(start, end)),
+        if (!_expanded && end - start > SeriesDetailEpisodes.collapsedCount)
+          _expandLink(palette, start, end),
       ],
     );
   }
+
+  List<int> _order(int start, int end) {
+    final order = [for (var i = start; i < end; i++) i];
+    if (_reversed) order.setAll(0, order.reversed.toList());
+    if (!_expanded && order.length > SeriesDetailEpisodes.collapsedCount) {
+      return order.take(SeriesDetailEpisodes.collapsedCount).toList();
+    }
+    return order;
+  }
+
+  Widget _expandLink(HomePalette palette, int start, int end) =>
+      GestureDetector(
+        key: const ValueKey('series-episodes-expand'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _expanded = true),
+        child: SizedBox(
+          width: double.infinity,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              '展开 ${start + SeriesDetailEpisodes.collapsedCount + 1}–$end 集',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: palette.muted),
+            ),
+          ),
+        ),
+      );
 
   Widget _rangeStrip(HomePalette palette, int range, int rangeCount) {
     _revealSelectedRange(range);
@@ -204,7 +236,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 6),
         _reverseToggle(palette),
       ],
     );
@@ -215,20 +247,23 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     margin: const EdgeInsets.only(right: 6),
     child: GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => setState(() => _range = page),
+      onTap: () => setState(() {
+        _range = page;
+        _expanded = false;
+      }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
         decoration: BoxDecoration(
           color: selected ? palette.ink : palette.soft,
           borderRadius: BorderRadius.circular(99),
-          border: palette.eink ? Border.all(color: palette.line) : null,
         ),
         child: Text(
           '${page * widget.pageSize + 1}–'
           '${((page + 1) * widget.pageSize).clamp(0, widget.episodes.length)}',
           style: TextStyle(
             fontSize: 12,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+            height: 1.5,
+            fontWeight: selected ? FontWeight.w500 : FontWeight.normal,
             color: selected ? palette.canvas : palette.muted,
           ),
         ),
@@ -246,16 +281,16 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
         key: const ValueKey('series-episode-reverse'),
         behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _reversed = !_reversed),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.swap_vert_rounded, size: 14, color: color),
-              const SizedBox(width: 2),
-              Text('倒序', style: TextStyle(fontSize: 12, color: color)),
-            ],
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.swap_vert_rounded, size: 14, color: color),
+            const SizedBox(width: 2),
+            Text(
+              '倒序',
+              style: TextStyle(fontSize: 12, height: 1.5, color: color),
+            ),
+          ],
         ),
       ),
     );
@@ -297,7 +332,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
           crossAxisCount: columns,
           mainAxisSpacing: 6,
           crossAxisSpacing: 6,
-          mainAxisExtent: 36 * scale,
+          mainAxisExtent: 34 * scale,
         ),
         itemCount: order.length,
         itemBuilder: (context, position) => _tile(palette, order[position]),
@@ -305,8 +340,8 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     },
   );
 
-  /// 格子：已看灰字，当前集强调色描边（墨水屏纯黑实心、白字），
-  /// 不可播的压暗且不可点。
+  /// 格子：已看灰字，当前集强调色描边 + 浅强调底 + 强调色文字；
+  /// 墨水屏当前集实心纯黑、白字，其余格子黑描边。
   Widget _tile(HomePalette palette, int index) {
     final episode = widget.episodes[index];
     final isCurrent = index == widget.currentIndex;
@@ -315,19 +350,11 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     if (episode.disabled) {
       textColor = palette.muted.withValues(alpha: 0.5);
     } else if (isCurrent) {
-      textColor = palette.eink ? palette.canvas : palette.accentText;
+      textColor = seriesAccentText(palette);
     } else if (watched) {
       textColor = palette.muted;
     } else {
       textColor = palette.ink;
-    }
-    final Color fill;
-    if (palette.eink) {
-      fill = isCurrent ? palette.ink : palette.surface;
-    } else {
-      fill = isCurrent
-          ? seriesAccent(palette).withValues(alpha: 0.08)
-          : palette.surface;
     }
     final BorderSide border;
     if (palette.eink) {
@@ -335,7 +362,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     } else {
       border = isCurrent
           ? BorderSide(color: seriesAccent(palette))
-          : BorderSide.none;
+          : const BorderSide(color: Colors.transparent);
     }
     return Semantics(
       key: ValueKey('series-episode-$index'),
@@ -346,7 +373,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
       excludeSemantics: true,
       onTap: episode.disabled ? null : () => widget.onSelect(index),
       child: Material(
-        color: fill,
+        color: isCurrent ? seriesCurrentFill(palette) : palette.surface,
         shape: RoundedRectangleBorder(
           borderRadius: const BorderRadius.all(Radius.circular(8)),
           side: border,
@@ -364,9 +391,10 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 12,
+                fontFeatures: const [FontFeature.tabularFigures()],
                 fontWeight: isCurrent && !episode.disabled
-                    ? FontWeight.bold
+                    ? FontWeight.w500
                     : FontWeight.normal,
                 color: textColor,
               ),

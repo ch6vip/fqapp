@@ -10,8 +10,9 @@ import 'package:fqapp/widgets/home/home_design.dart' show HomePalette;
 import 'support/fakes.dart';
 import 'support/series_detail_fixtures.dart';
 
-/// 短剧详情改版的回归：跟随应用主题、选集上移、50 集分段 / 倒序、
-/// 区块标题右对齐、空详情容错与桌面剧评卡限宽。
+/// 短剧详情改版的回归：跟随应用主题、选集上移、50 集分段 / 倒序 /
+/// 一段先给 24 格、区块标题右对齐、无 tab 行、顶栏无标题、
+/// 空详情容错与桌面剧评卡限宽。
 ///
 /// 既有行为仍在 `series_detail_page_test.dart`。
 void main() {
@@ -91,6 +92,21 @@ void main() {
     final gradient =
         (gradientBox.decoration as BoxDecoration).gradient! as LinearGradient;
     expect(gradient.colors, [bandTop, const Color(0xFF151517)]);
+    // 版式稿深色的当前集：底 #3A2420、文字调亮到 #FF7A63。
+    final currentTile = tester.widget<Material>(
+      find.descendant(
+        of: find.byKey(const ValueKey('series-episode-0')),
+        matching: find.byType(Material),
+      ),
+    );
+    expect(currentTile.color, const Color(0xFF3A2420));
+    final label = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('series-episode-0')),
+        matching: find.text('1'),
+      ),
+    );
+    expect(label.style?.color, const Color(0xFFFF7A63));
   });
 
   testWidgets('墨水屏：纯黑白、没有色带，播放钮与当前集用纯黑', (tester) async {
@@ -142,11 +158,11 @@ void main() {
     );
     await scrollToWidget(
       tester,
-      find.byKey(const ValueKey('series-detail-comment-card-0')),
+      find.byKey(const ValueKey('series-detail-comment-list')),
     );
     expect(
       tester
-          .getSize(find.byKey(const ValueKey('series-detail-comment-card-0')))
+          .getSize(find.byKey(const ValueKey('series-detail-comment-list')))
           .width,
       420,
     );
@@ -167,8 +183,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // 顶栏与头部各渲染一份兜底剧名。
-    expect(find.text('兜底剧名'), findsNWidgets(2));
+    // 顶栏只有返回，兜底剧名只在头部出现一次。
+    expect(find.text('兜底剧名'), findsOneWidget);
     expect(find.byKey(const ValueKey('series-detail-title')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('series-detail-play-button')),
@@ -228,6 +244,24 @@ void main() {
     expect(related.right, closeTo(360 - 16, 1));
   });
 
+  testWidgets('选集一段先给 24 格，「展开 25–50 集」补齐本段', (tester) async {
+    await pumpSeriesDetail(
+      tester,
+      detail: seriesDetailFixture(episodeCount: 80),
+      episodes: [for (var i = 0; i < 80; i++) chapterAt(i)],
+    );
+    await scrollToWidget(tester, find.text('1–50'));
+    // 折叠态 4 行 × 6 列：第 24 集在、第 25 集不在。
+    expect(find.byKey(const ValueKey('series-episode-23')), findsOneWidget);
+    expect(find.byKey(const ValueKey('series-episode-24')), findsNothing);
+    expect(find.text('展开 25–50 集'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('series-episodes-expand')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('series-episode-24')), findsOneWidget);
+    expect(find.byKey(const ValueKey('series-episode-49')), findsOneWidget);
+    expect(find.text('展开 25–50 集'), findsNothing);
+  });
+
   testWidgets('选集分段 50 集一段，倒序把本段最后一集排到最前', (tester) async {
     await pumpSeriesDetail(
       tester,
@@ -241,17 +275,67 @@ void main() {
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('series-episode-0'))).dy,
       lessThan(
-        tester.getTopLeft(find.byKey(const ValueKey('series-episode-49'))).dy,
+        tester.getTopLeft(find.byKey(const ValueKey('series-episode-23'))).dy,
       ),
     );
     await tester.tap(find.byKey(const ValueKey('series-episode-reverse')));
     await tester.pumpAndSettle();
-    // 倒序：第 50 集排到最前。
+    // 倒序：第 50 集排到最前，原第 1 集不在前 24 格里。
+    expect(find.byKey(const ValueKey('series-episode-49')), findsOneWidget);
+    expect(find.byKey(const ValueKey('series-episode-0')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('series-episodes-expand')));
+    await tester.pumpAndSettle();
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('series-episode-49'))).dy,
       lessThan(
         tester.getTopLeft(find.byKey(const ValueKey('series-episode-0'))).dy,
       ),
     );
+  });
+
+  testWidgets('没有基本信息/剧评/原著小说吸顶 tab，原著小说直接是一个区块', (tester) async {
+    await pumpSeriesDetail(
+      tester,
+      detail: seriesDetailFixture(
+        originalBook: const SeriesRelateBook(
+          id: 'book-1',
+          title: '三国：他们的武将技不太对劲',
+        ),
+      ),
+      episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
+    );
+    // 版式稿里没有 tab 行：区块标题直接连着内容。
+    expect(find.byKey(const ValueKey('series-detail-tabs')), findsNothing);
+    expect(find.text('基本信息'), findsNothing);
+    await scrollToWidget(tester, find.text('立即阅读'));
+    expect(find.text('原著小说'), findsOneWidget);
+    expect(find.text('三国：他们的武将技不太对劲'), findsOneWidget);
+  });
+
+  testWidgets('顶栏只有返回箭头：滚动前后都不出现标题', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await pumpSeriesDetail(
+      tester,
+      detail: seriesDetailFixture(),
+      episodes: [for (var i = 0; i < 12; i++) chapterAt(i)],
+    );
+    final topBar = find.byKey(const ValueKey('series-detail-topbar'));
+    expect(topBar, findsOneWidget);
+    expect(find.byKey(const ValueKey('series-detail-back')), findsOneWidget);
+    expect(
+      find.descendant(of: topBar, matching: find.byType(Text)),
+      findsNothing,
+    );
+    final scroll = tester.widget<CustomScrollView>(
+      find.byKey(const ValueKey('series-detail-content')),
+    );
+    scroll.controller!.jumpTo(350);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: topBar, matching: find.byType(Text)),
+      findsNothing,
+    );
+    expect(find.text('抽象三国第一季'), findsOneWidget);
   });
 }

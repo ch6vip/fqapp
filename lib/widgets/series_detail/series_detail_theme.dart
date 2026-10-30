@@ -5,8 +5,8 @@ import '../home/home_design.dart';
 /// 短剧详情页的配色换算。
 ///
 /// 页面跟随应用主题（浅色 / 深色 / OLED / 墨水屏），颜色一律从
-/// [HomePalette] 取。剧集自己的 `series_color_hex` 只留作顶部一条淡色带，
-/// 见 [seriesBandTint]。
+/// [HomePalette] 取。剧集自己的 `series_color_hex` 只留作顶栏后面一条
+/// 淡色带，见 [seriesBandTint]。
 
 /// 主行动钮与当前集描边用强调色。
 ///
@@ -17,6 +17,23 @@ Color seriesAccent(HomePalette palette) =>
 /// 强调色块上的文字 / 图标色。
 Color seriesOnAccent(HomePalette palette) =>
     palette.eink ? palette.canvas : Colors.white;
+
+/// 强调色文字（当前集数字）。版式稿给深色单独调亮到 `#FF7A63`，
+/// 比直接拿强调色当文字更易读；浅色 `#C73D29`；墨水屏当前集实心纯黑，
+/// 文字反过来用画布白。
+Color seriesAccentText(HomePalette palette) {
+  if (palette.eink) return palette.canvas;
+  return palette.dark ? const Color(0xFFFF7A63) : HomePalette.accentStrong;
+}
+
+/// 当前集格子的浅强调底。
+///
+/// 浅色 `#FDECE8`、深色 `#3A2420` 是版式稿里的固定值——比强调色 8% 的
+/// 叠加更暖一点；墨水屏直接实心纯黑。
+Color seriesCurrentFill(HomePalette palette) {
+  if (palette.eink) return palette.ink;
+  return palette.dark ? const Color(0xFF3A2420) : const Color(0xFFFDECE8);
+}
 
 /// 剧集主色在画布上的淡色带（已按透明度混合的感觉给值）。
 ///

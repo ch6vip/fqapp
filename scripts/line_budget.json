@@ -89,7 +89,7 @@
     "test/reader_pagination_test.dart": 597,
     "test/reader_paragraph_actions_test.dart": 964,
     "test/search_page_test.dart": 865,
-    "test/series_detail_page_test.dart": 667,
+    "test/series_detail_page_test.dart": 655,
     "test/video_player_chrome_test.dart": 2232
   },
   "functions": {

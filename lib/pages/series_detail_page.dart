@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
 
 import '../models/media_item.dart';
 import '../models/playlet_comment.dart';
@@ -22,16 +21,16 @@ import '../widgets/series_detail/series_detail_episodes.dart';
 import '../widgets/series_detail/series_detail_hero.dart';
 import '../widgets/series_detail/series_detail_info.dart';
 import '../widgets/series_detail/series_detail_reviews.dart';
-import '../widgets/series_detail/series_detail_tabs.dart';
 import '../widgets/series_detail/series_detail_theme.dart';
 import '../widgets/series_detail/series_detail_top_bar.dart';
 import 'detail_page.dart' show openBookDetail;
 import 'player_page.dart' show PlayerPage;
 
-/// 短剧详情：跟随应用主题（浅色 / 深色 / 墨水屏 / OLED），首屏依次是
-/// 头部、播放 / 收藏、选集，再往下才是简介、剧评与原著小说。
+/// 短剧详情：版式照 `mockups/detail-redesign.html` 右机。
 ///
-/// 剧集主色只留作顶栏与头部后面的一条淡色带；详情接口返回空不算失败，
+/// 自上而下：顶栏（只有返回）→ 头部 → 播放 / 收藏 → 选集 → 简介 →
+/// 剧评 → 原著小说。页面跟随应用主题（浅色 / 深色 / 墨水屏 / OLED）；
+/// 剧集主色只留作顶栏后面的一条淡色带。详情接口返回空不算失败，
 /// 目录失败只在选集区块内联重试。
 /// Note: 入口数据复用与占位裁撤见
 /// .agents/notes/implemented/bug-fix/2026-09-30-series-detail-usability.md
@@ -100,17 +99,8 @@ class SeriesDetailPage extends StatefulWidget {
 }
 
 class _SeriesDetailPageState extends State<SeriesDetailPage> {
-  double get _tabsHeight =>
-      40 * (MediaQuery.textScalerOf(context).scale(16) / 16).clamp(1.0, 2.0);
-
   /// 选集一段 50 集（1–50 / 51–80 …）。
   static const _pageSize = 50;
-
-  /// 顶部色带淡出到画布的高度。
-  static const _bandHeight = 240.0;
-
-  /// 滚过这段距离后顶栏浮现剧名（VideoCommonTitleBar 初始 gone）。
-  static const _topBarRevealOffset = 150.0;
 
   SeriesDetail _detail = SeriesDetail.empty;
   bool _detailDone = false;
@@ -126,24 +116,14 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   Set<String> _watchedIds = {};
   Set<int> _watched = {};
   final BackendRequest _requests = BackendRequest();
-  final GlobalKey _viewportKey = GlobalKey();
-  final GlobalKey _episodeKey = GlobalKey();
 
   /// feed 等入口没带目录时自拉的剧集（宿主传了 [SeriesDetailPage.episodes]
   /// 就以宿主为准，不重复请求）。
   List<Chapter> _loadedEpisodes = const [];
   bool _episodesDone = false;
   PlayletCommentPage? _comments;
-  int _tab = 0;
-  bool _userScrolling = false;
-  bool _scrolled = false;
-
-  /// tab 行（SliverPersistentHeader）是否已吸顶：吸顶后内容会从下面穿过，
-  /// 需要不透明背景；未吸顶时保持透明融入背景色带。
-  bool _tabsPinned = false;
 
   final ScrollController _scroll = ScrollController();
-  final List<GlobalKey> _sectionKeys = [GlobalKey(), GlobalKey(), GlobalKey()];
 
   @override
   void initState() {
@@ -161,7 +141,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     if (!_detailDone) unawaited(_loadDetail());
     unawaited(_loadEpisodes());
     unawaited(_loadComments());
-    _scroll.addListener(_onScroll);
   }
 
   @override
@@ -332,89 +311,19 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       _episodes.isNotEmpty &&
       !_episodes[_currentIndex].disabled;
 
-  // ---- 顶部色带 ----
-
   /// 剧集主色混合到画布后的实色带顶，null 表示不出色带（灰色系 / 墨水屏）。
   Color? _bandTop(HomePalette palette) {
     final tint = seriesBandTint(_detail.seriesColorHex, palette);
     return tint == null ? null : Color.alphaBlend(tint, palette.canvas);
   }
 
-  void _onScroll() {
-    // 官方 VideoCommonTitleBar 初始 gone，滚过头部后浮现。
-    final scrolled = _scroll.hasClients && _scroll.offset > _topBarRevealOffset;
-    // 统一使用滚动视口坐标，安全区和顶栏已经排除在视口之外。
-    final firstTop = _offsetOf(_episodeKey);
-    final tabsPinned =
-        _scroll.hasClients &&
-        firstTop.isFinite &&
-        firstTop <= _tabsHeight + 0.5;
-    // 官方 tab 与锚点区联动；滚动经过哪个区就点亮哪个 tab。
-    // 选集区没有自己的 tab（官方如此），归到上方的剧评。
-    var tab = 0;
-    if (_userScrolling) {
-      for (var i = _tabNames.length - 1; i >= 0; i--) {
-        if (_offsetOf(_sectionKeys[i]) <= _tabsHeight + 8) {
-          tab = i;
-          break;
-        }
-      }
-    }
-    if (!mounted) return;
-    if (scrolled == _scrolled &&
-        tabsPinned == _tabsPinned &&
-        (!_userScrolling || tab == _tab)) {
-      return;
-    }
-    setState(() {
-      _scrolled = scrolled;
-      _tabsPinned = tabsPinned;
-      if (_userScrolling) _tab = tab;
-    });
-  }
-
-  /// 官方 tab（实机 7.0.9.32）：基本信息 / 剧评 / 原著小说 / 相关作品 /
-  /// 猜你喜欢，**没有选集**。后两个本地无数据源，裁掉；原著小说仅在
-  /// 确有关联书时出现。
-  List<String> get _tabNames => [
-    '基本信息',
-    '剧评',
-    ?(_detail.originalBook != null ? '原著小说' : null),
-  ];
-
-  /// 区块顶相对滚动视口顶的偏移。
-  double _offsetOf(GlobalKey key) {
-    final context = key.currentContext;
-    if (context == null) return double.infinity;
-    final box = context.findRenderObject();
-    if (box is! RenderBox) return double.infinity;
-    final viewport = _viewportKey.currentContext?.findRenderObject();
-    if (viewport is! RenderBox) return double.infinity;
-    return box.localToGlobal(Offset.zero).dy -
-        viewport.localToGlobal(Offset.zero).dy;
-  }
-
-  void _selectTab(int index) {
-    setState(() => _tab = index);
-    _scrollToSection(_sectionKeys[index]);
-  }
-
-  void _scrollToSection(GlobalKey key) {
-    if (!_scroll.hasClients) return;
-    final box = key.currentContext?.findRenderObject();
-    final viewport = _viewportKey.currentContext?.findRenderObject();
-    if (box is! RenderBox || viewport is! RenderBox) return;
-    final top =
-        box.localToGlobal(Offset.zero).dy -
-        viewport.localToGlobal(Offset.zero).dy;
-    final target = _scroll.offset + top - _tabsHeight - 8;
-    unawaited(
-      _scroll.animateTo(
-        target.clamp(0.0, _scroll.position.maxScrollExtent),
-        duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOutCubic,
-      ),
-    );
+  /// 实机状态行 = `episodeLabel · 播放量`，没有追更段（官方 `bp` 布局
+  /// 只有集数与播放量）。
+  String _statusLine() {
+    final parts = <String>[];
+    if (_detail.episodeLabel.isNotEmpty) parts.add(_detail.episodeLabel);
+    if (_detail.playCount > 0) parts.add('${_detail.playLabel}次播放');
+    return parts.join(' · ');
   }
 
   void _play(int index) {
@@ -520,11 +429,29 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             child: Column(
               children: [
                 SeriesDetailTopBar(
-                  title: _titleText,
-                  revealed: _scrolled,
                   onBack: () => Navigator.of(context).maybePop(),
                 ),
-                Expanded(key: _viewportKey, child: _scrollBody(palette)),
+                Expanded(
+                  child: CustomScrollView(
+                    key: const ValueKey('series-detail-content'),
+                    controller: _scroll,
+                    slivers: [
+                      SliverToBoxAdapter(child: _hero()),
+                      SliverToBoxAdapter(child: _episodeSection()),
+                      SliverToBoxAdapter(child: _introSection()),
+                      SliverToBoxAdapter(child: _reviewsSection()),
+                      if (_detail.originalBook != null)
+                        SliverToBoxAdapter(
+                          child: SeriesDetailBookSection(
+                            book: _detail.originalBook!,
+                            onOpen: () =>
+                                _openOriginalBook(_detail.originalBook!),
+                          ),
+                        ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -533,56 +460,11 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
-  Widget _scrollBody(HomePalette palette) =>
-      NotificationListener<UserScrollNotification>(
-        onNotification: (notification) {
-          _userScrolling = notification.direction != ScrollDirection.idle;
-          return false;
-        },
-        child: CustomScrollView(
-          key: const ValueKey('series-detail-content'),
-          controller: _scroll,
-          slivers: [
-            SliverToBoxAdapter(child: _hero()),
-            SliverPersistentHeader(
-              pinned: true,
-              delegate: SeriesDetailTabsDelegate(
-                names: _tabNames,
-                height: _tabsHeight,
-                activeIndex: _tab,
-                pinned: _tabsPinned,
-                background: _pinnedTabsBackground(palette),
-                onTap: _selectTab,
-              ),
-            ),
-            _sliver(_episodeKey, _episodeSection()),
-            _sliver(_sectionKeys[0], _introSection()),
-            _sliver(_sectionKeys[1], _reviewsSection()),
-            if (_detail.originalBook != null)
-              _sliver(
-                _sectionKeys[2],
-                SeriesDetailBookSection(
-                  book: _detail.originalBook!,
-                  onOpen: () => _openOriginalBook(_detail.originalBook!),
-                ),
-              ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 24 + MediaQuery.paddingOf(context).bottom,
-              ),
-            ),
-          ],
-        ),
-      );
-
-  Widget _sliver(GlobalKey key, Widget child) => SliverToBoxAdapter(
-    child: KeyedSubtree(key: key, child: child),
-  );
-
-  /// 顶部淡色带：剧集主色混合到画布，240dp 内淡出。墨水屏 / 灰色系时
-  /// 整页就是画布色，没有色带。
+  /// 顶部淡色带：只铺在状态栏 + 顶栏后面（高度 = 安全区顶 + 44），在
+  /// 顶栏下缘淡出到画布。墨水屏 / 灰色系时整页就是画布色。
   Widget _backdrop(HomePalette palette) {
     final top = _bandTop(palette);
+    final height = MediaQuery.paddingOf(context).top + 44;
     return Stack(
       children: [
         Positioned.fill(child: ColoredBox(color: palette.canvas)),
@@ -591,7 +473,7 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             top: 0,
             left: 0,
             right: 0,
-            height: _bandHeight,
+            height: height,
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -603,27 +485,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
             ),
           ),
       ],
-    );
-  }
-
-  /// 吸顶导航垫的底：取色带在顶栏下方那一段的实色切片，吸顶后与背景
-  /// 完全一致，不会出现横条。
-  BoxDecoration _pinnedTabsBackground(HomePalette palette) {
-    final top = _bandTop(palette);
-    if (top == null) return BoxDecoration(color: palette.canvas);
-    final y = MediaQuery.paddingOf(context).top + 44;
-    if (y >= _bandHeight) return BoxDecoration(color: palette.canvas);
-    Color slice(double offset) => Color.lerp(
-      top,
-      palette.canvas,
-      (offset / _bandHeight).clamp(0.0, 1.0),
-    )!;
-    return BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [slice(y), slice(y + _tabsHeight)],
-      ),
     );
   }
 
@@ -643,15 +504,6 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       onToggleShelf: _toggleShelf,
     ),
   );
-
-  /// 实机状态行 = `episodeLabel · 播放量`，没有追更段（官方 `bp` 布局
-  /// 只有集数与播放量）。
-  String _statusLine() {
-    final parts = <String>[];
-    if (_detail.episodeLabel.isNotEmpty) parts.add(_detail.episodeLabel);
-    if (_detail.playCount > 0) parts.add('${_detail.playLabel}次播放');
-    return parts.join(' · ');
-  }
 
   Widget _episodeSection() => SeriesDetailEpisodes(
     episodes: _episodes,
