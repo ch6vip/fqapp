@@ -106,6 +106,9 @@ flutter:
     - assets/images/app_logo.webp
     - assets/images/wechat_reward.png
     - assets/images/bubble/
+    # 评论/回复正文的官方表情（`emoji_config.json` 的 53 个令牌），
+    # 图片从 `ckao/fanqie-7.0.9.32/apktool/res/drawable-xxhdpi/` 原样抽出。
+    - assets/images/emoji/
     # 短剧单列卡右侧栏/信息层的官方图标，从
     # `ckao/decompile/apktool/res/drawable*/` 原样抽出（见
     # docs/research/short-drama-decompile-comparison-20260921.md §8）。

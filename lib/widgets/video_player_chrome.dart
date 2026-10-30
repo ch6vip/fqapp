@@ -17,6 +17,7 @@ import '../services/playback_gesture_levels.dart';
 import '../services/player_layout_preferences.dart';
 import '../services/player_preferences.dart';
 import '../services/player_style_config.dart';
+import '../services/player_system_ui.dart';
 import '../services/short_series_font_scale.dart';
 import '../models/playlet_comment.dart';
 import 'home/home_design.dart';
@@ -814,6 +815,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _appActive = true;
       if (_resumeOnForeground) unawaited(_control((player) => player.play()));
       _resumeOnForeground = false;
+      // 回到前台时系统可能已把系统栏放回来；全屏仍在就重新隐藏（#176）。
+      if (_fullScreen && !_routeCovered) {
+        _queueSystemUi(() async {
+          if (!mounted || !_fullScreen || _routeCovered) return;
+          await PlayerSystemUi.hide();
+        });
+      }
       _scheduleHide();
     }
   }
@@ -2170,7 +2178,10 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       if (fullScreen) {
         _portraitPinned = false;
         _portraitPinSuspended = false;
-        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+        // Android 15+ ignores Flutter's legacy immersiveSticky under
+        // edge-to-edge (target SDK 36); the Android host hides the bars with
+        // WindowInsetsController instead (#176).
+        await PlayerSystemUi.hide();
         // 全屏方向跟片源走：竖版片源铺满竖屏（点「全屏」不该把 9:16 的画面
         // 转成横屏、留一圈黑边），横版片源沿用官方 `ShortSeriesLandActivity`
         // 的 `userLandscape`。尺寸未知（连播切集的新播放器）时不发请求，
@@ -2241,7 +2252,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
             ? const [DeviceOrientation.portraitUp]
             : const <DeviceOrientation>[],
       );
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      await PlayerSystemUi.show();
     } catch (_) {}
   }
 
@@ -2256,16 +2267,31 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     if (covered == _routeCovered) return;
     _routeCovered = covered;
     if (covered) {
-      if (!_portraitPinned) return;
-      _portraitPinned = false;
-      _portraitPinSuspended = true;
-    } else {
-      if (!_portraitPinSuspended) return;
+      // 新路由盖住播放页：把系统栏还给上层页面。全屏时不走
+      // `_restoreSystemUi`，否则被 push 的详情页会跟着转屏。
+      if (_portraitPinned) {
+        _portraitPinned = false;
+        _portraitPinSuspended = true;
+        _queueSystemUi(() => _restoreSystemUi());
+      } else if (_fullScreen) {
+        _queueSystemUi(() => PlayerSystemUi.show());
+      }
+      return;
+    }
+    if (_portraitPinSuspended) {
       _portraitPinSuspended = false;
       _portraitPinned = true;
+      _queueSystemUi(() => _restoreSystemUi());
+    } else if (_fullScreen) {
+      // 回到全屏播放页：重新沉浸（#176）。
+      _queueSystemUi(() => PlayerSystemUi.hide());
     }
-    final operation = _systemUiUpdates.then((_) => _restoreSystemUi());
-    _systemUiUpdates = operation.catchError((Object _) {});
+  }
+
+  /// 串行执行系统 UI 变更，后一次不会抢在前一次前面落地。
+  void _queueSystemUi(Future<void> Function() operation) {
+    final queued = _systemUiUpdates.then((_) => operation());
+    _systemUiUpdates = queued.catchError((Object _) {});
   }
 
   @override

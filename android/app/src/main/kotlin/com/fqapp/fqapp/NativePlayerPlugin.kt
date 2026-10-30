@@ -1353,7 +1353,8 @@ internal enum class AudioRateEngine(val wireName: String) {
     BUILT_IN("builtIn");
 
     companion object {
-        fun fromName(value: String?): AudioRateEngine = entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: WSOLA
+        /** 缺省/未知取值退回内建 Sonic（与 Dart 侧默认一致，issue #170）。 */
+        fun fromName(value: String?): AudioRateEngine = entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: BUILT_IN
     }
 }
 

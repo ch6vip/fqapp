@@ -435,9 +435,9 @@ void main() {
     },
   );
 
-  // issue #129：变速引擎只对听书（纯音频）播放器下发，否则原生侧会给视频
-  // 也打开 AudioTrack 变速，画面与声音不再步进同一套计时。
-  testWidgets('audio players request the platform rate engine on create', (
+  // issue #129 / #170：变速引擎只对听书（纯音频）播放器下发，否则原生侧会让
+  // 视频也走 AudioTrack 变速；默认内建 Sonic（1.0.121 的行为）。
+  testWidgets('audio players request the built-in rate engine on create', (
     tester,
   ) async {
     AudioPreferences.instance.resetForTest();
@@ -460,7 +460,7 @@ void main() {
           .arguments
           as Map<Object?, Object?>;
       expect(arguments['audioOnly'], true);
-      expect(arguments['audioRateEngine'], 'wsola');
+      expect(arguments['audioRateEngine'], 'builtIn');
     } finally {
       await player.dispose();
       await tester.pump();

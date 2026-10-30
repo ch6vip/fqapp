@@ -9,10 +9,11 @@ import org.junit.Test
  * 变速」这条边界——视频必须留在 Media3 内建变速，否则音画不再同步计时。
  */
 class AudioRateEngineTest {
-    @Test fun `missing or unknown names fall back to the platform engine`() {
-        assertEquals(AudioRateEngine.WSOLA, AudioRateEngine.fromName(null))
-        assertEquals(AudioRateEngine.WSOLA, AudioRateEngine.fromName(""))
-        assertEquals(AudioRateEngine.WSOLA, AudioRateEngine.fromName("sonic2"))
+    @Test fun `missing or unknown names fall back to the built-in engine`() {
+        // issue #170：默认与 Dart 侧一致退回内建 Sonic（1.0.121 的行为）。
+        assertEquals(AudioRateEngine.BUILT_IN, AudioRateEngine.fromName(null))
+        assertEquals(AudioRateEngine.BUILT_IN, AudioRateEngine.fromName(""))
+        assertEquals(AudioRateEngine.BUILT_IN, AudioRateEngine.fromName("sonic2"))
     }
 
     @Test fun `known names are parsed case insensitively`() {

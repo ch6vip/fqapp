@@ -7,7 +7,9 @@ import 'package:fqapp/models/chapter_ideas.dart';
 import 'package:fqapp/models/comment_reply.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/eink_refresh.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_ideas_sheet.dart';
 import 'package:fqapp/widgets/reader/reader_illustration.dart';
@@ -180,6 +182,7 @@ void main() {
                 text: '这段太真实了',
                 userName: '读者甲',
                 diggCount: 4,
+                replyCount: 2,
                 createdAt: DateTime(2024, 2, 29),
               ),
             ],
@@ -192,7 +195,7 @@ void main() {
       expect(find.text('这段太真实了'), findsOneWidget);
       expect(find.text('读者甲'), findsOneWidget);
       expect(find.text('4'), findsOneWidget);
-      expect(find.text('回复'), findsOneWidget);
+      expect(find.text('回复 2'), findsOneWidget);
       expect(find.text('2024-02-29'), findsOneWidget);
       // The date belongs below the body, aligned with the reply affordance.
       expect(
@@ -201,7 +204,7 @@ void main() {
       );
       expect(
         tester.getTopLeft(find.text('2024-02-29')).dy,
-        tester.getTopLeft(find.text('回复')).dy,
+        tester.getTopLeft(find.text('回复 2')).dy,
       );
     });
 
@@ -283,6 +286,53 @@ void main() {
       expect(find.text('回复 2'), findsOneWidget);
       // 离线调用方拿不到只有失败可能的控件。
       expect(find.byKey(const ValueKey('reader_reply_toggle_a1')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('无二级评论时不出现回复入口，也不显示暂无回复（issue #173）', (tester) async {
+      var loads = 0;
+      await pumpSheet(
+        tester,
+        load: (_, _) async => BookCommentPage(
+          comments: [
+            BookComment(
+              id: 'a1',
+              text: '没有回复的评论',
+              userName: '读者甲',
+              createdAt: DateTime(2024, 2, 29),
+            ),
+          ],
+        ),
+        replyLoader: (_) async {
+          loads++;
+          return CommentReplyPage.empty;
+        },
+      );
+
+      expect(find.text('没有回复的评论'), findsOneWidget);
+      expect(find.text('展开 0 条回复'), findsNothing);
+      expect(find.text('回复'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('reader_reply_toggle_a1')),
+        findsNothing,
+      );
+      expect(find.text('暂无回复'), findsNothing);
+      // 没有可点的 0 回复入口，自然也没有发出请求。
+      expect(loads, 0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('评论正文里的表情令牌渲染成图片（issue #173）', (tester) async {
+      await pumpSheet(
+        tester,
+        load: (_, _) async => BookCommentPage(
+          comments: [BookComment(id: 'a1', text: '这段[微笑]太真实了')],
+        ),
+      );
+
+      expect(find.text('[微笑]'), findsNothing);
+      expect(find.text('这段[微笑]太真实了'), findsNothing);
+      expect(find.byType(Image), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -554,6 +604,29 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ReaderIdeasSheet), findsNothing);
       expect(find.byType(ReaderPage), findsOneWidget);
+    });
+
+    testWidgets('closing the sheet in e-ink mode does not blank the page',
+        (tester) async {
+      // #172: on devices without the vendor EPD channel the sheet-close
+      // refresh used to fall back to the software white flash, blanking the
+      // body behind the closing sheet. E-ink sheet close must never flash.
+      einkModeNotifier.value = true;
+      addTearDown(() => einkModeNotifier.value = false);
+      final flash = EinkRefreshService.instance.flashRequest;
+      final before = flash.value;
+      await pumpReader(
+        tester,
+        ideasLoader: (_) async => _ideas(),
+        commentResolver: (_, _, _) async => const BookCommentPage(),
+      );
+      await tester.tap(find.text('12'));
+      await tester.pumpAndSettle();
+      expect(find.text('12条评论'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('reader-ideas-close')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReaderIdeasSheet), findsNothing);
+      expect(flash.value, before);
     });
 
     testWidgets('the control menu has no ideas entry any more', (tester) async {

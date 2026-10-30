@@ -619,16 +619,13 @@ class SettingsPage extends StatelessWidget {
                   RadioListTile<AudioRateEngine>(
                     value: value,
                     title: Text(value.label),
-                    subtitle: Text(
-                      switch (value) {
-                        AudioRateEngine.wsola =>
-                          '与番茄官方同一套算法（FFmpeg atempo），高倍速听感最接近原声（默认）',
-                        AudioRateEngine.platform =>
-                          '系统混音器变速，不依赖本应用的 native 库',
-                        AudioRateEngine.builtIn =>
-                          'Media3 内建 Sonic，保底用（改动前的行为）',
-                      },
-                    ),
+                    subtitle: Text(switch (value) {
+                      AudioRateEngine.wsola =>
+                        '与番茄官方同一套算法（FFmpeg atempo），高倍速听感最接近原声',
+                      AudioRateEngine.platform => '系统混音器变速，不依赖本应用的 native 库',
+                      AudioRateEngine.builtIn =>
+                        'Media3 内建 Sonic，最稳（默认，1.0.121 的行为）',
+                    }),
                   ),
               ],
             ),

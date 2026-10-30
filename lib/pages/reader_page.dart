@@ -2390,9 +2390,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   /// 墨水屏：弹窗/菜单关闭后刷一次，清掉弹窗残影。非墨水屏不做事。
+  ///
+  /// 只走厂商全刷接口，绝不走软件白闪回退：关闭弹窗并不改变正文，盖白帧会
+  /// 把正文整页闪没（#172）。非海信设备留给下一次真正的内容变化（切章、
+  /// 翻页、滚够三屏）去清残影。
   void _maybeEinkRefresh() {
     if (!einkModeNotifier.value) return;
-    unawaited(EinkRefreshService.instance.requestRefresh());
+    unawaited(EinkRefreshService.instance.refreshIfSupported());
   }
 
   /// 软件白闪：盖一张全屏白帧 150ms 再撤掉。白帧本身就是一次可见闪烁，
