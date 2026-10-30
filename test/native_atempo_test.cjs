@@ -49,6 +49,7 @@ const kissfftSources = [
 
 let resampleExecutable;
 let resumeExecutable;
+let flushErrorExecutable;
 
 function compile() {
   mkdirSync(outputDirectory, { recursive: true });
@@ -65,6 +66,11 @@ function compile() {
   resumeExecutable = build('flush-resume', [
     'native/tests/flush_resume.c',
     'native/audio_tempo/sp_atempo.c',
+    ...kissfftSources,
+  ], ['-Wno-sign-compare']);
+  // 白盒驱动：自己包含 sp_atempo.c，才能构造 yae_flush 的内部错误分支。
+  flushErrorExecutable = build('flush-errors', [
+    'native/tests/flush_errors.c',
     ...kissfftSources,
   ], ['-Wno-sign-compare']);
 }
@@ -145,6 +151,27 @@ test('立体声与单声道给出同样的时长比例', () => {
   const stereo = run(48000, 2, 2.0, 440, 2);
   assert.ok(Math.abs(mono.duration_ratio - stereo.duration_ratio) < 0.05,
     `单声道 ${mono.duration_ratio} 与立体声 ${stereo.duration_ratio} 差距过大`);
+});
+
+test('flush 只报内部错误：缓冲写满（EAGAIN）仍算成功', () => {
+  // 回归：旧实现 `rc == 0 ? 0 : 0` 把 yae_flush 的所有错误都折成 0，
+  // 调用方会误以为已经排空。目标缓冲写满（-3，等价 EAGAIN）本来就不是
+  // 错误，必须继续返回 0 并让调用方按 *dst_written 拉取；真正的内部
+  // 错误（-6）则必须原样传出。
+  const result = spawnSync(flushErrorExecutable, [], {
+    encoding: 'utf8', timeout: 60_000, windowsHide: true,
+  });
+  assert.equal(result.status, 0, `driver failed: ${result.stderr}`);
+  const values = {};
+  for (const line of result.stdout.split('\n')) {
+    const match = /^([a-z_]+)=(-?[\d.]+)\s*$/.exec(line.trim());
+    if (match) values[match[1]] = Number(match[2]);
+  }
+  assert.equal(values.eagain_rc, 0,
+    `目标缓冲写满不是错误，flush 应返回 0，实际 ${values.eagain_rc}`);
+  assert.ok(values.drained_bytes > 0, '小缓冲也必须能冲出尾部的重叠区');
+  assert.equal(values.error_rc, -6,
+    `内部错误必须原样传出，实际 ${values.error_rc}`);
 });
 
 /** 跑一次重采样驱动。 */
