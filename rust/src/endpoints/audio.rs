@@ -19,41 +19,9 @@ pub(crate) fn set_param(params: &mut Vec<(String, String)>, key: &str, value: im
     params.push((key.to_string(), value));
 }
 
-/// reading724Params from content_util.go.
+/// reading724Params from content_util.go (shared in `endpoints::base`).
 pub(crate) fn reading_724_params() -> Vec<(String, String)> {
-    [
-        ("iid", "{install_id}"),
-        ("device_id", "{device_id}"),
-        ("ac", "wifi"),
-        ("channel", "xiaomi_1967_64"),
-        ("aid", "1967"),
-        ("app_name", "novelapp"),
-        ("version_code", "72432"),
-        ("version_name", "7.2.4.32"),
-        ("device_platform", "android"),
-        ("os", "android"),
-        ("ssmix", "a"),
-        ("device_type", "25053RT47C"),
-        ("device_brand", "Redmi"),
-        ("language", "zh"),
-        ("os_api", "36"),
-        ("os_version", "16"),
-        ("manifest_version_code", "72432"),
-        ("resolution", "1280*2620"),
-        ("dpi", "520"),
-        ("update_version_code", "72432"),
-        ("host_abi", "arm64-v8a"),
-        ("dragon_device_type", "phone"),
-        ("pv_player", "72432"),
-        ("compliance_status", "0"),
-        ("need_personal_recommend", "1"),
-        ("player_so_load", "1"),
-        ("is_android_pad_screen", "0"),
-        ("rom_version", "miui_V816_OS3.0.9.0.WOLCNXM"),
-    ]
-    .iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+    crate::endpoints::base::reading724_params()
 }
 
 /// Audio book detail: GET /api/v1/audio/books/{id}.
