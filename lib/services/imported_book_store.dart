@@ -156,6 +156,11 @@ class ImportedBookStore {
   Future<Directory>? _rootFuture;
   static final _random = Random.secure();
 
+  /// Manifests read by [chapterText], keyed by book id. A manifest never
+  /// changes after import, so reading chapter after chapter must not parse the
+  /// whole catalogue each time; [deleteBook] drops the entry.
+  final Map<String, ImportedBook> _chapterManifests = {};
+
   Future<Directory> _root() => _rootFuture ??= _createRoot();
 
   Future<ImportedBook?> pickAndImport() async {
@@ -350,6 +355,7 @@ class ImportedBookStore {
   /// rather than resolved, so this can never walk out of the book root.
   Future<bool> deleteBook(String id) async {
     if (!isLocalBookId(id)) return false;
+    _chapterManifests.remove(id);
     final root = await _root();
     final directory = Directory('${root.path}${Platform.pathSeparator}$id');
     if (!await directory.exists()) return false;
@@ -358,8 +364,9 @@ class ImportedBookStore {
   }
 
   Future<String> chapterText(String bookId, String chapterId) async {
-    final record = await book(bookId);
+    final record = _chapterManifests[bookId] ?? await book(bookId);
     if (record == null) throw const FileSystemException('找不到本地书籍');
+    _chapterManifests[bookId] = record;
     final index = record.chapters.indexWhere(
       (chapter) => chapter.itemId == chapterId,
     );
