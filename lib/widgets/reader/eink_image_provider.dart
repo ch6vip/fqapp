@@ -39,13 +39,16 @@ class EinkImageProvider extends ImageProvider<EinkImageKey> {
     final info = await _firstImage(completer);
     try {
       final processed = await _process(info.image);
+      // 监听器收到的是 completer 复制出来的 clone，换成新图后由我们释放；
+      // `_process` 跳过处理时也会先 clone，所以这里可以无条件 dispose。
+      info.dispose();
       return ImageInfo(
         image: processed,
         scale: info.scale,
         debugLabel: 'EinkImageProvider(${info.debugLabel})',
       );
     } catch (_) {
-      // 处理失败退回原图：插图是装饰，绝不能因此报错。
+      // 处理失败退回原图：插图是装饰，绝不能因此报错。info 的所有权随之转交。
       return info;
     }
   }
@@ -68,21 +71,27 @@ class EinkImageProvider extends ImageProvider<EinkImageKey> {
   }
 
   Future<ui.Image> _process(ui.Image image) async {
-    if (image.width * image.height > 2048 * 4096) return image;
+    // 调用方（[_load]）成功后统一释放原始 clone，所以跳过处理的路径
+    // 必须交回独立句柄，不能把传入的 image 原样返回。
+    if (image.width * image.height > 2048 * 4096) return image.clone();
     final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (bytes == null) return image;
+    if (bytes == null) return image.clone();
     final rgba = bytes.buffer.asUint8List(
       bytes.offsetInBytes,
       bytes.lengthInBytes,
     );
+    // `ui.Image` 不能跨 isolate 传递：宽高先在当前 isolate 取成 int，
+    // 否则 Isolate.run 会在发送闭包时抛 unsendable，整条处理链退化成原图。
+    final width = image.width;
+    final height = image.height;
     final processed = await Isolate.run(
-      () => einkDitherPixels(rgba, image.width, image.height),
+      () => einkDitherPixels(rgba, width, height),
     );
     final result = Completer<ui.Image>();
     ui.decodeImageFromPixels(
       processed,
-      image.width,
-      image.height,
+      width,
+      height,
       ui.PixelFormat.rgba8888,
       result.complete,
     );
