@@ -1574,7 +1574,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
-    if (isWindowsDesktop) {
+    // 宽屏（桌面窗口 / 手机或平板横屏）统一走桌面口径；竖屏保持各频道
+    // 自己的官方列数（漫剧 3 / 看剧 2）。
+    final wide = isWindowsDesktop ||
+        MediaQuery.sizeOf(context).width >= 840;
+    if (wide) {
       columns = dramaDesktopColumns(context);
     }
     final bottomInset = _effectiveBottomInset(context);
@@ -1593,7 +1597,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
           crossAxisSpacing: 8,
           mainAxisSpacing: 16,
           // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
-          childAspectRatio: isWindowsDesktop
+          childAspectRatio: wide
               ? .58
               : columns == 2
               ? 0.56
@@ -3787,14 +3791,14 @@ class _InlineVideoLayer extends StatelessWidget {
   /// `contain` over a black backing — the same look as the video's
   /// `VideoFit.contain` right below. Phones keep a portrait card, so they
   /// keep filling.
-  Widget _cover(int cacheWidth) => ColoredBox(
+  Widget _cover(int cacheWidth, {required bool wide}) => ColoredBox(
     color: Colors.black,
     child: StoryCover(
       key: ValueKey('drama_inline_cover_${item.kind}_${item.id}'),
       item: item,
       cacheWidth: cacheWidth,
       alignment: Alignment.topCenter,
-      fit: isWindowsDesktop ? BoxFit.contain : BoxFit.cover,
+      fit: wide ? BoxFit.contain : BoxFit.cover,
     ),
   );
 
@@ -3808,6 +3812,9 @@ class _InlineVideoLayer extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final window = constraints.biggest;
+        // 宽屏（桌面窗口 / 横屏卡片）：竖版片源与封面要完整显示，按宽度裁切
+        // 只会露出中间一条。竖屏手机保持原来的铺满观感。
+        final wide = isWindowsDesktop || window.width >= 840;
         final cacheWidth =
             (window.width * MediaQuery.devicePixelRatioOf(context)).ceil();
         return AnimatedBuilder(
@@ -3819,7 +3826,7 @@ class _InlineVideoLayer extends StatelessWidget {
             playback.videoSize,
           ]),
           builder: (context, _) {
-            final cover = _cover(cacheWidth);
+            final cover = _cover(cacheWidth, wide: wide);
             // A card the session is not playing (yet) shows its cover only.
             if (playback.activeId.value != item.id) return cover;
             final textureId = playback.textureId.value;
@@ -3836,7 +3843,7 @@ class _InlineVideoLayer extends StatelessWidget {
               // Official display mode for a feed card: fill the frame unless
               // the source is wide enough to be pinned to its width. The
               // overflow is clipped by the ClipRRect above this layer.
-              fit: isWindowsDesktop ? VideoFit.contain : VideoFit.fillFrame,
+              fit: wide ? VideoFit.contain : VideoFit.fillFrame,
             );
             return Stack(
               fit: StackFit.expand,
@@ -4507,7 +4514,8 @@ class _LocalListState extends State<_LocalList> {
           // 桌面端跟看剧/漫剧同口径铺列（[dramaDesktopColumns]，行距也放到
           // 16）；手机保持官方的双列 8dp。原先这里恒写 2 列，桌面上两列会被
           // 拉到近 700dp 宽，和隔壁频道完全两种排版。
-          final desktopGrid = isWindowsDesktop;
+          final desktopGrid = isWindowsDesktop ||
+              MediaQuery.sizeOf(context).width >= 840;
           final columns = desktopGrid ? dramaDesktopColumns(context) : 2;
           final body = filtered.isEmpty
               ? empty
