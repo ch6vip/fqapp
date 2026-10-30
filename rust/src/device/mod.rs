@@ -175,7 +175,8 @@ pub struct DevicePool {
     /// Serializes network registration without holding the pool lock.
     register_lock: Mutex<()>,
     /// Serializes pool-size maintenance while network registration is in flight.
-    maintenance_lock: Mutex<()>,
+    /// `Arc` so a background top-up can own the lock while it runs.
+    maintenance_lock: Arc<Mutex<()>>,
     /// Serializes the final file commit against retirement.
     commit: Arc<CommitGate>,
 }
@@ -288,14 +289,30 @@ impl DevicePool {
                 None => Registrar::new()?,
             },
             register_lock: Mutex::new(()),
-            maintenance_lock: Mutex::new(()),
+            maintenance_lock: Arc::new(Mutex::new(())),
             commit: Arc::new(CommitGate::new()),
         }))
     }
 
     /// Least-recently-used device, refilling the pool when needed.
-    pub async fn get(&self) -> Result<Device, String> {
-        let refill_err = self.check_and_refill().await;
+    ///
+    /// Only an empty pool waits for a registration. A pool that still has a
+    /// device hands it out immediately and tops itself up in the background:
+    /// one registration is several network round trips plus a deliberate
+    /// pacing delay, so a request must not queue behind it while a usable
+    /// device exists.
+    pub async fn get(self: &Arc<Self>) -> Result<Device, String> {
+        let (empty, below_min) = {
+            let s = self.state.lock().await;
+            (s.devices.is_empty(), s.devices.len() < MIN_POOL_SIZE)
+        };
+        let mut refill_err = None;
+        if empty {
+            // Nothing to hand out: this caller waits for at least one device.
+            refill_err = self.check_and_refill().await.err();
+        } else if below_min {
+            self.schedule_refill();
+        }
 
         // Least-recently-used selection, with the emptiness check and the pick
         // inside ONE lock scope. These used to be two separate `state` locks,
@@ -310,8 +327,8 @@ impl DevicePool {
                 Some(dev) => dev,
                 None => {
                     return Err(match refill_err {
-                        Err(e) => e,
-                        Ok(()) => "device pool empty".to_string(),
+                        Some(e) => e,
+                        None => "device pool empty".to_string(),
                     });
                 }
             }
@@ -526,14 +543,49 @@ impl DevicePool {
         }
     }
 
+    /// Number of registrations needed to bring the pool back to
+    /// `MIN_POOL_SIZE`.
+    async fn missing_devices(&self) -> usize {
+        let s = self.state.lock().await;
+        MIN_POOL_SIZE
+            .saturating_sub(s.devices.len())
+            .min(MAX_POOL_SIZE.saturating_sub(s.devices.len()))
+    }
+
     async fn check_and_refill(&self) -> Result<(), String> {
+        // The need check happens before `maintenance_lock` is taken: a healthy
+        // pool must not queue behind a slow registration. The count is checked
+        // again under the lock because another maintenance path may have
+        // topped the pool up in the meantime.
+        if self.missing_devices().await == 0 {
+            return Ok(());
+        }
         let _maintenance = self.maintenance_lock.lock().await;
-        let need = {
-            let s = self.state.lock().await;
-            MIN_POOL_SIZE
-                .saturating_sub(s.devices.len())
-                .min(MAX_POOL_SIZE.saturating_sub(s.devices.len()))
+        self.refill_to_min().await
+    }
+
+    /// Queues a top-up while the caller keeps using the device it has.
+    ///
+    /// Taking `maintenance_lock` with `try_lock_owned` before spawning means
+    /// at most one top-up is outstanding, and the lock is released even if the
+    /// task unwinds.
+    fn schedule_refill(self: &Arc<Self>) {
+        let Ok(maintenance) = Arc::clone(&self.maintenance_lock).try_lock_owned() else {
+            return;
         };
+        let pool = Arc::clone(self);
+        tokio::spawn(async move {
+            let _maintenance = maintenance;
+            if let Err(error) = pool.refill_to_min().await {
+                log::warn!("device pool background refill failed: {error}");
+            }
+        });
+    }
+
+    /// Registers devices until the pool reaches `MIN_POOL_SIZE`. Callers must
+    /// hold `maintenance_lock`.
+    async fn refill_to_min(&self) -> Result<(), String> {
+        let need = self.missing_devices().await;
         if need == 0 {
             return Ok(());
         }
@@ -897,5 +949,26 @@ mod persistence_tests {
             assert_eq!(persisted.android.len(), MAX_POOL_SIZE);
             let _ = std::fs::remove_dir_all(&dir);
         });
+    }
+
+    /// A pool that still has a device must not queue its picks behind a slow
+    /// refill or replacement: those hold `maintenance_lock` across their
+    /// network registrations.
+    #[tokio::test]
+    async fn a_full_pool_hands_out_devices_while_maintenance_is_running() {
+        let dir = temp_dir("maintenance-no-wait");
+        let path = dir.join("device_pool.json");
+        tokio::fs::write(&path, pool_json(MIN_POOL_SIZE))
+            .await
+            .expect("seed pool");
+        let pool = DevicePool::new(&path).await.expect("pool");
+
+        let _maintenance = pool.maintenance_lock.lock().await;
+        let device = tokio::time::timeout(Duration::from_secs(2), pool.get())
+            .await
+            .expect("get() must not wait for maintenance while a device is available")
+            .expect("pick");
+        assert_eq!(device.device_id, "0000000000000000");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
