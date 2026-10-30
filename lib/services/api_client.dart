@@ -160,6 +160,14 @@ class ApiClient {
   /// 退化成第一段的结果。
   final Map<int, String> _seriesCellIds = {};
 
+  /// Raw detail payload [audioVoices] just fetched, offered to [bookDetail].
+  ///
+  /// The listening page resolves voices and its decorations through two
+  /// callers, but both need the same `/detail` envelope in one session. Handing
+  /// the payload across keeps that open to one upstream request. One-shot: the
+  /// entry is consumed on use, so a later refresh always fetches again.
+  ({String bookId, Map<String, dynamic> payload})? _detailHandoff;
+
   /// Timeout applied to every backend request. The backend runs locally, so a
   /// healthy call returns in well under this; a hung child process or a stuck
   /// upstream request must not leave a page spinning forever.
@@ -514,7 +522,9 @@ class ApiClient {
   /// Optional metadata failures must not prevent playing the default voice.
   Future<List<AudioVoice>> audioVoices(String bookId) async {
     try {
-      return parseAudioVoices(await detail(bookId, tab: '小说'));
+      final payload = await detail(bookId, tab: '小说');
+      _detailHandoff = (bookId: bookId, payload: payload);
+      return parseAudioVoices(payload);
     } on Exception {
       return defaultAudioVoices;
     }
@@ -528,6 +538,11 @@ class ApiClient {
   /// Rich book metadata (category, word count, rating, tags, author level…).
   /// Returns an empty model when the backend has no detail record.
   Future<BookDetail> bookDetail(String bookId) async {
+    final handoff = _detailHandoff;
+    if (handoff != null && handoff.bookId == bookId) {
+      _detailHandoff = null;
+      return BookDetail.fromPayload(handoff.payload);
+    }
     final response = await _get(
       _url('/api/v1/books/${Uri.encodeComponent(bookId)}/detail', {}),
     );
