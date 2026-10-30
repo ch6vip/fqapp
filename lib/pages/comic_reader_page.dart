@@ -87,6 +87,8 @@ class ComicReaderPage extends StatefulWidget {
 class _ComicReaderPageState extends State<ComicReaderPage>
     with WidgetsBindingObserver {
   final _scroll = ScrollController(keepScrollOffset: false);
+  // 翻页模式专用；条漫模式不用控制器，位置由 _scroll 负责。
+  PageController? _pageController;
   late final ReaderStore _readerStore = scopedHistoryStore(
     widget.readerStore ?? LibraryStore.instance,
     'manga',
@@ -177,6 +179,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     _sessionActive = false;
     unawaited(_saveProgress());
     _scroll.dispose();
+    _pageController?.dispose();
     super.dispose();
   }
 
@@ -219,6 +222,9 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     final chapter = _chapter;
     _saveTimer?.cancel();
     ++_restoreTicket;
+    // 换章后由新的 PageController(initialPage) 决定翻页起点。
+    _pageController?.dispose();
+    _pageController = null;
     setState(() {
       _loading = true;
       _error = null;
@@ -283,6 +289,14 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   }
 
   double _logicalPosition() {
+    if (_pagedMode) {
+      final controller = _pageController;
+      if (controller != null && controller.hasClients) {
+        final page = controller.page;
+        if (page != null && page.isFinite) return page.roundToDouble();
+      }
+      return _lastPosition;
+    }
     if (_layout == null || !_scroll.hasClients) return _lastPosition;
     final scroll = _scroll.position;
     if (scroll.hasContentDimensions &&
@@ -335,16 +349,31 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     );
     _layoutWidth = width;
     _builtLayoutRevision = _layoutRevision;
+    _scheduleRestore();
+    return _layout!;
+  }
+
+  /// 首帧后完成位置恢复。
+  ///
+  /// 条漫模式依赖滚动偏移，翻页模式由 [PageController.initialPage] 定位，
+  /// 只需解除 [_restoring] 让同一套进度记录逻辑接管。
+  void _scheduleRestore() {
     final generation = _loadGeneration;
     final ticket = ++_restoreTicket;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           generation != _loadGeneration ||
-          ticket != _restoreTicket ||
-          !_scroll.hasClients ||
-          _layout == null) {
+          ticket != _restoreTicket) {
         return;
       }
+      if (_pagedMode) {
+        final controller = _pageController;
+        if (controller == null || !controller.hasClients) return;
+        _restoring = false;
+        _recordVisiblePosition();
+        return;
+      }
+      if (!_scroll.hasClients || _layout == null) return;
       final anchor = _restoreAnchor ?? 0;
       _restoreAnchor = null;
       _scroll.jumpTo(
@@ -355,11 +384,11 @@ class _ComicReaderPageState extends State<ComicReaderPage>
       _restoring = false;
       _recordVisiblePosition();
     });
-    return _layout!;
   }
 
   void _recordVisiblePosition() {
-    if (_restoring || _images.isEmpty || !_scroll.hasClients) return;
+    if (_restoring || _images.isEmpty) return;
+    if (!_pagedMode && !_scroll.hasClients) return;
     final position = _logicalPosition();
     final page = position.floor().clamp(0, _images.length - 1);
     if (_visiblePage != page) setState(() => _visiblePage = page);
@@ -384,6 +413,49 @@ class _ComicReaderPageState extends State<ComicReaderPage>
       _settleReadTime();
       unawaited(_saveProgress());
     });
+  }
+
+  /// 翻页模式的位置回调：与滚动模式共用同一套记录/保存路径。
+  void _onPageChanged(int page) {
+    if (_visiblePage != page) setState(() => _visiblePage = page);
+    if (_restoring) return;
+    _recordVisiblePosition();
+    if (!_progressReady) return;
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 500), () {
+      _settleReadTime();
+      unawaited(_saveProgress());
+    });
+  }
+
+  int _currentPageIndex() {
+    if (_images.isEmpty) return 0;
+    return _logicalPosition().floor().clamp(0, _images.length - 1).toInt();
+  }
+
+  /// 条漫/翻页模式互切，当前页保持不变。
+  void _togglePagedMode() {
+    final page = _currentPageIndex();
+    final stale = _pageController;
+    final paged = !_pagedMode;
+    setState(() {
+      _pagedMode = paged;
+      if (paged) {
+        _visiblePage = page;
+        if (_readyImages.contains(page)) _lastPosition = page.toDouble();
+        _restoring = false;
+        _pageController = PageController(initialPage: page, keepPage: false);
+      } else {
+        _pageController = null;
+        _restoreAnchor = page.toDouble();
+        _restoring = true;
+      }
+    });
+    stale?.dispose();
+    if (!paged) {
+      // 布局可能命中缓存，不会自动排队恢复回调，这里显式回到当前页。
+      _scheduleRestore();
+    }
   }
 
   void _startReadTime() {
@@ -413,7 +485,9 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   Future<void> _saveProgress({bool createHistory = false}) async {
     if (!_progressReady || _images.isEmpty) return;
     // Only a successfully displayed image advances the durable position.
-    if (!_restoring && _scroll.hasClients) {
+    // _logicalPosition falls back to _lastPosition when no controller is
+    // attached, and _lastPosition itself only moves on displayed pages.
+    if (!_restoring) {
       final position = _logicalPosition();
       final page = position.floor().clamp(0, _images.length - 1);
       if (_readyImages.contains(page)) _lastPosition = position;
@@ -525,9 +599,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
             : [
                 IconButton(
                   tooltip: _pagedMode ? '切换为条漫模式' : '切换为翻页模式',
-                  onPressed: _loading
-                      ? null
-                      : () => setState(() => _pagedMode = !_pagedMode),
+                  onPressed: _loading ? null : _togglePagedMode,
                   icon: Icon(_pagedMode ? Icons.view_day : Icons.auto_stories),
                 ),
                 IconButton(
@@ -624,11 +696,15 @@ class _ComicReaderPageState extends State<ComicReaderPage>
                   final layout = _layoutFor(width);
                   final generation = _loadGeneration;
                   if (_pagedMode) {
+                    final controller = _pageController ??= PageController(
+                      initialPage: _visiblePage,
+                      keepPage: false,
+                    );
                     return PageView.builder(
                       key: const ValueKey('comic-reader-paged-view'),
+                      controller: controller,
                       itemCount: _images.length,
-                      onPageChanged: (page) =>
-                          setState(() => _visiblePage = page),
+                      onPageChanged: _onPageChanged,
                       itemBuilder: (context, index) => Center(
                         child: SizedBox(
                           width: width,
