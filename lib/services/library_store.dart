@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'encrypted_hive.dart';
 import 'reader_underline_store.dart';
 
+part 'history_trim.dart';
+
 abstract interface class ReaderStore {
   Future<Map<String, dynamic>?> historyEntry(String id);
 
@@ -132,29 +134,6 @@ class LibraryStore implements ReaderStore {
     final write = _writes.then<T>((_) => action());
     _writes = write.then<void>((_) {}).catchError((Object _) {});
     return write;
-  }
-
-  /// Counts non-imported history records without copying or sorting them.
-  int _localHistoryCountNow() {
-    final cached = _localHistoryCount;
-    if (cached != null) return cached;
-    var count = 0;
-    for (final key in _histBox.keys) {
-      final raw = _histBox.get(key);
-      if (raw is! Map || raw['fanqieImported'] != true) count++;
-    }
-    return _localHistoryCount = count;
-  }
-
-  /// Keeps the cached count in step with one in-place history write.
-  void _noteHistoryWrite(Object? before, Map<String, dynamic> after) {
-    final count = _localHistoryCount;
-    if (count == null) return;
-    final wasLocal =
-        before != null && (before is! Map || before['fanqieImported'] != true);
-    final isLocal = after['fanqieImported'] != true;
-    final delta = (isLocal ? 1 : 0) - (wasLocal ? 1 : 0);
-    if (delta != 0) _localHistoryCount = count + delta;
   }
 
   /// Hive-backed notifications for retained tabs. Visible pages update after
@@ -514,54 +493,7 @@ class LibraryStore implements ReaderStore {
     }
     await _histBox.put(id, record);
     _noteHistoryWrite(existing, record);
-
-    // Trim history to 50 entries once it grows past 100 (leaves headroom so
-    // we don't prune on every single write). The gate counts non-imported
-    // records: imported history is exempt from this trim, so a large import
-    // can hold the box above 100 with nothing local to prune — rebuilding the
-    // whole snapshot on every write would then be wasted work.
-    if (_localHistoryCountNow() > 100) {
-      // Legacy backups must not make fifty books look like a hundred books.
-      final retained = historySnapshot().take(50).map(_historyIdentity).toSet()
-        // Never trim the record this write just inserted, even without a time.
-        ..add(_historyIdentity(record));
-      final oldestKeys = <dynamic>[];
-      for (final key in _histBox.keys) {
-        final record = _historyRecord(_histBox.get(key), id: key.toString());
-        if (record == null ||
-            (record['fanqieImported'] != true &&
-                !retained.contains(_historyIdentity(record)))) {
-          oldestKeys.add(key);
-        }
-      }
-      await _histBox.deleteAll(oldestKeys);
-      _localHistoryCount = null;
-    }
-    // Imported records are exempt from the 50-entry trim above, so a bulk
-    // import is not wiped by the next local write. They still get their own
-    // bound: past the cap, drop the oldest imported records.
-    if (_histBox.length > _importedHistoryCap) {
-      final imported = <MapEntry<dynamic, Map<String, dynamic>>>[];
-      for (final key in _histBox.keys) {
-        final record = _historyRecord(_histBox.get(key), id: key.toString());
-        if (record != null && record['fanqieImported'] == true) {
-          imported.add(MapEntry(key, record));
-        }
-      }
-      if (imported.length > _importedHistoryCap) {
-        imported.sort(
-          (a, b) => _historyTime(a.value).compareTo(_historyTime(b.value)),
-        );
-        final doomed = [
-          for (final entry in imported.take(
-            imported.length - _importedHistoryCap,
-          ))
-            // Never trim the record this write just inserted.
-            if (entry.key != id) entry.key,
-        ];
-        await _histBox.deleteAll(doomed);
-      }
-    }
+    await _trimHistory(id, record);
   }
 
   @override
