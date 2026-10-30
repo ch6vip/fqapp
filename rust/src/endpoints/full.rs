@@ -60,14 +60,31 @@ pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiR
         .await?;
 
     let mut root: Value = crate::endpoints::util::raw_json(&raw)?;
-    let mut data: Map<String, Value> = match root.get("data").and_then(|d| d.as_object()) {
-        Some(d) if !d.is_empty() => d.clone(),
-        _ => return Ok(root),
-    };
-    let item_infos = match data.get("item_infos") {
-        Some(v) => v.clone(),
-        None => return Ok(root),
-    };
+    // Inspect before mutating so the pass-through cases return the parsed root
+    // untouched. The checks borrow immutably; the clone-free take below needs
+    // the borrow to end first.
+    if !matches!(
+        root.get("data").and_then(|d| d.as_object()),
+        Some(d) if !d.is_empty()
+    ) {
+        return Ok(root);
+    }
+    if root.get("data").and_then(|d| d.get("item_infos")).is_none() {
+        return Ok(root);
+    }
+    // Take `item_infos` out of `data` in place: cloning the whole map (and
+    // then inserting the processed one back) copied every chapter body for no
+    // reason. `mem::take` leaves the key in place, so key order and therefore
+    // the serialized JSON stay unchanged.
+    let data = root
+        .as_object_mut()
+        .and_then(|root_obj| root_obj.get_mut("data"))
+        .and_then(|d| d.as_object_mut())
+        .expect("data is a non-empty object, checked above");
+    let item_infos = data
+        .get_mut("item_infos")
+        .map(std::mem::take)
+        .expect("item_infos exists, checked above");
 
     let processor = FullContentProcessor::new();
     let zwsm = ctx.cfg.zwsm.clone();
@@ -106,9 +123,6 @@ pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiR
         }
     }
 
-    if let Some(root_obj) = root.as_object_mut() {
-        root_obj.insert("data".to_string(), Value::Object(data));
-    }
     Ok(root)
 }
 
