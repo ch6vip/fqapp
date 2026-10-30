@@ -34,7 +34,7 @@ pub async fn handle(ctx: &Ctx, req: &Request) -> Response {
         return response;
     }
     // The FFI path needs its own limit as well as the HTTP adapter's limit.
-    if req.body.len() > 16 * 1024 || !req.query.is_empty() {
+    if req.body.len() > crate::dispatch::ACCOUNT_REQUEST_BODY_LIMIT || !req.query.is_empty() {
         return failure(400, "历史读取参数无效或过长");
     }
     let input: HistoryRequest = match serde_json::from_slice(&req.body) {
