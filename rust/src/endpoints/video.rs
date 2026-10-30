@@ -747,7 +747,14 @@ fn fallback_api_url(model: &Map<String, Value>) -> String {
 }
 
 async fn fetch_fallback_video_info(ctx: &Ctx, u: &str) -> Option<Map<String, Value>> {
-    let raw = unsigned_get(ctx, u, FALLBACK_USER_AGENT).await?;
+    // JSON response: same 64 MiB cap as every other API call.
+    let raw = unsigned_get(
+        ctx,
+        u,
+        FALLBACK_USER_AGENT,
+        crate::upstream::http::API_BODY_LIMIT_BYTES,
+    )
+    .await?;
     serde_json::from_slice::<Value>(&raw)
         .ok()?
         .as_object()
@@ -1209,8 +1216,10 @@ fn dir_item_count(dm: &Map<String, Value>) -> i64 {
 // HTTP + on-disk cache
 // ---------------------------------------------------------------------------
 
-/// Plain, unsigned GET with an explicit User-Agent.
-async fn unsigned_get(ctx: &Ctx, url: &str, user_agent: &str) -> Option<Vec<u8>> {
+/// Plain, unsigned GET with an explicit User-Agent. The body is rejected once
+/// it exceeds `max_bytes`; callers pass the shared API cap for JSON responses
+/// and the per-file video cap for whole-body download fallbacks.
+async fn unsigned_get(ctx: &Ctx, url: &str, user_agent: &str, max_bytes: usize) -> Option<Vec<u8>> {
     let req = UpstreamRequest {
         method: Some("GET".to_string()),
         url: url.to_string(),
@@ -1219,7 +1228,7 @@ async fn unsigned_get(ctx: &Ctx, url: &str, user_agent: &str) -> Option<Vec<u8>>
         no_sign: true,
         pin: None,
     };
-    match ctx.up.do_request(&req).await {
+    match ctx.up.do_request_capped(&req, max_bytes).await {
         Ok((body, _)) => Some(body),
         Err(_) => None,
     }
@@ -3334,5 +3343,103 @@ mod variant_url_shapes {
         let (url, key) = decrypt_variant_entry(&entry(main_url), Some(b"AAAA")).unwrap();
         assert_eq!(url, "https://example.test/1080.mp4");
         assert_eq!(key.len(), 16);
+    }
+}
+
+#[cfg(test)]
+mod unsigned_get_cap {
+    //! The plain unsigned GET must honor its caller's body cap. It used to go
+    //! through the uncapped request path and buffer any response whole.
+
+    use super::*;
+
+    async fn serve_once(body: Vec<u8>) -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let port = listener.local_addr().expect("test server addr").port();
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(header.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        (port, handle)
+    }
+
+    async fn test_ctx(origin: String, dir: &Path) -> Ctx {
+        let pool =
+            crate::device::DevicePool::with_mock_origin(dir.join("pool.json"), origin.clone())
+                .await
+                .expect("device pool");
+        let up = crate::upstream::UpstreamClient::with_mock_origin(
+            pool.clone(),
+            crate::sign::Manager::new(),
+            origin,
+        )
+        .expect("upstream client");
+        Ctx {
+            up: Arc::new(up),
+            pool,
+            cfg: Arc::new(crate::config::Config::default()),
+            src_dir: dir.to_string_lossy().into_owned(),
+            filters: Arc::new(crate::filter::FilterManager::default()),
+        }
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[tokio::test]
+    async fn rejects_a_body_over_the_callers_cap() {
+        let (port, server) = serve_once(vec![b'x'; 4096]).await;
+        let dir = temp_dir("unsigned-cap");
+        let ctx = test_ctx(format!("http://127.0.0.1:{port}"), &dir).await;
+
+        // The mock origin rewrites this absolute URL onto the local server.
+        let got = unsigned_get(
+            &ctx,
+            "https://example.invalid/video_model",
+            UA_WINDOWS_BROWSER,
+            1024,
+        )
+        .await;
+        assert!(got.is_none(), "a 4 KiB body must be refused by a 1 KiB cap");
+        let _ = server.await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn returns_a_body_within_the_cap() {
+        let (port, server) = serve_once(b"{\"ok\":true}".to_vec()).await;
+        let dir = temp_dir("unsigned-cap-ok");
+        let ctx = test_ctx(format!("http://127.0.0.1:{port}"), &dir).await;
+
+        let body = unsigned_get(
+            &ctx,
+            "https://example.invalid/video_model",
+            UA_WINDOWS_BROWSER,
+            1024,
+        )
+        .await
+        .expect("body within the cap");
+        assert_eq!(body, b"{\"ok\":true}");
+        let _ = server.await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
