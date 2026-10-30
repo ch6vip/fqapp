@@ -11,7 +11,7 @@ import 'series_detail_theme.dart';
 
 /// 选集：紧贴播放钮下方，50 集一段、可倒序，6 列格子。
 ///
-/// 版式稿：区块头 15sp + 右端 12sp 状态；分段胶囊 12sp；格子高 34、
+/// 版式稿：区块头 15sp + 右端 12sp 状态；分段胶囊 12sp；格子高 36（34 + 上下 1 描边）、
 /// 圆角 8、间距 6；一段先给 24 格，下面居中的「展开 25–50 集」再放全部。
 /// 目录失败只在本区块内联重试，播放钮保持自己的状态。
 class SeriesDetailEpisodes extends StatefulWidget {
@@ -332,7 +332,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
           crossAxisCount: columns,
           mainAxisSpacing: 6,
           crossAxisSpacing: 6,
-          mainAxisExtent: 34 * scale,
+          mainAxisExtent: 36 * scale,
         ),
         itemCount: order.length,
         itemBuilder: (context, position) => _tile(palette, order[position]),
