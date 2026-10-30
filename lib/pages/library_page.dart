@@ -207,6 +207,11 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
       } catch (_) {}
     }
     if (!mounted) return;
+    // 本地缓存扫描不需要网络：先发现的变化马上刷新，不跟着整轮网络探测等。
+    if (changed && _visible) {
+      _load();
+      changed = false;
+    }
     if (widget.cacheStore == null || widget.chapterCountLoader != null) {
       final network = await (widget.connectivity ?? probeConnectivity)();
       if (network?.online == true) {

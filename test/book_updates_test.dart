@@ -149,6 +149,33 @@ void main() {
       });
     }
 
+    testWidgets('本地缓存发现的新目录先刷新，不等网络探测结束', (tester) async {
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      await _seedShelf(tester);
+      final cache = MemoryChapterCache();
+      await cache.saveBook(
+        CachedBook(id: _book.id, title: _book.title, chapters: _chapters),
+      );
+      final probe = Completer<({bool online, bool metered})>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LibraryPage(
+            cacheStore: cache,
+            // 网络探测挂起：本地扫描已经发现三章，不该陪它一起等。
+            connectivity: () => probe.future,
+            chapterCountLoader: (_) async => _chapters.length,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('更新'), findsOneWidget);
+      expect(find.text('共2章·已读完'), findsNothing);
+
+      probe.complete((online: false, metered: false));
+      await tester.pumpAndSettle();
+      expect(find.text('更新'), findsOneWidget);
+    });
+
     testWidgets('联网检测新增章节，不等待打开详情页，并在返回前台时重查', (tester) async {
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
       await _seedShelf(tester);
