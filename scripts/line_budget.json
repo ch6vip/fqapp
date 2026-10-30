@@ -36,9 +36,6 @@
     "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
-    "lib/widgets/detail/detail_hero.dart": 514,
-    "lib/widgets/detail/detail_reviews.dart": 566,
-    "lib/widgets/detail/detail_sections.dart": 641,
     "lib/widgets/player/player_split_panel.dart": 618,
     "lib/widgets/player/playlet_danmaku_layer.dart": 569,
     "lib/widgets/player/story_player_panel.dart": 1082,
@@ -292,6 +289,16 @@
       "lines": 445,
       "symbol": "Widget build(BuildContext context) => Theme("
     },
+    "lib/widgets/detail/detail_comment_tile.dart::_DetailCommentTileState.build": {
+      "line": 74,
+      "lines": 115,
+      "symbol": "Widget build(BuildContext context) {"
+    },
+    "lib/widgets/detail/detail_comment_tile.dart::_ReplyTile.build": {
+      "line": 314,
+      "lines": 85,
+      "symbol": "Widget build(BuildContext context) {"
+    },
     "lib/widgets/detail/detail_description.dart::_DetailDescriptionState.build": {
       "line": 32,
       "lines": 111,
@@ -303,18 +310,8 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/detail/detail_hero.dart::DetailHero.build": {
-      "line": 33,
-      "lines": 98,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/detail/detail_hero.dart::_BookTitle.build": {
-      "line": 286,
-      "lines": 113,
-      "symbol": "Widget build(BuildContext context) => LayoutBuilder("
-    },
-    "lib/widgets/detail/detail_hero.dart::_CoverTile.build": {
-      "line": 151,
-      "lines": 84,
+      "line": 37,
+      "lines": 97,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/detail/detail_read_bar.dart::DetailReadBar.build": {
@@ -322,29 +319,9 @@
       "lines": 253,
       "symbol": "Widget build(BuildContext context) {"
     },
-    "lib/widgets/detail/detail_reviews.dart::DetailReviews.build": {
-      "line": 50,
-      "lines": 95,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/detail/detail_reviews.dart::_DetailCommentTileState.build": {
-      "line": 241,
-      "lines": 140,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/detail/detail_reviews.dart::_ReplyTile.build": {
-      "line": 480,
-      "lines": 85,
-      "symbol": "Widget build(BuildContext context) {"
-    },
     "lib/widgets/detail/detail_reviews_sheet.dart::_DetailReviewsSheetState.build": {
       "line": 135,
       "lines": 126,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/detail/detail_sections.dart::DetailAuthorRow.build": {
-      "line": 28,
-      "lines": 92,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/home/home_media_card.dart::HomeMediaCard.build": {

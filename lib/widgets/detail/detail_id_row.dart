@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../home/home_design.dart';
+import 'detail_style.dart';
 
 /// The work's id, selectable and copyable.
 ///
-/// The value is the same id the page loads the work with, so it can be pasted
-/// straight into the app's `id:` search to reopen the work.
+/// Mockup: one 11dp muted line at the very bottom, padding 22/18, `ID xxx`
+/// then `复制`. Digits use the inherited font with tabular figures — never
+/// `monospace`, which resolves to a typewriter face on some phones. The old
+/// card is gone; the value is the same id the page loads the work with, so it
+/// can be pasted into the app's `id:` search.
 class DetailIdRow extends StatelessWidget {
   final String id;
   final bool compact;
@@ -26,75 +29,51 @@ class DetailIdRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     if (id.isEmpty) return const SizedBox.shrink();
-    return Container(
+    final mono = TextStyle(
+      color: palette.muted,
+      fontSize: compact ? 12 : 11,
+      height: 1.5,
+      fontFeatures: detailNumericFeatures,
+    );
+    return Padding(
       key: const Key('detail_id_row'),
-      padding: compact
-          ? EdgeInsets.zero
-          : const EdgeInsets.fromLTRB(14, 8, 6, 8),
-      decoration: compact
-          ? null
-          : BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: palette.line, width: 0.6),
-            ),
+      padding: EdgeInsets.only(top: compact ? 4 : 22, bottom: compact ? 4 : 18),
       child: Row(
         children: [
-          Icon(LucideIcons.hash, size: 14, color: palette.muted),
-          const SizedBox(width: 7),
-          Expanded(
+          Text('ID', style: mono),
+          const SizedBox(width: 8),
+          Flexible(
+            fit: FlexFit.loose,
             child: SelectableText(
               id,
               key: const Key('detail_id_text'),
               maxLines: 1,
-              style: TextStyle(
-                color: palette.muted,
-                fontSize: compact ? 13 : 12,
-                height: 1.4,
-                // Ids are strings of digits; a monospaced face keeps them
-                // readable when compared character by character.
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
+              style: mono,
             ),
           ),
           if (note != null && note!.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Text(note!, style: TextStyle(color: palette.muted, fontSize: 11)),
+            const SizedBox(width: 8),
+            Text(note!, style: mono),
           ],
-          _CopyIdButton(id: id),
+          const SizedBox(width: 8),
+          HomePressable(
+            key: const Key('detail_id_copy'),
+            semanticLabel: '复制 ID',
+            borderRadius: BorderRadius.circular(4),
+            onTap: () async {
+              final messenger = ScaffoldMessenger.maybeOf(context);
+              await Clipboard.setData(ClipboardData(text: id));
+              messenger?.showSnackBar(
+                const SnackBar(
+                  content: Text('已复制 ID'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            child: Text('复制', style: mono),
+          ),
         ],
       ),
-    );
-  }
-}
-
-class _CopyIdButton extends StatelessWidget {
-  final String id;
-
-  const _CopyIdButton({required this.id});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return IconButton(
-      key: const Key('detail_id_copy'),
-      tooltip: '复制 ID',
-      onPressed: () async {
-        final messenger = ScaffoldMessenger.maybeOf(context);
-        await Clipboard.setData(ClipboardData(text: id));
-        messenger?.showSnackBar(
-          const SnackBar(
-            content: Text('已复制 ID'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      },
-      style: IconButton.styleFrom(
-        foregroundColor: palette.muted,
-        minimumSize: const Size(40, 40),
-        padding: EdgeInsets.zero,
-      ),
-      icon: const Icon(LucideIcons.copy, size: 15),
     );
   }
 }

@@ -1,11 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fqapp/models/chapter_summary.dart';
 import 'package:fqapp/models/media_item.dart';
-import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/widgets/chapter_cache_sheet.dart';
@@ -13,66 +9,6 @@ import 'package:fqapp/widgets/chapter_cache_sheet.dart';
 import 'support/fakes.dart';
 
 void main() {
-  testWidgets(
-    'refreshing clears stale excerpts while the preview loader is pending',
-    (tester) async {
-      var calls = 0;
-      final second = Completer<ChapterSummary>();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: DetailPage(
-            item: _book,
-            detailLoader: (id, {String tab = '小说'}) async => {},
-            directoryLoader: (id, {String tab = '小说'}) async => [_chapters],
-            previewLoader: (ids) {
-              calls++;
-              if (calls == 1) {
-                return Future.value(
-                  const ChapterSummary(byItemId: {'first': '摘要一'}),
-                );
-              }
-              return second.future;
-            },
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('摘要一'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('detail_refresh_button')));
-      await tester.pump();
-      await tester.pumpAndSettle();
-      expect(find.text('摘要一'), findsNothing);
-
-      second.complete(const ChapterSummary(byItemId: {'first': '摘要二'}));
-      await tester.pumpAndSettle();
-      expect(find.text('摘要二'), findsOneWidget);
-      expect(find.text('摘要一'), findsNothing);
-
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
-
-  testWidgets('a failing preview loader degrades to no excerpts', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: DetailPage(
-          item: _book,
-          detailLoader: (id, {String tab = '小说'}) async => {},
-          directoryLoader: (id, {String tab = '小说'}) async => [_chapters],
-          previewLoader: (ids) async => throw StateError('preview unavailable'),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(find.text('第一章'), findsOneWidget);
-    expect(find.byKey(const Key('detail_preview_excerpt_first')), findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
   testWidgets(
     'an opened cache sheet saves no catalogue until a download starts',
     (tester) async {
@@ -130,21 +66,6 @@ void main() {
     },
   );
 }
-
-final _book = MediaItem(
-  id: 'book',
-  title: '测试书',
-  cover: '',
-  author: '',
-  badge: '',
-  ep: '',
-  kind: 'book',
-);
-
-final _chapters = <Chapter>[
-  Chapter(itemId: 'first', title: '第一章', volumeName: ''),
-  Chapter(itemId: 'second', title: '第二章', volumeName: ''),
-];
 
 final _cachedBook = CachedBook(
   id: 'book',

@@ -2,370 +2,14 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
-import '../../services/poster_cache.dart';
-import '../../models/book_detail.dart';
 import '../../models/series_detail.dart';
+import '../../services/poster_cache.dart';
 import '../home/home_design.dart';
 
-/// Author row: avatar, pen name, level badge, tagline and follow action.
-class DetailAuthorRow extends StatelessWidget {
-  final BookAuthor author;
-  final bool desktop;
-
-  /// Opens the author's home. The backend exposes no follow endpoint, so this
-  /// row offers a route to the author rather than a follow action that could
-  /// not work.
-  final VoidCallback? onOpenAuthor;
-
-  const DetailAuthorRow({
-    super.key,
-    required this.author,
-    this.onOpenAuthor,
-    this.desktop = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final avatar = ClipOval(
-      child: SizedBox.square(
-        dimension: 38,
-        child: author.avatar.isEmpty
-            ? ColoredBox(
-                color: palette.soft,
-                child: Icon(LucideIcons.user, size: 20, color: palette.muted),
-              )
-            : CachedNetworkImage(
-                cacheManager: PosterCache.instance,
-                imageUrl: author.avatar,
-                fit: BoxFit.cover,
-                // 38dp avatar; decode at 2×. CachedNetworkImage also adds
-                // the disk cache a bare Image.network lacks.
-                memCacheWidth: 76,
-                errorWidget: (context, _, _) => ColoredBox(
-                  color: palette.soft,
-                  child: Icon(LucideIcons.user, size: 20, color: palette.muted),
-                ),
-              ),
-      ),
-    );
-    final identity = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Flexible(
-              child: Text(
-                author.name,
-                key: const Key('detail_author_name'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.ink,
-                  fontSize: desktop ? 16 : 14.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            if (author.title.isNotEmpty) ...[
-              const SizedBox(width: 6),
-              _LevelBadge(text: author.title),
-            ],
-          ],
-        ),
-        const SizedBox(height: 3),
-        Text(
-          onOpenAuthor == null ? '关注我，掌握书籍最新动态' : '查看作者主页和全部作品',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: palette.muted,
-            fontSize: desktop ? 13 : 11.5,
-            height: desktop ? 1.6 : 1.3,
-          ),
-        ),
-      ],
-    );
-
-    final card = Container(
-      padding: desktop
-          ? const EdgeInsets.all(16)
-          : const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(desktop ? 12 : 16),
-        border: Border.all(color: palette.line, width: desktop ? 1 : 0.6),
-      ),
-      child: Row(
-        children: [
-          avatar,
-          const SizedBox(width: 12),
-          Expanded(child: identity),
-          if (onOpenAuthor != null && !desktop) ...[
-            const SizedBox(width: 10),
-            _AuthorLinkChip(),
-          ],
-        ],
-      ),
-    );
-    if (onOpenAuthor == null) return card;
-    return HomePressable(
-      key: const Key('detail_author_row'),
-      semanticLabel: '查看 ${author.name} 的主页',
-      onTap: onOpenAuthor!,
-      borderRadius: BorderRadius.circular(16),
-      child: card,
-    );
-  }
-}
-
-class _LevelBadge extends StatelessWidget {
-  final String text;
-
-  const _LevelBadge({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    // The official badge is orange; reuse the accent family so it still reads
-    // as a rank chip in both themes.
-    final color = palette.dark
-        ? const Color(0xFFE9A23B)
-        : const Color(0xFFD98324);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          height: 1.4,
-        ),
-      ),
-    );
-  }
-}
-
-/// Trailing affordance that opens the author's home.
+/// Five stars filled to [stars] (halves supported), used by review tiles.
 ///
-/// The official client shows a 关注 button here, but the backend exposes no
-/// follow endpoint, so a button that looked like 关注 would be a dead control.
-/// This offers the one action that actually works.
-class _AuthorLinkChip extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: HomePalette.accent.withValues(alpha: palette.dark ? 0.16 : 0.08),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: HomePalette.accent.withValues(
-            alpha: palette.dark ? 0.35 : 0.22,
-          ),
-          width: 0.6,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '主页',
-            style: TextStyle(
-              color: palette.accentText,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 2),
-          Icon(LucideIcons.chevron_right, size: 14, color: palette.accentText),
-        ],
-      ),
-    );
-  }
-}
-
-/// One statistic rendered in the three-column row under the author.
-class DetailStat {
-  const DetailStat({
-    required this.value,
-    required this.label,
-    this.icon,
-    this.stars = 0,
-    this.accent = false,
-  });
-
-  final String value;
-  final String label;
-  final IconData? icon;
-
-  /// Filled-star count (0-5) rendered under [value]; 0 hides the row.
-  final double stars;
-  final bool accent;
-
-  bool get isEmpty => value.trim().isEmpty && label.trim().isEmpty;
-}
-
-/// Rank / readers / rating, separated by hairline dividers.
-class DetailStatsRow extends StatelessWidget {
-  final List<DetailStat> stats;
-  final bool desktop;
-  final bool vertical;
-
-  const DetailStatsRow({
-    super.key,
-    required this.stats,
-    this.desktop = false,
-    this.vertical = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final visible = stats
-        .where((stat) => !stat.isEmpty)
-        .toList(growable: false);
-    if (visible.isEmpty) return const SizedBox.shrink();
-    final children = <Widget>[];
-    for (var index = 0; index < visible.length; index++) {
-      if (index > 0) {
-        children.add(
-          Container(
-            width: 0.6,
-            height: 36,
-            color: palette.line,
-            margin: const EdgeInsets.symmetric(horizontal: 2),
-          ),
-        );
-      }
-      children.add(
-        Expanded(
-          child: _StatCell(stat: visible[index], desktop: desktop),
-        ),
-      );
-    }
-    return Container(
-      key: const Key('detail_stats_row'),
-      padding: desktop
-          ? const EdgeInsets.all(16)
-          : const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(desktop ? 12 : 16),
-        border: Border.all(color: palette.line, width: desktop ? 1 : 0.6),
-      ),
-      child: vertical
-          ? Column(
-              children: [
-                for (var i = 0; i < visible.length; i++) ...[
-                  if (i > 0)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Divider(color: palette.line, height: 1),
-                    ),
-                  _StatCell(stat: visible[i], desktop: desktop),
-                ],
-              ],
-            )
-          : Row(children: children),
-    );
-  }
-}
-
-class _StatCell extends StatelessWidget {
-  final DetailStat stat;
-
-  final bool desktop;
-  const _StatCell({required this.stat, this.desktop = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final valueColor = stat.accent ? palette.accentText : palette.ink;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (stat.icon != null) ...[
-            Icon(
-              stat.icon,
-              size: 17,
-              color: stat.accent ? palette.accentText : palette.muted,
-            ),
-            const SizedBox(height: 4),
-          ],
-          Text(
-            stat.value,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: valueColor,
-              fontSize: desktop ? 17 : 15.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.2,
-            ),
-          ),
-          if (stat.stars > 0) ...[
-            const SizedBox(height: 2),
-            _StarRow(stars: stat.stars),
-          ],
-          const SizedBox(height: 3),
-          Text(
-            stat.label,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: palette.muted,
-              fontSize: desktop ? 13 : 11,
-              height: desktop ? 1.6 : 1.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Five stars filled to [stars] (halves supported), used by the stats row and
-/// the review card.
-class _StarRow extends StatelessWidget {
-  final double stars;
-  final double size;
-
-  const _StarRow({required this.stars, this.size = 11});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var index = 1; index <= 5; index++)
-          Icon(
-            stars >= index
-                ? Icons.star_rounded
-                : (stars >= index - 0.5
-                      ? Icons.star_half_rounded
-                      : Icons.star_outline_rounded),
-            size: size,
-            color: stars >= index - 0.5 ? HomePalette.accent : palette.line,
-          ),
-      ],
-    );
-  }
-}
-
-/// Half-star row exposed for the review card.
+/// Lucide strokes, not the Material star font, so every icon on the detail
+/// page shares one family; e-ink keeps the same shapes with palette tokens.
 class DetailStarRow extends StatelessWidget {
   final double stars;
   final double size;
@@ -373,7 +17,28 @@ class DetailStarRow extends StatelessWidget {
   const DetailStarRow({super.key, required this.stars, this.size = 11});
 
   @override
-  Widget build(BuildContext context) => _StarRow(stars: stars, size: size);
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final filled = palette.eink ? palette.ink : HomePalette.accent;
+    final empty = palette.eink ? palette.surface : palette.line;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var index = 1; index <= 5; index++)
+          Builder(
+            builder: (context) {
+              final full = stars >= index;
+              final half = !full && stars >= index - 0.5;
+              return Icon(
+                half ? LucideIcons.star_half : LucideIcons.star,
+                size: size,
+                color: full || half ? filled : empty,
+              );
+            },
+          ),
+      ],
+    );
+  }
 }
 
 /// Genre tags as rounded chips.
@@ -389,97 +54,27 @@ class DetailTagChips extends StatelessWidget {
     if (tags.isEmpty) return const SizedBox.shrink();
     return Wrap(
       key: const Key('detail_tag_chips'),
-      spacing: 8,
-      runSpacing: 8,
+      spacing: 6,
+      runSpacing: 6,
       children: [
         for (final tag in tags)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6.5),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
             decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: palette.line, width: 0.6),
+              color: palette.soft,
+              borderRadius: BorderRadius.circular(999),
+              border: palette.eink ? Border.all(color: palette.line) : null,
             ),
             child: Text(
               tag,
               style: TextStyle(
                 color: palette.muted,
-                fontSize: desktop ? 13 : 12,
-                fontWeight: FontWeight.w500,
-                height: 1.35,
+                fontSize: desktop ? 13 : 11,
+                height: 1.5,
               ),
             ),
           ),
       ],
-    );
-  }
-}
-
-/// `查看目录  完结 共1157章 ›` row that opens the full catalog.
-class DetailDirectoryRow extends StatelessWidget {
-  final String trailing;
-  final VoidCallback onTap;
-
-  const DetailDirectoryRow({
-    super.key,
-    required this.trailing,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return HomePressable(
-      key: const Key('detail_directory_button'),
-      semanticLabel: '查看目录',
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.line, width: 0.6),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 3.5,
-              height: 14,
-              margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(
-                color: HomePalette.accent,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Text(
-              '查看目录',
-              style: TextStyle(
-                color: palette.ink,
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
-            ),
-            const Spacer(),
-            if (trailing.isNotEmpty)
-              Flexible(
-                child: Text(
-                  trailing,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.muted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            const SizedBox(width: 4),
-            Icon(LucideIcons.chevron_right, size: 16, color: palette.muted),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -508,7 +103,7 @@ class DetailCastRow extends StatelessWidget {
               '演员表',
               style: TextStyle(
                 color: palette.ink,
-                fontSize: 17,
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
                 letterSpacing: -0.2,
               ),

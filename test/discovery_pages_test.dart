@@ -537,9 +537,8 @@ void main() {
           MaterialApp(
             home: Scaffold(
               body: SingleChildScrollView(
-                child: DetailReviews(
-                  page: BookCommentPage(comments: comments, totalCount: 1),
-                  bookId: '7491705400958405694',
+                child: DetailCommentTile(
+                  comment: comments.single,
                   replyLoader: replyLoader,
                 ),
               ),

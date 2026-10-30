@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fqapp/models/chapter_summary.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
@@ -13,78 +12,6 @@ import 'package:fqapp/widgets/home/home_design.dart';
 import 'support/fakes.dart';
 
 void main() {
-  testWidgets('the masthead wash runs behind the title bar', (tester) async {
-    await _pumpBook(tester);
-    await tester.pumpAndSettle();
-
-    final wash = find.byKey(const Key('detail_masthead_wash'));
-    expect(wash, findsOneWidget);
-    final appBar = find.byType(AppBar);
-    expect(appBar, findsOneWidget);
-
-    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
-    expect(scaffold.extendBodyBehindAppBar, isTrue);
-    expect(tester.widget<AppBar>(appBar).backgroundColor, Colors.transparent);
-    // 暖光从屏幕顶端开始，一直盖过标题栏下沿：标题栏不再截断它。
-    expect(tester.getTopLeft(wash).dy, 0);
-    expect(
-      tester.getBottomLeft(wash).dy,
-      greaterThan(tester.getBottomLeft(appBar).dy),
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('the dark detail page keeps the wash behind the title bar', (
-    tester,
-  ) async {
-    await _pumpBook(tester, dark: true);
-    await tester.pumpAndSettle();
-    // 深色的红色渐变同样从屏幕顶端穿过标题栏，不能被切成一条硬边。
-    final wash = find.byKey(const Key('detail_masthead_wash'));
-    expect(wash, findsOneWidget);
-    expect(tester.getTopLeft(wash).dy, 0);
-    expect(
-      tester.getBottomLeft(wash).dy,
-      greaterThan(tester.getBottomLeft(find.byType(AppBar)).dy),
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('the masthead wash is painted once, then only translated', (
-    tester,
-  ) async {
-    await _pumpBook(tester);
-    final wash = find.byKey(const Key('detail_masthead_wash'));
-    final paint = find.descendant(of: wash, matching: find.byType(CustomPaint));
-    final before = tester.widget<CustomPaint>(paint).painter;
-
-    final position = tester
-        .state<ScrollableState>(
-          find
-              .descendant(
-                of: find.byKey(const Key('detail_scroll')),
-                matching: find.byType(Scrollable),
-              )
-              .first,
-        )
-        .position;
-    await tester.drag(
-      find.byKey(const Key('detail_scroll')),
-      const Offset(0, -240),
-    );
-    await tester.pump();
-
-    // 滚动只平移已经画好的那一层。把滚动量塞进 painter 的话，每帧都要重建
-    // 渐变 shader 并整条重绘，和首页暖光的约定相反。
-    expect(position.pixels, greaterThan(0));
-    expect(
-      identical(tester.widget<CustomPaint>(paint).painter, before),
-      isTrue,
-      reason: '暖光 painter 不应随滚动重建',
-    );
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets('long descriptions expand and collapse without losing text', (
     tester,
   ) async {
@@ -201,8 +128,9 @@ void main() {
         entry: {'kind': 'book', 'chapterId': 'chapter-23', 'episode': 0},
       ),
     );
-    expect(find.text('继续阅读'), findsOneWidget);
-    expect(find.text('上次读到：第23章 故事的另一种可能'), findsOneWidget);
+    expect(find.textContaining('继续阅读'), findsOneWidget);
+    // 上次读到横条已删；进度在目录里写成 23 / 146。
+    expect(find.text('23 / 146'), findsOneWidget);
     await _openDirectory(tester);
     await tester.enterText(
       find.byKey(const Key('detail_directory_search')),
@@ -287,40 +215,6 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('找到 1 章'), findsOneWidget);
   });
-
-  testWidgets('audio content markers never reach the preview excerpt', (
-    tester,
-  ) async {
-    await _pumpBook(
-      tester,
-      previewLoader: (ids) async => ChapterSummary.fromPayload({
-        'code': 0,
-        'data': {
-          'summary_item_data': [
-            {
-              'item_id': 'chapter-1',
-              'summary':
-                  '{!-- PGC_VOICE:{"content":"","duration":"664.79",'
-                  '"source_provider":"audiobook"}--}第一章的正文开头',
-            },
-            {'item_id': 'chapter-2', 'summary': '{!-- PGC_VOICE:{"content":""'},
-          ],
-        },
-      }),
-    );
-
-    expect(
-      find.byKey(const Key('detail_preview_excerpt_chapter-1')),
-      findsOneWidget,
-    );
-    expect(find.textContaining('PGC_VOICE'), findsNothing);
-    expect(find.textContaining('第一章的正文开头'), findsOneWidget);
-    // A marker-only preview is dropped instead of shown as raw JSON.
-    expect(
-      find.byKey(const Key('detail_preview_excerpt_chapter-2')),
-      findsNothing,
-    );
-  });
 }
 
 Future<void> _pumpBook(
@@ -332,7 +226,6 @@ Future<void> _pumpBook(
   int chapterCount = 146,
   MemoryReaderStore? store,
   NavigatorObserver? observer,
-  ChapterPreviewLoader? previewLoader,
 }) async {
   await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -354,7 +247,6 @@ Future<void> _pumpBook(
       home: DetailPage(
         item: _book,
         readerStore: store ?? MemoryReaderStore(),
-        previewLoader: previewLoader,
         detailLoader: (id, {String tab = '小说'}) async => {
           'data': {'abstract': _description},
         },
@@ -375,9 +267,8 @@ Future<void> _pumpBook(
 }
 
 Future<void> _openDirectory(WidgetTester tester) async {
-  // The catalog entry lives in the page body. On small viewports with a large
-  // text scale the masthead fills the viewport, so the sliver is offstage and
-  // must be looked up with skipOffstage disabled before scrolling to it.
+  // The catalog entry lives in the page body; on small viewports it is offstage
+  // and must be looked up with skipOffstage disabled before scrolling to it.
   final button = find.byKey(
     const Key('detail_directory_button'),
     skipOffstage: false,

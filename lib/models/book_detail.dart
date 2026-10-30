@@ -152,6 +152,16 @@ class BookDetail {
 
   String get wordLabel => formatWordCount(wordNumber);
 
+  /// Human-readable rank for the hero pill: the first non-empty
+  /// `book_rank_info` entry, falling back to `rank_title`.
+  String get rankLabel {
+    for (final entry in rank) {
+      final text = entry.text.trim();
+      if (text.isNotEmpty) return text;
+    }
+    return rankTitle.trim();
+  }
+
   /// Reading counter for the stats row. Prefers the upstream's own display
   /// string, otherwise formats the raw count.
   String get readLabel {

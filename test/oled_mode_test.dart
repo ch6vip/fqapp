@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/reader_preferences.dart';
-import 'package:fqapp/widgets/detail/detail_hero.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/reader/reader_theme.dart';
 
@@ -265,50 +264,6 @@ void main() {
       expect(identical(plain, oled), isFalse);
       expect(plain.scaffoldBackgroundColor, const Color(0xFF171717));
       expect(oled.scaffoldBackgroundColor, Colors.black);
-    });
-  });
-
-  group('the detail masthead wash follows the appearance', () {
-    tearDown(() {
-      oledModeNotifier.value = false;
-      einkModeNotifier.value = false;
-      themeModeNotifier.value = ThemeMode.system;
-    });
-
-    Future<void> pumpWash(WidgetTester tester, ThemeData theme) async {
-      final controller = ScrollController();
-      addTearDown(controller.dispose);
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: theme,
-          home: Scaffold(
-            body: SizedBox(
-              height: 300,
-              child: DetailMastheadWash(scroll: controller),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-    }
-
-    testWidgets('the light masthead keeps the warm wash', (tester) async {
-      await pumpWash(tester, AppTheme.createTheme(Brightness.light));
-      expect(find.byKey(const Key('detail_masthead_wash')), findsOneWidget);
-    });
-
-    testWidgets('the dark masthead keeps the warm wash', (tester) async {
-      await pumpWash(tester, AppTheme.createTheme(Brightness.dark));
-      expect(find.byKey(const Key('detail_masthead_wash')), findsOneWidget);
-    });
-
-    testWidgets('the e-ink masthead stays pure white', (tester) async {
-      einkModeNotifier.value = true;
-      await pumpWash(
-        tester,
-        AppTheme.createTheme(Brightness.light, einkMode: true),
-      );
-      expect(find.byKey(const Key('detail_masthead_wash')), findsNothing);
     });
   });
 }
