@@ -158,6 +158,12 @@ class ChapterCacheStore implements ChapterCache {
   final Expando<int> _byteCounts = Expando<int>();
   int _lastAccessTime = 0;
 
+  /// Number of texts encoded to measure their size, so a regression test can
+  /// assert that a reopened cache reuses the persisted measurement instead of
+  /// re-encoding every chapter.
+  @visibleForTesting
+  int textEncodes = 0;
+
   Future<Box<dynamic>> _box() async {
     // P1-5: decrypted chapter text stays in the encrypted box (offline
     // reading still works — the box is on disk, just ciphertext). Never a
@@ -199,11 +205,21 @@ class ChapterCacheStore implements ChapterCache {
       (value['text'] as String).trim().isNotEmpty;
 
   int _bytes(Map entry) {
-    // Re-measure even when a stored 'bytes' field claims otherwise: damaged
-    // or hostile metadata must not under-report its way past the capacity
-    // caps (chapter_cache_store_test locks this). The post-restart trim cost
-    // of re-encoding is the deliberate price of that validation.
-    return _byteCounts[entry] ??= utf8.encode(entry['text'] as String).length;
+    final text = entry['text'] as String;
+    // Reuse the measurement persisted with the record, but only when it lies
+    // within the UTF-8 bounds of the text itself (1–3 bytes per UTF-16 code
+    // unit). Anything else is re-measured, so damaged or foreign metadata
+    // cannot under-report its way past the capacity caps
+    // (chapter_cache_store_test locks the damaged-record case). Trusting the
+    // stored value is what keeps a restart from re-encoding every chapter.
+    final stored = entry['bytes'];
+    if (stored is int && stored >= text.length && stored <= text.length * 3) {
+      return stored;
+    }
+    final cached = _byteCounts[entry];
+    if (cached != null) return cached;
+    textEncodes++;
+    return _byteCounts[entry] = utf8.encode(text).length;
   }
 
   int _accessedAt(Map entry) {

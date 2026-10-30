@@ -41,6 +41,18 @@ void main() {
     },
   );
 
+  test('a reopened cache reuses the persisted byte count', () async {
+    final store = ChapterCacheStore(keys: keys);
+    await _write(store, 'a', '1', '中文正文');
+    expect(store.textEncodes, 0);
+    await Hive.close();
+
+    final reopened = ChapterCacheStore(keys: keys);
+    expect((await reopened.stats()).byteCount, 12);
+    expect((await reopened.books()).single.stats.byteCount, 12);
+    expect(reopened.textEncodes, 0);
+  });
+
   test('evicts least recently read text and enforces the byte limit', () async {
     final store = ChapterCacheStore(keys: keys, maxEntries: 2, maxBytes: 12);
     await _write(store, 'a', '1', 'aaaa');
