@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
+import 'chapter_cache_bytes.dart';
 import 'encrypted_hive.dart';
 import 'secure_key_provider.dart';
 
@@ -156,14 +157,14 @@ class ChapterCacheStore implements ChapterCache {
   Future<Box<dynamic>>? _opening;
   Future<void> _writes = Future<void>.value();
   final Map<String, int> _accessTimes = {};
-  final Expando<int> _byteCounts = Expando<int>();
+  final _byteCounter = ChapterCacheByteCounter();
   int _lastAccessTime = 0;
 
   /// Number of texts encoded to measure their size, so a regression test can
   /// assert that a reopened cache reuses the persisted measurement instead of
   /// re-encoding every chapter.
   @visibleForTesting
-  int textEncodes = 0;
+  int get textEncodes => _byteCounter.encodes;
 
   Future<Box<dynamic>> _box() async {
     // P1-5: decrypted chapter text stays in the encrypted box (offline
@@ -205,36 +206,7 @@ class ChapterCacheStore implements ChapterCache {
       value['text'] is String &&
       (value['text'] as String).trim().isNotEmpty;
 
-  int _bytes(Map entry) {
-    final text = entry['text'] as String;
-    // Reuse the measurement persisted with the record only when it can be the
-    // one this store wrote: at least one byte per UTF-16 code unit and at most
-    // three. A count equal to the code-unit length is exactly what an
-    // all-ASCII text measures; if the text contains any non-ASCII code unit,
-    // that count under-reports (each such unit takes at least two bytes), so
-    // it is re-measured instead of trusted. Other in-range counts are the
-    // values this store itself persists for non-ASCII text, and trusting them
-    // is what keeps a restart from re-encoding every chapter.
-    final stored = entry['bytes'];
-    if (stored is int &&
-        stored >= text.length &&
-        stored <= text.length * 3 &&
-        (stored != text.length || _isAscii(text))) {
-      return stored;
-    }
-    final cached = _byteCounts[entry];
-    if (cached != null) return cached;
-    textEncodes++;
-    return _byteCounts[entry] = utf8.encode(text).length;
-  }
-
-  /// Whether every UTF-16 code unit is ASCII, i.e. one byte in UTF-8.
-  static bool _isAscii(String text) {
-    for (var index = 0; index < text.length; index++) {
-      if (text.codeUnitAt(index) > 0x7F) return false;
-    }
-    return true;
-  }
+  int _bytes(Map entry) => _byteCounter.bytesOf(entry);
 
   int _accessedAt(Map entry) {
     final value = entry['accessedAt'];
