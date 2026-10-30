@@ -1338,7 +1338,9 @@ async fn download_and_save(
     } else {
         ctx.src_dir.clone()
     };
-    std::fs::create_dir_all(&src_dir).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(&src_dir)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut ext = ".mp4".to_string();
     if let Some(idx) = video_url.rfind('.') {
@@ -1355,32 +1357,40 @@ async fn download_and_save(
     let filename = format!("{video_id}{ext}");
     let fp = Path::new(&src_dir).join(&filename);
 
-    if let Ok(info) = std::fs::metadata(&fp) {
+    if let Ok(info) = tokio::fs::metadata(&fp).await {
         if info.len() > 0 {
             // The cache keeps the downloaded bytes exactly as they arrived
             // (CENC-encrypted when the source is encrypted); the serve path
             // decrypts ranges on demand. All this path has to do is keep the
             // key sidecar in place — which also repairs a sidecar lost to a
             // crash between the download's rename and its sidecar write.
-            if !content_key.is_empty()
-                && cache_cenc_state(&fp) == CacheCencState::Encrypted
-                && read_key_sidecar(&fp).as_deref() != Some(content_key)
-            {
-                write_key_sidecar(&fp, content_key)?;
-            }
+            // The moov/sidecar reads are blocking file I/O, so they run on
+            // the blocking pool instead of an async worker.
+            let cache_path = fp.clone();
+            let cache_key = content_key.to_vec();
+            tokio::task::spawn_blocking(move || {
+                if !cache_key.is_empty()
+                    && cache_cenc_state(&cache_path) == CacheCencState::Encrypted
+                    && read_key_sidecar(&cache_path).as_deref() != Some(cache_key.as_slice())
+                {
+                    write_key_sidecar(&cache_path, &cache_key)?;
+                }
+                Ok::<(), String>(())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             return Ok(format!("/src/{filename}"));
         }
     }
 
     let part_path = PathBuf::from(format!("{}.part", fp.display()));
-    let _ = std::fs::remove_file(&part_path);
+    let _ = tokio::fs::remove_file(&part_path).await;
 
     if streaming_client().is_some() {
         // Streaming download: the body is written chunk by chunk and never
         // held whole in memory (P1-9). `VIDEO_CACHE_LOCK` above still
-        // serializes downloads; the lock is kept because the cache file,
-        // the key sidecar, and the prune pass below are not safe to run
-        // concurrently for the same video.
+        // serializes downloads; the cache file and its key sidecar must not
+        // be written concurrently for the same video.
         // The streaming client bypasses `UpstreamClient::do_request`, so
         // apply the mock-origin rewrite here; without it the download
         // would go to the real upstream instead of the mock server and
@@ -1389,27 +1399,35 @@ async fn download_and_save(
         if let Err(err) =
             stream_download_to_file(&download_url, UA_WINDOWS_BROWSER, &part_path).await
         {
-            let _ = std::fs::remove_file(&part_path);
+            let _ = tokio::fs::remove_file(&part_path).await;
             return Err(err);
         }
     } else {
         // No TLS provider installed in this process (unit-test embedding
         // without the upstream transport): fall back to the shared
-        // whole-body download instead of failing outright.
-        let data = unsigned_get(ctx, video_url, UA_WINDOWS_BROWSER)
-            .await
-            .ok_or_else(|| "download video: request failed".to_string())?;
+        // whole-body download instead of failing outright. The per-file
+        // video cap still bounds the read.
+        let data = unsigned_get(
+            ctx,
+            video_url,
+            UA_WINDOWS_BROWSER,
+            MAX_VIDEO_DOWNLOAD_BYTES as usize,
+        )
+        .await
+        .ok_or_else(|| "download video: request failed".to_string())?;
         if data.len() as u64 > MAX_VIDEO_DOWNLOAD_BYTES {
             return Err(format!(
                 "download video: {} bytes exceeds cap {MAX_VIDEO_DOWNLOAD_BYTES}",
                 data.len()
             ));
         }
-        std::fs::write(&part_path, &data).map_err(|e| e.to_string())?;
+        tokio::fs::write(&part_path, &data)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
-    if let Err(err) = std::fs::rename(&part_path, &fp) {
-        let _ = std::fs::remove_file(&part_path);
+    if let Err(err) = tokio::fs::rename(&part_path, &fp).await {
+        let _ = tokio::fs::remove_file(&part_path).await;
         return Err(err.to_string());
     }
     // The bytes on disk stay exactly as downloaded — encrypted when the
@@ -1417,13 +1435,25 @@ async fn download_and_save(
     // decrypt ranges on demand, now and in later processes; if it cannot be
     // written the entry would be undecodable, so fail the download instead
     // of leaving a dead cache file behind.
-    if !content_key.is_empty() && cache_cenc_state(&fp) == CacheCencState::Encrypted {
-        if let Err(err) = write_key_sidecar(&fp, content_key) {
-            let _ = std::fs::remove_file(&fp);
+    if !content_key.is_empty() {
+        let key_path = fp.clone();
+        let key = content_key.to_vec();
+        let sidecar = tokio::task::spawn_blocking(move || {
+            if cache_cenc_state(&key_path) != CacheCencState::Encrypted {
+                return Ok(());
+            }
+            write_key_sidecar(&key_path, &key)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if let Err(err) = sidecar {
+            let _ = tokio::fs::remove_file(&fp).await;
             return Err(err);
         }
     }
-    prune_src_cache(&src_dir, &fp);
+    // Eviction walks the whole cache directory, so it must not run on the
+    // request path; schedule it instead of awaiting it.
+    schedule_prune_src_cache(&src_dir, fp);
 
     Ok(format!("/src/{filename}"))
 }
@@ -1436,15 +1466,41 @@ struct CacheEntry {
     when: std::time::SystemTime,
 }
 
+/// Serializes background prune passes: at most one runs at a time, and a
+/// request that arrives while one is running does not queue another.
+static PRUNE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+
+/// Requests a cache-eviction pass off the request path.
+///
+/// The pass walks the whole `src_dir` and stats every candidate, so it must
+/// not run on an async worker or hold up the response; it is spawned and
+/// never awaited. At most one pass runs at a time; a request that arrives
+/// while a pass is in flight is skipped (the next download schedules again).
+pub(crate) fn schedule_prune_src_cache(src_dir: &str, keep: PathBuf) {
+    schedule_prune_src_cache_with_budget(src_dir, keep, MAX_VIDEO_CACHE_BYTES);
+}
+
+fn schedule_prune_src_cache_with_budget(src_dir: &str, keep: PathBuf, max_bytes: i64) {
+    let src_dir = src_dir.to_string();
+    tokio::spawn(async move {
+        let Ok(_guard) = PRUNE_LOCK.try_lock() else {
+            return;
+        };
+        let outcome = tokio::task::spawn_blocking(move || {
+            prune_src_cache_with_budget(&src_dir, &keep, max_bytes)
+        })
+        .await;
+        if let Err(err) = outcome {
+            log::warn!("cache prune task failed: {err}");
+        }
+    });
+}
+
 /// Removes the oldest completed cached files once the cache exceeds the
 /// limit. Videos and manga images share `src_dir`, so both count toward the
 /// same budget: manga images are the content-addressed `img_<sha256>.<ext>`
 /// files, and they are evictable like videos (re-downloadable on demand).
 /// In-flight downloads (`.part` / `.tmp`) are never counted or deleted.
-pub(crate) fn prune_src_cache(src_dir: &str, keep: &Path) {
-    prune_src_cache_with_budget(src_dir, keep, MAX_VIDEO_CACHE_BYTES);
-}
-
 fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
     let Ok(entries) = std::fs::read_dir(src_dir) else {
         return;
@@ -3131,6 +3187,60 @@ mod cenc_sample_fixture {
         assert!(new_image.exists(), "kept image must survive");
         assert!(in_flight.exists(), "in-flight .part must never be deleted");
         assert!(unrelated.exists(), "unrelated files must never be deleted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Eviction now runs off the request path, once at a time. While a pass
+    /// holds the lock a newly scheduled one must skip instead of queueing, and
+    /// once the lock is free the next request's pass evicts.
+    #[tokio::test]
+    async fn scheduled_prune_runs_in_the_background_and_never_overlaps() {
+        let dir = std::env::temp_dir().join(format!(
+            "fqapp-prune-bg-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let write_at = |name: &str, secs: u64| {
+            let path = dir.join(name);
+            std::fs::write(&path, vec![b'x'; 60]).expect("write cache file");
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open cache file")
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .expect("set mtime");
+            path
+        };
+        let old_video = write_at("old.mp4", 50);
+        let new_video = write_at("new.mp4", 200);
+        let src_dir = dir.to_string_lossy().into_owned();
+
+        // Hold the pass lock: a scheduled pass must skip while one is
+        // already running instead of queueing behind it.
+        let guard = PRUNE_LOCK.lock().await;
+        schedule_prune_src_cache_with_budget(&src_dir, new_video.clone(), 100);
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            old_video.exists(),
+            "a scheduled pass must not run while one is already running"
+        );
+        drop(guard);
+
+        // Once the lock is free the next scheduled pass evicts. Retry because
+        // other tests in this binary share the same pass lock.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while old_video.exists() && tokio::time::Instant::now() < deadline {
+            schedule_prune_src_cache_with_budget(&src_dir, new_video.clone(), 100);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            !old_video.exists(),
+            "the scheduled pass must evict the oldest file"
+        );
+        assert!(new_video.exists(), "the kept file must survive");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
