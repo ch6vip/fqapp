@@ -295,6 +295,16 @@
       "lines": 445,
       "symbol": "Widget build(BuildContext context) => Theme("
     },
+    "lib/widgets/detail/detail_comment_tile.dart::_DetailCommentTileState.build": {
+      "line": 74,
+      "lines": 115,
+      "symbol": "Widget build(BuildContext context) {"
+    },
+    "lib/widgets/detail/detail_comment_tile.dart::_ReplyTile.build": {
+      "line": 314,
+      "lines": 85,
+      "symbol": "Widget build(BuildContext context) {"
+    },
     "lib/widgets/detail/detail_description.dart::_DetailDescriptionState.build": {
       "line": 32,
       "lines": 111,
@@ -313,16 +323,6 @@
     "lib/widgets/detail/detail_read_bar.dart::DetailReadBar.build": {
       "line": 38,
       "lines": 253,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/detail/detail_reviews.dart::_DetailCommentTileState.build": {
-      "line": 173,
-      "lines": 115,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/widgets/detail/detail_reviews.dart::_ReplyTile.build": {
-      "line": 413,
-      "lines": 85,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/detail/detail_reviews_sheet.dart::_DetailReviewsSheetState.build": {

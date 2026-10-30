@@ -88,6 +88,10 @@ class _DetailDirectorySheetState extends State<DetailDirectorySheet> {
     setState(_filter);
   }
 
+  /// Chapters listed before the saved one count as already read.
+  bool _isRead(int index) =>
+      widget.currentIndex != null && index < widget.currentIndex!;
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
@@ -304,8 +308,8 @@ class _DetailDirectorySheetState extends State<DetailDirectorySheet> {
                             'detail_directory_chapter_${chapter.itemId}',
                           ),
                           chapter: chapter,
-                          index: index,
                           current: index == widget.currentIndex,
+                          read: _isRead(index),
                           onTap: () => Navigator.pop(context, chapter),
                         ),
                       ],

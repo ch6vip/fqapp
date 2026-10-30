@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -117,6 +116,73 @@ void main() {
     });
   }
 
+  testWidgets('directory rows carry right-aligned 已读 / 读到这里 labels', (
+    tester,
+  ) async {
+    await _pumpBook(
+      tester,
+      store: MemoryReaderStore(
+        entry: {'kind': 'book', 'chapterId': 'chapter-23', 'episode': 0},
+      ),
+    );
+    expect(find.text('已读'), findsOneWidget);
+    expect(find.text('读到这里'), findsOneWidget);
+    // 读过的 22 章标「已读」，23 章标「读到这里」，24 章没有任何标签。
+    final currentRow = find.byKey(
+      const ValueKey('detail_preview_chapter_chapter-23'),
+    );
+    expect(
+      find.descendant(of: currentRow, matching: find.text('读到这里')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('detail_preview_chapter_chapter-24')),
+        matching: find.text('已读'),
+      ),
+      findsNothing,
+    );
+    // 标签贴右：右边缘与目录预览列的右边缘对齐。
+    final previewRight = tester
+        .getTopRight(find.byKey(const Key('detail_preview_chapters')))
+        .dx;
+    expect(tester.getTopRight(find.text('已读')).dx, closeTo(previewRight, 1));
+    expect(tester.getTopRight(find.text('读到这里')).dx, closeTo(previewRight, 1));
+  });
+
+  testWidgets('the resume row shows the relative save time', (tester) async {
+    await _pumpBook(
+      tester,
+      store: MemoryReaderStore(
+        entry: {
+          'kind': 'book',
+          'chapterId': 'chapter-23',
+          'episode': 0,
+          'time': DateTime.now()
+              .subtract(const Duration(days: 3))
+              .millisecondsSinceEpoch,
+        },
+      ),
+    );
+    expect(find.byKey(const Key('detail_resume_row')), findsOneWidget);
+    expect(find.text('3 天前'), findsOneWidget);
+  });
+
+  testWidgets('下载 folds whole-book download and offline cache into a sheet', (
+    tester,
+  ) async {
+    await _pumpBook(tester);
+    // 改版后页面上没有额外的缓存入口，下载弹层承载这两个行为。
+    expect(find.byKey(const Key('detail_read_cached')), findsNothing);
+    await tester.tap(find.byKey(const Key('detail_action_下载')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('detail_download_sheet')), findsOneWidget);
+    expect(find.byKey(const Key('detail_download_all')), findsOneWidget);
+    expect(find.byKey(const Key('detail_download_cached')), findsOneWidget);
+    expect(find.text('整本下载'), findsOneWidget);
+    expect(find.text('离线缓存'), findsOneWidget);
+  });
+
   testWidgets('e-ink renders the rating and primary action in black', (
     tester,
   ) async {
@@ -132,14 +198,13 @@ void main() {
         },
       },
     );
-    expect(find.byKey(const Key('detail_masthead_wash')), findsNothing);
-    final star = tester.widget<Icon>(
+    final star = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const Key('detail_rating_line')),
-        matching: find.byIcon(LucideIcons.star),
+        matching: find.text('★'),
       ),
     );
-    expect(star.color, Colors.black);
+    expect(star.style!.color, Colors.black);
     final pill = tester.widget<Container>(
       find
           .descendant(

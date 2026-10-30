@@ -7,21 +7,27 @@ import 'detail_style.dart';
 /// Bottom action bar: secondary actions (听书 / 下载) on the left and the
 /// primary read / play call to action as a filled pill on the right.
 ///
-/// The bar itself is always mounted — while loading it renders disabled
-/// instead of disappearing, so the page never jumps when data arrives.
+/// Mockup: surface fill with a 1px top line, 8/12/14 padding, two 54dp
+/// icon+label items (20dp icon, 10dp muted label) and a 42dp accent pill.
+/// The bar is always mounted — while loading it renders disabled instead of
+/// disappearing, so the page never jumps when data arrives.
 class DetailReadBar extends StatelessWidget {
   final String label;
-  final IconData icon;
   final bool opening;
 
   /// False while the catalogue is loading, empty or failed.
   final bool enabled;
+
+  /// Secondary entries (听书 / 下载) can stay tappable while the catalogue
+  /// loads: 下载 opens the download sheet, which also offers the cached copy.
+  final bool actionsEnabled;
+
   final VoidCallback onRead;
 
   /// Opens the listening page. Hidden when the work has no audio version.
   final VoidCallback? onListen;
 
-  /// Starts (or stops) the whole-book download.
+  /// Opens the download sheet (整本下载 / 离线缓存).
   final VoidCallback? onDownload;
 
   /// Running whole-book batch: its progress replaces the static download icon.
@@ -30,10 +36,10 @@ class DetailReadBar extends StatelessWidget {
   const DetailReadBar({
     super.key,
     required this.label,
-    required this.icon,
     required this.opening,
     required this.onRead,
     this.enabled = true,
+    this.actionsEnabled = true,
     this.onListen,
     this.onDownload,
     this.download,
@@ -47,7 +53,7 @@ class DetailReadBar extends StatelessWidget {
     final secondary = <_Secondary>[
       if (onListen != null)
         (
-          icon: LucideIcons.headphones,
+          icon: LucideIcons.headset,
           label: '听书',
           keyName: '听书',
           onTap: onListen!,
@@ -56,9 +62,7 @@ class DetailReadBar extends StatelessWidget {
       if (onDownload != null)
         (
           icon: LucideIcons.download,
-          label: download == null
-              ? '下载'
-              : '缓存 ${download!.completed}/${download!.total}',
+          label: '下载',
           keyName: '下载',
           onTap: onDownload!,
           progress: download == null ? null : _fraction(download!),
@@ -68,7 +72,7 @@ class DetailReadBar extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: palette.surface,
-          border: Border(top: BorderSide(color: palette.line, width: 0.6)),
+          border: Border(top: BorderSide(color: palette.line, width: 1)),
         ),
         child: SafeArea(
           top: false,
@@ -77,7 +81,7 @@ class DetailReadBar extends StatelessWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 840),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
                 child: Row(
                   children: [
                     for (final action in secondary) ...[
@@ -88,7 +92,7 @@ class DetailReadBar extends StatelessWidget {
                         onTap: action.onTap,
                         progress: action.progress,
                         compact: largeType,
-                        enabled: enabled,
+                        enabled: actionsEnabled,
                       ),
                       const SizedBox(width: 6),
                     ],
@@ -103,10 +107,10 @@ class DetailReadBar extends StatelessWidget {
                             onTap: onRead,
                             borderRadius: BorderRadius.circular(999),
                             child: Container(
-                              constraints: const BoxConstraints(minHeight: 46),
+                              height: 42,
+                              alignment: Alignment.center,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
-                                vertical: 12,
                               ),
                               decoration: BoxDecoration(
                                 color: active
@@ -114,45 +118,19 @@ class DetailReadBar extends StatelessWidget {
                                     : palette.soft,
                                 borderRadius: BorderRadius.circular(999),
                               ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  if (!largeType) ...[
-                                    if (opening)
-                                      SizedBox.square(
-                                        dimension: 17,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: detailOnAccent(palette),
-                                        ),
-                                      )
-                                    else
-                                      Icon(
-                                        icon,
-                                        color: active
-                                            ? detailOnAccent(palette)
-                                            : palette.muted,
-                                        size: 18,
-                                      ),
-                                    const SizedBox(width: 7),
-                                  ],
-                                  Flexible(
-                                    child: Text(
-                                      opening ? '正在打开' : label,
-                                      textAlign: TextAlign.center,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: active
-                                            ? detailOnAccent(palette)
-                                            : palette.muted,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                        height: 1.4,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                              child: Text(
+                                opening ? '正在打开' : label,
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: active
+                                      ? detailOnAccent(palette)
+                                      : palette.muted,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  height: 1.35,
+                                ),
                               ),
                             ),
                           ),
@@ -174,8 +152,7 @@ class _SecondaryAction extends StatelessWidget {
   final IconData icon;
   final String label;
 
-  /// Stable identifier for the widget key: a running download puts its progress
-  /// into [label], so the label itself cannot be the key.
+  /// Stable identifier for the widget key: 下载 opens a sheet, not a label.
   final String keyName;
   final VoidCallback onTap;
   final bool compact;
@@ -205,30 +182,32 @@ class _SecondaryAction extends StatelessWidget {
         key: Key('detail_action_$keyName'),
         semanticLabel: label,
         onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 54,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (progress == null)
-                Icon(icon, size: 19, color: color)
+                Icon(icon, size: 20, color: color)
               else
                 SizedBox.square(
-                  dimension: 19,
+                  dimension: 20,
                   child: CircularProgressIndicator(
                     value: progress.clamp(0.0, 1.0).toDouble(),
                     strokeWidth: 2,
                     color: color,
                   ),
                 ),
-              if (!compact) ...[
-                const SizedBox(height: 2),
+              if (!compact)
                 Text(
                   label,
-                  style: TextStyle(color: color, fontSize: 10.5, height: 1.25),
+                  style: TextStyle(
+                    color: palette.muted,
+                    fontSize: 10,
+                    height: 1.4,
+                  ),
                 ),
-              ],
             ],
           ),
         ),
@@ -237,9 +216,6 @@ class _SecondaryAction extends StatelessWidget {
   }
 }
 
-/// A secondary action: what it shows, what it opens, and — for a running
-/// whole-book download — the batch progress the entry renders in place of its
-/// static icon.
 typedef _Secondary = ({
   IconData icon,
   String label,

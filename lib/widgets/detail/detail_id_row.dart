@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../home/home_design.dart';
+import 'detail_style.dart';
 
 /// The work's id, selectable and copyable.
 ///
-/// The redesign drops the card: it is one small monospace line at the very
-/// bottom of the page. The value is the same id the page loads the work with,
-/// so it can be pasted straight into the app's `id:` search.
+/// Mockup: one 11dp monospace muted line at the very bottom, padding 22/18,
+/// `ID xxx` then `复制`. The old card is gone; the value is the same id the
+/// page loads the work with, so it can be pasted into the app's `id:` search.
 class DetailIdRow extends StatelessWidget {
   final String id;
   final bool compact;
@@ -29,19 +30,20 @@ class DetailIdRow extends StatelessWidget {
     final mono = TextStyle(
       color: palette.muted,
       fontSize: compact ? 12 : 11,
-      height: 1.4,
+      height: 1.5,
       fontFamily: 'monospace',
       fontFamilyFallback: const ['Menlo', 'Consolas', 'monospace'],
-      fontFeatures: const [FontFeature.tabularFigures()],
+      fontFeatures: detailMonoFeatures,
     );
     return Padding(
       key: const Key('detail_id_row'),
-      padding: EdgeInsets.symmetric(vertical: compact ? 4 : 18),
+      padding: EdgeInsets.only(top: compact ? 4 : 22, bottom: compact ? 4 : 18),
       child: Row(
         children: [
           Text('ID', style: mono),
-          const SizedBox(width: 6),
-          Expanded(
+          const SizedBox(width: 8),
+          Flexible(
+            fit: FlexFit.loose,
             child: SelectableText(
               id,
               key: const Key('detail_id_text'),
@@ -50,12 +52,15 @@ class DetailIdRow extends StatelessWidget {
             ),
           ),
           if (note != null && note!.isNotEmpty) ...[
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
             Text(note!, style: mono),
           ],
-          TextButton(
+          const SizedBox(width: 8),
+          HomePressable(
             key: const Key('detail_id_copy'),
-            onPressed: () async {
+            semanticLabel: '复制 ID',
+            borderRadius: BorderRadius.circular(4),
+            onTap: () async {
               final messenger = ScaffoldMessenger.maybeOf(context);
               await Clipboard.setData(ClipboardData(text: id));
               messenger?.showSnackBar(
@@ -65,12 +70,6 @@ class DetailIdRow extends StatelessWidget {
                 ),
               );
             },
-            style: TextButton.styleFrom(
-              foregroundColor: palette.muted,
-              minimumSize: const Size(48, 40),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
             child: Text('复制', style: mono),
           ),
         ],

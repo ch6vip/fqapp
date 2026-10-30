@@ -5,11 +5,14 @@ import '../../models/media_item.dart';
 import '../home/home_design.dart';
 import '../home/home_media_card.dart';
 
-/// 3:4 detail cover with a soft shadow, tappable to open the zoomable viewer.
+/// 3:4-ish detail cover, tappable to open the zoomable viewer.
+///
+/// Mockup size is exactly 92×128 at r6 with no shadow, spine or border; e-ink
+/// keeps the shape and paints the artwork in grayscale.
 class DetailCoverTile extends StatelessWidget {
   final MediaItem item;
 
-  /// 桌面两栏布局：封面放大到 168×224。
+  /// 桌面两栏布局：封面放大。
   final bool desktop;
   final bool compact;
 
@@ -23,59 +26,20 @@ class DetailCoverTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final scaler = MediaQuery.textScalerOf(context);
-    // The cover keeps its 3:4 ratio; it only grows a little with text scale so
-    // the text column is never starved of width.
-    final width =
-        (desktop ? (compact ? 112.0 : 168.0) : 92.0) +
-        (scaler.scale(16) - 16).clamp(0.0, 10.0) * 1.2;
+    final width = desktop ? (compact ? 112.0 : 168.0) : 92.0;
+    final height = desktop ? width * 4 / 3 : 128.0;
     return SizedBox(
       width: width,
+      height: height,
       child: HomePressable(
         key: const Key('detail_cover_button'),
         semanticLabel: '查看《${item.title}》封面',
         onTap: () => showDetailCover(context, item),
         borderRadius: BorderRadius.circular(6),
         child: ExcludeSemantics(
-          child: AspectRatio(
-            aspectRatio: 3 / 4,
-            child: _CoverArt(item: item, palette: palette),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CoverArt extends StatelessWidget {
-  final MediaItem item;
-  final HomePalette palette;
-
-  const _CoverArt({required this.item, required this.palette});
-
-  @override
-  Widget build(BuildContext context) {
-    final cover = StoryCover(item: item, cacheWidth: 320);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(6),
-        boxShadow: [
-          // E-ink panels smear soft shadows into grey noise.
-          if (!palette.eink)
-            BoxShadow(
-              color: Colors.black.withValues(alpha: palette.dark ? 0.42 : 0.14),
-              blurRadius: 14,
-              spreadRadius: -2,
-              offset: const Offset(1, 6),
-            ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            palette.eink
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: palette.eink
                 ? ColorFiltered(
                     colorFilter: const ColorFilter.matrix(<double>[
                       0.2126, 0.7152, 0.0722, 0, 0, //
@@ -83,44 +47,10 @@ class _CoverArt extends StatelessWidget {
                       0.2126, 0.7152, 0.0722, 0, 0, //
                       0, 0, 0, 1, 0, //
                     ]),
-                    child: cover,
+                    child: StoryCover(item: item, cacheWidth: 320),
                   )
-                : cover,
-            if (!palette.eink)
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: 10,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Colors.black.withValues(alpha: 0.22),
-                        Colors.white.withValues(alpha: 0.14),
-                        Colors.transparent,
-                      ],
-                      stops: const [0, 0.32, 1],
-                    ),
-                  ),
-                ),
-              ),
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: palette.eink
-                        ? palette.line
-                        : Colors.white.withValues(
-                            alpha: palette.dark ? 0.16 : 0.28,
-                          ),
-                    width: 0.8,
-                  ),
-                ),
-              ),
-            ),
-          ],
+                : StoryCover(item: item, cacheWidth: 320),
+          ),
         ),
       ),
     );

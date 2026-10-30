@@ -12,6 +12,13 @@ Color detailAccentFill(HomePalette palette) =>
 Color detailOnAccent(HomePalette palette) =>
     palette.eink ? palette.surface : Colors.white;
 
+/// Mockup star gold (`--m-star`), which e-ink replaces with ink.
+Color detailStarColor(HomePalette palette) =>
+    palette.eink ? palette.ink : const Color(0xFFF2A93B);
+
+/// Tabular figures for the score and the ID line (`font-variant-numeric`).
+const List<FontFeature> detailMonoFeatures = [FontFeature.tabularFigures()];
+
 /// Primary action: a solid accent pill. This is the only filled style on the
 /// detail page.
 ButtonStyle detailPrimaryButtonStyle(

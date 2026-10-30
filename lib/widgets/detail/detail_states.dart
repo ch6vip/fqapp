@@ -7,8 +7,8 @@ import 'detail_style.dart';
 
 /// A section title for the detail page.
 ///
-/// Same rhythm as the home `HomeSectionHeader` (16dp gutter, 20dp above,
-/// 12dp below), but the trailing action is flexible so a long
+/// Mockup rhythm: 16dp gutter, 20dp above, 10dp below, a 15dp heading and a
+/// 12dp muted action. The trailing action is flexible so a long
 /// `完结 共820章 · 全部 ›` ellipsises on a 320dp screen at 3× text instead of
 /// overflowing the row.
 class DetailSectionHeader extends StatelessWidget {
@@ -25,7 +25,7 @@ class DetailSectionHeader extends StatelessWidget {
         homeGutter,
         homeSectionGap,
         homeGutter,
-        homeHeaderGap,
+        10,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -36,10 +36,9 @@ class DetailSectionHeader extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 16.5,
-                height: 1.25,
+                fontSize: 15,
+                height: 1.5,
                 fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
                 color: palette.ink,
               ),
             ),
@@ -56,8 +55,9 @@ class DetailSectionHeader extends StatelessWidget {
 
 /// `＋ 书架` pill in the app bar (and in the desktop side card).
 ///
-/// The old bookmark icon plus a separate refresh icon became one pill; the
-/// refresh action is now pull-to-refresh on the page itself.
+/// The mockup pill is plain 12dp text inside a 1px hairline capsule; the old
+/// bookmark icon plus a separate refresh icon became this one pill. Refresh is
+/// pull-to-refresh on the page itself.
 class DetailShelfPill extends StatelessWidget {
   final bool inShelf;
   final bool enabled;
@@ -75,6 +75,7 @@ class DetailShelfPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final color = enabled ? palette.ink : palette.muted;
     return IgnorePointer(
       ignoring: !enabled,
       child: HomePressable(
@@ -83,34 +84,19 @@ class DetailShelfPill extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
-            color: inShelf ? palette.soft : Colors.transparent,
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: inShelf ? palette.line : palette.muted,
-              width: 0.8,
-            ),
+            border: Border.all(color: palette.line, width: 1),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                inShelf ? LucideIcons.check : LucideIcons.plus,
-                size: 15,
-                color: enabled ? palette.ink : palette.muted,
-              ),
-              const SizedBox(width: 3),
-              Text(
-                '书架',
-                style: TextStyle(
-                  color: enabled ? palette.ink : palette.muted,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                  height: 1.3,
-                ),
-              ),
-            ],
+          child: Text(
+            inShelf ? '✓ 书架' : '＋ 书架',
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              height: 1.5,
+              fontWeight: FontWeight.w400,
+            ),
           ),
         ),
       ),
@@ -118,10 +104,7 @@ class DetailShelfPill extends StatelessWidget {
   }
 }
 
-/// `上次读到 第205章 风起` — the reader's place, right under the hero.
-///
-/// It used to be an 11sp caption in the bottom action bar; the redesign gives
-/// it a soft rounded row and normal type so resuming is the obvious next tap.
+/// `上次读到 第205章 风起` with a muted relative time on the right.
 class DetailResumeRow extends StatelessWidget {
   final String chapterTitle;
   final String? trailing;
@@ -147,22 +130,20 @@ class DetailResumeRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(LucideIcons.clock_arrow_up, size: 15, color: palette.muted),
-          const SizedBox(width: 8),
           Expanded(
             child: Text(
               '上次读到 $chapterTitle',
               key: const Key('detail_resume_label'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: palette.ink, fontSize: 13, height: 1.4),
+              style: TextStyle(color: palette.ink, fontSize: 12, height: 1.5),
             ),
           ),
           if (trailing != null && trailing!.isNotEmpty) ...[
             const SizedBox(width: 8),
             Text(
               trailing!,
-              style: TextStyle(color: palette.muted, fontSize: 12),
+              style: TextStyle(color: palette.muted, fontSize: 12, height: 1.5),
             ),
           ],
         ],
@@ -183,13 +164,11 @@ class DetailResumeRow extends StatelessWidget {
 class DetailInlineError extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
-  final VoidCallback? onReadCached;
 
   const DetailInlineError({
     super.key,
     required this.message,
     required this.onRetry,
-    this.onReadCached,
   });
 
   @override
@@ -203,34 +182,17 @@ class DetailInlineError extends StatelessWidget {
         children: [
           Text(
             message,
-            style: TextStyle(color: palette.muted, fontSize: 13, height: 1.6),
+            style: TextStyle(color: palette.muted, fontSize: 13, height: 1.5),
           ),
           const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (onReadCached != null)
-                FilledButton.icon(
-                  key: const Key('detail_read_cached'),
-                  onPressed: onReadCached,
-                  style: detailPrimaryButtonStyle(
-                    palette,
-                    minimumSize: const Size(110, 42),
-                  ),
-                  icon: const Icon(LucideIcons.book_open, size: 16),
-                  label: const Text('从缓存阅读'),
-                ),
-              OutlinedButton.icon(
-                onPressed: onRetry,
-                style: detailOutlineButtonStyle(
-                  palette,
-                  minimumSize: const Size(88, 42),
-                ),
-                icon: const Icon(LucideIcons.refresh_cw, size: 16),
-                label: const Text('重试'),
-              ),
-            ],
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            style: detailOutlineButtonStyle(
+              palette,
+              minimumSize: const Size(88, 40),
+            ),
+            icon: const Icon(LucideIcons.refresh_cw, size: 16),
+            label: const Text('重试'),
           ),
         ],
       ),
@@ -271,7 +233,7 @@ class DetailSkeleton extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               bar(title, 16),
-              const SizedBox(height: homeHeaderGap),
+              const SizedBox(height: 10),
               for (final line in lines) ...[
                 bar(line, 12),
                 const SizedBox(height: 8),
@@ -287,6 +249,69 @@ class DetailSkeleton extends StatelessWidget {
         section(title: 0.16, lines: const [0.9, 0.86, 0.9]),
         section(title: 0.12, lines: const [1, 0.82]),
       ],
+    );
+  }
+}
+
+/// One row of the download sheet (整本下载 / 离线缓存).
+///
+/// The mockup keeps the phone rest layout to a single 下载 item, so the
+/// whole-book batch and the cached copy fold into this sheet.
+class DetailSheetOption extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const DetailSheetOption({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.enabled = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final color = enabled ? palette.ink : palette.muted;
+    return IgnorePointer(
+      ignoring: !enabled,
+      child: HomePressable(
+        semanticLabel: title,
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(color: color, fontSize: 14, height: 1.4),
+                    ),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: palette.muted,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

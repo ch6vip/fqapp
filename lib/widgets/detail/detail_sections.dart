@@ -54,12 +54,12 @@ class DetailTagChips extends StatelessWidget {
     if (tags.isEmpty) return const SizedBox.shrink();
     return Wrap(
       key: const Key('detail_tag_chips'),
-      spacing: 8,
-      runSpacing: 8,
+      spacing: 6,
+      runSpacing: 6,
       children: [
         for (final tag in tags)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
             decoration: BoxDecoration(
               color: palette.soft,
               borderRadius: BorderRadius.circular(999),
@@ -69,9 +69,8 @@ class DetailTagChips extends StatelessWidget {
               tag,
               style: TextStyle(
                 color: palette.muted,
-                fontSize: desktop ? 13 : 11.5,
-                fontWeight: FontWeight.w500,
-                height: 1.35,
+                fontSize: desktop ? 13 : 11,
+                height: 1.5,
               ),
             ),
           ),
