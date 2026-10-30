@@ -27,6 +27,7 @@ import '../models/category_front.dart';
 import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
 import 'app_log.dart';
+import 'api_response_decoder.dart';
 import 'backend_service.dart';
 import 'backend_transport.dart';
 import 'chapter_text_formatter.dart';
@@ -197,12 +198,17 @@ class ApiClient {
     return resolveBackendResource(_resourceBase, raw);
   }
 
-  /// Decodes and envelope-checks a response body on a background isolate so
-  /// large JSON payloads never jank the UI thread.
-  Future<Map<String, dynamic>> _decodeAsync(http.Response r) async {
+  /// Decodes and envelope-checks a response body.
+  ///
+  /// Small envelopes stay on the calling isolate — an isolate hop costs more
+  /// than the decode — while large payloads move off the UI thread.
+  Future<Map<String, dynamic>> _decodeAsync(http.Response r) {
     final statusCode = r.statusCode;
     final bodyBytes = r.bodyBytes;
-    return Isolate.run(() => _decodeEnvelope(statusCode, bodyBytes));
+    return decodeResponseBody(
+      bodyBytes.length,
+      () => _decodeEnvelope(statusCode, bodyBytes),
+    );
   }
 
   /// Sends a request to the local backend with a timeout.
