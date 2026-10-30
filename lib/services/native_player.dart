@@ -595,21 +595,25 @@ class NativePlayer {
   Future<void> _releaseNative() {
     final playerId = _playerId;
     if (playerId == null) return Future<void>.value();
-    return _nativeRelease ??= () {
-      _instances.remove(playerId);
-      _retire(playerId);
-      return _disposeNative(playerId);
-    }();
+    return _nativeRelease ??= _disposeNative(playerId);
   }
 
-  static Future<void> _disposeNative(int playerId) async {
+  Future<void> _disposeNative(int playerId) async {
+    _instances.remove(playerId);
+    _retire(playerId);
     try {
       await _channel
           .invokeMethod<void>('dispose', {'id': playerId})
           .timeout(_methodTimeout);
-    } catch (_) {
-      // Local state is already retired; native teardown is best effort when
-      // the engine/channel itself is shutting down.
+    } catch (error) {
+      // 本地状态已摘除，原生 teardown 仍尽力而为：失败不吞掉诊断（日志里
+      // 只留类型，异常文本可能带原生载荷），并清掉记忆化，让下一次释放
+      // （dispose 重入、迟到的 create 回复）还能重试。
+      AppLog.w(
+        'player-native',
+        'dispose failed playerId=$playerId (${error.runtimeType})',
+      );
+      _nativeRelease = null;
     }
   }
 
