@@ -311,6 +311,13 @@ class DramaPage extends ConsumerStatefulWidget {
   ConsumerState<DramaPage> createState() => _DramaPageState();
 }
 
+/// 桌面端海报格列数：一格 190dp 宽、钳在 3–9 列。
+///
+/// 看剧/漫剧的瀑布格与最近/收藏的双列格共用这一个口径，改动只在这里。
+/// 手机端不走它——那边是官方的固定两列。
+int dramaDesktopColumns(BuildContext context) =>
+    (MediaQuery.sizeOf(context).width / 190).floor().clamp(3, 9);
+
 class _DramaPageState extends ConsumerState<DramaPage>
     with WidgetsBindingObserver {
   static const _pullRefreshTrigger = 64.0;
@@ -1568,7 +1575,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
     if (isWindowsDesktop) {
-      columns = (MediaQuery.sizeOf(context).width / 190).floor().clamp(3, 9);
+      columns = dramaDesktopColumns(context);
     }
     final bottomInset = _effectiveBottomInset(context);
     return NotificationListener<ScrollNotification>(
@@ -4497,6 +4504,11 @@ class _LocalListState extends State<_LocalList> {
             onFind: widget.onFind,
             buttonLabel: fromShelf ? '找视频' : '找短剧',
           );
+          // 桌面端跟看剧/漫剧同口径铺列（[dramaDesktopColumns]，行距也放到
+          // 16）；手机保持官方的双列 8dp。原先这里恒写 2 列，桌面上两列会被
+          // 拉到近 700dp 宽，和隔壁频道完全两种排版。
+          final desktopGrid = isWindowsDesktop;
+          final columns = desktopGrid ? dramaDesktopColumns(context) : 2;
           final body = filtered.isEmpty
               ? empty
               : GridView.builder(
@@ -4508,12 +4520,12 @@ class _LocalListState extends State<_LocalList> {
                     12,
                     MediaQuery.paddingOf(context).bottom + 72.0 + 20,
                   ),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
                     crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
+                    mainAxisSpacing: desktopGrid ? 16 : 8,
                     // 官方封面 10:14 + 粗体两行标题 + 进度行。
-                    childAspectRatio: 0.56,
+                    childAspectRatio: desktopGrid ? .58 : 0.56,
                   ),
                   // 尾部页脚「已显示全部内容」（官方 `u4.a()`）。
                   itemCount: filtered.length + 1,

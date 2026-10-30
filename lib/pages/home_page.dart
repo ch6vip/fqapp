@@ -247,8 +247,16 @@ class _HomePageState extends ConsumerState<HomePage> {
       backgroundColor: palette.canvas,
       body: Align(
         alignment: Alignment.topCenter,
+        // 阅读宽度：手机/平板压 840（一屏三到五列，再宽眼睛就散）。
+        //
+        // 桌面不吃固定 1440：2560 的窗口里只占一半多，两侧各空 560dp。
+        // 宽度交给窗口后，列数由 homeShelfColumns 按「一格 190dp，钳 6–9 列」
+        // 反推（见 `widgets/home/home_shelf.dart`）：默认六列、全屏九列，
+        // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: isWindowsDesktop ? 1440 : 840),
+          constraints: BoxConstraints(
+            maxWidth: isWindowsDesktop ? double.infinity : 840,
+          ),
           child: SafeArea(
             bottom: false,
             // 冷启动失败不再整页替换：搜索行与分类条留在原位，错误信息进
