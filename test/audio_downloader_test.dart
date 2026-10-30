@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -30,6 +31,12 @@ class _FakeCdn {
 
   /// 非空时第一次请求回这个状态码（模拟 5xx 抖动）。
   int? failFirstStatus;
+
+  /// 非空时第一次请求先发 [stallBytes] 字节再挂起，等完成才把剩余部分发完。
+  /// 一段要够大，客户端才会在响应结束前把字节交给下载循环（dart:io 的
+  /// HttpClient 对小段响应有缓冲）。
+  Completer<void>? stallFirstResponse;
+  static const int stallBytes = 32 * 1024;
 
   int get requestCount => _served;
 
@@ -72,7 +79,15 @@ class _FakeCdn {
         );
       }
       request.response.contentLength = body.length;
-      request.response.add(body);
+      final stall = _served == 1 ? stallFirstResponse : null;
+      if (stall != null && body.length > stallBytes) {
+        request.response.add(body.sublist(0, stallBytes));
+        await request.response.flush();
+        await stall.future;
+        request.response.add(body.sublist(stallBytes));
+      } else {
+        request.response.add(body);
+      }
       await request.response.close();
     });
   }
@@ -346,6 +361,37 @@ void main() {
     expect(File(cached!.filePath).readAsBytesSync(), content.sublist(0, 100));
   });
 
+  test('discard 后立刻重下不会和旧协程并发写同一个 .part', () async {
+    final gate = Completer<void>();
+    cdn.stallFirstResponse = gate;
+    final part = File(
+      '${temp.path}${Platform.pathSeparator}ch1__toneA.m4a.part',
+    );
+    final engine = downloader();
+
+    await engine.enqueue(book: book(), chapters: [chapterOne()]);
+    // 旧协程已经收到第一段字节并且卡在收流上。
+    await _waitFor(
+      () => part.existsSync() && part.lengthSync() >= _FakeCdn.stallBytes,
+    );
+
+    await engine.discard('ch1', toneId: 'toneA');
+    await engine.enqueue(book: book(), chapters: [chapterOne()]);
+    // 旧协程还没收尾：同 key 的新一轮此时绝不能已经发请求（否则两个循环
+    // 会同时往同一个 `.part` 里写）。
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(cdn.requestCount, 1, reason: '旧协程收尾前不得为同一章再起一轮');
+
+    gate.complete();
+    await settle(engine);
+
+    final task = engine.value.single;
+    expect(task.status, AudioDownloadStatus.completed, reason: '${task.error}');
+    final cached = store.chapters['ch1|toneA'];
+    expect(cached, isNotNull);
+    expect(File(cached!.filePath).readAsBytesSync(), content);
+  });
+
   test('the same chapter in two tones becomes two files', () async {
     final engine = downloader();
     for (final tone in ['toneA', 'toneB']) {
@@ -373,4 +419,13 @@ void main() {
     await settle(engine);
     expect(engine.value.length, firstCount);
   });
+}
+
+Future<void> _waitFor(bool Function() condition) async {
+  final end = DateTime.now().add(const Duration(seconds: 10));
+  while (DateTime.now().isBefore(end)) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  fail('条件在时限内未满足');
 }

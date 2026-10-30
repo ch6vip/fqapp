@@ -237,7 +237,8 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     if (!_isSafe(itemId) || !_isSafe(toneId)) return;
     final task = _tasks.remove(taskId(itemId, toneId));
     task?.abort('discarded');
-    _active.remove(taskId(itemId, toneId));
+    // 不在这里让出 `_active`：旧协程可能还卡在收流/写盘上，槽位要等 `_run`
+    // 真正收尾才释放。提前释放会让同 key 的新一轮与它同时写同一个 `.part`。
     try {
       final dir = await _store.directory();
       await File(
@@ -409,7 +410,9 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
       task.snapshot = task.snapshot.copyWith(
         status: AudioDownloadStatus.paused,
       );
-    } else if (abortReason == 'discarded') {
+    } else if (abortReason == 'discarded' && identical(_tasks[key], task)) {
+      // discard 已经把它摘掉了；期间若又入队了同 key 的新任务，这里不能
+      // 顺手把新的那条也删掉。
       _tasks.remove(key);
     }
     _publish();
@@ -444,6 +447,9 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
       if (received > 0) request.headers.add('Range', 'bytes=$received-');
       request.headers.add('Accept-Encoding', 'identity');
       final response = await request.close();
+      // 等响应头期间可能已被暂停/放弃：先退出，别再碰 `.part`（discard 刚
+      // 删掉的文件不能在这里被旧协程重新创建或删改）。
+      if (task.abortReason != null) return null;
       if (response.statusCode == 403 || response.statusCode == 410) {
         return 'stale-url';
       }
@@ -507,12 +513,16 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
           _publish();
         }
       }
+      // 收流结束与放弃可能同时发生：放弃后不再 flush/改名，否则会把新一轮
+      // 正在写的 `.part` 抢走。
+      if (task.abortReason != null) return null;
       await sink.flush();
       await sink.close();
       sink = null;
       client.close(force: true);
       client = null;
 
+      if (task.abortReason != null) return null;
       if (expectedTotal < 0) return '无法确认下载完整性（服务器未提供总长度）';
       if (received != expectedTotal) return '下载不完整';
       try {
