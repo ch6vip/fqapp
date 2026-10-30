@@ -47,7 +47,11 @@ int sp_atempo_process(struct sp_atempo *atempo,
                       size_t *src_consumed,
                       size_t *dst_written);
 
-/* 冲掉内部残留（尾部的重叠区与余量）。 */
+/*
+ * 冲掉内部残留（尾部的重叠区与余量）。
+ * 返回 0 表示正常：目标缓冲写满时也只写出 *dst_written 字节，调用方取走
+ * 后继续调用即可；负值表示内部错误。
+ */
 int sp_atempo_flush(struct sp_atempo *atempo,
                     void *dst,
                     size_t dst_capacity,
