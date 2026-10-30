@@ -121,7 +121,7 @@ class ReaderPreferences {
     this.titleAlignment = ReaderTitleAlignment.start,
     bool? showReadingInfo,
     ReaderInfoMode readingInfoMode = ReaderInfoMode.compact,
-    this.showSystemStatusBar = false,
+    this.showSystemStatusBar = true,
     this.followSystemBrightness = true,
     this.brightness = 0.5,
     this.fontPath = '',
@@ -207,13 +207,11 @@ class ReaderPreferences {
       listeningFollow: listeningFollow ?? this.listeningFollow,
       narrationHighlight: narrationHighlight ?? this.narrationHighlight,
       continuousReading: continuousReading ?? this.continuousReading,
-      einkRefreshInterval:
-          einkRefreshInterval ?? this.einkRefreshInterval,
+      einkRefreshInterval: einkRefreshInterval ?? this.einkRefreshInterval,
       instantSwipeTurn: instantSwipeTurn ?? this.instantSwipeTurn,
       tapLeftTurnsNext: tapLeftTurnsNext ?? this.tapLeftTurnsNext,
       tapZones: tapZones ?? this.tapZones,
-      showParagraphBubbles:
-          showParagraphBubbles ?? this.showParagraphBubbles,
+      showParagraphBubbles: showParagraphBubbles ?? this.showParagraphBubbles,
     ).normalized();
   }
 
@@ -292,7 +290,7 @@ class ReaderPreferences {
             : ReaderInfoMode.compact,
       ),
       showSystemStatusBar:
-          _boolean(preferences, _showSystemStatusBarKey) ?? false,
+          _boolean(preferences, _showSystemStatusBarKey) ?? true,
       followSystemBrightness:
           _boolean(preferences, _followSystemBrightnessKey) ?? true,
       brightness: _number(preferences, _brightnessKey) ?? 0.5,
@@ -312,11 +310,10 @@ class ReaderPreferences {
           .round()
           .clamp(3, 60),
       listeningFollow: _boolean(preferences, _listeningFollowKey) ?? true,
-      narrationHighlight:
-          _boolean(preferences, _narrationHighlightKey) ?? true,
+      narrationHighlight: _boolean(preferences, _narrationHighlightKey) ?? true,
       continuousReading: _boolean(preferences, _continuousReadingKey) ?? true,
-      einkRefreshInterval:
-          (_number(preferences, _einkRefreshIntervalKey) ?? 10).round(),
+      einkRefreshInterval: (_number(preferences, _einkRefreshIntervalKey) ?? 10)
+          .round(),
       instantSwipeTurn: _boolean(preferences, _instantSwipeTurnKey) ?? false,
       tapLeftTurnsNext: _boolean(preferences, _tapLeftTurnsNextKey) ?? false,
       tapZones: _tapZones(preferences),
@@ -368,20 +365,14 @@ class ReaderPreferences {
       preferences.setBool(_listeningFollowKey, value.listeningFollow),
       preferences.setBool(_narrationHighlightKey, value.narrationHighlight),
       preferences.setBool(_continuousReadingKey, value.continuousReading),
-      preferences.setInt(
-        _einkRefreshIntervalKey,
-        value.einkRefreshInterval,
-      ),
+      preferences.setInt(_einkRefreshIntervalKey, value.einkRefreshInterval),
       preferences.setBool(_instantSwipeTurnKey, value.instantSwipeTurn),
       preferences.setBool(_tapLeftTurnsNextKey, value.tapLeftTurnsNext),
       preferences.setStringList(
         _tapZonesKey,
         encodeReaderTapZones(value.tapZones),
       ),
-      preferences.setBool(
-        _showParagraphBubblesKey,
-        value.showParagraphBubbles,
-      ),
+      preferences.setBool(_showParagraphBubblesKey, value.showParagraphBubbles),
     ]);
   }
 
@@ -397,9 +388,7 @@ class ReaderPreferences {
 
   /// 九宫格加载：无保存值时回落默认；旧单手开关开着且无九宫格时，
   /// 迁移为单手九宫格（保持旧用户行为不变）。
-  static List<ReaderTapZoneAction> _tapZones(
-    SharedPreferences preferences,
-  ) {
+  static List<ReaderTapZoneAction> _tapZones(SharedPreferences preferences) {
     final raw = preferences.getStringList(_tapZonesKey);
     if (raw == null) {
       if (_boolean(preferences, _tapLeftTurnsNextKey) == true) {

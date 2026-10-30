@@ -42,7 +42,7 @@
     "lib/widgets/player/player_split_panel.dart": 618,
     "lib/widgets/player/playlet_danmaku_layer.dart": 569,
     "lib/widgets/player/story_player_panel.dart": 1082,
-    "lib/widgets/reader/reader_appearance_sheet.dart": 1161,
+    "lib/widgets/reader/reader_appearance_sheet.dart": 577,
     "lib/widgets/reader/reader_chapter_layout.dart": 1194,
     "lib/widgets/reader/reader_ideas_sheet.dart": 691,
     "lib/widgets/reader/reader_paged_view.dart": 1045,
@@ -426,11 +426,6 @@
       "line": 65,
       "lines": 104,
       "symbol": "Widget build(BuildContext context) => Semantics("
-    },
-    "lib/widgets/reader/reader_appearance_sheet.dart::_ReaderAppearanceSheetState.build": {
-      "line": 150,
-      "lines": 602,
-      "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/reader/reader_directory_sheet.dart::_ReaderDirectorySheetState.build": {
       "line": 93,

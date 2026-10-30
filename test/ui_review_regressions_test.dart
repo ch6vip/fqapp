@@ -491,10 +491,9 @@ class _AudioSession {
   );
 }
 
-/// Expands the 设置 section of the reading menu. The section keeps its state
-/// across chapter changes, so this is a no-op while it is already open.
+/// 从阅读菜单的「设置」直接打开阅读设置面板。
 Future<void> _openSettings(WidgetTester tester) async {
-  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  if (find.text('阅读设置').evaluate().isNotEmpty) return;
   await tester.tap(find.byKey(const ValueKey('reader-settings')));
   await tester.pumpAndSettle();
 }

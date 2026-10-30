@@ -11,20 +11,22 @@ void main() {
   });
 
   test(
-    'system status bar defaults off and preserves explicit choices',
+    'system status bar defaults on and preserves explicit choices',
     () async {
       final defaults = await ReaderPreferences.load();
-      expect(defaults.showSystemStatusBar, isFalse);
-      await defaults.copyWith(showSystemStatusBar: true).save();
+      expect(defaults.showSystemStatusBar, isTrue);
+      expect(const ReaderPreferences().showSystemStatusBar, isTrue);
+      await defaults.copyWith(showSystemStatusBar: false).save();
       final restored = await ReaderPreferences.load();
-      expect(restored.showSystemStatusBar, isTrue);
-      expect(restored.copyWith(fontSize: 22).showSystemStatusBar, isTrue);
-      await restored.copyWith(showSystemStatusBar: false).save();
-      expect((await ReaderPreferences.load()).showSystemStatusBar, isFalse);
+      expect(restored.showSystemStatusBar, isFalse);
+      expect(restored.copyWith(fontSize: 22).showSystemStatusBar, isFalse);
+      await restored.copyWith(showSystemStatusBar: true).save();
+      expect((await ReaderPreferences.load()).showSystemStatusBar, isTrue);
       SharedPreferences.setMockInitialValues({
         'reader_show_system_status_bar': 'yes',
       });
-      expect((await ReaderPreferences.load()).showSystemStatusBar, isFalse);
+      // 存储值无效时回到默认（显示）。
+      expect((await ReaderPreferences.load()).showSystemStatusBar, isTrue);
     },
   );
 
