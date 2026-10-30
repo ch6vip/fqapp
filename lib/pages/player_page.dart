@@ -46,6 +46,8 @@ import '../widgets/player/player_split_panel.dart';
 import '../widgets/player/player_toast.dart';
 import '../widgets/video_player_chrome.dart';
 
+part 'player_page_progress.dart';
+
 class PlayerPage extends StatefulWidget {
   final String bookId;
   final String kind;
@@ -1647,34 +1649,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     } else {
       _watchTime.stop();
     }
-  }
-
-  Map<String, dynamic> _historyEntry(int index, NativePlayer player) {
-    final durationMs = player.duration > Duration.zero
-        ? player.duration.inMilliseconds
-        : 0;
-    final rawPositionMs = player.position.inMilliseconds;
-    final positionMs = durationMs > 0
-        ? rawPositionMs.clamp(0, durationMs)
-        : rawPositionMs < 0
-        ? 0
-        : rawPositionMs;
-    return {
-      'id': widget.bookId,
-      'kind': _historyKind,
-      'title': widget.title,
-      'bookId': widget.bookId,
-      'seriesId': widget.bookId,
-      'episodeId': widget.eps[index].itemId,
-      'chapterId': widget.eps[index].itemId,
-      'episode': index,
-      'progress': durationMs > 0 ? positionMs / durationMs : 0.0,
-      'position': positionMs / 1000,
-      'duration': durationMs / 1000,
-      'maxScroll': durationMs / 1000,
-      'cover': widget.cover,
-      'time': DateTime.now().millisecondsSinceEpoch,
-    };
   }
 
   /// 保存当前集的续播进度；除首帧外的所有调用点都对应官方
