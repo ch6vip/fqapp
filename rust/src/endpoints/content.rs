@@ -140,13 +140,22 @@ async fn handle_batch(ctx: &Ctx, item_ids: &str) -> ApiResult<Value> {
 
     let mut root: Value = serde_json::from_slice(&raw)
         .map_err(|e| ApiError::Internal(format!("parse upstream json: {e}")))?;
-    let data_map = match root.get("data").and_then(|d| d.as_object()) {
-        Some(d) if !d.is_empty() => d.clone(),
-        _ => return crate::endpoints::util::raw_json(&raw),
-    };
+    if !matches!(
+        root.get("data").and_then(|d| d.as_object()),
+        Some(d) if !d.is_empty()
+    ) {
+        return Ok(root);
+    }
+    // Take the map out of `root` instead of cloning it: every chapter body was
+    // copied once only to replace the original immediately afterwards.
+    let data = root
+        .as_object_mut()
+        .and_then(|root_obj| root_obj.get_mut("data"))
+        .and_then(|d| d.as_object_mut())
+        .expect("data is a non-empty object, checked above");
 
     let mut out: Map<String, Value> = Map::new();
-    for (id, item) in data_map {
+    for (id, item) in std::mem::take(data) {
         match item {
             Value::Object(mut m) => {
                 let enc = m
