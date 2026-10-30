@@ -26,7 +26,9 @@ class SeriesSectionHeader extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 15,
-                height: 1.4,
+                // 版式稿渲染出的 `.sh` 行盒是 24（浏览器按字体度量把 15sp
+                // 撑到 1.6 倍），不是名义上的 1.5。
+                height: 1.6,
                 fontWeight: FontWeight.w700,
                 color: palette.ink,
               ),

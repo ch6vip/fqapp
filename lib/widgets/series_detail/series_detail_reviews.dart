@@ -10,8 +10,9 @@ import 'series_detail_common.dart';
 
 /// 剧评：头部 `剧评 · 952` + 右侧「全部 ›」，下面是竖排的评论行。
 ///
-/// 版式稿：行内 22dp 头像 + 12sp 昵称 + 12sp 相对时间，正文 13/1.5
-/// 最多 4 行，行间 1px 分隔线。桌面只保留最大宽度，不铺满整屏。
+/// 版式稿：行内 22dp 头像 + 12sp 昵称 + 紧跟其后的 12sp 相对时间（8dp 间距，
+/// 不推到右边缘），正文 13/1.5 最多 4 行，行间 1px 分隔线。桌面只保留最大
+/// 宽度，不铺满整屏。
 class SeriesDetailReviews extends StatelessWidget {
   const SeriesDetailReviews({
     super.key,
@@ -119,7 +120,7 @@ class SeriesDetailReviews extends StatelessWidget {
                     ),
             ),
             const SizedBox(width: 8),
-            Expanded(
+            Flexible(
               child: Text(
                 comment.userName,
                 maxLines: 1,

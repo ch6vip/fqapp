@@ -6,8 +6,10 @@ import 'series_detail_theme.dart';
 
 /// 头部：封面、标题、`全80集 · 8.7万次播放`、分类标签，紧接播放 / 收藏。
 ///
-/// 尺寸照版式稿右机：外边距 4/16，封面 96×136 圆角 6，标题 19/1.3，
-/// 状态行 12 灰，标签 11；动作行上距 14、间距 8、高 40。
+/// 尺寸照版式稿右机的渲染结果：外边距 4/16，封面 96×136 圆角 6；标题是
+/// 浏览器默认 `h1` 的样子（26sp / 1.5 行高 / 上下各 0.67em ≈ 17.4 外边距），
+/// 所以它比封面低一截、也比封面的字更大；状态行 12（1.5 行高），标签 11
+/// （1.5 行高，胶囊高 20.5）；动作行上距 14、间距 8、高 40。
 class SeriesDetailHero extends StatelessWidget {
   const SeriesDetailHero({
     super.key,
@@ -63,44 +65,43 @@ class SeriesDetailHero extends StatelessWidget {
     );
   }
 
-  Widget _titleColumn(HomePalette palette) => Padding(
-    padding: const EdgeInsets.only(top: 2),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
+  Widget _titleColumn(HomePalette palette) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        // 浏览器 `h1` 默认 margin-block: 0.67em（26sp → 17.4）。
+        padding: const EdgeInsets.symmetric(vertical: 17.4),
+        child: Text(
           title,
           key: const ValueKey('series-detail-title'),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            fontSize: 19,
-            height: 1.3,
+            fontSize: 26,
+            height: 1.5,
             fontWeight: FontWeight.w700,
             color: palette.ink,
           ),
         ),
-        if (statusLine.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(
-            statusLine,
-            key: const ValueKey('series-detail-status'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, color: palette.muted),
-          ),
-        ],
-        if (categories.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Wrap(
-            key: const ValueKey('series-detail-categories'),
-            spacing: 6,
-            runSpacing: 6,
-            children: [for (final name in categories) _tag(palette, name)],
-          ),
-        ],
+      ),
+      if (statusLine.isNotEmpty)
+        Text(
+          statusLine,
+          key: const ValueKey('series-detail-status'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 12, height: 1.5, color: palette.muted),
+        ),
+      if (categories.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        Wrap(
+          key: const ValueKey('series-detail-categories'),
+          spacing: 6,
+          runSpacing: 6,
+          children: [for (final name in categories) _tag(palette, name)],
+        ),
       ],
-    ),
+    ],
   );
 
   Widget _tag(HomePalette palette, String name) => Container(
@@ -110,7 +111,10 @@ class SeriesDetailHero extends StatelessWidget {
       borderRadius: BorderRadius.circular(99),
       border: palette.eink ? Border.all(color: palette.line) : null,
     ),
-    child: Text(name, style: TextStyle(fontSize: 11, color: palette.muted)),
+    child: Text(
+      name,
+      style: TextStyle(fontSize: 11, height: 1.5, color: palette.muted),
+    ),
   );
 
   Widget _cover(HomePalette palette) => Container(
@@ -150,6 +154,7 @@ class SeriesDetailHero extends StatelessWidget {
             disabledForegroundColor: palette.muted,
             elevation: 0,
             minimumSize: const Size(0, 40),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             shape: const StadiumBorder(),
             textStyle: const TextStyle(
@@ -183,6 +188,7 @@ class SeriesDetailHero extends StatelessWidget {
           disabledForegroundColor: palette.muted,
           side: BorderSide(color: palette.line),
           minimumSize: const Size(0, 40),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           padding: const EdgeInsets.symmetric(horizontal: 16),
           shape: const StadiumBorder(),
           textStyle: const TextStyle(fontSize: 13),

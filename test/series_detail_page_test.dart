@@ -630,8 +630,8 @@ void main() {
           pixels!.getUint8((y * 360 + x) * 4 + c);
       // 右边缘没有文字/封面：同时覆盖状态栏、返回栏与色带淡出后的画布。
       expect(channel(358, 0, 0), closeTo(bandTop.r * 255, 2));
-      // 色带高度 = 安全区顶 32 + 顶栏 44，到这里已经是纯画布。
-      expect(channel(358, 80, 0), closeTo(0xF6, 2));
+      // 色带高度 = 安全区顶 32 + 顶栏 52，到这里已经是纯画布。
+      expect(channel(358, 90, 0), closeTo(0xF6, 2));
       expect(channel(358, 300, 0), closeTo(0xF6, 2));
       // 相邻行不跳变：顶栏边界也不能出现横条。
       for (var y = 1; y < 420; y++) {

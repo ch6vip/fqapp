@@ -460,11 +460,11 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
     );
   }
 
-  /// 顶部淡色带：只铺在状态栏 + 顶栏后面（高度 = 安全区顶 + 44），在
+  /// 顶部淡色带：只铺在状态栏 + 顶栏后面（高度 = 安全区顶 + 顶栏），在
   /// 顶栏下缘淡出到画布。墨水屏 / 灰色系时整页就是画布色。
   Widget _backdrop(HomePalette palette) {
     final top = _bandTop(palette);
-    final height = MediaQuery.paddingOf(context).top + 44;
+    final height = MediaQuery.paddingOf(context).top + seriesDetailTopBarHeight;
     return Stack(
       children: [
         Positioned.fill(child: ColoredBox(color: palette.canvas)),
