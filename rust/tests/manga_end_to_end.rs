@@ -224,3 +224,162 @@ async fn a_tampered_image_is_skipped_instead_of_being_published() {
         "a payload that fails authentication must not be served: {body}"
     );
 }
+
+/// Builds a chapter body whose picInfos list `urls` in order, encrypted for
+/// the pool's first device (secret key 32 hex zeros).
+fn chapter_body(urls: &[&str], encrypt_key_hex: &str) -> String {
+    let pic_infos: Vec<serde_json::Value> = urls
+        .iter()
+        .map(|u| serde_json::json!({ "picUrl": u }))
+        .collect();
+    encrypt_upstream(
+        serde_json::json!({
+            "encrypt_key": encrypt_key_hex,
+            "picInfos": pic_infos,
+        })
+        .to_string()
+        .as_bytes(),
+        "00000000000000000000000000000000",
+    )
+}
+
+/// A chapter with several pictures must serve them in picInfos order, even
+/// though the download pass works on a bounded batch at once.
+#[tokio::test]
+async fn several_pictures_are_served_in_picinfo_order() {
+    let fixture = fixture();
+    let f = &fixture["manga_image"];
+    let image_key_hex = f["key_hex"].as_str().expect("key_hex").to_string();
+    let wire = fixture_bytes(f, "large_wire_b64");
+    let plain = hex::decode(f["large_plain_hex"].as_str().expect("large_plain_hex")).unwrap();
+
+    // Same encrypted bytes under four URL extensions: each URL yields its own
+    // content-addressed name, so the served order is observable without
+    // re-encrypting the payload.
+    let urls = [
+        "https://p3-novel.byteimg.com/origin/1.png",
+        "https://p3-novel.byteimg.com/origin/2.jpg?a=1&b=2",
+        "https://p3-novel.byteimg.com/origin/3.gif",
+        "https://p3-novel.byteimg.com/origin/4.webp",
+    ];
+    let content = chapter_body(&urls, &image_key_hex);
+
+    let dir = TempDir::new("manga-order");
+    let wire_for_mock = wire.clone();
+    let mock = MockUpstream::start(move |req| {
+        if req.path.contains("/origin/") {
+            MockReply {
+                status: 200,
+                headers: vec![("content-type".to_string(), "image/png".to_string())],
+                body: wire_for_mock.clone(),
+            }
+        } else {
+            MockReply::json(serde_json::json!({
+                "data": { "book_id": "7000000000000000001", "content": content }
+            }))
+        }
+    })
+    .await;
+    let server = build_server(&dir, Some(mock.origin.clone()), &[], &[], &pool_json(5)).await;
+    let (status, body) = body_string(&server, &request("/api/v1/manga/1", "")).await;
+    assert_eq!(status, 200, "body: {body}");
+    let parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
+    let images: Vec<&str> = parsed["images"]
+        .as_array()
+        .expect("images array")
+        .iter()
+        .map(|v| v.as_str().expect("served url"))
+        .collect();
+    assert_eq!(images.len(), urls.len(), "all pictures served: {body}");
+    let formats: Vec<&str> = images
+        .iter()
+        .map(|u| u.rsplit_once('.').expect("extension").1)
+        .collect();
+    assert_eq!(
+        formats,
+        ["png", "jpg", "gif", "webp"],
+        "the served order must follow picInfos: {images:?}"
+    );
+    for served in &images {
+        let written = std::fs::read(
+            std::path::Path::new(&server.ctx.src_dir).join(served.trim_start_matches("/src/")),
+        )
+        .expect("written image");
+        assert_eq!(written, plain, "stored image must be the decrypted payload");
+    }
+}
+
+#[tokio::test]
+async fn a_failed_image_is_skipped_without_reordering_the_rest() {
+    let fixture = fixture();
+    let f = &fixture["manga_image"];
+    let image_key_hex = f["key_hex"].as_str().expect("key_hex").to_string();
+    let wire = fixture_bytes(f, "large_wire_b64");
+    let plain = hex::decode(f["large_plain_hex"].as_str().expect("large_plain_hex")).unwrap();
+
+    let urls = [
+        "https://p3-novel.byteimg.com/origin/ok-1.png",
+        "https://p3-novel.byteimg.com/origin/missing.jpg",
+        "https://p3-novel.byteimg.com/origin/ok-2.gif",
+    ];
+    let content = chapter_body(&urls, &image_key_hex);
+
+    let dir = TempDir::new("manga-skip");
+    let wire_for_mock = wire.clone();
+    let mock = MockUpstream::start(move |req| {
+        if req.path.contains("/missing") {
+            return MockReply::status(404);
+        }
+        if req.path.contains("/origin/") {
+            return MockReply {
+                status: 200,
+                headers: vec![("content-type".to_string(), "image/png".to_string())],
+                body: wire_for_mock.clone(),
+            };
+        }
+        MockReply::json(serde_json::json!({
+            "data": { "book_id": "7000000000000000001", "content": content }
+        }))
+    })
+    .await;
+    let server = build_server(&dir, Some(mock.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = body_string(&server, &request("/api/v1/manga/1", "")).await;
+    assert_eq!(status, 200, "body: {body}");
+    let parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
+    let images: Vec<&str> = parsed["images"]
+        .as_array()
+        .expect("images array")
+        .iter()
+        .map(|v| v.as_str().expect("served url"))
+        .collect();
+    let formats: Vec<&str> = images
+        .iter()
+        .map(|u| u.rsplit_once('.').expect("extension").1)
+        .collect();
+    assert_eq!(
+        formats,
+        ["png", "gif"],
+        "a failed download must be skipped, not reorder the others: {images:?}"
+    );
+    assert!(
+        mock.requests()
+            .iter()
+            .any(|r| r.path.contains("/missing.jpg")),
+        "the failing image must still have been requested"
+    );
+    assert_eq!(
+        std::fs::read(
+            std::path::Path::new(&server.ctx.src_dir).join(images[0].trim_start_matches("/src/"))
+        )
+        .unwrap(),
+        plain
+    );
+    assert_eq!(
+        std::fs::read(
+            std::path::Path::new(&server.ctx.src_dir).join(images[1].trim_start_matches("/src/"))
+        )
+        .unwrap(),
+        plain
+    );
+}
