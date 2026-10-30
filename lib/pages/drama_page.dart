@@ -1439,7 +1439,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                   _browseGrid(
                     state,
                     items,
-                    columns: 2,
+                    columns: 3,
                     gridKey: 'drama_episode_grid',
                     titleMaxLines: 2,
                   ),
@@ -1601,6 +1601,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
               ? .58
               : columns == 2
               ? 0.56
+              : titleMaxLines >= 2
+              ? 0.47
               : 0.52,
         ),
         itemCount: items.length,
@@ -4516,7 +4518,7 @@ class _LocalListState extends State<_LocalList> {
           // 拉到近 700dp 宽，和隔壁频道完全两种排版。
           final desktopGrid = isWindowsDesktop ||
               MediaQuery.sizeOf(context).width >= 840;
-          final columns = desktopGrid ? dramaDesktopColumns(context) : 2;
+          final columns = desktopGrid ? dramaDesktopColumns(context) : 3;
           final body = filtered.isEmpty
               ? empty
               : GridView.builder(
@@ -4533,7 +4535,7 @@ class _LocalListState extends State<_LocalList> {
                     crossAxisSpacing: 8,
                     mainAxisSpacing: desktopGrid ? 16 : 8,
                     // 官方封面 10:14 + 粗体两行标题 + 进度行。
-                    childAspectRatio: desktopGrid ? .58 : 0.56,
+                    childAspectRatio: desktopGrid ? .58 : 0.47,
                   ),
                   // 尾部页脚「已显示全部内容」（官方 `u4.a()`）。
                   itemCount: filtered.length + 1,
