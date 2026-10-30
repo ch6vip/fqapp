@@ -26,6 +26,7 @@ import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
+import '../services/update_check_gate.dart';
 import '../widgets/bookshelf_card.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/shelf/shelf_design.dart';
@@ -92,6 +93,10 @@ class LibraryPage extends StatefulWidget {
   final BookDirectoryLoader? directoryLoader;
   final BookChapterCountLoader? chapterCountLoader;
 
+  /// 后台检查目录更新的最短间隔；下拉刷新总是强制检查。测试可传
+  /// [Duration.zero]，让每次可见 / 回前台都真正重查。
+  final Duration updateCheckInterval;
+
   const LibraryPage({
     super.key,
     this.onBrowse,
@@ -101,6 +106,7 @@ class LibraryPage extends StatefulWidget {
     this.connectivity,
     this.directoryLoader,
     this.chapterCountLoader,
+    this.updateCheckInterval = const Duration(minutes: 10),
   });
 
   @override
@@ -124,7 +130,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   String? _collectionFilter;
   bool _visible = false;
   final Map<String, int> _latestChapterCounts = {};
-  Future<void>? _updatesFuture;
+  final _updateChecks = UpdateCheckGate();
 
   /// 已完成入场动画的条目下标：HomeEntrance 只在首屏（index 0–5）播一次，
   /// 滚动回看不重放（HomeEntrance 的 animate 开关约定）。
@@ -164,8 +170,12 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     if (_visible) _load();
   }
 
-  Future<void> _refreshUpdates() => _updatesFuture ??= _checkUpdates()
-      .whenComplete(() => _updatesFuture = null);
+  /// 可见 / 回前台的重查走最短间隔；下拉刷新用 `force: true` 绕过。
+  Future<void> _refreshUpdates({bool force = false}) => _updateChecks.run(
+    _checkUpdates,
+    interval: widget.updateCheckInterval,
+    force: force,
+  );
 
   Future<void> _checkUpdates() async {
     final cache = widget.cacheStore ?? ChapterCacheStore.instance;
@@ -175,6 +185,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
             !ImportedBookStore.isLocalBookId(entry.item.id))
           entry.item,
     ];
+    var changed = false;
     for (final item in books) {
       try {
         final book = await cache.savedCatalogue(item.id);
@@ -182,30 +193,37 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
         if (book != null &&
             book.chapters.length > (_latestChapterCounts[item.id] ?? 0)) {
           _latestChapterCounts[item.id] = book.chapters.length;
+          changed = true;
         }
       } catch (_) {}
     }
     if (!mounted) return;
-    if (_visible) _load();
-    if (widget.cacheStore != null && widget.chapterCountLoader == null) return;
-    final network = await (widget.connectivity ?? probeConnectivity)();
-    if (network?.online != true) return;
-    for (var i = 0; i < books.length; i += 3) {
-      if (!mounted || !_visible) return;
-      await Future.wait(
-        books.skip(i).take(3).map((item) async {
-          try {
-            final count = await (widget.chapterCountLoader ??
-                loadBookChapterCount)(item.id);
-            if (!mounted || count <= 0) return;
-            _latestChapterCounts[item.id] = count;
-            if (_visible) _load();
-          } catch (_) {
-            // 单本更新检测失败不清空进度或阻止其他书籍更新。
-          }
-        }),
-      );
+    if (widget.cacheStore == null || widget.chapterCountLoader != null) {
+      final network = await (widget.connectivity ?? probeConnectivity)();
+      if (network?.online == true) {
+        for (var i = 0; i < books.length; i += 3) {
+          if (!mounted || !_visible) break;
+          await Future.wait(
+            books.skip(i).take(3).map((item) async {
+              try {
+                final count =
+                    await (widget.chapterCountLoader ?? loadBookChapterCount)(
+                      item.id,
+                    );
+                if (!mounted || count <= 0) return;
+                if (_latestChapterCounts[item.id] != count) changed = true;
+                _latestChapterCounts[item.id] = count;
+              } catch (_) {
+                // 单本更新检测失败不清空进度或阻止其他书籍更新。
+              }
+            }),
+          );
+        }
+      }
     }
+    // One rebuild for the whole sweep instead of one per batch.
+    if (!mounted) return;
+    if (changed && _visible) _load();
   }
 
   @override
@@ -799,7 +817,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
                   // 只让内容跟手横移：标题栏与工具条固定在顶上，切换后立刻
                   // 显示新的选中项。
                   child: RefreshIndicator(
-                    onRefresh: _refreshUpdates,
+                    onRefresh: () => _refreshUpdates(force: true),
                     child: _content(palette),
                   ),
                 ),
