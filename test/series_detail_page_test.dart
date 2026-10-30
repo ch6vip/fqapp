@@ -12,6 +12,8 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/playlet_comment.dart';
 import 'package:fqapp/models/series_detail.dart';
 import 'package:fqapp/pages/series_detail_page.dart';
+import 'package:fqapp/services/app_theme.dart' show einkModeNotifier;
+import 'package:fqapp/widgets/home/home_design.dart' show HomePalette;
 import 'package:fqapp/widgets/player/story_player_panel.dart' show SeriesStatus;
 
 Chapter _chapter(int index, {bool disabled = false}) => Chapter(
@@ -28,6 +30,7 @@ SeriesDetail _detail({
   SeriesRelateBook? originalBook,
   String seriesColorHex = '#F5E6C8',
   String intro = '这是一段剧集简介，用于基本信息区块的展开收起验证。',
+  String relatedAlbumId = '',
 }) => SeriesDetail(
   seriesId: 'series-1',
   title: '抽象三国第一季',
@@ -46,6 +49,7 @@ SeriesDetail _detail({
   originalBook: originalBook,
   status: status,
   seriesColorHex: seriesColorHex,
+  relatedAlbumId: relatedAlbumId,
 );
 
 PlayletCommentPage _comments() => const PlayletCommentPage(
@@ -57,6 +61,18 @@ PlayletCommentPage _comments() => const PlayletCommentPage(
 );
 
 Widget _host(Widget child) => MaterialApp(home: child);
+
+/// 两色渐变的 [DecoratedBox]：页面背景色带（底栏 scrim 已随改版移除）。
+Finder _twoColorGradient() => find.byWidgetPredicate(
+  (w) =>
+      w is DecoratedBox &&
+      w.decoration is BoxDecoration &&
+      (w.decoration as BoxDecoration).gradient is LinearGradient &&
+      ((w.decoration as BoxDecoration).gradient as LinearGradient)
+              .colors
+              .length ==
+          2,
+);
 
 Future<void> _pump(
   WidgetTester tester, {
@@ -226,7 +242,7 @@ void main() {
     expect(find.text('选集'), findsWidgets);
   });
 
-  testWidgets('选集格子状态与点击：当前集主题色、已看灰字、点击回传下标', (tester) async {
+  testWidgets('选集格子状态与点击：当前集强调色描边、已看灰字、点击回传下标', (tester) async {
     final played = <int>[];
     await _pump(
       tester,
@@ -236,126 +252,151 @@ void main() {
       watchedIds: {'ep-0', 'ep-1', 'ep-2'},
       onPlay: (index) => played.add(index),
     );
-    await _scrollTo(
-      tester,
-      find.byKey(const ValueKey('series-episode-6')),
-      extra: 160,
-    );
-    // 当前集（第 4 格）亮 accent 底白字（真机实证 accent=HSL(色相,0.5,0.39)；
-    // #F5E6C8 → #957432），右上角挂播放中 lottie 角标。
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-6')));
+    // 当前集（第 4 格）用强调色描边 + 淡强调底 + 强调色文字。
     final currentTile = tester.widget<Material>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
         matching: find.byType(Material),
       ),
     );
-    expect(currentTile.color, const Color(0xFF957432));
+    final shape = currentTile.shape! as RoundedRectangleBorder;
+    expect(shape.side.color, HomePalette.accent);
+    expect(currentTile.color, HomePalette.accent.withValues(alpha: 0.08));
     final current = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-3')),
         matching: find.text('4'),
       ),
     );
-    expect(current.style?.color, Colors.white);
+    expect(current.style?.color, HomePalette.accentStrong);
     expect(current.style?.fontWeight, FontWeight.bold);
-    // 已看集（第 1 格）灰字 #66FFFFFF（详情页深色皮肤，@color/agw 同族；
-    // 播放页面板同款白系灰字）。
+    // 已看集（第 1 格）灰字 #706C66（浅色 palette.muted）。
     final watched = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-0')),
         matching: find.text('1'),
       ),
     );
-    expect(watched.style?.color, const Color(0x66FFFFFF));
+    expect(watched.style?.color, const Color(0xFF706C66));
     // 点普通格回传该集下标。
     await tester.tap(find.byKey(const ValueKey('series-episode-6')));
     expect(played, [6]);
   });
 
-  testWidgets('背景与主题色照官方 Zf/Df：series_color_hex 渐变 + 主色 accent', (
-    tester,
-  ) async {
+  testWidgets('跟随浅色主题：画布 + 剧集主色淡色带 + 品牌强调色播放钮', (tester) async {
     await _pump(
       tester,
       detail: _detail(),
       episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
     );
-    // Scaffold 底色 = base；顶部 400dp 渐变 = top→base（Df 渐变层只占
-    // 顶部 400dp，其余露纯主色；top = HSL(40°, 0.396, 0.334) ≈ #776033）。
     final scaffold = tester.widget<Scaffold>(
       find.byKey(const ValueKey('series-detail-page')),
     );
-    expect(scaffold.backgroundColor, const Color(0xFF533D0F));
-    // 底栏 scrim 也是渐变 DecoratedBox，这里只认背景那条两色渐变。
-    final gradientBox = tester.widget<DecoratedBox>(
-      find.byWidgetPredicate(
-        (w) =>
-            w is DecoratedBox &&
-            w.decoration is BoxDecoration &&
-            (w.decoration as BoxDecoration).gradient is LinearGradient &&
-            ((w.decoration as BoxDecoration).gradient as LinearGradient)
-                    .colors
-                    .length ==
-                2,
-      ),
+    expect(scaffold.backgroundColor, const Color(0xFFF6F6F6));
+    // 色带顶部 = 剧集主色 #F5E6C8 按 10% 混到画布，然后淡出到画布。
+    final bandTop = Color.alphaBlend(
+      const Color(0xFFF5E6C8).withValues(alpha: 0.10),
+      const Color(0xFFF6F6F6),
     );
+    final gradientBox = tester.widget<DecoratedBox>(_twoColorGradient());
     final gradient =
         (gradientBox.decoration as BoxDecoration).gradient! as LinearGradient;
-    expect(gradient.colors, const [Color(0xFF776033), Color(0xFF533D0F)]);
-    // 底部「继续播放」钮 = 亮 accent 底白字（`g1.b` 的 n(l(), bright)；
-    // #F5E6C8 的 accent = HSL(40°, 0.5, 0.39) ≈ #957432）。
+    expect(gradient.colors, [bandTop, const Color(0xFFF6F6F6)]);
+    // 播放钮 = 品牌强调色。
     final button = tester.widget<FilledButton>(
       find.byKey(const ValueKey('series-detail-play-button')),
     );
-    expect(button.style!.backgroundColor!.resolve({}), const Color(0xFF957432));
+    expect(button.style!.backgroundColor!.resolve({}), HomePalette.accent);
   });
 
-  testWidgets('品牌色缺失/灰色系时回退官方 #404040（w4）', (tester) async {
-    await _pump(
-      tester,
-      detail: _detail(seriesColorHex: ''),
-      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
-    );
-    final scaffold = tester.widget<Scaffold>(
-      find.byKey(const ValueKey('series-detail-page')),
-    );
-    expect(scaffold.backgroundColor, const Color(0xFF404040));
+  testWidgets('灰色系 / 缺失品牌色时不出色带（页面就是画布色）', (tester) async {
+    for (final hex in <String>['', '#404040']) {
+      await _pump(
+        tester,
+        detail: _detail(seriesColorHex: hex),
+        episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+      );
+      final scaffold = tester.widget<Scaffold>(
+        find.byKey(const ValueKey('series-detail-page')),
+      );
+      expect(scaffold.backgroundColor, const Color(0xFFF6F6F6));
+      expect(_twoColorGradient(), findsNothing);
+    }
   });
 
-  testWidgets('暗色品牌色不发散成浅背景（真机回归：#302010 深棕、白字可读）', (tester) async {
-    // apiprobe 实抓 video_detail 样本 series_color_hex=#302010（HSL 30°,
-    // 0.20, 0.125）。首版移植把 s0.b 上段起点误当分段点、上段终点误当 1.0，
-    // 暗色输入 L 被映射到 0.949 → 近白背景配白字不可读。官方 s0.b 输出
-    // 恒在暗色带（base L∈[0.18,0.2]）。
-    await _pump(
-      tester,
-      detail: _detail(seriesColorHex: '#302010'),
-      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
-    );
-    final scaffold = tester.widget<Scaffold>(
-      find.byKey(const ValueKey('series-detail-page')),
-    );
-    expect(scaffold.backgroundColor, const Color(0xFF492E12));
-    // 渐变顶部同样是暗色（muted 棕），不再是高亮色。
-    // 底栏 scrim 也是渐变 DecoratedBox，这里只认背景那条两色渐变。
-    final gradientBox = tester.widget<DecoratedBox>(
-      find.byWidgetPredicate(
-        (w) =>
-            w is DecoratedBox &&
-            w.decoration is BoxDecoration &&
-            (w.decoration as BoxDecoration).gradient is LinearGradient &&
-            ((w.decoration as BoxDecoration).gradient as LinearGradient)
-                    .colors
-                    .length ==
-                2,
+  testWidgets('跟随深色主题：深色画布，主色只做更实的暗色带（不再强制深色背景）', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: KeyedSubtree(
+          key: UniqueKey(),
+          child: SeriesDetailPage(
+            seriesId: 'series-1',
+            historyStore: MemoryReaderStore(),
+            title: '抽象三国第一季',
+            cover: '',
+            episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+            seriesLoader: (_) async => _detail(seriesColorHex: '#302010'),
+            commentLoader: (_) async => const PlayletCommentPage(),
+          ),
+        ),
       ),
     );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('series-detail-page')),
+    );
+    expect(scaffold.backgroundColor, const Color(0xFF151517));
+    final bandTop = Color.alphaBlend(
+      const Color(0xFF302010).withValues(alpha: 0.16),
+      const Color(0xFF151517),
+    );
+    // 仍是暗色，白字可读。
+    expect(bandTop.computeLuminance(), lessThan(0.1));
+    final gradientBox = tester.widget<DecoratedBox>(_twoColorGradient());
     final gradient =
         (gradientBox.decoration as BoxDecoration).gradient! as LinearGradient;
-    expect(gradient.colors.first, const Color(0xFF694D30));
+    expect(gradient.colors, [bandTop, const Color(0xFF151517)]);
   });
 
-  testWidgets('底部播放钮：续播文案照官方「继续播放」，点击回传当前下标', (tester) async {
+  testWidgets('墨水屏：纯黑白、没有色带，播放钮与当前集用纯黑', (tester) async {
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = false);
+    await _pump(
+      tester,
+      detail: _detail(),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+      startIndex: 2,
+    );
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('series-detail-page')),
+    );
+    expect(scaffold.backgroundColor, Colors.white);
+    expect(_twoColorGradient(), findsNothing);
+    final button = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('series-detail-play-button')),
+    );
+    expect(button.style!.backgroundColor!.resolve({}), Colors.black);
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-2')));
+    final currentTile = tester.widget<Material>(
+      find.descendant(
+        of: find.byKey(const ValueKey('series-episode-2')),
+        matching: find.byType(Material),
+      ),
+    );
+    expect(currentTile.color, Colors.black);
+    final label = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('series-episode-2')),
+        matching: find.text('3'),
+      ),
+    );
+    expect(label.style?.color, Colors.white);
+  });
+
+  testWidgets('播放钮在头部下方：续播文案照官方「继续播放」，点击回传当前下标', (tester) async {
     final played = <int>[];
     await _pump(
       tester,
@@ -364,10 +405,7 @@ void main() {
       startIndex: 4,
       onPlay: (index) => played.add(index),
     );
-    expect(
-      find.byKey(const ValueKey('series-detail-bottombar')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('series-detail-actions')), findsOneWidget);
     // 本地详情页明确展示续播集数。
     expect(find.text('继续播放 · 第5集'), findsOneWidget);
     expect(find.text('继续播放 第5集'), findsNothing);
@@ -375,7 +413,7 @@ void main() {
     expect(played, [4]);
   });
 
-  testWidgets('无进度时底部按钮为「立即播放」', (tester) async {
+  testWidgets('无进度时播放钮为「立即播放」', (tester) async {
     await _pump(
       tester,
       detail: _detail(),
@@ -384,7 +422,7 @@ void main() {
     expect(find.text('立即播放'), findsOneWidget);
   });
 
-  testWidgets('底栏收藏写入本机书架并可取消', (tester) async {
+  testWidgets('头部收藏钮写入本机书架并可取消', (tester) async {
     await _pump(
       tester,
       detail: _detail(),
@@ -426,7 +464,7 @@ void main() {
     expect(find.byKey(const ValueKey('series-detail-more')), findsNothing);
   });
 
-  testWidgets('长简介折叠 3 行：蓝色展开钮，点开展开全文并出现收起', (tester) async {
+  testWidgets('长简介折叠 3 行：灰色展开钮，点开展开全文并出现收起', (tester) async {
     const longIntro =
         '被公司开除的范理拒绝内耗，转身开起下午才营业的早餐店。凭真材实料和'
         '极致手艺，他把冷清侧门变成烟火聚场，也让邻里看见认真做事的人，终会被'
@@ -441,13 +479,13 @@ void main() {
       detail: _detail(intro: longIntro),
       episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
     );
-    // 折叠态：正文截断出「…」，右下角蓝色「展开」（官方 awv=#82A5CD）。
+    // 折叠态：正文截断出「…」，右下角灰色「展开」（palette.muted）。
     final collapsed = tester.widget<Text>(
       find.byKey(const ValueKey('series-detail-intro')),
     );
     expect(collapsed.data, endsWith('…'));
     final expand = tester.widget<Text>(find.text('展开'));
-    expect(expand.style?.color, const Color(0xFF82A5CD));
+    expect(expand.style?.color, const Color(0xFF706C66));
     // 展开后全文 + 「收起」。
     await tester.tap(find.byKey(const ValueKey('series-detail-intro')));
     await tester.pumpAndSettle();
@@ -486,25 +524,46 @@ void main() {
     expect(find.text('期待你的第一条剧评'), findsNothing);
   });
 
-  testWidgets('超过 30 集出现分页条，切页显示对应区间', (tester) async {
+  testWidgets('桌面宽屏：剧评卡限制最大宽度，不再拉满整屏', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await _pump(
       tester,
-      detail: _detail(episodeCount: 35),
-      episodes: [for (var i = 0; i < 35; i++) _chapter(i)],
+      detail: _detail(),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+      comments: _comments(),
     );
-    await _scrollTo(tester, find.text('1-30'));
-    expect(find.byKey(const ValueKey('series-episode-pages')), findsOneWidget);
-    expect(find.text('1-30'), findsOneWidget);
-    expect(find.text('31-35'), findsOneWidget);
-    // 第二页当前不可见：第 31 格不在树里。
-    expect(find.byKey(const ValueKey('series-episode-30')), findsNothing);
-    await tester.tap(find.text('31-35'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('series-episode-30')), findsOneWidget);
-    expect(find.text('31'), findsOneWidget);
+    await _scrollTo(
+      tester,
+      find.byKey(const ValueKey('series-detail-comment-card-0')),
+    );
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('series-detail-comment-card-0')))
+          .width,
+      420,
+    );
   });
 
-  testWidgets('详情接口失败仍能以宿主兜底数据渲染（band 不阻塞）', (tester) async {
+  testWidgets('超过 50 集出现分段条，切段显示对应区间', (tester) async {
+    await _pump(
+      tester,
+      detail: _detail(episodeCount: 80),
+      episodes: [for (var i = 0; i < 80; i++) _chapter(i)],
+    );
+    await _scrollTo(tester, find.text('1–50'));
+    expect(find.byKey(const ValueKey('series-episode-pages')), findsOneWidget);
+    expect(find.text('1–50'), findsOneWidget);
+    expect(find.text('51–80'), findsOneWidget);
+    // 第二段当前不可见：第 51 格不在树里。
+    expect(find.byKey(const ValueKey('series-episode-50')), findsNothing);
+    await tester.tap(find.text('51–80'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('series-episode-50')), findsOneWidget);
+    expect(find.text('51'), findsOneWidget);
+  });
+
+  testWidgets('详情返回空不是失败：照常渲染目录与播放钮', (tester) async {
     await tester.pumpWidget(
       _host(
         SeriesDetailPage(
@@ -526,6 +585,11 @@ void main() {
       find.byKey(const ValueKey('series-detail-play-button')),
       findsOneWidget,
     );
+    // 空详情不报失败，也不影响选集。
+    expect(find.text('详情加载失败'), findsNothing);
+    expect(find.text('重试加载'), findsNothing);
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-grid')));
+    expect(find.byKey(const ValueKey('series-episode-0')), findsOneWidget);
   });
 
   testWidgets('顶栏返回键 pop 页面', (tester) async {
@@ -560,12 +624,12 @@ void main() {
     expect(find.byKey(const ValueKey('series-detail-page')), findsNothing);
   });
 
-  testWidgets('异步目录按稳定 ID 恢复续播并定位第 31-60 集', (tester) async {
+  testWidgets('异步目录按稳定 ID 恢复续播并定位第 51-100 集', (tester) async {
     final directory = Completer<List<List<Chapter>>>();
     final store = MemoryReaderStore(
-      entry: {'episodeId': 'ep-45', 'episode': 2, 'position': 20.0},
+      entry: {'episodeId': 'ep-95', 'episode': 2, 'position': 20.0},
     );
-    store.watched['series-1'] = {'ep-45'};
+    store.watched['series-1'] = {'ep-95'};
     int? played;
     List<Chapter>? selectedEpisodes;
     await tester.pumpWidget(
@@ -573,7 +637,7 @@ void main() {
         SeriesDetailPage(
           seriesId: 'series-1',
           historyStore: store,
-          initialDetail: _detail(episodeCount: 90),
+          initialDetail: _detail(episodeCount: 120),
           directoryLoader: (_) => directory.future,
           commentLoader: (_) async => const PlayletCommentPage(),
           onPlaySelection: (index, episodes, _) {
@@ -585,14 +649,16 @@ void main() {
     );
     await tester.pump();
     expect(find.text('加载中…'), findsOneWidget);
-    final episodes = [for (var i = 0; i < 90; i++) _chapter(i)];
+    final episodes = [for (var i = 0; i < 120; i++) _chapter(i)];
     directory.complete([episodes]);
     await tester.pumpAndSettle();
-    expect(find.text('继续播放 · 第46集'), findsOneWidget);
+    expect(find.text('继续播放 · 第96集'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('series-detail-play-button')));
-    expect(played, 45);
+    expect(played, 95);
     expect(selectedEpisodes, episodes);
-    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-45')));
+    // 当前集在第 2 段（51–100），分段条跟到当前段。
+    expect(find.text('51–100').hitTestable(), findsOneWidget);
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-95')));
     expect(find.byKey(const ValueKey('series-episode-0')), findsNothing);
   });
 
@@ -644,7 +710,7 @@ void main() {
     expect(played, isFalse);
   });
 
-  testWidgets('目录失败可重试，空目录和失败文案区分', (tester) async {
+  testWidgets('目录失败只在选集区重试，播放钮不变成「重试加载」', (tester) async {
     var calls = 0;
     await tester.pumpWidget(
       _host(
@@ -663,11 +729,18 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    // 重试只在选集区出现一次；播放钮保持不可播文案。
     expect(find.text('重试加载'), findsOneWidget);
-    expect(find.text('暂无剧集'), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('series-detail-play-button')));
+    expect(find.byKey(const ValueKey('series-episodes-retry')), findsOneWidget);
+    expect(find.text('暂不可播放'), findsOneWidget);
+    await _scrollTo(
+      tester,
+      find.byKey(const ValueKey('series-episodes-retry')),
+    );
+    await tester.tap(find.byKey(const ValueKey('series-episodes-retry')));
     await tester.pumpAndSettle();
     expect(calls, 2);
+    expect(find.text('重试加载'), findsNothing);
     expect(find.text('立即播放'), findsOneWidget);
   });
 
@@ -681,8 +754,10 @@ void main() {
           seriesId: 'series-1',
           title: '兜底标题',
           historyStore: MemoryReaderStore(),
-          seriesLoader: (_) async =>
-              ++detailCalls == 1 ? SeriesDetail.empty : _detail(),
+          seriesLoader: (_) async {
+            if (++detailCalls == 1) throw StateError('offline');
+            return _detail();
+          },
           directoryLoader: (_) async {
             directoryCalls++;
             return [
@@ -737,7 +812,78 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('窄屏大字体与安全区：快捷选集可达，内容没有溢出', (tester) async {
+  testWidgets('区块顺序：播放钮 → 选集 → 简介', (tester) async {
+    await _pump(
+      tester,
+      detail: _detail(),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+    );
+    final play = tester.getRect(
+      find.byKey(const ValueKey('series-detail-play-button')),
+    );
+    final grid = tester.getRect(
+      find.byKey(const ValueKey('series-episode-grid')),
+    );
+    final intro = tester.getRect(
+      find.byKey(const ValueKey('series-detail-intro-section')),
+    );
+    expect(play.bottom, lessThan(grid.top));
+    expect(grid.top, lessThan(intro.top));
+  });
+
+  testWidgets('选集头部右侧的状态与「同系列」右对齐且同在一行', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _pump(
+      tester,
+      detail: _detail(relatedAlbumId: '99'),
+      episodes: [for (var i = 0; i < 12; i++) _chapter(i)],
+    );
+    await _scrollTo(
+      tester,
+      find.byKey(const ValueKey('series-episode-status')),
+    );
+    final title = tester.getRect(find.text('选集'));
+    final status = tester.getRect(
+      find.byKey(const ValueKey('series-episode-status')),
+    );
+    final related = tester.getRect(
+      find.byKey(const ValueKey('series-detail-related-series')),
+    );
+    // 两段动作都在标题右侧，同一条基线，右端贴 16dp 栏距。
+    expect(status.left, greaterThan(title.right));
+    expect(status.center.dy, closeTo(related.center.dy, 2));
+    expect(related.right, closeTo(360 - 16, 1));
+  });
+
+  testWidgets('选集分段 50 集一段，倒序把本段最后一集排到最前', (tester) async {
+    await _pump(
+      tester,
+      detail: _detail(episodeCount: 80),
+      episodes: [for (var i = 0; i < 80; i++) _chapter(i)],
+    );
+    await _scrollTo(tester, find.text('1–50'));
+    expect(find.text('1–50'), findsOneWidget);
+    expect(find.text('51–80'), findsOneWidget);
+    // 正序：第 1 集在第一行。
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('series-episode-0'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('series-episode-49'))).dy,
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('series-episode-reverse')));
+    await tester.pumpAndSettle();
+    // 倒序：第 50 集排到最前。
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('series-episode-49'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('series-episode-0'))).dy,
+      ),
+    );
+  });
+
+  testWidgets('窄屏大字体与安全区：选集可达，内容没有溢出', (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 780));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -763,26 +909,17 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await tester.tap(
-      find.byKey(const ValueKey('series-detail-episodes-shortcut')),
-    );
-    await tester.pumpAndSettle();
+    // 选集就在首屏播放钮下方，滚过去不会溢出。
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-0')));
     expect(
       find.byKey(const ValueKey('series-episode-0')).hitTestable(),
       findsOneWidget,
     );
-    final firstTile = tester.getRect(
-      find.byKey(const ValueKey('series-episode-0')),
-    );
-    final tabs = tester.getRect(
-      find.byKey(const ValueKey('series-detail-tabs')),
-    );
-    expect(firstTile.top, greaterThanOrEqualTo(tabs.bottom));
     expect(tester.takeException(), isNull);
     await _scrollTo(tester, find.text('立即阅读'));
     expect(tester.takeException(), isNull);
   });
-  testWidgets('长剧当前分组自动露出，横向定位不挪动详情锚点', (tester) async {
+  testWidgets('长剧当前分段自动露出，横向定位不挪动详情锚点', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await _pump(
@@ -791,18 +928,16 @@ void main() {
       episodes: [for (var i = 0; i < 300; i++) _chapter(i)],
       startIndex: 245,
     );
-    await tester.tap(
-      find.byKey(const ValueKey('series-detail-episodes-shortcut')),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('241-270').hitTestable(), findsOneWidget);
+    // 当前集落在第 5 段（201–250），首屏的分段条自动横向滚到它。
+    expect(find.text('201–250').hitTestable(), findsOneWidget);
+    await _scrollTo(tester, find.byKey(const ValueKey('series-episode-245')));
     expect(
       find.byKey(const ValueKey('series-episode-240')).hitTestable(),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
   });
-  testWidgets('背景实际像素铺满宽度，返回栏与吸顶导航没有异色横条', (tester) async {
+  testWidgets('背景铺满宽度：顶部淡色带平滑淡出，返回栏与吸顶导航没有异色横条', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final captureKey = GlobalKey();
@@ -810,6 +945,7 @@ void main() {
       RepaintBoundary(
         key: captureKey,
         child: MaterialApp(
+          debugShowCheckedModeBanner: false,
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(
               context,
@@ -827,6 +963,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    final bandTop = Color.alphaBlend(
+      const Color(0xFF302010).withValues(alpha: 0.10),
+      const Color(0xFFF6F6F6),
+    );
     Future<void> checkPixels() async {
       final boundary =
           captureKey.currentContext!.findRenderObject()!
@@ -840,16 +980,18 @@ void main() {
         }
       });
       expect(pixels, isNotNull);
-      // 右边缘没有文字/封面：同时覆盖状态栏、返回栏上下边界、tab 和渐变尾部。
-      for (final y in [20, 31, 32, 75, 76, 80, 100, 115, 200, 390, 410]) {
-        final t = ((y + 0.5) / 400).clamp(0.0, 1.0);
-        const top = [0x69, 0x4d, 0x30];
-        const base = [0x49, 0x2e, 0x12];
-        for (var channel = 0; channel < 3; channel++) {
-          final actual = pixels!.getUint8((y * 360 + 358) * 4 + channel);
-          final expected = top[channel] + (base[channel] - top[channel]) * t;
-          expect(actual, closeTo(expected, 2), reason: 'y=$y channel=$channel');
-        }
+      int channel(int x, int y, int c) =>
+          pixels!.getUint8((y * 360 + x) * 4 + c);
+      // 右边缘没有文字/封面：同时覆盖状态栏、返回栏上下边界、tab 和色带尾部。
+      expect(channel(358, 0, 0), closeTo(bandTop.r * 255, 2));
+      expect(channel(358, 300, 0), closeTo(0xF6, 2));
+      // 相邻行不跳变：顶栏与吸顶 tab 的边界都不能出现横条。
+      for (var y = 1; y < 420; y++) {
+        expect(
+          (channel(358, y, 0) - channel(358, y - 1, 0)).abs(),
+          lessThanOrEqualTo(3),
+          reason: 'y=$y',
+        );
       }
     }
 
