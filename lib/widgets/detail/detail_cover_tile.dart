@@ -60,12 +60,14 @@ class _CoverArt extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(6),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: palette.dark ? 0.42 : 0.14),
-            blurRadius: 14,
-            spreadRadius: -2,
-            offset: const Offset(1, 6),
-          ),
+          // E-ink panels smear soft shadows into grey noise.
+          if (!palette.eink)
+            BoxShadow(
+              color: Colors.black.withValues(alpha: palette.dark ? 0.42 : 0.14),
+              blurRadius: 14,
+              spreadRadius: -2,
+              offset: const Offset(1, 6),
+            ),
         ],
       ),
       child: ClipRRect(
