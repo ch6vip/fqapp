@@ -212,6 +212,46 @@ void main() {
       reason: '已释放的旧播放器不能再收到播放指令',
     );
   });
+
+  testWidgets('位置心跳只重建进度区，不整页重建', (tester) async {
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    expect(created, hasLength(1));
+
+    final titleBefore = tester.widget<Text>(
+      find.byKey(const ValueKey('listen-episode-title')),
+    );
+    final playBefore = tester.widget<IconButton>(
+      find.byKey(const ValueKey('listen-play')),
+    );
+
+    // 原生位置流约 5Hz：一拍一次重建只能落在进度区。
+    created.first.positions.add(const Duration(seconds: 42));
+    await tester.pump();
+
+    expect(
+      identical(
+        tester.widget<Text>(find.byKey(const ValueKey('listen-episode-title'))),
+        titleBefore,
+      ),
+      isTrue,
+      reason: '位置更新不该重建集名等页内其它部件',
+    );
+    expect(
+      identical(
+        tester.widget<IconButton>(find.byKey(const ValueKey('listen-play'))),
+        playBefore,
+      ),
+      isTrue,
+      reason: '位置更新不该重建播放按钮',
+    );
+    // 进度区本身要跟着刷新：时间文案与滑块比例都来自这一拍。
+    expect(find.text('00:42 / 02:00'), findsOneWidget);
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('listen-seek')),
+    );
+    expect(slider.value, closeTo(42 / 120, 1e-9));
+  });
 }
 
 /// 建播放器必失败的假播放器：用来验证失败路径的资源释放与提示。
