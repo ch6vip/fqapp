@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/widgets/home/home_hero.dart';
 
 /// 书架版式在页面层的回归：推荐页只画书、主视觉不重复、追加失败可重试。
 ///
@@ -181,5 +183,65 @@ void main() {
     expect(find.text('后来之书'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('桌面宽窗铺满窗口，不再居中留出固定空白', (tester) async {
+    // 这条守的是页面级宽度上限：原先桌面固定吃 1440，2560 的窗口里内容只占
+    // 一半多，两侧各空 560dp。
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(2560, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    MediaItem book(int index) => MediaItem(
+      id: 'b$index',
+      title: '书 $index',
+      cover: '',
+      author: '',
+      badge: '',
+      ep: '',
+      kind: 'book',
+    );
+    try {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            homeProvider.overrideWith(
+              () => HomeNotifier(
+                homepageLoader:
+                    ({
+                      int tabType = 2,
+                      int offset = 0,
+                      String? sessionId,
+                    }) async => HomepagePage(
+                      items: [for (var i = 0; i < 30; i++) book(i)],
+                      nextOffset: null,
+                      sessionId: null,
+                    ),
+                searchLoader: (query, {int page = 1}) async => const [],
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: HomePage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 页面本身不再被夹住：宽度等于窗口宽度。
+      expect(tester.getSize(find.byType(HomePage)).width, 2560);
+      // 网格按「一张卡 ~180dp」反推列数。840 时代这里只有 4 列。
+      final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
+      final columns =
+          (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+              .crossAxisCount;
+      expect(columns, 13);
+      // 搜索行另有上限，不会撑成一条 2500 宽的灰带。
+      expect(
+        tester.getSize(find.byKey(const Key('home_search_button'))).width,
+        lessThan(HomeHero.maxToolbarWidth),
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }

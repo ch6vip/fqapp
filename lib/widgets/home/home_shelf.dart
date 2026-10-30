@@ -30,18 +30,32 @@ const double homeSectionGap = 20;
 double homeBottomClearance(BuildContext context) =>
     64 + 8 + MediaQuery.paddingOf(context).bottom + 24;
 
+/// 宽屏（≥900dp）上一张卡片的目标宽度：列数由它反推，不再按断点给固定列数。
+///
+/// 断点表在 900dp 之后就到顶了（5 列），桌面窗口宽到 2560 时这 5 列会把一张
+/// 封面撑到 500dp、书名拉成一条横幅。按 180dp 反推之后每列落在 170–190dp，
+/// 窗口再宽只是多几列，读起来仍是「一张封面 + 两行字」。
+const double homeShelfCardTarget = 180;
+
+/// 上限列数：只用来挡住极端分辨率（8K 之类）算出的荒唐值，正常窗口用不到。
+const int homeShelfMaxColumns = 32;
+
 /// Columns for the book grid.
 ///
 /// 手机 3 列（≥360dp 宽时）是「以书为主」的取舍：封面仍是主角，一屏能
 /// 扫到六本书；320dp 的小屏和大字号会退到 2 列，否则 15sp 的标题在 88dp
-/// 宽里只剩四五个字。平板与桌面按同一套宽度断点放宽。
+/// 宽里只剩四五个字。平板沿用断点表；桌面（≥900dp）改由 [homeShelfCardTarget]
+/// 反推，免得窗口越宽卡片越胖。
 int homeShelfColumns(BuildContext context, double width) {
-  final largeType = MediaQuery.textScalerOf(context).scale(15) > 22;
-  if (largeType && width < 640) return 2;
+  final scaler = MediaQuery.textScalerOf(context);
+  if (scaler.scale(15) > 22 && width < 640) return 2;
   if (width < 360) return 2;
   if (width < 640) return 3;
   if (width < 900) return 4;
-  return 5;
+  // 大字号把目标卡宽一起放大：180dp 里塞 2.4 倍的字会挤成竖条。
+  final target = homeShelfCardTarget * (scaler.scale(15) / 15).clamp(1.0, 1.8);
+  final fit = ((width + homeGridGap) / (target + homeGridGap)).round();
+  return fit.clamp(5, homeShelfMaxColumns);
 }
 
 /// Laid-out width of one card, handed down so the card can decode its cover at

@@ -50,4 +50,21 @@ void main() {
     expect(homeShelfColumns(context, 700), 4);
     expect(homeShelfColumns(context, 950), 5);
   });
+
+  testWidgets('宽屏按目标卡宽反推列数，卡片不会被拉胖', (tester) async {
+    await pump(tester);
+
+    // 840 的上限被拆掉之后，2560 的窗口里内容宽约 2528：13 列，一张卡
+    // 186dp。旧断点在 900dp 之后就到顶（5 列），这个宽度下会给出 5 列、
+    // 一张封面 500dp 宽。
+    expect(homeShelfColumns(context, 2528), 13);
+
+    // 无论窗口多宽，卡片都停在 180dp 上下——这是「可读」的那条线：
+    // 再窄书名只剩三四个字，再胖封面就变成海报。
+    for (final width in <double>[900, 1408, 2528, 3808]) {
+      final card = homeShelfCardWidth(context, width);
+      expect(card, greaterThan(165), reason: '$width 宽时卡片被压窄');
+      expect(card, lessThan(195), reason: '$width 宽时卡片被拉胖');
+    }
+  });
 }

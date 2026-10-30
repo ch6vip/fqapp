@@ -27,6 +27,11 @@ class HomeHero extends StatefulWidget {
   static const double searchBarHeight = 40;
   static const double searchBarRadius = 20;
 
+  /// 搜索行在宽屏上的最大宽度。手机与平板永远吃不满这一档，只有桌面需要
+  /// 它兜住：没有上限时窗口多宽、那条空胶囊就多宽，「分类」被挤到最右。
+  /// 1120 ≈ 6 列书卡（6×180 + 5×12 + 32 栏距），与网格左端同一条竖线。
+  static const double maxToolbarWidth = 1120;
+
   /// 官方 `@string/duw`：`SearchWordDisplayView` 的默认文案。
   static const String searchHint = '请输入书名或作者名';
 
@@ -103,36 +108,45 @@ class _HomeHeroState extends State<HomeHero> {
     return Padding(
       // 官方 fua：paddingTop 6dp / paddingBottom 9dp，左右 16dp。
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: HomePressable(
-              key: const Key('home_search_button'),
-              onTap: widget.onSearch,
-              borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
-              semanticLabel: HomeHero.searchHint,
-              child: Container(
-                height: HomeHero.searchBarHeight,
-                padding: const EdgeInsets.only(left: 16, right: 14),
-                decoration: BoxDecoration(
-                  color: palette.searchBar,
-                  borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
-                ),
-                child: Row(
-                  children: [
-                    Icon(LucideIcons.search, size: 15, color: palette.muted),
-                    const SizedBox(width: 10),
-                    Expanded(child: _cueText(palette, animate)),
-                  ],
+      // 桌面宽窗里不再把搜索行拉满整条：2560 的窗口下一枚 2528 宽的空胶囊
+      // 只剩一条灰带，「分类」还被推到窗口最右端。工具栏收到
+      // [HomeHero.maxToolbarWidth]——约等于 6 张卡片的宽度，左端仍与网格、
+      // 分区头同一条 16dp 竖线。
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: HomeHero.maxToolbarWidth),
+        child: Row(
+          children: [
+            Expanded(
+              child: HomePressable(
+                key: const Key('home_search_button'),
+                onTap: widget.onSearch,
+                borderRadius: BorderRadius.circular(HomeHero.searchBarRadius),
+                semanticLabel: HomeHero.searchHint,
+                child: Container(
+                  height: HomeHero.searchBarHeight,
+                  padding: const EdgeInsets.only(left: 16, right: 14),
+                  decoration: BoxDecoration(
+                    color: palette.searchBar,
+                    borderRadius: BorderRadius.circular(
+                      HomeHero.searchBarRadius,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.search, size: 15, color: palette.muted),
+                      const SizedBox(width: 10),
+                      Expanded(child: _cueText(palette, animate)),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          if (widget.onCategory != null) ...[
-            const SizedBox(width: 16),
-            _categoryPill(palette),
+            if (widget.onCategory != null) ...[
+              const SizedBox(width: 16),
+              _categoryPill(palette),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
