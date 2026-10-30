@@ -53,6 +53,7 @@ class _ListenModePageState extends State<ListenModePage>
   NativePlayer? _player;
   StreamSubscription<bool>? _completedSub;
   StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
   bool _switching = false;
   bool _popped = false;
 
@@ -65,6 +66,10 @@ class _ListenModePageState extends State<ListenModePage>
 
   /// 播放位置（原生位置流约 5Hz）：只喂给进度区，不触发整页重建。
   final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
+
+  /// 总时长：`create` 完成时原生可能还不知道时长，`duration` 事件随后才到；
+  /// 页面位置流不再整页 setState，所以它也必须有自己的通知。
+  final ValueNotifier<Duration> _duration = ValueNotifier(Duration.zero);
 
   // Official listen mode is ShortSeriesActivity, which hides the capsule.
   @override
@@ -131,7 +136,9 @@ class _ListenModePageState extends State<ListenModePage>
     NativePlayer.clearRemoteCommandHandler();
     _completedSub?.cancel();
     _positionSub?.cancel();
+    _durationSub?.cancel();
     _position.dispose();
+    _duration.dispose();
     unawaited(_stopForeground());
     unawaited(_player?.dispose());
     super.dispose();
@@ -182,11 +189,17 @@ class _ListenModePageState extends State<ListenModePage>
         _positionSub = player.positionStream.listen((position) {
           if (mounted && !_switching) _position.value = position;
         });
+        _durationSub?.cancel();
+        _durationSub = player.durationStream.listen((duration) {
+          if (mounted && !_switching) _duration.value = duration;
+        });
         if (!mounted) return;
         setState(() {
           _player = player;
           _index = index;
           _position.value = player.position;
+          // 新集重置；已经拿到时长（事件早于订阅）时沿用播放器的值。
+          _duration.value = player.duration;
         });
         // 所有权已交给 `_player`，不能在这里释放。
         created = null;
@@ -273,7 +286,6 @@ class _ListenModePageState extends State<ListenModePage>
   Widget build(BuildContext context) {
     final player = _player;
     final playing = player?.playWhenReady ?? false;
-    final duration = player?.duration ?? Duration.zero;
     // 返回时把「听到哪一集 + 进度」一起交给宿主：听书页可能已自动连播
     // 跨集，宿主要跟到那一集续看（官方 sync_progress_strategy_listen_mode）。
     return PopScope(
@@ -346,7 +358,7 @@ class _ListenModePageState extends State<ListenModePage>
                     const SizedBox(height: 4),
                     ListenProgressBar(
                       position: _position,
-                      duration: duration,
+                      duration: _duration,
                       onSeek: _seekTo,
                     ),
                     Row(

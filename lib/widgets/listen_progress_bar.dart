@@ -15,7 +15,10 @@ class ListenProgressBar extends StatefulWidget {
   });
 
   final ValueListenable<Duration> position;
-  final Duration duration;
+
+  /// 总时长单独走 notifier：原生在 `created` 之后才发 `duration`，
+  /// build 时的快照可能还是 0，不能拖到下一次整页重建才更新。
+  final ValueListenable<Duration> duration;
 
   /// 松手时把目标比例（0–1）交给宿主 seek。
   final ValueChanged<double> onSeek;
@@ -32,42 +35,44 @@ class _ListenProgressBarState extends State<ListenProgressBar> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Duration>(
       valueListenable: widget.position,
-      builder: (context, position, _) {
-        final duration = widget.duration;
-        final seekable = duration.inMilliseconds > 0;
-        final fraction = seekable
-            ? (position.inMilliseconds / duration.inMilliseconds).clamp(
-                0.0,
-                1.0,
-              )
-            : 0.0;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              '${_fmt(position)} / ${_fmt(duration)}',
-              key: const ValueKey('listen-time'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: Color(0x99FFFFFF)),
-            ),
-            Slider(
-              key: const ValueKey('listen-seek'),
-              value: seekable ? _dragFraction ?? fraction : 0,
-              onChanged: seekable
-                  ? (value) => setState(() => _dragFraction = value)
-                  : null,
-              onChangeEnd: seekable
-                  ? (value) {
-                      setState(() => _dragFraction = null);
-                      widget.onSeek(value);
-                    }
-                  : null,
-              activeColor: const Color(0xFFFA6725),
-            ),
-          ],
-        );
-      },
+      builder: (context, position, _) => ValueListenableBuilder<Duration>(
+        valueListenable: widget.duration,
+        builder: (context, duration, _) {
+          final seekable = duration.inMilliseconds > 0;
+          final fraction = seekable
+              ? (position.inMilliseconds / duration.inMilliseconds).clamp(
+                  0.0,
+                  1.0,
+                )
+              : 0.0;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '${_fmt(position)} / ${_fmt(duration)}',
+                key: const ValueKey('listen-time'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Color(0x99FFFFFF)),
+              ),
+              Slider(
+                key: const ValueKey('listen-seek'),
+                value: seekable ? _dragFraction ?? fraction : 0,
+                onChanged: seekable
+                    ? (value) => setState(() => _dragFraction = value)
+                    : null,
+                onChangeEnd: seekable
+                    ? (value) {
+                        setState(() => _dragFraction = null);
+                        widget.onSeek(value);
+                      }
+                    : null,
+                activeColor: const Color(0xFFFA6725),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
