@@ -589,6 +589,7 @@ class _DetailPageState extends State<DetailPage> {
                   item: widget.item,
                   detail: _bookDetail,
                   onOpenAuthor: _openAuthorAction,
+                  lastChapterTitle: _latestChapterTitle,
                 ),
               ),
               SliverToBoxAdapter(
@@ -646,6 +647,7 @@ class _DetailPageState extends State<DetailPage> {
             item: widget.item,
             detail: _bookDetail,
             onOpenAuthor: _openAuthorAction,
+            lastChapterTitle: _latestChapterTitle,
             desktop: true,
             compactDesktop: compact,
           ),
@@ -738,7 +740,7 @@ class _DetailPageState extends State<DetailPage> {
           )
         : _loading
         ? _loadingView(palette)
-        : _content(palette, desktop: true, showTags: !threeColumns);
+        : _content(palette, desktop: true);
     Widget mainScroll() => RefreshIndicator(
       onRefresh: _load,
       color: palette.eink ? palette.ink : HomePalette.accent,
@@ -821,19 +823,14 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Widget _content(
-    HomePalette palette, {
-    bool desktop = false,
-    bool showTags = true,
-  }) {
+  Widget _content(HomePalette palette, {bool desktop = false}) {
     final hasReviews =
         _comments.comments.isNotEmpty || _comments.totalCount > 0;
     if (!desktop) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _resumeSection(),
-          _introSection(palette, showTags: showTags),
+          _introSection(palette),
           _directorySection(),
           _reviewsSection(palette, hasReviews: hasReviews, showEmpty: false),
           Padding(
@@ -861,9 +858,7 @@ class _DetailPageState extends State<DetailPage> {
                   showEmpty: true,
                 ),
               ],
-              _ => <Widget>[
-                _introSection(palette, showTags: showTags, desktop: true),
-              ],
+              _ => <Widget>[_introSection(palette, desktop: true)],
             },
           ),
         ),
@@ -871,21 +866,7 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Widget _resumeSection() {
-    final index = _resumeIndex;
-    if (index == null || _allChapters.isEmpty) return const SizedBox.shrink();
-    final chapter = _allChapters[index.clamp(0, _allChapters.length - 1)];
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(homeGutter, 14, homeGutter, 0),
-      child: DetailResumeRow(
-        chapterTitle: chapter.title,
-        trailing: _resumeTimeLabel(),
-        onTap: _openLastPosition,
-      ),
-    );
-  }
-
-  /// `3 天前` — when the saved place was written, muted on the resume row.
+  /// `3 天前` — when the saved place was written, muted in 目录 progress.
   String? _resumeTimeLabel() {
     final time = _resumeTime;
     if (time == null) return null;
@@ -898,12 +879,7 @@ class _DetailPageState extends State<DetailPage> {
     return '${date.month}月${date.day}日';
   }
 
-  Widget _introSection(
-    HomePalette palette, {
-    required bool showTags,
-    bool desktop = false,
-  }) {
-    final detail = _bookDetail;
+  Widget _introSection(HomePalette palette, {bool desktop = false}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -918,11 +894,6 @@ class _DetailPageState extends State<DetailPage> {
             text: extractMediaDescription(_detail),
             desktop: desktop,
           ),
-          if (showTags && detail != null && detail.tags.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(homeGutter, 10, homeGutter, 0),
-              child: DetailTagChips(tags: detail.tags, desktop: desktop),
-            ),
         ],
         if (_series.cast.isNotEmpty)
           Padding(
@@ -940,12 +911,25 @@ class _DetailPageState extends State<DetailPage> {
     return '${status.isEmpty ? '' : '$status '}$count · 全部';
   }
 
+  /// The newest chapter for the hero's `更新至 …` line: the payload's own
+  /// title first, then the last catalogue entry.
+  String? get _latestChapterTitle {
+    final payload = _bookDetail?.lastChapterTitle.trim() ?? '';
+    if (payload.isNotEmpty) return payload;
+    if (_allChapters.isEmpty) return null;
+    final title = _allChapters.last.title.trim();
+    return title.isEmpty ? null : title;
+  }
+
   Widget _directorySection() {
     final preview = _previewChapters();
     return DetailDirectorySection(
       trailing: _allChapters.isEmpty ? '' : _directoryTrailing,
       preview: preview,
       currentIndex: _previewCurrentIndex(),
+      resumeIndex: _resumeIndex,
+      chapterCount: _allChapters.length,
+      readTimeLabel: _resumeTimeLabel(),
       error: _directoryError,
       onOpenAll: _openDirectory,
       onRetry: _load,

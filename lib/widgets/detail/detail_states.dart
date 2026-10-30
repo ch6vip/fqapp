@@ -15,17 +15,25 @@ class DetailSectionHeader extends StatelessWidget {
   final String title;
   final Widget? action;
 
-  const DetailSectionHeader({super.key, required this.title, this.action});
+  /// Gap between the header and the content below (mockup default 10).
+  final double bottomGap;
+
+  const DetailSectionHeader({
+    super.key,
+    required this.title,
+    this.action,
+    this.bottomGap = 10,
+  });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         homeGutter,
         homeSectionGap,
         homeGutter,
-        10,
+        bottomGap,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -100,61 +108,6 @@ class DetailShelfPill extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// `上次读到 第205章 风起` with a muted relative time on the right.
-class DetailResumeRow extends StatelessWidget {
-  final String chapterTitle;
-  final String? trailing;
-  final VoidCallback? onTap;
-
-  const DetailResumeRow({
-    super.key,
-    required this.chapterTitle,
-    this.trailing,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final row = Container(
-      key: const Key('detail_resume_row'),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: palette.soft,
-        borderRadius: BorderRadius.circular(10),
-        border: palette.eink ? Border.all(color: palette.line) : null,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '上次读到 $chapterTitle',
-              key: const Key('detail_resume_label'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: palette.ink, fontSize: 12, height: 1.5),
-            ),
-          ),
-          if (trailing != null && trailing!.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Text(
-              trailing!,
-              style: TextStyle(color: palette.muted, fontSize: 12, height: 1.5),
-            ),
-          ],
-        ],
-      ),
-    );
-    if (onTap == null) return row;
-    return HomePressable(
-      semanticLabel: '继续阅读 $chapterTitle',
-      onTap: onTap!,
-      borderRadius: BorderRadius.circular(10),
-      child: row,
     );
   }
 }

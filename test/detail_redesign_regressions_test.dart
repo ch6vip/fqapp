@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -150,7 +151,9 @@ void main() {
     expect(tester.getTopRight(find.text('读到这里')).dx, closeTo(previewRight, 1));
   });
 
-  testWidgets('the resume row shows the relative save time', (tester) async {
+  testWidgets('目录 carries the progress line, percentage and bar', (
+    tester,
+  ) async {
     await _pumpBook(
       tester,
       store: MemoryReaderStore(
@@ -164,8 +167,152 @@ void main() {
         },
       ),
     );
-    expect(find.byKey(const Key('detail_resume_row')), findsOneWidget);
-    expect(find.text('3 天前'), findsOneWidget);
+    // 上次读到横条已删，进度并入目录：23/146 取整 16%。
+    expect(find.byKey(const Key('detail_resume_row')), findsNothing);
+    expect(find.byKey(const Key('detail_progress_line')), findsOneWidget);
+    expect(find.text('已读 16% · 3 天前'), findsOneWidget);
+    expect(find.text('23 / 146'), findsOneWidget);
+    final fill = tester.getSize(find.byKey(const Key('detail_progress_fill')));
+    final bar = tester.getSize(find.byKey(const Key('detail_progress_bar')));
+    expect(fill.width, closeTo(bar.width * 0.16, 0.5));
+    expect(find.byKey(const Key('detail_resume_label')), findsNothing);
+  });
+
+  testWidgets('without progress the 目录 line and bar are hidden', (
+    tester,
+  ) async {
+    await _pumpBook(tester);
+    expect(find.byKey(const Key('detail_progress_line')), findsNothing);
+    expect(find.byKey(const Key('detail_progress_bar')), findsNothing);
+    expect(find.textContaining('已读 '), findsNothing);
+  });
+
+  testWidgets('the hero shows rank, update line and tags when present', (
+    tester,
+  ) async {
+    await _pumpBook(
+      tester,
+      detailPayload: {
+        'data': {
+          'abstract': _description,
+          'creation_status': '1',
+          'last_chapter_title': '第820章 北境来信',
+          'book_rank_info': [
+            {'text': '科幻热榜 第3名'},
+          ],
+          'tags': '废土,群像,冒险',
+        },
+      },
+    );
+    expect(find.byKey(const Key('detail_rank_pill')), findsOneWidget);
+    expect(find.text('科幻热榜 第3名'), findsOneWidget);
+    expect(find.byKey(const Key('detail_update_line')), findsOneWidget);
+    expect(find.text('更新至 第820章 北境来信'), findsOneWidget);
+    final heroTags = find.byKey(const Key('detail_hero_tags'));
+    expect(heroTags, findsOneWidget);
+    for (final tag in ['废土', '群像', '冒险']) {
+      expect(
+        find.descendant(of: heroTags, matching: find.text(tag)),
+        findsOneWidget,
+      );
+    }
+    // 标签不再留在简介下面。
+    expect(find.byKey(const Key('detail_tag_chips')), findsNothing);
+  });
+
+  testWidgets('the hero omits rank and update when there is no data', (
+    tester,
+  ) async {
+    await _pumpBook(tester);
+    expect(find.byKey(const Key('detail_rank_pill')), findsNothing);
+    expect(find.byKey(const Key('detail_update_line')), findsNothing);
+    expect(find.byKey(const Key('detail_hero_tags')), findsNothing);
+  });
+
+  testWidgets('a finished book hides the update line', (tester) async {
+    await _pumpBook(
+      tester,
+      detailPayload: {
+        'data': {
+          'abstract': _description,
+          'creation_status': '0',
+          'last_chapter_title': '第820章 北境来信',
+        },
+      },
+    );
+    expect(find.byKey(const Key('detail_update_line')), findsNothing);
+  });
+
+  testWidgets('rank_title is the fallback when book_rank_info is empty', (
+    tester,
+  ) async {
+    await _pumpBook(
+      tester,
+      detailPayload: {
+        'data': {'abstract': _description, 'rank_title': '飙升榜 第9名'},
+      },
+    );
+    expect(find.text('飙升榜 第9名'), findsOneWidget);
+  });
+
+  testWidgets('the update line falls back to the last directory chapter', (
+    tester,
+  ) async {
+    await _pumpBook(
+      tester,
+      detailPayload: {
+        'data': {'abstract': _description, 'creation_status': '1'},
+      },
+    );
+    expect(find.text('更新至 第146章 故事的另一种可能'), findsOneWidget);
+  });
+
+  testWidgets('no detail text declares the monospace family', (tester) async {
+    await _pumpBook(
+      tester,
+      store: MemoryReaderStore(
+        entry: {'kind': 'book', 'chapterId': 'chapter-23', 'episode': 0},
+      ),
+      detailPayload: {
+        'data': {
+          'abstract': _description,
+          'score': '8.7',
+          'read_count': '124000',
+          'creation_status': '1',
+          'last_chapter_title': '第820章 北境来信',
+          'book_rank_info': [
+            {'text': '科幻热榜 第3名'},
+          ],
+          'tags': '废土,群像',
+        },
+      },
+    );
+    final paragraphs = tester.renderObjectList<RenderParagraph>(
+      find.byType(RichText, skipOffstage: false),
+    );
+    expect(paragraphs, isNotEmpty);
+    for (final paragraph in paragraphs) {
+      final styles = <TextStyle?>[paragraph.text.style];
+      paragraph.text.visitChildren((span) {
+        if (span is TextSpan) styles.add(span.style);
+        return true;
+      });
+      for (final style in styles) {
+        expect(style?.fontFamily, isNot('monospace'));
+        expect(
+          style?.fontFamilyFallback ?? const <String>[],
+          isNot(contains('monospace')),
+        );
+      }
+    }
+    final id = tester.widget<SelectableText>(
+      find.byKey(const Key('detail_id_text')),
+    );
+    expect(id.style?.fontFamily, isNot('monospace'));
+    expect(
+      id.style?.fontFeatures,
+      contains(const FontFeature.tabularFigures()),
+    );
   });
 
   testWidgets('下载 folds whole-book download and offline cache into a sheet', (

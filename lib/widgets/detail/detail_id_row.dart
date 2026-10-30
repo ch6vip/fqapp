@@ -6,9 +6,11 @@ import 'detail_style.dart';
 
 /// The work's id, selectable and copyable.
 ///
-/// Mockup: one 11dp monospace muted line at the very bottom, padding 22/18,
-/// `ID xxx` then `复制`. The old card is gone; the value is the same id the
-/// page loads the work with, so it can be pasted into the app's `id:` search.
+/// Mockup: one 11dp muted line at the very bottom, padding 22/18, `ID xxx`
+/// then `复制`. Digits use the inherited font with tabular figures — never
+/// `monospace`, which resolves to a typewriter face on some phones. The old
+/// card is gone; the value is the same id the page loads the work with, so it
+/// can be pasted into the app's `id:` search.
 class DetailIdRow extends StatelessWidget {
   final String id;
   final bool compact;
@@ -31,9 +33,7 @@ class DetailIdRow extends StatelessWidget {
       color: palette.muted,
       fontSize: compact ? 12 : 11,
       height: 1.5,
-      fontFamily: 'monospace',
-      fontFamilyFallback: const ['Menlo', 'Consolas', 'monospace'],
-      fontFeatures: detailMonoFeatures,
+      fontFeatures: detailNumericFeatures,
     );
     return Padding(
       key: const Key('detail_id_row'),

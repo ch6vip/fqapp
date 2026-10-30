@@ -6,17 +6,23 @@ import 'detail_cover_tile.dart';
 import 'detail_style.dart';
 
 /// Detail-page masthead: the cover on the left with the title, the author /
-/// category meta line and the single rating line stacked to its right.
+/// category meta line, the single rating, the rank pill, the update line and
+/// the tags stacked to its right.
 ///
-/// Mockup: 6/16 padding, a 14 gap, a 19/1.3 title, 12dp meta and rating, and
-/// exactly one rating for the whole page. The title deliberately has no
-/// `maxLines` so it always wraps in full rather than truncating.
+/// Mockup: 6/16 padding, a 14 gap, a 19/1.3 title, and a 5dp gap between the
+/// rows of `.hcol`. Each row appears only when it has data. The title
+/// deliberately has no `maxLines` so it always wraps in full rather than
+/// truncating.
 class DetailHero extends StatelessWidget {
   final MediaItem item;
   final BookDetail? detail;
 
   /// Opens the author's home. Only called when the payload carried an id.
   final VoidCallback? onOpenAuthor;
+
+  /// Last chapter title used by the `更新至 …` line; the page resolves it from
+  /// `BookDetail.lastChapterTitle` or the directory.
+  final String? lastChapterTitle;
 
   /// 桌面两栏布局：去掉顶部色块，封面放大并整体居中。
   final bool desktop;
@@ -27,6 +33,7 @@ class DetailHero extends StatelessWidget {
     required this.item,
     this.detail,
     this.onOpenAuthor,
+    this.lastChapterTitle,
     this.desktop = false,
     this.compactDesktop = false,
   });
@@ -39,13 +46,14 @@ class DetailHero extends StatelessWidget {
     // phone, so the masthead stacks instead of squeezing both into one row.
     final stacked = MediaQuery.textScalerOf(context).scale(16) > 26;
     final centered = desktop && !compactDesktop;
+    final rows = _rows(palette, centered: centered);
     final info = Column(
       crossAxisAlignment: centered
           ? CrossAxisAlignment.center
           : CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(top: 2, bottom: 6),
+          padding: const EdgeInsets.only(top: 2, bottom: 1),
           child: Text(
             title,
             key: const Key('detail_book_title'),
@@ -57,20 +65,10 @@ class DetailHero extends StatelessWidget {
             ),
           ),
         ),
-        _MetaLine(
-          palette: palette,
-          author: detail?.author,
-          fallbackAuthor: item.author,
-          parts: detail?.metaParts ?? const <String>[],
-          onOpenAuthor: onOpenAuthor,
-          centered: centered,
-        ),
-        _RatingLine(
-          palette: palette,
-          score: detail?.scoreLabel ?? '',
-          readers: detail?.readLabel ?? '',
-          centered: centered,
-        ),
+        for (var i = 0; i < rows.length; i++) ...[
+          SizedBox(height: i == rows.length - 1 ? 7 : 5),
+          rows[i],
+        ],
       ],
     );
     final cover = DetailCoverTile(
@@ -99,6 +97,136 @@ class DetailHero extends StatelessWidget {
                 const SizedBox(width: 14),
                 Expanded(child: info),
               ],
+            ),
+    );
+  }
+
+  /// The optional meta / rating / rank / update / tags rows, in mockup order.
+  List<Widget> _rows(HomePalette palette, {required bool centered}) {
+    final authorName = detail?.author.name.isNotEmpty == true
+        ? detail!.author.name
+        : item.author.trim();
+    final metaParts = detail?.metaParts ?? const <String>[];
+    final score = detail?.scoreLabel ?? '';
+    final readers = detail?.readLabel ?? '';
+    final rank = detail?.rankLabel ?? '';
+    final latest = lastChapterTitle?.trim() ?? '';
+    final updating = detail?.creationStatus == 1 && latest.isNotEmpty
+        ? '更新至 $latest'
+        : '';
+    final tags = detail?.tags ?? const <String>[];
+    return [
+      if (authorName.isNotEmpty || metaParts.isNotEmpty)
+        _MetaLine(
+          palette: palette,
+          author: detail?.author,
+          fallbackAuthor: item.author,
+          parts: metaParts,
+          onOpenAuthor: onOpenAuthor,
+          centered: centered,
+        ),
+      if (score.isNotEmpty || readers.isNotEmpty)
+        _RatingLine(
+          palette: palette,
+          score: score,
+          readers: readers,
+          centered: centered,
+        ),
+      if (rank.isNotEmpty) _RankPill(palette: palette, label: rank),
+      if (updating.isNotEmpty)
+        Text(
+          updating,
+          key: const Key('detail_update_line'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: palette.muted, fontSize: 12, height: 1.5),
+        ),
+      if (tags.isNotEmpty) _HeroTags(tags: tags, centered: centered),
+    ];
+  }
+}
+
+/// `科幻热榜 第3名` — rank pill in the hero's right column.
+class _RankPill extends StatelessWidget {
+  final HomePalette palette;
+  final String label;
+
+  const _RankPill({required this.palette, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        key: const Key('detail_rank_pill'),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+        decoration: BoxDecoration(
+          color: detailRankFill(palette),
+          borderRadius: BorderRadius.circular(99),
+          border: palette.eink
+              ? Border.all(color: palette.line, width: 1)
+              : null,
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: palette.accentText,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+            height: 1.5,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Genre tags in the hero: one clipped line on phones, a centred wrap on the
+/// wide desktop masthead.
+class _HeroTags extends StatelessWidget {
+  final List<String> tags;
+  final bool centered;
+
+  const _HeroTags({required this.tags, required this.centered});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    Widget pill(String tag) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+      decoration: BoxDecoration(
+        color: palette.soft,
+        borderRadius: BorderRadius.circular(99),
+        border: palette.eink ? Border.all(color: palette.line) : null,
+      ),
+      child: Text(
+        tag,
+        maxLines: 1,
+        style: TextStyle(color: palette.muted, fontSize: 11, height: 1.5),
+      ),
+    );
+    final row = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < tags.length; i++) ...[
+          if (i > 0) const SizedBox(width: 6),
+          pill(tags[i]),
+        ],
+      ],
+    );
+    return SizedBox(
+      key: const Key('detail_hero_tags'),
+      height: 20.5,
+      child: centered
+          ? Center(child: row)
+          : ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.centerLeft,
+                maxWidth: double.infinity,
+                child: row,
+              ),
             ),
     );
   }
@@ -192,7 +320,7 @@ class _RatingLine extends StatelessWidget {
         ? ''
         : (readers.endsWith('在读') ? readers : '$readers人在读');
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: EdgeInsets.zero,
       child: Row(
         key: const Key('detail_rating_line'),
         mainAxisSize: centered ? MainAxisSize.min : MainAxisSize.max,
@@ -214,9 +342,7 @@ class _RatingLine extends StatelessWidget {
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
                 height: 1.5,
-                fontFamily: 'monospace',
-                fontFamilyFallback: const ['Menlo', 'Consolas', 'monospace'],
-                fontFeatures: detailMonoFeatures,
+                fontFeatures: detailNumericFeatures,
               ),
             ),
           ],

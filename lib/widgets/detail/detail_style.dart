@@ -16,8 +16,24 @@ Color detailOnAccent(HomePalette palette) =>
 Color detailStarColor(HomePalette palette) =>
     palette.eink ? palette.ink : const Color(0xFFF2A93B);
 
-/// Tabular figures for the score and the ID line (`font-variant-numeric`).
-const List<FontFeature> detailMonoFeatures = [FontFeature.tabularFigures()];
+/// Tabular figures for the score, ID and progress (`font-variant-numeric`).
+/// No font family is set: the detail page keeps the app's own font.
+const List<FontFeature> detailNumericFeatures = [
+  FontFeature.tabularFigures(),
+];
+
+/// Rank pill fill (`--m-cur`): the current-chapter tint, black/white on e-ink.
+Color detailRankFill(HomePalette palette) {
+  if (palette.eink) return palette.surface;
+  return palette.dark ? const Color(0xFF3A2420) : const Color(0xFFFDECE8);
+}
+
+/// Progress track fill (`--m-soft`).
+Color detailProgressTrack(HomePalette palette) => palette.soft;
+
+/// Progress bar fill: brand accent, solid black on e-ink.
+Color detailProgressFill(HomePalette palette) =>
+    palette.eink ? palette.ink : HomePalette.accent;
 
 /// Primary action: a solid accent pill. This is the only filled style on the
 /// detail page.

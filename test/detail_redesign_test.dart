@@ -129,8 +129,8 @@ void main() {
       ),
     );
     expect(find.textContaining('继续阅读'), findsOneWidget);
-    // 上次读到从底栏小字改到 hero 下方的软色行，正文里写明章节名。
-    expect(find.text('上次读到 第23章 故事的另一种可能'), findsOneWidget);
+    // 上次读到横条已删；进度在目录里写成 23 / 146。
+    expect(find.text('23 / 146'), findsOneWidget);
     await _openDirectory(tester);
     await tester.enterText(
       find.byKey(const Key('detail_directory_search')),
@@ -215,7 +215,6 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('找到 1 章'), findsOneWidget);
   });
-
 }
 
 Future<void> _pumpBook(
