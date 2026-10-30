@@ -10,6 +10,7 @@ import '../services/audio_preferences.dart';
 import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
+import '../widgets/listen_progress_bar.dart';
 
 /// 听书模式页（官方 `jm3.d0.y()` 的 `ShortSeriesLaunchArgs.setIsListenMode`
 /// 语义）：独立于视频播放页的音频页——封面、剧名/集名、进度条、上一集/
@@ -62,8 +63,8 @@ class _ListenModePageState extends State<ListenModePage>
   static const _rates = <double>[0.75, 1.0, 1.25, 1.5, 2.0];
   double _rate = 1.0;
 
-  /// 拖动进度条时用于合并回写：只有最后一次拖动落地才同步通知。
-  int _seekSyncGeneration = 0;
+  /// 播放位置（原生位置流约 5Hz）：只喂给进度区，不触发整页重建。
+  final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
 
   // Official listen mode is ShortSeriesActivity, which hides the capsule.
   @override
@@ -130,6 +131,7 @@ class _ListenModePageState extends State<ListenModePage>
     NativePlayer.clearRemoteCommandHandler();
     _completedSub?.cancel();
     _positionSub?.cancel();
+    _position.dispose();
     unawaited(_stopForeground());
     unawaited(_player?.dispose());
     super.dispose();
@@ -177,13 +179,14 @@ class _ListenModePageState extends State<ListenModePage>
           if (completed) _onEpisodeEnded();
         });
         _positionSub?.cancel();
-        _positionSub = player.positionStream.listen((_) {
-          if (mounted && !_switching) setState(() {});
+        _positionSub = player.positionStream.listen((position) {
+          if (mounted && !_switching) _position.value = position;
         });
         if (!mounted) return;
         setState(() {
           _player = player;
           _index = index;
+          _position.value = player.position;
         });
         // 所有权已交给 `_player`，不能在这里释放。
         created = null;
@@ -253,12 +256,13 @@ class _ListenModePageState extends State<ListenModePage>
   Future<void> _seekTo(double value) async {
     final player = _player;
     if (player == null || player.duration.inMilliseconds <= 0) return;
-    final generation = ++_seekSyncGeneration;
-    await player.seek(
-      Duration(milliseconds: (value * player.duration.inMilliseconds).round()),
+    final target = Duration(
+      milliseconds: (value * player.duration.inMilliseconds).round(),
     );
-    // 拖动是连续触发的：只有最后一次落地才回写通知，否则会刷爆前台服务。
-    if (!mounted || generation != _seekSyncGeneration) return;
+    // 拖动结束才走到这里：先把滑块钉在目标位置，等位置流回填。
+    _position.value = target;
+    await player.seek(target);
+    if (!mounted) return;
     await _startForeground();
   }
 
@@ -269,7 +273,6 @@ class _ListenModePageState extends State<ListenModePage>
   Widget build(BuildContext context) {
     final player = _player;
     final playing = player?.playWhenReady ?? false;
-    final position = player?.position ?? Duration.zero;
     final duration = player?.duration ?? Duration.zero;
     // 返回时把「听到哪一集 + 进度」一起交给宿主：听书页可能已自动连播
     // 跨集，宿主要跟到那一集续看（官方 sync_progress_strategy_listen_mode）。
@@ -341,23 +344,10 @@ class _ListenModePageState extends State<ListenModePage>
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      '${_fmt(position)} / ${_fmt(duration)}',
-                      key: const ValueKey('listen-time'),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0x99FFFFFF),
-                      ),
-                    ),
-                    Slider(
-                      key: const ValueKey('listen-seek'),
-                      value: duration.inMilliseconds <= 0
-                          ? 0
-                          : (position.inMilliseconds / duration.inMilliseconds)
-                                .clamp(0.0, 1.0),
-                      onChanged: duration.inMilliseconds <= 0 ? null : _seekTo,
-                      activeColor: const Color(0xFFFA6725),
+                    ListenProgressBar(
+                      position: _position,
+                      duration: duration,
+                      onSeek: _seekTo,
                     ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -443,11 +433,5 @@ class _ListenModePageState extends State<ListenModePage>
         ),
       ),
     );
-  }
-
-  static String _fmt(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
   }
 }
