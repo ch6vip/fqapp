@@ -15,8 +15,8 @@ import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
-import '../services/backend_transport.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/chapter_request_tracker.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/text_replacement_engine.dart';
 import '../services/text_replacement_store.dart';
@@ -148,9 +148,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 拖过顶部为负；同一拖拽内反向会抵消累计量。
   double _scrollOverscroll = 0;
 
-  /// In-flight chapter fetch. Switching chapters or leaving the reader cancels
-  /// it, so a slow chapter cannot keep the upstream request alive.
-  BackendRequest? _chapterRequest;
+  /// In-flight chapter fetches keyed by chapter id: prefetching a neighbour or
+  /// refreshing a cached chapter must not cancel the chapter being read.
+  final ChapterRequestTracker _chapterRequestHandles = ChapterRequestTracker();
 
   String _content = '';
   ChapterContent _chapterContent = ChapterContent(blocks: const []);
@@ -1633,7 +1633,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   void dispose() {
     _followPoll?.cancel();
     _followPoll = null;
-    _chapterRequest?.cancel();
+    _chapterRequestHandles.cancelAll();
     VolumeKeyService.instance.setOnVolumeKey(null);
     unawaited(VolumeKeyService.instance.setEnabled(false));
     ListeningSession.instance.removeListener(_onListeningTick);
@@ -1987,12 +1987,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final loader = widget.chapterLoader;
     final ChapterContent content;
     if (loader == null) {
-      _chapterRequest?.cancel();
-      final request = _chapterRequest = BackendRequest();
-      content = await ApiClient.instance.withCancellation(
-        request,
-        () => ApiClient.instance.chapterContent(chapter.itemId),
-      );
+      final request = _chapterRequestHandles.start(chapter.itemId);
+      try {
+        content = await ApiClient.instance.withCancellation(
+          request,
+          () => ApiClient.instance.chapterContent(chapter.itemId),
+        );
+      } finally {
+        _chapterRequestHandles.finish(chapter.itemId, request);
+      }
     } else {
       final text = await loader(chapter);
       content = ChapterContent.isStructuredCache(text)
