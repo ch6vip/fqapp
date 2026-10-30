@@ -398,3 +398,34 @@ test('the PowerShell build script keeps the profile arguments in scope for -Host
     'the -HostLib branch must pass the profile flags to cargo',
   );
 });
+
+test('the Rust build and host-test scripts always honor Cargo.lock', () => {
+  const invocations = (source) => source.split('\n').filter((line) => {
+    const trimmed = line.trimStart();
+    return /cargo build --/.test(line) && !trimmed.startsWith('echo') &&
+      !trimmed.startsWith('#');
+  });
+
+  for (const name of ['build_rust_backend.sh', 'run_rust_host_tests.sh']) {
+    const lines = invocations(readScript(name));
+    assert.ok(lines.length > 0, `${name} must invoke cargo build`);
+    for (const line of lines) {
+      assert.ok(line.includes('--locked'),
+        `${name}: cargo build must use --locked: ${line.trim()}`);
+    }
+  }
+
+  const psBuild = readScript('build_rust_backend.ps1');
+  const psInvocations = psBuild.split('\n').filter((line) => line.includes("@('build'"));
+  assert.equal(psInvocations.length, 2,
+    'build_rust_backend.ps1 must build the Android targets and -HostLib');
+  for (const line of psInvocations) {
+    assert.ok(line.includes("'--locked'"),
+      `build_rust_backend.ps1: cargo build must use --locked: ${line.trim()}`);
+  }
+  const psHostTests = readScript('run_rust_host_tests.ps1');
+  const hostLine = psHostTests.split('\n').find((line) => /cargo build --/.test(line));
+  assert.ok(hostLine, 'run_rust_host_tests.ps1 must invoke cargo build');
+  assert.ok(hostLine.includes('--locked'),
+    `run_rust_host_tests.ps1: cargo build must use --locked: ${hostLine.trim()}`);
+});
