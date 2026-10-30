@@ -92,6 +92,10 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
 
   static final AudioDownloader instance = AudioDownloader();
 
+  /// 单个任务最多试几次（首次 + 自动重试）。CDN 偶发 5xx / 断流很常见，
+  /// 试三次基本能过；再多就只是在拖队列（与短剧下载器同一口径）。
+  static const int _maxAttempts = 3;
+
   /// 文件名里允许出现的字符。章 id 与音色 id 都来自上游，直接拼进路径前
   /// 必须先过这道门（与短剧的 `_safeItemId` 同一约定）。
   static final RegExp _safeToken = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
@@ -360,6 +364,7 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
   Future<void> _run(String key, _MutableTask task) async {
     final generation = task.generation;
     var refreshed = false;
+    var attempt = 0;
     try {
       while (true) {
         final reason = await _runOnce(task);
@@ -370,6 +375,16 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
           refreshed = true;
           continue;
         }
+        // 其余失败自动再试：断流、5xx、续传范围对不上、416 丢掉半成品这
+        // 类都可以靠重跑（每次重跑都会重新 resolve、按现有 `.part` 续传）
+        // 自己好。4xx 里只有 408/429 值得等，其余重试也是同一个结果。
+        attempt++;
+        if (attempt < _maxAttempts && _isRetryable(reason)) {
+          await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
+          if (task.abortReason != null) break;
+          continue;
+        }
+        debugPrint('[audio-download] ${task.snapshot.title} 失败：$reason');
         if (task.snapshot.status == AudioDownloadStatus.downloading) {
           task.snapshot = task.snapshot.copyWith(
             status: AudioDownloadStatus.failed,
@@ -431,6 +446,19 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
       final response = await request.close();
       if (response.statusCode == 403 || response.statusCode == 410) {
         return 'stale-url';
+      }
+      if (response.statusCode == 416 && received > 0) {
+        // 续传起点超出服务器认定的长度。常见成因：重取地址后拿到另一条更短
+        // 的流，或者半成品其实已经收全、只是上次没来得及改名。旧的 `.part`
+        // 字节都不可信，丢掉从头拉 —— 当硬失败会让这一章每次「继续」都用
+        // 同一个越界 Range 再撞 416。
+        try {
+          await partFile.delete();
+        } catch (_) {}
+        // 半成品已经不要了，界面上的进度也得跟着归零。
+        task.snapshot = task.snapshot.copyWith(received: 0, clearTotal: true);
+        _publish();
+        return 'restart-from-zero';
       }
       var expectedTotal = -1;
       if (response.statusCode == 206) {
@@ -524,6 +552,25 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
       } catch (_) {}
       client?.close(force: true);
     }
+  }
+
+  /// 这个失败原因值不值得再试一次。
+  ///
+  /// 章节/音色不合法、取流结果对不上是永久错误；HTTP 4xx 里只有 408/429
+  /// 表示「稍后再试」，其余（404、空响应的 416 等）重试也是同一个结果。
+  /// 5xx、断流、续传校验失败这类网络侧偶发问题才重试。
+  static bool _isRetryable(String reason) {
+    if (reason == '无效的章节或音色' ||
+        reason == '取流结果与章节不匹配' ||
+        reason == '该章没有可下载的音频地址') {
+      return false;
+    }
+    final match = RegExp(r'HTTP (\d{3})').firstMatch(reason);
+    if (match == null) return true;
+    final status = int.parse(match.group(1)!);
+    return status == HttpStatus.requestTimeout ||
+        status == HttpStatus.tooManyRequests ||
+        status >= 500;
   }
 
   static String _fileName(String itemId, String toneId) =>
