@@ -864,14 +864,7 @@ int sp_atempo_flush(struct sp_atempo *atempo,
     int rc = yae_flush(atempo, &dst_ref, dst_end);
 
     *dst_written = (size_t)(dst_ref - (uint8_t *)dst);
-    /*
-     * yae_flush 的 -3 是「目标缓冲写满 / 还有残留」（等价上游的
-     * AVERROR(EAGAIN)），不是错误：已写出的样本有效，调用方按
-     * *dst_written 取走后继续调用即可。其它负值（如 -6 位置不变量
-     * 被破坏）是内部错误，必须原样传出，不能折成 0 让调用方误以为
-     * 已经排空。
-     */
-    return rc == -3 ? 0 : rc;
+    return rc == -3 ? 0 : rc; /* -3=EAGAIN，继续拉取；其它负值原样传出 */
 }
 
 int sp_atempo_window(const struct sp_atempo *atempo)
