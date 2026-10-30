@@ -21,6 +21,26 @@ class AudioPlaybackScope extends StatefulWidget {
     return owner.startSystemTts(book);
   }
 
+  /// 在后台起播，不打开听书页（阅读页「从本页听」用它）。
+  ///
+  /// 会话由 scope 持有、页面只是视图，所以不挂载页面也能播；阅读页留在
+  /// 原处继续跟随与高亮。返回 false 表示入口不支持或起播失败。
+  static Future<bool> startListeningInBackground(
+    BuildContext context,
+    AudioPage request,
+  ) async {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    if (owner == null) return false;
+    return await owner.acquire(request) != null;
+  }
+
+  /// 段落锚点跳转（双击跳读用）：与「从本页播放」同一套寻址。
+  static bool jumpToParagraph(BuildContext context, String chapterId,
+      {required int? paraIndex, required int ordinal}) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return owner?.jumpToParagraph(chapterId, paraIndex: paraIndex, ordinal: ordinal) ?? false;
+  }
+
   /// 把正在进行的朗读跳到 [position]（阅读页双击跳读用）。
   ///
   /// 只有智能朗读 / 真人讲书这类走播放器的会话能被跳转；系统朗读（本地 TTS）
@@ -241,6 +261,22 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     } else {
       unawaited(session._openChapter(index, position: position));
     }
+    return true;
+  }
+
+  /// 见 [AudioPlaybackScope.jumpToParagraph]。段落锚点交给播放器的
+  /// `/timepoints` 解析，不依赖字幕轨 —— 跨页/跨章时手里的字幕轨对不上
+  /// 本章正文，这条才是可靠的寻址路径。
+  bool jumpToParagraph(
+    String chapterId, {
+    required int? paraIndex,
+    required int ordinal,
+  }) {
+    final session = _session;
+    if (session == null || session._closed) return false;
+    final index = session._chapters.indexWhere((c) => c.itemId == chapterId);
+    if (index < 0) return false;
+    unawaited(session._openChapter(index, paragraph: (paraIndex: paraIndex, ordinal: ordinal)));
     return true;
   }
 
