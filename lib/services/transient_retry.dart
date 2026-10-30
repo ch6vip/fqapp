@@ -1,4 +1,9 @@
 import 'dart:async';
+import 'dart:io';
+
+import 'package:http/http.dart' as http;
+
+import 'api_client.dart';
 
 /// Retries a transient async failure a few times with linear backoff.
 ///
@@ -31,4 +36,26 @@ Future<T> retryTransient<T>(
     }
   }
   throw lastError!;
+}
+
+/// Whether [error] is a transient failure worth another attempt.
+///
+/// The local backend draws a pooled device per upstream request: a dropped
+/// connection, HTTP 408/429 or a 5xx can succeed on the next draw. Everything
+/// else is deterministic - a timeout already spent its deadline, another 4xx
+/// (404/403) and upstream business codes (NO_THIS_TONE, audit rejection) answer
+/// the same way every time - so retrying only delays the same failure. Callers
+/// that put a per-attempt deadline on a request (the audio source fetch allows
+/// 30 seconds) must not turn one failure into minutes of waiting.
+bool isTransientNetworkFailure(Object error) {
+  if (error is ApiException) {
+    final status = error.statusCode;
+    if (status == null) return false;
+    return status == HttpStatus.requestTimeout ||
+        status == HttpStatus.tooManyRequests ||
+        status >= 500;
+  }
+  return error is SocketException ||
+      error is HttpException ||
+      error is http.ClientException;
 }
