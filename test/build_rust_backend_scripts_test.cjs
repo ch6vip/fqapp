@@ -336,6 +336,19 @@ test('workflow path filters are defined once and referenced by anchor', () => {
   }
 });
 
+test('native-crypto runs the host atempo and resample regressions', () => {
+  // test/native_atempo_test.cjs 编译并运行 native/tests 下的宿主驱动；只在
+  // 本地跑的话，sp_atempo/sp_resample 的算法回归会在 CI 里悄悄失效。
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'native-crypto.yml'),
+    'utf8',
+  );
+  assert.ok(
+    workflow.includes('node --test test/native_atempo_test.cjs'),
+    'native-crypto.yml must run test/native_atempo_test.cjs',
+  );
+});
+
 test('the size budget gate runs in the Dart gate, not the Windows build', () => {
   // 行数预算只读源码，不依赖 Windows 工具链；绑在 windows.yml 上就要排在
   // ffmpeg 下载后面。它必须留在 dart-gate，否则这个门禁会随 Windows job 一起
