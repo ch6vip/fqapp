@@ -18,7 +18,7 @@
     "lib/pages/rank_page.dart": 543,
     "lib/pages/reader_page.dart": 4061,
     "lib/pages/search_page.dart": 1115,
-    "lib/pages/series_detail_page.dart": 1927,
+    "lib/pages/series_detail_page.dart": 726,
     "lib/pages/settings_page.dart": 808,
     "lib/pages/stats_page.dart": 1064,
     "lib/services/api_client.dart": 1797,
@@ -89,7 +89,7 @@
     "test/reader_pagination_test.dart": 597,
     "test/reader_paragraph_actions_test.dart": 964,
     "test/search_page_test.dart": 865,
-    "test/series_detail_page_test.dart": 865,
+    "test/series_detail_page_test.dart": 1007,
     "test/video_player_chrome_test.dart": 2232
   },
   "functions": {
@@ -206,11 +206,6 @@
     "lib/pages/search_page.dart::_SearchPageState.build": {
       "line": 531,
       "lines": 165,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/pages/series_detail_page.dart::_SeriesDetailPageState.build": {
-      "line": 576,
-      "lines": 91,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/settings_page.dart::SettingsPage.build": {
