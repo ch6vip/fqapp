@@ -24,6 +24,7 @@ abstract interface class ChapterCache {
   });
   Future<void> saveBook(CachedBook book);
   Future<Set<String>> cachedChapterIds(String bookId);
+
   /// [bookId] 的缓存目录，只在它确实还有缓存章节时返回；目录本身被清掉时用
   /// 缓存章节重建。null 表示这本书没有可离线阅读的正文。
   ///
@@ -206,20 +207,33 @@ class ChapterCacheStore implements ChapterCache {
 
   int _bytes(Map entry) {
     final text = entry['text'] as String;
-    // Reuse the measurement persisted with the record, but only when it lies
-    // within the UTF-8 bounds of the text itself (1–3 bytes per UTF-16 code
-    // unit). Anything else is re-measured, so damaged or foreign metadata
-    // cannot under-report its way past the capacity caps
-    // (chapter_cache_store_test locks the damaged-record case). Trusting the
-    // stored value is what keeps a restart from re-encoding every chapter.
+    // Reuse the measurement persisted with the record only when it can be the
+    // one this store wrote: at least one byte per UTF-16 code unit and at most
+    // three. A count equal to the code-unit length is exactly what an
+    // all-ASCII text measures; if the text contains any non-ASCII code unit,
+    // that count under-reports (each such unit takes at least two bytes), so
+    // it is re-measured instead of trusted. Other in-range counts are the
+    // values this store itself persists for non-ASCII text, and trusting them
+    // is what keeps a restart from re-encoding every chapter.
     final stored = entry['bytes'];
-    if (stored is int && stored >= text.length && stored <= text.length * 3) {
+    if (stored is int &&
+        stored >= text.length &&
+        stored <= text.length * 3 &&
+        (stored != text.length || _isAscii(text))) {
       return stored;
     }
     final cached = _byteCounts[entry];
     if (cached != null) return cached;
     textEncodes++;
     return _byteCounts[entry] = utf8.encode(text).length;
+  }
+
+  /// Whether every UTF-16 code unit is ASCII, i.e. one byte in UTF-8.
+  static bool _isAscii(String text) {
+    for (var index = 0; index < text.length; index++) {
+      if (text.codeUnitAt(index) > 0x7F) return false;
+    }
+    return true;
   }
 
   int _accessedAt(Map entry) {
