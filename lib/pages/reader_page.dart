@@ -431,8 +431,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// 非当前播放章的字幕轨，键 = 章节 id。
   ///
-  /// 会话里只存在正在播那一章的轨；停在别的章时按章补取一次留着。
+  /// 会话里只存在正在播那一章的轨。停在别的章时双击跳读要先有本章字幕，
+  /// 所以按章补取一次留着，翻回来不用再请求。
   final _cueTracks = <String, SubtitleTrack>{};
+  final _cueTrackRequests = <String, Future<SubtitleTrack>>{};
 
   /// 本章该用哪条字幕轨：正在播的就是本章时用会话里的，否则用补取的。
   SubtitleTrack? _cueTrackFor(String chapterId) {
@@ -452,6 +454,28 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _cueIndex = track == null || track.isEmpty
         ? CueIndex.empty
         : CueIndex.build(layout: layout, track: track);
+  }
+
+  /// 取本章字幕，取到就缓存。跨章跳读用；同章直接返回会话里的那条。
+  Future<SubtitleTrack?> _fetchCueTrack() async {
+    final chapterId = _chapter.itemId;
+    final session = ListeningSession.instance;
+    if (session.chapterId == chapterId) return session.subtitles;
+    final cached = _cueTracks[chapterId];
+    if (cached != null) return cached;
+    final pending = _cueTrackRequests[chapterId];
+    if (pending != null) return pending;
+    final future = AudioPlaybackScope.timelineForChapter(context, chapterId);
+    _cueTrackRequests[chapterId] = future;
+    try {
+      final track = await future;
+      if (track.isNotEmpty) _cueTracks[chapterId] = track;
+      return track;
+    } catch (_) {
+      return null;
+    } finally {
+      _cueTrackRequests.remove(chapterId);
+    }
   }
 
   /// The passage being narrated, in layout coordinates, or null when this
@@ -1110,18 +1134,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 处理行内折行、标题占位这些偏移修正，没必要再实现一遍；拿到字符下标后去
   /// 对照表里查出这句的起点时间，再让播放器跳过去。听的是同一本书的别的章时，
   /// 播放器会先切到本章再按位置起播。
-  /// 双击点落在章内哪个段落（拿它的 textId 供段落锚点寻址）。
-  int? _textIdAtOffset(int offset) {
-    final layout = _chapterLayout;
-    if (layout == null) return null;
-    for (final page in layout.pages) {
-      for (final f in page.fragments) {
-        if (offset >= f.start && offset < f.end) return f.block.textId;
-      }
-    }
-    return null;
-  }
-
   Future<void> _seekToTappedSentence(Offset globalPosition) async {
     final layout = _chapterLayout;
     if (layout == null) return;
@@ -1136,22 +1148,44 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
     final offset = _marksScope?.geometry.chapterOffsetAt(globalPosition);
     if (offset == null) return;
-    // 与「从本页播放」同一套寻址：段落锚点交给播放器的 /timepoints 解析，
-    // 不依赖字幕轨 —— 跨页/跨章时手里的字幕轨对不上本章正文。
-    final tappedTextId = _textIdAtOffset(offset);
-    final anchor = tappedTextId == null ? null : _paragraphAnchor(tappedTextId);
-    if (anchor == null ||
-        anchor.paraIndex == null ||
-        !AudioPlaybackScope.jumpToParagraph(
-          context,
-          _chapter.itemId,
-          paraIndex: anchor.paraIndex,
-          ordinal: anchor.ordinal,
-        )) {
-      _showMessage('这一点没有对应音频，稍后再试');
+    _ensureCueIndex(layout);
+    if (_cueIndex.isEmpty) {
+      // 跨章时手里的字幕轨是「正在播那一章」的，对不上本章正文。现场取本章
+      // 字幕再跳 —— 否则用户得先手动切到播放中的那章，再翻回来点。
+      final track = await _fetchCueTrack();
+      if (!mounted || !identical(_chapterLayout, layout)) return;
+      if (track == null || track.isEmpty) {
+        _showMessage('本章没有逐句字幕，无法跳读');
+        return;
+      }
+      _ensureCueIndex(layout);
+      if (_cueIndex.isEmpty) {
+        // 字幕取到了，但一句都没对上正文（章节文本被改过，或语音文本不是原文）。
+        _showMessage('本章字幕和正文对不上，无法跳读');
+        return;
+      }
+    }
+    final span = _cueIndex.spanAtChar(offset);
+    if (span == null) {
+      _showMessage('这一点没有对应字幕，换一句试试');
+      return;
+    }
+    if (!AudioPlaybackScope.jumpToChapter(
+      context,
+      _chapter.itemId,
+      span.startPosition,
+    )) {
+      _showMessage('朗读还没准备好，稍后再试');
       return;
     }
     HapticFeedback.selectionClick();
+    // 立刻把高亮移到这句：下一次 tick 要等 200ms，等待期间旧句子还亮着，
+    // 看上去像点错了。跨章时本章本来没高亮，这条跳过即可。
+    if (kReaderHighlightWash &&
+        mounted &&
+        (span.start, span.end) != _narrationRange) {
+      setState(() => _narrationRange = (span.start, span.end));
+    }
   }
 
   Future<void> _onParagraphLongPress(
@@ -2932,30 +2966,38 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       }
       if (!mounted) return;
       setState(() => _controlsVisible = false);
-      // 不跳听书页：会话由 AudioPlaybackScope 持有，阅读页留在原处跟随。
-      final started = await AudioPlaybackScope.startListeningInBackground(
-        context,
-        AudioPage(
-          bookId: widget.bookId,
-          title: widget.title,
-          cover: widget.cover,
-          chapters: widget.chapters,
-          startIndex: chapterIndex,
-          resumeSession: false,
-          // 沿用正在听的那个音色：不传的话播放页只能挑默认音色，
-          // 「从本页播放」就会把真人讲书换成内置 TTS。
-          initialToneId: _listeningToneId(),
-          startPosition: paragraphAnchored
-              ? Duration(milliseconds: startMs ?? 0)
-              : null,
-          startParagraph: paragraph,
-          startFraction: paragraphAnchored && startMs == null
-              ? _readFraction(textId)
-              : null,
-          historyStore: widget.readerStore,
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => AudioPage(
+            bookId: widget.bookId,
+            title: widget.title,
+            cover: widget.cover,
+            chapters: widget.chapters,
+            startIndex: chapterIndex,
+            resumeSession: false,
+            // 沿用正在听的那个音色：不传的话播放页只能挑默认音色，
+            // 「从本页播放」就会把真人讲书换成内置 TTS。
+            initialToneId: _listeningToneId(),
+            // A paragraph-anchored request always carries an explicit start:
+            // Duration.zero means "this paragraph has no audio, begin at the
+            // chapter opening" and must not fall back to saved history.
+            // startParagraph hands the paragraph to the player when the body
+            // has no spans of its own; the player resolves it from
+            // /timepoints and only falls back to that Duration.zero.
+            startPosition: paragraphAnchored
+                ? Duration(milliseconds: startMs ?? 0)
+                : null,
+            startParagraph: paragraph,
+            // 没有精确毫秒、也没有 `/timepoints` 可查时的兜底：告诉播放页这
+            // 一段在正文里的位置比例，让它按时长折算。折算不精确，但它保证
+            // 锚定请求不会落到章首——那正是用户看到「还是从章首播」的样子。
+            startFraction: paragraphAnchored && startMs == null
+                ? _readFraction(textId)
+                : null,
+            historyStore: widget.readerStore,
+          ),
         ),
       );
-      if (!started && mounted) _showMessage('无法开始播放，请检查网络');
     } finally {
       _openingListening = false;
     }
