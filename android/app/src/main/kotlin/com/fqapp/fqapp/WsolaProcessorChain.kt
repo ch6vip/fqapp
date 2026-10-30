@@ -5,6 +5,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 
@@ -48,6 +49,14 @@ internal class WsolaProcessorChain(private val tempoProcessor: SpeechTempoProces
 
     private var skipSilenceEnabled = false
 
+    /**
+     * 最近一次下发的倍速。
+     *
+     * [getMediaDuration] 要拿它把播放时长换算回媒体时长，所以必须在这里留一份：
+     * Media3 调那个函数时不带任何速度参数。
+     */
+    private var speed = 1f
+
     private val processors: Array<AudioProcessor> = buildList {
         add(tempoProcessor)
         add(silenceSkipping)
@@ -60,6 +69,8 @@ internal class WsolaProcessorChain(private val tempoProcessor: SpeechTempoProces
     override fun applyPlaybackParameters(playbackParameters: PlaybackParameters): PlaybackParameters {
         // 音高恒为 1.0：只做时伸缩，与官方 PlaybackParams.setPitch(1.0f) 对齐。
         tempoProcessor.setSpeed(playbackParameters.speed)
+        // 记住倍速：下面 getMediaDuration 要把播放时长乘回它。
+        speed = playbackParameters.speed
         return PlaybackParameters(playbackParameters.speed)
     }
 
@@ -69,11 +80,25 @@ internal class WsolaProcessorChain(private val tempoProcessor: SpeechTempoProces
         return skipSilenceEnabled
     }
 
-    override fun getMediaDuration(mediaDurationUs: Long): Long {
-        // 输入时长 -> 输出时长：WSOLA 的产出是「输入 / tempo」。
-        // 这里只汇报 1.0 比例（Media3 只用它做 seek 提示），真实换算由
-        // AudioSink 侧的 getPlayoutDuration 逐步校正。
-        return mediaDurationUs
+    /**
+     * 播放时长 -> 媒体时长，**必须乘倍速**。
+     *
+     * `DefaultAudioSink.applyMediaPositionParameters` 拿 AudioTrack 的播放时长调
+     * 这个函数，算出来的值就是 `player.currentPosition`（默认链里这个方法转发给
+     * `sonicAudioProcessor.getMediaDuration`，同样不是恒等）。WSOLA 的产出是
+     * 「输入 / tempo」：1.5× 时 AudioTrack 走完 1 秒，媒体已经过去 1.5 秒。
+     *
+     * 曾经这里恒等返回、并注释「Media3 只用它做 seek 提示」，那个判断是错的。恒等
+     * 的后果是上报位置只有真实进度的 `1/tempo`：1.5× 下听完 10 分钟的内容，位置只
+     * 报到 6 分 40 秒（少 3 分 20 秒），且误差随播放时长线性累积——正文高亮越听越
+     * 落后、保存的进度跟着偏小、媒体卡片的进度条也走不满。
+     */
+    override fun getMediaDuration(playoutDurationUs: Long): Long {
+        if (playoutDurationUs <= 0L) return 0L
+        val current = speed
+        // 速度非法时退回恒等：宁可位置不准，也不能让整条播放链崩掉。
+        if (!current.isFinite() || current <= 0f || current == 1f) return playoutDurationUs
+        return Util.getMediaDurationForPlayoutDuration(playoutDurationUs, current)
     }
 
     override fun getSkippedOutputFrameCount(): Long = if (skipSilenceEnabled) silenceSkipping.skippedFrames else 0L
