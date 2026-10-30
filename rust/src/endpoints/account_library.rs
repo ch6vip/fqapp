@@ -87,7 +87,7 @@ pub async fn handle(ctx: &Ctx, req: &Request) -> Response {
         response.headers.push(("allow".into(), "POST".into()));
         return response;
     }
-    if req.body.len() > 16 * 1024 || !req.query.is_empty() {
+    if req.body.len() > crate::dispatch::ACCOUNT_REQUEST_BODY_LIMIT || !req.query.is_empty() {
         return failure(400, "书架采集参数无效或过长");
     }
     let input: CaptureRequest = match serde_json::from_slice(&req.body) {
