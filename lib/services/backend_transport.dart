@@ -165,13 +165,36 @@ class RustBackendTransport implements BackendTransport {
   /// app unable to reach the core for the rest of the process. Only this
   /// attempt's own handle is cleared on failure, so a concurrent retry that
   /// already installed a new future is never dropped.
+  ///
+  /// `RustLib.init` is not atomic: it installs FRB's process-wide state before
+  /// running the Rust initializers, so a failure in that second half leaves a
+  /// half-initialized bridge behind. A blind retry would then throw
+  /// `Should not initialize flutter_rust_bridge twice` from FRB itself, so the
+  /// half state is reset through FRB's own [RustLib.dispose] before the next
+  /// attempt. A runtime that is already up is reused instead of re-initialized.
   static Future<void> ensureRuntime() {
     final cached = _runtimeReady;
     if (cached != null) return cached;
+    if (runtimeInitialized()) return _runtimeReady = Future<void>.value();
     late final Future<void> attempt;
     attempt = Future<void>.sync(runtimeInitializer).catchError(
       (Object error, StackTrace stack) {
         if (identical(_runtimeReady, attempt)) _runtimeReady = null;
+        if (runtimeInitialized()) {
+          try {
+            disposeRuntime();
+          } catch (resetError, resetStack) {
+            // FRB could not release the half-initialized state. There is no
+            // other reset entry point, so the process cannot retry cleanly;
+            // make that actionable instead of looping on the same StateError.
+            AppLog.e(
+              'backend',
+              'Flutter Rust Bridge 运行时复位失败，需要重启应用',
+              error: resetError,
+              stack: resetStack,
+            );
+          }
+        }
         AppLog.e(
           'backend',
           'Flutter Rust Bridge 运行时初始化失败，下次启动重试',
@@ -191,11 +214,25 @@ class RustBackendTransport implements BackendTransport {
   @visibleForTesting
   static Future<void> Function() runtimeInitializer = RustLib.init;
 
+  /// Whether FRB already installed its process-wide state.
+  ///
+  /// Read before initializing (a runtime loaded by the host is reused) and
+  /// after a failure (only a half-initialized bridge needs [disposeRuntime]).
+  @visibleForTesting
+  static bool Function() runtimeInitialized = () =>
+      RustLib.instance.initialized;
+
+  /// FRB's own reset entry point (`disposeImpl` clears the singleton state).
+  @visibleForTesting
+  static void Function() disposeRuntime = RustLib.dispose;
+
   /// Forgets the process-wide runtime handle. Only for tests.
   @visibleForTesting
   static void resetRuntimeForTest() {
     _runtimeReady = null;
     runtimeInitializer = RustLib.init;
+    runtimeInitialized = () => RustLib.instance.initialized;
+    disposeRuntime = RustLib.dispose;
   }
 
   /// Records that the runtime is already initialized, for hosts that load the
