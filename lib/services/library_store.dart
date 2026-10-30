@@ -109,6 +109,17 @@ class LibraryStore implements ReaderStore {
   late Box<dynamic> _watchedBox;
   Future<void> _writes = Future<void>.value();
 
+  /// Non-imported history records, or null when a bulk write left the count
+  /// unknown and the next trim check must recount. Imported records are
+  /// exempt from the 50-entry trim, so the box length alone cannot tell
+  /// whether local history is over the trim threshold.
+  int? _localHistoryCount;
+
+  /// Full snapshot builds, so the regression test can assert that adding a
+  /// record while imported history keeps the box above 100 does not rebuild.
+  @visibleForTesting
+  int historySnapshotBuilds = 0;
+
   Future<void> _serialize(Future<void> Function() action) {
     final write = _writes.then<void>((_) => action());
     // Return a failure to its caller without poisoning subsequent mutations.
@@ -123,6 +134,29 @@ class LibraryStore implements ReaderStore {
     return write;
   }
 
+  /// Counts non-imported history records without copying or sorting them.
+  int _localHistoryCountNow() {
+    final cached = _localHistoryCount;
+    if (cached != null) return cached;
+    var count = 0;
+    for (final key in _histBox.keys) {
+      final raw = _histBox.get(key);
+      if (raw is! Map || raw['fanqieImported'] != true) count++;
+    }
+    return _localHistoryCount = count;
+  }
+
+  /// Keeps the cached count in step with one in-place history write.
+  void _noteHistoryWrite(Object? before, Map<String, dynamic> after) {
+    final count = _localHistoryCount;
+    if (count == null) return;
+    final wasLocal =
+        before != null && (before is! Map || before['fanqieImported'] != true);
+    final isLocal = after['fanqieImported'] != true;
+    final delta = (isLocal ? 1 : 0) - (wasLocal ? 1 : 0);
+    if (delta != 0) _localHistoryCount = count + delta;
+  }
+
   /// Hive-backed notifications for retained tabs. Visible pages update after
   /// writes; hidden pages defer their snapshots until the next visit.
   bool get isInitialized => EncryptedHive.isBoxOpen(Hive, _histBoxName);
@@ -132,6 +166,7 @@ class LibraryStore implements ReaderStore {
 
   Future<void> init() async {
     _writes = Future<void>.value();
+    _localHistoryCount = null;
     _histBox = await EncryptedHive.openBox(Hive, _histBoxName);
     _readTimeBox = await EncryptedHive.openBox(Hive, _readTimeBoxName);
     _watchedBox = await EncryptedHive.openBox(Hive, _watchedBoxName);
@@ -276,6 +311,7 @@ class LibraryStore implements ReaderStore {
   }
 
   List<Map<String, dynamic>> historySnapshot() {
+    historySnapshotBuilds++;
     final byIdentity = <(String, String), Map<String, dynamic>>{};
     for (final key in _histBox.keys) {
       final record = _historyRecord(_histBox.get(key), id: key.toString());
@@ -351,6 +387,7 @@ class LibraryStore implements ReaderStore {
         identities.add((kind, id));
         addedHistory++;
       }
+      _localHistoryCount = null;
       var addedEpisodes = 0;
       for (final entry in watched.entries) {
         final current = _watchedRecord(_watchedBox.get(entry.key));
@@ -435,6 +472,7 @@ class LibraryStore implements ReaderStore {
         await _histBox.put(id, clean);
         changed++;
       }
+      _localHistoryCount = null;
       await _histBox.flush();
       return changed;
     });
@@ -475,10 +513,14 @@ class LibraryStore implements ReaderStore {
       record['fanqieImported'] = true;
     }
     await _histBox.put(id, record);
+    _noteHistoryWrite(existing, record);
 
     // Trim history to 50 entries once it grows past 100 (leaves headroom so
-    // we don't prune on every single write).
-    if (_histBox.length > 100) {
+    // we don't prune on every single write). The gate counts non-imported
+    // records: imported history is exempt from this trim, so a large import
+    // can hold the box above 100 with nothing local to prune — rebuilding the
+    // whole snapshot on every write would then be wasted work.
+    if (_localHistoryCountNow() > 100) {
       // Legacy backups must not make fifty books look like a hundred books.
       final retained = historySnapshot().take(50).map(_historyIdentity).toSet()
         // Never trim the record this write just inserted, even without a time.
@@ -492,29 +534,33 @@ class LibraryStore implements ReaderStore {
           oldestKeys.add(key);
         }
       }
-      // Imported records are exempt from the 50-entry trim above, so a
-      // bulk import is not wiped by the next local write. They still get
-      // their own bound: past the cap, drop the oldest imported records.
-      if (_histBox.length > _importedHistoryCap) {
-        final imported = <MapEntry<dynamic, Map<String, dynamic>>>[];
-        for (final key in _histBox.keys) {
-          final record = _historyRecord(_histBox.get(key), id: key.toString());
-          if (record != null && record['fanqieImported'] == true) {
-            imported.add(MapEntry(key, record));
-          }
-        }
-        if (imported.length > _importedHistoryCap) {
-          imported.sort(
-            (a, b) => _historyTime(a.value).compareTo(_historyTime(b.value)),
-          );
-          for (final entry
-              in imported.take(imported.length - _importedHistoryCap)) {
-            // Never trim the record this write just inserted.
-            if (entry.key != id) oldestKeys.add(entry.key);
-          }
+      await _histBox.deleteAll(oldestKeys);
+      _localHistoryCount = null;
+    }
+    // Imported records are exempt from the 50-entry trim above, so a bulk
+    // import is not wiped by the next local write. They still get their own
+    // bound: past the cap, drop the oldest imported records.
+    if (_histBox.length > _importedHistoryCap) {
+      final imported = <MapEntry<dynamic, Map<String, dynamic>>>[];
+      for (final key in _histBox.keys) {
+        final record = _historyRecord(_histBox.get(key), id: key.toString());
+        if (record != null && record['fanqieImported'] == true) {
+          imported.add(MapEntry(key, record));
         }
       }
-      await _histBox.deleteAll(oldestKeys);
+      if (imported.length > _importedHistoryCap) {
+        imported.sort(
+          (a, b) => _historyTime(a.value).compareTo(_historyTime(b.value)),
+        );
+        final doomed = [
+          for (final entry in imported.take(
+            imported.length - _importedHistoryCap,
+          ))
+            // Never trim the record this write just inserted.
+            if (entry.key != id) entry.key,
+        ];
+        await _histBox.deleteAll(doomed);
+      }
     }
   }
 
@@ -598,6 +644,7 @@ class LibraryStore implements ReaderStore {
       }
       if (keys.isEmpty) return false;
       await _histBox.deleteAll(keys);
+      _localHistoryCount = null;
       return true;
     });
   }
@@ -620,6 +667,7 @@ class LibraryStore implements ReaderStore {
       }
       if (keys.isEmpty) return 0;
       await _histBox.deleteAll(keys);
+      _localHistoryCount = null;
       return keys.length;
     });
   }
@@ -631,6 +679,7 @@ class LibraryStore implements ReaderStore {
       final preferences = await SharedPreferences.getInstance();
       await _removeLegacySource(preferences, 'hist');
       await _histBox.clear();
+      _localHistoryCount = null;
       // 已看集也来自观看历史：清历史必须一并清掉，「删除历史」不能在
       // 选集面板里留下已看标记。
       await _watchedBox.clear();
@@ -650,6 +699,7 @@ class LibraryStore implements ReaderStore {
       await _removeLegacySource(preferences, 'hist');
       await _removeLegacySource(preferences, 'read_time_map');
       await _histBox.clear();
+      _localHistoryCount = null;
       await _readTimeBox.clear();
       await _watchedBox.clear();
     });
@@ -827,6 +877,7 @@ class LibraryStore implements ReaderStore {
     final id = record['id'] as String;
     if (!_histBox.containsKey(target)) {
       await _histBox.put(target, {...record, 'id': target, 'contentId': id});
+      _localHistoryCount = null;
     }
     final current = _readTimeBox.get(target);
     final previous = _legacyTimeAllocation(current);
