@@ -148,11 +148,7 @@ void main() {
 
     // 取流在 messenger 取值之前完成，异常落到 catch 时 messenger 还是 null：
     // 不补取一次，用户什么提示都看不到。
-    expect(
-      find.text('本集暂时无法收听'),
-      findsOneWidget,
-      reason: '取流抛异常必须有可见提示',
-    );
+    expect(find.text('本集暂时无法收听'), findsOneWidget, reason: '取流抛异常必须有可见提示');
   });
 
   testWidgets('换集建播放器失败时释放新播放器，且不再驱动已释放的旧播放器', (tester) async {
@@ -196,21 +192,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(created, hasLength(2));
     expect(find.text('本集暂时无法收听'), findsOneWidget);
-    expect(
-      created[1].disposed,
-      isTrue,
-      reason: 'create 失败的新播放器必须被释放，不能泄漏',
-    );
+    expect(created[1].disposed, isTrue, reason: 'create 失败的新播放器必须被释放，不能泄漏');
 
     // 旧播放器已被释放，`_player` 必须不再指向它：点播放不能驱动旧句柄。
     final oldCalls = List<String>.from(created.first.calls);
     await tester.tap(find.byKey(const ValueKey('listen-play')));
     await tester.pumpAndSettle();
-    expect(
-      created.first.calls,
-      oldCalls,
-      reason: '已释放的旧播放器不能再收到播放指令',
-    );
+    expect(created.first.calls, oldCalls, reason: '已释放的旧播放器不能再收到播放指令');
   });
 
   testWidgets('位置心跳只重建进度区，不整页重建', (tester) async {
@@ -253,11 +241,43 @@ void main() {
     expect(slider.value, closeTo(42 / 120, 1e-9));
   });
 
+  testWidgets('时长迟到时总时长和可拖动状态都会更新', (tester) async {
+    final created = <FakeNativePlayer>[];
+    await _pump(
+      tester,
+      created: created,
+      createPlayer: () => FakeNativePlayer(totalDuration: Duration.zero),
+    );
+    // create 返回时原生还没解析出时长：总时长未知，滑块不可拖。
+    expect(find.text('00:20 / 00:00'), findsOneWidget);
+    expect(
+      tester
+          .widget<Slider>(find.byKey(const ValueKey('listen-seek')))
+          .onChanged,
+      isNull,
+    );
+
+    // 模拟原生稍后才解析出时长并广播 `duration`。
+    created.single
+      ..totalDuration = const Duration(minutes: 3)
+      ..durations.add(const Duration(minutes: 3));
+    await tester.pump();
+
+    // 位置流没有新事件（页面也不再整页重建）：时长事件本身必须刷新进度区。
+    expect(find.text('00:20 / 03:00'), findsOneWidget);
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('listen-seek')),
+    );
+    expect(slider.onChanged, isNotNull);
+    expect(slider.value, closeTo(20 / 180, 1e-9));
+  });
+
   testWidgets('拖动进度条只在松手时 seek 一次', (tester) async {
     final created = <FakeNativePlayer>[];
     await _pump(tester, created: created);
     final player = created.single;
-    int seeks() => player.calls.where((call) => call.startsWith('seek:')).length;
+    int seeks() =>
+        player.calls.where((call) => call.startsWith('seek:')).length;
     expect(seeks(), 0);
 
     final slider = find.byKey(const ValueKey('listen-seek'));
@@ -305,6 +325,7 @@ Future<void> _pump(
   required List<FakeNativePlayer> created,
   List<String>? resolved,
   int initialIndex = 0,
+  FakeNativePlayer Function()? createPlayer,
 }) async {
   popped = null;
   await tester.pumpWidget(
@@ -325,7 +346,7 @@ Future<void> _pump(
                       return _source;
                     },
                     playerFactory: () {
-                      final fake = FakeNativePlayer();
+                      final fake = (createPlayer ?? FakeNativePlayer.new)();
                       created.add(fake);
                       return fake;
                     },
