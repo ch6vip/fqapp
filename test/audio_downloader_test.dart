@@ -24,6 +24,17 @@ class _FakeCdn {
   /// 忽略 Range 的响应：始终 200 全量。
   bool ignoreRange = false;
 
+  /// 非空时把它当作服务器的「文件总长」：Range 起点越界就回 416（模拟重取
+  /// 地址后拿到另一条更短的流）。
+  int? shortLength;
+
+  /// 非空时第一次请求回这个状态码（模拟 5xx 抖动）。
+  int? failFirstStatus;
+
+  int get requestCount => _served;
+
+  int get _total => shortLength ?? content.length;
+
   String get url => 'http://127.0.0.1:${server.port}/audio.m4a';
 
   Future<void> start() async {
@@ -37,17 +48,27 @@ class _FakeCdn {
         await request.response.close();
         return;
       }
+      if (failFirstStatus != null && _served == 1) {
+        request.response.statusCode = failFirstStatus!;
+        await request.response.close();
+        return;
+      }
       var start = 0;
       if (range != null && !ignoreRange) {
         final match = RegExp(r'^bytes=(\d+)-$').firstMatch(range);
         if (match != null) start = int.parse(match.group(1)!);
       }
-      final body = content.sublist(start);
+      if (start >= _total) {
+        request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+        await request.response.close();
+        return;
+      }
+      final body = content.sublist(start, _total);
       if (start > 0) {
         request.response.statusCode = HttpStatus.partialContent;
         request.response.headers.set(
           HttpHeaders.contentRangeHeader,
-          'bytes $start-${content.length - 1}/${content.length}',
+          'bytes $start-${_total - 1}/$_total',
         );
       }
       request.response.contentLength = body.length;
@@ -178,8 +199,10 @@ void main() {
       Chapter(itemId: 'ch1', title: '一', volumeName: '');
 
   Future<void> settle(AudioDownloader engine) async {
-    // 引擎在后台跑；等所有任务离开等待/下载态。
-    for (var i = 0; i < 300; i++) {
+    // 引擎在后台跑；等所有任务离开等待/下载态。失败会自动重试（最多三次，
+    // 退避 0.9s + 1.8s），窗口要留够。
+    final end = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().isBefore(end)) {
       final busy = engine.value.any(
         (task) =>
             task.status == AudioDownloadStatus.waiting ||
@@ -258,23 +281,69 @@ void main() {
     expect(File(cached!.filePath).readAsBytesSync(), content);
   });
 
-  test('a failing resolve marks the chapter failed and resume retries', () async {
+  test('a failing resolve is retried, then failed, then resume works', () async {
     var attempts = 0;
+    var offline = true;
     final engine = downloader(
       resolve: (bookId, itemId, toneId) async {
         attempts++;
-        if (attempts == 1) throw const SocketException('offline');
+        if (offline) throw const SocketException('offline');
         return AudioSource(itemId: itemId, url: cdn.url, toneId: toneId);
       },
     );
     await engine.enqueue(book: book(), chapters: [chapterOne()]);
     await settle(engine);
     expect(engine.value.single.status, AudioDownloadStatus.failed);
+    expect(attempts, 3, reason: '首次 + 自动重试两次后放弃');
 
+    offline = false;
     engine.resume('ch1', toneId: 'toneA');
     await settle(engine);
     expect(engine.value.single.status, AudioDownloadStatus.completed);
     expect(store.chapters.containsKey('ch1|toneA'), isTrue);
+  });
+
+  test('a 5xx is retried automatically and the chapter still completes', () async {
+    cdn.failFirstStatus = HttpStatus.serviceUnavailable;
+    final engine = downloader();
+    await engine.enqueue(book: book(), chapters: [chapterOne()]);
+    await settle(engine);
+
+    final task = engine.value.single;
+    expect(task.status, AudioDownloadStatus.completed, reason: '${task.error}');
+    expect(cdn.requestCount, 2, reason: '第一次 503 后应自动再试一次');
+    expect(store.chapters.containsKey('ch1|toneA'), isTrue);
+  });
+
+  test('a 4xx other than 408/429 is not retried', () async {
+    cdn.failFirstStatus = HttpStatus.notFound;
+    final engine = downloader();
+    await engine.enqueue(book: book(), chapters: [chapterOne()]);
+    await settle(engine);
+
+    final task = engine.value.single;
+    expect(task.status, AudioDownloadStatus.failed);
+    expect(task.error, contains('404'));
+    expect(cdn.requestCount, 1, reason: '404 重试也是同一个结果');
+  });
+
+  test('续传越界（HTTP 416）丢掉半成品重下，不会卡在失败', () async {
+    // 半成品 500 字节，但重取地址后这条流只有 100 字节：Range 起点越界。
+    final part = File(
+      '${temp.path}${Platform.pathSeparator}ch1__toneA.m4a.part',
+    )..writeAsBytesSync(List.filled(500, 7));
+    cdn.shortLength = 100;
+
+    final engine = downloader();
+    await engine.enqueue(book: book(), chapters: [chapterOne()]);
+    await settle(engine);
+
+    final task = engine.value.single;
+    expect(task.status, AudioDownloadStatus.completed, reason: '${task.error}');
+    expect(part.existsSync(), isFalse, reason: '越界的半成品要被丢掉');
+    final cached = store.chapters['ch1|toneA'];
+    expect(cached, isNotNull);
+    expect(File(cached!.filePath).readAsBytesSync(), content.sublist(0, 100));
   });
 
   test('the same chapter in two tones becomes two files', () async {
