@@ -12,6 +12,7 @@ use fqapi_core::endpoints::{router, session, Params, INTERNAL_DEVICE_PIN_KEY};
 use fqapi_core::sign::Manager;
 use fqapi_core::upstream::{UpstreamClient, UpstreamRequest};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
@@ -252,8 +253,8 @@ async fn a_recorded_session_pins_its_device_across_pages() {
 
 const DH_FIXTURE: &str = include_str!("../testdata/dh_content_fixture.json");
 
-#[test]
-fn dh_content_decrypts_a_go_generated_fixture() {
+#[tokio::test]
+async fn dh_content_decrypts_a_go_generated_fixture() {
     let fixture: Value =
         serde_json::from_str(DH_FIXTURE).expect("dh_content_fixture.json is valid JSON");
     let f = &fixture["dh_content"];
@@ -276,7 +277,9 @@ fn dh_content_decrypts_a_go_generated_fixture() {
         ("C".to_string(), "1".to_string()),
     ];
 
-    let result = set_dh_content_in_place(&raw, &headers, &state).expect("decrypt");
+    let result = set_dh_content_in_place(&raw, &headers, &state)
+        .await
+        .expect("decrypt");
     let data = &result["data"];
     assert_eq!(data["content"], json!(plain));
     assert_eq!(data["content_decrypted"], json!(true));
@@ -286,8 +289,37 @@ fn dh_content_decrypts_a_go_generated_fixture() {
     );
 }
 
-#[test]
-fn dh_content_failure_modes_fail_closed() {
+// The shipping path offloads the 3071-bit subgroup check and shared-secret
+// exponentiation to the blocking pool, so on a current-thread runtime the
+// await must yield while that CPU work runs. An inline implementation would
+// leave the spawned task unpolled until the decrypt had already returned.
+#[tokio::test(flavor = "current_thread")]
+async fn dh_decrypt_runs_off_the_async_worker() {
+    let fixture: Value = serde_json::from_str(DH_FIXTURE).expect("fixture");
+    let f = &fixture["dh_content"];
+    let state = fqapi_core::upstream::dh::DHState {
+        a: Zeroizing::new(vec![1]),
+    };
+    let polled = Arc::new(AtomicBool::new(false));
+    let setter = polled.clone();
+    tokio::spawn(async move { setter.store(true, Ordering::SeqCst) });
+
+    let plain = fqapi_core::upstream::dh::decrypt_dh_content_off_thread(
+        f["key_b64"].as_str().unwrap(),
+        f["cipher_b64"].as_str().unwrap(),
+        &state,
+    )
+    .await
+    .expect("off-thread decrypt");
+    assert!(!plain.is_empty());
+    assert!(
+        polled.load(Ordering::SeqCst),
+        "the 3071-bit work must not run inline on the async worker"
+    );
+}
+
+#[tokio::test]
+async fn dh_content_failure_modes_fail_closed() {
     let fixture: Value = serde_json::from_str(DH_FIXTURE).expect("fixture");
     let f = &fixture["dh_content"];
     let key = f["key_b64"].as_str().unwrap();
@@ -305,7 +337,9 @@ fn dh_content_failure_modes_fail_closed() {
     ] {
         let raw = br#"{"code":0,"data":{"content":"not base64!"}}"#.to_vec();
         assert!(
-            set_dh_content_in_place(&raw, &headers, &state).is_err(),
+            set_dh_content_in_place(&raw, &headers, &state)
+                .await
+                .is_err(),
             "ciphertext without a valid key must not be published"
         );
     }
@@ -323,7 +357,9 @@ fn dh_content_failure_modes_fail_closed() {
         ("C".to_string(), "1".to_string()),
     ];
     assert!(
-        set_dh_content_in_place(&raw, &headers, &state).is_err(),
+        set_dh_content_in_place(&raw, &headers, &state)
+            .await
+            .is_err(),
         "invalid UTF-8 must not be reported as a readable chapter"
     );
 }
