@@ -175,7 +175,7 @@ function Build-AndroidTarget {
     Push-Location -LiteralPath $AppDir
     try {
         Invoke-NativeCommand -Exe 'cargo' `
-            -Arguments (@('build', '--manifest-path', $Manifest, '--target', $RustTarget) + $ProfileArgs) `
+            -Arguments (@('build', '--locked', '--manifest-path', $Manifest, '--target', $RustTarget) + $ProfileArgs) `
             -FailureMessage 'rust cross build failed'
     }
     finally { Pop-Location }
@@ -200,7 +200,7 @@ if ($HostLib) {
     Push-Location -LiteralPath $AppDir
     try {
         Invoke-NativeCommand -Exe 'cargo' `
-            -Arguments (@('build', '--manifest-path', $Manifest) + $ProfileArgs) `
+            -Arguments (@('build', '--locked', '--manifest-path', $Manifest) + $ProfileArgs) `
             -FailureMessage 'host rust build failed'
     }
     finally { Pop-Location }

@@ -34,7 +34,7 @@ done
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
   echo "==> building the host Rust core..."
-  ( cd "$APP_DIR" && cargo build --manifest-path "$MANIFEST" )
+  ( cd "$APP_DIR" && cargo build --locked --manifest-path "$MANIFEST" )
 fi
 
 case "$(uname -s)" in

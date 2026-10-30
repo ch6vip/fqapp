@@ -153,7 +153,7 @@ build_android_target() {
   mkdir -p "$jni_dir"
 
   echo "==> cargo build --target $rust_target ($PROFILE)..."
-  ( cd "$APP_DIR" && cargo build --manifest-path "$MANIFEST" --target "$rust_target" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} )
+  ( cd "$APP_DIR" && cargo build --locked --manifest-path "$MANIFEST" --target "$rust_target" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} )
 
   local built_so="$APP_DIR/rust/target/$rust_target/$PROFILE/libfqapi_core.so"
   if [ ! -s "$built_so" ]; then
@@ -174,5 +174,5 @@ build_android_target armv7-linux-androideabi armv7a-linux-androideabi armeabi-v7
 
 if [ "$HOST_LIB" -eq 1 ]; then
   echo "==> 编译宿主 cdylib..."
-  ( cd "$APP_DIR" && cargo build --manifest-path "$MANIFEST" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} )
+  ( cd "$APP_DIR" && cargo build --locked --manifest-path "$MANIFEST" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} )
 fi

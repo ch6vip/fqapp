@@ -30,7 +30,7 @@ if (-not $SkipBuild) {
     Write-Host '==> building the host Rust core...'
     Push-Location -LiteralPath $AppDir
     try {
-        cargo build --manifest-path $Manifest
+        cargo build --locked --manifest-path $Manifest
         if ($LASTEXITCODE -ne 0) { throw 'host rust build failed' }
     }
     finally { Pop-Location }
