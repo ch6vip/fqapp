@@ -20,7 +20,6 @@
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 808,
-    "lib/pages/stats_page.dart": 1064,
     "lib/services/api_client.dart": 1797,
     "lib/services/app_log.dart": 617,
     "lib/services/audio_downloader.dart": 568,
@@ -216,11 +215,6 @@
     "lib/pages/settings_page.dart::SettingsPage.build": {
       "line": 33,
       "lines": 225,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/pages/stats_page.dart::_Heatmap.build": {
-      "line": 611,
-      "lines": 82,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/system_tts_settings_page.dart::_SystemTtsSettingsPageState.build": {

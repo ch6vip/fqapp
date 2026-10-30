@@ -1,22 +1,119 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../models/media_item.dart';
+import '../models/reading_stats.dart';
+import '../services/book_open_preferences.dart';
+import '../services/library_store.dart';
+import '../services/media_history_store.dart';
 import '../widgets/home/home_design.dart';
-import 'about_page.dart';
-import 'cached_books_page.dart';
-import 'cached_dramas_page.dart';
+import '../widgets/mine/mine_entries.dart';
+import '../widgets/mine/mine_heatmap.dart';
+import '../widgets/mine/mine_summary.dart';
+import '../widgets/mine/mine_top_books.dart';
+import 'detail_page.dart';
 import 'settings_page.dart';
-import 'stats_page.dart';
 
-/// 个人中心（我的）页：顶部书友卡片 + 快捷入口（章节缓存/剧集缓存/设置/关于）
-/// + 嵌入式阅读与视听统计。
-class MinePage extends StatelessWidget {
+/// 我的：首屏直接是阅读统计（今日 / 本周 / 累计 / 连续），下面热力图、
+/// 读得最多，最后是离线缓存 / 备份与导入 / 关于。应用设置在标题栏齿轮。
+///
+/// 统计来自本地阅读历史与实测阅读时长；页面在 tab 隐藏或被不透明路由盖住
+/// 时不跟着存储刷新，下次可见时一次追上。
+class MinePage extends StatefulWidget {
   const MinePage({super.key});
+
+  @override
+  State<MinePage> createState() => _MinePageState();
+}
+
+class _MinePageState extends State<MinePage> {
+  ReadingStats _stats = ReadingStats.empty;
+  bool _loading = true;
+  late final Listenable _historyChanges;
+  late final Listenable _readTimeChanges;
+  Timer? _reloadTimer;
+  bool _visible = false;
+  bool _storeDirty = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _historyChanges = LibraryStore.instance.historyListenable
+      ..addListener(_scheduleStoreReload);
+    _readTimeChanges = LibraryStore.instance.readTimeListenable
+      ..addListener(_scheduleStoreReload);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final wasVisible = _visible;
+    _visible = TickerMode.valuesOf(context).enabled;
+    if (!_visible) {
+      _reloadTimer?.cancel();
+      _reloadTimer = null;
+    } else if (!wasVisible || _storeDirty) {
+      _reloadFromStore();
+    }
+  }
+
+  @override
+  void dispose() {
+    _reloadTimer?.cancel();
+    _historyChanges.removeListener(_scheduleStoreReload);
+    _readTimeChanges.removeListener(_scheduleStoreReload);
+    super.dispose();
+  }
+
+  void _scheduleStoreReload() {
+    _storeDirty = true;
+    _reloadTimer?.cancel();
+    _reloadTimer = null;
+    if (!_visible) return;
+    _reloadTimer = Timer(const Duration(milliseconds: 250), _reloadFromStore);
+  }
+
+  void _reloadFromStore() {
+    if (!mounted || !_visible) return;
+    _reloadTimer?.cancel();
+    _reloadTimer = null;
+    _storeDirty = false;
+    final store = LibraryStore.instance;
+    final stats = ReadingStats.from(
+      history: store.historySnapshot(),
+      readTime: store.readTimeSnapshot(),
+      readTimeKinds: store.readTimeKindSnapshot(),
+    );
+    setState(() {
+      _stats = stats;
+      _loading = false;
+    });
+  }
+
+  void _openEntry(Map<String, dynamic> entry) {
+    openBookDetail(
+      context,
+      MediaItem(
+        id: historyContentId(entry),
+        title: '${entry['title'] ?? ''}',
+        cover: '${entry['cover'] ?? ''}',
+        author: '${entry['author'] ?? ''}',
+        badge: '',
+        ep: '',
+        kind: '${entry['kind'] ?? 'book'}',
+        seriesId: entry['seriesId']?.toString(),
+        episodeId: entry['episodeId']?.toString(),
+      ),
+      entry: BookOpenEntry.shelf,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-
+    final today = DateUtils.dateOnly(DateTime.now());
     return Scaffold(
       backgroundColor: palette.canvas,
       appBar: AppBar(
@@ -25,181 +122,29 @@ class MinePage extends StatelessWidget {
         backgroundColor: palette.canvas,
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
+        actions: [
+          IconButton(
+            tooltip: '应用设置',
+            icon: const Icon(LucideIcons.settings, size: 21),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
-      body: StatsPage(header: _buildProfileHeader(context, palette)),
-    );
-  }
-
-  Widget _buildProfileHeader(BuildContext context, HomePalette palette) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 个人概览卡片
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: palette.line, width: 0.6),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFEF5038), Color(0xFFF27A65)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: HomePalette.accent.withValues(alpha: 0.22),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  LucideIcons.circle_user_round,
-                  color: Colors.white,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '书友',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: palette.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '沉浸阅读，记录每一个好故事',
-                      style: TextStyle(fontSize: 12.5, color: palette.muted),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        // 4个快捷入口
-        Row(
-          children: [
-            _buildShortcutTile(
-              context: context,
-              icon: LucideIcons.bookmark,
-              iconColor: const Color(0xFF3B82F6),
-              label: '章节缓存',
-              palette: palette,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CachedBooksPage()),
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildShortcutTile(
-              context: context,
-              icon: LucideIcons.film,
-              iconColor: const Color(0xFFEF5038),
-              label: '剧集缓存',
-              palette: palette,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CachedDramasPage()),
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildShortcutTile(
-              context: context,
-              icon: LucideIcons.sliders_horizontal,
-              iconColor: const Color(0xFF10B981),
-              label: '应用设置',
-              palette: palette,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsPage()),
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildShortcutTile(
-              context: context,
-              icon: LucideIcons.info,
-              iconColor: const Color(0xFF8B5CF6),
-              label: '关于我们',
-              palette: palette,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AboutPage()),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        // 「阅读与视听统计」作为下面统计卡片的标题，交给 StatsPage 的 _Card 渲染：
-        // 那一层把红线 + 标题放在卡片内边距里，与本页其余分区一致。
-        // 这里不再自己画一份，否则同一节标题会出现两遍、且只有它是卡外的。
-      ],
-    );
-  }
-
-  Widget _buildShortcutTile({
-    required BuildContext context,
-    required IconData icon,
-    required Color iconColor,
-    required String label,
-    required HomePalette palette,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: Material(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: palette.line, width: 0.6),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.only(bottom: 88),
               children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: iconColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(icon, size: 18, color: iconColor),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
-                    color: palette.ink,
-                  ),
-                ),
+                MineSummary(stats: _stats, today: today),
+                MineHeatmap(stats: _stats, today: today),
+                MineTopBooks(rank: _stats.rank, onOpen: _openEntry),
+                const MineEntries(),
               ],
             ),
-          ),
-        ),
-      ),
     );
   }
 }
