@@ -159,6 +159,8 @@ void main() {
             cacheStore: MemoryChapterCache(),
             connectivity: () async => (online: true, metered: false),
             chapterCountLoader: (_) async => count,
+            // 回到前台是否重查由间隔决定；这里验证到期后确实会重查。
+            updateCheckInterval: Duration.zero,
           ),
         ),
       );
@@ -172,6 +174,36 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('更新'), findsOneWidget);
       expect(find.text('共2章·已读完'), findsNothing);
+    });
+
+    testWidgets('返回前台在最短间隔内不重复检查，下拉刷新强制检查', (tester) async {
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      await _seedShelf(tester);
+      var attempts = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LibraryPage(
+            cacheStore: MemoryChapterCache(),
+            connectivity: () async => (online: true, metered: false),
+            chapterCountLoader: (_) async => ++attempts,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(attempts, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(attempts, 1);
+
+      final refresh = tester.state<RefreshIndicatorState>(
+        find.byType(RefreshIndicator),
+      );
+      final refreshed = refresh.show();
+      await tester.pumpAndSettle();
+      await refreshed;
+      expect(attempts, 2);
     });
 
     testWidgets('书架点击封面会把后台新目录交给阅读器', (tester) async {
@@ -303,6 +335,7 @@ void main() {
               if (++attempt > 1) throw StateError('offline');
               return 3;
             },
+            updateCheckInterval: Duration.zero,
           ),
         ),
       );
