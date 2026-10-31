@@ -58,12 +58,28 @@ extension _AudioListeningLayout on _AudioPageState {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _coverCard(
-                          chapter: chapter,
-                          detail: detail,
-                          introSummary: introSummary,
-                          related: related,
-                        ),
+                        // 官方 `bjo.xml`：真人讲书页头是 72dp 书籍行，不是
+                        // 0.72 屏宽的大封面（样稿「书籍行」）。智能朗读
+                        // 仍保留大封面。
+                        if (realAudio)
+                          AudioRealBookRow(
+                            cover: c._cover,
+                            chapterTitle: chapter.title,
+                            bookTitle: detail?.title ?? '',
+                            onSwap: () => _showIntroSheet(
+                              theme: theme,
+                              detail: detail,
+                              introSummary: introSummary,
+                              related: related,
+                            ),
+                          )
+                        else
+                          _coverCard(
+                            chapter: chapter,
+                            detail: detail,
+                            introSummary: introSummary,
+                            related: related,
+                          ),
                         // 官方 `fs5`/`fs6`：封面正下方是一条多行滚动字幕
                         // （`AudioPlaySubtitleView`，高度按字号取档再减 2dp，
                         // 默认 50dp、左右 20dp、底部 24dp）。
@@ -228,14 +244,10 @@ extension _AudioListeningLayout on _AudioPageState {
     required RelatedWork? related,
   }) {
     final edge = audioCoverEdge(context);
-    final intro = AudioIntroCard(
-      cover: c._cover,
-      title: detail?.title.isNotEmpty == true ? detail!.title : c._title,
-      author: detail?.author.name ?? '',
-      meta: detail?.metaParts ?? const [],
-      summary: introSummary,
+    final intro = _introCard(
+      detail: detail,
+      introSummary: introSummary,
       related: related,
-      onOpenRelated: _openRelated,
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
@@ -250,6 +262,55 @@ extension _AudioListeningLayout on _AudioPageState {
             back: intro,
             onSwitch: _showVoices,
             onOpenBook: _showCatalog,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 简介卡内容（官方 `bhi.xml`）：大封面的翻转背面与书籍行 ⇋ 的弹层共用
+  /// 同一份构建逻辑，避免两处样式漂移。
+  Widget _introCard({
+    required BookDetail? detail,
+    required String introSummary,
+    required RelatedWork? related,
+  }) {
+    return AudioIntroCard(
+      cover: c._cover,
+      title: detail?.title.isNotEmpty == true ? detail!.title : c._title,
+      author: detail?.author.name ?? '',
+      meta: detail?.metaParts ?? const [],
+      summary: introSummary,
+      related: related,
+      onOpenRelated: _openRelated,
+    );
+  }
+
+  /// 书籍行右侧 ⇋：打开简介卡。
+  ///
+  /// 官方的简介入口是大封面背面的翻转卡；真人模式的书籍行没有翻转面，
+  /// 所以沿用页面现有弹层样式，把同一张 [AudioIntroCard] 放进底部弹层。
+  Future<void> _showIntroSheet({
+    required AudioPageTheme theme,
+    required BookDetail? detail,
+    required String introSummary,
+    required RelatedWork? related,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: theme.card,
+      builder: (context) => AudioPageThemeScope(
+        theme: theme,
+        child: SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.6,
+            child: _introCard(
+              detail: detail,
+              introSummary: introSummary,
+              related: related,
+            ),
           ),
         ),
       ),

@@ -37,6 +37,7 @@ import '../widgets/audio/audio_floating_player.dart';
 import '../widgets/audio/audio_advance_banner.dart';
 import '../widgets/audio/audio_control_rows.dart';
 import '../widgets/audio/audio_quick_rows.dart';
+import '../widgets/audio/audio_real_sections.dart';
 import '../widgets/audio/audio_skip_points_rows.dart';
 import '../widgets/audio/audio_cover_card.dart';
 import '../widgets/audio/audio_sections.dart';

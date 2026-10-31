@@ -8,6 +8,8 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/services/audio_page_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
+import 'package:fqapp/widgets/audio/audio_cover_card.dart';
+import 'package:fqapp/widgets/audio/audio_real_sections.dart';
 import 'package:fqapp/widgets/audio/audio_sections.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,11 +18,13 @@ import 'support/controlled_player.dart';
 
 /// 真人讲书页头对齐官方 7.0.9.32 的行为（本轮按反编译重新核对）：
 ///
-///  * `d2.smali` + `TTSPlayHeaderFragment.smali`：封面卡 `0.72 × 屏宽`、
-///    高度 = 宽 + 20dp，可见封面是**正方形**（`ahg` 高 = `ah7` − 15dp − 5dp）；
+///  * `d2.smali` + `TTSPlayHeaderFragment.smali`：智能朗读的封面卡
+///    `0.72 × 屏宽`，可见封面是**正方形**（`ahg` 高 = `ah7` − 15dp − 5dp）；
+///  * `bjo.xml` + 样稿：真人讲书页头改成 72dp 书籍行（48×64 封面、章节名
+///    16sp w600、书名 14sp muted、右侧 ⇋ 开简介卡），不再显示大封面；
 ///  * `bio.xml` 页脚只有两行：集标题 `b1h` + 副行 `bj2`；书名 `b1g` 官方是
 ///    `visibility="gone"`，所以不存在旧的「三段页脚 / 真人讲书・第 N 集」；
-///  * 副行点一下翻到简介面（`bhi.xml`）再翻回；
+///  * 副行点一下翻到简介面（`bhi.xml`）再翻回；真人模式改由 ⇋ 弹层展示；
 ///  * 页头内嵌逐行字幕（`fs6`），无字幕时保留状态槽位；
 ///  * `hy.xml` 的智能朗读 │ 真人讲书 分段放在页头中央；
 ///  * `bif.xml` 图标行首项显示当前倍速（截图里的 `1.2x`）；
@@ -32,35 +36,69 @@ void main() {
     AudioPreferences.instance.resetForTest();
   });
 
-  testWidgets('a recording keeps the official two-line cover footer', (
+  testWidgets('a recording replaces the large cover with the book row', (
     tester,
   ) async {
     await _mount(tester, _RealSession());
-    expect(
-      tester.widget<Text>(find.byKey(const Key('audio_chapter_title'))).data,
-      '第1章',
+    final row = find.byType(AudioRealBookRow);
+    expect(row, findsOneWidget);
+    // 真人模式不再渲染 0.72 屏宽的大封面。
+    expect(find.byType(AudioFlipCover), findsNothing);
+    expect(tester.getSize(row).height, 72);
+
+    final cover = find.byKey(const Key('audio_real_book_cover'));
+    expect(tester.getSize(cover), const Size(48, 64));
+    expect(tester.getRect(cover).left, 20);
+
+    // 右侧 ⇋：28dp 按钮、r6、16dp 图标，距右 20dp。
+    final swap = find.byKey(const Key('audio_real_swap'));
+    expect(tester.getSize(swap), const Size(28, 28));
+    expect(tester.getRect(swap).right, 430 - 20);
+    final swapIcon = tester.widget<Icon>(
+      find.descendant(of: swap, matching: find.byType(Icon)),
     );
-    // 官方 bio.xml 的 b1g（书名行）是 visibility="gone"，封面页脚只有两行，
-    // 所以书书名和旧的「真人讲书・第 N 集」都不该出现。
-    expect(find.text('测试听书'), findsNothing);
-    expect(find.textContaining('真人讲书・第'), findsNothing);
+    expect(swapIcon.size, 16);
+
+    final theme = AudioPageThemeScope.of(tester.element(row));
+    final chapter = tester.widget<Text>(
+      find.byKey(const Key('audio_chapter_title')),
+    );
+    expect(chapter.data, '第1章');
+    expect(chapter.style?.fontSize, 16);
+    expect(chapter.style?.fontWeight, FontWeight.w600);
+    // 书名取 detail.title，14sp muted。
+    final book = tester.widget<Text>(
+      find.byKey(const Key('audio_real_book_title')),
+    );
+    expect(book.data, '测试听书');
+    expect(book.style?.fontSize, 14);
+    expect(book.style?.color, theme.muted);
   });
 
-  testWidgets('the cover flips to the intro card and back', (tester) async {
+  testWidgets('intelligent reading keeps the large cover, not the book row', (
+    tester,
+  ) async {
+    await _mount(tester, _RealSession(genreType: 0));
+    expect(find.byType(AudioFlipCover), findsOneWidget);
+    expect(find.byType(AudioRealBookRow), findsNothing);
+  });
+
+  testWidgets('the swap button opens the intro card sheet', (tester) async {
     await _mount(tester, _RealSession());
     expect(find.byKey(const Key('audio_intro_title')), findsNothing);
 
-    await tester.tap(find.byKey(const Key('audio_mode_row')));
+    await tester.tap(find.byKey(const Key('audio_real_swap')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('audio_intro_title')), findsOneWidget);
     expect(find.text('老恒'), findsOneWidget);
     expect(find.textContaining('都市脑洞'), findsOneWidget);
     expect(find.textContaining('这是一段用于对齐的简介'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('audio_cover_back')));
+    // 点弹层外的遮罩收起。
+    await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('audio_intro_title')), findsNothing);
-    expect(find.byKey(const Key('audio_chapter_title')), findsOneWidget);
+    expect(find.byType(AudioRealBookRow), findsOneWidget);
   });
 
   testWidgets(
@@ -191,6 +229,8 @@ void main() {
     expect(find.text('边听边读'), findsNothing);
     expect(find.text('主播：老恒'), findsOneWidget);
     expect(find.text('换版本'), findsOneWidget);
+    // S2：换版本行外边距收窄到 (12, 10, 12, 0)。
+    expect(tester.getRect(find.byKey(const ValueKey('audio-voice'))).left, 12);
 
     await tester.tap(find.byKey(const ValueKey('audio-voice')));
     await tester.pumpAndSettle();
@@ -213,10 +253,9 @@ void main() {
     await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
 
-    // 官方书名行 `b1g` 默认 gone，但仓库一直用 `audio_book_bar` 开目录，
-    // 所以实现里它渲染为空字符串占位：看不见，但仍是目录入口。
-    await tester.ensureVisible(find.byKey(const Key('audio_book_bar')));
-    await tester.tap(find.byKey(const Key('audio_book_bar')));
+    // 真人模式的书籍行没有目录入口，目录改由控制行的「目录」按钮打开。
+    await tester.ensureVisible(find.text('目录'));
+    await tester.tap(find.text('目录'));
     await tester.pumpAndSettle();
     expect(find.text('目录 · 3 集'), findsOneWidget);
     expect(find.text('搜索集名或序号'), findsOneWidget);
@@ -301,6 +340,7 @@ class _RealSession {
   final Future<SubtitleTrack> Function(String itemId, String toneId) subtitles;
   final List<AudioTone> narratorTones;
   final List<AudioTone> ttsTones;
+  final int genreType;
   final List<RelatedWork> related = const [
     RelatedWork(
       kind: 'book',
@@ -317,6 +357,7 @@ class _RealSession {
       AudioTone(id: '7239243941252598845', title: '主播：老恒'),
     ],
     this.ttsTones = const [AudioTone(id: '96', title: '多角色对话升级版')],
+    this.genreType = 1,
   });
 
   static Future<SubtitleTrack> _noSubtitles(String _, String _) async =>
@@ -337,7 +378,7 @@ class _RealSession {
       excerptLoader: (_) async => null,
       extrasLoader: (_) async => AudioExtras(
         tones: AudioToneSet(
-          genreType: 1,
+          genreType: genreType,
           narratorTones: narratorTones,
           ttsTones: ttsTones,
         ),

@@ -1463,7 +1463,7 @@ class AudioRealVersionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = AudioPageThemeScope.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
       child: HomePressable(
         key: const Key('audio-voice'),
         semanticLabel: '选择音色',
