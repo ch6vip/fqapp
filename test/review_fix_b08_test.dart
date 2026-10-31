@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/models/chapter_ideas.dart';
@@ -50,7 +49,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({'reader_page_mode': 'paged'});
+    setSingleChapterPrefs({'reader_page_mode': 'paged'});
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
@@ -62,7 +61,7 @@ void main() {
   });
 
   testWidgets('chapter-end entry opens the ideas end bucket', (tester) async {
-    SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+    setSingleChapterPrefs({'reader_page_mode': 'scroll'});
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final requested = <int>[];

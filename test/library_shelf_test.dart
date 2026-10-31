@@ -28,7 +28,7 @@ void main() {
   late Directory directory;
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    setSingleChapterPrefs({});
     directory = await Directory.systemTemp.createTemp('fqapp-shelf-test-');
     Hive.init(directory.path);
     await LibraryStore.instance.init();
@@ -227,7 +227,7 @@ void main() {
     });
 
     testWidgets('旧的列数偏好迁移成宫格并回写', (tester) async {
-      SharedPreferences.setMockInitialValues({'bookshelf_layout': 4});
+      setSingleChapterPrefs({'bookshelf_layout': 4});
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
       });
@@ -241,7 +241,7 @@ void main() {
     });
 
     testWidgets('无效的旧偏好退回宫格且不写坏偏好', (tester) async {
-      SharedPreferences.setMockInitialValues({'bookshelf_layout': 'compact'});
+      setSingleChapterPrefs({'bookshelf_layout': 'compact'});
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
       });
@@ -256,7 +256,7 @@ void main() {
     });
 
     testWidgets('已保存的列表偏好直接生效', (tester) async {
-      SharedPreferences.setMockInitialValues({'bookshelf_layout': 2});
+      setSingleChapterPrefs({'bookshelf_layout': 2});
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
       });
@@ -742,7 +742,7 @@ void main() {
     for (final entry in ['首页', '书架']) {
       testWidgets('$entry 缓存续读不经过详情或网络探测，并恢复原章节位置', (tester) async {
         addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-        SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+        setSingleChapterPrefs({'reader_page_mode': 'scroll'});
         BookOpenPreferences.instance.resetForTest();
         final saved = <String, dynamic>{
           'id': 'recent-book',

@@ -135,6 +135,8 @@ extension _ReaderPageContent on _ReaderPageState {
                           rangeUnderlines: _displayRangeUnderlines,
                           narrationRange: _narrationRange,
                         )
+                      : _joined
+                      ? _buildJoinedContent(layout, scope)
                       : _buildScrollContent(layout, scope),
                 ),
                 ..._selectionHandles(scope),
