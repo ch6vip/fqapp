@@ -16,7 +16,9 @@ import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_shelf.dart';
 import '../widgets/media_card.dart';
 import '../widgets/search/search_discovery.dart';
+import '../widgets/search/shuqi_source_chip.dart';
 import 'detail_page.dart';
+import 'search_shuqi.dart';
 
 typedef SearchPageLoader =
     Future<List<SearchTab>> Function(
@@ -51,6 +53,9 @@ class SearchPage extends StatefulWidget {
   final SearchSuggestLoader? suggestLoader;
   final HotSearchLoader? hotSearchLoader;
 
+  /// 书旗搜索。留空走后端；注入后视为离线，与 [searchLoader] 同一约定。
+  final ShuqiSearchLoader? shuqiSearchLoader;
+
   const SearchPage({
     super.key,
     this.initialQuery,
@@ -59,6 +64,7 @@ class SearchPage extends StatefulWidget {
     this.historyStore,
     this.suggestLoader,
     this.hotSearchLoader,
+    this.shuqiSearchLoader,
     this.initialCategory = SearchCategory.general,
   });
 
@@ -86,6 +92,12 @@ class _SearchPageState extends State<SearchPage> {
   int _requestGeneration = 0;
   double _minimumScore = 0;
   bool _listView = false;
+
+  /// 搜索来源：false = 番茄（默认），true = 书旗。
+  ///
+  /// 书旗没有番茄那套综合/小说/短剧分类，切到书旗时结果落在第一个 feed 里，
+  /// 分类页签让位给单一的「书旗」页签。
+  bool _shuqiSource = false;
   bool _layoutChosen = false;
   Future<void> _layoutWrite = Future<void>.value();
 
@@ -219,8 +231,10 @@ class _SearchPageState extends State<SearchPage> {
     });
   }
 
+  /// 书旗条目没有上游评分，且评分下拉在书旗模式下禁用；阈值不能过滤整批结果。
   bool _matchesScore(MediaItem item) =>
       _idQuery != null ||
+      _shuqiSource ||
       _minimumScore == 0 ||
       (item.score != null && item.score! >= _minimumScore);
 
@@ -299,10 +313,57 @@ class _SearchPageState extends State<SearchPage> {
       _query = query;
       _draft = query;
       _suggestions = const [];
-      _idQuery = asKeyword ? null : mediaIdFromSearch(query);
+      // 书旗 id 是另一套命名空间，按 id 直查不适用。
+      _idQuery = (_shuqiSource || asKeyword) ? null : mediaIdFromSearch(query);
       _feeds = [for (final _ in _categories) _SearchFeed()];
     });
+    if (_shuqiSource) {
+      _activeRequest?.cancel();
+      await _searchShuqi(query, _requestGeneration);
+      return;
+    }
     await _loadTab(_tabIndex);
+  }
+
+  /// 切换搜索来源。切到书旗后重新执行当前查询，避免结果集与来源脱节。
+  void _toggleShuqiSource() {
+    final next = !_shuqiSource;
+    setState(() {
+      _shuqiSource = next;
+      _tabIndex = 0;
+      _feeds = [for (final _ in _categories) _SearchFeed()];
+    });
+    if (_query.isEmpty) return;
+    ++_requestGeneration;
+    // 切走之后番茄的在途分页请求不再需要，避免它晚到后浪费一次响应。
+    _activeRequest?.cancel();
+    unawaited(
+      next ? _searchShuqi(_query, _requestGeneration) : _loadTab(0),
+    );
+  }
+
+  /// 书旗搜索：单次返回、服务端不支持分页，结果全量落在第一个 feed。
+  Future<void> _searchShuqi(String query, int generation) async {
+    final feed = _feeds[0];
+    setState(() { feed.loading = true; feed.error = null; });
+    try {
+      final loader = widget.shuqiSearchLoader ?? ApiClient.instance.shuqiSearch;
+      final items = await loadShuqiSearch(loader, query);
+      if (!mounted || generation != _requestGeneration) return;
+      setState(() {
+        feed.items..clear()..addAll(items);
+        feed.seen
+          ..clear()
+          ..addAll(items.map((item) => '${item.kind}:${item.id}'));
+        feed.hasMore = false; feed.initialized = true; feed.loading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _requestGeneration) return;
+      setState(() {
+        feed.loading = false;
+        feed.error = userFacingError(error);
+      });
+    }
   }
 
   void _rememberQuery(String query) {
@@ -386,7 +447,14 @@ class _SearchPageState extends State<SearchPage> {
     _showHistory();
   }
 
-  Future<void> _loadMore() => _loadTab(_tabIndex);
+  Future<void> _loadMore() {
+    if (_shuqiSource) {
+      return _feeds[0].error != null
+          ? _searchShuqi(_query, _requestGeneration)
+          : Future<void>.value();
+    }
+    return _loadTab(_tabIndex);
+  }
 
   Future<void> _loadId(String id) async {
     if (_feeds.first.loading || _feeds.first.initialized) return;
@@ -430,6 +498,7 @@ class _SearchPageState extends State<SearchPage> {
 
   // Note: 分类来源、游标与请求隔离见 .agents/notes/implemented/bug-fix/2026-09-10-search-categories.md
   Future<void> _loadTab(int index) async {
+    if (_shuqiSource) return;
     if (_idQuery != null) return _loadId(_idQuery!);
     final feed = _feeds[index];
     if (_query.isEmpty || feed.loading || (feed.initialized && !feed.hasMore)) {
@@ -608,7 +677,7 @@ class _SearchPageState extends State<SearchPage> {
               padding: const EdgeInsets.symmetric(horizontal: homeGutter - 4),
               children: List.generate(_categories.length, (i) {
                 final category = _categories[i];
-                final isSelected = i == _tabIndex;
+                final isSelected = !_shuqiSource && i == _tabIndex;
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Center(
@@ -722,11 +791,11 @@ class _SearchPageState extends State<SearchPage> {
                   ? (_feeds.first.items.isEmpty
                         ? '未找到该 ID 对应的作品'
                         : '该分类下没有匹配的作品')
-                  : (_minimumScore > 0
+                  : (!_shuqiSource && _minimumScore > 0
                         ? '已加载结果中暂无达到评分的作品'
                         : (feed.hasMore ? '当前页暂无匹配结果' : '无结果')),
             ),
-            if (_idQuery == null && _minimumScore > 0)
+            if (_idQuery == null && !_shuqiSource && _minimumScore > 0)
               TextButton(
                 onPressed: () => setState(() => _minimumScore = 0),
                 child: const Text('清除评分筛选'),
@@ -743,7 +812,7 @@ class _SearchPageState extends State<SearchPage> {
   // Note: 小说来源、评分范围与分页见 .agents/notes/implemented/feature/2026-10-15-search-filters-and-list.md
   Widget _resultControls(BuildContext context) {
     final palette = HomePalette.of(context);
-    final active = _idQuery == null && _minimumScore > 0;
+    final active = _idQuery == null && !_shuqiSource && _minimumScore > 0;
     return Padding(
       padding: const EdgeInsets.fromLTRB(homeGutter, 2, homeGutter - 8, 0),
       child: Column(
@@ -751,10 +820,12 @@ class _SearchPageState extends State<SearchPage> {
         children: [
           Row(
             children: [
+              ShuqiSourceChip(_shuqiSource, _toggleShuqiSource),
+              const SizedBox(width: 8),
               DropdownButtonHideUnderline(
                 child: DropdownButton<double>(
                   key: const Key('search-minimum-score'),
-                  value: _idQuery != null ? 0 : _minimumScore,
+                  value: _idQuery != null || _shuqiSource ? 0 : _minimumScore,
                   isDense: true,
                   borderRadius: BorderRadius.circular(14),
                   dropdownColor: palette.surface,
@@ -777,7 +848,7 @@ class _SearchPageState extends State<SearchPage> {
                     DropdownMenuItem(value: 8, child: Text('8 分及以上')),
                     DropdownMenuItem(value: 9, child: Text('9 分及以上')),
                   ],
-                  onChanged: _idQuery != null
+                  onChanged: _idQuery != null || _shuqiSource
                       ? null
                       : (value) {
                           if (value != null) {
@@ -797,7 +868,7 @@ class _SearchPageState extends State<SearchPage> {
               ),
             ],
           ),
-          if (_idQuery == null && _minimumScore > 0)
+          if (_idQuery == null && !_shuqiSource && _minimumScore > 0)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
@@ -986,8 +1057,13 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void _selectTab(int index) {
-    if (index == _tabIndex) return;
-    setState(() => _tabIndex = index);
+    final wasShuqi = _shuqiSource;
+    if (index == _tabIndex && !wasShuqi) return;
+    setState(() {
+      _tabIndex = index;
+      _shuqiSource = false;
+      if (wasShuqi) _feeds = [for (final _ in _categories) _SearchFeed()];
+    });
     if (_query.isEmpty) return;
     final feed = _feeds[index];
     if (!feed.initialized && feed.error == null) {

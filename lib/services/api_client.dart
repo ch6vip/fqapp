@@ -329,6 +329,47 @@ class ApiClient {
     return _decodeAsync(r);
   }
 
+  /// 书旗数据源：搜索。
+  ///
+  /// 书旗搜索是单次返回，服务端不支持分页（`page` 参数在源协议里是模块名常量，
+  /// 不是页码），所以这里不接收 page。
+  Future<Map<String, dynamic>> shuqiSearch(String key) async {
+    final r = await _get(_url('/api/v1/shuqi/search', {'key': key}));
+    return _decodeAsync(r);
+  }
+
+  /// 书旗数据源：书籍详情（含总章数）。
+  Future<Map<String, dynamic>> shuqiBook(String bookId) async {
+    final r = await _get(_url('/api/v1/shuqi/book', {'book_id': bookId}));
+    return _decodeAsync(r);
+  }
+
+  /// 书旗数据源：目录。
+  ///
+  /// 主路返回真章名（`data.path == 'h5'`）；回退路径的章名是「第N章」占位，
+  /// 调用方可用 `data.path` 区分。
+  Future<Map<String, dynamic>> shuqiToc(String bookId) async {
+    final r = await _get(_url('/api/v1/shuqi/toc', {'book_id': bookId}));
+    return _decodeAsync(r);
+  }
+
+  /// 书旗数据源：正文。
+  ///
+  /// `data.path == 'cdn'` 是免签 CDN 直出的明文；`'chapterinfo'` 是加密口兜底
+  /// 解码后的结果，两者正文都已归一（`<br>` 已转换行）。
+  Future<Map<String, dynamic>> shuqiChapter(
+    String bookId,
+    String chapterId,
+  ) async {
+    final r = await _get(
+      _url('/api/v1/shuqi/chapter', {
+        'book_id': bookId,
+        'chapter_id': chapterId,
+      }),
+    );
+    return _decodeAsync(r);
+  }
+
   /// Search with JSON decoding and model parsing combined into one isolate
   /// hop. This avoids decoding a large response in one isolate and then
   /// copying the resulting map into a second isolate for normalization.
