@@ -359,6 +359,8 @@ class _TopBar extends StatelessWidget {
 
 /// 左侧 88dp 维度栏：项高 50dp、14sp 居中；选中橙、未选黑（真机取证，
 /// 官方无指示条、无选中底色——`TabPageLeftCell` 只有颜色分支）。
+/// 墨水屏下两档都退化为黑色，靠选中加粗 + 左侧 2dp 黑指示条保留层级
+/// （否则选中维度完全不可见）。
 class _DimRail extends StatelessWidget {
   const _DimRail({
     required this.sections,
@@ -384,6 +386,7 @@ class _DimRail extends StatelessWidget {
           itemCount: sections.length,
           itemBuilder: (context, index) {
             final selected = index == selectedIndex;
+            final einkSelected = palette.eink && selected;
             return GestureDetector(
               key: ValueKey('category_dim_$index'),
               behavior: HitTestBehavior.opaque,
@@ -391,12 +394,21 @@ class _DimRail extends StatelessWidget {
               child: Container(
                 height: 50,
                 alignment: Alignment.center,
+                decoration: einkSelected
+                    ? const BoxDecoration(
+                        border: Border(
+                          left: BorderSide(color: Colors.black, width: 2),
+                        ),
+                      )
+                    : null,
                 child: Text(
                   sections[index].title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 14,
+                    // 墨屏黑字两档同色，选中只靠字重 + 指示条区分。
+                    fontWeight: einkSelected ? FontWeight.w700 : null,
                     color: selected
                         ? (palette.eink ? palette.ink : HomePalette.accent)
                         : palette.ink,

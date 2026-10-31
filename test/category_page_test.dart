@@ -347,14 +347,40 @@ void main() {
     // 顶部频道：选中/未选都退化为纯黑，层级只靠字重。
     expect(tabText('1').style?.color, Colors.black);
     expect(tabText('2').style?.color, Colors.black);
-    // 左栏选中项不再是品牌橙。
-    final rail = tester.widget<Text>(
+    // 左栏选中/未选都退化为黑字；选中必须另有可见差异：加粗 + 左侧黑指示条。
+    Text railText(String key) => tester.widget<Text>(
       find.descendant(
-        of: find.byKey(const ValueKey('category_dim_0')),
+        of: find.byKey(ValueKey(key)),
         matching: find.byType(Text),
       ),
     );
-    expect(rail.style?.color, Colors.black);
+    final selectedRail = railText('category_dim_0');
+    final plainRail = railText('category_dim_1');
+    expect(selectedRail.style?.color, Colors.black);
+    expect(plainRail.style?.color, Colors.black);
+    expect(selectedRail.style?.fontWeight, FontWeight.w700);
+    expect(plainRail.style?.fontWeight, isNot(FontWeight.w700));
+    final selectedBox = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('category_dim_0')),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final selectedBorder =
+        (selectedBox.decoration! as BoxDecoration).border! as Border;
+    expect(selectedBorder.left.color, Colors.black);
+    expect(selectedBorder.left.width, 2);
+    final plainBox = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('category_dim_1')),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    expect(plainBox.decoration, isNull);
     // 组头灰字也变黑。
     final header = tester
         .widgetList<Text>(find.text('热门标签'))
