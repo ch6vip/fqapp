@@ -80,6 +80,15 @@ class CueIndex {
     r'[\s，。！？；：、“”‘’（）《》〈〉…—·,.!?;:"()\[\]{}]',
   );
 
+  /// cue 超过这个字数就按逗号细分成子片逐片高亮：番茄仙侠文一段常只有
+  /// 三五个短句（40 字上下），阈值太高会让「鎏金梁柱，灵气充沛…」这种
+  /// 段落整段一起亮；20 字能覆盖绝大多数短句段落，纯短语 cue 不受影响。
+  static const int commaSplitThreshold = 20;
+
+  /// 逗号细分使用的切分标点：逗号/顿号之外，句号、叹号、问号、省略号与
+  /// 破折号同样点亮到边界；连续标点归前片（「——」「！？」不拆开）。
+  static final RegExp commaSplitAt = RegExp('[，、。！？…—]');
+
   /// 用 [layout] 的正文块顺序去匹配 [track] 的每一句。
   factory CueIndex.build({
     required ReaderChapterLayout layout,
@@ -145,6 +154,51 @@ class CueIndex {
       // 单调性保险：命中必须在上一次之后，否则宁可丢掉这句。
       if (start < lastEnd) continue;
       lastEnd = end;
+      // 整段一条 cue 且字数超阈值：按逗号拆成子片逐片高亮。时间在片间线性
+      // 插值 —— 与 [CueSpan.spokenOffset] 的句内插值是同一个假设。剥噪匹配
+      // 拿不到正文里的精确片段（只有 stripped 坐标），那条路保持整句不拆。
+      if (at >= 0 && needle.length >= commaSplitThreshold) {
+        final pieces = <(int, int)>[]; // combined 下标 [from, to)
+        final segmentEnd = at + needle.length;
+        var pieceStart = at;
+        for (var k = at; k < segmentEnd; k++) {
+          if (commaSplitAt.hasMatch(combined[k])) {
+            var e = k + 1;
+            // 连续标点（——、！？）整组归前片，避免破折号被劈成两半。
+            while (e < segmentEnd && commaSplitAt.hasMatch(combined[e])) {
+              e++;
+            }
+            pieces.add((pieceStart, e));
+            pieceStart = e;
+            k = e - 1;
+          }
+        }
+        if (pieceStart < segmentEnd) pieces.add((pieceStart, segmentEnd));
+        if (pieces.length > 1) {
+          final cueStartMs = track.cues[i].startMs;
+          final cueEndMs = track.endMsAt(i);
+          final total = pieces.fold<int>(0, (sum, p) => sum + p.$2 - p.$1);
+          final duration = (cueEndMs - cueStartMs).clamp(0, 1 << 30);
+          var elapsed = 0;
+          for (var p = 0; p < pieces.length; p++) {
+            final piece = pieces[p];
+            final pieceStartMs = cueStartMs + elapsed;
+            elapsed += duration * (piece.$2 - piece.$1) ~/ total;
+            spans.add(
+              CueSpan(
+                start: origin[piece.$1],
+                end: origin[piece.$2 - 1] + 1,
+                cueIndex: i,
+                startMs: pieceStartMs,
+                endMs: p == pieces.length - 1
+                    ? cueEndMs
+                    : cueStartMs + elapsed,
+              ),
+            );
+          }
+          continue;
+        }
+      }
       spans.add(
         CueSpan(
           start: start,
