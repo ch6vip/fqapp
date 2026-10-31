@@ -21,6 +21,7 @@ pub mod manga;
 pub mod router;
 pub mod search;
 pub mod session;
+pub mod shuqi;
 pub mod toutiao;
 pub mod util;
 pub mod video;
@@ -172,6 +173,7 @@ pub mod server {
 
     pub fn register_all(s: &mut Server) {
         search::register(s);
+        shuqi::register(s);
         home::register(s);
         book::register(s);
         content::register(s);

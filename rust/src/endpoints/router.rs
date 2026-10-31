@@ -33,6 +33,7 @@ pub fn match_rest_path(path: &str, query: &Params) -> Option<RouteMatch> {
         "books" => match_books(tail, query),
         "novels" => match_novels(tail, query),
         "search" => match_search(tail, query),
+        "shuqi" => match_shuqi(tail, query),
         "category" => Some(RouteMatch {
             api: "category_front",
             params: query.clone(),
@@ -272,6 +273,27 @@ fn match_search(parts: &[&str], q: &Params) -> Option<RouteMatch> {
         }),
         _ => None,
     }
+}
+
+/// 书旗数据源：`/api/v1/shuqi/{search|book|toc|chapter}`。
+///
+/// 参数全部走 query，不占用更多路径段 —— 书旗的 bookId/chapterId 本身就是
+/// 纯数字，做成路径参数只会和番茄的 `books`/`chapters` 语义混淆。
+fn match_shuqi(parts: &[&str], q: &Params) -> Option<RouteMatch> {
+    if parts.is_empty() {
+        return None;
+    }
+    let api = match parts[0] {
+        "search" => "shuqi_search",
+        "book" => "shuqi_book",
+        "toc" => "shuqi_toc",
+        "chapter" => "shuqi_chapter",
+        _ => return None,
+    };
+    Some(RouteMatch {
+        api,
+        params: q.clone(),
+    })
 }
 
 fn match_audio(parts: &[&str], q: &Params) -> Option<RouteMatch> {
