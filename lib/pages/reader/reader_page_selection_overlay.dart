@@ -14,15 +14,19 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
     final narration = custom == null
         ? preset.narrationHighlightColor
         : Color(custom);
+    // 样式：显式选了就用它，否则墨水屏下划线、其余背景色块。
+    final narrationUnderline = _preferences.narrationUnderlineFor(preset);
     if (_marksScope == null ||
         !identical(_marksScopeLayout, layout) ||
-        _marksScope!.narrationColor != narration) {
+        _marksScope!.narrationColor != narration ||
+        _marksScope!.narrationUnderline != narrationUnderline) {
       _marksScope = ReaderSelectionScope(
         geometry: ReaderSelectionGeometry(),
         washColor: preset.selectionWashColor,
         handleColor: preset.selectionHandleColor,
         underlineColor: preset.selectionUnderlineColor,
         narrationColor: narration,
+        narrationUnderline: narrationUnderline,
       );
       _marksScopeLayout = layout;
     }

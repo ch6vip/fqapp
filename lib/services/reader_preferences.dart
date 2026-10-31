@@ -47,6 +47,7 @@ class ReaderPreferences {
   static const _listeningFollowKey = 'reader_listening_follow';
   static const _narrationHighlightKey = 'reader_narration_highlight';
   static const _narrationHighlightColorKey = 'reader_narration_highlight_color';
+  static const _narrationHighlightStyleKey = 'reader_narration_highlight_style';
   static const _continuousReadingKey = 'reader_continuous_reading';
   static const _einkRefreshIntervalKey = 'reader_eink_refresh_interval';
   static const _instantSwipeTurnKey = 'reader_instant_swipe_turn';
@@ -101,6 +102,27 @@ class ReaderPreferences {
     0x477C3AED,
   ];
 
+  /// 朗读句高亮的呈现方式：[narrationHighlightStyleWash] = 背景色块，
+  /// [narrationHighlightStyleUnderline] = 文字下划线。
+  /// null = 自动：**墨水屏用下划线**（色块会整屏拖影），其余背景色块。
+  ///
+  /// 设置入口：设置 → 听书 → 高亮样式。
+  final int? narrationHighlightStyle;
+
+  /// 高亮样式 = 背景色块。
+  static const int narrationHighlightStyleWash = 1;
+
+  /// 高亮样式 = 文字下划线。
+  static const int narrationHighlightStyleUnderline = 2;
+
+  /// 该偏好最终用哪种样式：显式选了样式就用它，否则墨水屏下划线、其余背景。
+  bool narrationUnderlineFor(ReaderThemePreset preset) =>
+      switch (narrationHighlightStyle) {
+        narrationHighlightStyleUnderline => true,
+        narrationHighlightStyleWash => false,
+        _ => preset == ReaderThemePreset.eink,
+      };
+
   /// 滚动模式连续阅读：到底继续下拉进入下一章。默认开启。
   /// 普通分页始终直接跨章，不受这个滚动手势开关影响。
   final bool continuousReading;
@@ -150,6 +172,7 @@ class ReaderPreferences {
     this.listeningFollow = true,
     this.narrationHighlight = true,
     this.narrationHighlightColor,
+    this.narrationHighlightStyle,
     this.continuousReading = true,
     this.einkRefreshInterval = 10,
     this.instantSwipeTurn = false,
@@ -189,6 +212,9 @@ class ReaderPreferences {
     /// true = 恢复「自动跟随背景派生」；此时 [narrationHighlightColor] 不生效。
     /// （copyWith 的 null 约定是「不改」，清除必须显式说明。）
     bool autoNarrationHighlightColor = false,
+    int? narrationHighlightStyle,
+    /// true = 恢复「自动」（墨水屏下划线，其余背景色块）。
+    bool autoNarrationHighlightStyle = false,
     bool? continuousReading,
     int? einkRefreshInterval,
     bool? instantSwipeTurn,
@@ -230,6 +256,9 @@ class ReaderPreferences {
       narrationHighlightColor: autoNarrationHighlightColor
           ? null
           : narrationHighlightColor ?? this.narrationHighlightColor,
+      narrationHighlightStyle: autoNarrationHighlightStyle
+          ? null
+          : narrationHighlightStyle ?? this.narrationHighlightStyle,
       continuousReading: continuousReading ?? this.continuousReading,
       einkRefreshInterval: einkRefreshInterval ?? this.einkRefreshInterval,
       instantSwipeTurn: instantSwipeTurn ?? this.instantSwipeTurn,
@@ -275,6 +304,7 @@ class ReaderPreferences {
       listeningFollow: listeningFollow,
       narrationHighlight: narrationHighlight,
       narrationHighlightColor: narrationHighlightColor,
+      narrationHighlightStyle: narrationHighlightStyle,
       continuousReading: continuousReading,
       einkRefreshInterval: einkRefreshInterval.clamp(0, 100),
       instantSwipeTurn: instantSwipeTurn,
@@ -340,6 +370,10 @@ class ReaderPreferences {
         preferences,
         _narrationHighlightColorKey,
       )?.toInt(),
+      narrationHighlightStyle: _number(
+        preferences,
+        _narrationHighlightStyleKey,
+      )?.toInt(),
       continuousReading: _boolean(preferences, _continuousReadingKey) ?? true,
       einkRefreshInterval: (_number(preferences, _einkRefreshIntervalKey) ?? 10)
           .round(),
@@ -399,6 +433,13 @@ class ReaderPreferences {
         preferences.setInt(
           _narrationHighlightColorKey,
           value.narrationHighlightColor!,
+        ),
+      if (value.narrationHighlightStyle == null)
+        preferences.remove(_narrationHighlightStyleKey)
+      else
+        preferences.setInt(
+          _narrationHighlightStyleKey,
+          value.narrationHighlightStyle!,
         ),
       preferences.setBool(_continuousReadingKey, value.continuousReading),
       preferences.setInt(_einkRefreshIntervalKey, value.einkRefreshInterval),
