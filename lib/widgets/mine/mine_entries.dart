@@ -44,7 +44,7 @@ class MineEntries extends StatelessWidget {
 void _push(BuildContext context, Widget page) =>
     Navigator.push(context, MaterialPageRoute<void>(builder: (_) => page));
 
-/// 小说章节和短剧剧集是两套缓存，各自有管理页；这里只做分流。
+/// 小说离线缓存和短剧离线缓存是两套存储，各自有管理页；这里只做分流。
 Future<void> _showCacheChoices(BuildContext context) {
   final palette = HomePalette.of(context);
   return showModalBottomSheet<void>(
@@ -57,7 +57,7 @@ Future<void> _showCacheChoices(BuildContext context) {
         children: [
           MineEntryRow(
             icon: LucideIcons.book_open,
-            label: '小说章节',
+            label: '小说离线缓存',
             onTap: () {
               Navigator.pop(sheet);
               _push(context, const CachedBooksPage());
@@ -65,7 +65,7 @@ Future<void> _showCacheChoices(BuildContext context) {
           ),
           MineEntryRow(
             icon: LucideIcons.clapperboard,
-            label: '短剧剧集',
+            label: '短剧离线缓存',
             onTap: () {
               Navigator.pop(sheet);
               _push(context, const CachedDramasPage());

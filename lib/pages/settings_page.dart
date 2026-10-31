@@ -113,7 +113,7 @@ class SettingsPage extends StatelessWidget {
           ),
           SettingsItem(
             icon: LucideIcons.bookmark,
-            title: '章节缓存',
+            title: '小说离线缓存',
             subtitle: '离线续读、查看占用和清理缓存',
             onTap: (context, setState) => Navigator.push(
               context,
@@ -122,7 +122,7 @@ class SettingsPage extends StatelessWidget {
           ),
           SettingsItem(
             icon: LucideIcons.clapperboard,
-            title: '剧集离线缓存',
+            title: '短剧离线缓存',
             subtitle: '短剧下载、离线播放和清理缓存',
             onTap: (context, setState) => Navigator.push(
               context,

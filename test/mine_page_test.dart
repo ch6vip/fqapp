@@ -109,8 +109,8 @@ void main() {
     await tester.scrollUntilVisible(find.text('离线缓存'), 200);
     await tester.tap(find.text('离线缓存'));
     await tester.pumpAndSettle();
-    expect(find.text('小说章节'), findsOneWidget);
-    expect(find.text('短剧剧集'), findsOneWidget);
+    expect(find.text('小说离线缓存'), findsOneWidget);
+    expect(find.text('短剧离线缓存'), findsOneWidget);
   });
 
   testWidgets('tapping a heatmap day shows its minutes', (tester) async {

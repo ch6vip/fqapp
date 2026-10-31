@@ -1,17 +1,115 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/cached_books_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
+import 'package:fqapp/widgets/home/home_design.dart';
+import 'package:fqapp/widgets/settings/settings_widgets.dart';
 
 import 'support/fakes.dart';
 
 void main() {
+  testWidgets('缓存页标题与设置入口使用同一名称', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CachedBooksPage(
+          cacheStore: _ManagedMemoryCache(),
+          readerStore: MemoryReaderStore(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('小说离线缓存'), findsOneWidget);
+    expect(find.text('暂无缓存章节'), findsOneWidget);
+  });
+
+  testWidgets('深色 OLED 下缓存卡片使用 HomePalette 的表面色', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final savedMode = themeModeNotifier.value;
+    final savedOled = oledModeNotifier.value;
+    themeModeNotifier.value = ThemeMode.dark;
+    oledModeNotifier.value = true;
+    addTearDown(() {
+      themeModeNotifier.value = savedMode;
+      oledModeNotifier.value = savedOled;
+    });
+    final cache = _ManagedMemoryCache();
+    await cache.saveBook(
+      CachedBook(
+        id: 'cached',
+        title: '离线测试书',
+        chapters: [Chapter(itemId: '1', title: '缓存章节', volumeName: '')],
+      ),
+    );
+    await cache.write(
+      bookId: 'cached',
+      chapterId: '1',
+      title: '缓存章节',
+      text: '缓存正文',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.dark),
+        home: CachedBooksPage(
+          cacheStore: cache,
+          readerStore: MemoryReaderStore(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final surface = tester.widget<Material>(
+      find
+          .descendant(
+            of: find.byType(SettingsGroupCard),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(surface.color, const HomePalette(true, oled: true).surface);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('墨水屏下删除图标用黑色而不是删除红', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final original = einkModeNotifier.value;
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = original);
+    final cache = _ManagedMemoryCache();
+    await cache.saveBook(
+      CachedBook(
+        id: 'cached',
+        title: '离线测试书',
+        chapters: [Chapter(itemId: '1', title: '缓存章节', volumeName: '')],
+      ),
+    );
+    await cache.write(
+      bookId: 'cached',
+      chapterId: '1',
+      title: '缓存章节',
+      text: '缓存正文',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CachedBooksPage(
+          cacheStore: cache,
+          readerStore: MemoryReaderStore(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final icon = tester.widget<Icon>(find.byIcon(LucideIcons.trash).first);
+    expect(icon.color, Colors.black);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('repeated taps while history loads open only one reader', (
     tester,
   ) async {
@@ -139,7 +237,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('删除《离线测试书》缓存'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(TextButton, '删除'));
+      await tester.tap(find.widgetWithText(FilledButton, '删除'));
       await tester.pumpAndSettle();
       expect(find.textContaining('暂无缓存章节'), findsOneWidget);
       expect(history.entry?['chapterId'], '1');
