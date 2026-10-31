@@ -75,6 +75,16 @@ extension _ReaderPageListening on _ReaderPageState {
   (int, int)? _narrationLayoutRange(ReaderChapterLayout layout) {
     final session = ListeningSession.instance;
     if (!session.matches(widget.bookId, _chapter.itemId)) return null;
+    // 字幕轨是逐句、甚至逐子片的，优先用它：官方时间点（audioParaRange）是
+    // 段落级，一给就是整段一起亮，段内有的句子还覆盖不到（表现为整句不亮）。
+    // 系统朗读没有字幕轨，才往下面 TTS 那条走。
+    _ensureCueIndex(layout);
+    if (_cueIndex.isNotEmpty) {
+      final span = _cueIndex.spanAtPositionMs(
+        session.position.inMilliseconds + readAheadMs,
+      );
+      if (span != null) return (span.start, span.end);
+    }
     final audioRange = session.audioParaRange;
     if (audioRange != null) {
       final translated = audioTimePointLayoutRange(
@@ -100,14 +110,6 @@ extension _ReaderPageListening on _ReaderPageState {
       final translated = narrationLayoutRange(layout, ttsRange);
       if (translated != null) return (translated.start, translated.end);
     }
-    // 官方时间点在多源项章节会重置时间轴（`para 0` 可能从 198 秒才开始），
-    // TTS 那条又不适用于音频朗读；这时按播放位置到字幕里查当前句。字幕是
-    // 逐句连续的，位置也对得上。
-    _ensureCueIndex(layout);
-    final span = _cueIndex.spanAtPositionMs(
-      session.position.inMilliseconds + readAheadMs,
-    );
-    if (span != null) return (span.start, span.end);
     // 逐句搜索兜底：句尾落到下一页这类跨页情形索引对不上，但正文里能找到。
     return _locateCue(layout, session.cue);
   }
