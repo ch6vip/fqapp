@@ -123,7 +123,9 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
             decoration: BoxDecoration(
               color: palette.soft,
               borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
-              border: Border.all(color: palette.line, width: 0.5),
+              // 与未选中的 HomeChip 同款：常规外观无描边，墨水屏下用一圈
+              // 黑线把白底胶囊从白画布上分出来。
+              border: palette.eink ? Border.all(color: palette.line) : null,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -168,27 +170,24 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
       ),
       child: Row(
         children: [
-          _CollectionChip(
+          HomeChip(
             key: const Key('library-collection-filter-all'),
             label: '全部',
             selected: _collectionFilter == null,
-            palette: palette,
             onTap: () => setState(() => _collectionFilter = null),
           ),
           const SizedBox(width: 8),
-          _CollectionChip(
+          HomeChip(
             key: const Key('library-collection-filter-video'),
             label: '短剧',
             selected: _collectionFilter == 'video',
-            palette: palette,
             onTap: () => setState(() => _collectionFilter = 'video'),
           ),
           const SizedBox(width: 8),
-          _CollectionChip(
+          HomeChip(
             key: const Key('library-collection-filter-manju'),
             label: '漫剧',
             selected: _collectionFilter == 'manju',
-            palette: palette,
             onTap: () => setState(() => _collectionFilter = 'manju'),
           ),
           const Spacer(),

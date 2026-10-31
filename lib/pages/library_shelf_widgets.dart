@@ -41,50 +41,6 @@ class _SlideUpState extends State<_SlideUp> {
   }
 }
 
-/// 收藏 tab 的筛选胶囊（形态对齐短剧页收藏频道的筛选行）：选中浅橙底
-/// 橙字加粗，未选中浅灰底深字。
-class _CollectionChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final HomePalette palette;
-  final VoidCallback onTap;
-
-  const _CollectionChip({
-    super.key,
-    required this.label,
-    required this.selected,
-    required this.palette,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: selected
-              ? HomePalette.accent.withValues(alpha: 0.10)
-              : palette.soft,
-          borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              color: selected ? HomePalette.accent : palette.ink,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// 一级 tab：选中 18sp w600，指示条宽度动画（AnimatedContainer）。
 class _TabButton extends StatelessWidget {
   final String label;

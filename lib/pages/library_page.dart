@@ -28,6 +28,7 @@ import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
 import '../services/update_check_gate.dart';
 import '../widgets/bookshelf_card.dart';
+import '../widgets/home/home_chip.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/shelf/shelf_design.dart';
 import '../widgets/shelf/shelf_empty.dart';
