@@ -90,7 +90,7 @@ class FanqieAccountPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
         val systemDark = activity.resources.configuration.uiMode and
             android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
         val dark = !eink && (preferredDark ?: systemDark)
-        val canvas = Color.parseColor(if (eink) "#FFFFFF" else if (dark) "#151517" else "#FCFAF7")
+        val canvas = Color.parseColor(if (eink) "#FFFFFF" else if (dark) "#151517" else "#F6F6F6")
         val ink = Color.parseColor(if (eink) "#000000" else if (dark) "#F5F1EB" else "#262522")
         val muted = Color.parseColor(if (eink) "#000000" else if (dark) "#A7A39E" else "#706C66")
         val accent = Color.parseColor(if (eink) "#000000" else "#C73D29")
