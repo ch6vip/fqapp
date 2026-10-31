@@ -30,7 +30,9 @@ class ReaderPlayerPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = playing ? '暂停播放' : '继续播放';
-    final foreground = weak ? preset.playerWeakText : preset.playerText;
+    // 页脚位（weak）以前是无底 + 半透明深字，在正文上常常糊成一片、看起来
+    // 像「没有背景」。统一给胶囊实底，弱态也用实色字，深底上才读得清。
+    final foreground = preset.playerText;
     final motion =
         animate &&
         preset != ReaderThemePreset.eink &&
@@ -42,7 +44,7 @@ class ReaderPlayerPill extends StatelessWidget {
       excludeSemantics: true,
       child: Material(
         key: ValueKey(weak ? 'reader-player-text' : 'reader-player-indicator'),
-        color: weak ? Colors.transparent : preset.playerBackground,
+        color: preset.playerBackground,
         borderRadius: BorderRadius.circular(height / 2),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
