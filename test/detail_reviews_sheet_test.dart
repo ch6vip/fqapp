@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/widgets/detail/detail_reviews.dart';
+import 'package:fqapp/widgets/home/home_feed_states.dart';
+import 'package:fqapp/widgets/home/home_stream_footer.dart';
 import 'package:fqapp/widgets/reader/reader_illustration.dart';
 import 'package:fqapp/widgets/detail/detail_reviews_sheet.dart';
 
@@ -206,5 +208,93 @@ void main() {
 
     expect(find.text('全部书评'), findsOneWidget);
     expect(find.text('暂无书评'), findsOneWidget);
+    // 空态改用共享紧凑态，不再自己拼图标 + 文案。
+    expect(find.byType(HomeStateView), findsOneWidget);
+  });
+
+  testWidgets('首页评论加载失败走共享错误态，重试后恢复', (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showDetailReviewsSheet(
+                context,
+                bookId: 'book_retry',
+                title: '重试书籍',
+                initialComments: const BookCommentPage(
+                  comments: [],
+                  totalCount: 0,
+                  hasMore: true,
+                  nextOffset: 0,
+                ),
+                loader: (offset) async {
+                  calls++;
+                  if (calls == 1) throw StateError('offline');
+                  return const BookCommentPage(
+                    comments: [BookComment(id: 'c1', text: '恢复后的书评')],
+                    totalCount: 1,
+                    hasMore: false,
+                  );
+                },
+              ),
+              child: const Text('打开重试书评'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开重试书评'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(HomeStateView), findsOneWidget);
+    expect(find.text('加载书评失败，点击重试'), findsOneWidget);
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.text('恢复后的书评'), findsOneWidget);
+  });
+
+  testWidgets('流尾：还有更多用加载更多，到底用共享 done 文案', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showDetailReviewsSheet(
+                context,
+                bookId: 'book_more',
+                title: '分页书籍',
+                initialComments: const BookCommentPage(
+                  comments: [BookComment(id: 'c1', text: '第一条书评')],
+                  totalCount: 2,
+                  hasMore: true,
+                  nextOffset: 1,
+                ),
+                loader: (offset) async => const BookCommentPage(
+                  comments: [BookComment(id: 'c2', text: '第二条书评')],
+                  totalCount: 2,
+                  hasMore: false,
+                ),
+              ),
+              child: const Text('打开分页书评'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开分页书评'));
+    await tester.pumpAndSettle();
+    expect(find.text('加载更多'), findsOneWidget);
+    expect(find.text('已显示全部内容'), findsNothing);
+
+    await tester.tap(find.text('加载更多'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('第二条书评'), findsOneWidget);
+    expect(find.byType(HomeStreamFooter), findsOneWidget);
+    expect(find.text('已显示全部内容'), findsOneWidget);
   });
 }
