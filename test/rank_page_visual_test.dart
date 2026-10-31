@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/rank.dart';
@@ -80,6 +81,53 @@ void main() {
     final unselected = tabText(tester, 100);
     expect(unselected.style?.fontWeight, FontWeight.w500);
     expect(unselected.style?.color, palette.muted);
+
+    // 文字 tab 视觉只有约 23dp 高，可点区域必须补到 44dp 高、48dp 宽，
+    // 并且由 InkWell 承载：焦点遍历 + 键盘 Enter/Space 用它激活。
+    final tabSize = tester.getSize(find.byKey(const ValueKey('rank_tab_200')));
+    expect(tabSize.height, greaterThanOrEqualTo(44));
+    expect(tabSize.width, greaterThanOrEqualTo(48));
+    final inkWell = tester.widget<InkWell>(
+      find.descendant(
+        of: find.byKey(const ValueKey('rank_tab_200')),
+        matching: find.byType(InkWell),
+      ),
+    );
+    expect(inkWell.canRequestFocus, isTrue);
+  });
+
+  testWidgets('tab 可键盘聚焦并用 Enter 激活切换', (tester) async {
+    final requested = <int>[];
+    await pump(
+      tester,
+      pageLoader:
+          ({
+            required rankId,
+            required algo,
+            required categoryId,
+            required offset,
+            required startAt,
+          }) async {
+            requested.add(algo);
+            return _board();
+          },
+    );
+
+    // 裸 GestureDetector 不在焦点遍历里；InkWell 的焦点节点应能收到
+    // Enter 并走 onTap 切换榜单。
+    final tabTextContext = tester.element(
+      find.descendant(
+        of: find.byKey(const ValueKey('rank_tab_100')),
+        matching: find.byType(Text),
+      ),
+    );
+    final focusNode = Focus.of(tabTextContext);
+    expect(focusNode.canRequestFocus, isTrue);
+    focusNode.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(requested, [200, 100]);
   });
 
   testWidgets('分类筛选统一为 HomeChip，点击仍按分类 id 请求', (tester) async {

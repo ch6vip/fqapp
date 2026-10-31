@@ -299,37 +299,46 @@ class _RankPageState extends State<RankPage> {
             label: '查看${tab.name}',
             excludeSemantics: true,
             onTap: () => _selectRank(index),
-            child: GestureDetector(
+            child: HomePressable(
               key: ValueKey('rank_tab_${tab.algo}'),
-              behavior: HitTestBehavior.opaque,
               onTap: () => _selectRank(index),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
-                    child: Text(
-                      tab.name,
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.2,
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                        color: selected ? palette.ink : palette.muted,
+              borderRadius: BorderRadius.circular(8),
+              // 文字 tab 本身只有约 23dp 高，触控区域补到 44dp 高、
+              // 48dp 宽；InkWell 同时提供焦点遍历与键盘 Enter/Space 激活。
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 44),
+                child: Center(
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Text(
+                          tab.name,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.2,
+                            fontWeight: selected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: selected ? palette.ink : palette.muted,
+                          ),
+                        ),
                       ),
-                    ),
+                      Container(
+                        width: 16,
+                        height: 2,
+                        decoration: BoxDecoration(
+                          color: selected ? palette.ink : Colors.transparent,
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                    ],
                   ),
-                  Container(
-                    width: 16,
-                    height: 2,
-                    decoration: BoxDecoration(
-                      color: selected ? palette.ink : Colors.transparent,
-                      borderRadius: BorderRadius.circular(1),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
