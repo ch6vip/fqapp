@@ -1030,9 +1030,9 @@ void main() {
           () => Future<void>.delayed(const Duration(milliseconds: 10)),
         );
         await tester.pump();
-        if (find.text('离线缓存').evaluate().isNotEmpty) break;
+        if (find.text('小说离线缓存').evaluate().isNotEmpty) break;
       }
-      expect(find.text('离线缓存'), findsWidgets);
+      expect(find.text('小说离线缓存'), findsWidgets);
       await tester.pumpWidget(const SizedBox.shrink());
     });
   });
