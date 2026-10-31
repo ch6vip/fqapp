@@ -10,25 +10,22 @@ import 'package:fqapp/widgets/reader/reader_chapter_layout.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  ReaderChapterLayout layoutWith(List<String> paragraphs) => ReaderChapterLayout(
-    title: '第一章 试读',
-    content: ChapterContent(
-      blocks: paragraphs.map(ChapterParagraph.new).toList(),
-    ),
-    spec: ReaderLayoutSpec(
-      viewport: const Size(350, 640),
-      textScaler: TextScaler.noScaling,
-      preferences: const ReaderPreferences(),
-      fontFamily: null,
-    ),
-  );
+  ReaderChapterLayout layoutWith(List<String> paragraphs) =>
+      ReaderChapterLayout(
+        title: '第一章 试读',
+        content: ChapterContent(
+          blocks: paragraphs.map(ChapterParagraph.new).toList(),
+        ),
+        spec: ReaderLayoutSpec(
+          viewport: const Size(350, 640),
+          textScaler: TextScaler.noScaling,
+          preferences: const ReaderPreferences(),
+          fontFamily: null,
+        ),
+      );
 
   testWidgets('按顺序把每句字幕映射到正文，区间与时间都对得上', (tester) async {
-    final layout = layoutWith([
-      '他骗了未婚妻，伪造了公司流水。',
-      '这件事只有他一个人知道。',
-      '后来他开了电视。',
-    ]);
+    final layout = layoutWith(['他骗了未婚妻，伪造了公司流水。', '这件事只有他一个人知道。', '后来他开了电视。']);
     final track = SubtitleTrack([
       SubtitleCue(startMs: 0, text: '他骗了未婚妻，伪造了公司流水。'),
       SubtitleCue(startMs: 3200, text: '这件事只有他一个人知道。'),
@@ -52,10 +49,7 @@ void main() {
   });
 
   testWidgets('同一句重复出现时游标只前进，不会跳回前面的段', (tester) async {
-    final layout = layoutWith([
-      '他说。然后是一段沉默。',
-      '他说。后面这句才是第二句。',
-    ]);
+    final layout = layoutWith(['他说。然后是一段沉默。', '他说。后面这句才是第二句。']);
     final track = SubtitleTrack([
       SubtitleCue(startMs: 0, text: '他说。'),
       SubtitleCue(startMs: 900, text: '他说。'),
@@ -72,10 +66,7 @@ void main() {
   });
 
   testWidgets('字幕与正文标点不一致时剥掉标点仍能对上', (tester) async {
-    final layout = layoutWith([
-      '他停了停，扇子在胸口点了两下。',
-      '上辈子的古人说，一饮一啄。',
-    ]);
+    final layout = layoutWith(['他停了停，扇子在胸口点了两下。', '上辈子的古人说，一饮一啄。']);
     final track = SubtitleTrack([
       // 字幕省了标点，正文有逗号和句号：精确匹配必然失败。
       SubtitleCue(startMs: 0, text: '他停了停扇子在胸口点了两下'),
@@ -90,10 +81,7 @@ void main() {
   });
 
   testWidgets('一句跨两段也能给出完整区间', (tester) async {
-    final layout = layoutWith([
-      '他把电视打开，屏幕上一片雪白',
-      '的信号在跳，像是谁在敲门。',
-    ]);
+    final layout = layoutWith(['他把电视打开，屏幕上一片雪白', '的信号在跳，像是谁在敲门。']);
     final track = SubtitleTrack([
       SubtitleCue(startMs: 0, text: '他把电视打开，屏幕'),
       // 这句的后半落在下一段：只有把正文拼接起来才能整句命中。
@@ -164,18 +152,14 @@ void main() {
   testWidgets('冒号与分号也算句读边界，标点归属前一片', (tester) async {
     const body = '“别啊！”陈青源赶紧说着：“那些家伙不可能与我同境界一战，那就是欺负人。”';
     final layout = layoutWith([body]);
-    final track = SubtitleTrack([
-      SubtitleCue(startMs: 0, text: body),
-    ]);
+    final track = SubtitleTrack([SubtitleCue(startMs: 0, text: body)]);
 
     final index = CueIndex.build(layout: layout, track: track);
     final block = layout.blocks[1];
     final pieces = index.spans
         .map(
-          (s) => block.text.substring(
-            s.start - block.start,
-            s.end - block.start,
-          ),
+          (s) =>
+              block.text.substring(s.start - block.start, s.end - block.start),
         )
         .toList();
 
@@ -183,11 +167,7 @@ void main() {
     expect(pieces, contains('“别啊！”'));
     expect(pieces, contains('陈青源赶紧说着：'));
     expect(pieces.first, startsWith('“别啊！”'));
-    expect(
-      pieces.any((p) => p.endsWith('，')),
-      isTrue,
-      reason: '逗号同样收在前一片末尾',
-    );
+    expect(pieces.any((p) => p.endsWith('，')), isTrue, reason: '逗号同样收在前一片末尾');
   });
 
   testWidgets('没有字幕时不建表', (tester) async {
@@ -203,10 +183,7 @@ void main() {
     final layout = layoutWith([body]);
     // 字幕把省略号写成半角三点、丢掉了引号：精确匹配必然失败，只能走剥噪兜底。
     final track = SubtitleTrack([
-      SubtitleCue(
-        startMs: 0,
-        text: '镇压...召唤...他嘴唇哆嗦着，那...那它在召唤什么？被它镇压的，又是什么？',
-      ),
+      SubtitleCue(startMs: 0, text: '镇压...召唤...他嘴唇哆嗦着，那...那它在召唤什么？被它镇压的，又是什么？'),
       SubtitleCue(startMs: 12000, text: '下一句。'),
     ]);
 

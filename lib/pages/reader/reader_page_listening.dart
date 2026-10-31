@@ -382,6 +382,8 @@ extension _ReaderPageListening on _ReaderPageState {
           chapterId,
           s.startPosition,
         )) {
+          // 立刻点亮目标句，不等下一拍（tick 最长 1s，等的话会先闪一下）。
+          _setState(() => _narrationRange = (s.start, s.end));
           HapticFeedback.selectionClick();
           return;
         }
