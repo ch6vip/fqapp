@@ -15,6 +15,7 @@ import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/settings/settings_widgets.dart';
 import 'about_page.dart';
 import 'api_service_page.dart';
 import 'cached_books_page.dart';
@@ -33,7 +34,6 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     // 开关读的是 ValueNotifier：先把持久化的值读出来，读到后自动重绘。
     unawaited(BookOpenPreferences.instance.load());
-    final palette = HomePalette.of(context);
     final categories = <SettingsCategory>[
       SettingsCategory(
         icon: LucideIcons.palette,
@@ -59,7 +59,7 @@ class SettingsPage extends StatelessWidget {
           _shelfDirectReaderItem(),
           _discoverDirectReaderItem(),
           SettingsItem(
-            icon: Icons.find_replace,
+            icon: LucideIcons.replace,
             title: '正文替换',
             subtitle: '自定义普通文本或正则替换规则',
             onTap: (context, _) => Navigator.push(
@@ -148,112 +148,43 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
 
-    const categoryColors = [
-      Color(0xFFEF5038), // 外观
-      Color(0xFF14B8A6), // 阅读
-      Color(0xFF8B5CF6), // 听书
-      Color(0xFFF59E0B), // 短剧
-      Color(0xFF3B82F6), // 数据
-      Color(0xFF10B981), // 服务
-      Color(0xFF6366F1), // 关于
-    ];
-
-    return Scaffold(
-      backgroundColor: palette.canvas,
-      appBar: AppBar(
-        title: const Text('设置'),
-        centerTitle: true,
-        backgroundColor: palette.canvas,
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-      ),
+    return SettingsScaffold(
+      title: '设置',
       body: isWindowsDesktop
           ? DesktopSettingsBody(categories: categories)
           : ListView(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               children: [
-                Material(
-                  color: palette.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  clipBehavior: Clip.antiAlias,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: palette.line, width: 0.6),
-                    ),
-                    child: Column(
-                      children: [
-                        for (var i = 0; i < categories.length; i++) ...[
-                          if (i > 0)
-                            Divider(height: 1, indent: 68, color: palette.line),
-                          ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 4,
-                            ),
-                            leading: Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color:
-                                    (i < categoryColors.length
-                                            ? categoryColors[i]
-                                            : HomePalette.accent)
-                                        .withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(
-                                categories[i].icon,
-                                size: 20,
-                                color: i < categoryColors.length
-                                    ? categoryColors[i]
-                                    : HomePalette.accent,
-                              ),
-                            ),
-                            title: Text(
-                              categories[i].title,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15,
-                                color: palette.ink,
-                              ),
-                            ),
-                            subtitle: Text(
-                              categories[i].subtitle,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: palette.muted,
-                              ),
-                            ),
-                            trailing: Icon(
-                              LucideIcons.chevron_right,
-                              size: 18,
-                              color: palette.muted,
-                            ),
-                            onTap: () {
-                              final cat = categories[i];
-                              final pageBuilder = cat.pageBuilder;
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder:
-                                      pageBuilder ??
-                                      (_) => SettingsCategoryPage(
-                                        title: cat.title,
-                                        items: cat.items,
-                                        itemsBuilder: cat.itemsBuilder,
-                                      ),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                SettingsGroupCard(
+                  children: [
+                    for (final cat in categories)
+                      SettingsRow(
+                        icon: cat.icon,
+                        iconTile: true,
+                        title: cat.title,
+                        subtitle: cat.subtitle,
+                        onTap: () => _openCategory(context, cat),
+                      ),
+                  ],
                 ),
               ],
             ),
+    );
+  }
+
+  static void _openCategory(BuildContext context, SettingsCategory cat) {
+    final pageBuilder = cat.pageBuilder;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder:
+            pageBuilder ??
+            (_) => SettingsCategoryPage(
+              title: cat.title,
+              items: cat.items,
+              itemsBuilder: cat.itemsBuilder,
+            ),
+      ),
     );
   }
 
@@ -266,17 +197,20 @@ class SettingsPage extends StatelessWidget {
     title: '主题模式',
     trailingBuilder: (context) => ListenableBuilder(
       listenable: Listenable.merge([themeModeNotifier, einkModeNotifier]),
-      builder: (context, _) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            _appearance.label,
-            style: TextStyle(color: Theme.of(context).colorScheme.outline),
-          ),
-          const SizedBox(width: 4),
-          const Icon(LucideIcons.chevron_right, size: 18),
-        ],
-      ),
+      builder: (context, _) {
+        final palette = HomePalette.of(context);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _appearance.label,
+              style: TextStyle(fontSize: 13, color: palette.muted),
+            ),
+            const SizedBox(width: 4),
+            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
+          ],
+        );
+      },
     ),
     onTap: (context, setState) => _showThemeModeDialog(context),
   );
@@ -370,8 +304,9 @@ class SettingsPage extends StatelessWidget {
     subtitle: '大面积纯黑省电，仅在深色外观下生效',
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: oledModeNotifier,
-      builder: (context, value, _) => Switch(
+      builder: (context, value, _) => SettingsSwitch(
         value: value,
+        semanticLabel: 'OLED 纯黑',
         onChanged: (v) => unawaited(_setOledMode(context, v)),
       ),
     ),
@@ -400,22 +335,25 @@ class SettingsPage extends StatelessWidget {
   ///
   /// 只影响短剧播放页，Windows 隐藏（桌面已有 304dp 停靠选集面板）。
   SettingsItem _playerLayoutItem() => SettingsItem(
-    icon: Icons.vertical_split_rounded,
+    icon: LucideIcons.columns_2,
     title: '播放页布局',
     subtitle: '短剧可分屏显示选集和评论，横屏时左右分栏',
     trailingBuilder: (context) => ValueListenableBuilder<PlayerLayoutMode>(
       valueListenable: PlayerLayoutPreferences.mode,
-      builder: (context, value, _) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            value.shortLabel,
-            style: TextStyle(color: Theme.of(context).colorScheme.outline),
-          ),
-          const SizedBox(width: 4),
-          const Icon(LucideIcons.chevron_right, size: 18),
-        ],
-      ),
+      builder: (context, value, _) {
+        final palette = HomePalette.of(context);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value.shortLabel,
+              style: TextStyle(fontSize: 13, color: palette.muted),
+            ),
+            const SizedBox(width: 4),
+            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
+          ],
+        );
+      },
     ),
     onTap: (context, setState) => _showPlayerLayoutDialog(context),
   );
@@ -485,8 +423,9 @@ class SettingsPage extends StatelessWidget {
     subtitle: '切到后台或锁屏时用悬浮小窗继续播放，需要悬浮窗权限',
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: PlayerPreferences.floatingWindow,
-      builder: (context, value, _) => Switch(
+      builder: (context, value, _) => SettingsSwitch(
         value: value,
+        semanticLabel: '切后台悬浮窗播放',
         onChanged: (enabled) => unawaited(_setFloatingWindow(context, enabled)),
       ),
     ),
@@ -523,8 +462,9 @@ class SettingsPage extends StatelessWidget {
     subtitle: '在书架、阅读历史里点书时跳过详情页，接着上次进度读',
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: BookOpenPreferences.instance.shelfDirectReader,
-      builder: (context, value, _) => Switch(
+      builder: (context, value, _) => SettingsSwitch(
         value: value,
+        semanticLabel: '书架点书直接进入阅读',
         onChanged: (v) =>
             unawaited(BookOpenPreferences.instance.setShelfDirectReader(v)),
       ),
@@ -541,8 +481,9 @@ class SettingsPage extends StatelessWidget {
     subtitle: '在首页、搜索、榜单、作者页等入口点书时跳过详情页',
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: BookOpenPreferences.instance.discoverDirectReader,
-      builder: (context, value, _) => Switch(
+      builder: (context, value, _) => SettingsSwitch(
         value: value,
+        semanticLabel: '首页与搜索点书直接进入阅读',
         onChanged: (v) =>
             unawaited(BookOpenPreferences.instance.setDiscoverDirectReader(v)),
       ),
@@ -560,8 +501,9 @@ class SettingsPage extends StatelessWidget {
     subtitle: '切到后台或锁屏时继续播放，并在通知栏常驻控制卡片',
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: AudioPreferences.instance.backgroundPlayback,
-      builder: (context, value, _) => Switch(
+      builder: (context, value, _) => SettingsSwitch(
         value: value,
+        semanticLabel: '后台听书与保活',
         onChanged: (v) =>
             unawaited(AudioPreferences.instance.setBackgroundPlayback(v)),
       ),
@@ -582,17 +524,20 @@ class SettingsPage extends StatelessWidget {
     subtitle: '高倍速发毛、像电音时可在两档间切换，重新进入听书页生效',
     trailingBuilder: (context) => ValueListenableBuilder<AudioRateEngine>(
       valueListenable: AudioPreferences.instance.rateEngine,
-      builder: (context, value, _) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            value.label,
-            style: TextStyle(color: Theme.of(context).colorScheme.outline),
-          ),
-          const SizedBox(width: 4),
-          const Icon(LucideIcons.chevron_right, size: 18),
-        ],
-      ),
+      builder: (context, value, _) {
+        final palette = HomePalette.of(context);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value.label,
+              style: TextStyle(fontSize: 13, color: palette.muted),
+            ),
+            const SizedBox(width: 4),
+            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
+          ],
+        );
+      },
     ),
     onTap: (context, setState) => _showAudioRateEngineDialog(context, setState),
   );
@@ -649,8 +594,9 @@ class SettingsPage extends StatelessWidget {
     // Switch 走 ValueListenableBuilder，翻转后无需依赖页面的 setState。
     trailingBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: DramaMutePreferences.instance.muteWhenColdStart,
-      builder: (context, value, _) => Switch(
+      builder: (context, value, _) => SettingsSwitch(
         value: value,
+        semanticLabel: '开启应用时默认静音',
         onChanged: (v) => unawaited(DramaMutePreferences.instance.set(v)),
       ),
     ),
@@ -670,17 +616,20 @@ class SettingsPage extends StatelessWidget {
     subtitle: '画面异常（黑屏、卡住、绿屏）时改用软解，重新进入播放页生效',
     trailingBuilder: (context) => FutureBuilder<VideoDecoderPreference>(
       future: PlayerPreferences.loadVideoDecoder(),
-      builder: (context, snapshot) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            (snapshot.data ?? VideoDecoderPreference.automatic).label,
-            style: TextStyle(color: Theme.of(context).colorScheme.outline),
-          ),
-          const SizedBox(width: 4),
-          const Icon(LucideIcons.chevron_right, size: 18),
-        ],
-      ),
+      builder: (context, snapshot) {
+        final palette = HomePalette.of(context);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              (snapshot.data ?? VideoDecoderPreference.automatic).label,
+              style: TextStyle(fontSize: 13, color: palette.muted),
+            ),
+            const SizedBox(width: 4),
+            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
+          ],
+        );
+      },
     ),
     onTap: (context, setState) => _showVideoDecoderDialog(context, setState),
   );
@@ -752,24 +701,14 @@ class SettingsPage extends StatelessWidget {
     String message,
     Future<void> Function() action,
   ) async {
-    final ok = await showDialog<bool>(
+    final ok = await showSettingsConfirmDialog(
       context: context,
-      builder: (c) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(c, true),
-            child: const Text('清空', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+      title: title,
+      message: message,
+      confirmLabel: '清空',
+      destructive: true,
     );
-    if (ok != true || !context.mounted) return;
+    if (!ok || !context.mounted) return;
     try {
       await action();
       if (context.mounted) {

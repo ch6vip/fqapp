@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/audio_floating_routes.dart';
 import '../services/system_tts.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/home/home_feed_states.dart';
+import '../widgets/settings/settings_widgets.dart';
 
 class SystemTtsSettingsPage extends StatefulWidget {
   const SystemTtsSettingsPage({super.key});
@@ -101,6 +105,7 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
 
   @override
   Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
     final selectedMissing =
         _prefs.engine != null &&
         !_engines.any((e) => e.package == _prefs.engine);
@@ -108,99 +113,153 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
         .where((e) => e.package == _defaultEngine)
         .firstOrNull
         ?.label;
-    return Scaffold(
-      appBar: AppBar(title: const Text('系统朗读')),
+    return SettingsScaffold(
+      title: '系统朗读',
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               children: [
-                const Text(
-                  '从小说或本地书阅读页点“听书”即可使用。支持已安装的系统 TTS 引擎，例如 MultiTTS；音色和联网需求由引擎管理。',
+                _bodyText(
+                  palette,
+                  '从小说或本地书阅读页点“听书”即可使用。支持已安装的系统 TTS '
+                  '引擎，例如 MultiTTS；音色和联网需求由引擎管理。',
                 ),
                 const SizedBox(height: 16),
-                if (_error != null) ...[
-                  Text(_error!),
-                  TextButton(onPressed: _load, child: const Text('重试')),
-                ] else if (_engines.isEmpty)
-                  const Text('没有找到朗读引擎，请先安装并在引擎应用中配置中文语音。')
+                if (_error case final error?)
+                  HomeStateView(
+                    icon: LucideIcons.circle_alert,
+                    title: '无法读取朗读引擎',
+                    message: error,
+                    actionLabel: '重试',
+                    actionIcon: LucideIcons.refresh_cw,
+                    onAction: _load,
+                  )
+                else if (_engines.isEmpty)
+                  const HomeStateView(
+                    icon: LucideIcons.volume_x,
+                    title: '没有找到朗读引擎',
+                    message: '请先安装并在引擎应用中配置中文语音。',
+                  )
                 else ...[
-                  if (selectedMissing)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text('之前选择的引擎已不可用，请重新选择。'),
-                    ),
-                  DropdownButtonFormField<String>(
-                    key: ValueKey(_prefs.engine ?? ''),
-                    initialValue: selectedMissing
-                        ? null
-                        : (_prefs.engine ?? ''),
-                    decoration: const InputDecoration(labelText: '朗读引擎'),
-                    items: [
-                      DropdownMenuItem(
-                        value: '',
-                        child: Text(
-                          '系统默认${defaultLabel == null ? '' : ' · $defaultLabel'}',
-                        ),
-                      ),
-                      for (final engine in _engines)
-                        DropdownMenuItem(
-                          value: engine.package,
+                  SettingsGroupCard(
+                    children: [
+                      if (selectedMissing)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                           child: Text(
-                            engine.label,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    isExpanded: true,
-                    onChanged: _saving
-                        ? null
-                        : (value) {
-                            if (value == null) return;
-                            _save(
-                              SystemTtsPreferences(
-                                engine: value.isEmpty ? null : value,
-                                rate: _prefs.rate,
-                              ),
-                            );
-                          },
-                  ),
-                  const SizedBox(height: 16),
-                  Text('语速 ${_prefs.rate.toStringAsFixed(1)}×'),
-                  Slider(
-                    value: _prefs.rate,
-                    min: 0.5,
-                    max: 3,
-                    divisions: 25,
-                    label: '${_prefs.rate.toStringAsFixed(1)}×',
-                    onChanged: _saving
-                        ? null
-                        : (value) => setState(() {
-                            _prefs = SystemTtsPreferences(
-                              engine: _prefs.engine,
-                              rate: value,
-                            );
-                          }),
-                    onChangeEnd: _saving
-                        ? null
-                        : (value) => _save(
-                            SystemTtsPreferences(
-                              engine: _prefs.engine,
-                              rate: value,
+                            '之前选择的引擎已不可用，请重新选择。',
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.5,
+                              color: palette.ink,
                             ),
                           ),
+                        ),
+                      _enginePicker(selectedMissing, defaultLabel),
+                      _ratePicker(palette),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _bodyText(
+                    palette,
+                    '引擎和语速修改在关闭当前系统朗读、重新开始后生效。'
+                    '部分引擎暂停后会从当前短句重读。',
                   ),
                 ],
                 const SizedBox(height: 12),
-                const Text('引擎和语速修改在关闭当前系统朗读、重新开始后生效。部分引擎暂停后会从当前短句重读。'),
-                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _openSettings,
-                  icon: const Icon(Icons.settings_voice),
+                  icon: const Icon(LucideIcons.settings_2, size: 18),
                   label: const Text('打开系统语音设置'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: palette.ink,
+                    side: BorderSide(color: palette.line),
+                    minimumSize: const Size.fromHeight(46),
+                  ),
                 ),
               ],
             ),
+    );
+  }
+
+  Widget _bodyText(HomePalette palette, String text) => Text(
+    text,
+    style: TextStyle(fontSize: 13, height: 1.6, color: palette.muted),
+  );
+
+  Widget _enginePicker(bool selectedMissing, String? defaultLabel) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: DropdownButtonFormField<String>(
+        key: ValueKey(_prefs.engine ?? ''),
+        initialValue: selectedMissing ? null : (_prefs.engine ?? ''),
+        decoration: const InputDecoration(labelText: '朗读引擎'),
+        items: [
+          DropdownMenuItem(
+            value: '',
+            child: Text(
+              '系统默认${defaultLabel == null ? '' : ' · $defaultLabel'}',
+            ),
+          ),
+          for (final engine in _engines)
+            DropdownMenuItem(
+              value: engine.package,
+              child: Text(engine.label, overflow: TextOverflow.ellipsis),
+            ),
+        ],
+        isExpanded: true,
+        onChanged: _saving
+            ? null
+            : (value) {
+                if (value == null) return;
+                _save(
+                  SystemTtsPreferences(
+                    engine: value.isEmpty ? null : value,
+                    rate: _prefs.rate,
+                  ),
+                );
+              },
+      ),
+    );
+  }
+
+  Widget _ratePicker(HomePalette palette) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '语速 ${_prefs.rate.toStringAsFixed(1)}×',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: palette.ink,
+            ),
+          ),
+          Slider(
+            value: _prefs.rate,
+            min: 0.5,
+            max: 3,
+            divisions: 25,
+            label: '${_prefs.rate.toStringAsFixed(1)}×',
+            onChanged: _saving
+                ? null
+                : (value) => setState(() {
+                    _prefs = SystemTtsPreferences(
+                      engine: _prefs.engine,
+                      rate: value,
+                    );
+                  }),
+            onChangeEnd: _saving
+                ? null
+                : (value) => _save(
+                    SystemTtsPreferences(engine: _prefs.engine, rate: value),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
