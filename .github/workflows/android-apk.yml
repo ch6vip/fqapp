@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [master, listen-follow]
+    branches: [master, listen-follow, listen-follow-ex]
     # 打 tag 也出包：tag 推送不走 paths 过滤（native-crypto 在
     # v1.0.117 tag 推送时已跑过一次可作证），branches/tags 是 OR 关系，
     # 所以加 tags 后推 v* 就会触发一次完整构建，APK 在 Artifacts 里，

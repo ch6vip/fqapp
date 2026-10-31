@@ -6,6 +6,12 @@ extension _ReaderPageListening on _ReaderPageState {
   /// 略微超前的视觉变化无感，滞后才有「字追不上声音」的拖沓感。
   static const int readAheadMs = 70;
 
+  /// 自然播放跨到下一句时，先多留上一句这么久（配合
+  /// [CueIndex.spanAtPositionMs] 的 `crossCueHoldMs`）。服务端时间轴的下一句
+  /// 起点常早于上一句真正念完，硬切会让句尾最后几个字只亮一瞬；配合提前
+  /// [readAheadMs] 取句，净滞后约 130ms。
+  static const int crossCueHoldMs = 200;
+
   void _toggleAutoTurn() {
     if (_autoTurnTimer != null) {
       _stopAutoTurn();
@@ -82,6 +88,8 @@ extension _ReaderPageListening on _ReaderPageState {
     if (_cueIndex.isNotEmpty) {
       final span = _cueIndex.spanAtPositionMs(
         session.position.inMilliseconds + readAheadMs,
+        crossCueHoldMs: crossCueHoldMs,
+        currentRange: _narrationRange,
       );
       if (span != null) return (span.start, span.end);
     }
@@ -270,7 +278,11 @@ extension _ReaderPageListening on _ReaderPageState {
     }
     _ensureCueIndex(layout);
     final positionMs = session.position.inMilliseconds + readAheadMs;
-    final span = _cueIndex.spanAtPositionMs(positionMs);
+    final span = _cueIndex.spanAtPositionMs(
+      positionMs,
+      crossCueHoldMs: crossCueHoldMs,
+      currentRange: _narrationRange,
+    );
     // [_narrationRange] 是**显示**状态：某一拍没匹配上时故意留着不清，好让
     // 高亮晚半拍而不是整页变黑。它绝不能当导航锚点 —— 字幕第一句从 3 秒才
     // 开始（`[3025, 0]`）时，位置 0 查不到句，用它寻址会把页面停到本章最后
@@ -364,6 +376,12 @@ extension _ReaderPageListening on _ReaderPageState {
     }
     final anchor = tappedTextId == null ? null : _paragraphAnchor(tappedTextId);
     final chapterId = _chapter.itemId;
+    _ensureCueIndex(layout);
+    // 本段第一个「从段内起」的字幕子片：既是第 ② 层的 seek 位置，也是三层
+    // 共用的首选点亮区间。
+    final startSpan = _cueIndex.firstSpanIn(tappedBlock.start, tappedBlock.end);
+    final target = _highlightSpanFor(tappedBlock, anchor, startSpan);
+    // ① 段落自带 <span start_time>
     if (anchor != null &&
         anchor.startMs != null &&
         AudioPlaybackScope.jumpToChapter(
@@ -371,25 +389,20 @@ extension _ReaderPageListening on _ReaderPageState {
           chapterId,
           Duration(milliseconds: anchor.startMs!),
         )) {
-      HapticFeedback.selectionClick();
+      _confirmTappedSeek(tappedBlock, target);
       return;
     }
-    _ensureCueIndex(layout);
-    for (final s in _cueIndex.spans) {
-      if (s.start >= tappedBlock.start && s.start < tappedBlock.end) {
-        if (AudioPlaybackScope.jumpToChapter(
+    // ② 字幕轨里本段的第一个子片（升级版官方音轨没有 /timepoints，只有字幕）
+    if (startSpan != null &&
+        AudioPlaybackScope.jumpToChapter(
           context,
           chapterId,
-          s.startPosition,
+          startSpan.startPosition,
         )) {
-          // 立刻点亮目标句，不等下一拍（tick 最长 1s，等的话会先闪一下）。
-          _setState(() => _narrationRange = (s.start, s.end));
-          HapticFeedback.selectionClick();
-          return;
-        }
-        break;
-      }
+      _confirmTappedSeek(tappedBlock, target);
+      return;
     }
+    // ③ /timepoints 段落锚
     if (anchor != null &&
         anchor.paraIndex != null &&
         AudioPlaybackScope.jumpToParagraph(
@@ -398,9 +411,44 @@ extension _ReaderPageListening on _ReaderPageState {
           paraIndex: anchor.paraIndex,
           ordinal: anchor.ordinal,
         )) {
-      HapticFeedback.selectionClick();
+      _confirmTappedSeek(tappedBlock, target);
       return;
     }
     _showMessage('这一点没有对应音频，稍后再试');
+  }
+
+  /// 跳转后要立刻点亮的区间：本段首个字幕子片 → 段首字符处的子片 → 段落起播
+  /// 毫秒对应的子片 → null（由调用方退回整段）。
+  ///
+  /// 按字符查这一路必须过 [CueIndex.spanAtCharIn] 的重叠校验：段间空隙在
+  /// 那里被算作前一句，不校验就会把上一段当成目标。
+  CueSpan? _highlightSpanFor(
+    ReaderContentBlock block,
+    ({int? startMs, int? paraIndex, int ordinal})? anchor,
+    CueSpan? startSpan,
+  ) {
+    if (startSpan != null) return startSpan;
+    final atChar = _cueIndex.spanAtCharIn(block.start, block.start, block.end);
+    if (atChar != null) return atChar;
+    final startMs = anchor?.startMs;
+    if (startMs != null) {
+      for (final span in _cueIndex.spans) {
+        if (span.startMs == startMs &&
+            span.start < block.end &&
+            span.end > block.start) {
+          return span;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// 三层定位成功后统一收口：立即点亮目标区间，不等下一拍（tick 最长 1s，
+  /// 等待期间屏幕上还是上一句，看上去就像跳错了）。
+  void _confirmTappedSeek(ReaderContentBlock block, CueSpan? target) {
+    _syncNarrationHighlight(
+      target == null ? (block.start, block.end) : (target.start, target.end),
+    );
+    HapticFeedback.selectionClick();
   }
 }

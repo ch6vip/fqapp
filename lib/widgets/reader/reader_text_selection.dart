@@ -557,8 +557,9 @@ class ReaderBlockMarkPainter extends CustomPainter {
     if (narration != null) {
       final rects = _lineRects(narration.$1, narration.$2);
       if (narrationUnderline) {
-        // 墨水屏走下划线：色块会整屏拖影，线只刷几行。
-        final line = Paint()..color = narrationColor..strokeWidth = 2;
+        // 墨水屏走下划线：色块会整屏拖影，线只刷几行。线要够粗才看得见
+        // （2px 在高 dpi 上仍嫌细），颜色由调用方保证是深色/不透明。
+        final line = Paint()..color = narrationColor..strokeWidth = 3;
         for (final rect in rects) {
           _strokeRow(canvas, rect, line);
         }
