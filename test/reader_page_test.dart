@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +12,8 @@ import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/reader_preferences.dart';
+import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
 
 import 'support/fakes.dart';
 
@@ -162,7 +165,7 @@ void main() {
       expect(find.text('重试'), findsNothing);
       if (operation == 'update progress') store.failHistoryWrite = true;
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('下一章'));
+      await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
       expect(find.text('重试'), findsNothing);
@@ -502,6 +505,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('目录 · 3 章'), findsOneWidget);
+    // 目录弹层走阅读设置面板的骨架，配色跟随当前 preset（默认浅色）。
+    final frame = tester.widget<ReaderSettingsSheetFrame>(
+      find.byType(ReaderSettingsSheetFrame),
+    );
+    expect(frame.preset, ReaderThemePreset.light);
+    expect(find.byIcon(LucideIcons.search), findsOneWidget);
     final selectedTiles = tester
         .widgetList<ListTile>(find.byType(ListTile))
         .where((tile) => tile.selected)
@@ -556,55 +565,56 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('scroll mode: dragging past the top returns to the previous chapter', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(320, 560));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(_readerApp());
-    await tester.pumpAndSettle();
-    expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
+  testWidgets(
+    'scroll mode: dragging past the top returns to the previous chapter',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 560));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_readerApp());
+      await tester.pumpAndSettle();
+      expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
 
-    // The overscroll notifications are dispatched directly: tester.drag does
-    // not produce drag overscroll against this harness, and the
-    // gesture-to-notification path is framework behaviour this fix does
-    // not touch. What changed is the listener's handling of the
-    // notification, which is exactly what is exercised here.
-    final listElement = tester.element(
-      find.byKey(const ValueKey('reader-paragraph-list')),
-    );
-    final scrollable = Scrollable.of(
-      tester.element(find.textContaining('这是 第一章 的正文。')),
-    );
-    OverscrollNotification(
-      metrics: scrollable.position,
-      context: listElement,
-      overscroll: 100,
-      velocity: 0,
-      dragDetails: DragUpdateDetails(globalPosition: Offset.zero),
-    ).dispatch(listElement);
-    await tester.pumpAndSettle();
-    expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
+      // The overscroll notifications are dispatched directly: tester.drag does
+      // not produce drag overscroll against this harness, and the
+      // gesture-to-notification path is framework behaviour this fix does
+      // not touch. What changed is the listener's handling of the
+      // notification, which is exactly what is exercised here.
+      final listElement = tester.element(
+        find.byKey(const ValueKey('reader-paragraph-list')),
+      );
+      final scrollable = Scrollable.of(
+        tester.element(find.textContaining('这是 第一章 的正文。')),
+      );
+      OverscrollNotification(
+        metrics: scrollable.position,
+        context: listElement,
+        overscroll: 100,
+        velocity: 0,
+        dragDetails: DragUpdateDetails(globalPosition: Offset.zero),
+      ).dispatch(listElement);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('这是 第二章 的正文。'), findsOneWidget);
 
-    // Dragging past the top retreats to the previous chapter, landing at
-    // its end — this used to do nothing (#27).
-    final listElement2 = tester.element(
-      find.byKey(const ValueKey('reader-paragraph-list')),
-    );
-    final scrollable2 = Scrollable.of(
-      tester.element(find.textContaining('这是 第二章 的正文。')),
-    );
-    OverscrollNotification(
-      metrics: scrollable2.position,
-      context: listElement2,
-      overscroll: -100,
-      velocity: 0,
-      dragDetails: DragUpdateDetails(globalPosition: Offset.zero),
-    ).dispatch(listElement2);
-    await tester.pumpAndSettle();
-    expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      // Dragging past the top retreats to the previous chapter, landing at
+      // its end — this used to do nothing (#27).
+      final listElement2 = tester.element(
+        find.byKey(const ValueKey('reader-paragraph-list')),
+      );
+      final scrollable2 = Scrollable.of(
+        tester.element(find.textContaining('这是 第二章 的正文。')),
+      );
+      OverscrollNotification(
+        metrics: scrollable2.position,
+        context: listElement2,
+        overscroll: -100,
+        velocity: 0,
+        dragDetails: DragUpdateDetails(globalPosition: Offset.zero),
+      ).dispatch(listElement2);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _openMenu(WidgetTester tester) async {
@@ -725,5 +735,3 @@ class _FakeReaderStore implements ReaderStore {
   @override
   Future<void> forgetWatchedEpisodes(String id) async {}
 }
-
-

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
@@ -10,6 +11,7 @@ import '../services/audio_preferences.dart';
 import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/listen_progress_bar.dart';
 
 /// 听书模式页（官方 `jm3.d0.y()` 的 `ShortSeriesLaunchArgs.setIsListenMode`
@@ -286,6 +288,7 @@ class _ListenModePageState extends State<ListenModePage>
   Widget build(BuildContext context) {
     final player = _player;
     final playing = player?.playWhenReady ?? false;
+    final colors = _listenColors;
     // 返回时把「听到哪一集 + 进度」一起交给宿主：听书页可能已自动连播
     // 跨集，宿主要跟到那一集续看（官方 sync_progress_strategy_listen_mode）。
     return PopScope(
@@ -295,17 +298,15 @@ class _ListenModePageState extends State<ListenModePage>
       },
       child: Scaffold(
         key: const ValueKey('listen-page'),
-        // 全屏听书页是整块大底色：OLED 纯黑生效时降到 #000000 省电，
-        // 其余深色模式保持官方 #121212。AppBar / 按钮本来就是透明 + 白字。
-        backgroundColor: oledActive() ? Colors.black : const Color(0xFF121212),
+        backgroundColor: colors.background,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
+          foregroundColor: colors.foreground,
           elevation: 0,
           leading: IconButton(
             key: const ValueKey('listen-page-back'),
             onPressed: _exitWithResult,
-            icon: const Icon(Icons.arrow_back),
+            icon: const Icon(LucideIcons.arrow_left),
           ),
           title: Text(
             widget.seriesTitle,
@@ -349,10 +350,10 @@ class _ListenModePageState extends State<ListenModePage>
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: colors.foreground,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -369,9 +370,9 @@ class _ListenModePageState extends State<ListenModePage>
                           onPressed: _index > 0
                               ? () => unawaited(_step(-1))
                               : null,
-                          icon: const Icon(Icons.skip_previous, size: 40),
-                          color: Colors.white,
-                          disabledColor: const Color(0x33FFFFFF),
+                          icon: const Icon(LucideIcons.skip_back, size: 40),
+                          color: colors.foreground,
+                          disabledColor: colors.disabled,
                         ),
                         const SizedBox(width: 24),
                         IconButton(
@@ -381,11 +382,11 @@ class _ListenModePageState extends State<ListenModePage>
                               : () => unawaited(_togglePlay()),
                           icon: Icon(
                             playing
-                                ? Icons.pause_circle_filled
-                                : Icons.play_circle_filled,
+                                ? LucideIcons.circle_pause
+                                : LucideIcons.circle_play,
                             size: 64,
                           ),
-                          color: const Color(0xFFFA6725),
+                          color: colors.accent,
                         ),
                         const SizedBox(width: 24),
                         IconButton(
@@ -393,9 +394,9 @@ class _ListenModePageState extends State<ListenModePage>
                           onPressed: _index < widget.episodes.length - 1
                               ? () => unawaited(_step(1))
                               : null,
-                          icon: const Icon(Icons.skip_next, size: 40),
-                          color: Colors.white,
-                          disabledColor: const Color(0x33FFFFFF),
+                          icon: const Icon(LucideIcons.skip_forward, size: 40),
+                          color: colors.foreground,
+                          disabledColor: colors.disabled,
                         ),
                       ],
                     ),
@@ -418,8 +419,38 @@ class _ListenModePageState extends State<ListenModePage>
     );
   }
 
+  /// 整页配色：官方深色 #121212 / OLED 纯黑 / 墨水屏白底黑字。
+  ///
+  /// 深色下 AppBar 与按钮本来就是透明 + 白字；墨水屏必须单独翻成黑字。
+  ({Color background, Color foreground, Color accent, Color disabled})
+  get _listenColors {
+    final palette = HomePalette.of(context);
+    if (palette.eink) {
+      return (
+        background: palette.canvas,
+        foreground: palette.ink,
+        accent: palette.ink,
+        disabled: palette.ink.withValues(alpha: 0.35),
+      );
+    }
+    return (
+      background: oledActive() ? Colors.black : const Color(0xFF121212),
+      foreground: Colors.white,
+      accent: const Color(0xFFFA6725),
+      disabled: const Color(0x33FFFFFF),
+    );
+  }
+
   Widget _ratePill(BuildContext context, double rate) {
     final selected = rate == _rate;
+    final palette = HomePalette.of(context);
+    final eink = palette.eink;
+    final background = eink
+        ? (selected ? palette.ink : palette.canvas)
+        : (selected ? const Color(0xFFFA6725) : const Color(0x14FFFFFF));
+    final foreground = eink
+        ? (selected ? palette.canvas : palette.ink)
+        : (selected ? Colors.white : const Color(0x99FFFFFF));
     return InkWell(
       key: ValueKey('listen-rate-$rate'),
       onTap: () async {
@@ -433,15 +464,13 @@ class _ListenModePageState extends State<ListenModePage>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFFA6725) : const Color(0x14FFFFFF),
+          color: background,
           borderRadius: BorderRadius.circular(14),
+          border: eink && !selected ? Border.all(color: palette.line) : null,
         ),
         child: Text(
           '${rate == rate.roundToDouble() ? rate.toInt() : rate}x',
-          style: TextStyle(
-            fontSize: 12,
-            color: selected ? Colors.white : const Color(0x99FFFFFF),
-          ),
+          style: TextStyle(fontSize: 12, color: foreground),
         ),
       ),
     );

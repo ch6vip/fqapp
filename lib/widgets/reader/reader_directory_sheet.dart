@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../../services/reader_preferences.dart';
+import 'reader_theme.dart';
+import 'settings/reader_settings_widgets.dart';
 
 /// The reader's chapter directory sheet. Extracted from `reader_page.dart` to
 /// keep that file under its line budget; behavior is unchanged.
@@ -12,11 +15,15 @@ class ReaderDirectorySheet extends StatefulWidget {
   final int currentIndex;
   final Set<String> cachedIds;
 
+  /// 阅读背景 preset：面板骨架、文字和控件配色都跟着它走。
+  final ReaderThemePreset preset;
+
   const ReaderDirectorySheet({
     super.key,
     required this.chapters,
     required this.currentIndex,
     required this.cachedIds,
+    this.preset = ReaderThemePreset.light,
   });
 
   @override
@@ -91,25 +98,23 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
 
   @override
   Widget build(BuildContext context) {
+    final preset = widget.preset;
     final indexes = _visibleIndexes;
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
+    return ReaderSettingsSheetFrame(
+      preset: preset,
+      title: '目录 · ${widget.chapters.length} 章',
+      closeTooltip: '关闭',
+      scrollKey: const ValueKey('reader-directory-scroll'),
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 8, 10),
+          padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
           child: Row(
             children: [
-              Expanded(
-                child: Text(
-                  '目录 · ${widget.chapters.length} 章',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
+              Expanded(child: _searchField(preset)),
               IconButton(
                 tooltip: _reversed ? '切换为正序' : '切换为倒序',
                 onPressed: _toggleOrder,
+                color: preset.textColor,
                 icon: Icon(
                   _reversed ? LucideIcons.arrow_up : LucideIcons.arrow_down,
                 ),
@@ -117,99 +122,101 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: TextField(
-            controller: _searchController,
-            textInputAction: TextInputAction.search,
-            onChanged: _onSearchChanged,
-            decoration: InputDecoration(
-              hintText: '搜索章节名或序号',
-              prefixIcon: const Icon(LucideIcons.search),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: '清空',
-                      onPressed: () {
-                        _searchDebounce?.cancel();
-                        _searchController.clear();
-                        setState(() => _query = '');
-                      },
-                      icon: const Icon(LucideIcons.x),
-                    ),
-              filled: true,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-        ),
-        Expanded(
+        SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.55,
           child: indexes.isEmpty
               ? Center(
                   child: Text(
                     '没有匹配的章节',
-                    style: TextStyle(color: scheme.onSurface),
+                    style: TextStyle(color: preset.mutedTextColor),
                   ),
                 )
               : ListView.builder(
                   controller: _scrollController,
                   itemExtent: _itemExtent,
                   itemCount: indexes.length,
-                  itemBuilder: (context, position) {
-                    final index = indexes[position];
-                    final chapter = widget.chapters[index];
-                    final current = index == widget.currentIndex;
-                    return Material(
-                      color: current
-                          ? scheme.primaryContainer.withValues(alpha: 0.72)
-                          : Colors.transparent,
-                      child: ListTile(
-                        dense: true,
-                        selected: current,
-                        onTap: () => Navigator.pop(context, index),
-                        leading: SizedBox(
-                          width: 42,
-                          child: Text(
-                            '${index + 1}',
-                            textAlign: TextAlign.end,
-                            style: TextStyle(
-                              color: current
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant,
-                              fontWeight: current
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                        ),
-                        title: Text(
-                          chapter.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (widget.cachedIds.contains(chapter.itemId))
-                              const Tooltip(
-                                message: '已缓存',
-                                child: Icon(LucideIcons.circle_check, size: 18),
-                              ),
-                            if (current)
-                              Icon(
-                                LucideIcons.locate_fixed,
-                                color: scheme.primary,
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+                  itemBuilder: (context, position) =>
+                      _row(context, indexes[position], preset),
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _searchField(ReaderThemePreset preset) => TextField(
+    controller: _searchController,
+    textInputAction: TextInputAction.search,
+    style: TextStyle(color: preset.textColor),
+    onChanged: _onSearchChanged,
+    decoration: InputDecoration(
+      hintText: '搜索章节名或序号',
+      hintStyle: TextStyle(color: preset.mutedTextColor),
+      prefixIcon: Icon(LucideIcons.search, color: preset.mutedTextColor),
+      suffixIcon: _query.isEmpty
+          ? null
+          : IconButton(
+              tooltip: '清空',
+              color: preset.mutedTextColor,
+              onPressed: () {
+                _searchDebounce?.cancel();
+                _searchController.clear();
+                setState(() => _query = '');
+              },
+              icon: const Icon(LucideIcons.x),
+            ),
+      filled: true,
+      fillColor: preset.fieldColor,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+    ),
+  );
+
+  Widget _row(BuildContext context, int index, ReaderThemePreset preset) {
+    final chapter = widget.chapters[index];
+    final current = index == widget.currentIndex;
+    return Material(
+      color: current
+          ? preset.accentColor.withValues(alpha: 0.14)
+          : Colors.transparent,
+      child: ListTile(
+        dense: true,
+        selected: current,
+        onTap: () => Navigator.pop(context, index),
+        leading: SizedBox(
+          width: 42,
+          child: Text(
+            '${index + 1}',
+            textAlign: TextAlign.end,
+            style: TextStyle(
+              color: current ? preset.accentColor : preset.mutedTextColor,
+              fontWeight: current ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+        title: Text(
+          chapter.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.cachedIds.contains(chapter.itemId))
+              Tooltip(
+                message: '已缓存',
+                child: Icon(
+                  LucideIcons.circle_check,
+                  size: 18,
+                  color: preset.mutedTextColor,
+                ),
+              ),
+            if (current)
+              Icon(LucideIcons.locate_fixed, color: preset.accentColor),
+          ],
+        ),
+      ),
     );
   }
 }

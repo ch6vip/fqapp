@@ -34,7 +34,7 @@
     "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
-    "lib/widgets/player/player_split_panel.dart": 618,
+    "lib/widgets/player/player_split_panel.dart": 619,
     "lib/widgets/player/playlet_danmaku_layer.dart": 569,
     "lib/widgets/player/story_player_panel.dart": 1082,
     "lib/widgets/reader/reader_appearance_sheet.dart": 577,
