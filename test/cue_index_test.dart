@@ -168,4 +168,39 @@ void main() {
     expect(index.spanAtPositionMs(0), isNull);
     expect(index.spanAtChar(0), isNull);
   });
+
+  testWidgets('字幕与正文标点写法不同时，高亮落在句读边界而不是字中间', (tester) async {
+    const body = '“镇压……召唤……”他嘴唇哆嗦着，“那……那它在召唤什么？被它镇压的，又是什么？”';
+    final layout = layoutWith([body]);
+    // 字幕把省略号写成半角三点、丢掉了引号：精确匹配必然失败，只能走剥噪兜底。
+    final track = SubtitleTrack([
+      SubtitleCue(
+        startMs: 0,
+        text: '镇压...召唤...他嘴唇哆嗦着，那...那它在召唤什么？被它镇压的，又是什么？',
+      ),
+      SubtitleCue(startMs: 12000, text: '下一句。'),
+    ]);
+
+    final index = CueIndex.build(layout: layout, track: track);
+    final block = layout.blocks[1];
+    final pieces = index.spans.where((s) => s.cueIndex == 0).toList();
+    expect(pieces.length, greaterThan(2), reason: '剥噪命中同样要按标点拆片');
+
+    final boundary = RegExp(r'[，、。！？…—]');
+    for (final span in pieces) {
+      final tail = block.text[span.end - 1 - block.start];
+      expect(
+        boundary.hasMatch(tail) || span.end == block.end,
+        isTrue,
+        reason: '片尾「$tail」不是句读边界，高亮会在句子中间截断',
+      );
+    }
+    // 片与片的接续必须严丝合缝，没有跳空也没有重叠。
+    for (var i = 1; i < pieces.length; i++) {
+      expect(pieces[i].start, pieces[i - 1].end);
+    }
+    // 省略号处停顿更久，该片拿到的时长必须明显大于同字数的普通片。
+    final ellipsis = pieces.first;
+    expect(ellipsis.endMs - ellipsis.startMs, greaterThan(500));
+  });
 }

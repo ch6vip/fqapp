@@ -136,7 +136,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('官方时间点译得出来时仍是唯一来源', (tester) async {
+  testWidgets('字幕轨逐句优先，官方时间点只在没有字幕时兜底', (tester) async {
     await _mount(tester);
     final track = _track();
     _seed(
@@ -162,9 +162,9 @@ void main() {
     ).spanAtPositionMs(36000)!;
     expect(official.start, isNot(fallback.start), reason: '两套来源必须指向不同处');
     expect(_pager(tester).narrationRange, (
-      official.start,
-      official.end,
-    ), reason: '官方区间译得出来时不能被字幕兜底顶掉');
+      fallback.start,
+      fallback.end,
+    ), reason: '有字幕轨时逐句点亮：官方时间点是段落级，整段一起亮太粗，段内句子还会漏');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
