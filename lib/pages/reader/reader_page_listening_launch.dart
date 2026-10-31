@@ -245,7 +245,13 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     return (tone == null || tone.isEmpty) ? null : tone;
   }
 
-  /// 「从本页播放」的锚点：当前页第一个正文段落的段落 ID 与它的起播时间。
+  /// 「从本页播放」的锚点：当前页第一个**从本页开始**的正文段落的段落 ID 与
+  /// 它的起播时间。
+  ///
+  /// 页首常常是上一页跨过来的段落尾巴（`fragment.firstLine > 0`）：拿它当锚点，
+  /// 播放会退到上一页那段正文的开头，用户听到的就不是眼前这段了。优先取
+  /// `firstLine == 0` 的段落；整页都是同一段的续行（超长段落跨多页）时才退回
+  /// 页首那段。
   ///
   /// 时间取 [ReaderContentBlock.startMs]（章节自带的 `<span start_time>`），
   /// 与「从本段听」同源。没有时间轴的章返回 startMs 为 null，调用方退回续播。
@@ -255,12 +261,15 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       return (startMs: null, textId: null);
     }
     final page = layout.pages[_pageIndex.clamp(0, layout.pages.length - 1)];
+    ({int? startMs, int? textId})? carried;
     for (final fragment in page.fragments) {
       final block = fragment.block;
       if (block.isTitle || block.isImage || block.text.isEmpty) continue;
-      return (startMs: block.startMs, textId: block.textId);
+      final anchor = (startMs: block.startMs, textId: block.textId);
+      if (fragment.firstLine == 0) return anchor;
+      carried ??= anchor;
     }
-    return (startMs: null, textId: null);
+    return carried ?? (startMs: null, textId: null);
   }
 
   /// The spoken start of the paragraph identified by [textId], plus the keys
