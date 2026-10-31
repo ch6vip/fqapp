@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -58,10 +59,7 @@ void main() {
     var opens = 0;
     await pump(
       tester,
-      relateBook: const EpisodeRelateBook(
-        id: 'b1',
-        title: '原著小说名',
-      ),
+      relateBook: const EpisodeRelateBook(id: 'b1', title: '原著小说名'),
       onOpen: () => opens++,
     );
     expect(
@@ -69,6 +67,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('原著小说名'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.chevron_right), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('story-panel-relate-book')));
     await tester.pump();
     expect(opens, 1);
@@ -76,10 +75,7 @@ void main() {
 
   testWidgets('no data means no row', (tester) async {
     await pump(tester);
-    expect(
-      find.byKey(const ValueKey('story-panel-relate-book')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('story-panel-relate-book')), findsNothing);
   });
 
   testWidgets('without a callback the row has no arrow', (tester) async {
@@ -88,14 +84,12 @@ void main() {
       relateBook: const EpisodeRelateBook(id: 'b1', title: '原著小说名'),
     );
     expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+    expect(find.byIcon(LucideIcons.chevron_right), findsNothing);
   });
 
   test('the official config gate defaults to off', () {
     // 官方 `relate_book_in_episodes_dialog` 默认 false：本地也默认关，
     // 不会在官方未显示的配置下强制添加这一条。
-    expect(
-      PlayerStyleConfig.defaults.relateBookInEpisodesDialog,
-      isFalse,
-    );
+    expect(PlayerStyleConfig.defaults.relateBookInEpisodesDialog, isFalse);
   });
 }

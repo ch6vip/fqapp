@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/audio/voice_settings_sheet.dart';
+import 'package:fqapp/widgets/home/home_sheet.dart';
 
 void main() {
   Future<void> pump(
@@ -56,7 +58,7 @@ void main() {
 
     final card = find.byKey(const ValueKey('voice_option_t1'));
     expect(
-      find.descendant(of: card, matching: find.byIcon(Icons.check)),
+      find.descendant(of: card, matching: find.byIcon(LucideIcons.check)),
       findsOneWidget,
     );
 
@@ -80,15 +82,19 @@ void main() {
       theme: AppTheme.createTheme(Brightness.dark, oledMode: true),
     );
 
-    // 面板自己画出比听书页高一档的底色 + 发丝线：纯黑画布上 barrier
-    // 叠不出变暗，否则面板和背景连成一片。
-    final surface = tester.widget<Material>(
-      find.byKey(const Key('voice_settings_surface')),
+    // 面板骨架统一走 HomeSheetFrame：深色 / OLED 下它画出比听书页高一档
+    // 的底色 + 上缘发丝线，纯黑画布上 barrier 叠不出变暗，否则面板和背景
+    // 连成一片。
+    final frame = find.byKey(const Key('voice_settings_surface'));
+    expect(tester.widget<HomeSheetFrame>(frame), isA<HomeSheetFrame>());
+    final container = tester.widget<AnimatedContainer>(
+      find.descendant(of: frame, matching: find.byType(AnimatedContainer)),
     );
-    expect(surface.color, const Color(0xFF0C0C0E));
-    final shape = surface.shape! as RoundedRectangleBorder;
-    expect(shape.side.width, 0.8);
-    expect(shape.side.color.a, closeTo(0.8, 0.01));
+    final decoration = container.decoration! as BoxDecoration;
+    expect(decoration.color, const Color(0xFF0C0C0E));
+    final border = decoration.border! as Border;
+    expect(border.top.width, 0.8);
+    expect(border.top.color.a, closeTo(0.8, 0.01));
   });
 
   testWidgets('a hearing-native album shows only the narrator section', (
@@ -110,5 +116,20 @@ void main() {
 
     expect(find.text('真人讲书'), findsOneWidget);
     expect(find.text('智能朗读'), findsNothing);
+  });
+
+  testWidgets('eink keeps the panel white with black text', (tester) async {
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = false);
+    await pump(tester, selectedId: 't1', onSelect: (_) {});
+
+    final frame = find.byKey(const Key('voice_settings_surface'));
+    final container = tester.widget<AnimatedContainer>(
+      find.descendant(of: frame, matching: find.byType(AnimatedContainer)),
+    );
+    final decoration = container.decoration! as BoxDecoration;
+    expect(decoration.color, Colors.white);
+    final title = tester.widget<Text>(find.text('声音设置'));
+    expect(title.style?.color, Colors.black);
   });
 }

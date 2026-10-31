@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/book_detail.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
+import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/audio_page_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
+import 'package:fqapp/widgets/home/home_sheet.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -144,8 +148,9 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('audio-voice')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('voice_settings_close')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('voice_settings_close')));
+    // 音色面板改走 HomeSheetFrame，关闭键是 frame 的 Lucide x。
+    expect(find.byTooltip('关闭'), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
     await _unmount(tester);
 
@@ -203,6 +208,52 @@ void main() {
       tester.getSize(find.byKey(const Key('audio_play'))),
       const Size(60, 60),
     );
+  });
+
+  testWidgets('eink renders the listening page in pure black and white', (
+    tester,
+  ) async {
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = false);
+    await _mount(tester, _RealSession());
+
+    final scope = tester.widget<AudioPageThemeScope>(
+      find.byType(AudioPageThemeScope),
+    );
+    expect(scope.theme, AudioPageTheme.eink);
+    expect(scope.eink, isTrue);
+    expect(scope.oled, isFalse);
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('audio_session_book')),
+    );
+    expect(scaffold.backgroundColor, Colors.white);
+  });
+
+  testWidgets('the playback sheets share the HomeSheetFrame shell', (
+    tester,
+  ) async {
+    await _mount(tester, _RealSession());
+
+    Future<void> openAndCheck(Finder opener, String title) async {
+      await tester.ensureVisible(opener);
+      await tester.tap(opener);
+      await tester.pumpAndSettle();
+      expect(find.byType(HomeSheetFrame), findsOneWidget);
+      expect(find.text(title), findsOneWidget);
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+    }
+
+    await openAndCheck(find.byKey(const ValueKey('audio-speed')), '播放速度');
+    await openAndCheck(find.byKey(const ValueKey('audio_more')), '播放设置');
+    await openAndCheck(find.byKey(const ValueKey('audio_sleep')), '定时关闭');
+
+    await tester.ensureVisible(find.byKey(const Key('audio_book_bar')));
+    await tester.tap(find.byKey(const Key('audio_book_bar')));
+    await tester.pumpAndSettle();
+    expect(find.byType(HomeSheetFrame), findsOneWidget);
+    expect(find.text('目录 · 3 集'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.search), findsOneWidget);
   });
 }
 

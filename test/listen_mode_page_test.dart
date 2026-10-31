@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/listen_mode_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/player_preferences.dart';
@@ -54,6 +56,39 @@ void main() {
     expect(created.first.playbackRequested, isTrue);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
+  });
+
+  testWidgets('墨水屏：听书页退化为白底黑字，控制图标走 Lucide', (tester) async {
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = false);
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    await tester.pumpAndSettle();
+
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('listen-page')),
+    );
+    expect(scaffold.backgroundColor, Colors.white);
+    final title = tester.widget<Text>(
+      find.byKey(const ValueKey('listen-episode-title')),
+    );
+    expect(title.style?.color, Colors.black);
+    expect(find.byIcon(LucideIcons.arrow_left), findsOneWidget);
+    expect(find.byIcon(LucideIcons.skip_back), findsOneWidget);
+    expect(find.byIcon(LucideIcons.skip_forward), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Icon &&
+            (widget.icon == LucideIcons.circle_pause ||
+                widget.icon == LucideIcons.circle_play),
+      ),
+      findsOneWidget,
+    );
+    // 旧的 Material 图标不应残留。
+    expect(find.byIcon(Icons.skip_next), findsNothing);
+    expect(find.byIcon(Icons.skip_previous), findsNothing);
+    expect(find.byIcon(Icons.play_circle_filled), findsNothing);
   });
 
   testWidgets('封面是明确的 220×308 竖版画幅，而不是无高度的正方形', (tester) async {

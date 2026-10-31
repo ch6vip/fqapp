@@ -1,10 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_download.dart';
+import '../services/reader_preferences.dart';
+import 'home/home_sheet.dart';
+import 'reader/settings/reader_settings_widgets.dart';
+
+/// 章节缓存面板的外壳：听书页用通用 HomeSheetFrame，阅读器用阅读设置面板
+/// 那套 ReaderSettingsSheetFrame（配色跟随阅读背景 preset）。
+enum ChapterCacheShell { home, reader }
 
 /// Range picker for the reader, where picking a batch size still makes sense.
 /// The detail page downloads the whole book without a sheet.
@@ -22,6 +30,12 @@ class ChapterCacheSheet extends StatefulWidget {
   /// 详情页不传这个参数时，面板保持原来的纯文本缓存形态。
   final Widget? extraSection;
 
+  /// 外壳样式；默认听书页的 HomeSheetFrame。
+  final ChapterCacheShell shell;
+
+  /// [ChapterCacheShell.reader] 时使用的阅读配色。
+  final ReaderThemePreset readerPreset;
+
   const ChapterCacheSheet({
     super.key,
     required this.book,
@@ -31,6 +45,8 @@ class ChapterCacheSheet extends StatefulWidget {
     required this.loader,
     this.extraSection,
     this.onContentAvailable,
+    this.shell = ChapterCacheShell.home,
+    this.readerPreset = ReaderThemePreset.light,
   });
 
   @override
@@ -101,9 +117,39 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
   @override
   Widget build(BuildContext context) {
     final state = _batch.value;
+    final remaining = widget.book.chapters.length - _startIndex;
+    final validIds = widget.book.chapters
+        .map((chapter) => chapter.itemId)
+        .toSet();
+    final cachedCount = _cached.intersection(validIds).length;
+    final children = _content(
+      context,
+      state: state,
+      remaining: remaining,
+      cachedCount: cachedCount,
+    );
+    switch (widget.shell) {
+      case ChapterCacheShell.home:
+        return HomeSheetFrame(title: '章节缓存', children: children);
+      case ChapterCacheShell.reader:
+        return ReaderSettingsSheetFrame(
+          preset: widget.readerPreset,
+          title: '章节缓存',
+          closeTooltip: '关闭',
+          scrollKey: const ValueKey('chapter-cache-scroll'),
+          children: children,
+        );
+    }
+  }
+
+  List<Widget> _content(
+    BuildContext context, {
+    required ChapterDownloadState state,
+    required int remaining,
+    required int cachedCount,
+  }) {
     final running = state.running;
     final message = state.message ?? _cacheError;
-    final remaining = widget.book.chapters.length - _startIndex;
     final capacity = widget.cache.chapterCapacity;
     // Offered once the presets leave a gap: the whole-book action downloads
     // everything left and pins it, so the cache's automatic budget can neither
@@ -113,94 +159,73 @@ class _ChapterCacheSheetState extends State<ChapterCacheSheet> {
       for (final count in _presetCounts)
         if (remaining > 0) remaining < count ? remaining : count,
     };
-    final validIds = widget.book.chapters
-        .map((chapter) => chapter.itemId)
-        .toSet();
-    final cachedCount = _cached.intersection(validIds).length;
-    return SafeArea(
-      top: false,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+    return [
+      Text(widget.book.title),
+      const SizedBox(height: 6),
+      Text('已缓存 $cachedCount / ${widget.book.chapters.length} 章'),
+      const SizedBox(height: 16),
+      Text(
+        widget.includeCurrentChapter
+            ? '从当前章节开始缓存，已有缓存会自动复用。插图首次查看需要联网，显示后会自动缓存。'
+            : '阅读过的章节会自动保存，也可提前缓存后续章节。插图首次查看需要联网，显示后会自动缓存。',
+      ),
+      const SizedBox(height: 16),
+      if (remaining == 0)
+        const Text('当前已是最后一章')
+      else ...[
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Text('章节缓存', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            Text(widget.book.title),
-            const SizedBox(height: 6),
-            Text('已缓存 $cachedCount / ${widget.book.chapters.length} 章'),
-            const SizedBox(height: 16),
-            Text(
-              widget.includeCurrentChapter
-                  ? '从当前章节开始缓存，已有缓存会自动复用。插图首次查看需要联网，显示后会自动缓存。'
-                  : '阅读过的章节会自动保存，也可提前缓存后续章节。插图首次查看需要联网，显示后会自动缓存。',
-            ),
-            const SizedBox(height: 16),
-            if (remaining == 0)
-              const Text('当前已是最后一章')
-            else ...[
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final count in choices)
-                    OutlinedButton(
-                      onPressed: running
-                          ? null
-                          : () => unawaited(
-                              _batch.start(
-                                startIndex: _startIndex,
-                                count: count,
-                              ),
-                            ),
-                      child: Text(
-                        widget.includeCurrentChapter
-                            ? '缓存 $count 章'
-                            : '缓存后 $count 章',
+            for (final count in choices)
+              OutlinedButton(
+                onPressed: running
+                    ? null
+                    : () => unawaited(
+                        _batch.start(startIndex: _startIndex, count: count),
                       ),
-                    ),
-                  // The presets already cover a short remainder, so the
-                  // whole-book action only appears where they leave a gap.
-                  if (offersWholeBook)
-                    FilledButton(
-                      key: const Key('chapter_cache_all'),
-                      onPressed: running
-                          ? null
-                          : () => unawaited(
-                              _batch.start(
-                                startIndex: _startIndex,
-                                count: remaining,
-                                pin: true,
-                              ),
-                            ),
-                      child: Text('全部下载 $remaining 章'),
-                    ),
-                ],
+                child: Text(
+                  widget.includeCurrentChapter ? '缓存 $count 章' : '缓存后 $count 章',
+                ),
               ),
-            ],
-            if (running) ...[
-              const SizedBox(height: 16),
-              LinearProgressIndicator(value: state.fraction),
-              const SizedBox(height: 8),
-              Text('正在缓存 ${state.completed} / ${state.total} 章'),
-              TextButton.icon(
-                onPressed: _cancel,
-                icon: const Icon(Icons.stop_circle_outlined),
-                label: const Text('停止缓存'),
+            // The presets already cover a short remainder, so the whole-book
+            // action only appears where they leave a gap.
+            if (offersWholeBook)
+              FilledButton(
+                key: const Key('chapter_cache_all'),
+                onPressed: running
+                    ? null
+                    : () => unawaited(
+                        _batch.start(
+                          startIndex: _startIndex,
+                          count: remaining,
+                          pin: true,
+                        ),
+                      ),
+                child: Text('全部下载 $remaining 章'),
               ),
-            ],
-            if (message != null) ...[const SizedBox(height: 12), Text(message)],
-            const SizedBox(height: 12),
-            Text(
-              '关闭此面板会停止下载。「全部下载」的章节会一直保留；自动缓存的章节最多保留 '
-              '$capacity 章或 80 MB，超出后清理较久未读的。',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            if (widget.extraSection != null) widget.extraSection!,
           ],
         ),
+      ],
+      if (running) ...[
+        const SizedBox(height: 16),
+        LinearProgressIndicator(value: state.fraction),
+        const SizedBox(height: 8),
+        Text('正在缓存 ${state.completed} / ${state.total} 章'),
+        TextButton.icon(
+          onPressed: _cancel,
+          icon: const Icon(LucideIcons.circle_stop),
+          label: const Text('停止缓存'),
+        ),
+      ],
+      if (message != null) ...[const SizedBox(height: 12), Text(message)],
+      const SizedBox(height: 12),
+      Text(
+        '关闭此面板会停止下载。「全部下载」的章节会一直保留；自动缓存的章节最多保留 '
+        '$capacity 章或 80 MB，超出后清理较久未读的。',
+        style: Theme.of(context).textTheme.bodySmall,
       ),
-    );
+      if (widget.extraSection != null) widget.extraSection!,
+    ];
   }
 }

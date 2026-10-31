@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/player/story_player_panel.dart';
 
 /// F06 第二批：选集面板**头部剧信息**。
@@ -27,6 +29,7 @@ void main() {
     String label = '更新至12集',
     bool freeWatch = false,
     VoidCallback? onOpenSeries,
+    VoidCallback? onOpenRelatedSeries,
   }) async {
     final scroll = ScrollController();
     addTearDown(scroll.dispose);
@@ -46,6 +49,7 @@ void main() {
               episodeLabel: label,
               freeWatch: freeWatch,
               onOpenSeries: onOpenSeries,
+              onOpenRelatedSeries: onOpenRelatedSeries,
               onSelectEpisode: (_) {},
               onDragStart: (_) {},
               onDragUpdate: (_) {},
@@ -218,6 +222,36 @@ void main() {
       await pump(tester);
       expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
       expect(find.byKey(const ValueKey('story-panel-collect')), findsNothing);
+    });
+  });
+
+  group('同系列入口', () {
+    Color? foreground(WidgetTester tester) => tester
+        .widget<TextButton>(
+          find.byKey(const ValueKey('story-panel-related-series')),
+        )
+        .style!
+        .foregroundColor!
+        .resolve(<WidgetState>{});
+
+    testWidgets('the related-series button takes the palette accent', (
+      tester,
+    ) async {
+      await pump(tester, onOpenRelatedSeries: () {});
+      // 面板曾自建一份裸 ThemeData，外层 colorScheme 丢失后按钮落到
+      // Material 默认主色（紫蓝）；现在颜色由外层主题推出的 palette 决定。
+      expect(foreground(tester), HomePalette.accentStrong);
+      expect(
+        foreground(tester),
+        isNot(ThemeData(useMaterial3: true).colorScheme.primary),
+      );
+    });
+
+    testWidgets('eink keeps the related-series button black', (tester) async {
+      einkModeNotifier.value = true;
+      addTearDown(() => einkModeNotifier.value = false);
+      await pump(tester, onOpenRelatedSeries: () {});
+      expect(foreground(tester), Colors.black);
     });
   });
 }

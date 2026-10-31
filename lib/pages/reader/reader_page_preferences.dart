@@ -335,30 +335,22 @@ extension _ReaderPagePreferences on _ReaderPageState {
       cachedIds = await _diskCache.cachedChapterIds(widget.bookId);
     } catch (_) {}
     if (!mounted) return;
+    final preset = _effectivePreset;
     final selected = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
-      backgroundColor: _effectivePreset.panelColor,
-      builder: (context) => Theme(
-        data: _effectivePreset.theme(Theme.of(context)),
-        child: Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: SizedBox(
-            height:
-                (MediaQuery.sizeOf(context).height -
-                    MediaQuery.viewInsetsOf(context).bottom) *
-                0.78,
-            child: ReaderDirectorySheet(
-              chapters: widget.chapters,
-              currentIndex: _index,
-              cachedIds: cachedIds,
-            ),
-          ),
-        ),
+      backgroundColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      // 与 ReaderSettingsSheetFrame 的顶部圆角一致，只用于裁掉越界内容。
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (context) => ReaderDirectorySheet(
+        chapters: widget.chapters,
+        currentIndex: _index,
+        cachedIds: cachedIds,
+        preset: preset,
       ),
     );
     // 墨水屏：目录关闭后刷一次（选了章节时切章本身也会刷一次，不叠加也无妨）。
@@ -368,21 +360,24 @@ extension _ReaderPagePreferences on _ReaderPageState {
 
   Future<void> _showCache() {
     _setState(() => _controlsVisible = false);
+    final preset = _effectivePreset;
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
-      backgroundColor: _effectivePreset.panelColor,
-      builder: (context) => Theme(
-        data: _effectivePreset.theme(Theme.of(context)),
-        child: ChapterCacheSheet(
-          book: _cachedBook,
-          currentIndex: _index,
-          cache: _diskCache,
-          loader: _fetchChapter,
-          onContentAvailable: _onChapterContentAvailable,
-        ),
+      backgroundColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (context) => ChapterCacheSheet(
+        book: _cachedBook,
+        currentIndex: _index,
+        cache: _diskCache,
+        loader: _fetchChapter,
+        onContentAvailable: _onChapterContentAvailable,
+        shell: ChapterCacheShell.reader,
+        readerPreset: preset,
       ),
     );
   }

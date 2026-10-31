@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/related_series.dart';
 import '../../services/api_client.dart';
 import '../../services/backend_transport.dart';
 import '../../services/user_facing_error.dart';
+import '../home/home_design.dart';
+import '../home/home_sheet.dart';
 import 'player_side_panel.dart';
 
 /// 同系列剧的双列区块（官方 `catalogdialog/view/s`，`enableDoubleRow`）。
@@ -94,17 +97,21 @@ class _RelatedSeriesBlockState extends State<RelatedSeriesBlock> {
     }
   }
 
-  /// 深色皮肤下的次级文字色，浅色支仍走主题的 `onSurfaceVariant`。
-  Color? get _mutedColor => widget.dark ? const Color(0xB3FFFFFF) : null;
+  /// 深色皮肤（播放页右侧面板）下的次级文字色；其余宿主走 palette.muted。
+  Color _mutedColor(HomePalette palette) =>
+      widget.dark ? const Color(0xB3FFFFFF) : palette.muted;
 
   @override
   Widget build(BuildContext context) {
     final dark = widget.dark;
+    final palette = HomePalette.of(context);
     if (_loading) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 24),
         child: Center(
-          child: CircularProgressIndicator(color: dark ? Colors.white70 : null),
+          child: CircularProgressIndicator(
+            color: dark ? Colors.white70 : palette.accentText,
+          ),
         ),
       );
     }
@@ -117,14 +124,14 @@ class _RelatedSeriesBlockState extends State<RelatedSeriesBlock> {
             Text(
               _error!,
               textAlign: TextAlign.center,
-              style: TextStyle(color: _mutedColor),
+              style: TextStyle(color: _mutedColor(palette)),
             ),
             const SizedBox(height: 12),
             OutlinedButton(
               onPressed: _load,
-              style: dark
-                  ? OutlinedButton.styleFrom(foregroundColor: Colors.white)
-                  : null,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: dark ? Colors.white : palette.accentText,
+              ),
               child: const Text('重试'),
             ),
           ],
@@ -135,7 +142,10 @@ class _RelatedSeriesBlockState extends State<RelatedSeriesBlock> {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 24),
         child: Center(
-          child: Text('暂无可切换的同系列剧', style: TextStyle(color: _mutedColor)),
+          child: Text(
+            '暂无可切换的同系列剧',
+            style: TextStyle(color: _mutedColor(palette)),
+          ),
         ),
       );
     }
@@ -150,7 +160,7 @@ class _RelatedSeriesBlockState extends State<RelatedSeriesBlock> {
             child: Text(
               widget.title,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: dark ? Colors.white : null,
+                color: dark ? Colors.white : palette.ink,
               ),
             ),
           ),
@@ -174,14 +184,13 @@ class _RelatedSeriesBlockState extends State<RelatedSeriesBlock> {
 
   Widget _card(BuildContext context, RelatedSeries item) {
     final dark = widget.dark;
+    final palette = HomePalette.of(context);
     final placeholder = ColoredBox(
-      color: dark
-          ? const Color(0xFF2A2A2A)
-          : Theme.of(context).colorScheme.surfaceContainerHighest,
+      color: dark ? const Color(0xFF2A2A2A) : palette.soft,
       child: Center(
         child: Icon(
-          Icons.movie_outlined,
-          color: dark ? const Color(0x8CFFFFFF) : null,
+          LucideIcons.clapperboard,
+          color: dark ? const Color(0x8CFFFFFF) : palette.muted,
         ),
       ),
     );
@@ -225,7 +234,7 @@ class _RelatedSeriesBlockState extends State<RelatedSeriesBlock> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: dark ? Colors.white : null,
+                color: dark ? Colors.white : palette.ink,
               ),
             ),
             Text(
@@ -234,11 +243,9 @@ class _RelatedSeriesBlockState extends State<RelatedSeriesBlock> {
                   : item.episodeCount > 0
                   ? '共 ${item.episodeCount} 集'
                   : '查看剧集',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: dark
-                    ? _mutedColor
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: _mutedColor(palette)),
             ),
           ],
         ),
@@ -260,13 +267,13 @@ class RelatedSeriesSheet extends StatelessWidget {
   final String seriesId;
   final Future<List<RelatedSeries>> Function(String)? loader;
 
+  /// 详情页 / 播放器的底部弹层入口：统一走 [showHomeSheet]（22 圆角 +
+  /// 拖拽柄 + Lucide 关闭，配色取 HomePalette）。
   static Future<RelatedSeries?> show(BuildContext context, String seriesId) =>
-      showModalBottomSheet<RelatedSeries>(
+      showHomeSheet<RelatedSeries>(
         context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        showDragHandle: true,
-        builder: (_) => RelatedSeriesSheet(seriesId: seriesId),
+        title: '同系列剧',
+        children: [RelatedSeriesBlock(seriesId: seriesId, title: '')],
       );
 
   /// 播放页横屏形态：右侧面板，宽度/位置与选集抽屉、视频设置一致。
@@ -281,44 +288,11 @@ class RelatedSeriesSheet extends StatelessWidget {
   );
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: MediaQuery.sizeOf(context).height * 0.65,
-    child: Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 8, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '同系列剧',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ),
-              IconButton(
-                tooltip: '关闭',
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: EdgeInsets.only(
-              left: 20,
-              right: 20,
-              bottom: MediaQuery.paddingOf(context).bottom + 16,
-            ),
-            child: RelatedSeriesBlock(
-              seriesId: seriesId,
-              loader: loader,
-              title: '',
-            ),
-          ),
-        ),
-      ],
-    ),
+  Widget build(BuildContext context) => HomeSheetFrame(
+    title: '同系列剧',
+    children: [
+      RelatedSeriesBlock(seriesId: seriesId, loader: loader, title: ''),
+    ],
   );
 }
 

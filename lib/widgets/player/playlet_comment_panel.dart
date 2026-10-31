@@ -17,6 +17,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/book_comment.dart' show formatCount;
 import '../../models/playlet_comment.dart';
@@ -344,7 +345,7 @@ class _PlayletCommentPanelState extends State<PlayletCommentPanel> {
             key: const ValueKey('playlet-comment-close'),
             tooltip: '关闭',
             onPressed: () => Navigator.maybePop(context),
-            icon: Icon(Icons.close_rounded, size: 20, color: palette.muted),
+            icon: Icon(LucideIcons.x, size: 20, color: palette.muted),
           ),
         ],
       ),
