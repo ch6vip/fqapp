@@ -255,7 +255,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: isWindowsDesktop ? double.infinity : 840,
+            maxWidth: isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840 ? double.infinity : 840,
           ),
           child: SafeArea(
             bottom: false,
