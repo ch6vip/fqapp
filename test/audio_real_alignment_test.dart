@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
+import 'package:fqapp/models/audio_time_track.dart';
 import 'package:fqapp/models/book_detail.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
@@ -111,15 +112,13 @@ void main() {
       await _mount(tester, session);
       expect(find.text('第一句同步字幕'), findsOneWidget);
       expect(find.text('第二句同步字幕'), findsOneWidget);
-      expect(find.byKey(const Key('audio_inline_subtitle')), findsOneWidget);
+      expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
 
       session.players.single.emitPosition(const Duration(seconds: 5));
       await _flush(tester);
       expect(
         tester
-            .widget<Text>(
-              find.byKey(const Key('audio-inline-subtitle-current')),
-            )
+            .widget<Text>(find.byKey(const Key('audio_real_subtitle_current')))
             .data,
         '第二句同步字幕',
       );
@@ -127,14 +126,14 @@ void main() {
       await tester.tap(find.byTooltip('下一章'));
       await _flush(tester);
       expect(
-        find.byKey(const Key('audio-inline-subtitle-current')),
+        find.byKey(const Key('audio_real_subtitle_current')),
         findsNothing,
       );
       // 官方槽位常驻：换到无字幕轨的章节后，`setStatusText` 接替字幕内容，
       // 只有 NOT_SUPPORT 才整块 gone。
-      expect(find.byKey(const Key('audio_inline_subtitle')), findsOneWidget);
+      expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
       expect(
-        find.byKey(const Key('audio-inline-subtitle-status')),
+        find.byKey(const Key('audio_real_subtitle_status')),
         findsOneWidget,
       );
     },
@@ -149,7 +148,7 @@ void main() {
       ]),
     );
     await _mount(tester, session);
-    final current = find.byKey(const Key('audio-inline-subtitle-current'));
+    final current = find.byKey(const Key('audio_real_subtitle_current'));
     final player = session.players.single;
     // The player's initial duration is two minutes, not the cue fallback 6s.
     player.emitPosition(const Duration(seconds: 40));
@@ -163,6 +162,86 @@ void main() {
     player.emitDuration(const Duration(minutes: 4));
     await _flush(tester);
     expect(tester.widget<Text>(current).data, '甲' * 23);
+  });
+
+  testWidgets('a recording uses the 238dp strip with 40dp rows', (
+    tester,
+  ) async {
+    const four = SubtitleTrack([
+      SubtitleCue(startMs: 0, text: '第一句'),
+      SubtitleCue(startMs: 4000, text: '第二句'),
+      SubtitleCue(startMs: 8000, text: '第三句'),
+      SubtitleCue(startMs: 12000, text: '第四句'),
+    ]);
+    await _mount(tester, _RealSession(subtitles: (_, _) async => four));
+
+    final slot = find.byKey(const Key('audio_real_subtitle'));
+    expect(tester.getSize(slot), const Size(430, 238));
+    final theme = AudioPageThemeScope.of(tester.element(slot));
+    final current = find.byKey(const Key('audio_real_subtitle_current'));
+    expect(tester.widget<Text>(current).data, '第一句');
+
+    // 当前句 20sp w700、主题主色。
+    final currentStyle = tester.widget<Text>(current).style!;
+    expect(currentStyle.fontSize, AudioRealSubtitle.currentFontSize);
+    expect(currentStyle.fontWeight, FontWeight.w700);
+    expect(currentStyle.color, theme.ink);
+
+    // 当前句停在第三行（官方 startLine = 3），行高 40dp。
+    final slotTop = tester.getTopLeft(slot).dy;
+    expect(tester.getCenter(current).dy - slotTop, closeTo(100, 0.6));
+
+    // 普通句 16sp、40% 主色；相邻行正好相距 40dp。
+    final second = tester.widget<Text>(find.text('第二句'));
+    expect(second.style?.fontSize, 16);
+    expect(second.style?.color, theme.ink.withValues(alpha: 0.4));
+    expect(
+      tester.getCenter(find.text('第三句')).dy -
+          tester.getCenter(find.text('第二句')).dy,
+      closeTo(40, 0.6),
+    );
+  });
+
+  testWidgets('the expand tag waits for subtitles and a text timeline', (
+    tester,
+  ) async {
+    final session = _RealSession(subtitles: (_, _) async => _track);
+    await _mount(tester, session);
+    // 没有时间点时字幕照常显示，只是没有「展开」。
+    expect(find.text('第一句同步字幕'), findsOneWidget);
+    expect(find.byKey(const Key('audio_real_subtitle_expand')), findsNothing);
+    await _unmount(tester);
+
+    final withTimeline = _RealSession(
+      subtitles: (_, _) async => _track,
+      timePoints: (_, _) async => AudioTimeTrack(const [
+        AudioSyncPoint(
+          startTime: 0,
+          startPara: 0,
+          startParaOff: 0,
+          endPara: 0,
+          endParaOff: 6,
+        ),
+      ], textItemId: 'novel-chapter'),
+    );
+    await _mount(tester, withTimeline);
+    // 时间点在章节打开后异步到达，下一次播放位置刷新把入口带出来。
+    withTimeline.players.single.emitPosition(const Duration(seconds: 2));
+    await _flush(tester);
+
+    final expand = find.byKey(const Key('audio_real_subtitle_expand'));
+    expect(expand, findsOneWidget);
+    final rect = tester.getRect(expand);
+    final slot = tester.getRect(find.byKey(const Key('audio_real_subtitle')));
+    expect(rect.right, closeTo(slot.right - 20, 0.6));
+    expect(rect.bottom, closeTo(slot.bottom - 6, 0.6));
+    final label = tester.widget<Text>(find.text('展开'));
+    expect(label.style?.fontSize, 12);
+
+    // S3 只留入口，点击暂不切换（S6 接展开态）。
+    await tester.tap(expand);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
   });
 
   testWidgets('the phone header uses the 44dp mockup metrics', (tester) async {
@@ -338,6 +417,8 @@ Future<void> _mount(
 /// novel, and a populated detail for the intro side.
 class _RealSession {
   final Future<SubtitleTrack> Function(String itemId, String toneId) subtitles;
+  final Future<AudioTimeTrack> Function(String itemId, String toneId)
+  timePoints;
   final List<AudioTone> narratorTones;
   final List<AudioTone> ttsTones;
   final int genreType;
@@ -353,12 +434,16 @@ class _RealSession {
 
   _RealSession({
     this.subtitles = _noSubtitles,
+    this.timePoints = _noTimePoints,
     this.narratorTones = const [
       AudioTone(id: '7239243941252598845', title: '主播：老恒'),
     ],
     this.ttsTones = const [AudioTone(id: '96', title: '多角色对话升级版')],
     this.genreType = 1,
   });
+
+  static Future<AudioTimeTrack> _noTimePoints(String _, String _) async =>
+      AudioTimeTrack.empty;
 
   static Future<SubtitleTrack> _noSubtitles(String _, String _) async =>
       SubtitleTrack.empty;
@@ -375,6 +460,7 @@ class _RealSession {
       sourceLoader: (id, {toneId}) async => _source(id, toneId),
       voicesLoader: () async => const [],
       subtitleLoader: (itemId, toneId) => subtitles(itemId, toneId),
+      timePointLoader: (itemId, toneId) => timePoints(itemId, toneId),
       excerptLoader: (_) async => null,
       extrasLoader: (_) async => AudioExtras(
         tones: AudioToneSet(

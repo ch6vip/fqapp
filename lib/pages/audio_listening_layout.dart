@@ -80,23 +80,39 @@ extension _AudioListeningLayout on _AudioPageState {
                             introSummary: introSummary,
                             related: related,
                           ),
-                        // 官方 `fs5`/`fs6`：封面正下方是一条多行滚动字幕
-                        // （`AudioPlaySubtitleView`，高度按字号取档再减 2dp，
-                        // 默认 50dp、左右 20dp、底部 24dp）。
-                        // 按显示行分配时间，上下各 3dp；槽位常驻，
-                        // 没有字幕时显示状态文案，只有 NOT_SUPPORT 才收起。
+                        // 官方 `fs5`/`fs6`：封面正下方是字幕槽。智能朗读
+                        // 沿用 `AudioPlaySubtitleView` 的 50dp 槽（高度按字号
+                        // 取档再减 2dp、左右 20dp、底部 24dp，按显示行分配
+                        // 时间，上下各 3dp）；真人讲书改用 `bj3.xml` 的
+                        // 238dp 逐句字幕（左右 20dp、上下 24dp 渐隐、40dp 行）。
                         //
-                        // 两种模式共用同一个槽：有字幕轨就显示正在朗读的那句
-                        // 及其上下文，没有轨则显示状态文案。
+                        // 两种模式共用同一份 `_readAlong` 快照：有字幕轨就
+                        // 显示正在朗读的那句及其上下文，没有轨则显示状态文案。
                         ValueListenableBuilder<_ReadAlongSnapshot>(
                           valueListenable: c._readAlong,
-                          builder: (context, snapshot, _) =>
-                              AudioInlineSubtitle(
+                          builder: (context, snapshot, _) {
+                            if (!realAudio) {
+                              return AudioInlineSubtitle(
                                 track: snapshot.track,
                                 position: snapshot.position,
                                 duration: snapshot.duration,
                                 onTap: _showReadAlong,
-                              ),
+                              );
+                            }
+                            final timeTrack = c._timeTrack;
+                            return AudioRealSubtitle(
+                              track: snapshot.track,
+                              position: snapshot.position,
+                              duration: snapshot.duration,
+                              // S6 才接展开态；先按「字幕 + 时间点 + 对应
+                              // 原著章节」决定入口是否出现。缺少任一项时
+                              // 字幕照常显示，只是没有「展开」。
+                              showExpand:
+                                  snapshot.track.isNotEmpty &&
+                                  timeTrack.isNotEmpty &&
+                                  timeTrack.textItemId.isNotEmpty,
+                            );
+                          },
                         ),
                         if (c._error != null ||
                             c._loading ||
