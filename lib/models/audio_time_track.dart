@@ -14,8 +14,11 @@
 ///     "text_para_match_data":  null } }
 /// ```
 ///
-/// Each point pairs an audio start offset (`start_time`, ms) with a text range
-/// as **paragraph index plus character offset inside that paragraph**.
+/// Each point pairs an audio window (`start_time` / `end_time`, ms) with a text
+/// range as **paragraph index plus character offset inside that paragraph**.
+/// The point also names the novel chapter it points at (`novel_item_id`, with
+/// `item_id` as the spelling measured on the live feed) and its title
+/// (`item_title`).
 ///
 /// The offsets count the *original* chapter text, punctuation included. That
 /// is verified against the live timeline: the de-punctuated `speech_text` of a
@@ -32,6 +35,8 @@ class AudioSyncPoint {
     required this.startParaOff,
     required this.endPara,
     required this.endParaOff,
+    this.endTime,
+    this.itemTitle = '',
     this.isTitle = false,
     this.audioItemId = '',
     this.novelItemId = '',
@@ -41,6 +46,15 @@ class AudioSyncPoint {
 
   /// Audio start of this range. Milliseconds, matching the player position.
   final int startTime;
+
+  /// Audio end of this range (`end_time`), milliseconds, when the payload
+  /// carries one. Null means the upstream omitted it; the next point's start
+  /// is then the only known boundary.
+  final int? endTime;
+
+  /// Title of the novel chapter this range addresses (`item_title`), when the
+  /// payload carries it. Empty when absent.
+  final String itemTitle;
 
   /// Text range as (paragraph id, offset inside that paragraph).
   ///
@@ -92,6 +106,13 @@ class AudioSyncPoint {
     return fallback;
   }
 
+  /// Reads an optional non-negative integer; absent or negative yields null.
+  static int? _optionalInt(Map raw, String key) {
+    final value = raw[key];
+    final parsed = value is num ? value.toInt() : int.tryParse('$value');
+    return parsed == null || parsed < 0 ? null : parsed;
+  }
+
   /// Parses one point. Returns null when it cannot drive a highlight.
   static AudioSyncPoint? fromPayload(dynamic raw, {String audioItemId = ''}) {
     if (raw is! Map) return null;
@@ -105,13 +126,17 @@ class AudioSyncPoint {
 
     return AudioSyncPoint(
       startTime: startTime,
+      endTime: _optionalInt(raw, 'end_time'),
+      itemTitle: '${raw['item_title'] ?? ''}',
       startPara: startPara < 0 ? 0 : startPara,
       startParaOff: _int(raw, 'start_para_off', 0),
       endPara: endPara < 0 ? startPara : endPara,
       endParaOff: _int(raw, 'end_para_off', 0),
       isTitle: raw['is_title'] == true,
       audioItemId: audioItemId,
-      novelItemId: '${raw['item_id'] ?? ''}',
+      // The official model spells it `novel_item_id`; the measured live shape
+      // used `item_id`. Prefer the former and keep the latter as a fallback.
+      novelItemId: '${raw['novel_item_id'] ?? raw['item_id'] ?? ''}',
       startElementIndex: _elementCoord(raw, 'start_element_index'),
       startElementOffset: _elementCoord(raw, 'start_element_offset'),
     );
@@ -134,7 +159,12 @@ class AudioSyncPoint {
 
 /// All points for one chapter, sorted by start time.
 class AudioTimeTrack {
-  const AudioTimeTrack(this.points, {this.textItemId = ''});
+  const AudioTimeTrack(
+    this.points, {
+    this.textItemId = '',
+    this.novelItemId = '',
+    this.novelChapterTitle = '',
+  });
 
   static const empty = AudioTimeTrack([]);
 
@@ -145,6 +175,16 @@ class AudioTimeTrack {
   /// The timeline is keyed by the *audio* chapter id while the ranges point at
   /// the *text* chapter; a highlight must be resolved against the latter.
   final String textItemId;
+
+  /// The novel chapter id the points carry (`novel_item_id`), falling back to
+  /// [textItemId] when the points do not spell it out.
+  ///
+  /// 边听边读 opens the reader on this chapter, so it must be the novel id,
+  /// not the album chapter id the player is keyed by.
+  final String novelItemId;
+
+  /// The novel chapter title carried by the points (`item_title`), if any.
+  final String novelChapterTitle;
 
   bool get isEmpty => points.isEmpty;
   bool get isNotEmpty => points.isNotEmpty;
@@ -229,6 +269,22 @@ class AudioTimeTrack {
       }
     }
 
-    return AudioTimeTrack(List.unmodifiable(parsed), textItemId: textItemId);
+    var novelItemId = '';
+    var novelChapterTitle = '';
+    for (final point in parsed) {
+      if (novelItemId.isEmpty && point.novelItemId.isNotEmpty) {
+        novelItemId = point.novelItemId;
+      }
+      if (novelChapterTitle.isEmpty && point.itemTitle.isNotEmpty) {
+        novelChapterTitle = point.itemTitle;
+      }
+    }
+
+    return AudioTimeTrack(
+      List.unmodifiable(parsed),
+      textItemId: textItemId,
+      novelItemId: novelItemId.isNotEmpty ? novelItemId : textItemId,
+      novelChapterTitle: novelChapterTitle,
+    );
   }
 }

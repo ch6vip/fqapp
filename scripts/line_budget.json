@@ -21,7 +21,7 @@
     "lib/services/api_client.dart": 1797,
     "lib/services/app_log.dart": 622,
     "lib/services/audio_downloader.dart": 625,
-    "lib/services/audio_playback_controller.dart": 1432,
+    "lib/services/audio_playback_controller.dart": 1459,
     "lib/services/chapter_text_formatter.dart": 690,
     "lib/services/desktop_platform.dart": 713,
     "lib/services/drama_download_store.dart": 529,

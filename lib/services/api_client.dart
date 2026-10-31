@@ -635,12 +635,39 @@ class ApiClient {
   ///
   /// [reqType] 默认 3：实测只有 3 会返回可用的偏移。1 对无 TTS 的书回
   /// `101049`，2 回 `101002`，4 虽然 `code:0` 但偏移全为 0。
+  ///
+  /// 真人讲书用 2 取音频时间轴；这一版上游对部分书直接拒绝（`101002
+  /// NOVEL_DATA_GET_ERROR`）或给空轨。失败的那一章随即改用 3 再取一次，并
+  /// 记住回落结果：同一章之后直接取 3，不反复试错。
   Future<AudioTimeTrack> chapterTimePoints(
     String bookId,
     String itemId, {
     String toneId = '0',
     int reqType = 3,
   }) async {
+    if (reqType != 2) {
+      return _chapterTimePoints(bookId, itemId, toneId, reqType);
+    }
+    final fallbackKey = '$itemId|$toneId';
+    if (_timePointFallbacks.contains(fallbackKey)) {
+      return _chapterTimePoints(bookId, itemId, toneId, 3);
+    }
+    final direct = await _chapterTimePoints(bookId, itemId, toneId, 2);
+    if (direct.isNotEmpty) return direct;
+    _timePointFallbacks.add(fallbackKey);
+    return _chapterTimePoints(bookId, itemId, toneId, 3);
+  }
+
+  /// 已经回落到 `req_type=3` 的章节（`itemId|toneId`）。只在内存里记，
+  /// 进程重启后重新探测一次没有代价。
+  final Set<String> _timePointFallbacks = {};
+
+  Future<AudioTimeTrack> _chapterTimePoints(
+    String bookId,
+    String itemId,
+    String toneId,
+    int reqType,
+  ) async {
     try {
       final response = await _get(
         _url('/api/v1/chapters/${Uri.encodeComponent(itemId)}/timepoints', {

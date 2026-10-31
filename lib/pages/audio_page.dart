@@ -179,6 +179,18 @@ typedef _ReadAlongSnapshot = ({
   SubtitleTrack track,
   Duration position,
   Duration duration,
+
+  /// The chapter's 听书 → 正文 timeline has finished loading (empty or not).
+  bool timeTrackReady,
+
+  /// The 正文章节 id the timeline offsets address (`item_ids[audio][0]`).
+  String textItemId,
+
+  /// The novel chapter id (`novel_item_id`) to open the reader on.
+  String novelItemId,
+
+  /// The novel chapter title carried by the timeline (`item_title`).
+  String novelChapterTitle,
 });
 
 typedef _MoreSnapshot = ({
