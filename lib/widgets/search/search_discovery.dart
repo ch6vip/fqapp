@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -14,7 +16,7 @@ import '../home/home_shelf.dart';
 /// Suggestion list shown while the query is being typed.
 ///
 /// Renders nothing when there is nothing to suggest, so the field simply has no
-/// dropdown rather than an empty panel.
+/// dropdown rather than an empty panel. 行高 48dp，分隔线两端都落在 16dp 栏距上。
 class SearchSuggestionList extends StatelessWidget {
   final List<SearchSuggestion> suggestions;
   final ValueChanged<String> onSelect;
@@ -36,9 +38,9 @@ class SearchSuggestionList extends StatelessWidget {
       itemCount: suggestions.length,
       separatorBuilder: (context, _) => Divider(
         height: 1,
-        thickness: 0.5,
+        thickness: 1,
         color: palette.line,
-        indent: homeGutter + 24,
+        indent: homeGutter,
         endIndent: homeGutter,
       ),
       itemBuilder: (context, index) {
@@ -46,22 +48,22 @@ class SearchSuggestionList extends StatelessWidget {
         return InkWell(
           key: ValueKey('search_suggestion_${suggestion.text}'),
           onTap: () => onSelect(suggestion.text),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: homeGutter,
-              vertical: 13,
-            ),
-            child: Row(
-              children: [
-                Icon(LucideIcons.search, size: 14, color: palette.muted),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _SuggestionText(
-                    suggestion: suggestion,
-                    palette: palette,
+          child: SizedBox(
+            height: 48,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.search, size: 14, color: palette.muted),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _SuggestionText(
+                      suggestion: suggestion,
+                      palette: palette,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -190,7 +192,7 @@ class _HotRow extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: SizedBox(
-        height: 36,
+        height: 44,
         child: Row(
           children: [
             SizedBox(
@@ -271,8 +273,14 @@ class _HotBadge extends StatelessWidget {
   }
 }
 
-/// 空查询时的发现区：热搜榜 + 搜索历史，两段裸排，不套白卡。
+/// 空查询时的发现区：搜索历史在前，热搜榜在后，两段裸排，不套白卡。
+///
+/// 搜索历史的位置比热搜更靠前，所以输入前就能看到；输入中只保留按输入过滤
+/// 后的历史（[filter] 非空时热搜整块隐藏），不再闪回热搜榜。
 class SearchDiscoveryView extends StatelessWidget {
+  /// 内容区第一行（工具条）；联想词 / 输入过滤状态下不传。
+  final Widget? leading;
+
   final HotSearch hot;
   final List<String> history;
   final bool historyLoading;
@@ -285,6 +293,7 @@ class SearchDiscoveryView extends StatelessWidget {
 
   const SearchDiscoveryView({
     super.key,
+    this.leading,
     required this.hot,
     required this.history,
     required this.historyLoading,
@@ -296,41 +305,58 @@ class SearchDiscoveryView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
     return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: EdgeInsets.only(
+        bottom: 24 + MediaQuery.paddingOf(context).bottom,
+      ),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       children: [
-        if (hot.isNotEmpty) HotSearchBoard(hot: hot, onSelect: onSearch),
-        HomeSectionHeader(
-          title: '搜索历史',
-          action: history.isEmpty
-              ? null
-              : TextButton(
-                  onPressed: onClearHistory,
-                  style: TextButton.styleFrom(
-                    minimumSize: Size.zero,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 2,
-                    ),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: palette.muted,
-                  ),
-                  child: const Text(
-                    '清空',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w500,
-                      height: 1.2,
-                    ),
-                  ),
-                ),
-        ),
+        ?leading,
+        _historyHeader(context),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
           child: _historyBody(context),
         ),
+        if (filter.isEmpty && hot.isNotEmpty)
+          HotSearchBoard(hot: hot, onSelect: onSearch),
+      ],
+    );
+  }
+
+  /// 分区头复用 [HomeSectionHeader]，「清空」的点击区单独撑到 44 高，
+  /// 但不改变标题和按钮的视觉位置。
+  Widget _historyHeader(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final titleHeight = MediaQuery.textScalerOf(context).scale(19) * 1.25;
+    final headerHeight = homeSectionGap + titleHeight + homeHeaderGap;
+    final desired = homeSectionGap + titleHeight / 2 - 22;
+    final top = desired.clamp(0.0, math.max(0.0, headerHeight - 44));
+    return Stack(
+      children: [
+        const HomeSectionHeader(title: '搜索历史'),
+        if (history.isNotEmpty)
+          Positioned(
+            right: homeGutter - 4,
+            top: top.toDouble(),
+            height: 44,
+            child: TextButton(
+              onPressed: onClearHistory,
+              style: TextButton.styleFrom(
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                foregroundColor: palette.muted,
+              ),
+              child: const Text(
+                '清空',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  height: 1.2,
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -362,9 +388,14 @@ class SearchDiscoveryView extends StatelessWidget {
   }
 
   /// 一条搜索记录：整块可点重新搜索，右端 × 只删这一条。
+  ///
+  /// 胶囊 36 高、左内边距 14、× 的点击区 32×32、图标 13——按样稿的密度
+  /// 比原版更宽松，手指更容易点中删除。
   Widget _historyChip(BuildContext context, String query) {
     final palette = HomePalette.of(context);
     return Container(
+      key: ValueKey('search_history_$query'),
+      height: 36,
       decoration: BoxDecoration(
         color: palette.soft,
         borderRadius: BorderRadius.circular(999),
@@ -372,39 +403,47 @@ class SearchDiscoveryView extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          InkWell(
-            onTap: () => onSearch(query),
-            borderRadius: const BorderRadius.horizontal(
-              left: Radius.circular(999),
-            ),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 220),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 220),
+            child: InkWell(
+              onTap: () => onSearch(query),
+              borderRadius: const BorderRadius.horizontal(
+                left: Radius.circular(999),
+              ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
-                child: Text(
-                  query,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.2,
-                    color: palette.ink,
+                padding: const EdgeInsets.only(left: 14),
+                child: Center(
+                  widthFactor: 1,
+                  child: Text(
+                    query,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.2,
+                      color: palette.ink,
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-          Tooltip(
-            message: '删除 $query',
-            child: InkWell(
-              onTap: () => onRemoveHistory(query),
-              customBorder: const CircleBorder(),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(2, 8, 10, 8),
-                child: Icon(LucideIcons.x, size: 13, color: palette.muted),
+          const SizedBox(width: 2),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: Tooltip(
+              message: '删除 $query',
+              child: InkWell(
+                onTap: () => onRemoveHistory(query),
+                customBorder: const CircleBorder(),
+                child: Center(
+                  child: Icon(LucideIcons.x, size: 13, color: palette.muted),
+                ),
               ),
             ),
           ),
+          const SizedBox(width: 4),
         ],
       ),
     );
