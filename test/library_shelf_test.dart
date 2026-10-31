@@ -346,6 +346,31 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('移出书架的撤销条到时自动消失（issue #211）', (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('a', title: '甲书'));
+      });
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+
+      await tester.longPress(find.byKey(const ValueKey('shelf-grid-book:a')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('shelf-remove-action')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('shelf-undo-button')), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shelf-undo-button')), findsNothing);
+      expect(find.textContaining('已移出'), findsNothing);
+      expect(ShelfStore.instance.records(), isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('收藏 tab 只放短剧/漫剧，书架 tab 只放书籍', (tester) async {
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('plain-book', title: '架上小说'));
