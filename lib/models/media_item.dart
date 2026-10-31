@@ -86,6 +86,13 @@ class MediaItem {
   /// 「观看全集·N集」 from the episode count, so this is informational.
   final String episodeListText;
 
+  /// 数据源标识：`fanqie`（默认）或 `shuqi`。
+  ///
+  /// 书旗的 bookId 与番茄同为纯数字，光看 id 无法区分来源，所以来源必须随条目
+  /// 一起传递；否则点击书旗结果会被送到番茄详情页去查一本不存在的书。
+  /// 见 `models/shuqi_book.dart` 的 `shuqiSourceId`。
+  final String source;
+
   MediaItem({
     required this.id,
     required this.title,
@@ -106,6 +113,7 @@ class MediaItem {
     this.recTags = const [],
     this.episodeListText = '',
     this.aiGenerated = false,
+    this.source = 'fanqie',
   });
 
   /// Copy with selected fields replaced.
@@ -136,6 +144,7 @@ class MediaItem {
     List<MediaRecTag>? recTags,
     String? episodeListText,
     bool? aiGenerated,
+    String? source,
   }) => MediaItem(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -156,6 +165,7 @@ class MediaItem {
     recTags: recTags ?? this.recTags,
     episodeListText: episodeListText ?? this.episodeListText,
     aiGenerated: aiGenerated ?? this.aiGenerated,
+    source: source ?? this.source,
   );
 
   factory MediaItem.fromRaw(Map<String, dynamic> item) {
@@ -1485,6 +1495,9 @@ extension MediaItemJson on MediaItem {
     'badge': badge,
     'ep': ep,
     'kind': kind,
+    // 书旗 bookId 与番茄同为纯数字，来源必须随条目一起落盘，否则恢复后会被
+    // 当成番茄书。`fanqie` 省略，旧缓存数据保持原样。
+    if (source != 'fanqie') 'source': source,
     if (wordNumber > 0) 'wordNumber': wordNumber,
     if (score != null) 'score': score,
     if (seriesId != null) 'seriesId': seriesId,
@@ -1514,6 +1527,7 @@ extension MediaItemJson on MediaItem {
     final title = field('title');
     final kind = field('kind');
     if (id.isEmpty || title.isEmpty || kind.isEmpty) return null;
+    final source = field('source');
     return MediaItem(
       id: id,
       title: title,
@@ -1522,6 +1536,8 @@ extension MediaItemJson on MediaItem {
       badge: field('badge'),
       ep: field('ep'),
       kind: kind,
+      // 旧数据没有 source：默认番茄。
+      source: source.isEmpty ? 'fanqie' : source,
       wordNumber: _asInt(map['wordNumber']) ?? 0,
       score: MediaItem._validScore(map['score']),
       tag: MediaTag.fromRaw(
