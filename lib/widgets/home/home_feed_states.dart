@@ -6,7 +6,12 @@ import 'home_design.dart';
 /// 紧凑版空 / 错态：图标砖 + 标题 + 说明 + 可选动作。
 ///
 /// 与 [HomeFeedEmpty] / [HomeFeedError] 的整页大态区分：这个版本放在列表
-/// 末尾、卡片内或弹层里都合适，自身不撑满高度、不做滚动。
+/// 末尾、卡片内或弹层里都合适，自身不撑满高度。
+///
+/// [scrollable] 为 true 时整体居中并可垂直滚动，用于替页面承担滚动：
+/// 内容区夹在 tab / chip 下面、高度有限时，窄屏大字号下的动作按钮仍可达。
+/// 之前榜单、缓存、日志、漫画和书评弹层各包了一层
+/// `Center(SingleChildScrollView(...))`，统一收敛到这里。
 class HomeStateView extends StatelessWidget {
   const HomeStateView({
     super.key,
@@ -17,6 +22,7 @@ class HomeStateView extends StatelessWidget {
     this.onAction,
     this.actionIcon,
     this.padding = const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+    this.scrollable = false,
   });
 
   final IconData icon;
@@ -26,13 +32,14 @@ class HomeStateView extends StatelessWidget {
   final VoidCallback? onAction;
   final IconData? actionIcon;
   final EdgeInsetsGeometry padding;
+  final bool scrollable;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final actionLabel = this.actionLabel;
     final actionIcon = this.actionIcon;
-    return Padding(
+    final content = Padding(
       padding: padding,
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -72,6 +79,8 @@ class HomeStateView extends StatelessWidget {
         ],
       ),
     );
+    if (!scrollable) return content;
+    return Center(child: SingleChildScrollView(child: content));
   }
 
   Widget _action(HomePalette palette, String label, IconData? icon) {

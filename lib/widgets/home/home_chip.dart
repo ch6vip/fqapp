@@ -57,20 +57,24 @@ class HomeChip extends StatelessWidget {
               child: Container(
                 height: height,
                 padding: const EdgeInsets.symmetric(horizontal: 14),
-                alignment: Alignment.center,
+                // 宽度必须收缩到文字宽度：Wrap / Center 给的是有限最大宽，
+                // 带 alignment 的 Container 会撑满整行，胶囊就变成整条。
                 decoration: ShapeDecoration(
                   color: background,
                   shape: StadiumBorder(side: side),
                 ),
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.2,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: foreground,
+                child: Center(
+                  widthFactor: 1,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.2,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      color: foreground,
+                    ),
                   ),
                 ),
               ),

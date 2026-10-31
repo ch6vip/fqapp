@@ -610,19 +610,15 @@ class _LogViewerPageState extends State<LogViewerPage>
         _playerOnly ||
         _filters.level != null ||
         _filters.timeWindow != null;
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: HomeStateView(
-          icon: filtered ? LucideIcons.search_x : LucideIcons.receipt_text,
-          title: filtered
-              ? '没有匹配的日志'
-              : _source == LogSource.app
-              ? '暂无日志'
-              : '暂无核心日志',
-          message: filtered ? '试试其他关键词，或调整筛选条件' : '运行应用后，日志会显示在这里',
-        ),
-      ),
+    return HomeStateView(
+      icon: filtered ? LucideIcons.search_x : LucideIcons.receipt_text,
+      title: filtered
+          ? '没有匹配的日志'
+          : _source == LogSource.app
+          ? '暂无日志'
+          : '暂无核心日志',
+      message: filtered ? '试试其他关键词，或调整筛选条件' : '运行应用后，日志会显示在这里',
+      scrollable: true,
     );
   }
 }

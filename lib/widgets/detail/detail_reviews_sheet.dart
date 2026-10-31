@@ -196,19 +196,14 @@ class _DetailReviewsSheetState extends State<DetailReviewsSheet> {
           // 虚拟化评论列表
           Expanded(
             child: _comments.isEmpty && !_loading
-                ? Center(
-                    child: SingleChildScrollView(
-                      child: HomeStateView(
-                        key: const Key('detail_reviews_state'),
-                        icon: LucideIcons.message_square,
-                        title: _error ?? '暂无书评',
-                        actionLabel: _error != null ? '重试' : null,
-                        actionIcon: _error != null
-                            ? LucideIcons.refresh_cw
-                            : null,
-                        onAction: _error != null ? _loadMore : null,
-                      ),
-                    ),
+                ? HomeStateView(
+                    key: const Key('detail_reviews_state'),
+                    icon: LucideIcons.message_square,
+                    title: _error ?? '暂无书评',
+                    actionLabel: _error != null ? '重试' : null,
+                    actionIcon: _error != null ? LucideIcons.refresh_cw : null,
+                    onAction: _error != null ? _loadMore : null,
+                    scrollable: true,
                   )
                 : ListView.separated(
                     controller: _scroll,

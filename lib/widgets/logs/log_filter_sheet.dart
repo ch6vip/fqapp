@@ -83,12 +83,8 @@ class _LogFilterSheetState extends State<LogFilterSheet> {
     ],
   );
 
-  /// Wrap 给的是有限最大宽，HomeChip 内部带 alignment 的容器会撑满整行；
-  /// 包一层 IntrinsicWidth 让它回到胶囊的自然宽度。
   Widget _chip(String label, bool selected, VoidCallback onTap) =>
-      IntrinsicWidth(
-        child: HomeChip(label: label, selected: selected, onTap: onTap),
-      );
+      HomeChip(label: label, selected: selected, onTap: onTap);
 
   Widget _buttons(HomePalette palette) => Row(
     children: [

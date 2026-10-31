@@ -94,18 +94,14 @@ extension _ComicReaderBuild on _ComicReaderPageState {
     );
   }
 
-  Widget _errorView({required bool canRetry}) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: HomeStateView(
-        icon: canRetry ? LucideIcons.circle_alert : LucideIcons.inbox,
-        title: canRetry ? '加载失败' : '暂无内容',
-        message: _error,
-        actionLabel: canRetry ? '重新加载本章' : null,
-        actionIcon: canRetry ? LucideIcons.rotate_ccw : null,
-        onAction: canRetry ? _reloadChapter : null,
-        padding: EdgeInsets.zero,
-      ),
-    ),
+  Widget _errorView({required bool canRetry}) => HomeStateView(
+    icon: canRetry ? LucideIcons.circle_alert : LucideIcons.inbox,
+    title: canRetry ? '加载失败' : '暂无内容',
+    message: _error,
+    actionLabel: canRetry ? '重新加载本章' : null,
+    actionIcon: canRetry ? LucideIcons.rotate_ccw : null,
+    onAction: canRetry ? _reloadChapter : null,
+    padding: const EdgeInsets.all(24),
+    scrollable: true,
   );
 }

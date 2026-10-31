@@ -88,11 +88,11 @@ class CacheEmptyState extends StatelessWidget {
   final String message;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: HomeStateView(icon: icon, title: title, message: message),
-    ),
+  Widget build(BuildContext context) => HomeStateView(
+    icon: icon,
+    title: title,
+    message: message,
+    scrollable: true,
   );
 }
 
@@ -108,17 +108,13 @@ class CacheErrorState extends StatelessWidget {
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: HomeStateView(
-        icon: LucideIcons.cloud_off,
-        title: message,
-        message: '请稍后重试',
-        actionLabel: '重试',
-        actionIcon: LucideIcons.rotate_ccw,
-        onAction: onRetry,
-      ),
-    ),
+  Widget build(BuildContext context) => HomeStateView(
+    icon: LucideIcons.cloud_off,
+    title: message,
+    message: '请稍后重试',
+    actionLabel: '重试',
+    actionIcon: LucideIcons.rotate_ccw,
+    onAction: onRetry,
+    scrollable: true,
   );
 }
