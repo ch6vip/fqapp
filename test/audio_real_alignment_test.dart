@@ -9,6 +9,8 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/services/audio_page_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
+import 'package:fqapp/services/audio_time_format.dart';
+import 'package:fqapp/widgets/audio/audio_control_rows.dart';
 import 'package:fqapp/widgets/audio/audio_cover_card.dart';
 import 'package:fqapp/widgets/audio/audio_real_sections.dart';
 import 'package:fqapp/widgets/audio/audio_sections.dart';
@@ -372,7 +374,200 @@ void main() {
       const Size(60, 60),
     );
   });
+
+  testWidgets('the action row follows the 8/6/24 mockup metrics', (
+    tester,
+  ) async {
+    await _mount(tester, _RealSession());
+    final row = find.byType(AudioIconRow);
+    expect(row, findsOneWidget);
+
+    // 样稿 `.acts`：左右 8、上 8、下 0。
+    final subtitle = find.byKey(const Key('audio_real_subtitle'));
+    expect(tester.getRect(row).left, 8);
+    expect(
+      tester.getRect(row).top,
+      closeTo(tester.getRect(subtitle).bottom + 8, 0.6),
+    );
+
+    final speed = find.byKey(const ValueKey('audio-speed'));
+    final icon = find.descendant(of: speed, matching: find.byType(Icon));
+    final label = find.descendant(of: speed, matching: find.byType(Text));
+    expect(tester.widget<Icon>(icon).size, 24);
+    expect(tester.widget<Text>(label).style?.fontSize, 12);
+    expect(
+      tester.getRect(label).top - tester.getRect(icon).bottom,
+      closeTo(6, 0.1),
+    );
+
+    // 真人模式的图标：仪表、加号书、下载、评论、更多。
+    expect(find.byIcon(LucideIcons.gauge), findsOneWidget);
+    expect(find.byIcon(LucideIcons.book_plus), findsOneWidget);
+    expect(find.byIcon(LucideIcons.download), findsOneWidget);
+    expect(find.byIcon(LucideIcons.message_circle), findsOneWidget);
+    expect(find.byIcon(LucideIcons.circle_ellipsis), findsOneWidget);
+  });
+
+  testWidgets('the progress row follows the 44dp mockup', (tester) async {
+    final session = _RealSession();
+    await _mount(tester, session);
+    final theme = AudioPageThemeScope.of(
+      tester.element(find.byType(AudioTimeSeekRow)),
+    );
+    expect(
+      tester.getSize(find.byType(AudioTimeSeekRow)).height,
+      AudioTimeSeekRow.realHeight,
+    );
+
+    // −15s / +15s：12sp ink。
+    for (final text in ['-15 s', '+15 s']) {
+      final label = tester.widget<Text>(find.text(text));
+      expect(label.style?.fontSize, 12);
+      expect(label.style?.color, theme.ink);
+    }
+    // 轨道 2dp。
+    final slider = find.byKey(const ValueKey('audio-seek'));
+    expect(SliderTheme.of(tester.element(slider)).trackHeight, 2);
+
+    // 时间药丸：18dp 高、r4、10.5sp、accent 底、canvas 字色。
+    final pill = find.byKey(const Key('audio-time-pill'));
+    expect(tester.getSize(pill).height, AudioTimeSeekRow.realPillHeight);
+    final decoration =
+        tester.widget<Container>(pill).decoration! as BoxDecoration;
+    expect(decoration.color, theme.accent);
+    expect(decoration.borderRadius, BorderRadius.circular(4));
+    final pillText = tester.widget<Text>(
+      find.descendant(of: pill, matching: find.byType(Text)),
+    );
+    expect(pillText.style?.fontSize, AudioTimeSeekRow.realPillFontSize);
+    expect(pillText.style?.color, theme.canvas);
+    expect(pillText.data, '00:00/02:00');
+
+    // 药丸中心跟着播放头走，两端夹回轨道内。
+    session.players.single.emitPosition(const Duration(seconds: 60));
+    await _flush(tester);
+    final sliderRect = tester.getRect(slider);
+    final pillRect = tester.getRect(pill);
+    expect(
+      pillRect.left - sliderRect.left,
+      closeTo(sliderRect.width / 2 - pillRect.width / 2, 0.6),
+    );
+    session.players.single.emitPosition(const Duration(seconds: 120));
+    await _flush(tester);
+    expect(tester.getRect(pill).right, closeTo(sliderRect.right, 0.6));
+  });
+
+  testWidgets('the transport row follows the 48/34/26/40 mockup', (
+    tester,
+  ) async {
+    await _mount(tester, _RealSession());
+    final theme = AudioPageThemeScope.of(
+      tester.element(find.byType(AudioTransportRow)),
+    );
+
+    final play = find.byKey(const Key('audio_play'));
+    expect(tester.getSize(play), const Size(60, 60));
+    expect(
+      tester.getSize(find.descendant(of: play, matching: find.byType(Icon))),
+      const Size.square(AudioTransportRow.realPlayIconSize),
+    );
+
+    // 两侧槽位 48dp，图标-文字间距 4dp，文字 ink。
+    final catalog = find.byTooltip('目录');
+    final catalogIcon = find.descendant(
+      of: catalog,
+      matching: find.byType(Icon),
+    );
+    final catalogLabel = find.descendant(
+      of: catalog,
+      matching: find.byType(Text),
+    );
+    expect(tester.getSize(catalog).width, AudioTransportRow.realSideWidth);
+    expect(
+      tester.getSize(find.byKey(const Key('audio_sleep'))).width,
+      AudioTransportRow.realSideWidth,
+    );
+    expect(
+      tester.getRect(catalogLabel).top - tester.getRect(catalogIcon).bottom,
+      closeTo(4, 0.1),
+    );
+    expect(tester.widget<Text>(catalogLabel).style?.color, theme.ink);
+
+    // 换章图标 26dp，播放键与换章的间距 40dp。
+    final previous = find.byTooltip('上一章');
+    final next = find.byTooltip('下一章');
+    expect(tester.getSize(previous), const Size(26, 26));
+    expect(tester.getSize(next), const Size(26, 26));
+    expect(
+      tester.getSize(find.descendant(of: next, matching: find.byType(Icon))),
+      const Size.square(AudioTransportRow.realChapterIconSize),
+    );
+    final playRect = tester.getRect(play);
+    expect(tester.getRect(next).left - playRect.right, closeTo(40, 0.6));
+    expect(playRect.left - tester.getRect(previous).right, closeTo(40, 0.6));
+  });
+
+  testWidgets('the pill switches to H:MM:SS past an hour', (tester) async {
+    final session = _RealSession();
+    await _mount(tester, session);
+    session.players.single.emitDuration(
+      const Duration(hours: 1, minutes: 5, seconds: 3),
+    );
+    await _flush(tester);
+    expect(find.text('0:00:00/1:05:03'), findsOneWidget);
+  });
+
+  test('the audio time formatter keeps hours in their own column', () {
+    expect(formatAudioTime(const Duration(minutes: 10, seconds: 36)), '10:36');
+    expect(
+      formatAudioTime(const Duration(hours: 1, minutes: 2, seconds: 5)),
+      '1:02:05',
+    );
+    expect(
+      formatAudioProgress(
+        const Duration(seconds: 13),
+        const Duration(minutes: 10, seconds: 36),
+      ),
+      '00:13/10:36',
+    );
+    // 总时长满一小时后，当前时间也补出小时位。
+    expect(
+      formatAudioProgress(
+        const Duration(minutes: 2, seconds: 5),
+        const Duration(hours: 1, minutes: 5, seconds: 3),
+      ),
+      '0:02:05/1:05:03',
+    );
+  });
+
+  testWidgets('the bare transport row keeps icons without labels', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 430,
+            child: AudioTransportRow(
+              real: true,
+              bare: true,
+              onCatalog: _noop,
+              onSleepTimer: _noop,
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('目录'), findsNothing);
+    expect(find.text('定时'), findsNothing);
+    expect(find.byTooltip('目录'), findsOneWidget);
+    expect(find.byTooltip('定时'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.list), findsOneWidget);
+    expect(find.byIcon(LucideIcons.timer), findsOneWidget);
+  });
 }
+
+void _noop() {}
 
 const _track = SubtitleTrack([
   SubtitleCue(startMs: 0, text: '第一句同步字幕'),

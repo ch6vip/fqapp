@@ -124,10 +124,17 @@ extension _AudioListeningLayout on _AudioPageState {
                             child: _statusLine(paletteForStatus),
                           ),
                         ],
-                        const SizedBox(height: 8),
+                        if (!realAudio) const SizedBox(height: 8),
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: AudioIconRow(actions: _iconActions),
+                          // 真人模式按样稿 `.acts`：左右 8、上 8、下 0；
+                          // 智能朗读保持原来的 20dp 左右留白。
+                          padding: realAudio
+                              ? const EdgeInsets.fromLTRB(8, 8, 8, 0)
+                              : const EdgeInsets.symmetric(horizontal: 20),
+                          child: AudioIconRow(
+                            actions: _iconActions(real: realAudio),
+                            real: realAudio,
+                          ),
                         ),
                         const SizedBox(height: 12),
                         Padding(
@@ -160,6 +167,7 @@ extension _AudioListeningLayout on _AudioPageState {
                                                     const Duration(seconds: 15),
                                               )
                                             : null,
+                                        real: realAudio,
                                       ),
                                 ),
                           ),
@@ -196,6 +204,7 @@ extension _AudioListeningLayout on _AudioPageState {
                             sleepLabel: c.sleepAtChapterEnd
                                 ? '剩余本章'
                                 : (c._sleepRemaining == null ? null : '剩余播放'),
+                            real: realAudio,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -334,10 +343,13 @@ extension _AudioListeningLayout on _AudioPageState {
   }
 
   /// 官方 `bif.xml` 图标行。首项文案是**当前倍速**（截图 2.jpg 的 `1.2x`）。
-  List<AudioIconAction> get _iconActions => [
+  ///
+  /// 真人讲书页按样稿换成仪表 / 加号书 / 下载 / 评论 / 更多；
+  /// 智能朗读保持原来的图标。
+  List<AudioIconAction> _iconActions({bool real = false}) => [
     AudioIconAction(
       key: 'audio-speed',
-      icon: LucideIcons.timer,
+      icon: real ? LucideIcons.gauge : LucideIcons.timer,
       label: '${_AudioPageState._rateLabel(c._rate)}x',
       semanticLabel: AudioPreferences.instance.rateLocked
           ? '播放速度 ${_AudioPageState._rateLabel(c._rate)} 倍，已锁定'
@@ -353,14 +365,14 @@ extension _AudioListeningLayout on _AudioPageState {
     ),
     AudioIconAction(
       key: 'audio_shelf',
-      icon: LucideIcons.book_open_check,
+      icon: real ? LucideIcons.book_plus : LucideIcons.book_open_check,
       label: c._inShelf ? '已在书架' : '加入书架',
       active: c._inShelf,
       onTap: _toggleShelf,
     ),
     AudioIconAction(
       key: 'audio_download',
-      icon: LucideIcons.list_end,
+      icon: real ? LucideIcons.download : LucideIcons.list_end,
       label: '下载',
       onTap: _showDownload,
     ),
@@ -372,7 +384,7 @@ extension _AudioListeningLayout on _AudioPageState {
     ),
     AudioIconAction(
       key: 'audio_more',
-      icon: LucideIcons.ellipsis,
+      icon: real ? LucideIcons.circle_ellipsis : LucideIcons.ellipsis,
       label: '更多',
       onTap: _showMore,
     ),

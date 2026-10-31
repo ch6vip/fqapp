@@ -613,7 +613,7 @@ class _AudioPageState extends State<AudioPage> {
                           if (c._excerpt.isNotEmpty)
                             AudioExcerpt(text: c._excerpt, onTap: _showExcerpt),
                           const SizedBox(height: 12),
-                          AudioIconRow(actions: _iconActions),
+                          AudioIconRow(actions: _iconActions()),
                           const SizedBox(height: 24),
                           AudioToneSection(
                             title: c._mode == 'narrator' ? '真人讲书' : '智能朗读',
