@@ -106,16 +106,25 @@ class HomeSectionHeader extends StatelessWidget {
   final String title;
   final Widget? action;
 
-  const HomeSectionHeader({super.key, required this.title, this.action});
+  /// 左右栏距。设置类页面已在外层给卡片留了 16dp，分区头放进卡片时可传
+  /// 0 避免与卡片边距叠加。
+  final double gutter;
+
+  const HomeSectionHeader({
+    super.key,
+    required this.title,
+    this.action,
+    this.gutter = homeGutter,
+  });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        homeGutter,
+      padding: EdgeInsets.fromLTRB(
+        gutter,
         homeSectionGap,
-        homeGutter,
+        gutter,
         homeHeaderGap,
       ),
       child: Row(

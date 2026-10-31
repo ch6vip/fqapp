@@ -7,6 +7,9 @@ import 'home_design.dart';
 import 'home_media_card.dart';
 import 'home_shelf.dart';
 
+// 流尾已拆到独立文件，这里保留导出，页面沿用原 import 即可。
+export 'home_stream_footer.dart';
+
 /// Bookstore blocks that the shelf still renders.
 ///
 /// 首页改成「以书为主」后只保留两块有独立结构的区块：排行榜（511）与流尾
@@ -426,74 +429,3 @@ class _RankCover extends StatelessWidget {
     );
   }
 }
-
-/// The card stream's tail (`aes.xml` + `widget/u4.java`, footer type 199).
-///
-/// Three states, all 12sp `skin_color_gray_40_light` (#66000000):
-/// loading「加载中...」/ retry「加载失败，点击重试」(tap reloads) /
-/// done「已显示全部内容」— the done form sits between two 12×0.5dp rules
-/// with 8dp top / 32dp bottom padding; the others take 16dp top / 24dp
-/// bottom (`vu`)。
-class HomeStreamFooter extends StatelessWidget {
-  const HomeStreamFooter.loading({super.key, this.onRetry})
-    : _state = _StreamFooterState.loading;
-  const HomeStreamFooter.retry({super.key, required this.onRetry})
-    : _state = _StreamFooterState.retry;
-  const HomeStreamFooter.done({super.key, this.onRetry})
-    : _state = _StreamFooterState.done;
-
-  final _StreamFooterState _state;
-  final VoidCallback? onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final color = palette.body;
-    switch (_state) {
-      case _StreamFooterState.done:
-        return Padding(
-          padding: const EdgeInsets.only(top: 8, bottom: 32),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(width: 12, height: 0.5, color: color),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(
-                  '已显示全部内容',
-                  style: TextStyle(fontSize: 12, height: 1.2, color: color),
-                ),
-              ),
-              Container(width: 12, height: 0.5, color: color),
-            ],
-          ),
-        );
-      case _StreamFooterState.retry:
-        return Padding(
-          padding: const EdgeInsets.only(top: 16, bottom: 24),
-          child: GestureDetector(
-            onTap: onRetry,
-            behavior: HitTestBehavior.opaque,
-            child: Center(
-              child: Text(
-                '加载失败，点击重试',
-                style: TextStyle(fontSize: 12, height: 1.2, color: color),
-              ),
-            ),
-          ),
-        );
-      case _StreamFooterState.loading:
-        return Padding(
-          padding: const EdgeInsets.only(top: 16, bottom: 24),
-          child: Center(
-            child: Text(
-              '加载中...',
-              style: TextStyle(fontSize: 12, height: 1.2, color: color),
-            ),
-          ),
-        );
-    }
-  }
-}
-
-enum _StreamFooterState { loading, retry, done }
