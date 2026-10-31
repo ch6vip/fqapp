@@ -652,22 +652,9 @@ class _DesktopPlayer {
       _size();
     } catch (error) {
       if (!ready.isCompleted) ready.completeError(StateError('无法打开媒体'));
-      final failure = error is DesktopMediaException ? error : null;
-      AppLog.d(
-        'desktop-player',
-        'id=$id open failed kind=${failure?.kind ?? 'player'} '
-            'status=${failure?.httpStatus}',
-      );
+      final value = desktopOpenFailure(id, error);
       if (!disposed) {
-        emit({
-          'playerId': id,
-          'type': 'error',
-          'value': {
-            'message': '媒体加载失败，请检查网络或重试',
-            'errorCode': ?failure?.errorCode,
-            'httpStatusCode': ?failure?.httpStatus,
-          },
-        });
+        emit({'playerId': id, 'type': 'error', 'value': value});
       }
       media?.close();
     }

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:isolate';
 import 'package:ffi/ffi.dart';
 
+import 'app_log.dart';
+
 typedef _OpenNative = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _Open = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _FreeNative = Void Function(Pointer<Utf8>);
@@ -45,6 +47,22 @@ class DesktopMediaException implements Exception {
 
   @override
   String toString() => 'DesktopMediaException($kind)';
+}
+
+/// The `error` event payload for a player whose media failed to open, in the
+/// shape `NativePlaybackException.fromEvent` reads. Logs only the category.
+Map<String, Object> desktopOpenFailure(int playerId, Object error) {
+  final failure = error is DesktopMediaException ? error : null;
+  AppLog.d(
+    'desktop-player',
+    'id=$playerId open failed kind=${failure?.kind ?? 'player'} '
+        'status=${failure?.httpStatus}',
+  );
+  return {
+    'message': '媒体加载失败，请检查网络或重试',
+    'errorCode': ?failure?.errorCode,
+    'httpStatusCode': ?failure?.httpStatus,
+  };
 }
 
 class DesktopMedia {

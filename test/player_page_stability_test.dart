@@ -307,7 +307,6 @@ void main() {
           if (chapter.itemId != '1') {
             return Future.value(_source(chapter.itemId));
           }
-          // 前三次 = 起播 + 两次静默重试，之后才轮到手动重试。
           return attempts++ < 3
               ? Future.error(StateError('source unavailable'))
               : retry.future;
