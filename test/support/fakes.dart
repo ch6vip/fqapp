@@ -3,12 +3,21 @@ import 'dart:io';
 import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/native_player.dart';
+
+/// Fixtures that assert the legacy single-chapter list explicitly opt into
+/// direct switching. Joined-reader tests use normal preferences and defaults.
+void setSingleChapterPrefs(Map<String, Object> values) =>
+    SharedPreferences.setMockInitialValues({
+      'reader_scroll_chapter_mode': 'replace',
+      ...values,
+    });
 
 class MemoryReaderStore implements ReaderStore {
   Map<String, dynamic>? entry;

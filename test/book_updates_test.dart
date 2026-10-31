@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/library_page.dart';
@@ -34,7 +33,7 @@ final _book = MediaItem(
 void main() {
   setUp(
     () =>
-        SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'}),
+        setSingleChapterPrefs({'reader_page_mode': 'scroll'}),
   );
 
   testWidgets('更新目录按章节 ID 保留当前章节和滚动位置，并保存新目录', (tester) async {
@@ -104,7 +103,7 @@ void main() {
     for (final layout in [0, 1, 2]) {
       testWidgets('版式 $layout 显示新增章节，阅读新目录后清除更新提示', (tester) async {
         addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-        SharedPreferences.setMockInitialValues({'bookshelf_layout': layout});
+        setSingleChapterPrefs({'bookshelf_layout': layout});
         await tester.runAsync(() async {
           await ShelfStore.instance.add(_book);
           await LibraryStore.instance.addHistory({
