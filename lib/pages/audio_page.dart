@@ -23,12 +23,14 @@ import '../services/audio_subtitle_synth.dart';
 import '../services/audio_time_point_lookup.dart';
 import '../services/audio_preferences.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/chapter_text_formatter.dart';
 import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/media_history_store.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
+import '../services/reader_preferences.dart';
 import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
@@ -37,6 +39,7 @@ import '../widgets/audio/audio_floating_player.dart';
 import '../widgets/audio/audio_advance_banner.dart';
 import '../widgets/audio/audio_control_rows.dart';
 import '../widgets/audio/audio_quick_rows.dart';
+import '../widgets/audio/audio_real_expanded.dart';
 import '../widgets/audio/audio_real_sections.dart';
 import '../widgets/audio/audio_skip_points_rows.dart';
 import '../widgets/audio/audio_cover_card.dart';
@@ -107,6 +110,10 @@ class AudioPage extends StatefulWidget {
   /// 没有映射时不高亮，而不是猜一个位置。
   final TimePointLoader? timePointLoader;
 
+  /// 展开态全文：按原著章节 id 取整章正文。默认走 `/novel` 接口；
+  /// 测试可以注入一份 [ChapterContent]，不让页面偷偷联网。
+  final ChapterContentLoader? contentLoader;
+
   /// Current-chapter opening excerpt shown under the cover, mirroring the
   /// official listening page. Defaults to `/chapters/summary`.
   final Future<String?> Function(String itemId)? excerptLoader;
@@ -140,6 +147,7 @@ class AudioPage extends StatefulWidget {
     this.extrasLoader,
     this.subtitleLoader,
     this.timePointLoader,
+    this.contentLoader,
     this.excerptLoader,
     this.directoryLoader,
     this.downloadStore,
@@ -173,6 +181,9 @@ typedef SubtitleLoader =
 
 typedef TimePointLoader =
     Future<AudioTimeTrack> Function(String itemId, String toneId);
+
+/// 展开态正文加载器：`itemId` 是原著章节 id（时间点里的 `novel_item_id`）。
+typedef ChapterContentLoader = Future<ChapterContent> Function(String itemId);
 
 typedef _ReadAlongSnapshot = ({
   String chapterTitle,
@@ -230,6 +241,21 @@ class _AudioPageState extends State<AudioPage> {
   /// 截图里那套暖棕兜底（[AudioPageTheme.fallback]）。
   AudioPageTheme? _theme;
   String _themeSource = '';
+
+  /// 展开态全文是否展开；换章/换模式时自动收起。
+  bool _transcriptExpanded = false;
+  int _expandedChapterIndex = -1;
+
+  /// 展开态正文字号/行距来自阅读器排版设置；加载完成前用兜底 20sp / 2.1。
+  ReaderPreferences _readerPreferences = const ReaderPreferences();
+  bool _readerPreferencesLoaded = false;
+  bool _readerPreferencesRequested = false;
+
+  /// 按原著章节 id 缓存展开态正文与请求，避免重复拉取同一章。
+  final Map<String, ChapterContent> _expandedTexts = {};
+  final Set<String> _expandedTextFailed = {};
+  final Map<String, Future<void>> _expandedTextRequests = {};
+
   _AudioPlaybackController get c => _session!;
 
   /// 封面变了才重算，避免每次 rebuild 都读一次缓存文件。
@@ -288,22 +314,117 @@ class _AudioPageState extends State<AudioPage> {
     }
     _session = session;
     session.addListener(_changed);
+    session._readAlong.addListener(_onReadAlongChanged);
     if (owner == null) session.start();
     owner?.registerView(this);
     _syncCoverTheme();
+    unawaited(_loadReaderPreferences());
     setState(() {});
   }
 
   void _changed() {
     if (!mounted) return;
+    // 换章或切回智能朗读时展开态没有意义，直接收起。
+    if (_transcriptExpanded &&
+        _session != null &&
+        (c._index != _expandedChapterIndex || c._mode != 'narrator')) {
+      _transcriptExpanded = false;
+    }
     _syncCoverTheme();
     setState(() {});
+  }
+
+  /// 时间轴一就绪就预取原著正文，点「展开」时不用再等一次网络。
+  void _onReadAlongChanged() {
+    if (!mounted || _session == null || c._mode != 'narrator') return;
+    final itemId = _expandedTextId(c._readAlong.value);
+    if (itemId.isNotEmpty) _ensureExpandedText(itemId);
+  }
+
+  static String _expandedTextId(_ReadAlongSnapshot snapshot) =>
+      snapshot.novelItemId.isNotEmpty
+      ? snapshot.novelItemId
+      : snapshot.textItemId;
+
+  void _expandTranscript(_ReadAlongSnapshot snapshot) {
+    final itemId = _expandedTextId(snapshot);
+    if (itemId.isEmpty) return;
+    setState(() {
+      _transcriptExpanded = true;
+      _expandedChapterIndex = c._index;
+    });
+    _ensureExpandedText(itemId);
+  }
+
+  void _foldTranscript() {
+    if (!_transcriptExpanded) return;
+    setState(() => _transcriptExpanded = false);
+  }
+
+  Future<void> _loadReaderPreferences() async {
+    if (_readerPreferencesRequested) return;
+    _readerPreferencesRequested = true;
+    try {
+      final preferences = await ReaderPreferences.load();
+      if (!mounted) return;
+      setState(() {
+        _readerPreferences = preferences;
+        _readerPreferencesLoaded = true;
+      });
+    } catch (_) {
+      // 取不到就保持兜底 20sp / 2.1 倍，不再重试。
+    }
+  }
+
+  void _ensureExpandedText(String itemId) {
+    if (itemId.isEmpty ||
+        _expandedTexts.containsKey(itemId) ||
+        _expandedTextRequests.containsKey(itemId)) {
+      return;
+    }
+    final request = _fetchExpandedText(itemId)
+        .then<void>((content) {
+          if (!mounted) return;
+          setState(() {
+            if (content == null) {
+              _expandedTextFailed.add(itemId);
+            } else {
+              _expandedTexts[itemId] = content;
+            }
+          });
+        })
+        .catchError((Object _) {
+          if (!mounted) return;
+          setState(() => _expandedTextFailed.add(itemId));
+        });
+    _expandedTextRequests[itemId] = request.whenComplete(
+      () => _expandedTextRequests.remove(itemId),
+    );
+  }
+
+  Future<ChapterContent?> _fetchExpandedText(String itemId) async {
+    final loader = widget.contentLoader;
+    if (loader != null) {
+      final content = await loader(itemId);
+      return content.isEmpty ? null : content;
+    }
+    // 与控制器一致：注入了播放器/音源的测试页面不偷偷走网络。
+    if (widget.sourceLoader != null || widget.playerFactory != null) {
+      return null;
+    }
+    try {
+      final content = await ApiClient.instance.chapterContent(itemId);
+      return content.isEmpty ? null : content;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
   void dispose() {
     final session = _session;
     session?.removeListener(_changed);
+    session?._readAlong.removeListener(_onReadAlongChanged);
     if (session != null && !session._closed) {
       unawaited(session._persistProgress());
     }

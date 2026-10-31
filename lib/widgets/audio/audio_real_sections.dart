@@ -29,7 +29,7 @@ class AudioRealBookRow extends StatelessWidget {
   /// 传 [BookDetail.title]；为空时整行不渲染书名。
   final String bookTitle;
 
-  /// 右侧 ⇋：打开简介卡。
+  /// 右侧 ⇋：打开简介卡。为 null 时整颗按钮不渲染（展开态隐藏 ⇋）。
   final VoidCallback? onSwap;
 
   const AudioRealBookRow({
@@ -88,27 +88,29 @@ class AudioRealBookRow extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 12),
-            HomePressable(
-              key: const Key('audio_real_swap'),
-              semanticLabel: '书籍简介',
-              onTap: onSwap ?? () {},
-              borderRadius: BorderRadius.circular(6),
-              child: Container(
-                width: 28,
-                height: 28,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: theme.card,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Icon(
-                  LucideIcons.arrow_right_left,
-                  size: 16,
-                  color: theme.ink,
+            if (onSwap != null) ...[
+              const SizedBox(width: 12),
+              HomePressable(
+                key: const Key('audio_real_swap'),
+                semanticLabel: '书籍简介',
+                onTap: onSwap!,
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: theme.card,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Icon(
+                    LucideIcons.arrow_right_left,
+                    size: 16,
+                    color: theme.ink,
+                  ),
                 ),
               ),
-            ),
+            ],
           ],
         ),
       ),

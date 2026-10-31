@@ -240,10 +240,11 @@ void main() {
     final label = tester.widget<Text>(find.text('展开'));
     expect(label.style?.fontSize, 12);
 
-    // S3 只留入口，点击暂不切换（S6 接展开态）。
+    // S6：点「展开」进入页内全文，238dp 字幕区让位给正文。
     await tester.tap(expand);
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('audio_real_subtitle')), findsNothing);
+    expect(find.byKey(const Key('audio_real_expanded_error')), findsOneWidget);
   });
 
   testWidgets('the phone header uses the 44dp mockup metrics', (tester) async {

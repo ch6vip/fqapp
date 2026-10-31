@@ -3,7 +3,8 @@
     "lib/main.dart": 781,
     "lib/models/media_item.dart": 1549,
     "lib/pages/api_service_page.dart": 601,
-    "lib/pages/audio_page.dart": 1995,
+    "lib/pages/audio_listening_layout.dart": 635,
+    "lib/pages/audio_page.dart": 2056,
     "lib/pages/category_page.dart": 618,
     "lib/pages/comic_reader_page.dart": 1044,
     "lib/pages/detail_page.dart": 1663,
@@ -57,7 +58,7 @@
     "rust/src/endpoints/router.rs": 557,
     "rust/src/endpoints/video.rs": 3555,
     "test/audio_page_test.dart": 1172,
-    "test/audio_real_alignment_test.dart": 690,
+    "test/audio_real_alignment_test.dart": 691,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 859,
     "test/desktop_semantics_update_test.dart": 844,
@@ -110,13 +111,8 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/audio_page.dart::_AudioCommentsSheetState.build": {
-      "line": 1689,
+      "line": 1750,
       "lines": 131,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/pages/audio_page.dart::_AudioPageState.build": {
-      "line": 433,
-      "lines": 224,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/cached_books_page.dart::_CachedBooksPageState.build": {
