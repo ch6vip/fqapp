@@ -638,10 +638,10 @@ class _AudioPlaybackController extends ChangeNotifier
 
   /// Fetches one chapter's audio source.
   ///
-  /// The backend picks a pooled device per upstream request and the audio
-  /// player host sometimes answers a body-level 403 for it, so the network
-  /// path retries a few draws before the page reports a failure. An injected
-  /// loader is exact and is never multiplied.
+  /// The backend picks a pooled device per upstream request, so a dropped
+  /// connection or a 5xx can hit a single draw; only those transient failures
+  /// are retried (see [isTransientNetworkFailure]). An injected loader is
+  /// exact and is never multiplied.
   ///
   /// A pure-TTS book has no default voice: the playinfo endpoint answers
   /// NO_THIS_TONE for tone 0, so the first selectable voice is retried once.
@@ -663,15 +663,7 @@ class _AudioPlaybackController extends ChangeNotifier
     final toneId = _toneId;
     AudioSource result;
     try {
-      result = await retryTransient(
-        () => ApiClient.instance
-            .audioSource(itemId, bookId: _bookId, toneId: toneId)
-            .timeout(const Duration(seconds: 30)),
-        // A deterministic "this tone does not exist" answer will not change on
-        // retry: let it reach the fallback below immediately.
-        shouldRetry: (error) =>
-            error is! ApiException || !error.message.contains('NO_THIS_TONE'),
-      );
+      result = await _fetchSource(itemId, toneId);
     } on ApiException catch (error) {
       if (toneId != '0' ||
           !error.message.contains('NO_THIS_TONE') ||
@@ -682,11 +674,7 @@ class _AudioPlaybackController extends ChangeNotifier
       if (fallback == null) rethrow;
       final tone = fallback;
       _toneSwitchedForChapter = true;
-      result = await retryTransient(
-        () => ApiClient.instance
-            .audioSource(itemId, bookId: _bookId, toneId: tone)
-            .timeout(const Duration(seconds: 30)),
-      );
+      result = await _fetchSource(itemId, tone);
     }
     _audioSourceCache[cacheKey] = result;
     while (_audioSourceCache.length > 5) {
@@ -694,6 +682,18 @@ class _AudioPlaybackController extends ChangeNotifier
     }
     return result;
   }
+
+  /// 默认音色与换音色回退共用同一套重试策略。每次尝试最多等 30 秒；超时、
+  /// 404/403 和业务错误码（NO_THIS_TONE、审核失败）再试也是同一个结果，
+  /// 只有网络中断、HTTP 408/429/5xx 值得再来一次——否则一次失败最坏要拖
+  /// 近三分钟才告诉用户。
+  Future<AudioSource> _fetchSource(String itemId, String toneId) =>
+      retryTransient(
+        () => ApiClient.instance
+            .audioSource(itemId, bookId: _bookId, toneId: toneId)
+            .timeout(const Duration(seconds: 30)),
+        shouldRetry: isTransientNetworkFailure,
+      );
 
   /// 离线命中：当前音色下这一章已下载完成时直接用本地文件。
   ///

@@ -214,7 +214,7 @@ Future<SubtitleTrack?> _synthesizeSubtitles(
   try {
     final text = await ApiClient.instance.contentText(itemId);
     if (text.trim().isEmpty) return null;
-    return SubtitleSynthesis.build(
+    return SubtitleSynthesis.buildAsync(
       text: text,
       duration: duration,
       anchors: c._timeTrack,

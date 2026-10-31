@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::endpoints::base::{Upstream, UpstreamMode, UpstreamRequestSpec, HOST_NOVEL_SNSSDK};
 use crate::endpoints::Ctx;
 use crate::error::{ApiError, ApiResult};
-use crate::upstream::dh::{decrypt_dh_content, generate_y, DHState};
+use crate::upstream::dh::{decrypt_dh_content_off_thread, generate_y, DHState};
 
 /// `novelReaderContentURL`.
 pub fn novel_reader_content_url(item_id: &str) -> String {
@@ -29,7 +29,11 @@ pub fn novel_reader_content_headers(y: &str) -> Vec<(String, String)> {
 }
 
 /// `setDHContentInPlace`.
-pub fn set_dh_content_in_place(
+///
+/// The DH shared-secret exponentiation runs on the blocking pool, so this is
+/// async: the caller's request task must not spend milliseconds on a 3071-bit
+/// modpow.
+pub async fn set_dh_content_in_place(
     raw: &[u8],
     resp_headers: &[(String, String)],
     state: &DHState,
@@ -64,7 +68,8 @@ pub fn set_dh_content_in_place(
         return crate::endpoints::util::raw_json(raw);
     }
 
-    let plain = decrypt_dh_content(&y_resp, &c_resp, state)
+    let plain = decrypt_dh_content_off_thread(&y_resp, &c_resp, state)
+        .await
         .map_err(|e| ApiError::Internal(format!("decrypt novel content: {e}")))?;
     if plain.is_empty() {
         return Err(ApiError::Internal(
@@ -97,5 +102,5 @@ pub async fn fetch_novel_reader_content(ctx: &Ctx, item_id: &str) -> ApiResult<V
             ..Default::default()
         })
         .await?;
-    set_dh_content_in_place(&raw, &headers, &state)
+    set_dh_content_in_place(&raw, &headers, &state).await
 }

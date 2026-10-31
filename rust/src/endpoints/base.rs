@@ -141,6 +141,7 @@ impl Upstream {
 pub fn map_client_error(err: ClientError) -> ApiError {
     match err {
         ClientError::DeviceFailed(m) => ApiError::Internal(format!("device failed: {m}")),
+        ClientError::Transient { message, .. } => ApiError::Internal(message),
         ClientError::Http(m) => ApiError::Internal(m),
         ClientError::Other(m) => ApiError::Internal(m),
     }

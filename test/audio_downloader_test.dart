@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/audio_download_store.dart';
+import 'package:fqapp/services/audio_download_transfer.dart';
 import 'package:fqapp/services/audio_downloader.dart';
 
 /// 本地假 CDN：整文件 GET 与 `Range: bytes=a-` 续传都支持，并记录每次请求
@@ -37,6 +38,12 @@ class _FakeCdn {
   /// HttpClient 对小段响应有缓冲）。
   Completer<void>? stallFirstResponse;
   static const int stallBytes = 32 * 1024;
+
+  /// true 时每一次请求都按 [stallFirstResponse] 挂起，而不是只在第一次。
+  bool stallAllResponses = false;
+
+  /// 挂起前先发出的字节数；0 表示只发响应头就停住。
+  int stallAfter = stallBytes;
 
   int get requestCount => _served;
 
@@ -79,12 +86,14 @@ class _FakeCdn {
         );
       }
       request.response.contentLength = body.length;
-      final stall = _served == 1 ? stallFirstResponse : null;
-      if (stall != null && body.length > stallBytes) {
-        request.response.add(body.sublist(0, stallBytes));
+      final stall = (stallAllResponses || _served == 1)
+          ? stallFirstResponse
+          : null;
+      if (stall != null && body.length > stallAfter) {
+        request.response.add(body.sublist(0, stallAfter));
         await request.response.flush();
         await stall.future;
-        request.response.add(body.sublist(stallBytes));
+        request.response.add(body.sublist(stallAfter));
       } else {
         request.response.add(body);
       }
@@ -185,9 +194,15 @@ void main() {
   AudioDownloader downloader({
     Future<AudioSource> Function(String, String, String)? resolve,
     int concurrency = 2,
+    HttpClient Function()? clientFactory,
+    Duration connectTimeout = audioDownloadConnectTimeout,
+    Duration readTimeout = audioDownloadReadTimeout,
   }) => AudioDownloader(
     store: store,
     concurrency: concurrency,
+    clientFactory: clientFactory,
+    connectTimeout: connectTimeout,
+    readTimeout: readTimeout,
     resolve:
         resolve ??
         (bookId, itemId, toneId) async => AudioSource(
@@ -359,6 +374,48 @@ void main() {
     final cached = store.chapters['ch1|toneA'];
     expect(cached, isNotNull);
     expect(File(cached!.filePath).readAsBytesSync(), content.sublist(0, 100));
+  });
+
+  test(
+    '服务器接了连接却不发正文时按超时重试，而不是永远挂着',
+    () async {
+      // 只发响应头就停住；客户端必须在读超时后自己收尾，别把 `_active` 的
+      // 槽位和协程永远占住。
+      cdn.stallFirstResponse = Completer<void>();
+      cdn.stallAllResponses = true;
+      cdn.stallAfter = 0;
+
+      final engine = downloader(
+        readTimeout: const Duration(milliseconds: 120),
+      );
+      await engine.enqueue(book: book(), chapters: [chapterOne()]);
+      await settle(engine);
+
+      final task = engine.value.single;
+      expect(task.status, AudioDownloadStatus.failed);
+      expect(task.error, '下载超时');
+      expect(cdn.requestCount, 3, reason: '超时按可重试的网络故障处理');
+    },
+  );
+
+  test('每次下载都给 HttpClient 设连接超时', () async {
+    final clients = <HttpClient>[];
+    final engine = downloader(
+      connectTimeout: const Duration(seconds: 3),
+      clientFactory: () {
+        final client = HttpClient();
+        clients.add(client);
+        return client;
+      },
+    );
+    await engine.enqueue(book: book(), chapters: [chapterOne()]);
+    await settle(engine);
+
+    expect(engine.value.single.status, AudioDownloadStatus.completed);
+    expect(clients, isNotEmpty);
+    for (final client in clients) {
+      expect(client.connectionTimeout, const Duration(seconds: 3));
+    }
   });
 
   test('discard 后立刻重下不会和旧协程并发写同一个 .part', () async {
