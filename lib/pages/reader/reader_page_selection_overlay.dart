@@ -11,11 +11,17 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
   ) {
     // 用户自定义高亮色优先，null 时跟随主题按背景派生。
     final custom = _preferences.narrationHighlightColor;
-    final narration = custom == null
-        ? preset.narrationHighlightColor
-        : Color(custom);
     // 样式：显式选了就用它，否则墨水屏下划线、其余背景色块。
     final narrationUnderline = _preferences.narrationUnderlineFor(preset);
+    // 下划线要看得见：色块用的派生色（背景 + 10% 文字）画线几乎不可见，
+    // 这里改成显式色不透明化、自动时直接用正文色（墨水屏即黑线）。
+    final narration = switch ((narrationUnderline, custom)) {
+      (true, final int? c) => c == null
+          ? preset.textColor
+          : Color(c).withValues(alpha: 1),
+      (false, final int? c) =>
+        c == null ? preset.narrationHighlightColor : Color(c),
+    };
     if (_marksScope == null ||
         !identical(_marksScopeLayout, layout) ||
         _marksScope!.narrationColor != narration ||

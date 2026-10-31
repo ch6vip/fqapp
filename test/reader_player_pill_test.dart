@@ -240,7 +240,8 @@ void main() {
       visible = false;
       viewportChanges.value++;
       await tester.pump();
-      await tester.pump();
+      // 高亮离屏要稳定 300ms 才切同步胶囊（翻页瞬间的短暂离屏不算）。
+      await tester.pump(const Duration(milliseconds: 350));
       expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('reader-player-indicator')),
