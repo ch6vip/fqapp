@@ -280,15 +280,11 @@ void main() {
           displayed ? 'firstFrame' : 'error',
         );
         expect(session.store.entry?['episodeId'], displayed ? '2' : '1');
-        if (displayed) {
-          expect(find.byType(CircularProgressIndicator), findsNothing);
-          await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
-          await tester.pump(const Duration(milliseconds: 350));
-          await _flush(tester);
-        } else {
-          // 还没出画面的集不弹错误，直接静默换新地址重来。
-          expect(find.widgetWithText(OutlinedButton, '重试'), findsNothing);
-        }
+        final spinner = displayed ? findsNothing : findsOneWidget; // 静默重试中
+        expect(find.byType(CircularProgressIndicator), spinner);
+        if (displayed) await tester.tap(find.text('重试'));
+        await tester.pump(const Duration(milliseconds: 350));
+        await _flush(tester);
         expect(session.requests, ['1', '2', '2']);
         expect(
           session.players.last.position,

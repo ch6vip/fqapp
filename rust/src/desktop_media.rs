@@ -1,6 +1,9 @@
 // The desktop player receives clear bytes over a per-player loopback capability.
 // Keys and original URLs stay inside the process; no decrypted movie is written.
-use reqwest::{blocking::Client, header};
+use crate::desktop_fetch::{
+    fetch_range, shared_client, with_retries, FetchError, OpenError, CHUNK_TIMEOUT, PROBE_TIMEOUT,
+};
+use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -43,161 +46,6 @@ unsafe extern "C" {
     fn sp_stream_close(stream: *mut c_void);
 }
 
-/// Why a CDN range request failed. Dart maps these onto the Media3 error codes
-/// the Android player already reports, so both platforms share one message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FetchError {
-    Connect,
-    Timeout,
-    Status(u16),
-    /// Malformed or short range response.
-    Protocol,
-    Cancelled,
-}
-impl FetchError {
-    fn from_reqwest(error: &reqwest::Error) -> Self {
-        if error.is_timeout() {
-            Self::Timeout
-        } else if error.is_connect() {
-            Self::Connect
-        } else {
-            // Resets and other transport failures mid-request.
-            Self::Connect
-        }
-    }
-    /// One stalled CDN node or an expired keep-alive connection must not fail
-    /// the whole episode; 4xx answers (expired or forbidden URLs) are final.
-    fn retryable(self) -> bool {
-        match self {
-            Self::Connect | Self::Timeout | Self::Protocol => true,
-            Self::Status(code) => code == 408 || code == 429 || code >= 500,
-            Self::Cancelled => false,
-        }
-    }
-}
-
-/// Media failure reported to Dart: a fixed user-facing message plus the
-/// category it came from. Never contains the URL or key.
-#[derive(Debug)]
-struct OpenError {
-    message: &'static str,
-    kind: &'static str,
-    status: Option<u16>,
-}
-impl OpenError {
-    fn new(message: &'static str, kind: &'static str) -> Self {
-        Self {
-            message,
-            kind,
-            status: None,
-        }
-    }
-    fn fetch(error: FetchError) -> Self {
-        match error {
-            FetchError::Connect => Self::new("媒体连接失败", "connect"),
-            FetchError::Timeout | FetchError::Cancelled => Self::new("媒体连接超时", "timeout"),
-            FetchError::Status(status) => Self {
-                message: "媒体服务器拒绝请求",
-                kind: "http",
-                status: Some(status),
-            },
-            FetchError::Protocol => Self::new("媒体服务器不支持分段读取", "range"),
-        }
-    }
-}
-
-const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
-const CHUNK_TIMEOUT: Duration = Duration::from_secs(12);
-const ATTEMPTS: usize = 3;
-const BACKOFF: [Duration; 2] = [Duration::from_millis(300), Duration::from_millis(800)];
-
-/// One pool for every session: switching episodes reuses the CDN connection
-/// (and its TLS session) of the previous episode instead of a new handshake.
-fn shared_client() -> Result<&'static Client, OpenError> {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    if let Some(client) = CLIENT.get() {
-        return Ok(client);
-    }
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .pool_idle_timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|_| OpenError::new("无法初始化媒体连接", "other"))?;
-    let _ = CLIENT.set(client);
-    Ok(CLIENT.get().expect("client initialized"))
-}
-
-/// Fetches `bytes=start-end` and checks the answer describes exactly that span.
-/// Returns the body and the total length from `Content-Range`.
-fn fetch_range(
-    client: &Client,
-    url: &str,
-    start: u64,
-    end: u64,
-    timeout: Duration,
-) -> Result<(Vec<u8>, u64), FetchError> {
-    let response = client
-        .get(url)
-        .header(header::RANGE, format!("bytes={start}-{end}"))
-        .header(header::ACCEPT_ENCODING, "identity")
-        .timeout(timeout)
-        .send()
-        .map_err(|e| FetchError::from_reqwest(&e))?;
-    let status = response.status().as_u16();
-    if status != 206 {
-        return Err(FetchError::Status(status));
-    }
-    let (actual_start, actual_end, total) = response
-        .headers()
-        .get(header::CONTENT_RANGE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(content_range)
-        .ok_or(FetchError::Protocol)?;
-    let wanted_end = end.min(total.saturating_sub(1));
-    if actual_start != start
-        || actual_end != wanted_end
-        || response
-            .headers()
-            .get(header::CONTENT_ENCODING)
-            .is_some_and(|v| v != "identity")
-    {
-        return Err(FetchError::Protocol);
-    }
-    let expected = actual_end - actual_start + 1;
-    let mut data = Vec::new();
-    response
-        .take(expected + 1)
-        .read_to_end(&mut data)
-        .map_err(|_| FetchError::Timeout)?;
-    if data.len() as u64 != expected {
-        return Err(FetchError::Protocol);
-    }
-    Ok((data, total))
-}
-
-/// Runs `attempt` until it succeeds, fails for good, or the session closes.
-fn with_retries<T>(
-    cancelled: &AtomicBool,
-    mut attempt: impl FnMut() -> Result<T, FetchError>,
-) -> Result<T, FetchError> {
-    let mut last = FetchError::Cancelled;
-    for round in 0..ATTEMPTS {
-        if cancelled.load(Ordering::Acquire) {
-            return Err(FetchError::Cancelled);
-        }
-        match attempt() {
-            Ok(value) => return Ok(value),
-            Err(error) if error.retryable() => last = error,
-            Err(error) => return Err(error),
-        }
-        if let Some(delay) = BACKOFF.get(round) {
-            thread::sleep(*delay);
-        }
-    }
-    Err(last)
-}
-
 struct Source {
     file: Option<File>,
     client: Option<&'static Client>,
@@ -231,7 +79,7 @@ impl Source {
                 .len();
             (None, size)
         } else {
-            let client = shared_client()?;
+            let client = shared_client().ok_or(OpenError::new("无法初始化媒体连接", "other"))?;
             let (_, total) = with_retries(&cancelled, || {
                 fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
             })
@@ -288,11 +136,6 @@ impl Source {
         bytes[..count].copy_from_slice(&self.cache[start..start + count]);
         Ok(count)
     }
-}
-fn content_range(value: &str) -> Option<(u64, u64, u64)> {
-    let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
-    let (start, end) = range.split_once('-')?;
-    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
 }
 extern "C" fn io_size(user: *mut c_void) -> i64 {
     unsafe { (*(user as *mut Source)).size as i64 }
@@ -499,7 +342,8 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, OpenError> {
     let reader = if request.key.is_empty() {
         Reader::Clear(source)
     } else {
-        let key = hex::decode(&request.key).map_err(|_| OpenError::new("媒体密钥无效", "decrypt"))?;
+        let key =
+            hex::decode(&request.key).map_err(|_| OpenError::new("媒体密钥无效", "decrypt"))?;
         if key.len() != 16 {
             return Err(OpenError::new("媒体密钥无效", "decrypt"));
         }
@@ -629,76 +473,5 @@ mod tests {
         for bad in ["bytes=100-", "bytes=9-2", "bytes=0-1,4-5", "bytes=-0"] {
             assert!(parse_range(Some(bad), 100).is_err());
         }
-    }
-
-    /// Serves one canned response per connection, in order.
-    fn upstream(responses: Vec<&'static str>) -> String {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let url = format!("http://{}/v", listener.local_addr().unwrap());
-        thread::spawn(move || {
-            for response in responses {
-                let (mut socket, _) = listener.accept().unwrap();
-                let mut request = Vec::new();
-                let mut byte = [0];
-                while !request.ends_with(b"\r\n\r\n") && socket.read(&mut byte).unwrap() > 0 {
-                    request.push(byte[0]);
-                }
-                let _ = socket.write_all(response.as_bytes());
-            }
-        });
-        url
-    }
-
-    const PARTIAL: &str = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-0/42\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx";
-
-    #[test]
-    fn transient_failures_are_retried() {
-        let url = upstream(vec![
-            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            PARTIAL,
-        ]);
-        let client = shared_client().unwrap();
-        let cancelled = AtomicBool::new(false);
-        let (data, total) =
-            with_retries(&cancelled, || fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)).unwrap();
-        assert_eq!((data.as_slice(), total), (&b"x"[..], 42));
-    }
-
-    #[test]
-    fn forbidden_is_final_and_reported_with_status() {
-        let url = upstream(vec![
-            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            PARTIAL,
-        ]);
-        let client = shared_client().unwrap();
-        let cancelled = AtomicBool::new(false);
-        let error =
-            with_retries(&cancelled, || fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)).unwrap_err();
-        assert_eq!(error, FetchError::Status(403));
-        let reported = OpenError::fetch(error);
-        assert_eq!((reported.kind, reported.status), ("http", Some(403)));
-    }
-
-    #[test]
-    fn closed_session_stops_retrying() {
-        let cancelled = AtomicBool::new(true);
-        let mut calls = 0;
-        let result: Result<(), _> = with_retries(&cancelled, || {
-            calls += 1;
-            Err(FetchError::Timeout)
-        });
-        assert_eq!((result, calls), (Err(FetchError::Cancelled), 0));
-    }
-
-    #[test]
-    fn plain_200_is_not_a_range_answer() {
-        let url = upstream(vec![
-            "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx",
-        ]);
-        let client = shared_client().unwrap();
-        let cancelled = AtomicBool::new(false);
-        let error =
-            with_retries(&cancelled, || fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)).unwrap_err();
-        assert_eq!(error, FetchError::Status(200));
     }
 }
