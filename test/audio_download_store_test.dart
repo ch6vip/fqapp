@@ -138,6 +138,17 @@ void main() {
     expect(await store.chapter('ch1', toneId: 'toneA'), isNull);
   });
 
+  test('a .. segment inside the audio root cannot escape it', () async {
+    final sep = Platform.pathSeparator;
+    final outside = File('${temp.path}${sep}secret.txt')
+      ..writeAsStringSync('keep me');
+    final sneaky = '${audioDir.path}$sep..${sep}secret.txt';
+    await store.saveChapter(chapter(filePath: sneaky));
+    await store.removeChapter('ch1', toneId: 'toneA');
+    expect(outside.existsSync(), isTrue);
+    expect(await store.chapter('ch1', toneId: 'toneA'), isNull);
+  });
+
   test('totalBytes sums only valid finite records', () async {
     await store.saveChapter(chapter(itemId: 'ch1', bytes: 1000));
     await store.saveChapter(chapter(itemId: 'ch2', bytes: 2500));

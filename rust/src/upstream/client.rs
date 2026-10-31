@@ -121,8 +121,8 @@ impl UpstreamClient {
 
     /// Performs a request with signature injection but no device retry.
     ///
-    /// Uncapped: only the video download path uses this. API callers must
-    /// use [UpstreamClient::do_request_capped].
+    /// Uncapped, so no API endpoint may use it: [UpstreamClient::do_request_capped]
+    /// is the bounded variant every JSON/API call goes through.
     pub async fn do_request(
         &self,
         req: &UpstreamRequest,

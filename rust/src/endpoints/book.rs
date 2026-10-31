@@ -2,8 +2,8 @@
 //! `novel_detail`, `related`, `forum_id`, `item_info` and `book_share`.
 //! Port of `book_detail_legacy.go`, `book.go`, `directory.go`,
 //! `novel_detail.go`, `related.go`, `forum_id.go`, `iteminfo.go` and
-//! `book_share.go`. The private `reading724Params` builder is copied from
-//! `content_util.go` (it is not exposed by the Rust `content_util` module).
+//! `book_share.go`. The shared `reading724Params` bag lives in
+//! `endpoints::base`; the wrapper below only adapts it to `Params`.
 
 use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
@@ -20,38 +20,9 @@ use crate::endpoints::{Ctx, Params, Server};
 use crate::error::{ApiError, ApiResult};
 use crate::sign::abogus::generate_a_bogus;
 
-/// Go's `reading724Params` (content_util.go).
+/// Go's `reading724Params` (content_util.go), in `Params` form.
 fn reading724_params() -> Params {
-    let mut p = Params::new();
-    p.set("iid", "{install_id}");
-    p.set("device_id", "{device_id}");
-    p.set("ac", "wifi");
-    p.set("channel", "xiaomi_1967_64");
-    p.set("aid", "1967");
-    p.set("app_name", "novelapp");
-    p.set("version_code", "72432");
-    p.set("version_name", "7.2.4.32");
-    p.set("device_platform", "android");
-    p.set("os", "android");
-    p.set("ssmix", "a");
-    p.set("device_type", "25053RT47C");
-    p.set("device_brand", "Redmi");
-    p.set("language", "zh");
-    p.set("os_api", "36");
-    p.set("os_version", "16");
-    p.set("manifest_version_code", "72432");
-    p.set("resolution", "1280*2620");
-    p.set("dpi", "520");
-    p.set("update_version_code", "72432");
-    p.set("host_abi", "arm64-v8a");
-    p.set("dragon_device_type", "phone");
-    p.set("pv_player", "72432");
-    p.set("compliance_status", "0");
-    p.set("need_personal_recommend", "1");
-    p.set("player_so_load", "1");
-    p.set("is_android_pad_screen", "0");
-    p.set("rom_version", "miui_V816_OS3.0.9.0.WOLCNXM");
-    p
+    Params::from_pairs(crate::endpoints::base::reading724_params())
 }
 
 /// Go's `reading724LargeScreenParams` (content_util.go).

@@ -138,6 +138,54 @@ void main() {
     await cache.close();
   });
 
+  test('写入会淘汰过期榜单并限制榜单键数', () async {
+    RankCache.hiveReady = true;
+    final writer = RankCache();
+    final box = await Hive.openBox<dynamic>('rank_cache_v1');
+    await box.clear();
+    final board = RankBoard(entries: [_entry('a', 1)], hasMore: true);
+
+    // 读取端不认过期快照，写入端也应当把它清掉。
+    await box.put('expired|1|0', {
+      ...board.toJson(),
+      'savedAt':
+          DateTime.now().millisecondsSinceEpoch -
+          const Duration(hours: 25).inMilliseconds,
+    });
+    await writer.saveBoard(
+      rankId: 'fresh',
+      algo: 1,
+      categoryId: 0,
+      board: board,
+    );
+    expect(box.containsKey('expired|1|0'), isFalse);
+
+    // 榜单 × 分类的组合键超过上限时，淘汰最旧的几条。
+    await box.clear();
+    final over = RankCache.maxBoards + 5;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (var i = 0; i < over; i++) {
+      await box.put('old$i|1|0', {
+        ...board.toJson(),
+        // savedAt 随 i 递增，淘汰顺序确定。
+        'savedAt': now - (over - i) * 1000,
+      });
+    }
+    await writer.saveBoard(
+      rankId: 'newest',
+      algo: 1,
+      categoryId: 0,
+      board: board,
+    );
+
+    final boardKeys = box.keys.where((key) => key != 'catalog').toList();
+    expect(boardKeys, hasLength(RankCache.maxBoards));
+    expect(box.containsKey('newest|1|0'), isTrue);
+    expect(box.containsKey('old0|1|0'), isFalse);
+    expect(box.containsKey('old${over - 1}|1|0'), isTrue);
+    await writer.close();
+  });
+
   testWidgets('a fresh board snapshot is served without the network', (
     tester,
   ) async {

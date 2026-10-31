@@ -42,6 +42,12 @@ class RankCache {
   /// and here the cached list renders while the refresh runs.
   static const staleTtl = Duration(hours: 24);
 
+  /// Upper bound on stored board snapshots. One key is written per
+  /// (rank, algo, category) combination ever visited, so without a cap the box
+  /// grows for the lifetime of the install. Writes keep the newest
+  /// [maxBoards]; dropped boards are simply refetched on the next visit.
+  static const maxBoards = 64;
+
   /// Set once Hive has a directory (app bootstrap). Widget tests that never
   /// call Hive.initFlutter() leave this false, so nothing touches a box that
   /// cannot be opened yet.
@@ -120,9 +126,38 @@ class RankCache {
         ...payload,
         'savedAt': DateTime.now().millisecondsSinceEpoch,
       });
+      await _prune(box, keep: key);
     } catch (_) {
       // The next successful load overwrites this entry anyway.
     }
+  }
+
+  /// Drops rows the read path no longer accepts and caps the board keys.
+  ///
+  /// Reads silently ignore snapshots older than [staleTtl], so deleting them
+  /// here cannot change what a load returns; the cap only bounds the box as
+  /// the user browses more rank/category combinations.
+  Future<void> _prune(Box<dynamic> box, {required String keep}) async {
+    final now = DateTime.now();
+    final expired = <dynamic>[];
+    final boards = <({dynamic key, DateTime savedAt})>[];
+    for (final key in box.keys.toList(growable: false)) {
+      if (key == keep) continue;
+      final raw = box.get(key);
+      if (raw is! Map) continue;
+      final savedAt = _savedAt(raw);
+      if (now.difference(savedAt) > staleTtl) {
+        expired.add(key);
+      } else if (key != 'catalog') {
+        boards.add((key: key, savedAt: savedAt));
+      }
+    }
+    if (expired.isNotEmpty) await box.deleteAll(expired);
+    // [keep] 不在 boards 里：留出它自己的一格后，其余榜单最多 maxBoards - 1 条。
+    final excess = boards.length - (maxBoards - 1);
+    if (excess <= 0) return;
+    boards.sort((a, b) => a.savedAt.compareTo(b.savedAt));
+    await box.deleteAll([for (final board in boards.take(excess)) board.key]);
   }
 
   T? _read<T>(String key, T? Function(Map<String, dynamic> raw) parse) {

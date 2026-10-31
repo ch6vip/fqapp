@@ -209,16 +209,33 @@ class BackendService {
       _logFile = File(logPath);
 
       final rustTransport = _transport;
+      // The startup timeout covers the FFI init as well as the health gate: an
+      // init that hangs inside the native library must fail the attempt instead
+      // of leaving the splash spinning forever. The clock also feeds the health
+      // budget below, so both steps share one deadline, and a finished attempt
+      // leaves [start] free to retry.
+      final startupClock = Stopwatch()..start();
       if (rustTransport is RustBackendTransport) {
         _log('initializing Rust core...');
-        final result = await rustTransport.start(
-          configPath: '${dir.path}/config/config.json',
-          poolPath: '${dir.path}/config/device_pool.json',
-          filterPath: '${dir.path}/config/filter.json',
-          runtimeDir: dir.path,
-          listenPort: await _configPort(dir),
-          lanShare: LanSharePreferences.instance.enabled.value,
-        );
+        final String result;
+        try {
+          result = await rustTransport
+              .start(
+                configPath: '${dir.path}/config/config.json',
+                poolPath: '${dir.path}/config/device_pool.json',
+                filterPath: '${dir.path}/config/filter.json',
+                runtimeDir: dir.path,
+                listenPort: await _configPort(dir),
+                lanShare: LanSharePreferences.instance.enabled.value,
+              )
+              .timeout(_startupRemaining(startupClock));
+        } on TimeoutException {
+          await _stopRunningBackend();
+          throw StateError(
+            'backend failed to start (core init timeout)\n'
+            'logs: ${_logLines.join('\n')}',
+          );
+        }
         _log('Rust core init returned: $result');
         if (result != 'running') {
           throw StateError('Rust core failed: $result');
@@ -226,7 +243,7 @@ class BackendService {
         _coreStarted = true;
       }
 
-      final ok = await _waitHealthy(startupTimeout);
+      final ok = await _waitHealthy(_startupRemaining(startupClock));
       if (!ok) {
         await _stopRunningBackend();
         throw StateError(
@@ -271,6 +288,12 @@ class BackendService {
   Future<void> restartForListenMode() async {
     await stop();
     await start();
+  }
+
+  /// Time left of [startupTimeout] for the remaining startup steps.
+  Duration _startupRemaining(Stopwatch clock) {
+    final remaining = startupTimeout - clock.elapsed;
+    return remaining > Duration.zero ? remaining : Duration.zero;
   }
 
   /// Polls `/health` until the backend responds or [timeout] elapses.

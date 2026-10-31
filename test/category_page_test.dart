@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -170,6 +172,96 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(requestedTab, 2);
+  });
+
+  testWidgets('a channel switch during an in-flight load is not dropped', (
+    tester,
+  ) async {
+    final pending = <int, Completer<CategoryFront>>{};
+    final requested = <int>[];
+    CategoryFront named(String tile) => CategoryFront.fromPayload({
+      'code': 0,
+      'data': {
+        'rule': {
+          'tab': [
+            {'name': '男生', 'value': '1'},
+            {'name': '女生', 'value': '2'},
+            {'name': '出版', 'value': '4'},
+          ],
+          'dim': [
+            {'name': '全部', 'value': '0'},
+          ],
+        },
+        'down_category': [
+          {'name': tile, 'dim': '0', 'id': '1'},
+        ],
+      },
+    });
+
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CategoryPage(
+          loader: ({int tab = 1}) {
+            requested.add(tab);
+            return (pending[tab] = Completer<CategoryFront>()).future;
+          },
+        ),
+      ),
+    );
+    pending[1]!.complete(named('tab1'));
+    await tester.pump();
+
+    // 上一个请求还挂着时连切两个频道：旧实现会静默丢掉第二次点击。
+    await tester.tap(find.byKey(const ValueKey('category_tab_2')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('category_tab_4')));
+    await tester.pump();
+    expect(requested, [1, 2, 4]);
+
+    // 新频道先回、旧频道后回：旧结果不能覆盖新频道的内容。
+    pending[4]!.complete(named('tab4'));
+    await tester.pump();
+    pending[2]!.complete(named('tab2'));
+    await tester.pump();
+
+    expect(find.text('tab4'), findsOneWidget);
+    expect(find.text('tab2'), findsNothing);
+  });
+
+  testWidgets('a failed load clears the spinner so retry refetches', (
+    tester,
+  ) async {
+    var attempts = 0;
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CategoryPage(
+          loader: ({int tab = 1}) async {
+            attempts++;
+            if (attempts == 1) throw StateError('offline');
+            return front();
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    // 失败后不能卡在 loading：旧实现里重试会被 `_loading` 直接吞掉。
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('加载失败，请稍后重试'), findsOneWidget);
+
+    await tester.tap(find.text('重试'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(attempts, 2);
+    expect(find.byKey(const ValueKey('category_tile_1_都市')), findsWidgets);
   });
 
   testWidgets('超过 30 个标签折叠，组头展开键切全量', (tester) async {
