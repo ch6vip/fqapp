@@ -93,6 +93,22 @@ class EpisodeSource {
   }
 }
 
+/// The rendition to try after [failed] could not start: the next lower one
+/// with a different stream, else the next higher one. Null when [failed] is
+/// not listed or no other stream exists.
+EpisodeVariant? fallbackVariant(List<EpisodeVariant> variants, String failed) {
+  final index = variants.indexWhere((variant) => variant.name == failed);
+  if (index < 0) return null;
+  final url = variants[index].url;
+  for (final variant in variants.skip(index + 1)) {
+    if (variant.url != url) return variant;
+  }
+  for (final variant in variants.take(index).toList().reversed) {
+    if (variant.url != url) return variant;
+  }
+  return null;
+}
+
 /// Lenient `vertical` decoding for the backend response.
 bool? _verticalOf(dynamic value) {
   if (value is bool) return value;

@@ -65,7 +65,8 @@ void main() {
         expect(find.byType(CircularProgressIndicator), findsNothing);
         expect(find.widgetWithText(OutlinedButton, '重试'), findsOneWidget);
         await tester.pump(const Duration(seconds: 30));
-        expect(session.requests, ['1']);
+        // 起播 + 两次静默重试都失败才出提示，之后不再自己重来。
+        expect(session.requests, ['1', '1', '1']);
         expect(session.players, isEmpty);
       },
     );
