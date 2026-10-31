@@ -153,7 +153,10 @@ void main() {
     tester,
   ) async {
     // 评分阈值从本地恢复为 9 分；书旗条目没有评分，不能被它过滤。
-    SharedPreferences.setMockInitialValues({'search_minimum_score': 9.0});
+    SharedPreferences.setMockInitialValues({
+      'search_minimum_score': 9.0,
+      'search_list_view': false,
+    });
     await tester.pumpWidget(
       MaterialApp(
         home: SearchPage(
