@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/chapter_media.dart';
@@ -138,7 +139,7 @@ void main() {
     final tile = find.byKey(const ValueKey('voice_option_96'));
     expect(tile, findsOneWidget);
     expect(
-      find.descendant(of: tile, matching: find.byIcon(Icons.check)),
+      find.descendant(of: tile, matching: find.byIcon(LucideIcons.check)),
       findsOneWidget,
     );
   });
@@ -158,9 +159,7 @@ void main() {
       ),
       directory: (bookId) async {
         opened.add(bookId);
-        return [
-          Chapter(itemId: 'ab-1', title: '001 第一章', volumeName: ''),
-        ];
+        return [Chapter(itemId: 'ab-1', title: '001 第一章', volumeName: '')];
       },
     );
     await _mount(tester, session);
@@ -282,7 +281,7 @@ void main() {
     final tile = find.byKey(const ValueKey('voice_option_96'));
     expect(tile, findsOneWidget);
     expect(
-      find.descendant(of: tile, matching: find.byIcon(Icons.check)),
+      find.descendant(of: tile, matching: find.byIcon(LucideIcons.check)),
       findsNothing,
     );
   });
