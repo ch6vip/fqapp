@@ -3,6 +3,95 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'home_design.dart';
 
+/// 紧凑版空 / 错态：图标砖 + 标题 + 说明 + 可选动作。
+///
+/// 与 [HomeFeedEmpty] / [HomeFeedError] 的整页大态区分：这个版本放在列表
+/// 末尾、卡片内或弹层里都合适，自身不撑满高度、不做滚动。
+class HomeStateView extends StatelessWidget {
+  const HomeStateView({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.message,
+    this.actionLabel,
+    this.onAction,
+    this.actionIcon,
+    this.padding = const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+  });
+
+  final IconData icon;
+  final String title;
+  final String? message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final IconData? actionIcon;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final actionLabel = this.actionLabel;
+    final actionIcon = this.actionIcon;
+    return Padding(
+      padding: padding,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: palette.soft,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, size: 22, color: palette.accentText),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 16,
+              height: 1.3,
+              fontWeight: FontWeight.w700,
+              color: palette.ink,
+            ),
+          ),
+          if (message != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              message!,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, height: 1.5, color: palette.muted),
+            ),
+          ],
+          if (actionLabel != null) ...[
+            const SizedBox(height: 14),
+            _action(palette, actionLabel, actionIcon),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _action(HomePalette palette, String label, IconData? icon) {
+    final style = TextButton.styleFrom(
+      foregroundColor: palette.accentText,
+      minimumSize: const Size(48, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+    );
+    if (icon == null) {
+      return TextButton(onPressed: onAction, style: style, child: Text(label));
+    }
+    return TextButton.icon(
+      onPressed: onAction,
+      style: style,
+      icon: Icon(icon, size: 16),
+      label: Text(label),
+    );
+  }
+}
+
 /// The two states a recommendation feed can be in when it has no cards to
 /// show. They were private to [HomePage] until the 短剧 destination needed the
 /// same two; the copy is a parameter because "换个分类" is advice the home
