@@ -253,11 +253,15 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   void _previewPreferences(ReaderPreferences preferences) {
+    _captureScrollProgress(updateTextOffset: true);
     _preferencesDirty = true;
     final fontChanged = preferences.fontPath != _preferences.fontPath;
     final intervalChanged =
         preferences.einkRefreshInterval != _preferences.einkRefreshInterval;
+    final joinChanged =
+        preferences.scrollChapterMode != _preferences.scrollChapterMode;
     _setState(() {
+      if (joinChanged) _chapterLayout = null;
       _preferences = preferences.normalized();
       if (_preferences.themePreset != ReaderThemePreset.dark) {
         _dayTheme = _preferences.themePreset;

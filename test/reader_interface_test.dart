@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/reader_device.dart';
@@ -17,7 +16,7 @@ import 'support/fakes.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
-    SharedPreferences.setMockInitialValues({
+    setSingleChapterPrefs({
       'reader_page_mode': 'scroll',
       'reader_info_mode': 'detailed',
     });
@@ -193,7 +192,7 @@ void main() {
   testWidgets(
     'night directory uses the reader palette instead of the app day theme',
     (tester) async {
-      SharedPreferences.setMockInitialValues({
+      setSingleChapterPrefs({
         'reader_theme_preset': 'dark',
         'reader_page_mode': 'scroll',
       });

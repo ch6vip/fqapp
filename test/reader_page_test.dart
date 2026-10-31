@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/chapter_ideas.dart';
 import 'package:fqapp/models/media_item.dart';
@@ -18,7 +17,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+    setSingleChapterPrefs({'reader_page_mode': 'scroll'});
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
@@ -349,7 +348,7 @@ void main() {
         // (the first is the content title block). It is compact by
         // default, so opt into detailed here to keep both assertions.
         // Keep the file setUp's scroll page mode as well.
-        SharedPreferences.setMockInitialValues({
+        setSingleChapterPrefs({
           'reader_page_mode': 'scroll',
           'reader_info_mode': 'detailed',
         });

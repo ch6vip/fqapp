@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
@@ -25,7 +24,7 @@ void main() {
   });
   tearDownAll(() => portrait.dispose());
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    setSingleChapterPrefs({});
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
@@ -548,7 +547,7 @@ void main() {
       tester,
     ) async {
       await _size(tester);
-      SharedPreferences.setMockInitialValues({'reader_page_mode': mode});
+      setSingleChapterPrefs({'reader_page_mode': mode});
       final cache = MemoryChapterCache();
       final onlyImage = ChapterContent(blocks: const [_image]);
       await _cache(cache, onlyImage.toCacheText());
@@ -587,7 +586,7 @@ void main() {
       'legacy cache gains pictures without losing the $mode text anchor',
       (tester) async {
         await _size(tester);
-        SharedPreferences.setMockInitialValues({'reader_page_mode': mode});
+        setSingleChapterPrefs({'reader_page_mode': mode});
         final content = _content();
         final cache = MemoryChapterCache();
         await _cache(cache, content.legacyText);

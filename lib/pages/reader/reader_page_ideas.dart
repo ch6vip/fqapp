@@ -41,22 +41,34 @@ extension _ReaderPageIdeas on _ReaderPageState {
   Widget _buildParagraphBubble(
     int paraIndex,
     int count,
-    ParagraphBubbleVariant variant,
-  ) => ReaderParagraphBubble(
+    ParagraphBubbleVariant variant, {
+    Chapter? sourceChapter,
+    ChapterIdeas? sourceIdeas,
+  }) => ReaderParagraphBubble(
     count: count,
     metrics: ReaderBubbleMetrics.forFontSize(
       MediaQuery.textScalerOf(context).scale(_preferences.fontSize),
       variant: variant,
     ),
     preset: _effectivePreset,
-    onTap: () => unawaited(_showIdeas(focusParaIndex: paraIndex)),
+    onTap: () => unawaited(
+      _showIdeas(
+        focusParaIndex: paraIndex,
+        sourceChapter: sourceChapter,
+        sourceIdeas: sourceIdeas,
+      ),
+    ),
   );
 
-  Future<void> _showIdeas({int? focusParaIndex}) async {
-    if (_ideas.isEmpty) return;
+  Future<void> _showIdeas({
+    int? focusParaIndex,
+    Chapter? sourceChapter,
+    ChapterIdeas? sourceIdeas,
+  }) async {
+    final ideaSnapshot = sourceIdeas ?? _ideas;
+    if (ideaSnapshot.isEmpty) return;
     _setState(() => _controlsVisible = false);
-    final ideaSnapshot = _ideas;
-    final chapter = widget.chapters[_index];
+    final chapter = sourceChapter ?? widget.chapters[_index];
     // Keep immersive on while the sheet is open (#57): the sheet pushes a
     // route, which would otherwise release the system bars. The flag is
     // read by [_syncSystemBars] when the route change lands.
