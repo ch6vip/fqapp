@@ -105,41 +105,44 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
       title: '目录 · ${widget.chapters.length} 章',
       closeTooltip: '关闭',
       scrollKey: const ValueKey('reader-directory-scroll'),
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
-          child: Row(
-            children: [
-              Expanded(child: _searchField(preset)),
-              IconButton(
-                tooltip: _reversed ? '切换为正序' : '切换为倒序',
-                onPressed: _toggleOrder,
-                color: preset.textColor,
-                icon: Icon(
-                  _reversed ? LucideIcons.arrow_up : LucideIcons.arrow_down,
-                ),
-              ),
-            ],
-          ),
-        ),
-        SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.55,
-          child: indexes.isEmpty
-              ? Center(
-                  child: Text(
-                    '没有匹配的章节',
-                    style: TextStyle(color: preset.mutedTextColor),
+      // 目录是长列表，用有界 body 让列表自己滚动：软键盘弹起时列表底边
+      // 停在键盘上沿，而不是把整块内容继续往下铺到键盘下面。
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+            child: Row(
+              children: [
+                Expanded(child: _searchField(preset)),
+                IconButton(
+                  tooltip: _reversed ? '切换为正序' : '切换为倒序',
+                  onPressed: _toggleOrder,
+                  color: preset.textColor,
+                  icon: Icon(
+                    _reversed ? LucideIcons.arrow_up : LucideIcons.arrow_down,
                   ),
-                )
-              : ListView.builder(
-                  controller: _scrollController,
-                  itemExtent: _itemExtent,
-                  itemCount: indexes.length,
-                  itemBuilder: (context, position) =>
-                      _row(context, indexes[position], preset),
                 ),
-        ),
-      ],
+              ],
+            ),
+          ),
+          Expanded(
+            child: indexes.isEmpty
+                ? Center(
+                    child: Text(
+                      '没有匹配的章节',
+                      style: TextStyle(color: preset.mutedTextColor),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    itemExtent: _itemExtent,
+                    itemCount: indexes.length,
+                    itemBuilder: (context, position) =>
+                        _row(context, indexes[position], preset),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 

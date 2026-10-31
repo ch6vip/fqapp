@@ -30,6 +30,9 @@ class ReaderSettingsTheme extends InheritedWidget {
 ///
 /// 内容默认按一屏排布；小屏 / 大字号下退化为滚动，绝不裁切。
 /// [maxHeightFactor] 是面板最多占屏高的比例。
+///
+/// 目录这类自带长列表的面板传 [body]：内容放进有界高度里自行滚动，
+/// 列表底边就停在键盘上沿；其余面板继续用 [children] 走滚动视图。
 class ReaderSettingsSheetFrame extends StatelessWidget {
   const ReaderSettingsSheetFrame({
     super.key,
@@ -37,7 +40,8 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
     required this.title,
     required this.closeTooltip,
     required this.scrollKey,
-    required this.children,
+    this.children = const [],
+    this.body,
     this.maxHeightFactor = 0.82,
   });
 
@@ -47,6 +51,9 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
   final Key scrollKey;
   final double maxHeightFactor;
   final List<Widget> children;
+
+  /// 有界正文：替代 [children] 的滚动视图，由内容自己管理滚动。
+  final Widget? body;
 
   @override
   Widget build(BuildContext context) {
@@ -87,14 +94,19 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
                 children: [
                   _header(context, preset),
                   Flexible(
-                    child: SingleChildScrollView(
-                      key: scrollKey,
-                      padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: children,
-                      ),
-                    ),
+                    child: body != null
+                        ? Padding(
+                            padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+                            child: body,
+                          )
+                        : SingleChildScrollView(
+                            key: scrollKey,
+                            padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: children,
+                            ),
+                          ),
                   ),
                 ],
               ),
