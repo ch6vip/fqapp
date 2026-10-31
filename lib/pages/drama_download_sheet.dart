@@ -9,6 +9,7 @@ import '../widgets/drama_group_picker.dart';
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
 import '../services/connectivity_status.dart';
+import '../widgets/home/home_chip.dart';
 import '../widgets/home/home_design.dart';
 import 'cached_dramas_page.dart';
 
@@ -404,10 +405,11 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
           for (final count in counts)
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: ActionChip(
+              child: HomeChip(
                 key: ValueKey('download-ahead-$count'),
-                label: Text(count == remaining ? '剩余 $count 集' : '往后 $count 集'),
-                onPressed: () => unawaited(_cacheAhead(count)),
+                label: count == remaining ? '剩余 $count 集' : '往后 $count 集',
+                selected: false,
+                onTap: () => unawaited(_cacheAhead(count)),
               ),
             ),
         ],
@@ -473,11 +475,11 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
           for (final option in options)
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
+              child: HomeChip(
                 key: ValueKey('download-quality-${option.height}'),
-                label: Text(option.label),
+                label: option.label,
                 selected: effective == option.height,
-                onSelected: (_) async {
+                onTap: () async {
                   await prefs.setDownloadHeight(option.height);
                   if (mounted) setState(() {});
                 },
@@ -520,11 +522,11 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
             for (final count in const [3, 5, 10])
               Padding(
                 padding: const EdgeInsets.only(left: 4),
-                child: ChoiceChip(
+                child: HomeChip(
                   key: ValueKey('download-auto-ahead-$count'),
-                  label: Text('$count'),
+                  label: '$count',
                   selected: prefs.ahead.value == count,
-                  onSelected: (_) async {
+                  onTap: () async {
                     await prefs.setAhead(count);
                     if (mounted) setState(() {});
                   },

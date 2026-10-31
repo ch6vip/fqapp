@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/playlet_comment.dart';
@@ -337,5 +338,41 @@ void main() {
       findsNothing,
     );
     expect(find.text('抽象三国第一季'), findsOneWidget);
+  });
+
+  testWidgets('版式稿图标统一走 Lucide：返回/播放/收藏/倒序', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    // 倒序开关只在多段目录（>50 集）出现。
+    await pumpSeriesDetail(
+      tester,
+      detail: seriesDetailFixture(episodeCount: 80),
+      episodes: [for (var i = 0; i < 80; i++) chapterAt(i)],
+    );
+
+    Icon iconIn(Key key) => tester.widget<Icon>(
+      find.descendant(of: find.byKey(key), matching: find.byType(Icon)),
+    );
+    expect(
+      iconIn(const ValueKey('series-detail-back')).icon,
+      LucideIcons.chevron_left,
+    );
+    expect(
+      iconIn(const ValueKey('series-detail-play-button')).icon,
+      LucideIcons.play,
+    );
+    expect(
+      iconIn(const ValueKey('series-detail-fav-button')).icon,
+      LucideIcons.star,
+    );
+
+    await scrollToWidget(
+      tester,
+      find.byKey(const ValueKey('series-episode-reverse')),
+    );
+    expect(
+      iconIn(const ValueKey('series-episode-reverse')).icon,
+      LucideIcons.arrow_up_down,
+    );
   });
 }

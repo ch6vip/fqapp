@@ -9,8 +9,11 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/poster_cache.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/home/home_back_button.dart';
 import '../widgets/home/home_design.dart';
-import '../widgets/media_card.dart';
+import '../widgets/home/home_feed_states.dart';
+import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_shelf.dart';
 import 'detail_page.dart';
 
 /// Loads an author profile. Injectable so the page can be tested offline.
@@ -78,19 +81,16 @@ class _AuthorPageState extends State<AuthorPage> {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final title = _profile.name.isNotEmpty
-        ? _profile.name
-        : widget.fallbackName.isNotEmpty
-        ? widget.fallbackName
-        : '作者';
     return Scaffold(
       backgroundColor: palette.canvas,
       appBar: AppBar(
         backgroundColor: palette.canvas,
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
+        leading: const HomeBackButton(),
+        // 作者名只在头部出现一次（原先 AppBar 与头部重复）。
         title: Text(
-          title,
+          '作者',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -154,39 +154,59 @@ class _AuthorPageState extends State<AuthorPage> {
         ],
       );
     }
-    return CustomScrollView(
-      key: const Key('author_scroll'),
-      physics: const AlwaysScrollableScrollPhysics(),
-      slivers: [
-        SliverToBoxAdapter(child: _header(palette)),
-        if (_profile.works.isEmpty)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 40, 16, 40),
-              child: Center(
-                child: Text(
-                  '暂无可展示的作品',
-                  style: TextStyle(color: palette.muted, fontSize: 13),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 网格与首页同一套：16dp 栏距、12dp 列距、HomeMediaCard。
+        final width = constraints.maxWidth - homeGutter * 2;
+        final cardWidth = homeShelfCardWidth(context, width);
+        return CustomScrollView(
+          key: const Key('author_scroll'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _header(palette)),
+            if (_profile.works.isEmpty)
+              SliverToBoxAdapter(
+                child: HomeStateView(
+                  key: const Key('author_empty'),
+                  icon: LucideIcons.inbox,
+                  title: '暂无可展示的作品',
+                ),
+              )
+            else ...[
+              SliverToBoxAdapter(
+                child: HomeSectionHeader(
+                  title: '全部作品',
+                  action: Text(
+                    '${_profile.works.length}',
+                    style: TextStyle(color: palette.muted, fontSize: 12),
+                  ),
                 ),
               ),
-            ),
-          )
-        else
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
-            sliver: SliverGrid(
-              gridDelegate: mediaGridDelegateFor(context),
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final work = _profile.works[index];
-                return MediaCard(
-                  key: ValueKey('author_work_${work.id}'),
-                  item: _asItem(work),
-                  onTap: () => _openWork(work),
-                );
-              }, childCount: _profile.works.length),
-            ),
-          ),
-      ],
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  homeGutter,
+                  0,
+                  homeGutter,
+                  28,
+                ),
+                sliver: SliverGrid(
+                  gridDelegate: homeShelfDelegate(context, width),
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final work = _profile.works[index];
+                    return HomeMediaCard(
+                      key: ValueKey('author_work_${work.id}'),
+                      item: _asItem(work),
+                      coverWidth: cardWidth,
+                      showLength: true,
+                      onTap: () => _openWork(work),
+                    );
+                  }, childCount: _profile.works.length),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -199,7 +219,7 @@ class _AuthorPageState extends State<AuthorPage> {
         '${profile.works.length} 部作品',
     ];
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+      padding: const EdgeInsets.fromLTRB(homeGutter, 4, homeGutter, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -284,27 +304,6 @@ class _AuthorPageState extends State<AuthorPage> {
               style: TextStyle(color: palette.ink, fontSize: 13.5, height: 1.7),
             ),
           ],
-          if (profile.works.isNotEmpty) ...[
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Text(
-                  '全部作品',
-                  style: TextStyle(
-                    color: palette.ink,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '${profile.works.length}',
-                  style: TextStyle(color: palette.muted, fontSize: 12),
-                ),
-              ],
-            ),
-          ],
         ],
       ),
     );
@@ -320,6 +319,11 @@ class _AuthorPageState extends State<AuthorPage> {
     badge: work.category,
     ep: '',
     kind: 'book',
+    // 卡片副标题的长度与详情页的分类都靠这两项；作者页的作品条目本身
+    // 就带着 word_number / category，之前漏掉了。
+    wordNumber: work.wordNumber,
+    categories: work.category.isEmpty ? const [] : [work.category],
+    intro: work.abstract,
   );
 
   void _openWork(AuthorWork work) {
@@ -336,14 +340,14 @@ class _LevelChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final color = palette.dark
-        ? const Color(0xFFE9A23B)
-        : const Color(0xFFD98324);
+    final color = palette.eink ? palette.ink : palette.accentText;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
+        // 墨水屏退化为白底 + 黑描边，浅/深色仍是品牌强调色的淡底。
+        color: palette.eink ? Colors.white : color.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(4),
+        border: palette.eink ? Border.all(color: palette.line) : null,
       ),
       child: Text(
         text,

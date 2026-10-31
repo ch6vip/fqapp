@@ -489,7 +489,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('rank_retry')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('rank_retry')));
+      // 共享空/错态把动作放在 HomeStateView 里，键落在整个状态视图上；
+      // 点按钮文字触发重试。
+      await tester.tap(find.text('重试'));
       await tester.pumpAndSettle();
       expect(attempts, 2);
       expect(find.byKey(const Key('rank_list')), findsOneWidget);
@@ -515,7 +517,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('rank_retry')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('rank_retry')));
+      await tester.tap(find.text('重试'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('rank_list')), findsOneWidget);
     });
