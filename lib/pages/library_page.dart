@@ -641,6 +641,9 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
           '已移出 ${selected.length} ${fromCollection ? '部' : '本'}，阅读记录会保留',
         ),
         duration: const Duration(seconds: 4),
+        // 带 action 的 SnackBar 默认 persist，duration 不生效，撤销条会挂在根
+        // messenger 上跨页常驻（#211）；读屏时仍保留，好让用户够得到撤销。
+        persist: MediaQuery.accessibleNavigationOf(context),
         action: SnackBarAction(
           key: const Key('shelf-undo-button'),
           label: '撤销',
