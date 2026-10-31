@@ -175,6 +175,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   int? _renditionHeight;
   int? _prefetchAttemptedGeneration;
 
+  /// 还没出画面的这一集失败后，还能静默重来几次（见 [_retrySilently]）。
+  int _silentRetriesLeft = 0;
+
+  /// 静默重试只在这之前发起：网络整个卡死时，加载封面不能一直挂着，
+  /// 到点就把错误和「重试」交给用户。
+  DateTime _silentRetryUntil = DateTime.now();
+  static const _silentRetryWindow = Duration(seconds: 20);
+  bool _lastAutoplay = true;
+
+  /// 当前集快播完时在后台建好的下一集播放器（见 [_updateWarmNext]）。
+  _WarmEpisode? _warm;
+
   /// 「左右滑动可调整进度」首次引导（每台设备一次，`of3/a`）。
   bool _seekHintVisible = false;
   Timer? _seekHintTimer;
@@ -485,6 +497,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _pendingAutoplay = null;
     _prefetchTimer?.cancel();
     _progressTimer?.cancel();
+    _dropWarm();
     _watchTime.stop();
     _loadTrace?.finish('relatedSeries');
     try {
@@ -794,6 +807,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _progressTimer?.cancel();
     _prefetchTimer?.cancel();
     _autoCacheTimer?.cancel();
+    _dropWarm();
     _danmakuProgressTimer?.cancel();
     _danmakuFlight?.cancel();
     _danmakuLoader.dispose();
@@ -821,6 +835,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (_floating) unawaited(_stopFloating());
     } else {
       unawaited(_persistProgress());
+      // 真正退到后台（不是悬浮窗）就不再占着第二个解码器。
+      if (!_floating) _dropWarm();
       if (state == AppLifecycleState.inactive) {
         // 悬浮窗在仍属前台的过渡态启动服务（后台启动前台服务会被系统拒绝），
         // 等 hidden 确认切后台后再显示悬浮窗；只是下拉通知栏时 resumed 会
@@ -1210,7 +1226,83 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
     }
     _updatePrefetch();
+    _updateWarmNext();
     _scheduleAutoCache(player);
+  }
+
+  /// 剩这么多时开始预热下一集：够把地址、媒体头和开头几秒缓冲好，
+  /// 又不会早到让签名地址在预热的播放器里过期。
+  static const _warmLead = Duration(seconds: 30);
+
+  /// 当前集快播完时，在后台把下一集的播放器建好：取地址、打开媒体、
+  /// 暂停着缓冲，不上屏。自然播完或点「下一集」时 [_loadVideo] 直接接管
+  /// 它，省掉取地址和 create 两段等待。只预热紧挨着的一集，最多一个。
+  void _updateWarmNext() {
+    final player = _player;
+    if (player == null || !_canPrefetch(_loadGeneration, player)) return;
+    final next = widget.eps[_index + 1];
+    if (_warm?.itemId == next.itemId) return;
+    final total = player.duration;
+    if (total <= Duration.zero || total - player.position > _warmLead) return;
+    _dropWarm();
+    final warm = _warm = _WarmEpisode(
+      next.itemId,
+      widget.playerFactory?.call() ?? NativePlayer(),
+    );
+    // 不在播放器自己的事件回调里销毁它。
+    warm.errors = warm.player.errorStream.listen(
+      (_) => scheduleMicrotask(() => _discardWarm(warm)),
+    );
+    warm.ready = () async {
+      try {
+        final (source, height) = await _episodeSource(next);
+        if (warm.dropped) return false;
+        warm.source = source;
+        warm.renditionHeight = height;
+        await warm.player.create(source.url, source.keyHex);
+        return !warm.dropped && warm.player.lastError == null;
+      } catch (_) {
+        return false;
+      }
+    }();
+    unawaited(
+      warm.ready.then((ok) {
+        if (!ok) _discardWarm(warm);
+      }),
+    );
+  }
+
+  /// 预热失败是静默的：丢掉播放器和它用过的地址，切到这一集时按常规
+  /// 链路重新取流（失败了还有 [_retrySilently] 兜底）。
+  void _discardWarm(_WarmEpisode warm) {
+    if (!identical(_warm, warm)) return;
+    _sources.invalidate(warm.itemId);
+    _dropWarm();
+  }
+
+  void _dropWarm() {
+    final warm = _warm;
+    if (warm == null) return;
+    _warm = null;
+    warm.dropped = true;
+    unawaited(warm.errors?.cancel());
+    // 和换集释放的播放器排在同一条队列里：新会话总在旧解码器释放后才建。
+    _releases = Future.wait([
+      _releases,
+      warm.player.dispose(),
+    ]).then<void>((_) {}).catchError((Object _) {});
+  }
+
+  /// 把 [itemId] 的预热播放器交给 [_loadVideo]；其他集的预热一律作废。
+  _WarmEpisode? _takeWarm(String itemId) {
+    final warm = _warm;
+    if (warm == null || warm.itemId != itemId) {
+      _dropWarm();
+      return null;
+    }
+    _warm = null;
+    unawaited(warm.errors?.cancel());
+    return warm;
   }
 
   Future<void> _teardownPlayer() {
@@ -1247,16 +1339,30 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     return _releases;
   }
 
-  Future<void> _loadVideo({bool refresh = false, bool autoplay = true}) async {
+  /// [silent] 是 [_retrySilently] 发起的重试：不重置重试次数，
+  /// [avoidVariant] 是刚失败的那一档清晰度。
+  Future<void> _loadVideo({
+    bool refresh = false,
+    bool autoplay = true,
+    bool silent = false,
+    String? avoidVariant,
+  }) async {
     if (!mounted || _switchingSeries || widget.eps.isEmpty) return;
     _loadTrace?.finish('superseded');
     final generation = ++_loadGeneration;
     final index = _index;
     final episode = widget.eps[index];
+    if (!silent) {
+      _silentRetriesLeft = 2;
+      _silentRetryUntil = DateTime.now().add(_silentRetryWindow);
+    }
+    _lastAutoplay = autoplay;
     final trace = _loadTrace = _diagnostics.begin(
       attempt: generation,
       episode: index + 1,
-      trigger: refresh
+      trigger: silent
+          ? 'autoRetry'
+          : refresh
           ? 'retry'
           : generation == 1
           ? 'initial'
@@ -1273,6 +1379,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _watchTime.stop();
     unawaited(_persistProgress());
     final release = _teardownPlayer();
+    // 重试一律重新取流：预热的播放器可能就是用旧地址建的。
+    final warm = refresh ? null : _takeWarm(episode.itemId);
+    if (refresh) _dropWarm();
     _watchTime.reset();
     setState(() {
       _initVideo = true;
@@ -1282,37 +1391,38 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     });
 
     NativePlayer? candidate;
+    NativePlayer? adopted;
     try {
-      // 离线优先（官方 isOfflineVideo 语义）：已缓存的集直接读本地加密
-      // 文件，不请求取流接口；文件被用户清掉时静默回退在线链路。
-      final offline = await _offlineSource(episode);
+      EpisodeSource? warmSource;
+      if (warm != null) {
+        trace.source = 'warm';
+        // 通常早已就绪；还在建的话，等它比从头再建一遍快。
+        final ok = await warm.ready;
+        if (ok && warm.player.lastError == null && _current(generation)) {
+          adopted = warm.player;
+          warmSource = warm.source;
+        } else {
+          unawaited(warm.player.dispose());
+          if (!_current(generation)) return;
+        }
+      }
       final EpisodeSource source;
       int? renditionHeight;
-      if (offline != null) {
-        trace.source = 'offline';
-        source = offline;
+      if (warmSource != null) {
+        source = warmSource;
+        renditionHeight = warm!.renditionHeight;
       } else {
-        final request = _sources.request(episode, refresh: refresh);
-        trace.source = request.origin.name;
-        var online = await request.future;
-        // 会话内记住的画质选择（官方=引擎当前档）：按画质名在本集自己
-        // 的 variants 里找，找到就用，找不到回默认（#60：换下一集不
-        // 应变回默认画质）。记忆由 [QualityMemory] 在 Feed 与播放页
-        // 之间共享；只记名、不搬 variant 对象——variant 的 URL 属于
-        // 它自己的集，搬过来会播错集的流。
-        final chosenName = QualityMemory.nameFor(widget.bookId);
-        if (chosenName != null) {
-          for (final variant in online.variants) {
-            if (variant.name == chosenName) {
-              online = online.withVariant(variant);
-              renditionHeight = variant.height > 0 ? variant.height : null;
-              break;
-            }
-          }
-        }
-        source = online;
+        (source, renditionHeight) = await _episodeSource(
+          episode,
+          refresh: refresh,
+          avoidVariant: avoidVariant,
+          trace: trace,
+        );
       }
-      if (!_current(generation)) return;
+      if (!_current(generation)) {
+        await adopted?.dispose();
+        return;
+      }
       _currentSource = source;
       // 取流响应携带的分集方向：目录里没有时由它补上「全屏观看」的判据。
       if (source.vertical case final bool vertical) {
@@ -1330,7 +1440,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
       trace.stage('releaseWait');
       await release;
-      if (!_current(generation)) return;
+      if (!_current(generation)) {
+        await adopted?.dispose();
+        return;
+      }
       trace.stage('history');
       Map<String, dynamic>? saved;
       try {
@@ -1339,7 +1452,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         // Local storage is optional for starting a video.
       }
       trace.stage('pagingBeforeCreate');
-      if (!await _waitForPaging(generation)) return;
+      if (!await _waitForPaging(generation)) {
+        await adopted?.dispose();
+        return;
+      }
       if (saved?['kind'] == 'manju') _historyKind = 'manju';
       // 起播位置要在 create 之前算：原生把它当初始播放位置，在 prepare() 之前
       // 应用，避免「先按 0 开流、再 seek 到存档进度」多出来的一次开流往返。
@@ -1368,9 +1484,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           ? requestedMs.round()
           : null;
       trace.stage('create');
-      final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
+      final player = candidate =
+          adopted ?? widget.playerFactory?.call() ?? NativePlayer();
       _player = player;
-      await player.create(source.url, source.keyHex, startMs: startMs);
+      if (adopted == null) {
+        await player.create(source.url, source.keyHex, startMs: startMs);
+      } else if (startMs != null) {
+        // 预热时还不知道续播点，按 0 建的；有续播点就在起播前跳过去。
+        await player.seek(Duration(milliseconds: startMs));
+      }
       if (!_current(generation, player)) {
         await player.dispose();
         return;
@@ -1435,6 +1557,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         // A paused episode must not keep re-stamping its history record.
         // 5s 心跳与听书页一致：暂停/切集/退出都另有即时保存，只在这里兜底。
         if (_playing) unawaited(_persistProgress());
+        _updateWarmNext();
       });
     } catch (error) {
       if (_current(generation)) {
@@ -1455,6 +1578,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     };
     _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
     _sources.invalidate(widget.eps[_index].itemId);
+    if (_retrySilently()) return;
     _prefetchTimer?.cancel();
     _prefetchTimer = null;
     ++_loadGeneration;
@@ -1471,6 +1595,84 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _initVideo = false;
       _playing = false;
     });
+  }
+
+  /// 还没出过画面的这一集失败时先静默重来，加载封面不撤：第一次换新地址，
+  /// 第二次再换一档清晰度。CDN 偶发卡住、某一档流坏掉时，用户只是多等
+  /// 一会儿，看不到「播放失败」。已经在播的集中途出错不在这里重来：那时
+  /// 续播点还在异步落盘，重建会从旧进度开始。返回 true 表示已接手。
+  bool _retrySilently() {
+    if (_silentRetriesLeft <= 0 ||
+        DateTime.now().isAfter(_silentRetryUntil) ||
+        _hasDisplayed ||
+        _switchingSeries ||
+        !mounted) {
+      return false;
+    }
+    final second = _silentRetriesLeft == 1;
+    _silentRetriesLeft--;
+    unawaited(
+      _loadVideo(
+        refresh: true,
+        autoplay: _lastAutoplay,
+        silent: true,
+        avoidVariant: second ? _currentVariantName() : null,
+      ),
+    );
+    return true;
+  }
+
+  /// 当前地址对应的清晰度名；播的是上游默认流且不在档位表里时为 null。
+  String? _currentVariantName() {
+    final source = _currentSource;
+    if (source == null) return null;
+    for (final variant in source.variants) {
+      if (variant.url == source.url) return variant.name;
+    }
+    return null;
+  }
+
+  /// 本集要播的地址：离线优先（官方 isOfflineVideo 语义），已缓存的集直接
+  /// 读本地加密文件，文件被清掉时回退在线。在线时套用会话内记住的画质；
+  /// [avoidVariant] 是刚失败的一档，换到相邻一档。返回地址与选中档位的高度。
+  Future<(EpisodeSource, int?)> _episodeSource(
+    Chapter episode, {
+    bool refresh = false,
+    String? avoidVariant,
+    PlayerLoadTrace? trace,
+  }) async {
+    final offline = await _offlineSource(episode);
+    if (offline != null) {
+      trace?.source = 'offline';
+      return (offline, null);
+    }
+    final request = _sources.request(episode, refresh: refresh);
+    trace?.source = request.origin.name;
+    var online = await request.future;
+    int? height;
+    // 会话内记住的画质选择（官方=引擎当前档）：按画质名在本集自己
+    // 的 variants 里找，找到就用，找不到回默认（#60：换下一集不
+    // 应变回默认画质）。记忆由 [QualityMemory] 在 Feed 与播放页
+    // 之间共享；只记名、不搬 variant 对象——variant 的 URL 属于
+    // 它自己的集，搬过来会播错集的流。
+    final chosenName = QualityMemory.nameFor(widget.bookId);
+    if (chosenName != null) {
+      for (final variant in online.variants) {
+        if (variant.name == chosenName) {
+          online = online.withVariant(variant);
+          height = variant.height > 0 ? variant.height : null;
+          break;
+        }
+      }
+    }
+    // 换档只为这一次起播，不写进 [QualityMemory]。
+    if (avoidVariant != null) {
+      if (fallbackVariant(online.variants, avoidVariant) case final variant?) {
+        online = online.withVariant(variant);
+        height = variant.height > 0 ? variant.height : null;
+      }
+    }
+    return (online, height);
   }
 
   /// The source the current player was created from (includes the rendition
@@ -1507,6 +1709,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final wasPlaying = _playing;
     final episode = widget.eps[_index];
     QualityMemory.remember(widget.bookId, variant.name);
+    // 预热的下一集还是旧档位：作废，快播完时按新档位重新预热。
+    _dropWarm();
     _currentSource = source.withVariant(variant);
     _renditionHeight = variant.height > 0 ? variant.height : null;
     final release = _teardownPlayer();
@@ -1969,4 +2173,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ],
     );
   }
+}
+
+class _WarmEpisode {
+  _WarmEpisode(this.itemId, this.player);
+
+  final String itemId;
+  final NativePlayer player;
+  EpisodeSource? source;
+  int? renditionHeight;
+
+  /// create 走完：true = 可以接管。
+  late final Future<bool> ready;
+  StreamSubscription<Object>? errors;
+
+  /// 已作废（换集、换档、离开页面），还在路上的预热步骤不再继续。
+  bool dropped = false;
 }

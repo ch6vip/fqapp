@@ -43,58 +43,203 @@ unsafe extern "C" {
     fn sp_stream_close(stream: *mut c_void);
 }
 
+/// Why a CDN range request failed. Dart maps these onto the Media3 error codes
+/// the Android player already reports, so both platforms share one message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FetchError {
+    Connect,
+    Timeout,
+    Status(u16),
+    /// Malformed or short range response.
+    Protocol,
+    Cancelled,
+}
+impl FetchError {
+    fn from_reqwest(error: &reqwest::Error) -> Self {
+        if error.is_timeout() {
+            Self::Timeout
+        } else if error.is_connect() {
+            Self::Connect
+        } else {
+            // Resets and other transport failures mid-request.
+            Self::Connect
+        }
+    }
+    /// One stalled CDN node or an expired keep-alive connection must not fail
+    /// the whole episode; 4xx answers (expired or forbidden URLs) are final.
+    fn retryable(self) -> bool {
+        match self {
+            Self::Connect | Self::Timeout | Self::Protocol => true,
+            Self::Status(code) => code == 408 || code == 429 || code >= 500,
+            Self::Cancelled => false,
+        }
+    }
+}
+
+/// Media failure reported to Dart: a fixed user-facing message plus the
+/// category it came from. Never contains the URL or key.
+#[derive(Debug)]
+struct OpenError {
+    message: &'static str,
+    kind: &'static str,
+    status: Option<u16>,
+}
+impl OpenError {
+    fn new(message: &'static str, kind: &'static str) -> Self {
+        Self {
+            message,
+            kind,
+            status: None,
+        }
+    }
+    fn fetch(error: FetchError) -> Self {
+        match error {
+            FetchError::Connect => Self::new("媒体连接失败", "connect"),
+            FetchError::Timeout | FetchError::Cancelled => Self::new("媒体连接超时", "timeout"),
+            FetchError::Status(status) => Self {
+                message: "媒体服务器拒绝请求",
+                kind: "http",
+                status: Some(status),
+            },
+            FetchError::Protocol => Self::new("媒体服务器不支持分段读取", "range"),
+        }
+    }
+}
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
+const CHUNK_TIMEOUT: Duration = Duration::from_secs(12);
+const ATTEMPTS: usize = 3;
+const BACKOFF: [Duration; 2] = [Duration::from_millis(300), Duration::from_millis(800)];
+
+/// One pool for every session: switching episodes reuses the CDN connection
+/// (and its TLS session) of the previous episode instead of a new handshake.
+fn shared_client() -> Result<&'static Client, OpenError> {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .pool_idle_timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|_| OpenError::new("无法初始化媒体连接", "other"))?;
+    let _ = CLIENT.set(client);
+    Ok(CLIENT.get().expect("client initialized"))
+}
+
+/// Fetches `bytes=start-end` and checks the answer describes exactly that span.
+/// Returns the body and the total length from `Content-Range`.
+fn fetch_range(
+    client: &Client,
+    url: &str,
+    start: u64,
+    end: u64,
+    timeout: Duration,
+) -> Result<(Vec<u8>, u64), FetchError> {
+    let response = client
+        .get(url)
+        .header(header::RANGE, format!("bytes={start}-{end}"))
+        .header(header::ACCEPT_ENCODING, "identity")
+        .timeout(timeout)
+        .send()
+        .map_err(|e| FetchError::from_reqwest(&e))?;
+    let status = response.status().as_u16();
+    if status != 206 {
+        return Err(FetchError::Status(status));
+    }
+    let (actual_start, actual_end, total) = response
+        .headers()
+        .get(header::CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(content_range)
+        .ok_or(FetchError::Protocol)?;
+    let wanted_end = end.min(total.saturating_sub(1));
+    if actual_start != start
+        || actual_end != wanted_end
+        || response
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .is_some_and(|v| v != "identity")
+    {
+        return Err(FetchError::Protocol);
+    }
+    let expected = actual_end - actual_start + 1;
+    let mut data = Vec::new();
+    response
+        .take(expected + 1)
+        .read_to_end(&mut data)
+        .map_err(|_| FetchError::Timeout)?;
+    if data.len() as u64 != expected {
+        return Err(FetchError::Protocol);
+    }
+    Ok((data, total))
+}
+
+/// Runs `attempt` until it succeeds, fails for good, or the session closes.
+fn with_retries<T>(
+    cancelled: &AtomicBool,
+    mut attempt: impl FnMut() -> Result<T, FetchError>,
+) -> Result<T, FetchError> {
+    let mut last = FetchError::Cancelled;
+    for round in 0..ATTEMPTS {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(FetchError::Cancelled);
+        }
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(error) if error.retryable() => last = error,
+            Err(error) => return Err(error),
+        }
+        if let Some(delay) = BACKOFF.get(round) {
+            thread::sleep(*delay);
+        }
+    }
+    Err(last)
+}
+
 struct Source {
     file: Option<File>,
-    client: Client,
+    client: Option<&'static Client>,
     url: String,
     size: u64,
     cache_start: u64,
     cache: Vec<u8>,
+    /// Set when the session closes, so a stalled read stops retrying.
+    cancelled: Arc<AtomicBool>,
+    /// The last network failure, kept for classifying a failed decrypt open.
+    last_error: Arc<Mutex<Option<FetchError>>>,
 }
 impl Source {
-    fn open(url: String) -> Result<Self, String> {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_secs(15))
-            .build()
-            .map_err(|_| "无法初始化媒体连接")?;
+    fn open(url: String) -> Result<Self, OpenError> {
         let file = if url.starts_with("file:") {
             let path = url::Url::parse(&url)
-                .map_err(|_| "离线文件地址无效")?
+                .map_err(|_| OpenError::new("离线文件地址无效", "file"))?
                 .to_file_path()
-                .map_err(|_| "离线文件地址无效")?;
-            Some(File::open(path).map_err(|_| "离线文件不存在或无法读取")?)
+                .map_err(|_| OpenError::new("离线文件地址无效", "file"))?;
+            Some(File::open(path).map_err(|_| OpenError::new("离线文件不存在或无法读取", "file"))?)
         } else if !url.starts_with("https://") && !url.starts_with("http://") {
-            Some(File::open(&url).map_err(|_| "离线文件不存在或无法读取")?)
+            Some(File::open(&url).map_err(|_| OpenError::new("离线文件不存在或无法读取", "file"))?)
         } else {
             None
         };
-        let size = if let Some(file) = &file {
-            file.metadata().map_err(|_| "无法读取文件长度")?.len()
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (client, size) = if let Some(file) = &file {
+            let size = file
+                .metadata()
+                .map_err(|_| OpenError::new("无法读取文件长度", "file"))?
+                .len();
+            (None, size)
         } else {
-            let response = client
-                .get(&url)
-                .header(header::RANGE, "bytes=0-0")
-                .header(header::ACCEPT_ENCODING, "identity")
-                .send()
-                .map_err(|_| "媒体连接失败或超时")?;
-            if response.status() != 206 {
-                return Err("媒体服务器不支持分段读取".into());
-            }
-            let range = response
-                .headers()
-                .get(header::CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-                .ok_or("媒体长度未知")?;
-            let (start, end, total) = content_range(range).ok_or("媒体范围响应无效")?;
-            if start != 0 || end != 0 {
-                return Err("媒体范围响应无效".into());
-            }
-            total
+            let client = shared_client()?;
+            let (_, total) = with_retries(&cancelled, || {
+                fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+            })
+            .map_err(OpenError::fetch)?;
+            (Some(client), total)
         };
         if size == 0 || size > i64::MAX as u64 {
-            return Err("媒体文件长度无效".into());
+            return Err(OpenError::new("媒体文件长度无效", "range"));
         }
         Ok(Self {
             file,
@@ -103,6 +248,8 @@ impl Source {
             size,
             cache_start: 0,
             cache: Vec::new(),
+            cancelled,
+            last_error: Arc::default(),
         })
     }
     fn read_at(&mut self, offset: u64, bytes: &mut [u8]) -> Result<usize, ()> {
@@ -116,39 +263,23 @@ impl Source {
         let cache_end = self.cache_start + self.cache.len() as u64;
         if offset < self.cache_start || offset >= cache_end {
             let end = (offset + 1024 * 1024 - 1).min(self.size - 1);
-            let response = self
-                .client
-                .get(&self.url)
-                .header(header::RANGE, format!("bytes={offset}-{end}"))
-                .header(header::ACCEPT_ENCODING, "identity")
-                .send()
-                .map_err(|_| ())?;
-            if response.status() != 206 {
-                return Err(());
-            }
-            let actual = response
-                .headers()
-                .get(header::CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(content_range)
-                .ok_or(())?;
-            if actual != (offset, end, self.size)
-                || response
-                    .headers()
-                    .get(header::CONTENT_ENCODING)
-                    .is_some_and(|v| v != "identity")
-            {
-                return Err(());
-            }
-            let expected = end - offset + 1;
-            let mut data = Vec::new();
-            response
-                .take(expected + 1)
-                .read_to_end(&mut data)
-                .map_err(|_| ())?;
-            if data.len() as u64 != expected {
-                return Err(());
-            }
+            let client = self.client.ok_or(())?;
+            let result = with_retries(&self.cancelled, || {
+                let (data, total) = fetch_range(client, &self.url, offset, end, CHUNK_TIMEOUT)?;
+                if total != self.size {
+                    return Err(FetchError::Protocol);
+                }
+                Ok(data)
+            });
+            let data = match result {
+                Ok(data) => data,
+                Err(error) => {
+                    if let Ok(mut last) = self.last_error.lock() {
+                        *last = Some(error);
+                    }
+                    return Err(());
+                }
+            };
             self.cache_start = offset;
             self.cache = data;
         }
@@ -176,6 +307,8 @@ extern "C" fn io_read(user: *mut c_void, offset: u64, buffer: *mut u8, length: u
     })
     .unwrap_or(-1)
 }
+// sp_stream calls this on every seek to abandon the old position, so it must
+// not end the source; closing the session sets `Source::cancelled` instead.
 extern "C" fn io_cancel(_: *mut c_void) {}
 extern "C" fn io_close(user: *mut c_void) {
     unsafe {
@@ -229,6 +362,8 @@ impl Reader {
 struct Session {
     reader: Mutex<Reader>,
     stop: AtomicBool,
+    /// Shared with the network source: closing ends its pending retries.
+    cancelled: Option<Arc<AtomicBool>>,
     size: u64,
     authority: String,
     path: String,
@@ -357,14 +492,16 @@ struct OpenRequest {
     #[serde(default)]
     key: String,
 }
-fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
+fn open(request: OpenRequest) -> Result<serde_json::Value, OpenError> {
     let source = Box::new(Source::open(request.url)?);
+    let cancelled = source.client.map(|_| source.cancelled.clone());
+    let last_error = source.last_error.clone();
     let reader = if request.key.is_empty() {
         Reader::Clear(source)
     } else {
-        let key = hex::decode(&request.key).map_err(|_| "媒体密钥无效")?;
+        let key = hex::decode(&request.key).map_err(|_| OpenError::new("媒体密钥无效", "decrypt"))?;
         if key.len() != 16 {
-            return Err("媒体密钥无效".into());
+            return Err(OpenError::new("媒体密钥无效", "decrypt"));
         }
         let user = Box::into_raw(source) as *mut c_void;
         let io = SpIo {
@@ -381,17 +518,24 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
         let stream = unsafe { sp_stream_open(&io, key.as_ptr(), &mut error) };
         if stream.is_null() {
             io_close(user);
-            return Err("无法打开加密媒体，请重试或切换清晰度".into());
+            // The header is read through the network source: a failed read
+            // there is a network problem, not a broken file.
+            let fetch = last_error.lock().ok().and_then(|last| *last);
+            return Err(match fetch {
+                Some(error) => OpenError::fetch(error),
+                None => OpenError::new("无法打开加密媒体，请重试或切换清晰度", "decrypt"),
+            });
         }
         Reader::Encrypted(stream)
     };
-    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| "无法打开本机媒体端口")?;
+    let local = |message| move |_| OpenError::new(message, "other");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(local("无法打开本机媒体端口"))?;
     listener
         .set_nonblocking(true)
-        .map_err(|_| "无法初始化媒体端口")?;
+        .map_err(local("无法初始化媒体端口"))?;
     let authority = listener
         .local_addr()
-        .map_err(|_| "媒体端口不可用")?
+        .map_err(local("媒体端口不可用"))?
         .to_string();
     let token = hex::encode(rand::random::<[u8; 32]>());
     let path = format!("/media/{token}");
@@ -400,12 +544,13 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
         size: reader.size(),
         reader: Mutex::new(reader),
         stop: AtomicBool::new(false),
+        cancelled,
         authority,
         path,
     });
     sessions()
         .lock()
-        .map_err(|_| "媒体会话不可用")?
+        .map_err(|_| OpenError::new("媒体会话不可用", "other"))?
         .insert(token.clone(), session.clone());
     thread::spawn(move || {
         while !session.stop.load(Ordering::Acquire) {
@@ -430,16 +575,20 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
 pub unsafe extern "C" fn fq_desktop_media_open(request: *const c_char) -> *mut c_char {
     let result = std::panic::catch_unwind(|| {
         if request.is_null() {
-            return Err("媒体请求无效".to_string());
+            return Err(OpenError::new("媒体请求无效", "other"));
         }
         let request: OpenRequest = serde_json::from_slice(CStr::from_ptr(request).to_bytes())
-            .map_err(|_| "媒体请求无效".to_string())?;
+            .map_err(|_| OpenError::new("媒体请求无效", "other"))?;
         open(request)
     })
-    .unwrap_or_else(|_| Err("媒体初始化失败".into()));
+    .unwrap_or_else(|_| Err(OpenError::new("媒体初始化失败", "other")));
     let value = match result {
         Ok(value) => value,
-        Err(error) => serde_json::json!({"error": error}),
+        Err(error) => serde_json::json!({
+            "error": error.message,
+            "kind": error.kind,
+            "status": error.status,
+        }),
     };
     CString::new(value.to_string())
         .map(CString::into_raw)
@@ -454,6 +603,9 @@ pub unsafe extern "C" fn fq_desktop_media_close(id: *const c_char) {
         if let Ok(mut sessions) = sessions().lock() {
             if let Some(session) = sessions.remove(id) {
                 session.stop.store(true, Ordering::Release);
+                if let Some(cancelled) = &session.cancelled {
+                    cancelled.store(true, Ordering::Release);
+                }
             }
         }
     }
@@ -477,5 +629,76 @@ mod tests {
         for bad in ["bytes=100-", "bytes=9-2", "bytes=0-1,4-5", "bytes=-0"] {
             assert!(parse_range(Some(bad), 100).is_err());
         }
+    }
+
+    /// Serves one canned response per connection, in order.
+    fn upstream(responses: Vec<&'static str>) -> String {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let url = format!("http://{}/v", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            for response in responses {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") && socket.read(&mut byte).unwrap() > 0 {
+                    request.push(byte[0]);
+                }
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+        url
+    }
+
+    const PARTIAL: &str = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-0/42\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx";
+
+    #[test]
+    fn transient_failures_are_retried() {
+        let url = upstream(vec![
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            PARTIAL,
+        ]);
+        let client = shared_client().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let (data, total) =
+            with_retries(&cancelled, || fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)).unwrap();
+        assert_eq!((data.as_slice(), total), (&b"x"[..], 42));
+    }
+
+    #[test]
+    fn forbidden_is_final_and_reported_with_status() {
+        let url = upstream(vec![
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            PARTIAL,
+        ]);
+        let client = shared_client().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let error =
+            with_retries(&cancelled, || fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)).unwrap_err();
+        assert_eq!(error, FetchError::Status(403));
+        let reported = OpenError::fetch(error);
+        assert_eq!((reported.kind, reported.status), ("http", Some(403)));
+    }
+
+    #[test]
+    fn closed_session_stops_retrying() {
+        let cancelled = AtomicBool::new(true);
+        let mut calls = 0;
+        let result: Result<(), _> = with_retries(&cancelled, || {
+            calls += 1;
+            Err(FetchError::Timeout)
+        });
+        assert_eq!((result, calls), (Err(FetchError::Cancelled), 0));
+    }
+
+    #[test]
+    fn plain_200_is_not_a_range_answer() {
+        let url = upstream(vec![
+            "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx",
+        ]);
+        let client = shared_client().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let error =
+            with_retries(&cancelled, || fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)).unwrap_err();
+        assert_eq!(error, FetchError::Status(200));
     }
 }

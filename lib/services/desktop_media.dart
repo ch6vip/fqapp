@@ -17,6 +17,36 @@ String desktopCoreLibraryPath() {
   return File('rust/target/release/fqapi_core.dll').absolute.path;
 }
 
+/// A failed media session open. [message] is a fixed user-facing string from
+/// the native core; it never carries the URL or key.
+class DesktopMediaException implements Exception {
+  const DesktopMediaException(
+    this.message, {
+    this.kind = 'other',
+    this.httpStatus,
+  });
+
+  final String message;
+
+  /// connect / timeout / http / range / file / decrypt / other.
+  final String kind;
+  final int? httpStatus;
+
+  /// The Media3 `PlaybackException` code with the same meaning, so desktop
+  /// failures reach the same [PlaybackIssue] texts as Android ones.
+  int? get errorCode => switch (kind) {
+    'connect' => 2001, // IO_NETWORK_CONNECTION_FAILED
+    'timeout' => 2002, // IO_NETWORK_CONNECTION_TIMEOUT
+    'http' || 'range' => 2004, // IO_BAD_HTTP_STATUS
+    'file' => 2005, // IO_FILE_NOT_FOUND
+    'decrypt' => 3001, // PARSING_CONTAINER_MALFORMED
+    _ => null,
+  };
+
+  @override
+  String toString() => 'DesktopMediaException($kind)';
+}
+
 class DesktopMedia {
   DesktopMedia._(this.id, this.url, this.libraryPath);
   final String id;
@@ -48,7 +78,13 @@ class DesktopMedia {
         calloc.free(request);
       }
     });
-    if (result['error'] case final String error) throw StateError(error);
+    if (result['error'] case final String error) {
+      throw DesktopMediaException(
+        error,
+        kind: result['kind'] is String ? result['kind'] as String : 'other',
+        httpStatus: result['status'] is int ? result['status'] as int : null,
+      );
+    }
     return DesktopMedia._(
       result['id'] as String,
       result['url'] as String,

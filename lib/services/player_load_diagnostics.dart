@@ -16,7 +16,7 @@ const _allowedStages = <String>{
   'firstFrame',
   'other',
 };
-const _allowedTriggers = <String>{'initial', 'switch', 'retry'};
+const _allowedTriggers = <String>{'initial', 'switch', 'retry', 'autoRetry'};
 const _allowedOutcomes = <String>{
   'firstFrame',
   'error',
@@ -30,6 +30,7 @@ const _allowedSources = <String>{
   'prefetchHit',
   'prefetchPending',
   'offline',
+  'warm',
 };
 
 String _safeLabel(String value, Set<String> allowed) =>
