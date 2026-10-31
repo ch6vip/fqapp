@@ -34,12 +34,16 @@ class VoiceSettingsSheet extends StatelessWidget {
   final List<VoiceOption> online;
   final ValueChanged<VoiceOption> onSelect;
 
+  /// 顶部的灰色说明，只在特定入口（阅读页胶囊）传；听书页不传。
+  final String? notice;
+
   const VoiceSettingsSheet({
     super.key,
     required this.selectedId,
     this.narrators = const [],
     this.online = const [],
     required this.onSelect,
+    this.notice,
   });
 
   @override
@@ -56,35 +60,8 @@ class VoiceSettingsSheet extends StatelessWidget {
         top: false,
         child: Column(
           children: [
-            SizedBox(
-              height: 60,
-              child: Stack(
-                children: [
-                  Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      '声音设置',
-                      style: TextStyle(
-                        color: palette.ink,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: IconButton(
-                      key: const Key('voice_settings_close'),
-                      tooltip: '关闭',
-                      onPressed: () => Navigator.maybePop(context),
-                      style: IconButton.styleFrom(foregroundColor: palette.ink),
-                      icon: const Icon(LucideIcons.check, size: 22),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Divider(height: 1, color: palette.line.withValues(alpha: 0.6)),
+            _header(context, palette),
+            _notice(palette),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -119,6 +96,59 @@ class VoiceSettingsSheet extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 标题栏 + 分隔线（抽出来是为了让 [build] 不越过 80 行预算）。
+  Widget _header(BuildContext context, HomePalette palette) => Column(
+    children: [
+      SizedBox(
+        height: 60,
+        child: Stack(
+          children: [
+            Align(
+              alignment: Alignment.center,
+              child: Text(
+                '声音设置',
+                style: TextStyle(
+                  color: palette.ink,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                key: const Key('voice_settings_close'),
+                tooltip: '关闭',
+                onPressed: () => Navigator.maybePop(context),
+                style: IconButton.styleFrom(foregroundColor: palette.ink),
+                icon: const Icon(LucideIcons.check, size: 22),
+              ),
+            ),
+          ],
+        ),
+      ),
+      Divider(height: 1, color: palette.line.withValues(alpha: 0.6)),
+    ],
+  );
+
+  /// 只在阅读页胶囊进来时出现：把「切真人讲书会停止跟随」说在前面。
+  Widget _notice(HomePalette palette) {
+    final text = notice;
+    if (text == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Text(
+        text,
+        key: const Key('voice_settings_notice'),
+        style: TextStyle(
+          color: palette.ink.withValues(alpha: 0.62),
+          fontSize: 12,
+          height: 1.45,
         ),
       ),
     );
