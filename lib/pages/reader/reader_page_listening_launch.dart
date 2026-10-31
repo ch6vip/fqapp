@@ -10,6 +10,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     int? fromMs,
     int? textId,
     bool fromPage = false,
+    bool keepControls = false,
   }) async {
     if (_openingListening || _loading || _error != null) return;
     if (fromPage) {
@@ -25,6 +26,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
           fromMs: fromMs,
           textId: textId,
           openPage: false,
+          keepControls: keepControls,
         );
         return;
       }
@@ -70,6 +72,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
             fromMs: anchor.startMs ?? fromMs,
             textId: anchor.textId ?? textId,
             openPage: false,
+            keepControls: true,
           );
           return;
         }
@@ -128,7 +131,8 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       );
       await _persistProgress();
       if (!mounted || chapterId != _chapter.itemId) return;
-      _setState(() => _controlsVisible = false);
+      // 从胶囊起播时要留在菜单里：一收菜单，胶囊自己就没影了。
+      if (!keepControls) _setState(() => _controlsVisible = false);
       await AudioPlaybackScope.startSystemTts(context, book);
     } catch (e) {
       if (mounted) _showMessage(SystemTts.errorMessage(e));
@@ -151,6 +155,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     int? fromMs,
     int? textId,
     bool openPage = true,
+    bool keepControls = false,
   }) async {
     final paragraphAnchored = textId != null;
     if (_openingListening) return;
@@ -186,7 +191,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         }
       }
       if (!mounted) return;
-      _setState(() => _controlsVisible = false);
+      if (!keepControls) _setState(() => _controlsVisible = false);
       final request = AudioPage(
         bookId: widget.bookId,
         title: widget.title,
