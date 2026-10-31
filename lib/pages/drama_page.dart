@@ -30,6 +30,7 @@ import '../services/short_series_font_scale.dart';
 import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
+import '../widgets/drama_pull_refresh_hint.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/player/playlet_comment_panel.dart';
@@ -320,8 +321,6 @@ int dramaDesktopColumns(BuildContext context) =>
 
 class _DramaPageState extends ConsumerState<DramaPage>
     with WidgetsBindingObserver {
-  static const _pullRefreshTrigger = 64.0;
-
   /// 顶栏在本页内容上方占的高度：移动端是搜索行 + 频道条两行；桌面端
   /// 不渲染搜索行——分区搜索入口收敛到频道条右端的搜索图标（壳层全局
   /// 搜索在短剧分区也隐藏），只占频道条一行，把垂直空间还给视频/网格。
@@ -419,7 +418,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// Downward overscroll on the first card, in logical pixels. Official
   /// `aq0.xml` shows 「下拉刷新内容」 (`@string/dhk`) while this is in flight.
-  double _pullDistance = 0;
+  /// A notifier, because the hint follows the drag every frame: a page-wide
+  /// setState per scroll update would rebuild the feed and the grid for it.
+  final ValueNotifier<double> _pullDistance = ValueNotifier(0);
 
   /// 「上滑查看更多视频」guide（官方 `pp3.f` + `cf_.xml`）。官方行为：
   /// **每台设备只弹一次**（SharedPreferences `series_show_user_guide`，
@@ -547,6 +548,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _guideFadeIn?.cancel();
     _guideTick?.cancel();
     _guideFadeOut?.cancel();
+    _pullDistance.dispose();
     _pages.dispose();
     super.dispose();
   }
@@ -813,32 +815,22 @@ class _DramaPageState extends ConsumerState<DramaPage>
     if (notification is OverscrollNotification &&
         _screenIndex == 0 &&
         notification.overscroll < 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.overscroll).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.overscroll)
+          .clamp(0, kDramaPullRefreshTrigger);
       return false;
     }
     if (notification is ScrollUpdateNotification &&
-        _pullDistance > 0 &&
+        _pullDistance.value > 0 &&
         (notification.scrollDelta ?? 0) > 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.scrollDelta!).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
+          .clamp(0, kDramaPullRefreshTrigger);
     }
     if (notification is ScrollStartNotification) {
       _paging = true;
       unawaited(_inline.pause());
     } else if (notification is ScrollEndNotification) {
-      final shouldRefresh = _pullDistance >= _pullRefreshTrigger;
-      if (_pullDistance > 0) {
-        setState(() => _pullDistance = 0);
-      }
+      final shouldRefresh = _pullDistance.value >= kDramaPullRefreshTrigger;
+      if (_pullDistance.value > 0) _pullDistance.value = 0;
       if (shouldRefresh) {
         unawaited(_refresh());
       }
@@ -1460,15 +1452,15 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 },
               ),
             ),
-            if (_pullDistance > 0)              Positioned(
-                top: MediaQuery.paddingOf(context).top + _topChromeHeight + 8,
-                left: 0,
-                right: 0,
-                child: _PullRefreshHint(
-                  armed: _pullDistance >= _pullRefreshTrigger,
-                  color: lightPage ? palette.ink : Colors.white,
-                ),
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + _topChromeHeight + 8,
+              left: 0,
+              right: 0,
+              child: DramaPullRefreshHint(
+                distance: _pullDistance,
+                color: lightPage ? palette.ink : Colors.white,
               ),
+            ),
             // 浅色页的顶栏背板：官方上滑时卡片从一条奶白渐变后面穿过，
             // 搜索框/频道条不会和海报叠在一起（黑页保持透明压在视频上）。
             // 最近频道进编辑后与官方一致：顶栏整个隐藏（`af()` gone）。
@@ -1618,29 +1610,19 @@ class _DramaPageState extends ConsumerState<DramaPage>
   bool _onGridScroll(ScrollNotification notification) {
     if (notification.depth != 0) return false;
     if (notification is OverscrollNotification && notification.overscroll < 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.overscroll).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.overscroll)
+          .clamp(0, kDramaPullRefreshTrigger);
       return false;
     }
     if (notification is ScrollUpdateNotification &&
-        _pullDistance > 0 &&
+        _pullDistance.value > 0 &&
         (notification.scrollDelta ?? 0) > 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.scrollDelta!).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
+          .clamp(0, kDramaPullRefreshTrigger);
     }
     if (notification is ScrollEndNotification) {
-      final shouldRefresh = _pullDistance >= _pullRefreshTrigger;
-      if (_pullDistance > 0) {
-        setState(() => _pullDistance = 0);
-      }
+      final shouldRefresh = _pullDistance.value >= kDramaPullRefreshTrigger;
+      if (_pullDistance.value > 0) _pullDistance.value = 0;
       if (shouldRefresh) {
         unawaited(_refresh());
         return false;
@@ -3725,40 +3707,6 @@ class _SwipeUpHint extends StatelessWidget {
       ),
     ),
   );
-}
-
-/// Official `aq0.xml` pull-to-refresh strip: 16sp 「下拉刷新内容」.
-class _PullRefreshHint extends StatelessWidget {
-  final bool armed;
-
-  /// 浅色页用墨色（白字在白底上看不见），视频流仍用白字。
-  final Color color;
-
-  const _PullRefreshHint({required this.armed, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: SizedBox(
-        height: 22,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              armed ? '正在刷新内容' : '下拉刷新内容',
-              style: TextStyle(fontSize: 16, color: color),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// The video rectangle of the on-screen card.

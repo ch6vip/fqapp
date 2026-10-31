@@ -7,6 +7,7 @@ import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import 'api_client.dart';
 import 'audio_download_store.dart';
+import 'audio_download_transfer.dart';
 
 enum AudioDownloadStatus { waiting, downloading, paused, completed, failed }
 
@@ -81,6 +82,8 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     resolve,
     HttpClient Function()? clientFactory,
     this.concurrency = 2,
+    this.connectTimeout = audioDownloadConnectTimeout,
+    this.readTimeout = audioDownloadReadTimeout,
   }) : _store = store ?? HiveAudioDownloadStore.instance,
        _resolve = resolve ?? _defaultResolve,
        _clientFactory = clientFactory ?? HttpClient.new,
@@ -107,6 +110,10 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
   _resolve;
   final HttpClient Function() _clientFactory;
   final int concurrency;
+
+  /// 建连与收流的期限：见 `audio_download_transfer.dart`。
+  final Duration connectTimeout;
+  final Duration readTimeout;
 
   final Map<String, _MutableTask> _tasks = {};
   final Map<String, _MutableTask> _active = {};
@@ -380,7 +387,7 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
         // 类都可以靠重跑（每次重跑都会重新 resolve、按现有 `.part` 续传）
         // 自己好。4xx 里只有 408/429 值得等，其余重试也是同一个结果。
         attempt++;
-        if (attempt < _maxAttempts && _isRetryable(reason)) {
+        if (attempt < _maxAttempts && isRetryableAudioDownloadFailure(reason)) {
           await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
           if (task.abortReason != null) break;
           continue;
@@ -442,11 +449,12 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
         return '该章没有可下载的音频地址';
       }
 
-      client = _clientFactory();
+      client = _clientFactory()..connectionTimeout = connectTimeout;
       final request = await client.openUrl('GET', uri);
       if (received > 0) request.headers.add('Range', 'bytes=$received-');
       request.headers.add('Accept-Encoding', 'identity');
-      final response = await request.close();
+      // 等响应头也是 await 点：服务器接了连接却不回话时按超时处理。
+      final response = await request.close().timeout(readTimeout);
       // 等响应头期间可能已被暂停/放弃：先退出，别再碰 `.part`（discard 刚
       // 删掉的文件不能在这里被旧协程重新创建或删改）。
       if (task.abortReason != null) return null;
@@ -502,7 +510,9 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
 
       const chunkBytes = 256 * 1024;
       var sincePublish = 0;
-      await for (final chunk in response) {
+      // 收流也要有期限：两次数据之间超过 readTimeout 就当断流，交给重试
+      // 循环，而不是让任务永远停在「下载中」。
+      await for (final chunk in response.timeout(readTimeout)) {
         if (task.abortReason != null) return null;
         await sink.writeFrom(chunk);
         received += chunk.length;
@@ -522,29 +532,30 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
       client.close(force: true);
       client = null;
 
-      if (task.abortReason != null) return null;
       if (expectedTotal < 0) return '无法确认下载完整性（服务器未提供总长度）';
       if (received != expectedTotal) return '下载不完整';
-      try {
-        await partFile.rename(finalPath);
-      } on FileSystemException {
-        // 同名终稿已存在（重复下载竞态）：以已存在文件为准。
-        await partFile.delete();
-      }
-      await _store.saveChapter(
-        CachedAudioChapter(
-          bookId: task.snapshot.bookId,
-          itemId: itemId,
-          toneId: toneId,
-          title: task.snapshot.title,
-          index: task.snapshot.index,
-          keyHex: source.keyHex,
-          bytes: received,
-          filePath: finalPath,
-          cachedAt: DateTime.now().millisecondsSinceEpoch,
-          durationMs: source.duration?.inMilliseconds,
+      // 改名与登记由 commitAudioDownload 负责：改名也是一个 await 点，
+      // 落在这期间的放弃绝不能再把记录写回去。
+      final committed = await commitAudioDownload(
+        partFile: partFile,
+        finalPath: finalPath,
+        isAborted: () => task.abortReason != null,
+        save: () => _store.saveChapter(
+          CachedAudioChapter(
+            bookId: task.snapshot.bookId,
+            itemId: itemId,
+            toneId: toneId,
+            title: task.snapshot.title,
+            index: task.snapshot.index,
+            keyHex: source.keyHex,
+            bytes: received,
+            filePath: finalPath,
+            cachedAt: DateTime.now().millisecondsSinceEpoch,
+            durationMs: source.duration?.inMilliseconds,
+          ),
         ),
       );
+      if (!committed) return null;
       task.snapshot = task.snapshot.copyWith(
         status: AudioDownloadStatus.completed,
         received: received,
@@ -555,32 +566,13 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     } on FileSystemException catch (error) {
       return '写入失败：${error.osError?.message ?? error.message}';
     } on Exception catch (error) {
-      return error.toString();
+      return audioDownloadFailureReason(error);
     } finally {
       try {
         await sink?.close();
       } catch (_) {}
       client?.close(force: true);
     }
-  }
-
-  /// 这个失败原因值不值得再试一次。
-  ///
-  /// 章节/音色不合法、取流结果对不上是永久错误；HTTP 4xx 里只有 408/429
-  /// 表示「稍后再试」，其余（404、空响应的 416 等）重试也是同一个结果。
-  /// 5xx、断流、续传校验失败这类网络侧偶发问题才重试。
-  static bool _isRetryable(String reason) {
-    if (reason == '无效的章节或音色' ||
-        reason == '取流结果与章节不匹配' ||
-        reason == '该章没有可下载的音频地址') {
-      return false;
-    }
-    final match = RegExp(r'HTTP (\d{3})').firstMatch(reason);
-    if (match == null) return true;
-    final status = int.parse(match.group(1)!);
-    return status == HttpStatus.requestTimeout ||
-        status == HttpStatus.tooManyRequests ||
-        status >= 500;
   }
 
   static String _fileName(String itemId, String toneId) =>

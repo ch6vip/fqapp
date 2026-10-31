@@ -14,6 +14,15 @@ fn dh_prime() -> &'static BigUint {
     P.get_or_init(|| BigUint::parse_bytes(DH_PRIME_DEC.as_bytes(), 10).expect("dh prime"))
 }
 
+/// Subgroup order `q = (p - 1) / 2`.
+///
+/// Not secret and identical for every handshake, so it is derived once: the
+/// peer-key subgroup check exponentiates with it on every decrypt.
+fn dh_prime_order() -> &'static BigUint {
+    static Q: OnceCell<BigUint> = OnceCell::new();
+    Q.get_or_init(|| (dh_prime() - BigUint::from(1u32)) / BigUint::from(2u32))
+}
+
 fn dh_g() -> BigUint {
     BigUint::from(2u32)
 }
@@ -81,6 +90,11 @@ pub fn generate_y() -> Result<(String, DHState), String> {
 
 /// Computes the shared secret from the server `y` header and decrypts the
 /// AES-256-CBC content.
+///
+/// Synchronous because it is also the fixture-test entry point; the shipping
+/// API path uses [decrypt_dh_content_off_thread], which runs this on the
+/// blocking pool: the peer-subgroup check and the 3071-bit shared-secret
+/// exponentiation are CPU work that must not occupy an async worker.
 pub fn decrypt_dh_content(
     server_y_b64: &str,
     content_b64: &str,
@@ -92,7 +106,7 @@ pub fn decrypt_dh_content(
     let b = BigUint::from_bytes_be(&b_bytes);
     // P2-10: never derive a shared secret from an unvalidated peer
     // value — a degenerate y collapses the secret to a known value.
-    crate::upstream::validate_peer_pubkey(&b, dh_prime())?;
+    crate::upstream::validate_peer_pubkey(&b, dh_prime(), dh_prime_order())?;
     let a = BigUint::from_bytes_be(&st.a);
     let s = b.modpow(&a, dh_prime());
     let s_bytes = if s.is_zero() {
@@ -120,4 +134,26 @@ pub fn decrypt_dh_content(
     }
     let pt = crate::crypto::aes_cbc_decrypt(ct, key, iv);
     Ok(crate::crypto::pkcs7_unpad_strict(&pt, 16)?.to_vec())
+}
+
+/// [decrypt_dh_content] on the blocking pool.
+///
+/// The state is cloned into the blocking task (a per-request value, zeroized
+/// when that task drops it); the caller's copy is untouched.
+pub async fn decrypt_dh_content_off_thread(
+    server_y_b64: &str,
+    content_b64: &str,
+    st: &DHState,
+) -> Result<Vec<u8>, String> {
+    let server_y_b64 = server_y_b64.to_owned();
+    let content_b64 = content_b64.to_owned();
+    let state = st.clone();
+    match tokio::task::spawn_blocking(move || {
+        decrypt_dh_content(&server_y_b64, &content_b64, &state)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(format!("dh decrypt task failed: {error}")),
+    }
 }

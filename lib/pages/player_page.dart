@@ -46,6 +46,8 @@ import '../widgets/player/player_split_panel.dart';
 import '../widgets/player/player_toast.dart';
 import '../widgets/video_player_chrome.dart';
 
+part 'player_page_progress.dart';
+
 class PlayerPage extends StatefulWidget {
   final String bookId;
   final String kind;
@@ -604,7 +606,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   /// 标记一集已看（按剧集 id）。同一集只写一次存储：进度保存点里
-  /// 含 2 秒定时器，不去重会反复落盘。
+  /// 含 5 秒定时器，不去重会反复落盘。
   Future<void> _markWatched(int index) async {
     if (!widget.shortSeries ||
         widget.bookId.isEmpty ||
@@ -1429,8 +1431,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _onFirstFrame(player, generation);
       _updatePrefetch();
       _syncWatchClock();
-      _progressTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _progressTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         // A paused episode must not keep re-stamping its history record.
+        // 5s 心跳与听书页一致：暂停/切集/退出都另有即时保存，只在这里兜底。
         if (_playing) unawaited(_persistProgress());
       });
     } catch (error) {
@@ -1595,6 +1598,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }),
       player.playingStream.listen((playing) {
         if (!_current(generation, player)) return;
+        // 官方在暂停时写 video_progress：心跳改成 5s 后不能只靠它兜底。
+        if (_playing && !playing) unawaited(_persistProgress());
         if (_playing != playing) setState(() => _playing = playing);
         _syncWatchClock();
         _updatePrefetch();
@@ -1644,34 +1649,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     } else {
       _watchTime.stop();
     }
-  }
-
-  Map<String, dynamic> _historyEntry(int index, NativePlayer player) {
-    final durationMs = player.duration > Duration.zero
-        ? player.duration.inMilliseconds
-        : 0;
-    final rawPositionMs = player.position.inMilliseconds;
-    final positionMs = durationMs > 0
-        ? rawPositionMs.clamp(0, durationMs)
-        : rawPositionMs < 0
-        ? 0
-        : rawPositionMs;
-    return {
-      'id': widget.bookId,
-      'kind': _historyKind,
-      'title': widget.title,
-      'bookId': widget.bookId,
-      'seriesId': widget.bookId,
-      'episodeId': widget.eps[index].itemId,
-      'chapterId': widget.eps[index].itemId,
-      'episode': index,
-      'progress': durationMs > 0 ? positionMs / durationMs : 0.0,
-      'position': positionMs / 1000,
-      'duration': durationMs / 1000,
-      'maxScroll': durationMs / 1000,
-      'cover': widget.cover,
-      'time': DateTime.now().millisecondsSinceEpoch,
-    };
   }
 
   /// 保存当前集的续播进度；除首帧外的所有调用点都对应官方

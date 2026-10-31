@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use futures::StreamExt;
+use once_cell::sync::OnceCell;
 
 use crate::crypto::{gunzip_capped, GunzipError, MAX_GUNZIP_BYTES};
 
@@ -211,6 +212,18 @@ impl HttpTransport {
     }
 }
 
+/// Process-wide transport for account cookie requests.
+///
+/// Account reads must not follow redirects with a cookie attached, and every
+/// collection request used to build a fresh `reqwest::Client` (TLS roots and
+/// all) just for that. The transport is stateless, so one shared instance is
+/// safe and keeps client construction off the per-request path. A failed
+/// first build is retried on the next call.
+pub fn account_transport() -> Result<&'static HttpTransport, String> {
+    static ACCOUNT_TRANSPORT: OnceCell<HttpTransport> = OnceCell::new();
+    ACCOUNT_TRANSPORT.get_or_try_init(|| HttpTransport::without_redirects(20))
+}
+
 /// reqwest is built with `rustls-no-provider` so exactly one TLS backend is
 /// linked; that means the process-wide crypto provider has to be installed
 /// before any client is constructed. Installing it here keeps the requirement
@@ -288,5 +301,22 @@ mod body_cap_tests {
             .expect("small body passes");
         assert_eq!(resp.status, 200);
         assert_eq!(resp.body, b"{\"ok\":true}");
+    }
+}
+
+#[cfg(test)]
+mod account_transport_tests {
+    use super::account_transport;
+
+    // Account collection runs several requests per import; each one used to
+    // rebuild the TLS client. The shared handle must stay identical.
+    #[test]
+    fn the_account_transport_is_built_once_and_reused() {
+        let first = account_transport().expect("account transport");
+        let second = account_transport().expect("account transport");
+        assert!(
+            std::ptr::eq(first, second),
+            "account requests must reuse the cached no-redirect transport"
+        );
     }
 }

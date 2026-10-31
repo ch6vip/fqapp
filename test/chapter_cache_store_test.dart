@@ -24,14 +24,14 @@ void main() {
   test(
     'catalog and text survive reopening, including colliding chapter IDs',
     () async {
-      final store = ChapterCacheStore(keys: keys, );
+      final store = ChapterCacheStore(keys: keys);
       await store.saveBook(_book('a'));
       await store.saveBook(_book('b'));
       await _write(store, 'a', 'same', '第一本正文');
       await _write(store, 'b', 'same', '第二本正文');
       await Hive.close();
 
-      final reopened = ChapterCacheStore(keys: keys, );
+      final reopened = ChapterCacheStore(keys: keys);
       expect(await reopened.read(bookId: 'a', chapterId: 'same'), '第一本正文');
       expect(await reopened.read(bookId: 'b', chapterId: 'same'), '第二本正文');
       final books = await reopened.books();
@@ -40,6 +40,18 @@ void main() {
       expect((await reopened.stats()).chapterCount, 2);
     },
   );
+
+  test('a reopened cache reuses the persisted byte count', () async {
+    final store = ChapterCacheStore(keys: keys);
+    await _write(store, 'a', '1', '中文正文');
+    expect(store.textEncodes, 0);
+    await Hive.close();
+
+    final reopened = ChapterCacheStore(keys: keys);
+    expect((await reopened.stats()).byteCount, 12);
+    expect((await reopened.books()).single.stats.byteCount, 12);
+    expect(reopened.textEncodes, 0);
+  });
 
   test('evicts least recently read text and enforces the byte limit', () async {
     final store = ChapterCacheStore(keys: keys, maxEntries: 2, maxBytes: 12);
@@ -92,7 +104,7 @@ void main() {
   test(
     'clear is ordered after pending writes and preserves reading history',
     () async {
-      final store = ChapterCacheStore(keys: keys, );
+      final store = ChapterCacheStore(keys: keys);
       final history = await Hive.openBox('history');
       await history.put('a', {'position': 35});
       final operations = [
@@ -135,9 +147,45 @@ void main() {
   );
 
   test(
+    'a stored count equal to the ASCII length is re-measured for CJK text',
+    () async {
+      final store = ChapterCacheStore(keys: keys, maxBytes: 8);
+      await store.saveBook(_book('a'));
+      final box = Hive.box('chapter_cache_v1_enc');
+      // 1000 个汉字：UTF-16 长度 1000，真实 UTF-8 是 3000 字节。旧的
+      // [len, len*3] 校验会把这个少报的 len 当成合法测量值，容量上限失效。
+      await box.put('chapter:["a","same"]', {
+        'bookId': 'a',
+        'chapterId': 'same',
+        'text': '汉' * 1000,
+        'bytes': 1000,
+      });
+      expect((await store.stats()).byteCount, 3000);
+      expect(store.textEncodes, 1);
+    },
+  );
+
+  test(
+    'an all-ASCII count equal to the code-unit length is still trusted',
+    () async {
+      final store = ChapterCacheStore(keys: keys);
+      await store.saveBook(_book('a'));
+      final box = Hive.box('chapter_cache_v1_enc');
+      await box.put('chapter:["a","same"]', {
+        'bookId': 'a',
+        'chapterId': 'same',
+        'text': 'abcdef',
+        'bytes': 6,
+      });
+      expect((await store.stats()).byteCount, 6);
+      expect(store.textEncodes, 0);
+    },
+  );
+
+  test(
     'clearing a book removes damaged chapter records without touching others',
     () async {
-      final store = ChapterCacheStore(keys: keys, );
+      final store = ChapterCacheStore(keys: keys);
       await store.saveBook(_book('a'));
       await store.saveBook(_book('ab'));
       await _write(store, 'ab', 'same', 'Unrelated content');

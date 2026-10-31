@@ -14,6 +14,8 @@ import 'package:xml/xml.dart';
 
 import '../models/media_item.dart';
 
+part 'imported_manifest_cache.dart';
+
 const _maxBookFileBytes = 32 * 1024 * 1024;
 const _maxExpandedEpubBytes = 64 * 1024 * 1024;
 const _maxEpubEntries = 4000;
@@ -155,6 +157,10 @@ class ImportedBookStore {
   final Future<Directory> Function() _rootDirectoryProvider;
   Future<Directory>? _rootFuture;
   static final _random = Random.secure();
+
+  /// Manifests read by [chapterText], LRU-bounded so a large shelf cannot grow
+  /// it without limit; import and delete invalidate the affected book.
+  final _chapterManifests = ImportedManifestCache<ImportedBook>();
 
   Future<Directory> _root() => _rootFuture ??= _createRoot();
 
@@ -301,6 +307,8 @@ class ImportedBookStore {
         flush: true,
       );
       await staging.rename(target.path);
+      // A re-import can reuse an id; never let that read a stale catalogue.
+      _chapterManifests.remove(id);
       return book;
     } catch (_) {
       if (await staging.exists()) await staging.delete(recursive: true);
@@ -318,7 +326,7 @@ class ImportedBookStore {
     try {
       final raw = jsonDecode(await manifest.readAsString(encoding: utf8));
       if (raw is! Map) return null;
-      return _fromManifest(
+      return _importedBookFromManifest(
         raw,
         expectedId: id,
         directory: '${root.path}${Platform.pathSeparator}$id',
@@ -350,6 +358,7 @@ class ImportedBookStore {
   /// rather than resolved, so this can never walk out of the book root.
   Future<bool> deleteBook(String id) async {
     if (!isLocalBookId(id)) return false;
+    _chapterManifests.remove(id);
     final root = await _root();
     final directory = Directory('${root.path}${Platform.pathSeparator}$id');
     if (!await directory.exists()) return false;
@@ -358,8 +367,7 @@ class ImportedBookStore {
   }
 
   Future<String> chapterText(String bookId, String chapterId) async {
-    final record = await book(bookId);
-    if (record == null) throw const FileSystemException('找不到本地书籍');
+    final record = await _chapterManifests.resolve(bookId, () => book(bookId));
     final index = record.chapters.indexWhere(
       (chapter) => chapter.itemId == chapterId,
     );
@@ -379,61 +387,6 @@ class ImportedBookStore {
     final timestamp = DateTime.now().microsecondsSinceEpoch;
     final salt = _random.nextInt(1 << 32).toRadixString(16);
     return 'local_${timestamp}_$salt';
-  }
-
-  ImportedBook? _fromManifest(
-    Map raw, {
-    required String expectedId,
-    required String directory,
-  }) {
-    if (raw['id'] != expectedId || raw['chapters'] is! List) return null;
-    final title = raw['title']?.toString().trim() ?? '';
-    if (title.isEmpty) return null;
-    final chapters = <Chapter>[];
-    final files = <String>[];
-    for (final value in raw['chapters'] as List) {
-      if (value is! Map) continue;
-      final id = value['id']?.toString() ?? '';
-      final file = value['file']?.toString() ?? '';
-      if (id.isEmpty ||
-          !file.startsWith('chapter_') ||
-          !file.endsWith('.txt') ||
-          file.contains('/') ||
-          file.contains('\\')) {
-        continue;
-      }
-      chapters.add(
-        Chapter(
-          itemId: id,
-          title: value['title']?.toString() ?? '第${chapters.length + 1}章',
-          volumeName: '',
-        ),
-      );
-      files.add(file);
-    }
-    if (chapters.isEmpty || chapters.length != files.length) return null;
-    final addedAt = raw['addedAt'];
-    // The cover name is validated like the chapter files: it must be one of the
-    // names this store writes and must not contain a path separator. A stored
-    // value that no longer matches is dropped rather than trusted, so a
-    // tampered manifest can never point the shelf at an arbitrary file.
-    final rawCover = raw['cover']?.toString() ?? '';
-    final coverFile = RegExp(_coverFilePattern).hasMatch(rawCover)
-        ? rawCover
-        : null;
-    return ImportedBook._(
-      id: expectedId,
-      title: title,
-      author: raw['author']?.toString() ?? '',
-      format: raw['format']?.toString() ?? '',
-      addedAt: DateTime.fromMillisecondsSinceEpoch(
-        addedAt is num ? addedAt.toInt() : 0,
-      ),
-      directory: directory,
-      coverFile: coverFile,
-      chapters: chapters,
-      chapterFiles: files,
-    );
   }
 }
 

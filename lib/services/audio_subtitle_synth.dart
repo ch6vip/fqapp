@@ -1,3 +1,5 @@
+import 'dart:isolate';
+
 import '../models/audio_extra.dart';
 import '../models/audio_time_track.dart';
 
@@ -18,14 +20,47 @@ class SubtitleSynthesis {
   /// 单句最长字符数：过长的句子按次要标点再切，免得一行显示不完。
   static const int maxSentenceChars = 60;
 
-  /// 句末标点（中英文）。
-  static final RegExp _sentenceEnd = RegExp(r'[。！？!?…]+');
+  /// 正文超过这个长度（UTF-16 code unit）时，切句放进后台 isolate。
+  ///
+  /// 一章几千字很常见；逐 code unit 扫描已经很快，但没必要让它占着 UI
+  /// isolate。短文本（标题、弹幕）仍同步处理，不为几行字付建 isolate 的开销。
+  static const int isolateThreshold = 4096;
+
+  /// 句末标点（中英文）对应的 UTF-16 code unit。
+  ///
+  /// 旧实现每个 rune 都要 `String.fromCharCode` 再跑两次正则；改成查表后
+  /// 整章扫描才能安全地丢进 [Isolate.run]（见 [splitSentencesAsync]）。
+  static const Set<int> _sentenceEndUnits = {
+    0x3002, // 。
+    0xFF01, // ！
+    0xFF1F, // ？
+    0x0021, // !
+    0x003F, // ?
+    0x2026, // …
+  };
 
   /// 右引号/右括号：应当跟在句末标点后面，而不是另起一句。
-  static const String _closingQuotes = '”’」』）)]}';
+  static const Set<int> _closingQuoteUnits = {
+    0x201D, // ”
+    0x2019, // ’
+    0x300D, // 」
+    0x300F, // 』
+    0xFF09, // ）
+    0x0029, // )
+    0x005D, // ]
+    0x007D, // }
+  };
 
   /// 长句的次要切点；保留原字符，不把 `：`/`；` 改写成 `，`。
-  static const String _softChars = '，,、；;：:';
+  static const Set<int> _softUnits = {
+    0xFF0C, // ，
+    0x002C, // ,
+    0x3001, // 、
+    0xFF1B, // ；
+    0x003B, // ;
+    0xFF1A, // ：
+    0x003A, // :
+  };
 
   /// 用 [text] 和 [duration] 合成一条字幕轨。
   ///
@@ -34,8 +69,36 @@ class SubtitleSynthesis {
     required String text,
     required Duration duration,
     AudioTimeTrack? anchors,
+  }) => _buildWithSentences(
+    text: text,
+    sentences: splitSentences(text),
+    duration: duration,
+    anchors: anchors,
+  );
+
+  /// [build] 的异步版本：长章节的切句在后台 isolate 完成，不阻塞 UI。
+  ///
+  /// 输出与 [build] 完全一致；播放链路用它。
+  static Future<SubtitleTrack> buildAsync({
+    required String text,
+    required Duration duration,
+    AudioTimeTrack? anchors,
+  }) async {
+    final sentences = await splitSentencesAsync(text);
+    return _buildWithSentences(
+      text: text,
+      sentences: sentences,
+      duration: duration,
+      anchors: anchors,
+    );
+  }
+
+  static SubtitleTrack _buildWithSentences({
+    required String text,
+    required List<String> sentences,
+    required Duration duration,
+    AudioTimeTrack? anchors,
   }) {
-    final sentences = splitSentences(text);
     if (sentences.isEmpty || duration <= Duration.zero) {
       return SubtitleTrack.empty;
     }
@@ -83,24 +146,35 @@ class SubtitleSynthesis {
       _splitLong(value, out);
     }
 
-    for (final rune in text.runes) {
-      final ch = String.fromCharCode(rune);
-      if (ch == '\n' || ch == '\r') {
+    for (var i = 0; i < text.length; i++) {
+      final ch = text.codeUnitAt(i);
+      if (ch == 0x0A || ch == 0x0D) {
+        // \n / \r
         flush();
         continue;
       }
       if (pendingEnd) {
-        if (_sentenceEnd.hasMatch(ch) || _closingQuotes.contains(ch)) {
-          buffer.write(ch);
+        if (_sentenceEndUnits.contains(ch) || _closingQuoteUnits.contains(ch)) {
+          buffer.writeCharCode(ch);
           continue;
         }
         flush();
       }
-      buffer.write(ch);
-      if (_sentenceEnd.hasMatch(ch)) pendingEnd = true;
+      buffer.writeCharCode(ch);
+      if (_sentenceEndUnits.contains(ch)) pendingEnd = true;
     }
     flush();
     return out;
+  }
+
+  /// [splitSentences] 的异步版本：长章节放进 [Isolate.run] 切句。
+  ///
+  /// 输出与 [splitSentences] 完全一致；短文本仍走同步路径。
+  static Future<List<String>> splitSentencesAsync(String text) {
+    if (text.length < isolateThreshold) {
+      return Future.value(splitSentences(text));
+    }
+    return Isolate.run(() => splitSentences(text));
   }
 
   /// 把超过 [maxSentenceChars] 的句子在次要标点处切开，分隔符留在前一段。
@@ -112,7 +186,7 @@ class SubtitleSynthesis {
     final chunk = StringBuffer();
     var start = 0;
     for (var i = 0; i < value.length; i++) {
-      if (!_softChars.contains(value[i])) continue;
+      if (!_softUnits.contains(value.codeUnitAt(i))) continue;
       final candidate = value.substring(start, i + 1);
       if (chunk.isNotEmpty &&
           chunk.length + candidate.length > maxSentenceChars) {

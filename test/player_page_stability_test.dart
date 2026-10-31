@@ -487,7 +487,7 @@ void main() {
     await _mount(tester, session);
     expect(session.players.single.isPlaying, true);
     session.players.single.emitPosition(const Duration(seconds: 44));
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(seconds: 5));
     await _flush(tester);
     expect(store.entry?['position'], 44);
     expect(store.entry?['episodeId'], '1');
