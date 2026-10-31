@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import 'api_client.dart';
+import 'backend_transport.dart';
 
 final _hasCuratedText = RegExp(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]');
 
@@ -20,9 +21,19 @@ String userFacingError(Object error) {
     // '搜索失败'); a bare upstream code like `NO_THIS_TONE` is not user text.
     final message = error.message.trim();
     if (message.isNotEmpty && _hasCuratedText.hasMatch(message)) return message;
+    // The core prefixes a failed device-pool draw with `get device:`
+    // (upstream/client.rs). A cold pool registers on the first request, and
+    // the registration hosts are the ones DNS blockers tend to drop (#212).
+    if (message.startsWith('get device:')) {
+      return '设备注册失败，请检查网络、VPN 或私人 DNS 后重试';
+    }
     return '加载失败，请稍后重试';
   }
   if (error is TimeoutException) return '加载超时，请检查网络后重试';
+  // The core's own deadline arrives as an abort, not a TimeoutException.
+  if (error is BackendRequestAborted && error.timedOut) {
+    return '加载超时，请检查网络后重试';
+  }
   if (error is SocketException || error is http.ClientException) {
     // API calls go through the local backend, so a refused loopback
     // connection says nothing about the device's actual connectivity.
