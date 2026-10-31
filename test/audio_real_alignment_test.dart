@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/book_detail.dart';
 import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
+import 'package:fqapp/services/audio_page_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
+import 'package:fqapp/widgets/audio/audio_sections.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -124,7 +127,52 @@ void main() {
     expect(tester.widget<Text>(current).data, '甲' * 23);
   });
 
-  testWidgets('the AI朗读/真人讲书 switch needs both voice families', (tester) async {
+  testWidgets('the phone header uses the 44dp mockup metrics', (tester) async {
+    // 顶栏高度按 MediaQuery 宽度判断，而 `setSurfaceSize` 只改渲染表面，
+    // 不改 view 的 physicalSize；这里把两者都设成手机尺寸。
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await _mount(tester, _RealSession());
+    final bar = find.byType(AudioTopBar);
+    expect(tester.getSize(bar).height, AudioTopBar.phoneHeight);
+    final back = find.descendant(
+      of: bar,
+      matching: find.byIcon(LucideIcons.chevron_down),
+    );
+    final more = find.descendant(
+      of: bar,
+      matching: find.byIcon(LucideIcons.ellipsis_vertical),
+    );
+    expect(tester.getSize(back), const Size(24, 24));
+    expect(tester.getSize(more), const Size(22, 22));
+    // 图标外缘距屏幕边：返回 20dp、更多 16dp。
+    expect(tester.getRect(back).left, 20);
+    expect(tester.getRect(more).right, 430 - 16);
+  });
+
+  testWidgets('the header switch reads 智能朗读 | 真人讲书', (tester) async {
+    await _mount(tester, _RealSession());
+    final theme = AudioPageThemeScope.of(
+      tester.element(find.byType(AudioModeSwitch)),
+    );
+    Text tabText(String key) => tester.widget<Text>(
+      find.descendant(of: find.byKey(Key(key)), matching: find.byType(Text)),
+    );
+    final tts = tabText('audio_mode_tts');
+    final narrator = tabText('audio_mode_narrator');
+    expect(tts.data, '智能朗读');
+    expect(narrator.data, '真人讲书');
+    expect(tts.style?.fontSize, 16);
+    expect(narrator.style?.fontSize, 16);
+    // 真人讲书选中：w700 + ink；智能朗读未选中：w500 + muted。
+    expect(narrator.style?.fontWeight, FontWeight.w700);
+    expect(narrator.style?.color, theme.ink);
+    expect(tts.style?.fontWeight, FontWeight.w500);
+    expect(tts.style?.color, theme.muted);
+  });
+
+  testWidgets('the 智能朗读/真人讲书 switch needs both voice families', (tester) async {
     await _mount(tester, _RealSession());
     expect(find.byKey(const Key('audio_mode_tts')), findsOneWidget);
     expect(find.byKey(const Key('audio_mode_narrator')), findsOneWidget);
@@ -133,6 +181,8 @@ void main() {
     await _mount(tester, _RealSession(ttsTones: const []));
     expect(find.byKey(const Key('audio_mode_tts')), findsNothing);
     expect(find.byKey(const Key('audio_mode_narrator')), findsNothing);
+    // 只有一类声音时退回单标题。
+    expect(find.text('听书'), findsOneWidget);
   });
 
   testWidgets('the narrator row replaces the voice card', (tester) async {
