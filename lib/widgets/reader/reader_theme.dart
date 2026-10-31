@@ -77,11 +77,17 @@ extension ReaderThemeColors on ReaderThemePreset {
   /// 不是正文色;夜间自带 60% alpha。
   Color get selectionUnderlineColor => selectionHandleColor;
 
-  /// 朗读句高亮底色：与选区强调色区分开的暖黄，墨水屏用淡黑灰以免
-  /// 盖住正文。
+  /// 朗读句高亮底色（默认值）：取**当前背景加深**，而不是固定暖黄。
+  ///
+  /// 浅色纸面用正文色压 10% 混进背景，得到同色系里深一档的底；夜间主题的
+  /// 正文色是浅色，混出来自然是「提亮」，白字仍读得清。墨水屏保留淡黑灰，
+  /// 避免彩色底把残影放大。
+  ///
+  /// 用户可在「设置 → 听书 → 高亮颜色」里覆盖（见
+  /// [ReaderPreferences.narrationHighlightColor]）。
   Color get narrationHighlightColor => isEink
       ? Colors.black.withValues(alpha: 0.10)
-      : const Color(0xFFFFC107).withValues(alpha: 0.28);
+      : Color.alphaBlend(textColor.withValues(alpha: 0.10), backgroundColor);
 
   Color get panelColor {
     if (isEink) return Colors.white;

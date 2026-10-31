@@ -46,6 +46,7 @@ class ReaderPreferences {
   static const _autoTurnSecondsKey = 'reader_auto_turn_seconds';
   static const _listeningFollowKey = 'reader_listening_follow';
   static const _narrationHighlightKey = 'reader_narration_highlight';
+  static const _narrationHighlightColorKey = 'reader_narration_highlight_color';
   static const _continuousReadingKey = 'reader_continuous_reading';
   static const _einkRefreshIntervalKey = 'reader_eink_refresh_interval';
   static const _instantSwipeTurnKey = 'reader_instant_swipe_turn';
@@ -84,6 +85,21 @@ class ReaderPreferences {
   /// behind the sentence being spoken (朗读句高亮, #25). Independent of
   /// [listeningFollow]: the highlight can show without auto page turns.
   final bool narrationHighlight;
+
+  /// 朗读句高亮的自定义底色（ARGB，半透明）。null = 跟随当前阅读背景自动
+  /// 派生（背景同色系深一档），见 [ReaderThemePreset.narrationHighlightColor]。
+  ///
+  /// 设置入口：设置 → 听书 → 高亮颜色。
+  final int? narrationHighlightColor;
+
+  /// 可选的高亮色（ARGB，半透明）：暖黄/橙/绿/蓝/紫。
+  static const narrationHighlightPresets = <int>[
+    0x47FFC107,
+    0x47FA6725,
+    0x4716A34A,
+    0x472F6FED,
+    0x477C3AED,
+  ];
 
   /// 滚动模式连续阅读：到底继续下拉进入下一章。默认开启。
   /// 普通分页始终直接跨章，不受这个滚动手势开关影响。
@@ -133,6 +149,7 @@ class ReaderPreferences {
     this.autoTurnSeconds = 10,
     this.listeningFollow = true,
     this.narrationHighlight = true,
+    this.narrationHighlightColor,
     this.continuousReading = true,
     this.einkRefreshInterval = 10,
     this.instantSwipeTurn = false,
@@ -168,6 +185,10 @@ class ReaderPreferences {
     int? autoTurnSeconds,
     bool? listeningFollow,
     bool? narrationHighlight,
+    int? narrationHighlightColor,
+    /// true = 恢复「自动跟随背景派生」；此时 [narrationHighlightColor] 不生效。
+    /// （copyWith 的 null 约定是「不改」，清除必须显式说明。）
+    bool autoNarrationHighlightColor = false,
     bool? continuousReading,
     int? einkRefreshInterval,
     bool? instantSwipeTurn,
@@ -206,6 +227,9 @@ class ReaderPreferences {
       autoTurnSeconds: autoTurnSeconds ?? this.autoTurnSeconds,
       listeningFollow: listeningFollow ?? this.listeningFollow,
       narrationHighlight: narrationHighlight ?? this.narrationHighlight,
+      narrationHighlightColor: autoNarrationHighlightColor
+          ? null
+          : narrationHighlightColor ?? this.narrationHighlightColor,
       continuousReading: continuousReading ?? this.continuousReading,
       einkRefreshInterval: einkRefreshInterval ?? this.einkRefreshInterval,
       instantSwipeTurn: instantSwipeTurn ?? this.instantSwipeTurn,
@@ -250,6 +274,7 @@ class ReaderPreferences {
           : 10,
       listeningFollow: listeningFollow,
       narrationHighlight: narrationHighlight,
+      narrationHighlightColor: narrationHighlightColor,
       continuousReading: continuousReading,
       einkRefreshInterval: einkRefreshInterval.clamp(0, 100),
       instantSwipeTurn: instantSwipeTurn,
@@ -311,6 +336,10 @@ class ReaderPreferences {
           .clamp(3, 60),
       listeningFollow: _boolean(preferences, _listeningFollowKey) ?? true,
       narrationHighlight: _boolean(preferences, _narrationHighlightKey) ?? true,
+      narrationHighlightColor: _number(
+        preferences,
+        _narrationHighlightColorKey,
+      )?.toInt(),
       continuousReading: _boolean(preferences, _continuousReadingKey) ?? true,
       einkRefreshInterval: (_number(preferences, _einkRefreshIntervalKey) ?? 10)
           .round(),
@@ -364,6 +393,13 @@ class ReaderPreferences {
       preferences.setInt(_autoTurnSecondsKey, value.autoTurnSeconds),
       preferences.setBool(_listeningFollowKey, value.listeningFollow),
       preferences.setBool(_narrationHighlightKey, value.narrationHighlight),
+      if (value.narrationHighlightColor == null)
+        preferences.remove(_narrationHighlightColorKey)
+      else
+        preferences.setInt(
+          _narrationHighlightColorKey,
+          value.narrationHighlightColor!,
+        ),
       preferences.setBool(_continuousReadingKey, value.continuousReading),
       preferences.setInt(_einkRefreshIntervalKey, value.einkRefreshInterval),
       preferences.setBool(_instantSwipeTurnKey, value.instantSwipeTurn),

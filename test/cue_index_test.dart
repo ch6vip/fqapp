@@ -161,6 +161,35 @@ void main() {
     expect(span.spokenOffset(99999), span.end - 1);
   });
 
+  testWidgets('冒号与分号也算句读边界，标点归属前一片', (tester) async {
+    const body = '“别啊！”陈青源赶紧说着：“那些家伙不可能与我同境界一战，那就是欺负人。”';
+    final layout = layoutWith([body]);
+    final track = SubtitleTrack([
+      SubtitleCue(startMs: 0, text: body),
+    ]);
+
+    final index = CueIndex.build(layout: layout, track: track);
+    final block = layout.blocks[1];
+    final pieces = index.spans
+        .map(
+          (s) => block.text.substring(
+            s.start - block.start,
+            s.end - block.start,
+          ),
+        )
+        .toList();
+
+    // 标点（含收尾引号）跟着前一片走：`！”` 不该被拆到下一句开头。
+    expect(pieces, contains('“别啊！”'));
+    expect(pieces, contains('陈青源赶紧说着：'));
+    expect(pieces.first, startsWith('“别啊！”'));
+    expect(
+      pieces.any((p) => p.endsWith('，')),
+      isTrue,
+      reason: '逗号同样收在前一片末尾',
+    );
+  });
+
   testWidgets('没有字幕时不建表', (tester) async {
     final layout = layoutWith(['正文。']);
     final index = CueIndex.build(layout: layout, track: SubtitleTrack.empty);
@@ -186,7 +215,7 @@ void main() {
     final pieces = index.spans.where((s) => s.cueIndex == 0).toList();
     expect(pieces.length, greaterThan(2), reason: '剥噪命中同样要按标点拆片');
 
-    final boundary = RegExp(r'[，、。！？…—]');
+    final boundary = RegExp(r'[，、。！？…—：；”’」』）】]');
     for (final span in pieces) {
       final tail = block.text[span.end - 1 - block.start];
       expect(

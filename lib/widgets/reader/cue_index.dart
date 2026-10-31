@@ -85,9 +85,16 @@ class CueIndex {
   /// 段落整段一起亮；20 字能覆盖绝大多数短句段落，纯短语 cue 不受影响。
   static const int commaSplitThreshold = 20;
 
-  /// 逗号细分使用的切分标点：逗号/顿号之外，句号、叹号、问号、省略号与
-  /// 破折号同样点亮到边界；连续标点归前片（「——」「！？」不拆开）。
-  static final RegExp commaSplitAt = RegExp('[，、。！？…—]');
+  /// 逗号细分使用的切分标点：逗号/顿号之外，句号、叹号、问号、冒号、分号、
+  /// 省略号与破折号同样点亮到边界；连续标点归前片（「——」「！？」不拆开）。
+  ///
+  /// 标点本身算在**前一片**里：「陈青源赶紧说着：」这一片连冒号一起亮，
+  /// 视觉上才是完整的一句。
+  static final RegExp commaSplitAt = RegExp('[，、。！？…—：；]');
+
+  /// 收尾引号/括号：`！”`、`。”` 是一个整体，切分时跟标点一起归前片，
+  /// 否则高亮会把右引号甩到下一句开头，看起来像少了一个字。
+  static final RegExp closingMarks = RegExp('[”’」』）】]');
 
   /// 片内计时权重：朗读时的停顿不按字数算。
   ///
@@ -193,7 +200,8 @@ class CueIndex {
             var e = probe + 1;
             while (e < combined.length &&
                 origin[e] < block.end &&
-                commaSplitAt.hasMatch(combined[e])) {
+                (commaSplitAt.hasMatch(combined[e]) ||
+                    closingMarks.hasMatch(combined[e]))) {
               e++;
             }
             segEnd = e;
@@ -217,8 +225,11 @@ class CueIndex {
         for (var k = segStart; k < segmentEnd; k++) {
           if (commaSplitAt.hasMatch(combined[k])) {
             var e = k + 1;
-            // 连续标点（——、！？）整组归前片，避免破折号被劈成两半。
-            while (e < segmentEnd && commaSplitAt.hasMatch(combined[e])) {
+            // 连续标点（——、！？）与收尾引号整组归前片，避免破折号被劈成
+            // 两半、`！”` 被拆到下一片。
+            while (e < segmentEnd &&
+                (commaSplitAt.hasMatch(combined[e]) ||
+                    closingMarks.hasMatch(combined[e]))) {
               e++;
             }
             pieces.add((pieceStart, e));

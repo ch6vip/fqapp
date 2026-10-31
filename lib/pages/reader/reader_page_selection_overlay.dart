@@ -9,13 +9,20 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
     ReaderThemePreset preset,
     ReaderChapterLayout layout,
   ) {
-    if (_marksScope == null || !identical(_marksScopeLayout, layout)) {
+    // 用户自定义高亮色优先，null 时跟随主题按背景派生。
+    final custom = _preferences.narrationHighlightColor;
+    final narration = custom == null
+        ? preset.narrationHighlightColor
+        : Color(custom);
+    if (_marksScope == null ||
+        !identical(_marksScopeLayout, layout) ||
+        _marksScope!.narrationColor != narration) {
       _marksScope = ReaderSelectionScope(
         geometry: ReaderSelectionGeometry(),
         washColor: preset.selectionWashColor,
         handleColor: preset.selectionHandleColor,
         underlineColor: preset.selectionUnderlineColor,
-        narrationColor: preset.narrationHighlightColor,
+        narrationColor: narration,
       );
       _marksScopeLayout = layout;
     }
