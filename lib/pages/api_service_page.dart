@@ -8,6 +8,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../services/backend_service.dart';
 import '../services/lan_share_preferences.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/settings/settings_widgets.dart';
 import 'log_viewer_page.dart';
 
 /// Local API service console.
@@ -189,27 +190,15 @@ class _ApiServicePageState extends State<ApiServicePage> {
   Future<void> _toggleLanShare(bool value) async {
     if (_switching) return;
     if (value) {
-      final confirmed = await showDialog<bool>(
+      final confirmed = await showSettingsConfirmDialog(
         context: context,
-        builder: (c) => AlertDialog(
-          title: const Text('开启局域网共享'),
-          content: const Text(
+        title: '开启局域网共享',
+        message:
             '同一网络下的其他设备将能访问这些接口，无需密码。\n\n'
             '开启后本地服务会重启，正在进行的请求会中断一次。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('开启'),
-            ),
-          ],
-        ),
+        confirmLabel: '开启',
       );
-      if (confirmed != true) return;
+      if (!confirmed) return;
     }
     if (!mounted) return;
     setState(() => _switching = true);
@@ -251,15 +240,8 @@ class _ApiServicePageState extends State<ApiServicePage> {
       ('正文', '/api/v1/chapters/{item_id}', '章节正文与插图'),
     ];
 
-    return Scaffold(
-      backgroundColor: palette.canvas,
-      appBar: AppBar(
-        title: const Text('本地接口'),
-        centerTitle: true,
-        backgroundColor: palette.canvas,
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-      ),
+    return SettingsScaffold(
+      title: '本地接口',
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
@@ -269,10 +251,12 @@ class _ApiServicePageState extends State<ApiServicePage> {
             child: Row(
               children: [
                 Container(
+                  key: const ValueKey('api-status-dot'),
                   width: 8,
                   height: 8,
                   decoration: BoxDecoration(
-                    color: healthy ? const Color(0xFF22C55E) : palette.muted,
+                    // 运行中的状态点跟随主题强调色：墨水屏退化为纯黑。
+                    color: healthy ? palette.accentText : palette.muted,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -309,16 +293,13 @@ class _ApiServicePageState extends State<ApiServicePage> {
               child: Text(
                 _probeResult!,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: _probeOk
-                      ? const Color(0xFF16A34A)
-                      : theme.colorScheme.error,
+                  color: _probeOk ? palette.accentText : palette.ink,
                 ),
               ),
             ),
 
           // 地址 + 局域网开关：两者都是「怎么访问」，合成一块。
           _card(
-            palette: palette,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -358,8 +339,9 @@ class _ApiServicePageState extends State<ApiServicePage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         else
-                          Switch(
+                          SettingsSwitch(
                             value: _lanShare,
+                            semanticLabel: '局域网共享',
                             onChanged: _switching ? null : _toggleLanShare,
                           ),
                       ],
@@ -386,7 +368,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
                   Text(
                     '无密码，同一网络下任何设备都能读取。公共 WiFi 建议关闭。',
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.error,
+                      color: palette.ink,
                     ),
                   ),
                 ],
@@ -417,7 +399,6 @@ class _ApiServicePageState extends State<ApiServicePage> {
           ),
           if (_showEndpoints)
             _card(
-              palette: palette,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -444,7 +425,6 @@ class _ApiServicePageState extends State<ApiServicePage> {
 
           const SizedBox(height: 8),
           _card(
-            palette: palette,
             child: InkWell(
               onTap: () => Navigator.push(
                 context,
@@ -479,20 +459,10 @@ class _ApiServicePageState extends State<ApiServicePage> {
     );
   }
 
-  Widget _card({required HomePalette palette, required Widget child}) =>
-      Material(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(20),
-        clipBehavior: Clip.antiAlias,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: palette.line, width: 0.6),
-          ),
-          padding: const EdgeInsets.all(16),
-          child: child,
-        ),
-      );
+  Widget _card({required Widget child}) => SettingsGroupCard(
+    showDividers: false,
+    children: [Padding(padding: const EdgeInsets.all(16), child: child)],
+  );
 
   /// One copyable address line: label, address, copy affordance.
   Widget _addressRow({

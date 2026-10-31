@@ -85,7 +85,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('清空历史'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(TextButton, '清空'));
+    // 清空确认统一走 showSettingsConfirmDialog：破坏性确认键是 FilledButton，
+    // 不再是旧的红色 TextButton。
+    await tester.tap(find.widgetWithText(FilledButton, '清空'));
     for (var frame = 0; frame < 4; frame++) {
       await tester.runAsync(() => Future<void>.delayed(Duration.zero));
       await tester.pump();

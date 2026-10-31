@@ -7,6 +7,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../widgets/data_transfer_widgets.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/settings/settings_widgets.dart';
 import '../models/fanqie_library_capture.dart';
 import '../services/backend_transport.dart';
 import '../services/fanqie_history_import_service.dart';
@@ -245,21 +246,10 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       canPop: !_busy,
       child: Scaffold(
         backgroundColor: palette.canvas,
-        appBar: AppBar(
-          title: const Text('导入番茄书架'),
-          centerTitle: true,
-          backgroundColor: palette.canvas,
-          surfaceTintColor: Colors.transparent,
-          actions: [
-            PopupMenuButton<String>(
-              enabled: enabled,
-              tooltip: '登录管理',
-              onSelected: (_) => _logout(),
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'logout', child: Text('退出网页登录')),
-              ],
-            ),
-          ],
+        appBar: settingsAppBar(
+          context,
+          title: '导入番茄书架',
+          actions: [_loginActions(enabled)],
         ),
         body: SafeArea(
           child: Align(
@@ -274,20 +264,23 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                     title: '书架和进度，一起带回来',
                     subtitle: '从番茄读取小说，加入本机书架与历史。\n有章节记录的书，可以接着读。',
                   ),
-                  _label('选择导入来源'),
-                  DataTransferCard(
+                  const SettingsSectionHeader(title: '选择导入来源'),
+                  SettingsGroupCard(
                     children: [
-                      DataTransferRow(
+                      SettingsRow(
                         icon: LucideIcons.globe,
+                        iconTile: true,
                         title: '从番茄账号读取',
                         subtitle: '打开官方页面登录，保留本机登录状态',
+                        enabled: enabled,
                         onTap: enabled ? _collect : null,
                       ),
-                      Divider(height: 1, indent: 68, color: palette.line),
-                      DataTransferRow(
+                      SettingsRow(
                         icon: LucideIcons.file_input,
+                        iconTile: true,
                         title: '从历史文件导入',
                         subtitle: '兼容此前保存的番茄历史 JSON',
+                        enabled: enabled,
                         onTap: enabled ? _pick : null,
                       ),
                     ],
@@ -298,16 +291,17 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                       child: LinearProgressIndicator(),
                     ),
                   if (capture != null) ...[
-                    const SizedBox(height: 24),
-                    _label('最近一次采集'),
-                    DataTransferCard(
+                    const SettingsSectionHeader(title: '最近一次采集'),
+                    SettingsGroupCard(
                       children: [
-                        DataTransferRow(
+                        SettingsRow(
                           icon: LucideIcons.clock,
+                          iconTile: true,
                           title: '使用已保存的书架数据',
                           subtitle:
                               '${capture.received} 个响应已保存 · 无需重新登录'
                               '${capture.stopReason.isNotEmpty ? ' · 部分采集' : ''}',
+                          enabled: enabled,
                           onTap: enabled ? _prepareLibrary : null,
                         ),
                         ExpansionTile(
@@ -411,9 +405,12 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                     ),
                   ],
                   if (parsed != null) ...[
-                    const SizedBox(height: 24),
-                    _label('导入预览 · $_previewSource', key: _previewKey),
-                    DataTransferCard(
+                    SettingsSectionHeader(
+                      title: '导入预览 · $_previewSource',
+                      key: _previewKey,
+                    ),
+                    SettingsGroupCard(
+                      showDividers: false,
                       children: [
                         Padding(
                           padding: const EdgeInsets.all(16),
@@ -557,17 +554,13 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
     );
   }
 
-  Widget _label(String text, {Key? key}) => Padding(
-    key: key,
-    padding: const EdgeInsets.only(left: 4, bottom: 10),
-    child: Text(
-      text,
-      style: TextStyle(
-        color: HomePalette.of(context).muted,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
+  Widget _loginActions(bool enabled) => PopupMenuButton<String>(
+    enabled: enabled,
+    tooltip: '登录管理',
+    onSelected: (_) => _logout(),
+    itemBuilder: (_) => [
+      const PopupMenuItem(value: 'logout', child: Text('退出网页登录')),
+    ],
   );
 
   Widget _cover(Map<String, dynamic> record, HomePalette palette) => ClipRRect(
