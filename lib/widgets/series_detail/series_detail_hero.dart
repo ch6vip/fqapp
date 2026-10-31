@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../home/home_design.dart';
 import 'series_detail_theme.dart';
@@ -128,14 +129,14 @@ class SeriesDetailHero extends StatelessWidget {
     child: coverUrl.isEmpty
         ? ColoredBox(
             color: palette.soft,
-            child: Icon(Icons.movie_creation_outlined, color: palette.muted),
+            child: Icon(LucideIcons.clapperboard, color: palette.muted),
           )
         : CachedNetworkImage(
             imageUrl: coverUrl,
             fit: BoxFit.cover,
             errorWidget: (_, _, _) => ColoredBox(
               color: palette.soft,
-              child: Icon(Icons.movie_creation_outlined, color: palette.muted),
+              child: Icon(LucideIcons.clapperboard, color: palette.muted),
             ),
           ),
   );
@@ -165,7 +166,7 @@ class SeriesDetailHero extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.play_arrow_rounded, size: 18),
+              const Icon(LucideIcons.play, size: 18),
               const SizedBox(width: 4),
               Flexible(
                 child: Text(
@@ -196,10 +197,8 @@ class SeriesDetailHero extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              saved ? Icons.star_rounded : Icons.star_border_rounded,
-              size: 16,
-            ),
+            // 版式稿的收藏是描边星形（收藏态由文字「已收藏」表达）。
+            const Icon(LucideIcons.star, size: 16),
             const SizedBox(width: 4),
             Text(saved ? '已收藏' : '收藏'),
           ],
