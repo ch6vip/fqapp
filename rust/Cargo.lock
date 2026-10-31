@@ -504,7 +504,6 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-util",
- "tower",
  "tower-http",
  "url",
  "webpki-roots",

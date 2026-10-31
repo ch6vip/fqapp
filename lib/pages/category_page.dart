@@ -4,6 +4,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/category_front.dart';
 import '../services/api_client.dart';
 import '../services/desktop_platform.dart';
+import '../services/user_facing_error.dart';
 import '../widgets/home/home_design.dart';
 
 /// 官方分类页（`BookCategoryActivity`，7.0.9.32 实测形态）：
@@ -76,6 +77,10 @@ class _CategoryPageState extends State<CategoryPage> {
   int _selected = 0;
   bool _loading = false;
 
+  /// 每次 [_load] 自增。请求回来时只有最新一代能落地：加载期间再切频道
+  /// 不会被丢掉，先发后到的旧频道响应也不会覆盖新频道的内容。
+  int _loadGeneration = 0;
+
   List<_Section> _sections = const [];
   final Set<int> _expanded = <int>{};
   final ScrollController _scroll = ScrollController();
@@ -107,26 +112,35 @@ class _CategoryPageState extends State<CategoryPage> {
 
   Future<void> _load({int? tab}) async {
     final target = tab ?? _tabValue;
-    if (_loading) return;
+    final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
     });
-    final front = await _fetch(tab: target);
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _tabValue = target;
-      _front = front;
-      _error = front.isEmpty ? '分类暂时没有内容，稍后再试' : null;
-      _sections = front.isEmpty ? const <_Section>[] : _sectionsFor(front);
-      _selected = 0;
-      _expanded.clear();
-    });
-    // 频道重取后回到顶部（控制器复用，extent 已变，须等布局落地）。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) _scroll.jumpTo(0);
-    });
+    try {
+      final front = await _fetch(tab: target);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _tabValue = target;
+        _front = front;
+        _error = front.isEmpty ? '分类暂时没有内容，稍后再试' : null;
+        _sections = front.isEmpty ? const <_Section>[] : _sectionsFor(front);
+        _selected = 0;
+        _expanded.clear();
+      });
+      // 频道重取后回到顶部（控制器复用，extent 已变，须等布局落地）。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients) _scroll.jumpTo(0);
+      });
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _error = userFacingError(error));
+    } finally {
+      // 失败也要复位：否则转圈永远挡在重试前面，重试会被 `_loading` 吞掉。
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   /// 分组重建：首组「热门标签」= 全量瓦片（老 schema 的 dim=0 不下瓦片，

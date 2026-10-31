@@ -74,6 +74,10 @@ async fn concurrent_gets_do_not_corrupt_the_pool_file() {
         assert!(handle.await.expect("join").is_ok(), "concurrent get failed");
     }
 
+    // Usage counters are written back at most every 30s; a structural save
+    // commits whatever the concurrent picks left in memory.
+    pool.refill(0).await.expect("flush usage counters");
+
     // The file must still be valid Go-compatible JSON with every device intact.
     let text = std::fs::read_to_string(&path).expect("pool file");
     let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid JSON after races");

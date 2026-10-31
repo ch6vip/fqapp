@@ -397,9 +397,11 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
     // P1-6: manga images share `src_dir` with the video cache, so run the
     // same eviction pass — otherwise plaintext images accumulate with no
     // budget and no eviction. The newest image is kept; older files go
-    // first. Images are re-downloadable, so eviction is safe.
+    // first. Images are re-downloadable, so eviction is safe. The pass scans
+    // the whole directory, so it is scheduled in the background rather than
+    // run on the request path.
     if let Some(last) = last_written {
-        crate::endpoints::video::prune_src_cache(&ctx.src_dir, &last);
+        crate::endpoints::video::schedule_prune_src_cache(&ctx.src_dir, last);
     }
     (urls, html)
 }

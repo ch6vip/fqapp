@@ -466,14 +466,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     final raw = box.get(_episodeKey(itemId));
     if (_isEpisode(raw)) {
       // 记录指向的文件随记录删除；路径被篡改时宁可留着文件也不删错。
-      final filePath = raw['filePath'] as String;
-      try {
-        await File(filePath).delete();
-      } on FileSystemException catch (_) {
-        // 文件已不存在是删除的常态结果。
-      } on ArgumentError catch (_) {
-        // 非法路径：记录照样删，文件留给系统清理。
-      }
+      await _deleteOwnedFile(raw['filePath'] as String);
     }
     await box.deleteAll([_episodeKey(itemId), _keyKey(itemId)]);
     // 最后一集删掉后目录再没有集可聚合，管理页永远读不到它；不清掉的话
@@ -501,12 +494,36 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     ];
     for (final value in box.values) {
       if (!_isEpisode(value) || value['seriesId'] != seriesId) continue;
-      try {
-        await File(value['filePath'] as String).delete();
-      } on FileSystemException catch (_) {
-      } on ArgumentError catch (_) {}
+      await _deleteOwnedFile(value['filePath'] as String);
     }
     await box.deleteAll(doomed);
     changes.value++;
   });
+
+  /// 只删属于本箱目录的文件。
+  ///
+  /// 记录里的路径可以被改箱内容的人指向任意位置，直接 `File(...).delete()`
+  /// 就成了任意文件删除（听书侧 `_deleteOwnedFile` 同源）。路径不在
+  /// `offline-video` 根内时保留文件、只删记录。两边都解析成真实路径再比：
+  /// `absolute` 不折叠 `..`，`<root>/../x` 会被误判为根内。
+  Future<void> _deleteOwnedFile(String filePath) async {
+    try {
+      final root = await (await directory()).resolveSymbolicLinks();
+      final file = File(filePath);
+      final resolved = await file.resolveSymbolicLinks();
+      if (!_within(root, resolved)) return;
+      await file.delete();
+    } on FileSystemException catch (_) {
+      // 文件已不存在是删除的常态结果。
+    } on ArgumentError catch (_) {
+      // 非法路径：记录照样删，文件留给系统清理。
+    }
+  }
+
+  static bool _within(String root, String candidate) {
+    final normalizedRoot = root.replaceAll('\\', '/').toLowerCase();
+    final normalized = candidate.replaceAll('\\', '/').toLowerCase();
+    return normalized == normalizedRoot ||
+        normalized.startsWith('$normalizedRoot/');
+  }
 }

@@ -12,9 +12,7 @@ use futures::StreamExt;
 use crate::crypto::{gunzip_capped, GunzipError, MAX_GUNZIP_BYTES};
 
 /// Response-body cap for JSON/API calls (P2-12). The video download path
-/// (`video.rs` unsigned_get) deliberately does not use it — it streams
-/// through the uncapped `request` until its own streaming fix lands, so a
-/// 64 MiB cap here must never apply to media bytes.
+/// passes its own per-file bound instead, so API callers all share one cap.
 pub const API_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -75,9 +73,9 @@ impl HttpTransport {
         })
     }
 
-    /// Uncapped request. Only the video download path uses this (see
-    /// [API_BODY_LIMIT_BYTES]); every JSON/API caller must use
-    /// [HttpTransport::request_with_limit].
+    /// Uncapped request. Every JSON/API caller must use
+    /// [HttpTransport::request_with_limit]; this stays as the escape hatch for
+    /// callers that bound the body some other way.
     pub async fn request(
         &self,
         method: &str,

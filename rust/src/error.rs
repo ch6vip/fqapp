@@ -32,6 +32,15 @@ impl ApiError {
             ApiError::BadRequest(m) | ApiError::Internal(m) => m,
         }
     }
+
+    /// Whether retrying the same request could plausibly succeed.
+    ///
+    /// Client errors are deterministic (bad input) and must never be retried.
+    /// Internal errors come from an upstream call or the parsing of its
+    /// response, so they can be transient upstream jitter.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, ApiError::Internal(_))
+    }
 }
 
 impl fmt::Display for ApiError {

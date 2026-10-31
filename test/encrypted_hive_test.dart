@@ -128,6 +128,45 @@ void main() {
     expect(reopened.get('a'), isNull);
   });
 
+  test('lost key keeps the unreadable box and opens a fresh one', () async {
+    final box = await EncryptedHive.openBox<dynamic>(
+      Hive,
+      'shelf',
+      keys: keys,
+    );
+    await box.put('a', {'title': 'Book A'});
+    await box.close();
+    final original = File('${dir.path}/shelf_enc.hive');
+    expect(original.existsSync(), isTrue);
+    final originalBytes = original.readAsBytesSync();
+
+    // A transient Keystore hiccup hands back a key that cannot open the box.
+    // Its ciphertext must survive: renamed out of Hive's lookup names, never
+    // deleted, with a fresh empty box taking its place.
+    final lostKeys = SecureKeyProvider(
+      storage: InMemorySecureKeyStorage(),
+    );
+    final reopened = await EncryptedHive.openBox<dynamic>(
+      Hive,
+      'shelf',
+      keys: lostKeys,
+    );
+    expect(reopened.isEmpty, isTrue);
+    await reopened.put('b', {'title': 'Book B'});
+    expect((reopened.get('b') as Map)['title'], 'Book B');
+
+    final preserved = dir
+        .listSync()
+        .whereType<File>()
+        .where((file) => file.path.contains('.unreadable-'))
+        .toList();
+    expect(preserved, hasLength(1));
+    expect(preserved.single.path, contains('shelf_enc.unreadable-'));
+    expect(preserved.single.readAsBytesSync(), originalBytes);
+    // The new empty box lives at the normal name again.
+    expect(await Hive.boxExists('shelf_enc'), isTrue);
+  });
+
   test('malformed stored key is replaced with a fresh 32-byte key', () async {
     await storage.write(
       SecureKeyProvider.hiveBoxKeyName,

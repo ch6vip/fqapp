@@ -64,6 +64,13 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+# cargo 的 profile 参数在 build_android_target 与 --host-lib 分支共用。
+# 函数内的 local 变量返回后不可见，set -u 下引用它会直接退出；而 macOS
+# 自带的 bash 3.2 在 set -u 下展开空数组同样会报未绑定变量，所以只在
+# 非空时展开。
+PROFILE_ARGS=()
+if [ "$PROFILE" = "release" ]; then PROFILE_ARGS=(--release); fi
+
 if ! command -v cargo >/dev/null 2>&1; then
   echo "错误：未找到 cargo，请先安装 Rust 工具链。" >&2
   exit 1
@@ -145,11 +152,8 @@ build_android_target() {
   local jni_dir="$APP_DIR/android/app/src/main/jniLibs/$abi"
   mkdir -p "$jni_dir"
 
-  local profile_args=()
-  if [ "$PROFILE" = "release" ]; then profile_args=(--release); fi
-
   echo "==> cargo build --target $rust_target ($PROFILE)..."
-  ( cd "$APP_DIR" && cargo build --manifest-path "$MANIFEST" --target "$rust_target" "${profile_args[@]}" )
+  ( cd "$APP_DIR" && cargo build --locked --manifest-path "$MANIFEST" --target "$rust_target" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} )
 
   local built_so="$APP_DIR/rust/target/$rust_target/$PROFILE/libfqapi_core.so"
   if [ ! -s "$built_so" ]; then
@@ -170,5 +174,5 @@ build_android_target armv7-linux-androideabi armv7a-linux-androideabi armeabi-v7
 
 if [ "$HOST_LIB" -eq 1 ]; then
   echo "==> 编译宿主 cdylib..."
-  ( cd "$APP_DIR" && cargo build --manifest-path "$MANIFEST" "${PROFILE_ARGS[@]}" )
+  ( cd "$APP_DIR" && cargo build --locked --manifest-path "$MANIFEST" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} )
 fi

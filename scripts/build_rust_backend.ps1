@@ -137,6 +137,13 @@ if (-not (Test-Path -LiteralPath $Prebuilt)) {
 }
 $ApiLevel = 21
 
+# -Profile 对应的 cargo 参数与输出目录由 Build-AndroidTarget 和 -HostLib
+# 分支共用。函数内的赋值是局部作用域，函数返回后脚本层读不到，会让
+# -HostLib 静默退回 debug 构建，所以在这里按脚本作用域算一次。
+$ProfileArgs = @()
+if ($Profile -eq 'release') { $ProfileArgs = @('--release') }
+$ProfileDir = if ($Profile -eq 'release') { 'release' } else { 'debug' }
+
 # Cross-compiles the Rust core for one Android ABI and installs it into
 # that ABI's jniLibs directory. The armv7 target uses the armv7a NDK triple
 # (armeabi-v7a with NEON, the same assumption the Flutter engine build
@@ -164,19 +171,15 @@ function Build-AndroidTarget {
     $JniDir = Join-Path $AppDir "android\app\src\main\jniLibs\$Abi"
     New-Item -ItemType Directory -Force -Path $JniDir | Out-Null
 
-    $ProfileArgs = @()
-    if ($Profile -eq 'release') { $ProfileArgs = @('--release') }
-
     Write-Host "==> cargo build --target $RustTarget ($Profile)..."
     Push-Location -LiteralPath $AppDir
     try {
         Invoke-NativeCommand -Exe 'cargo' `
-            -Arguments (@('build', '--manifest-path', $Manifest, '--target', $RustTarget) + $ProfileArgs) `
+            -Arguments (@('build', '--locked', '--manifest-path', $Manifest, '--target', $RustTarget) + $ProfileArgs) `
             -FailureMessage 'rust cross build failed'
     }
     finally { Pop-Location }
 
-    $ProfileDir = if ($Profile -eq 'release') { 'release' } else { 'debug' }
     $BuiltSo = Join-Path $AppDir "rust\target\$RustTarget\$ProfileDir\libfqapi_core.so"
     if (-not (Test-Path -LiteralPath $BuiltSo)) {
         Write-Error "rust build produced no $BuiltSo"
@@ -197,7 +200,7 @@ if ($HostLib) {
     Push-Location -LiteralPath $AppDir
     try {
         Invoke-NativeCommand -Exe 'cargo' `
-            -Arguments (@('build', '--manifest-path', $Manifest) + $ProfileArgs) `
+            -Arguments (@('build', '--locked', '--manifest-path', $Manifest) + $ProfileArgs) `
             -FailureMessage 'host rust build failed'
     }
     finally { Pop-Location }

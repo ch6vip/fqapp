@@ -1,6 +1,6 @@
 //! `homepage_recommend` and `series_feed` endpoints.
-//! The private `reading724Params` builder below duplicates logic that the
-//! Rust `content_util` module does not expose.
+//! The `reading724Params` bag lives in `endpoints::base`; the wrapper below
+//! only adapts it to `Params` for this module and `search`.
 
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -16,38 +16,9 @@ const HOMEPAGE_RECOMMEND_PATH: &str = "/reading/bookapi/bookmall/tab/v";
 const SERIES_FEED_PATH: &str = "/reading/bookapi/bookmall/cell/change/v";
 const SERIES_RELATED_PATH: &str = "/reading/bookapi/plan/v";
 
-/// Go's `reading724Params` (content_util.go).
+/// Go's `reading724Params` (content_util.go), in `Params` form.
 pub(crate) fn reading724_params() -> Params {
-    let mut p = Params::new();
-    p.set("iid", "{install_id}");
-    p.set("device_id", "{device_id}");
-    p.set("ac", "wifi");
-    p.set("channel", "xiaomi_1967_64");
-    p.set("aid", "1967");
-    p.set("app_name", "novelapp");
-    p.set("version_code", "72432");
-    p.set("version_name", "7.2.4.32");
-    p.set("device_platform", "android");
-    p.set("os", "android");
-    p.set("ssmix", "a");
-    p.set("device_type", "25053RT47C");
-    p.set("device_brand", "Redmi");
-    p.set("language", "zh");
-    p.set("os_api", "36");
-    p.set("os_version", "16");
-    p.set("manifest_version_code", "72432");
-    p.set("resolution", "1280*2620");
-    p.set("dpi", "520");
-    p.set("update_version_code", "72432");
-    p.set("host_abi", "arm64-v8a");
-    p.set("dragon_device_type", "phone");
-    p.set("pv_player", "72432");
-    p.set("compliance_status", "0");
-    p.set("need_personal_recommend", "1");
-    p.set("player_so_load", "1");
-    p.set("is_android_pad_screen", "0");
-    p.set("rom_version", "miui_V816_OS3.0.9.0.WOLCNXM");
-    p
+    Params::from_pairs(crate::endpoints::base::reading724_params())
 }
 /// 顶栏选中下标 `(tab_index, last_tab_index)`。
 ///
