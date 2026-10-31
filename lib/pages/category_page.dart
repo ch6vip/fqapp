@@ -5,6 +5,7 @@ import '../models/category_front.dart';
 import '../services/api_client.dart';
 import '../services/desktop_platform.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/category/category_dim_rail.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 
@@ -47,9 +48,6 @@ class _Section {
 
 /// 官方收起态每组只显示前 30 颗（`CollectionsKt.take(_, 30)`）。
 const _collapsedCount = 30;
-
-/// 左侧维度栏宽度（官方 88dp 定值）。
-const double _dimRailWidth = 88;
 
 /// 桌面下每颗 chip 的目标宽度。
 ///
@@ -253,13 +251,15 @@ class _CategoryPageState extends State<CategoryPage> {
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final columns = _chipColumnsFor(
-                      constraints.maxWidth - _dimRailWidth - 32,
+                      constraints.maxWidth - categoryDimRailWidth - 32,
                     );
                     _columns = columns;
                     return Row(
                       children: [
-                        _DimRail(
-                          sections: _sections,
+                        CategoryDimRail(
+                          titles: [
+                            for (final section in _sections) section.title,
+                          ],
                           selectedIndex: _selected,
                           onSelect: _scrollToSection,
                         ),
@@ -352,72 +352,6 @@ class _TopBar extends StatelessWidget {
             onPressed: () {},
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// 左侧 88dp 维度栏：项高 50dp、14sp 居中；选中橙、未选黑（真机取证，
-/// 官方无指示条、无选中底色——`TabPageLeftCell` 只有颜色分支）。
-/// 墨水屏下两档都退化为黑色，靠选中加粗 + 左侧 2dp 黑指示条保留层级
-/// （否则选中维度完全不可见）。
-class _DimRail extends StatelessWidget {
-  const _DimRail({
-    required this.sections,
-    required this.selectedIndex,
-    required this.onSelect,
-  });
-
-  final List<_Section> sections;
-  final int selectedIndex;
-  final ValueChanged<int> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return SizedBox(
-      width: _dimRailWidth,
-      child: ColoredBox(
-        color: palette.soft,
-        child: ListView.builder(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.paddingOf(context).bottom,
-          ),
-          itemCount: sections.length,
-          itemBuilder: (context, index) {
-            final selected = index == selectedIndex;
-            final einkSelected = palette.eink && selected;
-            return GestureDetector(
-              key: ValueKey('category_dim_$index'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onSelect(index),
-              child: Container(
-                height: 50,
-                alignment: Alignment.center,
-                decoration: einkSelected
-                    ? const BoxDecoration(
-                        border: Border(
-                          left: BorderSide(color: Colors.black, width: 2),
-                        ),
-                      )
-                    : null,
-                child: Text(
-                  sections[index].title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    // 墨屏黑字两档同色，选中只靠字重 + 指示条区分。
-                    fontWeight: einkSelected ? FontWeight.w700 : null,
-                    color: selected
-                        ? (palette.eink ? palette.ink : HomePalette.accent)
-                        : palette.ink,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
       ),
     );
   }

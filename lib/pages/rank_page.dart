@@ -14,6 +14,7 @@ import '../widgets/home/home_media_card.dart' show StoryCover;
 import '../widgets/home/home_shelf.dart' show homeGutter;
 import '../widgets/home/home_stream_footer.dart';
 import '../widgets/rank/rank_state_view.dart';
+import '../widgets/rank/rank_tabs.dart';
 import 'detail_page.dart';
 
 /// Loads the rank catalogue.
@@ -267,7 +268,12 @@ class _RankPageState extends State<RankPage> {
           constraints: const BoxConstraints(maxWidth: 840),
           child: Column(
             children: [
-              if (_catalog.tabs.isNotEmpty) _rankTabs(palette),
+              if (_catalog.tabs.isNotEmpty)
+                RankBoardTabs(
+                  tabs: _catalog.tabs,
+                  selectedIndex: _rankIndex,
+                  onSelect: _selectRank,
+                ),
               if (_catalog.categories.isNotEmpty && !(_rank?.isDrama ?? false))
                 _categoryChips(palette),
               Expanded(child: _body()),
@@ -277,75 +283,6 @@ class _RankPageState extends State<RankPage> {
       ),
     );
   }
-
-  /// 榜单层级：与首页榜单块同一套下划线文字 tab（13sp，选中墨色加粗 +
-  /// 16×2 短线），不再用橙底白字胶囊 —— 胶囊和下面的分类筛选是两套
-  /// 选中态，页面看起来像两种设计拼在一起。
-  Widget _rankTabs(HomePalette palette) => SizedBox(
-    height: 44,
-    child: ListView.separated(
-      key: const Key('rank_tabs'),
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-      itemCount: _catalog.tabs.length,
-      separatorBuilder: (context, _) => const SizedBox(width: 20),
-      itemBuilder: (context, index) {
-        final tab = _catalog.tabs[index];
-        final selected = index == _rankIndex;
-        return Center(
-          child: Semantics(
-            selected: selected,
-            button: true,
-            label: '查看${tab.name}',
-            excludeSemantics: true,
-            onTap: () => _selectRank(index),
-            child: HomePressable(
-              key: ValueKey('rank_tab_${tab.algo}'),
-              onTap: () => _selectRank(index),
-              borderRadius: BorderRadius.circular(8),
-              // 文字 tab 本身只有约 23dp 高，触控区域补到 44dp 高、
-              // 48dp 宽；InkWell 同时提供焦点遍历与键盘 Enter/Space 激活。
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 44),
-                child: Center(
-                  widthFactor: 1,
-                  heightFactor: 1,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 5),
-                        child: Text(
-                          tab.name,
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.2,
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                            color: selected ? palette.ink : palette.muted,
-                          ),
-                        ),
-                      ),
-                      Container(
-                        width: 16,
-                        height: 2,
-                        decoration: BoxDecoration(
-                          color: selected ? palette.ink : Colors.transparent,
-                          borderRadius: BorderRadius.circular(1),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    ),
-  );
 
   Widget _categoryChips(HomePalette palette) => SizedBox(
     height: HomeChip.minTapTarget,
