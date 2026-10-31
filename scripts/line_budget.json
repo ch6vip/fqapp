@@ -7,7 +7,7 @@
     "lib/pages/category_page.dart": 618,
     "lib/pages/comic_reader_page.dart": 1044,
     "lib/pages/detail_page.dart": 1663,
-    "lib/pages/drama_download_sheet.dart": 661,
+    "lib/pages/drama_download_sheet.dart": 663,
     "lib/pages/drama_page.dart": 4997,
     "lib/pages/fanqie_history_import_page.dart": 624,
     "lib/pages/home_page.dart": 662,
@@ -133,7 +133,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_download_sheet.dart::_DramaDownloadSheetState.build": {
-      "line": 280,
+      "line": 281,
       "lines": 102,
       "symbol": "Widget build(BuildContext context) {"
     },
