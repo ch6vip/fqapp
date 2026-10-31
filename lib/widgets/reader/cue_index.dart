@@ -95,6 +95,12 @@ class CueIndex {
   /// 否则高亮会把右引号甩到下一句开头，看起来像少了一个字。
   static final RegExp closingMarks = RegExp('[”’」』）】]');
 
+  /// 每片的最小停留时长。
+  ///
+  /// 纯按停顿权重分时，句子拆得越碎、尾片拿到的时长越接近 0，观感就是
+  /// 「最后几个字一闪而过」。先给每片一个保底，余额再按权重分。
+  static const int pieceBaseMs = 140;
+
   /// 片内计时权重：朗读时的停顿不按字数算。
   ///
   /// 省略号、破折号、句号、叹号、问号后往往要停顿半秒到两秒，按一个字计时
@@ -250,18 +256,30 @@ class CueIndex {
           }
           final total = weights.fold<int>(0, (sum, w) => sum + w);
           final duration = (cueEndMs - cueStartMs).clamp(0, 1 << 30);
+          final n = pieces.length;
+          // 每片先占 [pieceBaseMs] 保底，余额按停顿权重分。整条 cue 短到连
+          // 保底都分不出时退成均分 —— 强行给 140ms 会撑出 cue 边界，让高亮
+          // 盖到下一句去。
+          final flexible = duration - n * pieceBaseMs;
           var elapsed = 0;
-          for (var p = 0; p < pieces.length; p++) {
+          for (var p = 0; p < n; p++) {
             final piece = pieces[p];
-            final pieceStartMs = cueStartMs + elapsed;
-            elapsed += duration * weights[p] ~/ total;
+            final pieceStartMs = cueStartMs +
+                (flexible > 0 ? elapsed : duration * p ~/ n);
+            elapsed += flexible > 0
+                ? pieceBaseMs + flexible * weights[p] ~/ total
+                : 0;
             spans.add(
               CueSpan(
                 start: origin[piece.$1],
                 end: origin[piece.$2 - 1] + 1,
                 cueIndex: i,
                 startMs: pieceStartMs,
-                endMs: p == pieces.length - 1 ? cueEndMs : cueStartMs + elapsed,
+                // 末片严格收在 cue 末尾，整数除法舍掉的零头都归它。
+                endMs: p + 1 == n
+                    ? cueEndMs
+                    : cueStartMs +
+                          (flexible > 0 ? elapsed : duration * (p + 1) ~/ n),
               ),
             );
           }
@@ -304,7 +322,18 @@ class CueIndex {
   ///
   /// 这一句如果因为标点差异没能对上正文，会退回到上一句 —— 比整页变黑好。
   /// 返回 null 表示播放位置还在第一句之前。
-  CueSpan? spanAtPositionMs(int ms) {
+  ///
+  /// [crossCueHoldMs] > 0 时，刚跨进下一句的头这么多毫秒**先不切走**：服务端
+  /// 时间轴的下一句起点常比上一句真正念完早，硬切会让句尾最后几个字只亮一瞬。
+  ///
+  /// 但只有 [currentRange] 正好是上一句时才保持 —— 自然播放时屏幕亮的正是
+  /// 上一句；双击跳读会先把高亮设成目标句，这一条不成立，于是立刻切到目标句，
+  /// 绝不会退回上一句。同一句内部的子片切换也不适用，避免叠成层层延迟。
+  CueSpan? spanAtPositionMs(
+    int ms, {
+    int crossCueHoldMs = 0,
+    (int, int)? currentRange,
+  }) {
     if (spans.isEmpty) return null;
     var low = 0;
     var high = spans.length - 1;
@@ -318,7 +347,17 @@ class CueIndex {
         high = mid - 1;
       }
     }
-    return found < 0 ? null : spans[found];
+    if (found < 0) return null;
+    if (crossCueHoldMs > 0 && found > 0 && currentRange != null) {
+      final current = spans[found];
+      final previous = spans[found - 1];
+      if (previous.cueIndex != current.cueIndex &&
+          ms < current.startMs + crossCueHoldMs &&
+          currentRange == (previous.start, previous.end)) {
+        return previous;
+      }
+    }
+    return spans[found];
   }
 
   /// 正文 [offset] 处属于哪一句（双击跳读用）。
@@ -340,5 +379,25 @@ class CueIndex {
       }
     }
     return found < 0 ? spans.first : spans[found];
+  }
+
+  /// 落在 `[blockStart, blockEnd)` 里、第一个「从段内起」的片；整段都是上一
+  /// 段续行时返回 null（这时不该用字幕寻址，得换段落锚）。
+  CueSpan? firstSpanIn(int blockStart, int blockEnd) {
+    for (final span in spans) {
+      if (span.start >= blockStart && span.start < blockEnd) return span;
+    }
+    return null;
+  }
+
+  /// [offset] 所在、且**确实与本段重叠**的片。
+  ///
+  /// [spanAtChar] 对段间空隙的既有语义是「返回前一句」，直接拿它当双击目标
+  /// 会把上一段当成眼前这段 —— 正是「点了这句、亮的是上一句」的成因。所以
+  /// 双击跳读必须先过这层重叠校验，不重叠就当它没命中。
+  CueSpan? spanAtCharIn(int offset, int blockStart, int blockEnd) {
+    final span = spanAtChar(offset);
+    if (span == null) return null;
+    return span.start < blockEnd && span.end > blockStart ? span : null;
   }
 }
