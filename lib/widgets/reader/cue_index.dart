@@ -48,8 +48,7 @@ class CueSpan {
   }
 
   @override
-  String toString() =>
-      'CueSpan[$start,$end) cue=$cueIndex $startMs→$endMs';
+  String toString() => 'CueSpan[$start,$end) cue=$cueIndex $startMs→$endMs';
 }
 
 /// 「正文字符位置 ↔ 音频时间」对照表。
@@ -262,9 +261,7 @@ class CueIndex {
                 end: origin[piece.$2 - 1] + 1,
                 cueIndex: i,
                 startMs: pieceStartMs,
-                endMs: p == pieces.length - 1
-                    ? cueEndMs
-                    : cueStartMs + elapsed,
+                endMs: p == pieces.length - 1 ? cueEndMs : cueStartMs + elapsed,
               ),
             );
           }
