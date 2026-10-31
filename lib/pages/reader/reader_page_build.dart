@@ -327,25 +327,48 @@ extension _ReaderPageBuild on _ReaderPageState {
   Widget _buildReaderControls(ReaderThemePreset preset) {
     final seekValue = _chapterSeekValue ?? _index.toDouble();
     final previewIndex = seekValue.round().clamp(0, widget.chapters.length - 1);
-    return ReaderControls(
-      key: const ValueKey('reader-controls'),
-      preferences: _displayPreferences,
-      chapterIndex: previewIndex,
-      chapterCount: widget.chapters.length,
-      chapterTitle: widget.chapters[previewIndex].title,
-      seekValue: seekValue,
-      onPrevious: _index > 0 ? _prev : null,
-      onNext: _index < widget.chapters.length - 1 ? _next : null,
-      onSeek: (value) => _setState(() => _chapterSeekValue = value),
-      onSeekEnd: (value) {
-        _setState(() => _chapterSeekValue = null);
-        _jumpToChapter(value.round());
-      },
-      onDirectory: _showDirectory,
-      onNight: _toggleNightTheme,
-      onAppearance: _showAppearanceSettings,
-      onListen: () => unawaited(_openListening()),
-      showListening: true,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 听书胶囊贴在控制条正上方：菜单呼出时才有，左上角对齐。
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: ReaderListenCapsuleHost(
+              bookId: widget.bookId,
+              cover: widget.cover,
+              preset: preset,
+              animate: !einkModeNotifier.value,
+              busy: _loading || _error != null,
+              onStartFromPage: () =>
+                  unawaited(_openListening(fromPage: true, keepControls: true)),
+              onCollapse: _toggleControls,
+            ),
+          ),
+        ),
+        ReaderControls(
+          key: const ValueKey('reader-controls'),
+          preferences: _displayPreferences,
+          chapterIndex: previewIndex,
+          chapterCount: widget.chapters.length,
+          chapterTitle: widget.chapters[previewIndex].title,
+          seekValue: seekValue,
+          onPrevious: _index > 0 ? _prev : null,
+          onNext: _index < widget.chapters.length - 1 ? _next : null,
+          onSeek: (value) => _setState(() => _chapterSeekValue = value),
+          onSeekEnd: (value) {
+            _setState(() => _chapterSeekValue = null);
+            _jumpToChapter(value.round());
+          },
+          onDirectory: _showDirectory,
+          onNight: _toggleNightTheme,
+          onAppearance: _showAppearanceSettings,
+          onListen: () => unawaited(_openListening()),
+          showListening: true,
+        ),
+      ],
     );
   }
 

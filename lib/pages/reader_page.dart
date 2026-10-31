@@ -26,6 +26,7 @@ import '../services/reader_device.dart';
 import '../services/reader_follow_poll.dart';
 import '../widgets/reader/eink_reading.dart';
 import '../widgets/reader/reader_player_pill.dart';
+import '../widgets/reader/reader_listen_capsule.dart';
 import '../widgets/reader/reader_narration_visibility.dart';
 import '../widgets/reader/reader_sync_pill.dart';
 import '../services/eink_refresh.dart';
