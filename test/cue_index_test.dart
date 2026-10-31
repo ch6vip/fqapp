@@ -415,4 +415,73 @@ void main() {
       );
     }
   });
+
+  testWidgets('逗号列举不再逐词切片，每片攒够 5 个真实字', (tester) async {
+    // 与截图同一段：把顿号换成逗号，旧逻辑会切出 8 片、每片 475ms 的碎跳。
+    final body =
+        '修行之道，划分为：后天境，先天境，黄灵境，玄灵境，地灵境，天灵境。';
+    final layout = layoutWith([body]);
+    final index = CueIndex.build(
+      layout: layout,
+      track: SubtitleTrack([SubtitleCue(startMs: 0, text: body)]),
+    );
+    final block = layout.blocks[1];
+    final pieces = index.spans
+        .where((s) => s.cueIndex == 0)
+        .map(
+          (s) => block.text.substring(s.start - block.start, s.end - block.start),
+        )
+        .toList();
+
+    expect(pieces.length, lessThanOrEqualTo(4), reason: '不应切到 8 片');
+    expect(pieces.length, greaterThan(1), reason: '整句仍要拆开');
+    final real = RegExp(r'[\s，。！？；：、“”‘’（）《》〈〉…—·,.!?;:"()\[\]{}]');
+    for (final piece in pieces) {
+      final n = piece.replaceAll(real, '').length;
+      expect(n, greaterThanOrEqualTo(5), reason: '片「$piece」真实字不足 5');
+    }
+  });
+
+  testWidgets('强边界无条件切：短句不被并进下一句', (tester) async {
+    // 「洞天福地。」只有 4 个真实字，弱边界规则会把它并进下一句。
+    // 整句要够 20 字才会拆片，否则走「整条不拆」的老路径。
+    const body = '洞天福地。他推门而入，屋里空无一人，只有桌上那盏灯还亮着。';
+    final layout = layoutWith([body]);
+    final index = CueIndex.build(
+      layout: layout,
+      track: SubtitleTrack([SubtitleCue(startMs: 0, text: body)]),
+    );
+    final block = layout.blocks[1];
+    final pieces = index.spans
+        .where((s) => s.cueIndex == 0)
+        .map(
+          (s) => block.text.substring(s.start - block.start, s.end - block.start),
+        )
+        .toList();
+
+    expect(pieces, isNotEmpty);
+    expect(pieces.first, '洞天福地。', reason: '句号是强边界，必须切在这里');
+  });
+
+  testWidgets('尾片攒不够 5 个真实字时并回上一片', (tester) async {
+    // 末尾「嗯。」只有 1 个真实字：旧逻辑会单独成片一闪而过。
+    const body = '他抬头看了看天色，云层压得很低，风里带着潮湿的土腥味，嗯。';
+    final layout = layoutWith([body]);
+    final index = CueIndex.build(
+      layout: layout,
+      track: SubtitleTrack([SubtitleCue(startMs: 0, text: body)]),
+    );
+    final block = layout.blocks[1];
+    final pieces = index.spans
+        .where((s) => s.cueIndex == 0)
+        .map(
+          (s) => block.text.substring(s.start - block.start, s.end - block.start),
+        )
+        .toList();
+    final real = RegExp(r'[\s，。！？；：、“”‘’（）《》〈〉…—·,.!?;:"()\[\]{}]');
+
+    expect(pieces.last.replaceAll(real, '').length, greaterThanOrEqualTo(5),
+        reason: '尾片「${pieces.last}」不应只剩「嗯。」');
+    expect(pieces.last, endsWith('土腥味，嗯。'), reason: '尾片并回上一片');
+  });
 }

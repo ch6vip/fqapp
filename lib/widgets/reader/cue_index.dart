@@ -95,6 +95,28 @@ class CueIndex {
   /// 否则高亮会把右引号甩到下一句开头，看起来像少了一个字。
   static final RegExp closingMarks = RegExp('[”’」』）】]');
 
+  /// **强边界**：句末/语义已断句的标点，一律切开，不受最小片长约束。
+  /// 与 [_weightOf] 里记 4 分的那批一致 —— 它们后面往往真停顿半秒以上。
+  static final RegExp strongBoundaryAt = RegExp('[。！？…—；!?;]');
+
+  /// 弱边界（`，：`）切片前要求的最小**真实字数**。
+  ///
+  /// 并列短语（`后天境，先天境，黄灵境，…`）和密集对话里逗号几乎不停顿，
+  /// 按它切会让每片只剩三五个字，高亮跳得极碎。攒够真实字才允许切一次；
+  /// 强边界不受此限，否则 `洞天福地。` 这类短句会被并进下一句。
+  ///
+  /// 真实字 = 不计空白与标点（复用 [cueNoise] 的口径），`后天境，` 算 3 字。
+  static const int minPieceChars = 5;
+
+  /// 区间 [from, to) 的真实字数：剔除空白与标点。
+  static int _visibleCount(String text, int from, int to) {
+    var n = 0;
+    for (var k = from; k < to; k++) {
+      if (!cueNoise.hasMatch(text[k])) n++;
+    }
+    return n;
+  }
+
   /// 每片的最小停留时长。
   ///
   /// 纯按停顿权重分时，句子拆得越碎、尾片拿到的时长越接近 0，观感就是
@@ -224,7 +246,7 @@ class CueIndex {
       if (segStart != null &&
           segEnd != null &&
           segEnd - segStart >= commaSplitThreshold) {
-        final pieces = <(int, int)>[]; // combined 下标 [from, to)
+        final pieces = <(int, int, bool)>[]; // combined [from, to)，是否由强边界切开
         final segmentEnd = segEnd;
         var pieceStart = segStart;
         for (var k = segStart; k < segmentEnd; k++) {
@@ -232,17 +254,45 @@ class CueIndex {
             var e = k + 1;
             // 连续标点（——、！？）与收尾引号整组归前片，避免破折号被劈成
             // 两半、`！”` 被拆到下一片。
+            var strong = strongBoundaryAt.hasMatch(combined[k]);
             while (e < segmentEnd &&
                 (commaSplitAt.hasMatch(combined[e]) ||
                     closingMarks.hasMatch(combined[e]))) {
+              if (strongBoundaryAt.hasMatch(combined[e])) strong = true;
               e++;
             }
-            pieces.add((pieceStart, e));
-            pieceStart = e;
+            // 强边界一律切；弱边界攒够 [minPieceChars] 个真实字才切，否则
+            // 跳过这个标点继续累积 —— 并列短语与密集对话据此不再切碎。
+            if (strong || _visibleCount(combined, pieceStart, e) >= minPieceChars) {
+              pieces.add((pieceStart, e, strong));
+              pieceStart = e;
+            }
             k = e - 1;
           }
         }
-        if (pieceStart < segmentEnd) pieces.add((pieceStart, segmentEnd));
+        if (pieceStart < segmentEnd) {
+          pieces.add((pieceStart, segmentEnd, true));
+        }
+        // 归并：真实字不足的短片并回上一片，但**只在两者之间是弱边界**时
+        // 才合并。`嗯。`（前接逗号）是同一句的收尾语气词，应跟着前句亮；
+        // `洞天福地。`（前接句号/段首）是独立短句，保留，否则跨句合并会让
+        // 高亮一次盖住两句。
+        final merged = <(int, int)>[];
+        for (var p = 0; p < pieces.length; p++) {
+          final (from, to, cutStrong) = pieces[p];
+          final prevWeak = p > 0 && !pieces[p - 1].$3;
+          if (merged.isNotEmpty &&
+              prevWeak &&
+              _visibleCount(combined, from, to) < minPieceChars) {
+            final last = merged.removeLast();
+            merged.add((last.$1, to));
+          } else {
+            merged.add((from, to));
+          }
+        }
+        pieces
+          ..clear()
+          ..addAll(merged.map((e) => (e.$1, e.$2, true)));
         if (pieces.length > 1) {
           final cueStartMs = track.cues[i].startMs;
           final cueEndMs = track.endMsAt(i);
