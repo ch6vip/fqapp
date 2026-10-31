@@ -318,6 +318,9 @@ class SettingsSwitch extends StatelessWidget {
 
 /// 设置页确认框：取消 + 确认（破坏性操作确认键用书架同款删除红）。
 ///
+/// 墨水屏下删除红不进入主题（纯黑白要求），改用 [HomePalette.ink] 黑字
+/// 并给按钮加 1dp 黑描边：`secondaryContainer` 与对话框底色都是白色，
+/// 没有描边按钮边界会和对话框融为一体。
 /// 返回 true 仅当用户点了确认；点遮罩 / 返回键关闭按取消处理。
 Future<bool> showSettingsConfirmDialog({
   required BuildContext context,
@@ -329,23 +332,33 @@ Future<bool> showSettingsConfirmDialog({
 }) async {
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(title),
-      content: message == null ? null : Text(message),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: Text(cancelLabel),
-        ),
-        FilledButton.tonal(
-          onPressed: () => Navigator.pop(dialogContext, true),
-          style: destructive
-              ? FilledButton.styleFrom(foregroundColor: ShelfTokens.deleteRed)
-              : null,
-          child: Text(confirmLabel),
-        ),
-      ],
-    ),
+    builder: (dialogContext) {
+      final palette = HomePalette.of(dialogContext);
+      return AlertDialog(
+        title: Text(title),
+        content: message == null ? null : Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(cancelLabel),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: destructive
+                ? FilledButton.styleFrom(
+                    foregroundColor: palette.eink
+                        ? palette.ink
+                        : ShelfTokens.deleteRed,
+                    side: palette.eink
+                        ? const BorderSide(color: Colors.black)
+                        : null,
+                  )
+                : null,
+            child: Text(confirmLabel),
+          ),
+        ],
+      );
+    },
   );
   return confirmed ?? false;
 }

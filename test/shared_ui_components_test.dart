@@ -447,4 +447,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(confirmed, isTrue);
   });
+
+  testWidgets('墨水屏破坏性确认键为黑字黑描边，与白色对话框可区分', (tester) async {
+    einkModeNotifier.value = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light, einkMode: true),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => showSettingsConfirmDialog(
+                  context: context,
+                  title: '删除',
+                  confirmLabel: '删除',
+                  destructive: true,
+                ),
+                child: const Text('执行'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('执行'));
+    await tester.pumpAndSettle();
+
+    final confirmButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '删除'),
+    );
+    final style = confirmButton.style!;
+    // 破坏红不进入墨屏主题：前景纯黑。
+    expect(style.foregroundColor!.resolve(const {}), Colors.black);
+    // secondaryContainer 与对话框底都是白色，靠 1dp 黑描边划出按钮边界。
+    final side = style.side!.resolve(const {});
+    expect(side?.color, Colors.black);
+    expect(side?.width, 1);
+    expect(
+      Theme.of(tester.element(find.byType(AlertDialog))).colorScheme.surface,
+      Colors.white,
+    );
+  });
 }
