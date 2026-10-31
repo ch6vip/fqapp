@@ -383,4 +383,36 @@ void main() {
     expect(index.spanAtChar(first.end)?.cueIndex, 0, reason: '底层语义不变');
     expect(index.spanAtCharIn(first.end, second.start, second.end), isNull);
   });
+
+  testWidgets('顿号不算句读边界：并列短语不会被拆成三字一片', (tester) async {
+    const body = '修行之道，划分为：后天境、先天境、黄灵境、玄灵境、地灵境、天灵境。';
+    final layout = layoutWith([body]);
+    final index = CueIndex.build(
+      layout: layout,
+      track: SubtitleTrack([
+        SubtitleCue(startMs: 0, text: body),
+        SubtitleCue(startMs: 9000, text: '下一句。'),
+      ]),
+    );
+    final block = layout.blocks[1];
+    final pieces = index.spans.where((s) => s.cueIndex == 0).toList();
+    expect(pieces.length, greaterThan(1), reason: '按逗号/冒号/句号仍要拆');
+
+    for (final piece in pieces) {
+      final text = block.text.substring(
+        piece.start - block.start,
+        piece.end - block.start,
+      );
+      expect(
+        text.endsWith('、'),
+        isFalse,
+        reason: '片尾「$text」是顿号：并列短语被逐词切开了，高亮会跳得极碎',
+      );
+      expect(
+        text.length,
+        greaterThan(3),
+        reason: '片「$text」太短，多半是按顿号切碎了',
+      );
+    }
+  });
 }
