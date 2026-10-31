@@ -4,20 +4,18 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/app_log.dart';
 import '../services/book_txt_export.dart';
 import '../services/playlet_share.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/home/home_feed_states.dart';
+import '../widgets/home/home_sheet.dart';
 import '../widgets/logs/log_entry_card.dart';
 import '../widgets/logs/log_filter_sheet.dart';
-
-enum _LogSource {
-  app('应用'),
-  rust('核心');
-
-  const _LogSource(this.label);
-  final String label;
-}
+import '../widgets/logs/log_viewer_chrome.dart';
+import '../widgets/settings/settings_widgets.dart';
 
 enum _LogAction { copy, exportVisible, exportAll, exportBoth, share, clear }
 
@@ -40,7 +38,7 @@ class _LogViewerPageState extends State<LogViewerPage>
   final _scrollController = ScrollController();
   final _searchController = TextEditingController();
   final _pendingEntries = HashSet<LogEntry>.identity();
-  _LogSource _source = _LogSource.app;
+  LogSource _source = LogSource.app;
   LogFilterSelection _filters = const LogFilterSelection();
   String _query = '';
   bool _playerOnly = false;
@@ -103,7 +101,7 @@ class _LogViewerPageState extends State<LogViewerPage>
   }
 
   void _onAppChanged() {
-    if (_active && _source == _LogSource.app) {
+    if (_active && _source == LogSource.app) {
       _acceptEntries(AppLog.instance.entries);
     }
   }
@@ -158,13 +156,13 @@ class _LogViewerPageState extends State<LogViewerPage>
     _jumpToLatest();
   }
 
-  void _selectSource(_LogSource source) {
+  void _selectSource(LogSource source) {
     if (_source == source) return;
     ++_sourceGeneration;
     setState(() {
       _source = source;
-      if (source == _LogSource.rust) _playerOnly = false;
-      _entries = source == _LogSource.app
+      if (source == LogSource.rust) _playerOnly = false;
+      _entries = source == LogSource.app
           ? AppLog.instance.entries
           : _rustEntries;
       _following = true;
@@ -177,7 +175,7 @@ class _LogViewerPageState extends State<LogViewerPage>
   void _updateRustPolling() {
     _rustTimer?.cancel();
     _rustTimer = null;
-    if (!_active || _source != _LogSource.rust) return;
+    if (!_active || _source != LogSource.rust) return;
     unawaited(_loadRust());
     _rustTimer = Timer.periodic(
       LogViewerPage.rustRefresh,
@@ -279,7 +277,7 @@ class _LogViewerPageState extends State<LogViewerPage>
 
   Future<void> _export(
     List<LogEntry> entries,
-    _LogSource source, {
+    LogSource source, {
     required bool all,
   }) async {
     if (_exporting || entries.isEmpty) return;
@@ -361,7 +359,7 @@ class _LogViewerPageState extends State<LogViewerPage>
     }
   }
 
-  Future<void> _share(List<LogEntry> entries, _LogSource source) async {
+  Future<void> _share(List<LogEntry> entries, LogSource source) async {
     final text = formatLogLines(entries, maxLines: 500);
     // Large stacks can exceed Android's Intent size even below the entry cap.
     if (text.length > 100000) {
@@ -383,76 +381,58 @@ class _LogViewerPageState extends State<LogViewerPage>
     final all = List<LogEntry>.of(_entries);
     final appAll = List<LogEntry>.of(AppLog.instance.entries);
     final source = _source;
-    final action = await showModalBottomSheet<_LogAction>(
+    final action = await showHomeSheet<_LogAction>(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: Text('${source.label}日志'),
-                subtitle: const Text('导出为 TXT 文件，保留完整内容'),
-              ),
-              _actionTile(
-                context,
-                _LogAction.copy,
-                Icons.copy_outlined,
-                '复制筛选结果',
-                '${visible.length} 条 · 当前查看的结果',
-                enabled: visible.isNotEmpty,
-              ),
-              _actionTile(
-                context,
-                _LogAction.exportVisible,
-                Icons.download_outlined,
-                '导出筛选结果',
-                '${visible.length} 条 · 保存为 TXT',
-                enabled: visible.isNotEmpty && !_exporting,
-              ),
-              _actionTile(
-                context,
-                _LogAction.exportAll,
-                Icons.file_download_outlined,
-                '导出全部',
-                '${all.length} 条 · 当前来源，不受筛选影响',
-                enabled: all.isNotEmpty && !_exporting,
-              ),
-              _actionTile(
-                context,
-                _LogAction.exportBoth,
-                Icons.library_books_outlined,
-                '导出应用 + 核心',
-                '应用 ${appAll.length} 条 + 核心日志 · 导出前读取最新内容',
-                // The core may have logs even if its tab has never been opened.
-                enabled: !_exporting,
-              ),
-              _actionTile(
-                context,
-                _LogAction.share,
-                Icons.share_outlined,
-                '分享筛选结果',
-                visible.length > 500
-                    ? '仅分享最近 500 条，完整内容请导出 TXT'
-                    : '${visible.length} 条 · 系统分享',
-                enabled: visible.isNotEmpty,
-              ),
-              const Divider(),
-              _actionTile(
-                context,
-                _LogAction.clear,
-                Icons.delete_outline,
-                '清空当前视图',
-                source == _LogSource.app ? '保留已保存的日志文件' : '核心日志由服务维护，不支持清空',
-                enabled: source == _LogSource.app && all.isNotEmpty,
-              ),
-            ],
-          ),
+      title: '${source.label}日志',
+      children: [
+        _sheetHint('导出为 TXT 文件，保留完整内容'),
+        _actionRow(
+          _LogAction.copy,
+          LucideIcons.copy,
+          '复制筛选结果',
+          '${visible.length} 条 · 当前查看的结果',
+          enabled: visible.isNotEmpty,
         ),
-      ),
+        _actionRow(
+          _LogAction.exportVisible,
+          LucideIcons.download,
+          '导出筛选结果',
+          '${visible.length} 条 · 保存为 TXT',
+          enabled: visible.isNotEmpty && !_exporting,
+        ),
+        _actionRow(
+          _LogAction.exportAll,
+          LucideIcons.file_down,
+          '导出全部',
+          '${all.length} 条 · 当前来源，不受筛选影响',
+          enabled: all.isNotEmpty && !_exporting,
+        ),
+        _actionRow(
+          _LogAction.exportBoth,
+          LucideIcons.files,
+          '导出应用 + 核心',
+          '应用 ${appAll.length} 条 + 核心日志 · 导出前读取最新内容',
+          // The core may have logs even if its tab has never been opened.
+          enabled: !_exporting,
+        ),
+        _actionRow(
+          _LogAction.share,
+          LucideIcons.share_2,
+          '分享筛选结果',
+          visible.length > 500
+              ? '仅分享最近 500 条，完整内容请导出 TXT'
+              : '${visible.length} 条 · 系统分享',
+          enabled: visible.isNotEmpty,
+        ),
+        Divider(height: 17, color: HomePalette.of(context).line),
+        _actionRow(
+          _LogAction.clear,
+          LucideIcons.trash,
+          '清空当前视图',
+          source == LogSource.app ? '保留已保存的日志文件' : '核心日志由服务维护，不支持清空',
+          enabled: source == LogSource.app && all.isNotEmpty,
+        ),
+      ],
     );
     if (!mounted || action == null) return;
     switch (action) {
@@ -471,18 +451,26 @@ class _LogViewerPageState extends State<LogViewerPage>
     }
   }
 
-  Widget _actionTile(
-    BuildContext context,
+  Widget _sheetHint(String text) {
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(text, style: TextStyle(fontSize: 12.5, color: palette.muted)),
+    );
+  }
+
+  Widget _actionRow(
     _LogAction action,
     IconData icon,
     String title,
     String subtitle, {
     required bool enabled,
-  }) => ListTile(
-    leading: Icon(icon),
-    title: Text(title),
-    subtitle: Text(subtitle),
+  }) => SettingsRow(
+    icon: icon,
+    title: title,
+    subtitle: subtitle,
     enabled: enabled,
+    showChevron: false,
     onTap: enabled ? () => Navigator.pop(context, action) : null,
   );
 
@@ -512,40 +500,72 @@ class _LogViewerPageState extends State<LogViewerPage>
 
   Future<void> _pickFilters() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final result = await showModalBottomSheet<LogFilterSelection>(
+    final result = await showHomeSheet<LogFilterSelection>(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (_) => LogFilterSheet(initial: _filters),
+      title: '筛选日志',
+      children: [LogFilterSheet(initial: _filters)],
     );
     if (!mounted || result == null) return;
     _changeFilters(() => _filters = result);
   }
 
+  void _togglePlayerOnly(bool selected) {
+    if (selected) _selectSource(LogSource.app);
+    _changeFilters(() => _playerOnly = selected);
+  }
+
+  void _clearLevel() => _changeFilters(
+    () => _filters = LogFilterSelection(timeWindow: _filters.timeWindow),
+  );
+
+  void _clearTimeWindow() => _changeFilters(
+    () => _filters = LogFilterSelection(level: _filters.level),
+  );
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final palette = HomePalette.of(context);
     final indices = <Key, int>{
       for (var i = 0; i < _displayEntries.length; i++)
         ObjectKey(_displayEntries[i]): _displayEntries.length - 1 - i,
     };
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('日志'),
-        actions: [
-          IconButton(
-            tooltip: '日志操作',
-            onPressed: _exporting ? null : _showActions,
-            icon: const Icon(Icons.more_horiz),
+    return SettingsScaffold(
+      title: '日志',
+      actions: [
+        IconButton(
+          tooltip: '日志操作',
+          onPressed: _exporting ? null : _showActions,
+          icon: Icon(
+            LucideIcons.ellipsis,
+            color: _exporting
+                ? palette.muted.withValues(alpha: 0.4)
+                : palette.ink,
           ),
-        ],
-      ),
+        ),
+      ],
       body: SafeArea(
         top: false,
         child: Column(
           children: [
-            _buildToolbar(),
-            if (_exporting) const LinearProgressIndicator(minHeight: 2),
+            LogToolbar(
+              controller: _searchController,
+              query: _query,
+              source: _source,
+              playerOnly: _playerOnly,
+              filters: _filters,
+              onQueryChanged: (value) => _changeFilters(() => _query = value),
+              onPickFilters: _pickFilters,
+              onSelectSource: _selectSource,
+              onTogglePlayerOnly: _togglePlayerOnly,
+              onClearLevel: _clearLevel,
+              onClearTimeWindow: _clearTimeWindow,
+            ),
+            if (_exporting)
+              LinearProgressIndicator(
+                minHeight: 2,
+                color: palette.accentText,
+                backgroundColor: palette.line,
+              ),
             Expanded(
               child: _displayEntries.isEmpty
                   ? _buildEmpty()
@@ -572,40 +592,11 @@ class _LogViewerPageState extends State<LogViewerPage>
                       ),
                     ),
             ),
-            Container(
-              decoration: BoxDecoration(
-                color: colors.surface,
-                border: Border(top: BorderSide(color: colors.outlineVariant)),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${_displayEntries.length} 条${_following ? '' : ' · 已暂停'}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: _following ? _pauseFollowing : _followLatest,
-                    icon: Icon(
-                      _following ? Icons.pause : Icons.arrow_downward,
-                      size: 18,
-                    ),
-                    label: Text(
-                      _following
-                          ? '实时跟随'
-                          : _pendingEntries.isEmpty
-                          ? '回到最新'
-                          : '新增 ${_pendingEntries.length} 条',
-                    ),
-                  ),
-                ],
-              ),
+            LogFollowBar(
+              count: _displayEntries.length,
+              following: _following,
+              pendingCount: _pendingEntries.length,
+              onToggle: _following ? _pauseFollowing : _followLatest,
             ),
           ],
         ),
@@ -613,109 +604,7 @@ class _LogViewerPageState extends State<LogViewerPage>
     );
   }
 
-  Widget _buildToolbar() {
-    final colors = Theme.of(context).colorScheme;
-    final filterCount =
-        (_filters.level == null ? 0 : 1) +
-        (_filters.timeWindow == null ? 0 : 1);
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  onChanged: (value) => _changeFilters(() => _query = value),
-                  decoration: InputDecoration(
-                    hintText: '搜索标签或内容',
-                    filled: true,
-                    fillColor: colors.surfaceContainerLow,
-                    isDense: true,
-                    prefixIcon: const Icon(Icons.search, size: 20),
-                    suffixIcon: _query.isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: '清除搜索',
-                            icon: const Icon(Icons.close, size: 18),
-                            onPressed: () {
-                              _searchController.clear();
-                              _changeFilters(() => _query = '');
-                            },
-                          ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filledTonal(
-                tooltip: '筛选日志',
-                onPressed: _pickFilters,
-                icon: Badge(
-                  isLabelVisible: filterCount > 0,
-                  label: Text('$filterCount'),
-                  child: const Icon(Icons.tune, size: 20),
-                ),
-              ),
-            ],
-          ),
-        ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              for (final source in _LogSource.values)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(source.label),
-                    selected: _source == source,
-                    showCheckmark: false,
-                    onSelected: (_) => _selectSource(source),
-                  ),
-                ),
-              FilterChip(
-                label: const Text('播放诊断'),
-                selected: _playerOnly,
-                onSelected: (selected) {
-                  if (selected) _selectSource(_LogSource.app);
-                  _changeFilters(() => _playerOnly = selected);
-                },
-              ),
-              if (_filters.level case final level?) ...[
-                const SizedBox(width: 8),
-                InputChip(
-                  label: Text(level.label),
-                  onDeleted: () => _changeFilters(
-                    () => _filters = LogFilterSelection(
-                      timeWindow: _filters.timeWindow,
-                    ),
-                  ),
-                ),
-              ],
-              if (_filters.timeWindow case final window?) ...[
-                const SizedBox(width: 8),
-                InputChip(
-                  label: Text(logTimeWindowLabel(window)),
-                  onDeleted: () => _changeFilters(
-                    () => _filters = LogFilterSelection(level: _filters.level),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildEmpty() {
-    final theme = Theme.of(context);
     final filtered =
         _query.trim().isNotEmpty ||
         _playerOnly ||
@@ -724,32 +613,14 @@ class _LogViewerPageState extends State<LogViewerPage>
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              filtered ? Icons.search_off : Icons.receipt_long_outlined,
-              size: 40,
-              color: theme.colorScheme.outline,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              filtered
-                  ? '没有匹配的日志'
-                  : _source == _LogSource.app
-                  ? '暂无日志'
-                  : '暂无核心日志',
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              filtered ? '试试其他关键词，或调整筛选条件' : '运行应用后，日志会显示在这里',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
+        child: HomeStateView(
+          icon: filtered ? LucideIcons.search_x : LucideIcons.receipt_text,
+          title: filtered
+              ? '没有匹配的日志'
+              : _source == LogSource.app
+              ? '暂无日志'
+              : '暂无核心日志',
+          message: filtered ? '试试其他关键词，或调整筛选条件' : '运行应用后，日志会显示在这里',
         ),
       ),
     );
