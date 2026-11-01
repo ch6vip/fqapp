@@ -30,6 +30,7 @@
     "lib/services/inline_video_playback.dart": 1139,
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 750,
+    "lib/services/reader_preferences.dart": 501,
     "lib/services/system_tts.dart": 708,
     "lib/widgets/audio/audio_control_rows.dart": 642,
     "lib/widgets/audio/audio_sections.dart": 1753,
