@@ -11,6 +11,7 @@ import '../models/book_detail.dart';
 import '../models/media_item.dart';
 import '../models/media_description.dart';
 import '../models/series_detail.dart';
+import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
 import '../services/audio_history.dart';
 import '../services/book_open_preferences.dart';
@@ -44,6 +45,7 @@ import 'cached_book_reader.dart';
 import 'comic_reader_page.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
+import 'shuqi_detail_page.dart';
 
 /// Optional decorations for the detail page (currently the review block).
 /// Kept as one injected bundle so callers that already stub the detail and
@@ -1536,6 +1538,21 @@ Future<void> openBookDetail(
   MediaItem item, {
   BookOpenEntry entry = BookOpenEntry.discover,
 }) async {
+  // 书旗条目走自己的详情页：它的 bookId 是另一套命名空间，番茄的 DetailPage
+  // 会拿这个 id 去查番茄接口，必然查不到。
+  if (isShuqiItem(item)) {
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => ShuqiDetailPage(
+          bookId: item.id,
+          initialTitle: item.title,
+          initialCover: item.cover,
+        ),
+      ),
+    );
+    return;
+  }
   final preferences = BookOpenPreferences.instance;
   await preferences.load();
   if (!context.mounted) return;

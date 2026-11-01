@@ -1,7 +1,7 @@
 {
   "files": {
     "lib/main.dart": 781,
-    "lib/models/media_item.dart": 1549,
+    "lib/models/media_item.dart": 1565,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_listening_layout.dart": 664,
     "lib/pages/audio_page.dart": 2131,
@@ -55,7 +55,7 @@
     "rust/src/endpoints/book.rs": 597,
     "rust/src/endpoints/comments.rs": 957,
     "rust/src/endpoints/manga.rs": 3164,
-    "rust/src/endpoints/router.rs": 557,
+    "rust/src/endpoints/router.rs": 579,
     "rust/src/endpoints/video.rs": 3555,
     "test/audio_page_test.dart": 1172,
     "test/audio_real_alignment_test.dart": 769,
