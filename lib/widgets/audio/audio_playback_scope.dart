@@ -123,6 +123,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   AudioFloatingRoutes? _routes;
   RecentListen? _recent;
   bool _resuming = false;
+  bool _readerVoicePickerOpen = false;
   Object? _toastedError;
 
   /// 跨章跳读要用的字幕轨缓存，键 = `音色|章节 id`。

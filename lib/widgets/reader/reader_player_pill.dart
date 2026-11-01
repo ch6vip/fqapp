@@ -117,8 +117,7 @@ class ReaderPlayerPillHost extends StatefulWidget {
   final Listenable viewportChanges;
 
   /// Official `d.java:305-320` `y(page)`: whether the current page is a normal
-  /// text page. The sync pill replaces the play/pause pill when the narration
-  /// highlight is off screen and this page is normal.
+  /// text page. Neither reader pill appears on image-only or title pages.
   final bool Function()? normalPage;
 
   /// `AudioSyncReaderController.K()`: back to the live position and follow.
@@ -272,17 +271,16 @@ class _ReaderPlayerPillHostState extends State<ReaderPlayerPillHost> {
 
   Widget _slot({required bool floating}) {
     final highlightOnScreen = _highlightOn;
+    final normalPage = widget.normalPage?.call() ?? true;
     // 官方 d.p()（d.java:285-320）：高亮在屏内给播放/暂停胶囊，否则给
     // 「原进度 / 从本页听」同步胶囊。同步胶囊只占浮动位（页面底部），
     // 5 秒弱化只属于播放胶囊。
     final sync =
-        _active &&
-        !widget.controlsVisible &&
-        !highlightOnScreen &&
-        (widget.normalPage?.call() ?? true);
+        _active && !widget.controlsVisible && !highlightOnScreen && normalPage;
     final show =
         !widget.controlsVisible &&
         _active &&
+        normalPage &&
         (sync ? floating : highlightOnScreen && (floating ? !_weak : _weak));
     final motion =
         widget.animate &&

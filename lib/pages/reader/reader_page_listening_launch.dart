@@ -100,7 +100,8 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       );
       await _persistProgress();
       if (!mounted || chapterId != _chapter.itemId) return;
-      _setControlsVisible(false);
+      // Preserve the menu state so its borrowed capsule remains accessible
+      // when system TTS starts; do not reopen a menu the user has dismissed.
       await AudioPlaybackScope.startSystemTts(context, book);
     } catch (e) {
       if (mounted) _showMessage(SystemTts.errorMessage(e));

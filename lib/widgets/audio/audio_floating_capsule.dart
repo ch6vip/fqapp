@@ -176,6 +176,26 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     )?.showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _showReaderVoices(BuildContext context, String bookId) async {
+    VoicePickerOutcome outcome;
+    try {
+      outcome = await ReaderAudioBridge.openVoiceSettings(context, bookId);
+    } catch (_) {
+      outcome = VoicePickerOutcome.failed;
+    }
+    if (!mounted || !context.mounted) return;
+    switch (outcome) {
+      case VoicePickerOutcome.changed:
+        _toast('已切换声音');
+      case VoicePickerOutcome.unavailable:
+        _toast('暂时无法获取音色列表');
+      case VoicePickerOutcome.failed:
+        _toast('切换失败，请稍后重试');
+      case VoicePickerOutcome.dismissed:
+        break;
+    }
+  }
+
   /// The overlay and reader menu borrow the same session and control path.
   Widget _buildCapsule(
     BuildContext context, {
@@ -223,6 +243,11 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
                   ? session._openChapter(session._index, restoreHistory: true)
                   : session._togglePlayback(),
             ),
+            onVoice: inReaderMenu
+                ? () => unawaited(_showReaderVoices(context, session._bookId))
+                : null,
+            canChangeVoice:
+                !session._switchingVersion && !_readerVoicePickerOpen,
             onClose: () => unawaited(stop(session)),
           );
         } else if (tts != null && !tts.closed) {
@@ -274,7 +299,12 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
           padding: const EdgeInsets.only(bottom: 10),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: Semantics(container: true, label: '听书控制', child: player),
+            child: Semantics(
+              container: true,
+              explicitChildNodes: true,
+              label: '听书控制',
+              child: player,
+            ),
           ),
         );
       },
