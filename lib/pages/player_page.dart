@@ -771,6 +771,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 的回滚实验里。本地只有前两条可判，第三条的开关未接入。
   EpisodeRelateBook? get _episodeRelateBook {
     if (!PlayerStyleConfig.instance.relateBookInEpisodesDialog) return null;
+    return _relateBook;
+  }
+
+  EpisodeRelateBook? get _relateBook {
     final book = _originalBook;
     if (book == null) return null;
     return EpisodeRelateBook(id: book.id, title: book.title, cover: book.cover);
@@ -1769,8 +1773,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onSelectEpisode: (index) => unawaited(_selectEpisode(index)),
       onOpenSeriesDetail: widget.bookId.isEmpty ? null : _openSeriesDetail,
       onOpenRelatedSeries: relatedSeries,
-      relateBook: _episodeRelateBook,
-      onOpenRelateBook: _episodeRelateBook == null ? null : _openOriginalBook,
+      // 简介不是选集弹窗，不受 relate_book_in_episodes_dialog 的实验门控制。
+      relateBook: _relateBook,
+      onOpenRelateBook: _relateBook == null ? null : _openOriginalBook,
       onOpenListenMode: hasEpisodes ? () => unawaited(_openListenMode()) : null,
       onOpenDownload: hasEpisodes
           ? () => unawaited(_openDownloadSheet())
