@@ -118,6 +118,88 @@ class AudioRealBookRow extends StatelessWidget {
   }
 }
 
+/// 真人讲书的「边听边读」卡（样稿 `.ra`）。
+///
+/// 40dp 高、10dp 圆角、card 底，外边距 `(12, 18, 12, 0)`；左边 14sp w600
+/// 「边听边读」，右边是原著章节名 13sp muted + 箭头。点击打开关联原著的
+/// 阅读页并定位到这一章，所以只有时间轴映射到原著章节时才渲染。
+class AudioRealListenAlong extends StatelessWidget {
+  static const double height = 40;
+  static const double horizontalMargin = 12;
+  static const double topMargin = 18;
+  static const double titleFontSize = 14;
+  static const double chapterFontSize = 13;
+  static const double arrowSize = 14;
+
+  /// 原著章节名；为空时由页面决定不渲染整张卡。
+  final String chapterTitle;
+  final VoidCallback? onTap;
+
+  const AudioRealListenAlong({
+    super.key,
+    required this.chapterTitle,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = AudioPageThemeScope.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        horizontalMargin,
+        topMargin,
+        horizontalMargin,
+        0,
+      ),
+      child: HomePressable(
+        key: const Key('audio_real_read_along'),
+        semanticLabel: '边听边读',
+        onTap: onTap ?? () {},
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          height: height,
+          padding: const EdgeInsets.fromLTRB(16, 0, 12, 0),
+          decoration: BoxDecoration(
+            color: theme.card,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Text(
+                '边听边读',
+                style: TextStyle(
+                  color: theme.ink,
+                  fontSize: titleFontSize,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  chapterTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: theme.muted,
+                    fontSize: chapterFontSize,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(
+                LucideIcons.chevron_right,
+                size: arrowSize,
+                color: theme.muted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 真人讲书页头下方的 238dp 逐句字幕（官方 `bj3.xml` 的 `a49`）。
 ///
 /// 取证（`AudioPlaySubtitleView`）：238dp 高、左右 20dp、`fadingEdgeLength`

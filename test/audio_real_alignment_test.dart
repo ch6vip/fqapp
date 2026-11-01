@@ -307,8 +307,12 @@ void main() {
 
   testWidgets('the narrator row replaces the voice card', (tester) async {
     await _mount(tester, _RealSession());
-    // 音色卡的双卡结构不再出现，只剩一行版本入口。
-    expect(find.text('边听边读'), findsNothing);
+    // 音色卡的双卡结构不再出现，只剩一行版本入口。真人模式的「边听边读」
+    // 改成独立卡片，且没有时间轴映射到原著章节时不渲染（见
+    // test/audio_real_listen_along_test.dart）。
+    expect(find.byType(AudioToneSection), findsNothing);
+    expect(find.byKey(const Key('audio_read_along')), findsNothing);
+    expect(find.byKey(const Key('audio_real_read_along')), findsNothing);
     expect(find.text('主播：老恒'), findsOneWidget);
     expect(find.text('换版本'), findsOneWidget);
     // S2：换版本行外边距收窄到 (12, 10, 12, 0)。

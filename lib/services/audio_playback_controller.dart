@@ -864,6 +864,12 @@ class _AudioPlaybackController extends ChangeNotifier
       subtitles: _subtitles,
       // 官方通道：当前毫秒正在读的「第几段第几个字」。有它时高亮不用猜。
       audioParaRange: _paraRangeAt(position),
+      // 真人讲书的阅读页别名：音频书/章节 id → 原著书/章节 id。阅读页据此
+      // 继续匹配会话；没有时间轴映射时章节别名为空，阅读页退回不匹配。
+      novelBookId: _linkedNovelBookId,
+      novelChapterId: _linkedNovelChapterId.isEmpty
+          ? null
+          : _linkedNovelChapterId,
     );
   }
 
@@ -1216,6 +1222,20 @@ class _AudioPlaybackController extends ChangeNotifier
 
   List<AudioTone> get _ttsTones =>
       _ttsBookId == null ? const [] : _extras.tones.ttsTones;
+
+  /// 这部剧/录音关联的原著书 id；书本身就是文本（智能朗读）时为 null。
+  ///
+  /// 「边听边读」打开的是这本原著，阅读页用的书 id 与章节 id 都和音频不是
+  /// 一套。会话把它作为别名发布，阅读页才能继续匹配播放状态。
+  String? get _linkedNovelBookId {
+    final novel = _extras.tones.relatedNovel;
+    if (novel == null) return null;
+    final id = novel.id.trim();
+    return id.isEmpty || id == _bookId ? null : id;
+  }
+
+  /// 当前集在时间轴上对应的原著章节 id；没有映射时为空。
+  String get _linkedNovelChapterId => _timeTrack.novelItemId;
 
   List<AudioTone> get _narratorTones => _extras.tones.narratorTones;
 

@@ -22,6 +22,7 @@ import '../services/audio_playback_choice.dart';
 import '../services/audio_subtitle_synth.dart';
 import '../services/audio_time_point_lookup.dart';
 import '../services/audio_preferences.dart';
+import '../services/book_updates.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/fair_memory.dart';
@@ -245,6 +246,9 @@ class _AudioPageState extends State<AudioPage> {
   /// 展开态全文是否展开；换章/换模式时自动收起。
   bool _transcriptExpanded = false;
   int _expandedChapterIndex = -1;
+
+  /// 「边听边读」打开原著阅读页的闸：目录请求期间重复点击不叠加路由。
+  bool _openingReadAlong = false;
 
   /// 展开态正文字号/行距来自阅读器排版设置；加载完成前用兜底 20sp / 2.1。
   ReaderPreferences _readerPreferences = const ReaderPreferences();
@@ -978,6 +982,68 @@ class _AudioPageState extends State<AudioPage> {
         ),
       ),
     );
+  }
+
+  /// 真人讲书「边听边读」：打开关联原著并定位到时间轴映射的章节。
+  ///
+  /// 音频页的章节是专辑/录音的集，阅读器要的是原著目录；两边 id 不同，所以
+  /// 先取原著目录再按 `novel_item_id` 找起点。没有关联原著、目录里找不到这
+  /// 一章或请求失败时不跳转，避免落到错误章节。
+  Future<void> _openReadAlongCard(_ReadAlongSnapshot snapshot) async {
+    final novel = c._extras.tones.relatedNovel;
+    final bookId = novel?.id ?? '';
+    final chapterId = snapshot.novelItemId;
+    if (c._closed || _openingReadAlong || bookId.isEmpty || chapterId.isEmpty) {
+      return;
+    }
+    _openingReadAlong = true;
+    try {
+      final chapters = await (widget.directoryLoader ?? loadBookDirectory)(
+        bookId,
+      );
+      if (!mounted || c._closed) return;
+      final index = chapters.indexWhere(
+        (chapter) => chapter.itemId == chapterId,
+      );
+      if (index < 0) {
+        _showReadAlongUnavailable('找不到对应的原著章节');
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ReaderPage(
+            bookId: bookId,
+            title: novel!.title.isEmpty ? c._title : novel.title,
+            cover: novel.cover.isEmpty ? c._cover : novel.cover,
+            chapters: chapters,
+            startIndex: index,
+            // 注入正文加载器说明调用方自己驱动数据（测试/离线缓存），阅读器
+            // 不再去碰磁盘缓存和上游接口。
+            localOnly: widget.contentLoader != null,
+            // 阅读进度与听书历史共用调用方提供的存储；不传的话阅读页会在
+            // 应用级 LibraryStore 里再开一套记录。
+            readerStore: widget.historyStore,
+            // 展开态已按原著章节取过正文：同一份 loader 交给阅读器，既省一次
+            // 请求，也保证两处看到的正文一致。
+            chapterLoader: widget.contentLoader == null
+                ? null
+                : (chapter) async => (await widget.contentLoader!(
+                    chapter.itemId,
+                  )).toCacheText(),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (mounted) _showReadAlongUnavailable('暂时无法打开原著，请稍后重试');
+    } finally {
+      _openingReadAlong = false;
+    }
+  }
+
+  void _showReadAlongUnavailable(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 当前主播的上游标签（形如 `主播：老恒`），供真人讲书页头那一行使用。

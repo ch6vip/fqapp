@@ -261,6 +261,32 @@ extension _AudioListeningLayout on _AudioPageState {
                                       real: realAudio,
                                     ),
                                   ),
+                                  // 样稿 `.ra`：真人讲书的「边听边读」入口。只有
+                                  // 时间轴把当前集映射到原著章节时才出现；点开
+                                  // 关联原著的阅读页并定位到这一章。
+                                  if (realAudio)
+                                    ValueListenableBuilder<_ReadAlongSnapshot>(
+                                      valueListenable: c._readAlong,
+                                      builder: (context, snapshot, _) {
+                                        final novel =
+                                            c._extras.tones.relatedNovel;
+                                        if (novel == null ||
+                                            novel.id.isEmpty ||
+                                            snapshot.novelItemId.isEmpty) {
+                                          return const SizedBox.shrink();
+                                        }
+                                        return AudioRealListenAlong(
+                                          chapterTitle:
+                                              snapshot
+                                                  .novelChapterTitle
+                                                  .isNotEmpty
+                                              ? snapshot.novelChapterTitle
+                                              : snapshot.chapterTitle,
+                                          onTap: () =>
+                                              _openReadAlongCard(snapshot),
+                                        );
+                                      },
+                                    ),
                                   const SizedBox(height: 16),
                                   // 官方在真人讲书页把音色卡默认收起（bj1.xml a5h 为
                                   // gone），主播版本改由一行入口 + 声音设置面板承担。

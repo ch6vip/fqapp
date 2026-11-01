@@ -40,12 +40,12 @@ extension _ReaderPageListening on _ReaderPageState {
 
   bool get _listenDoubleTapArmed =>
       _narrationRange != null ||
-      ListeningSession.instance.bookId == widget.bookId;
+      ListeningSession.instance.matchesBook(widget.bookId);
 
   /// 本章该用哪条字幕轨：正在播的就是本章时用会话里的，否则用补取的。
   SubtitleTrack? _cueTrackFor(String chapterId) {
     final session = ListeningSession.instance;
-    if (session.chapterId == chapterId) return session.subtitles;
+    if (session.matchesChapter(chapterId)) return session.subtitles;
     return _cueTracks[chapterId];
   }
 
@@ -66,7 +66,7 @@ extension _ReaderPageListening on _ReaderPageState {
   Future<SubtitleTrack?> _fetchCueTrack() async {
     final chapterId = _chapter.itemId;
     final session = ListeningSession.instance;
-    if (session.chapterId == chapterId) return session.subtitles;
+    if (session.matchesChapter(chapterId)) return session.subtitles;
     final cached = _cueTracks[chapterId];
     if (cached != null) return cached;
     final pending = _cueTrackRequests[chapterId];
@@ -139,7 +139,8 @@ extension _ReaderPageListening on _ReaderPageState {
     // `onPlayPause` 只改播放态，不停同步服务），阅读页据此继续显示「继续播放」。
     final session = ListeningSession.instance;
     final active =
-        session.bookId == widget.bookId && session.chapterId == _chapter.itemId;
+        session.matchesBook(widget.bookId) &&
+        session.matchesChapter(_chapter.itemId);
     final held = narration ?? (active ? _narrationRange : null);
     // The follow anchor still uses [narration] when the wash is switched off;
     // only painting depends on the preference.
@@ -235,16 +236,17 @@ extension _ReaderPageListening on _ReaderPageState {
     if (_controlsVisible || _autoTurnTimer != null) return;
     final session = ListeningSession.instance;
     if (!session.playing) return;
-    if (session.bookId != widget.bookId) return;
+    if (!session.matchesBook(widget.bookId)) return;
     if (_loading || _changingChapter || _error != null) return;
     // 用户刚手动翻过页：15 秒内不抢，之后再跟上。这一条必须在「换章」分支
     // 前面 —— 否则被闩锁挡住的那次切章每 100ms 还会走一遍结算+存盘。
     if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
     // 朗读已经读完本章、进了下一章：跟随就该把页面带过去。原来这里直接
     // return，于是跟着跟着停在旧章不动了（用户报的「读完一章不翻章」）。
-    if (session.chapterId != _chapter.itemId) {
+    if (!session.matchesChapter(_chapter.itemId)) {
+      // 别名书（真人讲书 ↔ 原著）的章节 id 不同，按阅读页 id 找目标章。
       final next = widget.chapters.indexWhere(
-        (c) => c.itemId == session.chapterId,
+        (c) => c.itemId == session.readerChapterId,
       );
       if (next >= 0) unawaited(_jumpToChapter(next, followListening: true));
       return;
@@ -266,15 +268,15 @@ extension _ReaderPageListening on _ReaderPageState {
     final layout = _chapterLayout;
     if (layout == null) return false;
     final session = ListeningSession.instance;
-    if (session.bookId != widget.bookId) {
+    if (!session.matchesBook(widget.bookId)) {
       if (!quiet) _showMessage('没在听这本书');
       return false;
     }
     // 正在听别的章：先把本页切到那一章再说，切章后轮询会接手。
-    if (session.chapterId != _chapter.itemId) {
+    if (!session.matchesChapter(_chapter.itemId)) {
       if (quiet) return false;
       final next = widget.chapters.indexWhere(
-        (c) => c.itemId == session.chapterId,
+        (c) => c.itemId == session.readerChapterId,
       );
       if (next >= 0) {
         unawaited(_jumpToChapter(next, followListening: true));
@@ -336,7 +338,7 @@ extension _ReaderPageListening on _ReaderPageState {
       _showMessage('先开始听书，再双击跳读');
       return;
     }
-    if (session.bookId != widget.bookId) {
+    if (!session.matchesBook(widget.bookId)) {
       _showMessage('正在听别的书');
       return;
     }
