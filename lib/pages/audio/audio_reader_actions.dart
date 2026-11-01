@@ -98,6 +98,21 @@ extension _AudioReaderActions on _AudioPlaybackScopeState {
     return true;
   }
 
+  /// 见 [AudioPlaybackScope.stopPlayback]。
+  Future<bool> stopPlayback(String bookId) async {
+    final session = _session;
+    if (session != null && !session._closed && sessionBookMatches(bookId)) {
+      await stop(session);
+      return true;
+    }
+    final tts = _tts;
+    if (tts != null && !tts.closed && tts.book.bookId == bookId) {
+      await stopTts(tts);
+      return true;
+    }
+    return false;
+  }
+
   /// 见 [AudioPlaybackScope.jumpToParagraph]。
   bool jumpToParagraph(
     String chapterId, {
