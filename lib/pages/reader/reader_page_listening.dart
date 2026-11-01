@@ -322,13 +322,15 @@ extension _ReaderPageListening on _ReaderPageState {
     if (_paged) {
       _pagedKey.currentState?.followOffset(offset);
     } else if (_scrollController.hasClients) {
-      final max = _scrollController.position.maxScrollExtent;
+      final max = _joined
+          ? layout.maxScroll
+          : _scrollController.position.maxScrollExtent;
       final length = layout.textLength;
       if (max > 0) {
         final ratio = length > 0
             ? (offset / length).clamp(0.0, 1.0)
             : session.progress;
-        _scrollController.jumpTo(ratio * max);
+        _jumpScroll(ratio * max);
       }
     }
     return true;

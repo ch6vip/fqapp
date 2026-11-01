@@ -3,6 +3,7 @@ part of '../reader_page.dart';
 /// State storage for [ReaderPage]: chapter text, paging layout, selection,
 /// listening and device state.
 mixin _ReaderPageFields on State<ReaderPage> {
+  final _joinedKey = GlobalKey<ReaderJoinedScrollState>();
   late int _index;
   final ScrollController _scrollController = ScrollController();
   Timer? _saveTimer;

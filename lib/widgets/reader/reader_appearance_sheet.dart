@@ -4,6 +4,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
 import 'reader_theme.dart';
+import 'settings/reader_turn_settings.dart';
 import 'settings/reader_font_picker_sheet.dart';
 import 'settings/reader_more_settings_sheet.dart';
 import 'settings/reader_settings_state.dart';
@@ -234,7 +235,7 @@ class _ReaderAppearanceSheetState
         _fontSizeRow(),
         _backgroundRow(preset),
         if (_backgroundLocked) _backgroundLockNotice(preset),
-        _turnRow(),
+        ReaderTurnSettings(value: value, onChanged: updatePreferences),
         _spacingRow(),
         const ReaderSettingsDivider(),
         _actionsRow(),
@@ -315,55 +316,6 @@ class _ReaderAppearanceSheetState
     child: Text(
       widget.einkOverride ? '全局墨水屏模式已开启，背景跟随全局设置' : '全局 OLED 纯黑已开启，背景跟随全局设置',
       style: TextStyle(color: preset.mutedTextColor, fontSize: 12),
-    ),
-  );
-
-  Widget _turnRow() {
-    final paged =
-        value.pageMode == ReaderPageMode.paged && !value.instantSwipeTurn;
-    bool style(ReaderPageTurnStyle style) =>
-        paged && value.pageTurnStyle == style;
-    return ReaderSettingsRow(
-      label: '翻页',
-      child: ReaderSettingsChipRow(
-        children: [
-          ReaderSettingsChip(
-            key: const ValueKey('reader-turn-curl'),
-            label: '仿真',
-            selected: style(ReaderPageTurnStyle.curl),
-            onTap: () => _selectPagedStyle(ReaderPageTurnStyle.curl),
-          ),
-          ReaderSettingsChip(
-            key: const ValueKey('reader-mode-paged'),
-            label: '覆盖',
-            selected: style(ReaderPageTurnStyle.cover),
-            onTap: () => _selectPagedStyle(ReaderPageTurnStyle.cover),
-          ),
-          ReaderSettingsChip(
-            key: const ValueKey('reader-turn-slide'),
-            label: '平移',
-            selected: style(ReaderPageTurnStyle.slide),
-            onTap: () => _selectPagedStyle(ReaderPageTurnStyle.slide),
-          ),
-          ReaderSettingsChip(
-            key: const ValueKey('reader-mode-scroll'),
-            label: '滚动',
-            selected: value.pageMode == ReaderPageMode.scroll,
-            onTap: () => _apply(
-              (current) => current.copyWith(pageMode: ReaderPageMode.scroll),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 选具体翻页方式即回到分页模式，并关掉「无动画翻页」。
-  void _selectPagedStyle(ReaderPageTurnStyle style) => _apply(
-    (current) => current.copyWith(
-      pageMode: ReaderPageMode.paged,
-      pageTurnStyle: style,
-      instantSwipeTurn: false,
     ),
   );
 

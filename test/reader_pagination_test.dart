@@ -14,6 +14,7 @@ import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/reader_device.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
+import 'package:fqapp/widgets/reader/reader_joined_scroll.dart';
 import 'package:fqapp/widgets/reader/reader_status_bar.dart';
 
 import 'support/fakes.dart';
@@ -272,10 +273,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ReaderPagedView), findsNothing);
       expect(store.entry?['textOffset'], anchor);
-      final scroll = tester
-          .widget<ListView>(find.byKey(const ValueKey('reader-paragraph-list')))
-          .controller!;
-      expect(scroll.offset, greaterThan(0));
+      final joined = tester.state<ReaderJoinedScrollState>(
+        find.byType(ReaderJoinedScroll),
+      );
+      expect(joined.position!.scroll, greaterThan(0));
       await tester.tap(find.byTooltip('关闭排版设置'));
       await tester.pumpAndSettle();
       expect((await ReaderPreferences.load()).pageMode, ReaderPageMode.scroll);

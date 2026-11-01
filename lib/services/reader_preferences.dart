@@ -9,6 +9,8 @@ enum ReaderTitleAlignment { start, center }
 
 enum ReaderPageMode { paged, scroll }
 
+enum ReaderScrollChapterMode { replace, joined }
+
 /// Compact mode keeps one footer; detailed mode also shows book/chapter data.
 /// Note: 兼容旧开关的迁移见 .agents/notes/implemented/feature/2026-10-15-reader-info-modes.md
 enum ReaderInfoMode { hidden, compact, detailed }
@@ -49,6 +51,7 @@ class ReaderPreferences {
   static const _narrationHighlightColorKey = 'reader_narration_highlight_color';
   static const _narrationHighlightStyleKey = 'reader_narration_highlight_style';
   static const _continuousReadingKey = 'reader_continuous_reading';
+  static const _scrollChapterModeKey = 'reader_scroll_chapter_mode';
   static const _einkRefreshIntervalKey = 'reader_eink_refresh_interval';
   static const _instantSwipeTurnKey = 'reader_instant_swipe_turn';
   static const _tapLeftTurnsNextKey = 'reader_tap_left_turns_next';
@@ -127,6 +130,9 @@ class ReaderPreferences {
   /// 普通分页始终直接跨章，不受这个滚动手势开关影响。
   final bool continuousReading;
 
+  /// 滚动模式默认预加载相邻章节并以分割线拼接；也可选择直接切章。
+  final ReaderScrollChapterMode scrollChapterMode;
+
   /// 墨水屏整屏刷新间隔（页）：翻够这么多页调用一次厂商 EPD 全刷压残影。
   /// 0 表示关闭。默认 10 页，只在设备提供海信 EPD 接口时才会真正触发。
   final int einkRefreshInterval;
@@ -174,6 +180,7 @@ class ReaderPreferences {
     this.narrationHighlightColor,
     this.narrationHighlightStyle,
     this.continuousReading = true,
+    this.scrollChapterMode = ReaderScrollChapterMode.joined,
     this.einkRefreshInterval = 10,
     this.instantSwipeTurn = false,
     this.tapLeftTurnsNext = false,
@@ -216,6 +223,7 @@ class ReaderPreferences {
     /// true = 恢复「自动」（墨水屏下划线，其余背景色块）。
     bool autoNarrationHighlightStyle = false,
     bool? continuousReading,
+    ReaderScrollChapterMode? scrollChapterMode,
     int? einkRefreshInterval,
     bool? instantSwipeTurn,
     bool? tapLeftTurnsNext,
@@ -260,6 +268,7 @@ class ReaderPreferences {
           ? null
           : narrationHighlightStyle ?? this.narrationHighlightStyle,
       continuousReading: continuousReading ?? this.continuousReading,
+      scrollChapterMode: scrollChapterMode ?? this.scrollChapterMode,
       einkRefreshInterval: einkRefreshInterval ?? this.einkRefreshInterval,
       instantSwipeTurn: instantSwipeTurn ?? this.instantSwipeTurn,
       tapLeftTurnsNext: tapLeftTurnsNext ?? this.tapLeftTurnsNext,
@@ -306,6 +315,7 @@ class ReaderPreferences {
       narrationHighlightColor: narrationHighlightColor,
       narrationHighlightStyle: narrationHighlightStyle,
       continuousReading: continuousReading,
+      scrollChapterMode: scrollChapterMode,
       einkRefreshInterval: einkRefreshInterval.clamp(0, 100),
       instantSwipeTurn: instantSwipeTurn,
       tapLeftTurnsNext: tapLeftTurnsNext,
@@ -375,6 +385,10 @@ class ReaderPreferences {
         _narrationHighlightStyleKey,
       )?.toInt(),
       continuousReading: _boolean(preferences, _continuousReadingKey) ?? true,
+      scrollChapterMode: ReaderScrollChapterMode.values.firstWhere(
+        (mode) => mode.name == preferences.getString(_scrollChapterModeKey),
+        orElse: () => ReaderScrollChapterMode.joined,
+      ),
       einkRefreshInterval: (_number(preferences, _einkRefreshIntervalKey) ?? 10)
           .round(),
       instantSwipeTurn: _boolean(preferences, _instantSwipeTurnKey) ?? false,
@@ -442,6 +456,10 @@ class ReaderPreferences {
           value.narrationHighlightStyle!,
         ),
       preferences.setBool(_continuousReadingKey, value.continuousReading),
+      preferences.setString(
+        _scrollChapterModeKey,
+        value.scrollChapterMode.name,
+      ),
       preferences.setInt(_einkRefreshIntervalKey, value.einkRefreshInterval),
       preferences.setBool(_instantSwipeTurnKey, value.instantSwipeTurn),
       preferences.setBool(_tapLeftTurnsNextKey, value.tapLeftTurnsNext),

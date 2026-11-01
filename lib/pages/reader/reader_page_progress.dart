@@ -30,6 +30,8 @@ extension _ReaderPageProgress on _ReaderPageState {
         _layoutIdeasRevision == _ideasRevision &&
         _layoutUnderlineRevision == _underlineRevision &&
         _layoutBubblesVisible == bubblesVisible;
+    final layoutChapter = _chapter;
+    final layoutIdeas = _ideas;
     final layout = reusable
         ? _chapterLayout!
         : ReaderChapterLayout(
@@ -42,12 +44,27 @@ extension _ReaderPageProgress on _ReaderPageState {
                 ? _ideas.bubbleVariants
                 : const {},
             underlinedParagraphs: _underlines,
-            bubbleBuilder: bubblesVisible ? _buildParagraphBubble : null,
+            bubbleBuilder: bubblesVisible
+                ? (paraIndex, count, variant) => _buildParagraphBubble(
+                    paraIndex,
+                    count,
+                    variant,
+                    sourceChapter: layoutChapter,
+                    sourceIdeas: layoutIdeas,
+                  )
+                : null,
           );
     _layoutIdeasRevision = _ideasRevision;
     _layoutUnderlineRevision = _underlineRevision;
     _layoutBubblesVisible = bubblesVisible;
     final initialRestore = _needsRestore;
+    // Joined content preserves its visible anchor during layout. Restoring a
+    // second time after paint would cancel the user's ongoing drag or fling.
+    final joinedAnchor =
+        _joined &&
+        _joinedKey.currentState != null &&
+        !initialRestore &&
+        _chapterLayout?.spec == spec;
     final restored = initialRestore
         ? layout.restore(
             _savedPosition,
@@ -57,7 +74,9 @@ extension _ReaderPageProgress on _ReaderPageState {
           )
         : (
             textOffset: _textOffset,
-            scroll: layout.scrollForTextOffset(_textOffset),
+            scroll:
+                layout.scrollForTextOffset(_textOffset) +
+                _joinedScrollRemainder(spec),
           );
     _chapterLayout = layout;
     // 阅读页可能在起播之后才打开：会话的结构性通知早于这份排版到达，若只等
@@ -80,11 +99,9 @@ extension _ReaderPageProgress on _ReaderPageState {
           !identical(layout, _chapterLayout)) {
         return;
       }
-      if (!_paged) {
+      if (!_paged && !joinedAnchor) {
         if (!_scrollController.hasClients) return;
-        _scrollController.jumpTo(
-          restored.scroll.clamp(0, _scrollController.position.maxScrollExtent),
-        );
+        _jumpScroll(restored.scroll);
       }
       _setState(() => _progressReady = true);
       if (_appActive && !_sessionActive) {
@@ -143,8 +160,12 @@ extension _ReaderPageProgress on _ReaderPageState {
       return;
     }
     if (!_scrollController.hasClients) return;
-    _lastPosition = _scrollController.offset;
-    _lastMaxScroll = _scrollController.position.maxScrollExtent;
+    _lastPosition = _joined
+        ? _joinedKey.currentState?.position?.scroll ?? _lastPosition
+        : _scrollController.offset;
+    _lastMaxScroll = _joined
+        ? layout?.maxScroll ?? 0
+        : _scrollController.position.maxScrollExtent;
     if (updateTextOffset && layout != null) {
       _textOffset = layout.textOffsetAtScroll(_lastPosition);
     }
@@ -227,10 +248,11 @@ extension _ReaderPageProgress on _ReaderPageState {
     if (!_progressReady) return;
     // The scrollable may already be detached when the reader is disposed.
     _captureScrollProgress();
-    final index = _index;
-    final chapterId = _chapter.itemId;
+    final joined = _joined ? _joinedKey.currentState?.position : null;
+    final index = joined?.index ?? _index;
+    final chapterId = widget.chapters[index].itemId;
     final position = _lastPosition;
-    final max = _lastMaxScroll;
+    final max = joined?.chapter.layout.maxScroll ?? _lastMaxScroll;
     final progress = _chapterProgress(
       position: position,
       maxScroll: max,
@@ -249,8 +271,11 @@ extension _ReaderPageProgress on _ReaderPageState {
       'position': position,
       'maxScroll': max,
       'positionVersion': 2,
-      'textOffset':
-          _chapterLayout?.sourceOffsetForDisplay(_textOffset) ?? _textOffset,
+      'textOffset': joined != null
+          ? joined.chapter.layout.sourceOffsetForDisplay(
+              joined.chapter.layout.textOffsetAtScroll(joined.scroll),
+            )
+          : _chapterLayout?.sourceOffsetForDisplay(_textOffset) ?? _textOffset,
       'progress': progress,
       'cover': widget.cover,
       'time': DateTime.now().millisecondsSinceEpoch,
@@ -260,6 +285,10 @@ extension _ReaderPageProgress on _ReaderPageState {
 
   double _chapterProgress({double? position, double? maxScroll, int? index}) {
     if (widget.chapters.isEmpty) return 0;
+    if (_joined) {
+      position ??= _joinedKey.currentState?.position?.scroll ?? _lastPosition;
+      maxScroll ??= _chapterLayout?.maxScroll ?? 0;
+    }
     if (_paged) {
       final pageCount = _chapterLayout?.pages.length ?? 1;
       final fraction = pageCount > 1 ? _pageIndex / (pageCount - 1) : 0.0;

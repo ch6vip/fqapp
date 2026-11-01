@@ -153,6 +153,9 @@ extension _ReaderPageBuild on _ReaderPageState {
                             paged: _paged,
                             pageIndex: _pageIndex,
                             scrollController: _scrollController,
+                            scrollOffset: _joined
+                                ? _joinedKey.currentState?.position?.scroll
+                                : null,
                           ),
                           normalPage: () => readerSyncPillNormalPage(
                             layout: _chapterLayout,

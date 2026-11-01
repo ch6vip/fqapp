@@ -43,6 +43,7 @@ import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
 import '../widgets/reader/reader_bubble.dart';
 import '../widgets/reader/reader_chapter_layout.dart';
+import '../widgets/reader/reader_joined_scroll.dart';
 import '../widgets/reader/cue_index.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_cutout_insets.dart';
@@ -69,6 +70,7 @@ part 'reader/reader_page_preferences.dart';
 part 'reader/reader_page_progress.dart';
 part 'reader/reader_page_build.dart';
 part 'reader/reader_page_content.dart';
+part 'reader/reader_page_joined_content.dart';
 
 typedef ChapterTextLoader = Future<String> Function(Chapter chapter);
 typedef _LoadedChapter = ({String text, bool fetched});
