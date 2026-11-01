@@ -78,6 +78,13 @@ class _AudioPlaybackController extends ChangeNotifier
   /// 没有映射时是空的，此时高亮退回字幕插值那套；两者都没有就不高亮——
   /// 猜一个位置比不高亮更糟。
   AudioTimeTrack _timeTrack = AudioTimeTrack.empty;
+
+  /// 本章的时间点请求是否已经有结果（成功或空）。
+  ///
+  /// 页面要区分「还在拉取」和「拉完了但没有时间轴」：前者不该闪烁地露出
+  /// 入口，后者该把入口永久藏掉。空轨本身分不出这两种状态，所以单独记。
+  bool _timeTrackReady = false;
+
   // Modal routes rebuild independently of the player page. See
   // .agents/notes/implemented/bug-fix/2026-09-16-cross-review-boundaries.md.
   final _readAlong = ValueNotifier<_ReadAlongSnapshot>((
@@ -85,6 +92,10 @@ class _AudioPlaybackController extends ChangeNotifier
     track: SubtitleTrack.empty,
     position: Duration.zero,
     duration: Duration.zero,
+    timeTrackReady: false,
+    textItemId: '',
+    novelItemId: '',
+    novelChapterTitle: '',
   ));
   final _moreState = ValueNotifier<_MoreSnapshot>((
     loading: true,
@@ -169,6 +180,9 @@ class _AudioPlaybackController extends ChangeNotifier
       _bookId,
       itemId,
       toneId: toneId,
+      // 真人讲书的音频时间轴先取 req_type=2；这一版上游对部分书拒绝它，
+      // ApiClient 会在失败时回落一次到 3 并记住，不在这里重试。
+      reqType: _mode == 'narrator' ? 2 : 3,
     );
   }
 
@@ -483,6 +497,7 @@ class _AudioPlaybackController extends ChangeNotifier
       _subtitles = SubtitleTrack.empty;
       _subtitlesEstimated = false;
       _timeTrack = AudioTimeTrack.empty;
+      _timeTrackReady = false;
       _wantPlay =
           autoplay &&
           (_appActive || AudioPreferences.instance.backgroundPlayback.value);
@@ -576,6 +591,7 @@ class _AudioPlaybackController extends ChangeNotifier
           );
           if (!_current(generation)) return;
           _timeTrack = track;
+          _timeTrackReady = true;
           timeTrackReady = true;
           final ms = startMsForParagraph(
             track,
@@ -768,13 +784,18 @@ class _AudioPlaybackController extends ChangeNotifier
       final track = await _loadTimePoints(itemId, toneId);
       if (!_current(generation)) return;
       _timeTrack = track;
-      // The chapter may already be playing: publish once so the reader picks
-      // the highlight up without waiting for the next position tick.
-      _publishListeningSession(playing: _player?.playing ?? false);
     } catch (_) {
       // 没有映射不是错误：这本书没生成过时间轴，或者章节文本已变化。保留
       // 上一次的空值，阅读页就不高亮。
+      if (!_current(generation)) return;
     }
+    // 无论有没有时间轴，这一章的请求都已经有结果了：页面据此决定是继续等
+    // 还是永久藏掉依赖时间轴的入口。
+    _timeTrackReady = true;
+    // The chapter may already be playing: publish once so the page snapshot
+    // carries the new timeline without waiting for the next position tick.
+    _publishReadAlong();
+    _publishListeningSession(playing: _player?.playing ?? false);
   }
 
   void _publishReadAlong() {
@@ -787,6 +808,12 @@ class _AudioPlaybackController extends ChangeNotifier
       position: preview == null
           ? _position.value
           : Duration(milliseconds: preview.round()),
+      // 章节时间轴：订阅者据此把音频位置映射到原著正文。没有时间轴时
+      // `timeTrackReady` 仍会变成 true，好让页面区分「还没拉到」和「没有」。
+      timeTrackReady: _timeTrackReady,
+      textItemId: _timeTrack.textItemId,
+      novelItemId: _timeTrack.novelItemId,
+      novelChapterTitle: _timeTrack.novelChapterTitle,
     );
   }
 
@@ -837,6 +864,12 @@ class _AudioPlaybackController extends ChangeNotifier
       subtitles: _subtitles,
       // 官方通道：当前毫秒正在读的「第几段第几个字」。有它时高亮不用猜。
       audioParaRange: _paraRangeAt(position),
+      // 真人讲书的阅读页别名：音频书/章节 id → 原著书/章节 id。阅读页据此
+      // 继续匹配会话；没有时间轴映射时章节别名为空，阅读页退回不匹配。
+      novelBookId: _linkedNovelBookId,
+      novelChapterId: _linkedNovelChapterId.isEmpty
+          ? null
+          : _linkedNovelChapterId,
     );
   }
 
@@ -1189,6 +1222,20 @@ class _AudioPlaybackController extends ChangeNotifier
 
   List<AudioTone> get _ttsTones =>
       _ttsBookId == null ? const [] : _extras.tones.ttsTones;
+
+  /// 这部剧/录音关联的原著书 id；书本身就是文本（智能朗读）时为 null。
+  ///
+  /// 「边听边读」打开的是这本原著，阅读页用的书 id 与章节 id 都和音频不是
+  /// 一套。会话把它作为别名发布，阅读页才能继续匹配播放状态。
+  String? get _linkedNovelBookId {
+    final novel = _extras.tones.relatedNovel;
+    if (novel == null) return null;
+    final id = novel.id.trim();
+    return id.isEmpty || id == _bookId ? null : id;
+  }
+
+  /// 当前集在时间轴上对应的原著章节 id；没有映射时为空。
+  String get _linkedNovelChapterId => _timeTrack.novelItemId;
 
   List<AudioTone> get _narratorTones => _extras.tones.narratorTones;
 

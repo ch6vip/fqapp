@@ -22,13 +22,16 @@ import '../services/audio_playback_choice.dart';
 import '../services/audio_subtitle_synth.dart';
 import '../services/audio_time_point_lookup.dart';
 import '../services/audio_preferences.dart';
+import '../services/book_updates.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/chapter_text_formatter.dart';
 import '../services/fair_memory.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/media_history_store.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
+import '../services/reader_preferences.dart';
 import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
@@ -37,6 +40,8 @@ import '../widgets/audio/audio_floating_player.dart';
 import '../widgets/audio/audio_advance_banner.dart';
 import '../widgets/audio/audio_control_rows.dart';
 import '../widgets/audio/audio_quick_rows.dart';
+import '../widgets/audio/audio_real_expanded.dart';
+import '../widgets/audio/audio_real_sections.dart';
 import '../widgets/audio/audio_skip_points_rows.dart';
 import '../widgets/audio/audio_cover_card.dart';
 import '../widgets/audio/audio_sections.dart';
@@ -106,6 +111,10 @@ class AudioPage extends StatefulWidget {
   /// 没有映射时不高亮，而不是猜一个位置。
   final TimePointLoader? timePointLoader;
 
+  /// 展开态全文：按原著章节 id 取整章正文。默认走 `/novel` 接口；
+  /// 测试可以注入一份 [ChapterContent]，不让页面偷偷联网。
+  final ChapterContentLoader? contentLoader;
+
   /// Current-chapter opening excerpt shown under the cover, mirroring the
   /// official listening page. Defaults to `/chapters/summary`.
   final Future<String?> Function(String itemId)? excerptLoader;
@@ -139,6 +148,7 @@ class AudioPage extends StatefulWidget {
     this.extrasLoader,
     this.subtitleLoader,
     this.timePointLoader,
+    this.contentLoader,
     this.excerptLoader,
     this.directoryLoader,
     this.downloadStore,
@@ -173,11 +183,26 @@ typedef SubtitleLoader =
 typedef TimePointLoader =
     Future<AudioTimeTrack> Function(String itemId, String toneId);
 
+/// 展开态正文加载器：`itemId` 是原著章节 id（时间点里的 `novel_item_id`）。
+typedef ChapterContentLoader = Future<ChapterContent> Function(String itemId);
+
 typedef _ReadAlongSnapshot = ({
   String chapterTitle,
   SubtitleTrack track,
   Duration position,
   Duration duration,
+
+  /// The chapter's 听书 → 正文 timeline has finished loading (empty or not).
+  bool timeTrackReady,
+
+  /// The 正文章节 id the timeline offsets address (`item_ids[audio][0]`).
+  String textItemId,
+
+  /// The novel chapter id (`novel_item_id`) to open the reader on.
+  String novelItemId,
+
+  /// The novel chapter title carried by the timeline (`item_title`).
+  String novelChapterTitle,
 });
 
 typedef _MoreSnapshot = ({
@@ -217,6 +242,29 @@ class _AudioPageState extends State<AudioPage> {
   /// 截图里那套暖棕兜底（[AudioPageTheme.fallback]）。
   AudioPageTheme? _theme;
   String _themeSource = '';
+
+  /// 展开态全文是否展开；换章/换模式时自动收起。
+  bool _transcriptExpanded = false;
+  int _expandedChapterIndex = -1;
+
+  /// 「边听边读」打开原著阅读页的闸：目录请求期间重复点击不叠加路由。
+  bool _openingReadAlong = false;
+
+  /// 展开态正文字号/行距来自阅读器排版设置；加载完成前用兜底 20sp / 2.1。
+  ReaderPreferences _readerPreferences = const ReaderPreferences();
+  bool _readerPreferencesLoaded = false;
+  bool _readerPreferencesRequested = false;
+
+  /// 按原著章节 id 缓存展开态正文与请求，避免重复拉取同一章。
+  ///
+  /// 播放器会预取当前章的正文；自动连播一本书时如果不设上限，缓存的整章
+  /// 正文会随章数一直增长。展开态只可能读当前章，留最近几章就够。
+  final Map<String, ChapterContent> _expandedTexts = {};
+  final Set<String> _expandedTextFailed = {};
+  final Map<String, Future<void>> _expandedTextRequests = {};
+
+  static const int _expandedTextCacheLimit = 3;
+
   _AudioPlaybackController get c => _session!;
 
   /// 封面变了才重算，避免每次 rebuild 都读一次缓存文件。
@@ -275,22 +323,120 @@ class _AudioPageState extends State<AudioPage> {
     }
     _session = session;
     session.addListener(_changed);
+    session._readAlong.addListener(_onReadAlongChanged);
     if (owner == null) session.start();
     owner?.registerView(this);
     _syncCoverTheme();
+    unawaited(_loadReaderPreferences());
     setState(() {});
   }
 
   void _changed() {
     if (!mounted) return;
+    // 换章或切回智能朗读时展开态没有意义，直接收起。
+    if (_transcriptExpanded &&
+        _session != null &&
+        (c._index != _expandedChapterIndex || c._mode != 'narrator')) {
+      _transcriptExpanded = false;
+    }
     _syncCoverTheme();
     setState(() {});
+  }
+
+  /// 时间轴一就绪就预取原著正文，点「展开」时不用再等一次网络。
+  void _onReadAlongChanged() {
+    if (!mounted || _session == null || c._mode != 'narrator') return;
+    final itemId = _expandedTextId(c._readAlong.value);
+    if (itemId.isNotEmpty) _ensureExpandedText(itemId);
+  }
+
+  static String _expandedTextId(_ReadAlongSnapshot snapshot) =>
+      snapshot.novelItemId.isNotEmpty
+      ? snapshot.novelItemId
+      : snapshot.textItemId;
+
+  void _expandTranscript(_ReadAlongSnapshot snapshot) {
+    final itemId = _expandedTextId(snapshot);
+    if (itemId.isEmpty) return;
+    setState(() {
+      _transcriptExpanded = true;
+      _expandedChapterIndex = c._index;
+    });
+    _ensureExpandedText(itemId);
+  }
+
+  void _foldTranscript() {
+    if (!_transcriptExpanded) return;
+    setState(() => _transcriptExpanded = false);
+  }
+
+  Future<void> _loadReaderPreferences() async {
+    if (_readerPreferencesRequested) return;
+    _readerPreferencesRequested = true;
+    try {
+      final preferences = await ReaderPreferences.load();
+      if (!mounted) return;
+      setState(() {
+        _readerPreferences = preferences;
+        _readerPreferencesLoaded = true;
+      });
+    } catch (_) {
+      // 取不到就保持兜底 20sp / 2.1 倍，不再重试。
+    }
+  }
+
+  void _ensureExpandedText(String itemId) {
+    if (itemId.isEmpty ||
+        _expandedTexts.containsKey(itemId) ||
+        _expandedTextRequests.containsKey(itemId)) {
+      return;
+    }
+    final request = _fetchExpandedText(itemId)
+        .then<void>((content) {
+          if (!mounted) return;
+          setState(() {
+            if (content == null) {
+              _expandedTextFailed.add(itemId);
+            } else {
+              _expandedTexts[itemId] = content;
+              while (_expandedTexts.length > _expandedTextCacheLimit) {
+                _expandedTexts.remove(_expandedTexts.keys.first);
+              }
+            }
+          });
+        })
+        .catchError((Object _) {
+          if (!mounted) return;
+          setState(() => _expandedTextFailed.add(itemId));
+        });
+    _expandedTextRequests[itemId] = request.whenComplete(
+      () => _expandedTextRequests.remove(itemId),
+    );
+  }
+
+  Future<ChapterContent?> _fetchExpandedText(String itemId) async {
+    final loader = widget.contentLoader;
+    if (loader != null) {
+      final content = await loader(itemId);
+      return content.isEmpty ? null : content;
+    }
+    // 与控制器一致：注入了播放器/音源的测试页面不偷偷走网络。
+    if (widget.sourceLoader != null || widget.playerFactory != null) {
+      return null;
+    }
+    try {
+      final content = await ApiClient.instance.chapterContent(itemId);
+      return content.isEmpty ? null : content;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
   void dispose() {
     final session = _session;
     session?.removeListener(_changed);
+    session?._readAlong.removeListener(_onReadAlongChanged);
     if (session != null && !session._closed) {
       unawaited(session._persistProgress());
     }
@@ -612,7 +758,7 @@ class _AudioPageState extends State<AudioPage> {
                           if (c._excerpt.isNotEmpty)
                             AudioExcerpt(text: c._excerpt, onTap: _showExcerpt),
                           const SizedBox(height: 12),
-                          AudioIconRow(actions: _iconActions),
+                          AudioIconRow(actions: _iconActions()),
                           const SizedBox(height: 24),
                           AudioToneSection(
                             title: c._mode == 'narrator' ? '真人讲书' : '智能朗读',
@@ -844,6 +990,68 @@ class _AudioPageState extends State<AudioPage> {
         ),
       ),
     );
+  }
+
+  /// 真人讲书「边听边读」：打开关联原著并定位到时间轴映射的章节。
+  ///
+  /// 音频页的章节是专辑/录音的集，阅读器要的是原著目录；两边 id 不同，所以
+  /// 先取原著目录再按 `novel_item_id` 找起点。没有关联原著、目录里找不到这
+  /// 一章或请求失败时不跳转，避免落到错误章节。
+  Future<void> _openReadAlongCard(_ReadAlongSnapshot snapshot) async {
+    final novel = c._extras.tones.relatedNovel;
+    final bookId = novel?.id ?? '';
+    final chapterId = snapshot.novelItemId;
+    if (c._closed || _openingReadAlong || bookId.isEmpty || chapterId.isEmpty) {
+      return;
+    }
+    _openingReadAlong = true;
+    try {
+      final chapters = await (widget.directoryLoader ?? loadBookDirectory)(
+        bookId,
+      );
+      if (!mounted || c._closed) return;
+      final index = chapters.indexWhere(
+        (chapter) => chapter.itemId == chapterId,
+      );
+      if (index < 0) {
+        _showReadAlongUnavailable('找不到对应的原著章节');
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ReaderPage(
+            bookId: bookId,
+            title: novel!.title.isEmpty ? c._title : novel.title,
+            cover: novel.cover.isEmpty ? c._cover : novel.cover,
+            chapters: chapters,
+            startIndex: index,
+            // 注入正文加载器说明调用方自己驱动数据（测试/离线缓存），阅读器
+            // 不再去碰磁盘缓存和上游接口。
+            localOnly: widget.contentLoader != null,
+            // 阅读进度与听书历史共用调用方提供的存储；不传的话阅读页会在
+            // 应用级 LibraryStore 里再开一套记录。
+            readerStore: widget.historyStore,
+            // 展开态已按原著章节取过正文：同一份 loader 交给阅读器，既省一次
+            // 请求，也保证两处看到的正文一致。
+            chapterLoader: widget.contentLoader == null
+                ? null
+                : (chapter) async => (await widget.contentLoader!(
+                    chapter.itemId,
+                  )).toCacheText(),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (mounted) _showReadAlongUnavailable('暂时无法打开原著，请稍后重试');
+    } finally {
+      _openingReadAlong = false;
+    }
+  }
+
+  void _showReadAlongUnavailable(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 当前主播的上游标签（形如 `主播：老恒`），供真人讲书页头那一行使用。

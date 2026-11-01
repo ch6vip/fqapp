@@ -203,7 +203,7 @@ class _ReaderPageState extends State<ReaderPage>
   /// 10Hz 跟随轮询，只在有本书的听书会话且前台时运行。见 [_followPollTick]。
   late final ReaderFollowPoll _followPoll = ReaderFollowPoll(
     _followPollTick,
-    () => _appActive && ListeningSession.instance.bookId == widget.bookId,
+    () => _appActive && ListeningSession.instance.matchesBook(widget.bookId),
   );
 
   /// 字幕与正文之间的噪声字符：各类标点和空白。两边在全/半角、省略号写法
@@ -231,7 +231,7 @@ class _ReaderPageState extends State<ReaderPage>
   void _onListeningTick() {
     if (!mounted) return;
     final session = ListeningSession.instance;
-    final playing = session.playing && session.bookId == widget.bookId;
+    final playing = session.playing && session.matchesBook(widget.bookId);
     if (playing && !_listenWasPlaying) {
       // 官方 onPlayResume（AudioSyncReaderController.java:381）恢复播放时
       // 立刻恢复跟随，不受手动翻页那 15 秒闩锁影响。
@@ -261,10 +261,12 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
     if (DateTime.now().isBefore(_listenFollowPausedUntil)) return;
-    if (!session.playing || session.bookId != widget.bookId) return;
-    if (session.chapterId != _chapter.itemId) {
+    if (!session.playing || !session.matchesBook(widget.bookId)) return;
+    if (!session.matchesChapter(_chapter.itemId)) {
+      // 真人讲书会按时间轴把当前音频章节别名成原著章节；跟随要翻到的是
+      // 原著那一章，而不是音频章节 id。
       final next = widget.chapters.indexWhere(
-        (c) => c.itemId == session.chapterId,
+        (c) => c.itemId == session.readerChapterId,
       );
       // 控制栏展开 / 自动翻页中的闸门由 [_jumpToChapter] 自己再查一遍。
       if (next >= 0) unawaited(_jumpToChapter(next, followListening: true));

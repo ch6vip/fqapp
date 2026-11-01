@@ -51,160 +51,292 @@ extension _AudioListeningLayout on _AudioPageState {
               theme: theme,
             ),
             Expanded(
-              child: SingleChildScrollView(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _coverCard(
+              child: AnimatedSwitcher(
+                // 展开/收起 300ms 淡入淡出（样稿 `.42,0,.58,1`）；进度行与
+                // 控制行在每个版式里位置固定，不参与位置动画。
+                duration: AudioRealExpandedTranscript.transitionDuration,
+                switchInCurve: AudioRealExpandedTranscript.transitionCurve,
+                switchOutCurve: AudioRealExpandedTranscript.transitionCurve,
+                layoutBuilder: (current, previous) => Stack(
+                  fit: StackFit.expand,
+                  alignment: Alignment.topCenter,
+                  children: [...previous, ?current],
+                ),
+                child: KeyedSubtree(
+                  key: ValueKey(
+                    realAudio && _transcriptExpanded
+                        ? 'audio_real_expanded_body'
+                        : 'audio_real_collapsed_body',
+                  ),
+                  child: realAudio && _transcriptExpanded
+                      ? _expandedListeningBody(
+                          theme: theme,
+                          pageDark: pageDark,
                           chapter: chapter,
                           detail: detail,
-                          introSummary: introSummary,
-                          related: related,
-                        ),
-                        // 官方 `fs5`/`fs6`：封面正下方是一条多行滚动字幕
-                        // （`AudioPlaySubtitleView`，高度按字号取档再减 2dp，
-                        // 默认 50dp、左右 20dp、底部 24dp）。
-                        // 按显示行分配时间，上下各 3dp；槽位常驻，
-                        // 没有字幕时显示状态文案，只有 NOT_SUPPORT 才收起。
-                        //
-                        // 两种模式共用同一个槽：有字幕轨就显示正在朗读的那句
-                        // 及其上下文，没有轨则显示状态文案。
-                        ValueListenableBuilder<_ReadAlongSnapshot>(
-                          valueListenable: c._readAlong,
-                          builder: (context, snapshot, _) =>
-                              AudioInlineSubtitle(
-                                track: snapshot.track,
-                                position: snapshot.position,
-                                duration: snapshot.duration,
-                                onTap: _showReadAlong,
-                              ),
-                        ),
-                        if (c._error != null ||
-                            c._loading ||
-                            (c._player?.buffering ?? false) ||
-                            c._completed) ...[
-                          const SizedBox(height: 8),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            child: _statusLine(paletteForStatus),
-                          ),
-                        ],
-                        const SizedBox(height: 8),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: AudioIconRow(actions: _iconActions),
-                        ),
-                        const SizedBox(height: 12),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: ValueListenableBuilder<Duration>(
-                            valueListenable: c._position,
-                            builder: (context, position, _) =>
-                                ValueListenableBuilder<double?>(
-                                  valueListenable: c._seekPreview,
-                                  builder: (context, seekPreview, _) =>
-                                      AudioTimeSeekRow(
-                                        position: position,
-                                        duration: c._duration,
-                                        preview: seekPreview,
-                                        enabled: c._ready,
-                                        onChanged: (value) =>
-                                            c._seekPreview.value = value,
-                                        onChangeEnd: (value) => c._seekTo(
-                                          Duration(milliseconds: value.round()),
-                                        ),
-                                        onBack15: c._ready
-                                            ? () => c._seekTo(
-                                                c._position.value -
-                                                    const Duration(seconds: 15),
-                                              )
-                                            : null,
-                                        onForward15: c._ready
-                                            ? () => c._seekTo(
-                                                c._position.value +
-                                                    const Duration(seconds: 15),
-                                              )
-                                            : null,
+                        )
+                      : SingleChildScrollView(
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 560),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // 官方 `bjo.xml`：真人讲书页头是 72dp 书籍行，不是
+                                  // 0.72 屏宽的大封面（样稿「书籍行」）。智能朗读
+                                  // 仍保留大封面。
+                                  if (realAudio)
+                                    AudioRealBookRow(
+                                      cover: c._cover,
+                                      chapterTitle: chapter.title,
+                                      bookTitle: detail?.title ?? '',
+                                      onSwap: () => _showIntroSheet(
+                                        theme: theme,
+                                        detail: detail,
+                                        introSummary: introSummary,
+                                        related: related,
                                       ),
-                                ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        // 官方 `te`「%s后播放下一集」：章末给一段可取消的窗口。
-                        ValueListenableBuilder<int?>(
-                          valueListenable: c.advanceCountdown,
-                          builder: (context, seconds, _) => seconds == null
-                              ? const SizedBox.shrink()
-                              : AudioAdvanceBanner(
-                                  seconds: seconds,
-                                  onCancel: () => _cancelAdvanceCountdown(c),
-                                ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: AudioTransportRow(
-                            onCatalog: _showCatalog,
-                            onPrevious: c._index > 0
-                                ? () => c._openChapter(c._index - 1)
-                                : null,
-                            onNext: c._index + 1 < c._chapters.length
-                                ? () => c._openChapter(c._index + 1)
-                                : null,
-                            onPlayPause: c._ready ? c._togglePlayback : null,
-                            onSleepTimer: _showSleepTimer,
-                            playing: c._wantPlay && !c._completed,
-                            loading:
-                                c._loading || (c._player?.buffering ?? false),
-                            ready: c._ready,
-                            // 官方 doc「剩余本章」/ dod「剩余播放」：定时开着时
-                            // 这个位置换成状态文字，没开就是「定时」。
-                            sleepLabel: c.sleepAtChapterEnd
-                                ? '剩余本章'
-                                : (c._sleepRemaining == null ? null : '剩余播放'),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        // 官方在真人讲书页把音色卡默认收起（bj1.xml a5h 为
-                        // gone），主播版本改由一行入口 + 声音设置面板承担。
-                        if (realAudio)
-                          AudioRealVersionRow(
-                            narrator: _narratorLabel,
-                            onTap: c._switchingVersion ? null : _showVoices,
-                          )
-                        else
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: AudioToneSection(
-                              title: '智能朗读',
-                              tones: tones,
-                              selectedId: c._extras.tones.hasFixedTone
-                                  ? c._bookId
-                                  : c._toneId,
-                              currentChapterTitle: chapter.title,
-                              onSelect: _onToneSelected,
-                              onReadAlong: _showReadAlong,
-                              onShowVoices: c._switchingVersion
-                                  ? null
-                                  : _showVoices,
+                                    )
+                                  else
+                                    _coverCard(
+                                      chapter: chapter,
+                                      detail: detail,
+                                      introSummary: introSummary,
+                                      related: related,
+                                    ),
+                                  // 官方 `fs5`/`fs6`：封面正下方是字幕槽。智能朗读
+                                  // 沿用 `AudioPlaySubtitleView` 的 50dp 槽（高度按字号
+                                  // 取档再减 2dp、左右 20dp、底部 24dp，按显示行分配
+                                  // 时间，上下各 3dp）；真人讲书改用 `bj3.xml` 的
+                                  // 238dp 逐句字幕（左右 20dp、上下 24dp 渐隐、40dp 行）。
+                                  //
+                                  // 两种模式共用同一份 `_readAlong` 快照：有字幕轨就
+                                  // 显示正在朗读的那句及其上下文，没有轨则显示状态文案。
+                                  ValueListenableBuilder<_ReadAlongSnapshot>(
+                                    valueListenable: c._readAlong,
+                                    builder: (context, snapshot, _) {
+                                      if (!realAudio) {
+                                        return AudioInlineSubtitle(
+                                          track: snapshot.track,
+                                          position: snapshot.position,
+                                          duration: snapshot.duration,
+                                          onTap: _showReadAlong,
+                                        );
+                                      }
+                                      final timeTrack = c._timeTrack;
+                                      return AudioRealSubtitle(
+                                        track: snapshot.track,
+                                        position: snapshot.position,
+                                        duration: snapshot.duration,
+                                        // 「字幕 + 时间点 + 对应原著章节」三者齐备才显示
+                                        // 「展开」；缺少任一项时字幕照常显示，只是没有
+                                        // 这个入口。原著章节以 novelItemId 为准，没有
+                                        // 时才退回 item_ids 里的正文章节 id。
+                                        showExpand:
+                                            snapshot.track.isNotEmpty &&
+                                            timeTrack.isNotEmpty &&
+                                            _AudioPageState._expandedTextId(
+                                              snapshot,
+                                            ).isNotEmpty,
+                                        onExpand: () =>
+                                            _expandTranscript(snapshot),
+                                      );
+                                    },
+                                  ),
+                                  if (c._error != null ||
+                                      c._loading ||
+                                      (c._player?.buffering ?? false) ||
+                                      c._completed) ...[
+                                    const SizedBox(height: 8),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                      ),
+                                      child: _statusLine(paletteForStatus),
+                                    ),
+                                  ],
+                                  if (!realAudio) const SizedBox(height: 8),
+                                  Padding(
+                                    // 真人模式按样稿 `.acts`：左右 8、上 8、下 0；
+                                    // 智能朗读保持原来的 20dp 左右留白。
+                                    padding: realAudio
+                                        ? const EdgeInsets.fromLTRB(8, 8, 8, 0)
+                                        : const EdgeInsets.symmetric(
+                                            horizontal: 20,
+                                          ),
+                                    child: AudioIconRow(
+                                      actions: _iconActions(real: realAudio),
+                                      real: realAudio,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                    ),
+                                    child: ValueListenableBuilder<Duration>(
+                                      valueListenable: c._position,
+                                      builder: (context, position, _) =>
+                                          ValueListenableBuilder<double?>(
+                                            valueListenable: c._seekPreview,
+                                            builder:
+                                                (
+                                                  context,
+                                                  seekPreview,
+                                                  _,
+                                                ) => AudioTimeSeekRow(
+                                                  position: position,
+                                                  duration: c._duration,
+                                                  preview: seekPreview,
+                                                  enabled: c._ready,
+                                                  onChanged: (value) =>
+                                                      c._seekPreview.value =
+                                                          value,
+                                                  onChangeEnd: (value) =>
+                                                      c._seekTo(
+                                                        Duration(
+                                                          milliseconds: value
+                                                              .round(),
+                                                        ),
+                                                      ),
+                                                  onBack15: c._ready
+                                                      ? () => c._seekTo(
+                                                          c._position.value -
+                                                              const Duration(
+                                                                seconds: 15,
+                                                              ),
+                                                        )
+                                                      : null,
+                                                  onForward15: c._ready
+                                                      ? () => c._seekTo(
+                                                          c._position.value +
+                                                              const Duration(
+                                                                seconds: 15,
+                                                              ),
+                                                        )
+                                                      : null,
+                                                  real: realAudio,
+                                                ),
+                                          ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  // 官方 `te`「%s后播放下一集」：章末给一段可取消的窗口。
+                                  ValueListenableBuilder<int?>(
+                                    valueListenable: c.advanceCountdown,
+                                    builder: (context, seconds, _) =>
+                                        seconds == null
+                                        ? const SizedBox.shrink()
+                                        : AudioAdvanceBanner(
+                                            seconds: seconds,
+                                            onCancel: () =>
+                                                _cancelAdvanceCountdown(c),
+                                          ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                    ),
+                                    child: AudioTransportRow(
+                                      onCatalog: _showCatalog,
+                                      onPrevious: c._index > 0
+                                          ? () => c._openChapter(c._index - 1)
+                                          : null,
+                                      onNext: c._index + 1 < c._chapters.length
+                                          ? () => c._openChapter(c._index + 1)
+                                          : null,
+                                      onPlayPause: c._ready
+                                          ? c._togglePlayback
+                                          : null,
+                                      onSleepTimer: _showSleepTimer,
+                                      playing: c._wantPlay && !c._completed,
+                                      loading:
+                                          c._loading ||
+                                          (c._player?.buffering ?? false),
+                                      ready: c._ready,
+                                      // 官方 doc「剩余本章」/ dod「剩余播放」：定时开着时
+                                      // 这个位置换成状态文字，没开就是「定时」。
+                                      sleepLabel: c.sleepAtChapterEnd
+                                          ? '剩余本章'
+                                          : (c._sleepRemaining == null
+                                                ? null
+                                                : '剩余播放'),
+                                      real: realAudio,
+                                    ),
+                                  ),
+                                  // 样稿 `.ra`：真人讲书的「边听边读」入口。只有
+                                  // 时间轴把当前集映射到原著章节时才出现；点开
+                                  // 关联原著的阅读页并定位到这一章。
+                                  if (realAudio)
+                                    ValueListenableBuilder<_ReadAlongSnapshot>(
+                                      valueListenable: c._readAlong,
+                                      builder: (context, snapshot, _) {
+                                        final novel =
+                                            c._extras.tones.relatedNovel;
+                                        if (novel == null ||
+                                            novel.id.isEmpty ||
+                                            snapshot.novelItemId.isEmpty) {
+                                          return const SizedBox.shrink();
+                                        }
+                                        return AudioRealListenAlong(
+                                          chapterTitle:
+                                              snapshot
+                                                  .novelChapterTitle
+                                                  .isNotEmpty
+                                              ? snapshot.novelChapterTitle
+                                              : snapshot.chapterTitle,
+                                          onTap: () =>
+                                              _openReadAlongCard(snapshot),
+                                        );
+                                      },
+                                    ),
+                                  const SizedBox(height: 16),
+                                  // 官方在真人讲书页把音色卡默认收起（bj1.xml a5h 为
+                                  // gone），主播版本改由一行入口 + 声音设置面板承担。
+                                  if (realAudio)
+                                    AudioRealVersionRow(
+                                      narrator: _narratorLabel,
+                                      onTap: c._switchingVersion
+                                          ? null
+                                          : _showVoices,
+                                    )
+                                  else
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                      child: AudioToneSection(
+                                        title: '智能朗读',
+                                        tones: tones,
+                                        selectedId: c._extras.tones.hasFixedTone
+                                            ? c._bookId
+                                            : c._toneId,
+                                        currentChapterTitle: chapter.title,
+                                        onSelect: _onToneSelected,
+                                        onReadAlong: _showReadAlong,
+                                        onShowVoices: c._switchingVersion
+                                            ? null
+                                            : _showVoices,
+                                      ),
+                                    ),
+                                  if (c._extras.related.isNotEmpty) ...[
+                                    const SizedBox(height: 18),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                      child: AudioRelatedRow(
+                                        works: c._extras.related,
+                                        onTap: _openRelated,
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 28),
+                                ],
+                              ),
                             ),
                           ),
-                        if (c._extras.related.isNotEmpty) ...[
-                          const SizedBox(height: 18),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: AudioRelatedRow(
-                              works: c._extras.related,
-                              onTap: _openRelated,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 28),
-                      ],
-                    ),
-                  ),
+                        ),
                 ),
               ),
             ),
@@ -214,8 +346,146 @@ extension _AudioListeningLayout on _AudioPageState {
     );
   }
 
-  /// 官方封面卡：`bio.xml`。
+  /// 展开态：书籍行（无 ⇋）+ 页内全文 + 收起胶囊 + 进度行 + 控制行（bare）。
   ///
+  /// 字幕区、操作行、边听边读与换版本行都收起来；进度和控制的版式与颜色
+  /// 沿用默认态，只把控制行的「目录」「定时」文字藏掉（样稿 `.trans.bare`）。
+  Widget _expandedListeningBody({
+    required AudioPageTheme theme,
+    required bool pageDark,
+    required Chapter chapter,
+    required BookDetail? detail,
+  }) {
+    final fontSize = _readerPreferencesLoaded
+        ? _readerPreferences.fontSize
+        : AudioRealExpandedTranscript.fallbackFontSize;
+    final lineHeight = _readerPreferencesLoaded
+        ? _readerPreferences.lineHeight
+        : AudioRealExpandedTranscript.fallbackLineHeight;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AudioRealBookRow(
+              cover: c._cover,
+              chapterTitle: chapter.title,
+              bookTitle: detail?.title ?? '',
+            ),
+            Expanded(
+              child: ValueListenableBuilder<_ReadAlongSnapshot>(
+                valueListenable: c._readAlong,
+                builder: (context, snapshot, _) {
+                  final itemId = _AudioPageState._expandedTextId(snapshot);
+                  final content = _expandedTexts[itemId];
+                  if (content == null) {
+                    final failed = _expandedTextFailed.contains(itemId);
+                    return Center(
+                      child: Text(
+                        failed ? '正文加载失败' : '正在加载正文…',
+                        key: Key(
+                          failed
+                              ? 'audio_real_expanded_error'
+                              : 'audio_real_expanded_loading',
+                        ),
+                        style: TextStyle(color: theme.muted, fontSize: 14),
+                      ),
+                    );
+                  }
+                  return ValueListenableBuilder<Duration>(
+                    valueListenable: c._position,
+                    builder: (context, position, _) =>
+                        ValueListenableBuilder<double?>(
+                          valueListenable: c._seekPreview,
+                          builder: (context, preview, _) =>
+                              AudioRealExpandedTranscript(
+                                key: ValueKey('audio_real_expanded_$itemId'),
+                                content: content,
+                                // 正文开头的章名段与书籍行重复：时间点没带
+                                // 标题时退回当前集标题，对不上就原样保留。
+                                chapterTitle:
+                                    snapshot.novelChapterTitle.isNotEmpty
+                                    ? snapshot.novelChapterTitle
+                                    : chapter.title,
+                                timeTrack: c._timeTrack,
+                                position: preview == null
+                                    ? position
+                                    : Duration(milliseconds: preview.round()),
+                                fontSize: fontSize,
+                                lineHeight: lineHeight,
+                                dark: pageDark,
+                              ),
+                        ),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 6),
+              child: Center(child: AudioRealFoldButton(onTap: _foldTranscript)),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: ValueListenableBuilder<Duration>(
+                valueListenable: c._position,
+                builder: (context, position, _) =>
+                    ValueListenableBuilder<double?>(
+                      valueListenable: c._seekPreview,
+                      builder: (context, seekPreview, _) => AudioTimeSeekRow(
+                        position: position,
+                        duration: c._duration,
+                        preview: seekPreview,
+                        enabled: c._ready,
+                        onChanged: (value) => c._seekPreview.value = value,
+                        onChangeEnd: (value) =>
+                            c._seekTo(Duration(milliseconds: value.round())),
+                        onBack15: c._ready
+                            ? () => c._seekTo(
+                                c._position.value - const Duration(seconds: 15),
+                              )
+                            : null,
+                        onForward15: c._ready
+                            ? () => c._seekTo(
+                                c._position.value + const Duration(seconds: 15),
+                              )
+                            : null,
+                        real: true,
+                      ),
+                    ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: AudioTransportRow(
+                onCatalog: _showCatalog,
+                onPrevious: c._index > 0
+                    ? () => c._openChapter(c._index - 1)
+                    : null,
+                onNext: c._index + 1 < c._chapters.length
+                    ? () => c._openChapter(c._index + 1)
+                    : null,
+                onPlayPause: c._ready ? c._togglePlayback : null,
+                onSleepTimer: _showSleepTimer,
+                playing: c._wantPlay && !c._completed,
+                loading: c._loading || (c._player?.buffering ?? false),
+                ready: c._ready,
+                sleepLabel: c.sleepAtChapterEnd
+                    ? '剩余本章'
+                    : (c._sleepRemaining == null ? null : '剩余播放'),
+                real: true,
+                bare: true,
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 官方封面卡：`bio.xml`。  ///
   /// 尺寸由 [audioCoverEdge] 按 `d2.smali` 的公式算（0.72 × 屏宽，大屏再夹
   /// 一次高 40%），是一个**正方形**；页脚只有两行（集标题 + 副行），书名
   /// `b1g` 在官方是 `visibility="gone"`。
@@ -228,14 +498,10 @@ extension _AudioListeningLayout on _AudioPageState {
     required RelatedWork? related,
   }) {
     final edge = audioCoverEdge(context);
-    final intro = AudioIntroCard(
-      cover: c._cover,
-      title: detail?.title.isNotEmpty == true ? detail!.title : c._title,
-      author: detail?.author.name ?? '',
-      meta: detail?.metaParts ?? const [],
-      summary: introSummary,
+    final intro = _introCard(
+      detail: detail,
+      introSummary: introSummary,
       related: related,
-      onOpenRelated: _openRelated,
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
@@ -256,11 +522,63 @@ extension _AudioListeningLayout on _AudioPageState {
     );
   }
 
+  /// 简介卡内容（官方 `bhi.xml`）：大封面的翻转背面与书籍行 ⇋ 的弹层共用
+  /// 同一份构建逻辑，避免两处样式漂移。
+  Widget _introCard({
+    required BookDetail? detail,
+    required String introSummary,
+    required RelatedWork? related,
+  }) {
+    return AudioIntroCard(
+      cover: c._cover,
+      title: detail?.title.isNotEmpty == true ? detail!.title : c._title,
+      author: detail?.author.name ?? '',
+      meta: detail?.metaParts ?? const [],
+      summary: introSummary,
+      related: related,
+      onOpenRelated: _openRelated,
+    );
+  }
+
+  /// 书籍行右侧 ⇋：打开简介卡。
+  ///
+  /// 官方的简介入口是大封面背面的翻转卡；真人模式的书籍行没有翻转面，
+  /// 所以沿用页面现有弹层样式，把同一张 [AudioIntroCard] 放进底部弹层。
+  Future<void> _showIntroSheet({
+    required AudioPageTheme theme,
+    required BookDetail? detail,
+    required String introSummary,
+    required RelatedWork? related,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: theme.card,
+      builder: (context) => AudioPageThemeScope(
+        theme: theme,
+        child: SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.6,
+            child: _introCard(
+              detail: detail,
+              introSummary: introSummary,
+              related: related,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 官方 `bif.xml` 图标行。首项文案是**当前倍速**（截图 2.jpg 的 `1.2x`）。
-  List<AudioIconAction> get _iconActions => [
+  ///
+  /// 真人讲书页按样稿换成仪表 / 加号书 / 下载 / 评论 / 更多；
+  /// 智能朗读保持原来的图标。
+  List<AudioIconAction> _iconActions({bool real = false}) => [
     AudioIconAction(
       key: 'audio-speed',
-      icon: LucideIcons.timer,
+      icon: real ? LucideIcons.gauge : LucideIcons.timer,
       label: '${_AudioPageState._rateLabel(c._rate)}x',
       semanticLabel: AudioPreferences.instance.rateLocked
           ? '播放速度 ${_AudioPageState._rateLabel(c._rate)} 倍，已锁定'
@@ -276,14 +594,14 @@ extension _AudioListeningLayout on _AudioPageState {
     ),
     AudioIconAction(
       key: 'audio_shelf',
-      icon: LucideIcons.book_open_check,
+      icon: real ? LucideIcons.book_plus : LucideIcons.book_open_check,
       label: c._inShelf ? '已在书架' : '加入书架',
       active: c._inShelf,
       onTap: _toggleShelf,
     ),
     AudioIconAction(
       key: 'audio_download',
-      icon: LucideIcons.list_end,
+      icon: real ? LucideIcons.download : LucideIcons.list_end,
       label: '下载',
       onTap: _showDownload,
     ),
@@ -295,7 +613,7 @@ extension _AudioListeningLayout on _AudioPageState {
     ),
     AudioIconAction(
       key: 'audio_more',
-      icon: LucideIcons.ellipsis,
+      icon: real ? LucideIcons.circle_ellipsis : LucideIcons.ellipsis,
       label: '更多',
       onTap: _showMore,
     ),
