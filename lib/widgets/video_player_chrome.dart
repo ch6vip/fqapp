@@ -41,6 +41,8 @@ import 'player/player_toast.dart';
 import 'player/player_video_layout.dart';
 import 'player/story_seek_bar.dart';
 
+part 'video_player_landscape_seek.dart';
+
 // Note: 移除短剧互动入口的范围见
 // .agents/notes/implemented/simplification/2026-09-26-playlet-social-controls.md
 // Note: 截图形态、视频底边定位与触区取舍见
@@ -4451,6 +4453,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// B站 形态重排，入口与语义一一对应，不新增数据源；官方那一行的评论
   /// 计数、弹幕输入框仍不显示（无发送接口，见诚实清单）。
   Widget _landscapeBar(EdgeInsets insets) => Positioned(
+    key: const ValueKey('landscape-controls-layer'),
     left: 0,
     right: 0,
     bottom: 0,
@@ -4527,20 +4530,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
           ),
           const SizedBox(height: 2),
           // StorySeekBar 自带 30dp 命中高度：进度线本身压在中间。
-          StorySeekBar(
-            key: const ValueKey('landscape-seek'),
-            value: _progressValue,
-            enabled: widget.duration > Duration.zero,
-            seeking: _seeking,
-            onStart: _startSeek,
-            onChanged: (value) => _seekValue.value = value,
-            onEnd: (value) => unawaited(_finishSeek(value)),
-            onCancel: _cancelSeek,
-            trackWidth: 3,
-            thumbRadius: 6,
-            progressColor: const Color(0xFFFA6725),
-            trackColor: const Color(0x47FFFFFF),
-          ),
+          _landscapeSeekBar(),
           const SizedBox(height: 4),
           SizedBox(
             height: 40,
