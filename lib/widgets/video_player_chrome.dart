@@ -2413,7 +2413,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       fit: VideoFit.contain,
       panelFraction: compact ? 0 : _panelFraction,
       restingPanelFraction: compact ? 0 : _panelRestFraction,
-      fullScreen: _fullScreen,
+      fullScreen: _fullScreen || landscape,
       compact: compact,
     );
     final durationMs = math.max(0, widget.duration.inMilliseconds);
@@ -3618,19 +3618,18 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         window: window,
         insets: insets,
         videoSize: _videoSize,
-        // 官方「画面撑满」只换铺排方式，不动解码与进度；但宽屏全屏时
-        // `cq3/o.d()` 强制 ASPECT_FIT，撑满不再生效——竖版片源在横屏里居中、
-        // 两侧留黑边（`PlayerVideoLayout.fitFor`）。
+        // 横屏窗口与主动全屏使用同一画面规则；横置进入时也不能沿用
+        // 竖屏的裁切和信息区留白。这里只改变几何，不改变返回/转屏状态。
         // 分屏视频盒同理：盒子里只求完整显示，撑满会裁掉字幕。
         fit: compact
             ? VideoFit.contain
             : PlayerVideoLayout.fitFor(
                 fillScreen: widget.fillScreen,
-                fullScreen: _fullScreen,
+                fullScreen: _fullScreen || _windowLandscape,
               ),
         panelFraction: compact ? 0 : fraction,
         restingPanelFraction: compact ? 0 : _panelRestFraction,
-        fullScreen: _fullScreen,
+        fullScreen: _fullScreen || _windowLandscape,
         compact: compact,
       );
       // Retain the video/cover subtree while only its rectangle follows the
