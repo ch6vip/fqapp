@@ -1446,7 +1446,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                     _browseGrid(
                       state,
                       items,
-                      columns: 2,
+                      columns: 3,
                       gridKey: 'drama_episode_grid',
                       titleMaxLines: 2,
                     ),
@@ -1571,7 +1571,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
-    if (isWindowsDesktop) {
+    final wide = isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840;
+    if (wide) {
       columns = dramaDesktopColumns(context);
     }
     final bottomInset = _effectiveBottomInset(context);
@@ -1590,11 +1591,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
           crossAxisSpacing: 8,
           mainAxisSpacing: 16,
           // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
-          childAspectRatio: isWindowsDesktop
-              ? .58
-              : columns == 2
-              ? 0.56
-              : 0.52,
+          childAspectRatio: wide ? .58 : columns == 2 ? 0.56 : (titleMaxLines >= 2 ? 0.47 : 0.52),
         ),
         itemCount: items.length,
         itemBuilder: (context, index) => _BrowseCard(
@@ -3740,14 +3737,14 @@ class _InlineVideoLayer extends StatelessWidget {
   /// `contain` over a black backing — the same look as the video's
   /// `VideoFit.contain` right below. Phones keep a portrait card, so they
   /// keep filling.
-  Widget _cover(int cacheWidth) => ColoredBox(
+  Widget _cover(int cacheWidth, {required bool wide}) => ColoredBox(
     color: Colors.black,
     child: StoryCover(
       key: ValueKey('drama_inline_cover_${item.kind}_${item.id}'),
       item: item,
       cacheWidth: cacheWidth,
       alignment: Alignment.topCenter,
-      fit: isWindowsDesktop ? BoxFit.contain : BoxFit.cover,
+      fit: wide ? BoxFit.contain : BoxFit.cover,
     ),
   );
 
@@ -3761,6 +3758,7 @@ class _InlineVideoLayer extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final window = constraints.biggest;
+        final wide = isWindowsDesktop || window.width >= 840;
         final cacheWidth =
             (window.width * MediaQuery.devicePixelRatioOf(context)).ceil();
         return AnimatedBuilder(
@@ -3772,7 +3770,7 @@ class _InlineVideoLayer extends StatelessWidget {
             playback.videoSize,
           ]),
           builder: (context, _) {
-            final cover = _cover(cacheWidth);
+            final cover = _cover(cacheWidth, wide: wide);
             // A card the session is not playing (yet) shows its cover only.
             if (playback.activeId.value != item.id) return cover;
             final textureId = playback.textureId.value;
@@ -3789,7 +3787,7 @@ class _InlineVideoLayer extends StatelessWidget {
               // Official display mode for a feed card: fill the frame unless
               // the source is wide enough to be pinned to its width. The
               // overflow is clipped by the ClipRRect above this layer.
-              fit: isWindowsDesktop ? VideoFit.contain : VideoFit.fillFrame,
+              fit: wide ? VideoFit.contain : VideoFit.fillFrame,
             );
             return Stack(
               fit: StackFit.expand,
@@ -4462,8 +4460,8 @@ class _LocalListState extends State<_LocalList> {
           // 桌面端跟看剧/漫剧同口径铺列（[dramaDesktopColumns]，行距也放到
           // 16）；手机保持官方的双列 8dp。原先这里恒写 2 列，桌面上两列会被
           // 拉到近 700dp 宽，和隔壁频道完全两种排版。
-          final desktopGrid = isWindowsDesktop;
-          final columns = desktopGrid ? dramaDesktopColumns(context) : 2;
+          final desktopGrid = isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840;
+          final columns = desktopGrid ? dramaDesktopColumns(context) : 3;
           final body = filtered.isEmpty
               ? empty
               : GridView.builder(
@@ -4480,7 +4478,7 @@ class _LocalListState extends State<_LocalList> {
                     crossAxisSpacing: 8,
                     mainAxisSpacing: desktopGrid ? 16 : 8,
                     // 官方封面 10:14 + 粗体两行标题 + 进度行。
-                    childAspectRatio: desktopGrid ? .58 : 0.56,
+                    childAspectRatio: desktopGrid ? .58 : 0.47,
                   ),
                   // 尾部页脚「已显示全部内容」（官方 `u4.a()`）。
                   itemCount: filtered.length + 1,
