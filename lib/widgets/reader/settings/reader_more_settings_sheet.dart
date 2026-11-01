@@ -8,8 +8,8 @@ import 'reader_settings_state.dart';
 import 'reader_typography_settings.dart';
 import 'reader_settings_widgets.dart';
 
-/// 更多设置的结果：正文替换需要先关掉两层面板再进页面。
-enum ReaderMoreSettingsResult { textReplacement }
+/// Actions that close both settings sheets before opening their destination.
+enum ReaderMoreSettingsResult { textReplacement, listeningSource }
 
 /// 打开「更多设置」。
 ///
@@ -22,6 +22,7 @@ Future<ReaderMoreSettingsResult?> showReaderMoreSettings({
   required bool einkOverride,
   required bool oledOverride,
   required bool backgroundLocked,
+  bool showListeningSource = false,
 }) {
   return showModalBottomSheet<ReaderMoreSettingsResult>(
     context: context,
@@ -38,6 +39,7 @@ Future<ReaderMoreSettingsResult?> showReaderMoreSettings({
       einkOverride: einkOverride,
       oledOverride: oledOverride,
       backgroundLocked: backgroundLocked,
+      showListeningSource: showListeningSource,
     ),
   );
 }
@@ -50,6 +52,7 @@ class ReaderMoreSettingsSheet extends StatefulWidget {
     this.einkOverride = false,
     this.oledOverride = false,
     this.backgroundLocked = false,
+    this.showListeningSource = false,
   });
 
   final ReaderPreferences initialValue;
@@ -59,6 +62,7 @@ class ReaderMoreSettingsSheet extends StatefulWidget {
   final bool einkOverride;
   final bool oledOverride;
   final bool backgroundLocked;
+  final bool showListeningSource;
 
   @override
   State<ReaderMoreSettingsSheet> createState() =>
@@ -172,6 +176,8 @@ class _ReaderMoreSettingsSheetState
         const ReaderSettingsDivider(),
         _listeningSection(),
         const ReaderSettingsDivider(),
+        ..._videoSettings(),
+        const ReaderSettingsDivider(),
         ReaderSettingsNavRow(
           label: '正文替换',
           icon: LucideIcons.replace,
@@ -182,10 +188,33 @@ class _ReaderMoreSettingsSheetState
     );
   }
 
+  List<Widget> _videoSettings() => [
+    const ReaderSettingsSectionHeader(title: '改编剧'),
+    ReaderSettingsSwitchRow(
+      label: '阅读器展示「看」悬浮球',
+      value: value.showVideoButton,
+      onChanged: (on) =>
+          _apply((current) => current.copyWith(showVideoButton: on)),
+    ),
+    ReaderSettingsSwitchRow(
+      label: '按阅读章节播放改编剧',
+      value: value.videoChapterSync,
+      onChanged: (on) =>
+          _apply((current) => current.copyWith(videoChapterSync: on)),
+    ),
+  ];
+
   Widget _listeningSection() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       const ReaderSettingsSectionHeader(title: '听书'),
+      if (widget.showListeningSource)
+        ReaderSettingsNavRow(
+          label: '听书方式',
+          icon: LucideIcons.headphones,
+          onTap: () =>
+              Navigator.pop(context, ReaderMoreSettingsResult.listeningSource),
+        ),
       ReaderSettingsSwitchRow(
         label: '跟随翻页',
         value: value.listeningFollow,
@@ -307,7 +336,8 @@ class _ReaderMoreSettingsSheetState
     return Wrap(
       children: [
         dot(null),
-        for (final argb in ReaderPreferences.narrationHighlightPresets) dot(argb),
+        for (final argb in ReaderPreferences.narrationHighlightPresets)
+          dot(argb),
       ],
     );
   }

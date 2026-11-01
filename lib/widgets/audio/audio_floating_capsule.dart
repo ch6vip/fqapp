@@ -176,10 +176,12 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     )?.showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Builds the capsule inside the Navigator's Overlay (see
-  /// [AudioFloatingRoutes]). Audio, system TTS and the cold-start idle state
-  /// share it: officially TTS is just another session on the same view.
-  Widget _buildCapsule(BuildContext context) {
+  /// The overlay and reader menu borrow the same session and control path.
+  Widget _buildCapsule(
+    BuildContext context, {
+    bool inReaderMenu = false,
+    bool monochrome = false,
+  }) {
     final routes = _routes;
     if (routes == null) return const SizedBox.shrink();
     return ListenableBuilder(
@@ -188,11 +190,15 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
         final session = _session;
         final tts = _tts;
         final recent = _recent;
-        final visible = routes.visible;
+        // The reader's menu/route owns visibility; popup sheets cover it.
+        final visible = inReaderMenu || routes.visible;
+        Widget? player;
         if (session != null && !session._closed) {
           final error = session._error != null;
-          return AudioFloatingPlayer(
+          player = AudioFloatingPlayer(
             key: ObjectKey(session),
+            inReaderMenu: inReaderMenu,
+            monochrome: monochrome,
             title: session._title,
             cover: session._cover,
             progress: session._position,
@@ -219,10 +225,11 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
             ),
             onClose: () => unawaited(stop(session)),
           );
-        }
-        if (tts != null && !tts.closed) {
-          return AudioFloatingPlayer(
+        } else if (tts != null && !tts.closed) {
+          player = AudioFloatingPlayer(
             key: ObjectKey(tts),
+            inReaderMenu: inReaderMenu,
+            monochrome: monochrome,
             title: tts.book.title,
             cover: tts.book.coverUrl,
             progress: tts,
@@ -236,10 +243,11 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
             onToggle: () => unawaited(tts.toggle()),
             onClose: () => unawaited(stopTts(tts)),
           );
-        }
-        if (recent != null) {
-          return AudioFloatingPlayer(
+        } else if (recent != null) {
+          player = AudioFloatingPlayer(
             key: ObjectKey(recent),
+            inReaderMenu: inReaderMenu,
+            monochrome: monochrome,
             title: recent.title,
             cover: recent.cover,
             progress: _tick,
@@ -247,18 +255,28 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
             playing: false,
             loading: _resuming,
             canToggle: !_resuming,
-            // Officially only the home shell attaches the idle ball.
-            visible: visible && routes.atRoot,
+            // The reader can borrow the home shell's recoverable idle player.
+            visible: visible && (inReaderMenu || routes.atRoot),
             bottomInset: routes.bottomInset,
             onOpen: () => unawaited(_resumeRecent(recent, open: true)),
             onToggle: () => unawaited(_resumeRecent(recent, open: false)),
             onClose: () {
-              _recent = null;
-              _changed();
+              if (identical(_recent, recent)) {
+                _recent = null;
+                _changed();
+              }
             },
           );
         }
-        return const SizedBox.shrink();
+        if (player == null) return const SizedBox.shrink();
+        if (!inReaderMenu) return player;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Semantics(container: true, label: '听书控制', child: player),
+          ),
+        );
       },
     );
   }

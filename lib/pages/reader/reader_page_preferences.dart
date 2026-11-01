@@ -113,6 +113,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
         _dayTheme = preferences.themePreset;
       }
     });
+    if (_controlsVisible) _loadReaderMenuData();
     _syncSystemBars();
     _syncVolumeKeyEnabled();
     await _loadFont(preferences.fontPath);
@@ -219,7 +220,13 @@ extension _ReaderPagePreferences on _ReaderPageState {
     if (!_controlsVisible) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
     }
-    _setState(() => _controlsVisible = !_controlsVisible);
+    _setControlsVisible(!_controlsVisible);
+    if (_controlsVisible) _loadReaderMenuData();
+  }
+
+  void _setControlsVisible(bool visible) {
+    if (!visible) _cancelVideoOpen();
+    _setState(() => _controlsVisibility.value = visible);
     _syncVolumeKeyEnabled();
   }
 
@@ -253,6 +260,10 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   void _previewPreferences(ReaderPreferences preferences) {
+    if (!preferences.showVideoButton ||
+        preferences.videoChapterSync != _preferences.videoChapterSync) {
+      _cancelVideoOpen();
+    }
     _captureScrollProgress(updateTextOffset: true);
     _preferencesDirty = true;
     final fontChanged = preferences.fontPath != _preferences.fontPath;
@@ -271,6 +282,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
     });
     _syncSystemBars();
     if (fontChanged) unawaited(_loadFont(preferences.fontPath));
+    if (_controlsVisible) unawaited(_loadVideoMatch());
   }
 
   Future<void> _showTextReplacement() => Navigator.push<void>(
@@ -297,6 +309,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
       einkOverride: einkModeNotifier.value,
       oledOverride: oledActive(),
       onTextReplacement: _showTextReplacement,
+      onListeningSource: () => unawaited(_openListening()),
     );
     // 墨水屏：排版面板关闭后刷一次，清掉面板残影。
     _maybeEinkRefresh();
@@ -333,7 +346,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   Future<void> _showDirectory() async {
-    _setState(() => _controlsVisible = false);
+    _setControlsVisible(false);
     Set<String> cachedIds = {};
     try {
       cachedIds = await _diskCache.cachedChapterIds(widget.bookId);
@@ -363,7 +376,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   Future<void> _showCache() {
-    _setState(() => _controlsVisible = false);
+    _setControlsVisible(false);
     final preset = _effectivePreset;
     return showModalBottomSheet<void>(
       context: context,

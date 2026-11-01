@@ -46,6 +46,7 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
     ReaderChapterTurn? chapterTurn,
   }) async {
     if (widget.chapters.isEmpty) return;
+    _cancelVideoOpen();
     final generation = ++_loadGeneration;
     _replacementCancellation?.cancel();
     ++_replacementGeneration;

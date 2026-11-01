@@ -334,23 +334,7 @@ extension _ReaderPageBuild on _ReaderPageState {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 听书胶囊贴在控制条正上方：菜单呼出时才有，左上角对齐。
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: ReaderListenCapsuleHost(
-              bookId: widget.bookId,
-              cover: widget.cover,
-              preset: preset,
-              animate: !einkModeNotifier.value,
-              busy: _loading || _error != null,
-              onStartFromPage: () =>
-                  unawaited(_openListening(fromPage: true, keepControls: true)),
-              onCollapse: _toggleControls,
-            ),
-          ),
-        ),
+        _buildReaderMenuPlayers(preset),
         ReaderControls(
           key: const ValueKey('reader-controls'),
           preferences: _displayPreferences,
@@ -368,8 +352,6 @@ extension _ReaderPageBuild on _ReaderPageState {
           onDirectory: _showDirectory,
           onNight: _toggleNightTheme,
           onAppearance: _showAppearanceSettings,
-          onListen: () => unawaited(_openListening()),
-          showListening: true,
         ),
       ],
     );

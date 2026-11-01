@@ -23,6 +23,7 @@ import '../models/media_id.dart';
 import '../models/playlet_comment.dart';
 import '../models/rank.dart';
 import '../models/related_series.dart';
+import '../models/reader_video_match.dart';
 import '../models/category_front.dart';
 import '../models/search_discovery.dart';
 import '../models/series_detail.dart';
@@ -33,9 +34,8 @@ import 'backend_transport.dart';
 import 'chapter_text_formatter.dart';
 import 'request_gate.dart';
 
-// HomepagePage/HomeTabItem live in models/, but every caller reads them through
-// this API client; re-exporting keeps that import path stable.
 export '../models/homepage_page.dart';
+part 'reader_video_api.dart';
 
 /// API client talking to the local Rust core.
 ///
