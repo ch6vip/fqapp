@@ -254,6 +254,16 @@ void main() {
       expect(find.byKey(const ValueKey('reader_player_pill')), findsNothing);
     });
 
+    testWidgets(
+      'no player pill on a non-normal page with highlight on screen',
+      (tester) async {
+        _publish(ListeningSession.instance, playing: true);
+        await mountHost(tester, highlightOnScreen: true, normalPage: false);
+        expect(find.byKey(const ValueKey('reader_player_pill')), findsNothing);
+        expect(find.byKey(const ValueKey('reader_sync_pill')), findsNothing);
+      },
+    );
+
     testWidgets('opening the menus hides both', (tester) async {
       _publish(ListeningSession.instance, playing: true);
       await mountHost(tester, highlightOnScreen: false, controlsVisible: true);
