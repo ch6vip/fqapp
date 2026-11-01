@@ -57,16 +57,25 @@ class AudioTopBar extends StatelessWidget {
             alignment: Alignment.center,
             child: Semantics(
               header: true,
-              child:
-                  center ??
-                  Text(
-                    '听书',
-                    style: TextStyle(
-                      color: colors.ink,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+              // 页签是「智能朗读…｜真人讲书」两颗 16sp 文字，系统字体放大后
+              // 整行会比 44dp 的顶栏更宽/更高。保留字号给读屏，但整体按需
+              // 等比缩小；两侧各留 56dp 给收起/更多按钮，避免叠在图标上。
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 56),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child:
+                      center ??
+                      Text(
+                        '听书',
+                        style: TextStyle(
+                          color: colors.ink,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                ),
+              ),
             ),
           ),
           Align(

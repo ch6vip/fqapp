@@ -256,9 +256,14 @@ class _AudioPageState extends State<AudioPage> {
   bool _readerPreferencesRequested = false;
 
   /// 按原著章节 id 缓存展开态正文与请求，避免重复拉取同一章。
+  ///
+  /// 播放器会预取当前章的正文；自动连播一本书时如果不设上限，缓存的整章
+  /// 正文会随章数一直增长。展开态只可能读当前章，留最近几章就够。
   final Map<String, ChapterContent> _expandedTexts = {};
   final Set<String> _expandedTextFailed = {};
   final Map<String, Future<void>> _expandedTextRequests = {};
+
+  static const int _expandedTextCacheLimit = 3;
 
   _AudioPlaybackController get c => _session!;
 
@@ -394,6 +399,9 @@ class _AudioPageState extends State<AudioPage> {
               _expandedTextFailed.add(itemId);
             } else {
               _expandedTexts[itemId] = content;
+              while (_expandedTexts.length > _expandedTextCacheLimit) {
+                _expandedTexts.remove(_expandedTexts.keys.first);
+              }
             }
           });
         })

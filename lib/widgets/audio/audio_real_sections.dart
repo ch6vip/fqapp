@@ -43,8 +43,10 @@ class AudioRealBookRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = AudioPageThemeScope.of(context);
-    return SizedBox(
-      height: rowHeight,
+    // 行高 72dp 是设计尺寸；用 minHeight 而不是固定高度，系统字体放大时
+    // 书名/章节名能撑开这一行，而不是在 72dp 里被压出 RenderFlex 溢出。
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: rowHeight),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(

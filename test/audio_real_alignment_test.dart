@@ -247,6 +247,34 @@ void main() {
     expect(find.byKey(const Key('audio_real_expanded_error')), findsOneWidget);
   });
 
+  testWidgets(
+    'the expand tag appears when only the novel chapter id is known',
+    (tester) async {
+      final session = _RealSession(
+        subtitles: (_, _) async => _track,
+        timePoints: (_, _) async => AudioTimeTrack(const [
+          AudioSyncPoint(
+            startTime: 0,
+            startPara: 0,
+            startParaOff: 0,
+            endPara: 0,
+            endParaOff: 6,
+          ),
+        ], novelItemId: 'novel-chapter'),
+      );
+      await _mount(tester, session);
+      session.players.single.emitPosition(const Duration(seconds: 2));
+      await _flush(tester);
+
+      // item_ids 缺失、时间点自己带 novel_item_id 时，原著章节已经知道，
+      // 「展开」不能因为 text_item_id 为空就被藏掉。
+      expect(
+        find.byKey(const Key('audio_real_subtitle_expand')),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('the phone header uses the 44dp mockup metrics', (tester) async {
     // 顶栏高度按 MediaQuery 宽度判断，而 `setSurfaceSize` 只改渲染表面，
     // 不改 view 的 physicalSize；这里把两者都设成手机尺寸。
@@ -378,6 +406,52 @@ void main() {
       tester.getSize(find.byKey(const Key('audio_play'))),
       const Size(60, 60),
     );
+  });
+
+  testWidgets('a recording fits a narrow screen with large text', (
+    tester,
+  ) async {
+    // 系统字体放到 2 倍：书籍行是 72dp 设计尺寸，但不能把两行文字压出
+    // RenderFlex 溢出；这一行要能随字号撑开，页面本身可以滚动。
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await _mount(tester, _RealSession(), size: const Size(320, 640));
+    expect(tester.takeException(), isNull);
+    expect(find.byType(AudioRealBookRow), findsOneWidget);
+    expect(find.text('第1章'), findsOneWidget);
+    expect(find.text('测试听书'), findsOneWidget);
+  });
+
+  testWidgets('the header switch scales down instead of overflowing', (
+    tester,
+  ) async {
+    // 2.5 倍字体下「智能朗读｜真人讲书」比 320dp 顶栏还宽；整块按需缩小
+    // 而不是让 Row 溢出或压到两端的收起/更多按钮。
+    tester.platformDispatcher.textScaleFactorTestValue = 2.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AudioPageThemeScope(
+          theme: AudioPageTheme.fallback,
+          child: Scaffold(
+            body: AudioTopBar(
+              onCollapse: () {},
+              onMore: () {},
+              center: AudioModeSwitch(
+                realSelected: true,
+                onSelectTts: () {},
+                onSelectNarrator: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.text('智能朗读'), findsOneWidget);
+    expect(find.text('真人讲书'), findsOneWidget);
   });
 
   testWidgets('the action row follows the 8/6/24 mockup metrics', (

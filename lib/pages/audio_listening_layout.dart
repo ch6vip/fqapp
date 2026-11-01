@@ -130,11 +130,14 @@ extension _AudioListeningLayout on _AudioPageState {
                                         duration: snapshot.duration,
                                         // 「字幕 + 时间点 + 对应原著章节」三者齐备才显示
                                         // 「展开」；缺少任一项时字幕照常显示，只是没有
-                                        // 这个入口。
+                                        // 这个入口。原著章节以 novelItemId 为准，没有
+                                        // 时才退回 item_ids 里的正文章节 id。
                                         showExpand:
                                             snapshot.track.isNotEmpty &&
                                             timeTrack.isNotEmpty &&
-                                            timeTrack.textItemId.isNotEmpty,
+                                            _AudioPageState._expandedTextId(
+                                              snapshot,
+                                            ).isNotEmpty,
                                         onExpand: () =>
                                             _expandTranscript(snapshot),
                                       );
