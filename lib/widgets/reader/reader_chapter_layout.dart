@@ -215,6 +215,7 @@ class ReaderContentBlock {
 /// the match goes through [ReaderContentBlock.paraIndex]. Display order and id
 /// order disagree whenever the markup holds marker-only or empty paragraphs —
 /// which is why counting paragraphs here lit the wrong text.
+/// Replacement maps translate the original paragraph offsets into display text.
 ///
 /// Offsets are half-open here: the caller passes `endOffset + 1` because the
 /// upstream end offset is inclusive (official `toTargetTextBlock` does the same
@@ -237,24 +238,30 @@ class ReaderContentBlock {
   int? startElementOffset,
 }) {
   final from = _blockByParaId(layout, startPara);
-  final to = endPara == startPara
-      ? from
-      : _blockByParaId(layout, endPara);
+  final to = endPara == startPara ? from : _blockByParaId(layout, endPara);
   if (from == null || to == null) return null;
 
+  final fromSource = layout._sourceBlocks[from.index];
+  final toSource = layout._sourceBlocks[to.index];
   final startInPara = _paraOffset(
     from,
     startParaOff,
     startElementIndex,
     startElementOffset,
-  ).clamp(0, from.text.length);
+  ).clamp(0, fromSource.text.length);
   // A range that spans paragraphs lights from this paragraph's start offset to
   // the last one's end offset; the single absolute span covers everything
   // between them, which is what the reader paints.
-  final endInPara = endParaOff.clamp(0, to.text.length);
+  final endInPara = endParaOff.clamp(0, toSource.text.length);
 
-  final start = from.start + startInPara;
-  final end = to.start + endInPara;
+  final start =
+      from.start +
+      (fromSource.map?.toDisplay(startInPara, bias: TextBoundaryBias.start) ??
+          startInPara);
+  final end =
+      to.start +
+      (toSource.map?.toDisplay(endInPara, bias: TextBoundaryBias.end) ??
+          endInPara);
   if (end <= start) return null;
   return (start: start, end: end);
 }

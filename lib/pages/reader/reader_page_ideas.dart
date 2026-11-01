@@ -67,7 +67,7 @@ extension _ReaderPageIdeas on _ReaderPageState {
   }) async {
     final ideaSnapshot = sourceIdeas ?? _ideas;
     if (ideaSnapshot.isEmpty) return;
-    _setState(() => _controlsVisible = false);
+    _setControlsVisible(false);
     final chapter = sourceChapter ?? widget.chapters[_index];
     // Keep immersive on while the sheet is open (#57): the sheet pushes a
     // route, which would otherwise release the system bars. The flag is

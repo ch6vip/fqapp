@@ -13,6 +13,13 @@ import '../models/chapter_ideas.dart';
 import '../models/audio_extra.dart';
 import '../models/comment_reply.dart';
 import '../models/media_item.dart';
+import '../models/reader_video_match.dart';
+import '../models/media_id.dart';
+import '../services/backend_transport.dart' show BackendRequest;
+import '../services/player_history.dart';
+import '../widgets/reader/reader_video_button.dart';
+import '../widgets/reader/reader_listen_button.dart';
+import 'player_page.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/chapter_cache_store.dart';
@@ -71,6 +78,8 @@ part 'reader/reader_page_progress.dart';
 part 'reader/reader_page_build.dart';
 part 'reader/reader_page_content.dart';
 part 'reader/reader_page_joined_content.dart';
+part 'reader/reader_page_video.dart';
+part 'reader/reader_page_menu_players.dart';
 
 typedef ChapterTextLoader = Future<String> Function(Chapter chapter);
 typedef _LoadedChapter = ({String text, bool fetched});
@@ -363,6 +372,7 @@ class _ReaderPageState extends State<ReaderPage>
     final current = ModalRoute.isCurrentOf(context) ?? true;
     if (_routeCurrent == current) return;
     _routeCurrent = current;
+    if (!current) _cancelVideoOpen();
     // The ideas sheet (#57) holds immersive while it is open. Once this
     // route is current again the sheet is gone, so the hold is released
     // here — the sheet's own finally runs before this notification lands
@@ -383,6 +393,10 @@ class _ReaderPageState extends State<ReaderPage>
 
   @override
   void dispose() {
+    _videoMatchRequest?.cancel();
+    _videoOpenRequest?.cancel();
+    _controlsVisibility.dispose();
+    _readerTonesRequest?.cancel();
     _followPoll.dispose();
     _chapterRequestHandles.cancelAll();
     VolumeKeyService.instance.setOnVolumeKey(null);
@@ -429,6 +443,7 @@ class _ReaderPageState extends State<ReaderPage>
     }
     final resumed = state == AppLifecycleState.resumed;
     if (!resumed && _appActive) {
+      _cancelVideoOpen();
       _stopAutoTurn();
       ++_deviceGeneration;
       unawaited(_device.suspend());

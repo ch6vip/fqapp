@@ -18,6 +18,7 @@ pub mod dhcontent;
 pub mod full;
 pub mod home;
 pub mod manga;
+pub mod reader_video;
 pub mod router;
 pub mod search;
 pub mod session;
@@ -184,6 +185,7 @@ pub mod server {
         author::register(s);
         audio::register(s);
         video::register(s);
+        reader_video::register(s);
         manga::register(s);
     }
 }

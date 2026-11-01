@@ -2,15 +2,14 @@ part of '../reader_page.dart';
 
 /// Opening the listening player and mapping the page to a playback position.
 extension _ReaderPageListeningLaunch on _ReaderPageState {
-  /// Local books use system TTS; online books offer both available sources.
+  /// Local books use system TTS; the settings/selection paths offer both sources.
   ///
   /// [fromPage] skips the source sheet and starts from this page directly —
-  /// the sync pill's 「从本页听」 (`AudioSyncReaderController.L()`, :702).
+  /// shared by the round entry and the sync pill's 「从本页听」.
   Future<void> _openListening({
     int? fromMs,
     int? textId,
     bool fromPage = false,
-    bool keepControls = false,
   }) async {
     if (_openingListening || _loading || _error != null) return;
     if (fromPage) {
@@ -26,35 +25,36 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
           fromMs: fromMs,
           textId: textId,
           openPage: false,
-          keepControls: keepControls,
         );
         return;
       }
-      _openingListening = true;
+      final int? choice;
+      _setState(() => _openingListening = true);
       try {
         // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
-        final choice = await _showListeningSourceSheet();
-        if (!mounted || choice == null || chapterId != _chapter.itemId) return;
-        if (choice == 1) {
-          final anchor = _currentPageAnchor();
-          await _openUpstreamListening(
-            fromMs: anchor.startMs ?? fromMs,
-            textId: anchor.textId ?? textId,
-            openPage: false,
-            keepControls: true,
-          );
-          return;
-        }
-        system = choice == 2;
+        choice = await _showListeningSourceSheet();
       } finally {
-        _openingListening = false;
+        if (mounted) _setState(() => _openingListening = false);
       }
+      if (!mounted || choice == null || chapterId != _chapter.itemId) return;
+      // The launch helper owns the same lock; release the source sheet first.
+      if (choice == 1) {
+        final anchor = _currentPageAnchor();
+        await _openUpstreamListening(
+          fromMs: anchor.startMs ?? fromMs,
+          textId: anchor.textId ?? textId,
+          openPage: false,
+          keepControls: true,
+        );
+        return;
+      }
+      system = choice == 2;
     }
     if (!system) {
       await _openUpstreamListening(fromMs: fromMs, textId: textId);
       return;
     }
-    _openingListening = true;
+    _setState(() => _openingListening = true);
     try {
       _stopAutoTurn();
       final snapshot = _replacementStore.snapshot;
@@ -100,13 +100,13 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       );
       await _persistProgress();
       if (!mounted || chapterId != _chapter.itemId) return;
-      // 从胶囊起播时要留在菜单里：一收菜单，胶囊自己就没影了。
-      if (!keepControls) _setState(() => _controlsVisible = false);
+      // Preserve the menu state so its borrowed capsule remains accessible
+      // when system TTS starts; do not reopen a menu the user has dismissed.
       await AudioPlaybackScope.startSystemTts(context, book);
     } catch (e) {
       if (mounted) _showMessage(SystemTts.errorMessage(e));
     } finally {
-      _openingListening = false;
+      if (mounted) _setState(() => _openingListening = false);
     }
   }
 
@@ -148,14 +148,18 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
   }) async {
     final paragraphAnchored = textId != null;
     if (_openingListening) return;
-    _openingListening = true;
+    if (_readerAudioUnavailable) {
+      _showMessage('本书暂无可用听书资源，可在设置 → 更多设置 → 听书方式中选择系统朗读');
+      return;
+    }
+    _setState(() => _openingListening = true);
     _showMessage('正在开始播放…');
     final chapter = _chapter;
     final chapterIndex = _index;
     try {
       _stopAutoTurn();
       await _persistProgress();
-      if (!mounted) return;
+      if (!mounted || _chapter.itemId != chapter.itemId) return;
       var startMs = fromMs;
       // The paragraph keys for the player's /timepoints lookup, used when the
       // chapter body carries no `<span start_time>` (plain-text 智能朗读
@@ -211,13 +215,12 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
           _showMessage('当前音频没有这一章，继续播放原进度');
         }
         if (!openPage) {
-          if (jumped) _showMessage('已开始播放，可从底部胶囊控制');
           return;
         }
         // 打开听书页只是给现有会话挂一个视图。
         reuseLive = true;
       }
-      if (!keepControls) _setState(() => _controlsVisible = false);
+      if (!keepControls) _setControlsVisible(false);
       final request = AudioPage(
         // 复用别名会话时用音频书 id：页面只是会话的视图，按会话自己的 id
         // 记账，评论/封面等读取才落对书。
@@ -258,17 +261,19 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         return;
       }
       // 「从本页播放」：后台起播，阅读页留在原处跟随。
-      final started = await AudioPlaybackScope.startListeningInBackground(
+      final accepted = await AudioPlaybackScope.startListeningInBackground(
         context,
         request,
       );
-      if (!started && mounted) {
+      if (!accepted && mounted) {
         _showMessage('无法开始播放，请检查网络');
-      } else if (started && mounted) {
-        _showMessage('已开始播放，可从底部胶囊控制');
+      } else if (accepted && mounted) {
+        _showMessage('已提交播放请求，可从底部胶囊查看状态');
       }
+    } catch (_) {
+      if (mounted) _showMessage('无法开始播放，请检查网络后重试');
     } finally {
-      _openingListening = false;
+      if (mounted) _setState(() => _openingListening = false);
     }
   }
 

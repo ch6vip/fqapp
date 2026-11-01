@@ -54,8 +54,7 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Analyze application
         run: flutter analyze --no-pub
-      # 行数预算门禁在 android-apk.yml 的 dart-gate 里跑：它只读源码，不依赖
-      # Windows 工具链，放在这里只会排在联网装 ffmpeg 之后。
+      # Informational source sizes are reported by the Android Dart job.
       - name: Test layout and playback lifecycle
         run: >-
           flutter test --no-pub

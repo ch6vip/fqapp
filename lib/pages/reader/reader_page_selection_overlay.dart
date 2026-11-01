@@ -16,9 +16,8 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
     // 下划线要看得见：色块用的派生色（背景 + 10% 文字）画线几乎不可见，
     // 这里改成显式色不透明化、自动时直接用正文色（墨水屏即黑线）。
     final narration = switch ((narrationUnderline, custom)) {
-      (true, final int? c) => c == null
-          ? preset.textColor
-          : Color(c).withValues(alpha: 1),
+      (true, final int? c) =>
+        c == null ? preset.textColor : Color(c).withValues(alpha: 1),
       (false, final int? c) =>
         c == null ? preset.narrationHighlightColor : Color(c),
     };
@@ -251,6 +250,6 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
   void _hideControlsOnDrag() {
     _stopAutoTurn();
     _takeOverListening();
-    if (_controlsVisible) _setState(() => _controlsVisible = false);
+    if (_controlsVisible) _setControlsVisible(false);
   }
 }

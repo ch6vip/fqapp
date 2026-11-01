@@ -4,8 +4,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../services/reader_preferences.dart';
 import 'reader_theme.dart';
 
-/// Reading menu. 章节进度行始终显示，下面只有四个主操作：目录 / 夜间 /
-/// 听书 / 设置；排版项由 设置 直接打开阅读设置面板。
+/// Reading menu. Listening starts from the separate round entry above this bar.
 class ReaderControls extends StatelessWidget {
   final ReaderPreferences preferences;
   final int chapterIndex;
@@ -19,10 +18,6 @@ class ReaderControls extends StatelessWidget {
   final VoidCallback onDirectory;
   final VoidCallback onNight;
   final VoidCallback onAppearance;
-
-  /// 听书: opens the listening page for this book.
-  final VoidCallback onListen;
-  final bool showListening;
 
   const ReaderControls({
     super.key,
@@ -38,8 +33,6 @@ class ReaderControls extends StatelessWidget {
     required this.onDirectory,
     required this.onNight,
     required this.onAppearance,
-    required this.onListen,
-    this.showListening = true,
   });
 
   @override
@@ -91,12 +84,6 @@ class ReaderControls extends StatelessWidget {
                           label: preset.isDark ? '日间' : '夜间',
                           onTap: onNight,
                         ),
-                        if (showListening)
-                          _Action(
-                            icon: LucideIcons.headphones,
-                            label: '听书',
-                            onTap: onListen,
-                          ),
                         _Action(
                           key: const ValueKey('reader-settings'),
                           icon: LucideIcons.sliders_horizontal,
