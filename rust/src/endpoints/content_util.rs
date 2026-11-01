@@ -27,12 +27,19 @@ static CONTENT_STRIP_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
 static AMP_X_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"&amp;x").unwrap());
 static CLOSE_P_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"</p>").unwrap());
 
+static FULL_BR: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)<\s*br\s*/?>").unwrap());
+static FULL_OPEN_P: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)<\s*p[^>]*>").unwrap());
+static FULL_CLOSE_P: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)<\s*/p\s*>").unwrap());
+static FULL_ANY_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]*>").unwrap());
+static FULL_MULTI_NL: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{2,}").unwrap());
+
+#[derive(Clone, Copy)]
 pub struct FullContentProcessor {
-    br: Regex,
-    open_p: Regex,
-    close_p: Regex,
-    any_tag: Regex,
-    multi_nl: Regex,
+    br: &'static Regex,
+    open_p: &'static Regex,
+    close_p: &'static Regex,
+    any_tag: &'static Regex,
+    multi_nl: &'static Regex,
 }
 
 impl Default for FullContentProcessor {
@@ -44,11 +51,11 @@ impl Default for FullContentProcessor {
 impl FullContentProcessor {
     pub fn new() -> Self {
         FullContentProcessor {
-            br: Regex::new(r"(?i)<\s*br\s*/?>").unwrap(),
-            open_p: Regex::new(r"(?i)<\s*p[^>]*>").unwrap(),
-            close_p: Regex::new(r"(?i)<\s*/p\s*>").unwrap(),
-            any_tag: Regex::new(r"<[^>]*>").unwrap(),
-            multi_nl: Regex::new(r"\n{2,}").unwrap(),
+            br: &FULL_BR,
+            open_p: &FULL_OPEN_P,
+            close_p: &FULL_CLOSE_P,
+            any_tag: &FULL_ANY_TAG,
+            multi_nl: &FULL_MULTI_NL,
         }
     }
 

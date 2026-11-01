@@ -1,6 +1,6 @@
 //! Bounded-concurrency download pass for manga chapter images.
 
-use futures::future::join_all;
+use futures::{future, stream::FuturesUnordered, StreamExt};
 
 use super::*;
 
@@ -9,8 +9,8 @@ use super::*;
 /// round-trip latency without opening an unbounded number of connections.
 const IMAGE_DOWNLOAD_CONCURRENCY: usize = 4;
 
-/// Maps `items` through `run` in batches of at most `limit`, polling every
-/// future in a batch at the same time, and returns the results in input order.
+/// Keeps up to `limit` downloads active, refilling on any completion rather
+/// than waiting for a slow image's batch. Results retain their input order.
 pub(super) async fn bounded_map<T, U, F, Fut>(
     items: &[T],
     limit: usize,
@@ -20,16 +20,24 @@ where
     F: FnMut(&T) -> Fut,
     Fut: std::future::Future<Output = Option<U>>,
 {
-    let mut out = Vec::with_capacity(items.len());
-    for batch in items.chunks(limit.max(1)) {
-        out.extend(join_all(batch.iter().map(&mut run)).await);
+    let mut out: Vec<Option<U>> = (0..items.len()).map(|_| None).collect();
+    let mut items = items.iter().enumerate();
+    let mut pending = FuturesUnordered::new();
+    for (index, item) in items.by_ref().take(limit.max(1)) {
+        pending.push(future::join(future::ready(index), run(item)));
+    }
+    while let Some((index, result)) = pending.next().await {
+        out[index] = result;
+        if let Some((index, item)) = items.next() {
+            pending.push(future::join(future::ready(index), run(item)));
+        }
     }
     out
 }
 
-/// Downloads and decrypts `pic_infos` in bounded batches and returns
+/// Downloads and decrypts `pic_infos` with bounded concurrency and returns
 /// `(picInfos index, content-addressed file name)` for every picture that made
-/// it to disk. Batches preserve picInfos order, so the served URLs and the
+/// it to disk. Results preserve picInfos order, so the served URLs and the
 /// HTML stay stable. Any per-picture failure is skipped, like the serial loop
 /// this replaced.
 pub(super) async fn download_pictures(

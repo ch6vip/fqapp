@@ -262,8 +262,12 @@ impl UpstreamClient {
         let mut delay = TRANSIENT_BACKOFF;
         loop {
             match self.do_resp(req, body_limit).await {
-                Err(ClientError::Transient { retry_after, .. }) if attempt < TRANSIENT_RETRIES => {
-                    tokio::time::sleep(retry_after.unwrap_or(delay)).await;
+                Err(err @ ClientError::Transient { retry_after, .. })
+                    if attempt < TRANSIENT_RETRIES =>
+                {
+                    if !super::budget::retry_pause(retry_after.unwrap_or(delay)).await {
+                        return Err(err);
+                    }
                     delay = (delay * 2).min(RETRY_AFTER_CAP);
                     attempt += 1;
                 }
@@ -337,9 +341,14 @@ impl UpstreamClient {
                 Err(err) => {
                     last_err = Some(err.clone());
                     if err.is_device_failed() {
+                        if super::budget::remaining().is_some_and(|left| left.is_zero()) {
+                            return Err(err);
+                        }
                         let _ = self.pool.replace_failed(&dev.device_id).await;
                         pin = None;
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        if !super::budget::retry_pause(Duration::from_millis(100)).await {
+                            return Err(err);
+                        }
                         continue;
                     }
                     return Err(err);

@@ -1,5 +1,6 @@
 //! Signed upstream HTTP access, device rotation, DH/CM key exchange.
 
+pub(crate) mod budget;
 pub mod client;
 pub mod cm;
 pub mod dh;

@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use base64::Engine;
@@ -43,7 +43,21 @@ const DIRECTORY_READING_QUERY_SUFFIX: &str = "&book_info_md5=&need_version=true&
 
 const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
 
-static VIDEO_CACHE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+type CacheLocks = HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>;
+static VIDEO_CACHE_LOCKS: Lazy<Mutex<CacheLocks>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static VIDEO_DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+fn cache_entry_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut locks = VIDEO_CACHE_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
 
 // Note: 编码拒绝必须穿透回退链，见 .agents/notes/implemented/bug-fix/2026-09-25-video-codec-gates.md
 #[derive(Debug, PartialEq, Eq)]
@@ -56,6 +70,24 @@ enum VideoSourceResolution {
 impl VideoSourceResolution {
     fn is_terminal(&self) -> bool {
         !matches!(self, Self::NotFound)
+    }
+}
+
+struct ParsedVideoResponse {
+    root: Value,
+    models: Vec<Map<String, Value>>,
+}
+
+impl ParsedVideoResponse {
+    fn parse(raw: &[u8]) -> ApiResult<Self> {
+        let root: Value = serde_json::from_slice(raw)
+            .map_err(|e| ApiError::Internal(format!("parse upstream json: {e}")))?;
+        let models = root
+            .get("data")
+            .and_then(Value::as_object)
+            .map(|data| video_models(data).collect())
+            .unwrap_or_default();
+        Ok(Self { root, models })
     }
 }
 
@@ -77,11 +109,27 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         // 了的 bytevc2（实测 2026-10-12 同一集对拍）。二选一必然少档：只信
         // shortplay 会丢 1080P，只信 phoenix 会让低档被编码门整片丢掉。
         // 两个请求互不依赖，并发发出，不额外占用一个往返。
-        let (raw, phoenix_raw) = if stream_mode {
-            let (shortplay, phoenix) = tokio::join!(
-                fetch_shortplay_video_model(ctx, &video_id),
-                fetch_phoenix_video_model(ctx, &video_id),
-            );
+        let (parsed, phoenix_parsed, resolved) = if stream_mode {
+            // Resolve the primary source while quality metadata is loading.
+            // A primary failure cancels the auxiliary work, but auxiliary
+            // failure remains non-fatal and successful tiers are never cut off.
+            let primary = async {
+                let parsed = ParsedVideoResponse::parse(
+                    &fetch_shortplay_video_model(ctx, &video_id).await?,
+                )?;
+                let resolved = resolve_video_source(ctx, &parsed).await;
+                if resolved == VideoSourceResolution::CodecRejected {
+                    return Err(ApiError::Internal("该视频暂不支持播放".to_string()));
+                }
+                Ok((parsed, resolved))
+            };
+            let auxiliary = async {
+                let response = fetch_phoenix_video_model(ctx, &video_id)
+                    .await
+                    .and_then(|raw| ParsedVideoResponse::parse(&raw));
+                Ok::<_, ApiError>(response)
+            };
+            let ((parsed, resolved), phoenix) = tokio::try_join!(primary, auxiliary)?;
             // 凤凰那条失败原先被 `.ok()` 静默吃掉，而 1080P 只可能来自它那条
             // 列表（短剧专用接口自带列表与其 `fallback_api` 都只到 720P）——
             // 失败即面板少一档且毫无痕迹。**HTTP 成功不等于业务成功**：实测
@@ -91,37 +139,41 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             // Note: 为什么静默会丢一整档、以及日志里刻意不记什么 —
             // 见 .agents/notes/implemented/bug-fix/2026-10-14-phoenix-reject-silent-quality-loss.md
             match &phoenix {
-                Ok(body) if phoenix_model_usable(body) => {}
+                Ok(body) if body.root.get("data").is_some_and(Value::is_object) => {}
                 Ok(body) => log::warn!(
                     "video {video_id}: phoenix body unusable (quality tiers lost): {}",
-                    envelope_of_body(body)
+                    body_envelope(&body.root)
                 ),
                 Err(error) => log::warn!(
                     "video {video_id}: phoenix request failed (quality tiers lost): {}",
                     error.message()
                 ),
             }
-            (shortplay?, phoenix.ok())
+            (parsed, phoenix.ok(), resolved)
         } else {
-            (fetch_phoenix_video_model(ctx, &video_id).await?, None)
+            let parsed =
+                ParsedVideoResponse::parse(&fetch_phoenix_video_model(ctx, &video_id).await?)?;
+            let resolved = resolve_video_source(ctx, &parsed).await;
+            (parsed, None, resolved)
         };
 
         // 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon` 按服务端
         // `vertical` 决定竖屏剧集是否给「全屏观看」（竖屏不给）。该字段随
         // 每集的 `VideoInfo.vertical` 下发，合成的取流响应原先把它丢了；
         // 这里透传出去，缺字段时为 null（Dart 侧保持旧行为，见 player_page）。
-        let vertical =
-            episode_vertical(&raw).or_else(|| phoenix_raw.as_deref().and_then(episode_vertical));
+        let vertical = episode_vertical_value(&parsed.root).or_else(|| {
+            phoenix_parsed
+                .as_ref()
+                .and_then(|extra| episode_vertical_value(&extra.root))
+        });
 
-        let (video_url, content_key) = match resolve_video_source(ctx, &raw).await {
+        let (video_url, content_key) = match resolved {
             VideoSourceResolution::Found(url, key) => (url, key),
             VideoSourceResolution::CodecRejected => {
                 return Err(ApiError::Internal("该视频暂不支持播放".to_string()));
             }
             VideoSourceResolution::NotFound => {
-                let data: Value = serde_json::from_slice(&raw)
-                    .map_err(|e| ApiError::Internal(format!("parse upstream json: {e}")))?;
-                return Ok(data);
+                return Ok(parsed.root);
             }
         };
 
@@ -134,7 +186,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             "vertical": vertical,
             // 全量兼容档（高→低）。官方面板按该列表渲染清晰度行；空数组
             // 表示单流，客户端隐藏清晰度入口。
-            "variants": extract_stream_variants(ctx, &raw, phoenix_raw.as_deref()).await,
+            "variants": extract_stream_variants(ctx, &parsed, phoenix_parsed.as_ref()).await,
         });
         if stream_mode {
             return Ok(source);
@@ -226,11 +278,16 @@ async fn fetch_shortplay_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec
 }
 
 /// Parses the multi_video_model response and extracts the best quality MP4 URL.
+#[cfg(test)]
 fn extract_video_url(raw: &[u8]) -> VideoSourceResolution {
-    let Ok(resp) = serde_json::from_slice::<Value>(raw) else {
+    let Ok(parsed) = ParsedVideoResponse::parse(raw) else {
         return VideoSourceResolution::NotFound;
     };
-    let Some(data) = resp.get("data").and_then(|d| d.as_object()) else {
+    extract_parsed_video_url(&parsed)
+}
+
+fn extract_parsed_video_url(parsed: &ParsedVideoResponse) -> VideoSourceResolution {
+    let Some(data) = parsed.root.get("data").and_then(Value::as_object) else {
         return VideoSourceResolution::NotFound;
     };
 
@@ -239,8 +296,8 @@ fn extract_video_url(raw: &[u8]) -> VideoSourceResolution {
         return direct;
     }
 
-    for model in video_models(data) {
-        let source = extract_video_model_url(&model);
+    for model in &parsed.models {
+        let source = extract_video_model_url(model);
         if source.is_terminal() {
             return source;
         }
@@ -282,8 +339,7 @@ fn extract_video_info_list_map_url(data: &Map<String, Value>) -> VideoSourceReso
 /// (`wp3/o1.java:301-347`, data copied from `EpisodeInfo.vertical` in
 /// `th3/e.java:95`). `None` means the response carried no field at all — the
 /// caller then leaves the client's old behaviour alone.
-fn episode_vertical(raw: &[u8]) -> Option<bool> {
-    let resp: Value = serde_json::from_slice(raw).ok()?;
+fn episode_vertical_value(resp: &Value) -> Option<bool> {
     let data = resp.get("data")?.as_object()?;
     if let Some(found) = data.get("vertical").and_then(vertical_flag) {
         return Some(found);
@@ -309,6 +365,11 @@ fn episode_vertical(raw: &[u8]) -> Option<bool> {
     None
 }
 
+#[cfg(test)]
+fn episode_vertical(raw: &[u8]) -> Option<bool> {
+    episode_vertical_value(&serde_json::from_slice::<Value>(raw).ok()?)
+}
+
 /// Lenient `vertical` decoding: upstream may send bool, 0/1, or "true"/"1".
 fn vertical_flag(value: &Value) -> Option<bool> {
     match value {
@@ -323,23 +384,16 @@ fn vertical_flag(value: &Value) -> Option<bool> {
     }
 }
 
-async fn resolve_video_source(ctx: &Ctx, raw: &[u8]) -> VideoSourceResolution {
-    let Ok(resp) = serde_json::from_slice::<Value>(raw) else {
-        return VideoSourceResolution::NotFound;
-    };
-    let Some(data) = resp.get("data").and_then(|d| d.as_object()) else {
-        return VideoSourceResolution::NotFound;
-    };
-
-    for model in video_models(data) {
-        let source = extract_shortplay_video_model_source(&model);
+async fn resolve_video_source(ctx: &Ctx, parsed: &ParsedVideoResponse) -> VideoSourceResolution {
+    for model in &parsed.models {
+        let source = extract_shortplay_video_model_source(model);
         if source.is_terminal() {
             return source;
         }
-        if !video_model_encrypted(&model) {
+        if !video_model_encrypted(model) {
             continue;
         }
-        let fallback_url = fallback_api_url(&model);
+        let fallback_url = fallback_api_url(model);
         if fallback_url.is_empty() {
             continue;
         }
@@ -351,7 +405,7 @@ async fn resolve_video_source(ctx: &Ctx, raw: &[u8]) -> VideoSourceResolution {
         }
     }
 
-    extract_video_url(raw)
+    extract_parsed_video_url(parsed)
 }
 
 fn extract_shortplay_video_model_source(model: &Map<String, Value>) -> VideoSourceResolution {
@@ -450,18 +504,14 @@ fn variant_display_name(height: i64) -> String {
 /// 720P 为止（各档 h265），phoenix 模型的 fallback 才有 1080p（低档是解不了的
 /// bytevc2）。只看一份会静默少档。Returns `[]` when no body yields a variant —
 /// the client then hides the quality row entirely (official `oi3/k.P()` gate).
-async fn extract_stream_variants(ctx: &Ctx, raw: &[u8], extra: Option<&[u8]>) -> Vec<Value> {
+async fn extract_stream_variants(
+    ctx: &Ctx,
+    parsed: &ParsedVideoResponse,
+    extra: Option<&ParsedVideoResponse>,
+) -> Vec<Value> {
     let mut scored = Vec::new();
-    // 读不动的 body 直接跳过、不报错：`extra`（凤凰）是不是可用由调用点判并告警，
-    // 那里才有剧集 id 可以把日志和一次播放对起来。
-    for body in std::iter::once(raw).chain(extra) {
-        let Ok(resp) = serde_json::from_slice::<Value>(body) else {
-            continue;
-        };
-        let Some(data) = resp.get("data").and_then(|d| d.as_object()) else {
-            continue;
-        };
-        for model in video_models(data) {
+    for body in std::iter::once(parsed).chain(extra) {
+        for model in &body.models {
             // NOTE: 不用 video_model_encrypted() 做前置——它只认数组形状的
             // video_list；实测漫剧（series 7686494169098898456）的 video_list 是
             // object 且未标 encrypt，但每档照常带 spade_a/kid，选流门照常适用。
@@ -473,7 +523,7 @@ async fn extract_stream_variants(ctx: &Ctx, raw: &[u8], extra: Option<&[u8]>) ->
                     .filter(|s| !s.is_empty())
                     .and_then(|s| audio_b64_decode(s).ok()),
             ));
-            scored.extend(fallback_variant_rows(ctx, &model).await);
+            scored.extend(fallback_variant_rows(ctx, model).await);
         }
     }
     merge_variant_rows(scored)
@@ -531,18 +581,6 @@ fn merge_variant_rows(scored: Vec<(i64, Value)>) -> Vec<Value> {
     out.into_iter().map(|(_, row)| row).collect()
 }
 
-/// 凤凰那条响应是否可用：`data` 必须是个对象。
-///
-/// HTTP 成功不等于业务成功——上游业务失败时回的是火山错误封包
-/// `{BaseResp, Code, Message}`（无 `data`），状态码仍是 200。看状态码判不出来，
-/// 只能看外壳，所以这里单独判一次由调用点告警。
-fn phoenix_model_usable(body: &[u8]) -> bool {
-    serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|resp| resp.get("data").map(Value::is_object))
-        .unwrap_or(false)
-}
-
 /// 把一份响应的**外壳**压成一行：顶层键名、`data` 的类型、`code`/`Code`、
 /// `message`/`Message` 与 `BaseResp`。
 ///
@@ -564,14 +602,6 @@ fn body_envelope(resp: &Value) -> String {
         line.push_str(&format!(" BaseResp={}", truncated(base, 240)));
     }
     line
-}
-
-/// 一份响应字节流的外壳；不是 JSON 就报长度。
-fn envelope_of_body(body: &[u8]) -> String {
-    match serde_json::from_slice::<Value>(body) {
-        Ok(resp) => body_envelope(&resp),
-        Err(_) => format!("not json len={}", body.len()),
-    }
 }
 
 /// 按候选键名取一个标量并渲染成短字符串，都取不到给 `-`。
@@ -1284,6 +1314,7 @@ async fn stream_download_to_file_with_cap(
     let client = streaming_client().ok_or_else(|| "streaming client unavailable".to_string())?;
     let mut resp = client
         .get(url)
+        .timeout(crate::upstream::budget::cap_timeout(VIDEO_DOWNLOAD_TIMEOUT))
         .header(reqwest::header::USER_AGENT, user_agent)
         .send()
         .await
@@ -1331,8 +1362,6 @@ async fn download_and_save(
     video_url: &str,
     content_key: &[u8],
 ) -> Result<String, String> {
-    let _guard = VIDEO_CACHE_LOCK.lock().await;
-
     let src_dir = if ctx.src_dir.is_empty() {
         "src".to_string()
     } else {
@@ -1356,6 +1385,7 @@ async fn download_and_save(
 
     let filename = format!("{video_id}{ext}");
     let fp = Path::new(&src_dir).join(&filename);
+    let guard = cache_entry_lock(&fp).lock_owned().await;
 
     if let Ok(info) = tokio::fs::metadata(&fp).await {
         if info.len() > 0 {
@@ -1369,6 +1399,7 @@ async fn download_and_save(
             let cache_path = fp.clone();
             let cache_key = content_key.to_vec();
             tokio::task::spawn_blocking(move || {
+                let _guard = guard;
                 if !cache_key.is_empty()
                     && cache_cenc_state(&cache_path) == CacheCencState::Encrypted
                     && read_key_sidecar(&cache_path).as_deref() != Some(cache_key.as_slice())
@@ -1383,14 +1414,16 @@ async fn download_and_save(
         }
     }
 
+    // Cache hits do not queue behind unrelated downloads. Same-file callers
+    // share the entry lock; different misses use a small global IO budget.
+    let download_slot = VIDEO_DOWNLOADS.acquire().await.map_err(|e| e.to_string())?;
     let part_path = PathBuf::from(format!("{}.part", fp.display()));
     let _ = tokio::fs::remove_file(&part_path).await;
 
     if streaming_client().is_some() {
         // Streaming download: the body is written chunk by chunk and never
-        // held whole in memory (P1-9). `VIDEO_CACHE_LOCK` above still
-        // serializes downloads; the cache file and its key sidecar must not
-        // be written concurrently for the same video.
+        // held whole in memory (P1-9). The entry lock keeps the cache file
+        // and its key sidecar serialized for the same video.
         // The streaming client bypasses `UpstreamClient::do_request`, so
         // apply the mock-origin rewrite here; without it the download
         // would go to the real upstream instead of the mock server and
@@ -1426,31 +1459,31 @@ async fn download_and_save(
             .map_err(|e| e.to_string())?;
     }
 
-    if let Err(err) = tokio::fs::rename(&part_path, &fp).await {
-        let _ = tokio::fs::remove_file(&part_path).await;
-        return Err(err.to_string());
-    }
     // The bytes on disk stay exactly as downloaded — encrypted when the
     // source is CENC (P1-7). The key sidecar is what lets the serve path
     // decrypt ranges on demand, now and in later processes; if it cannot be
     // written the entry would be undecodable, so fail the download instead
     // of leaving a dead cache file behind.
-    if !content_key.is_empty() {
-        let key_path = fp.clone();
-        let key = content_key.to_vec();
-        let sidecar = tokio::task::spawn_blocking(move || {
-            if cache_cenc_state(&key_path) != CacheCencState::Encrypted {
-                return Ok(());
-            }
-            write_key_sidecar(&key_path, &key)
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-        if let Err(err) = sidecar {
-            let _ = tokio::fs::remove_file(&fp).await;
-            return Err(err);
+    let key_path = fp.clone();
+    let key = content_key.to_vec();
+    tokio::task::spawn_blocking(move || {
+        // Finalization owns both guards even if the request is cancelled.
+        let _guard = guard;
+        let _download_slot = download_slot;
+        if let Err(err) = std::fs::rename(&part_path, &key_path) {
+            let _ = std::fs::remove_file(&part_path);
+            return Err(err.to_string());
         }
-    }
+        if !key.is_empty() && cache_cenc_state(&key_path) == CacheCencState::Encrypted {
+            if let Err(err) = write_key_sidecar(&key_path, &key) {
+                let _ = std::fs::remove_file(&key_path);
+                return Err(err);
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     // Eviction walks the whole cache directory, so it must not run on the
     // request path; schedule it instead of awaiting it.
     schedule_prune_src_cache(&src_dir, fp);
@@ -1520,7 +1553,14 @@ fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
     for (name, path) in &entries {
         if let Some(stem) = name.strip_suffix(".key") {
             if !names.contains(stem) && !names.contains(format!("{stem}.part").as_str()) {
-                let _ = std::fs::remove_file(path);
+                let video = Path::new(src_dir).join(stem);
+                let Ok(_guard) = cache_entry_lock(&video).try_lock_owned() else {
+                    continue;
+                };
+                // The directory snapshot may predate another download's commit.
+                if !video.exists() && !Path::new(src_dir).join(format!("{stem}.part")).exists() {
+                    let _ = std::fs::remove_file(path);
+                }
             }
         }
     }
@@ -1569,6 +1609,9 @@ fn prune_src_cache_with_budget(src_dir: &str, keep: &Path, max_bytes: i64) {
         if item.path.as_path() == keep {
             continue;
         }
+        let Ok(_guard) = cache_entry_lock(&item.path).try_lock_owned() else {
+            continue;
+        };
         if std::fs::remove_file(&item.path).is_ok() {
             // A video's key sidecar (P1-7) is part of the entry, not a
             // separate cache citizen.
