@@ -56,6 +56,9 @@ class PlayerPage extends StatefulWidget {
   final String cover;
   final List<Chapter> eps;
   final int startIndex;
+
+  /// Explicit entry position; null preserves the episode's saved progress.
+  final Duration? startPosition;
   final Future<Map<String, dynamic>> Function(Chapter)? contentLoader;
   final NativePlayer Function()? playerFactory;
   final ReaderStore? historyStore;
@@ -103,6 +106,7 @@ class PlayerPage extends StatefulWidget {
     this.cover = '',
     required this.eps,
     required this.startIndex,
+    this.startPosition,
     this.contentLoader,
     this.playerFactory,
     this.historyStore,
@@ -1277,12 +1281,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       final savedDuration = rawDuration is num && rawDuration.isFinite
           ? rawDuration.toDouble()
           : 0.0;
+      final initialPosition = !_hasDisplayed && index == widget.startIndex
+          ? widget.startPosition
+          : null;
       final requestedMs = listenResumeMs >= 0
           ? listenResumeMs.toDouble()
-          : savedPosition * 1000;
+          : initialPosition?.inMilliseconds.toDouble() ?? savedPosition * 1000;
       // 记录已播到末尾的不给起播位置（从头播）；记录没时长时由首个时长事件再校正。
       final startMs =
           (listenResumeMs >= 0 ||
+                  initialPosition != null ||
                   resumeEpisodeIndex(saved, widget.eps) == index) &&
               requestedMs.isFinite &&
               requestedMs > 0 &&

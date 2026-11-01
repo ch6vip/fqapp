@@ -17,7 +17,7 @@ extension _ReaderPageListening on _ReaderPageState {
       _stopAutoTurn();
       return;
     }
-    _controlsVisible = false;
+    _setControlsVisible(false);
     _autoTurnTimer = Timer.periodic(
       Duration(seconds: _preferences.autoTurnSeconds),
       (_) => _autoTurnStep(),

@@ -26,6 +26,7 @@ Future<void> showReaderSettingsSheet({
   bool einkOverride = false,
   bool oledOverride = false,
   VoidCallback? onTextReplacement,
+  VoidCallback? onListeningSource,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -50,6 +51,7 @@ Future<void> showReaderSettingsSheet({
       einkOverride: einkOverride,
       oledOverride: oledOverride,
       onTextReplacement: onTextReplacement,
+      onListeningSource: onListeningSource,
     ),
   );
 }
@@ -77,6 +79,7 @@ class ReaderAppearanceSheet extends StatefulWidget {
   final bool oledOverride;
 
   final VoidCallback? onTextReplacement;
+  final VoidCallback? onListeningSource;
 
   const ReaderAppearanceSheet({
     super.key,
@@ -93,6 +96,7 @@ class ReaderAppearanceSheet extends StatefulWidget {
     this.einkOverride = false,
     this.oledOverride = false,
     this.onTextReplacement,
+    this.onListeningSource,
   });
 
   @override
@@ -208,6 +212,7 @@ class _ReaderAppearanceSheetState
       einkOverride: widget.einkOverride,
       oledOverride: widget.oledOverride,
       backgroundLocked: _backgroundLocked,
+      showListeningSource: widget.onListeningSource != null,
       onChanged: (next) {
         if (!mounted) return;
         // 子面板已经按 120ms 合并过，这里直接同步本地并转给阅读页。
@@ -219,6 +224,9 @@ class _ReaderAppearanceSheetState
     if (result == ReaderMoreSettingsResult.textReplacement) {
       Navigator.pop(context);
       widget.onTextReplacement?.call();
+    } else if (result == ReaderMoreSettingsResult.listeningSource) {
+      Navigator.pop(context);
+      widget.onListeningSource?.call();
     }
   }
 

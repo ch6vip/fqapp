@@ -187,8 +187,12 @@ fn match_books(parts: &[&str], q: &Params) -> Option<RouteMatch> {
                 params: p,
             })
         }
-        "detail" => Some(RouteMatch {
-            api: "book_detail_legacy",
+        "detail" | "tones" | "video-match" => Some(RouteMatch {
+            api: match parts[1] {
+                "detail" => "book_detail_legacy",
+                "tones" => "tones",
+                _ => "reader_video_match",
+            },
             params: p,
         }),
         "comments" => Some(RouteMatch {
@@ -203,10 +207,6 @@ fn match_books(parts: &[&str], q: &Params) -> Option<RouteMatch> {
         // 见 `match_series` / `match_videos`。
         "reviews" => Some(RouteMatch {
             api: "book_reviews",
-            params: p,
-        }),
-        "tones" => Some(RouteMatch {
-            api: "tones",
             params: p,
         }),
         "chapters" => {

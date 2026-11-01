@@ -25,6 +25,8 @@ class AudioFloatingPlayer extends StatefulWidget {
     required this.onOpen,
     required this.onToggle,
     required this.onClose,
+    this.inReaderMenu = false,
+    this.monochrome = false,
   });
 
   final String title;
@@ -43,6 +45,8 @@ class AudioFloatingPlayer extends StatefulWidget {
   final VoidCallback onOpen;
   final VoidCallback onToggle;
   final VoidCallback onClose;
+  final bool inReaderMenu;
+  final bool monochrome;
 
   @override
   State<AudioFloatingPlayer> createState() => _AudioFloatingPlayerState();
@@ -63,7 +67,8 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
   bool _closing = false;
   Timer? _closeTimer;
   bool _systemReducedMotion = false;
-  bool get _reducedMotion => _systemReducedMotion || einkModeNotifier.value;
+  bool get _eink => widget.monochrome || einkModeNotifier.value;
+  bool get _reducedMotion => _systemReducedMotion || _eink;
   bool _active =
       WidgetsBinding.instance.lifecycleState == null ||
       WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -140,14 +145,21 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
     setState(() => _closing = true);
     _syncRotation();
     // A route may hide/mute the widget during the dismissal animation.
-    _closeTimer = Timer(const Duration(milliseconds: 300), widget.onClose);
+    _closeTimer = Timer(const Duration(milliseconds: 300), () {
+      _closeTimer = null;
+      widget.onClose();
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     einkModeNotifier.removeListener(_motionChanged);
-    _closeTimer?.cancel();
+    if (_closeTimer != null) {
+      _closeTimer!.cancel();
+      // Returning the menu's borrowed view must not cancel a requested stop.
+      widget.onClose();
+    }
     _rotation.dispose();
     super.dispose();
   }
@@ -177,7 +189,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
 
   Widget _capsule(BuildContext context, {double closeProgress = 0}) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final eink = einkModeNotifier.value;
+    final eink = _eink;
     // Background and cover fade linearly across the 300ms dismissal; the
     // play/close icons finish their 200ms fade earlier.
     final fade = (1 - closeProgress).clamp(0.0, 1.0);
@@ -326,6 +338,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.inReaderMenu) return _readerMenuPlayer();
     final media = MediaQuery.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -403,6 +416,18 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
       },
     );
   }
+
+  Widget _readerMenuPlayer() => Visibility(
+    visible: widget.visible,
+    maintainState: true,
+    maintainSize: true,
+    maintainAnimation: true,
+    child: SizedBox(
+      width: _width,
+      height: _height,
+      child: IgnorePointer(ignoring: _closing, child: _dismissal()),
+    ),
+  );
 
   /// Official close (`pn2/b0.java:288-314`): 162→74dp over 300ms, always
   /// anchored to the left; the capsule fades its own parts inside.
