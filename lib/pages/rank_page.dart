@@ -1,15 +1,20 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/rank.dart';
 import '../services/api_client.dart';
-import '../services/poster_cache.dart';
 import '../services/rank_cache.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/home/home_back_button.dart';
+import '../widgets/home/home_chip.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_media_card.dart' show StoryCover;
+import '../widgets/home/home_shelf.dart' show homeGutter;
+import '../widgets/home/home_stream_footer.dart';
+import '../widgets/rank/rank_state_view.dart';
+import '../widgets/rank/rank_tabs.dart';
 import 'detail_page.dart';
 
 /// Loads the rank catalogue.
@@ -50,6 +55,10 @@ class _RankPageState extends State<RankPage> {
   RankBoard _page = RankBoard.empty;
   bool _loading = true;
   bool _loadingMore = false;
+
+  /// 空榜与失败分开：空榜是「这个榜确实没有内容」，用空态；只有真正
+  /// 的请求失败才走错误态和重试。
+  bool _empty = false;
   String? _error;
   String? _loadMoreError;
   int _rankIndex = 0;
@@ -149,7 +158,8 @@ class _RankPageState extends State<RankPage> {
         _loading = false;
         _loadingMore = false;
         _loadMoreError = null;
-        _error = snapshot.board.isEmpty ? '该榜单暂无内容' : null;
+        _empty = snapshot.board.isEmpty;
+        _error = null;
       });
       if (DateTime.now().difference(snapshot.savedAt) < RankCache.freshTtl) {
         return;
@@ -159,6 +169,7 @@ class _RankPageState extends State<RankPage> {
         _loading = true;
         _loadingMore = false;
         _loadMoreError = null;
+        _empty = false;
         _error = null;
       });
     }
@@ -168,7 +179,8 @@ class _RankPageState extends State<RankPage> {
       setState(() {
         _page = page;
         _loading = false;
-        _error = page.isEmpty ? '该榜单暂无内容' : null;
+        _empty = page.isEmpty;
+        _error = null;
       });
       unawaited(
         _cache.saveBoard(
@@ -240,6 +252,7 @@ class _RankPageState extends State<RankPage> {
         backgroundColor: palette.canvas,
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
+        leading: const HomeBackButton(),
         title: Text(
           '排行榜',
           style: TextStyle(
@@ -255,10 +268,15 @@ class _RankPageState extends State<RankPage> {
           constraints: const BoxConstraints(maxWidth: 840),
           child: Column(
             children: [
-              if (_catalog.tabs.isNotEmpty) _rankTabs(palette),
+              if (_catalog.tabs.isNotEmpty)
+                RankBoardTabs(
+                  tabs: _catalog.tabs,
+                  selectedIndex: _rankIndex,
+                  onSelect: _selectRank,
+                ),
               if (_catalog.categories.isNotEmpty && !(_rank?.isDrama ?? false))
                 _categoryChips(palette),
-              Expanded(child: _body(palette)),
+              Expanded(child: _body()),
             ],
           ),
         ),
@@ -266,109 +284,57 @@ class _RankPageState extends State<RankPage> {
     );
   }
 
-  Widget _rankTabs(HomePalette palette) => SizedBox(
-    height: 46,
-    child: ListView.separated(
-      key: const Key('rank_tabs'),
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      itemCount: _catalog.tabs.length,
-      separatorBuilder: (context, _) => const SizedBox(width: 6),
-      itemBuilder: (context, index) {
-        final tab = _catalog.tabs[index];
-        final selected = index == _rankIndex;
-        return Center(
-          child: HomePressable(
-            key: ValueKey('rank_tab_${tab.algo}'),
-            semanticLabel: '查看${tab.name}',
-            onTap: () => _selectRank(index),
-            borderRadius: BorderRadius.circular(999),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-              decoration: BoxDecoration(
-                color: selected ? HomePalette.accent : palette.soft,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                tab.name,
-                style: TextStyle(
-                  color: selected ? Colors.white : palette.ink,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    ),
-  );
-
   Widget _categoryChips(HomePalette palette) => SizedBox(
-    height: 38,
+    height: HomeChip.minTapTarget,
     child: ListView.separated(
       key: const Key('rank_categories'),
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
+      padding: const EdgeInsets.symmetric(horizontal: homeGutter),
       itemCount: _catalog.categories.length,
       separatorBuilder: (context, _) => const SizedBox(width: 8),
       itemBuilder: (context, index) {
         final category = _catalog.categories[index];
-        final selected = index == _categoryIndex;
         return Center(
-          child: GestureDetector(
+          child: HomeChip(
             key: ValueKey('rank_category_${category.id}'),
+            label: category.name,
+            selected: index == _categoryIndex,
+            semanticLabel: '筛选${category.name}',
             onTap: () => _selectCategory(index),
-            child: Text(
-              category.name,
-              style: TextStyle(
-                color: selected ? palette.accentText : palette.muted,
-                fontSize: 12.5,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-              ),
-            ),
           ),
         );
       },
     ),
   );
 
-  Widget _body(HomePalette palette) {
+  Widget _body() {
     if (_loading) {
       return const Center(
         child: CircularProgressIndicator(color: HomePalette.accent),
       );
     }
     if (_error != null) {
-      return ListView(
-        children: [
-          const SizedBox(height: 60),
-          Icon(LucideIcons.trophy, size: 30, color: palette.muted),
-          const SizedBox(height: 12),
-          Text(
-            _error!,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: palette.muted, fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-          Center(
-            child: OutlinedButton.icon(
-              key: const Key('rank_retry'),
-              // Re-runs the whole bootstrap: when the catalogue itself failed
-              // there is no rank to reload, so a page-only retry would no-op.
-              onPressed: () => unawaited(_bootstrap()),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: palette.accentText,
-                side: BorderSide(color: palette.line),
-                minimumSize: const Size(110, 48),
-              ),
-              icon: const Icon(LucideIcons.refresh_cw, size: 16),
-              label: const Text('重试'),
-            ),
-          ),
-        ],
+      return RankStateView(
+        key: const Key('rank_retry'),
+        icon: LucideIcons.cloud_off,
+        title: _error!,
+        actionLabel: '重试',
+        // Re-runs the whole bootstrap: when the catalogue itself failed
+        // there is no rank to reload, so a page-only retry would no-op.
+        onAction: () => unawaited(_bootstrap()),
       );
     }
+    if (_empty) {
+      return RankStateView(
+        key: const Key('rank_empty'),
+        icon: LucideIcons.trophy,
+        title: '该榜单暂无内容',
+        message: '换个榜单或分类看看',
+        actionLabel: '刷新',
+        onAction: () => unawaited(_loadFirst(++_generation)),
+      );
+    }
+    final hasFooter = _loadingMore || _loadMoreError != null || !_page.hasMore;
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         final metrics = notification.metrics;
@@ -380,34 +346,17 @@ class _RankPageState extends State<RankPage> {
       },
       child: ListView.builder(
         key: const Key('rank_list'),
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-        itemCount:
-            _page.entries.length +
-            (_loadingMore || _loadMoreError != null ? 1 : 0),
+        padding: EdgeInsets.fromLTRB(
+          homeGutter,
+          4,
+          homeGutter,
+          // 没有流尾时由列表自己吃掉底部安全区；有流尾时交给流尾。
+          hasFooter ? 0 : 24 + MediaQuery.paddingOf(context).bottom,
+        ),
+        itemCount: _page.entries.length + (hasFooter ? 1 : 0),
         itemBuilder: (context, index) {
           if (index >= _page.entries.length) {
-            if (_loadMoreError != null) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Center(
-                  child: TextButton.icon(
-                    key: const Key('rank_load_more_retry'),
-                    onPressed: () => unawaited(_loadMore()),
-                    icon: const Icon(LucideIcons.refresh_cw, size: 16),
-                    label: const Text('加载失败，点击重试'),
-                  ),
-                ),
-              );
-            }
-            return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 18),
-              child: Center(
-                child: SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            );
+            return _footer();
           }
           return _RankRow(
             entry: _page.entries[index],
@@ -416,6 +365,21 @@ class _RankPageState extends State<RankPage> {
         },
       ),
     );
+  }
+
+  /// 三态流尾：追加失败可重试 / 加载中 / 已到底。
+  Widget _footer() {
+    if (_loadMoreError != null) {
+      return HomeStreamFooter.retry(
+        key: const Key('rank_load_more_retry'),
+        onRetry: () => unawaited(_loadMore()),
+        includeBottomSafeArea: true,
+      );
+    }
+    if (_loadingMore) {
+      return const HomeStreamFooter.loading(includeBottomSafeArea: true);
+    }
+    return HomeStreamFooter.done(includeBottomSafeArea: true);
   }
 
   void _openEntry(RankEntry entry) {
@@ -454,7 +418,7 @@ class _RankRow extends StatelessWidget {
                   '${entry.position}',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: top ? HomePalette.accent : palette.muted,
+                    color: top ? palette.accentText : palette.muted,
                     fontSize: top ? 17 : 15,
                     fontWeight: FontWeight.w700,
                     fontFeatures: const [FontFeature.tabularFigures()],
@@ -464,34 +428,15 @@ class _RankRow extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             ClipRRect(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(12),
               child: SizedBox(
                 width: 56,
                 height: 78,
-                child: entry.cover.isEmpty
-                    ? ColoredBox(
-                        color: palette.soft,
-                        child: Icon(
-                          LucideIcons.book,
-                          size: 20,
-                          color: palette.muted,
-                        ),
-                      )
-                    : CachedNetworkImage(
-                        cacheManager: PosterCache.instance,
-                        imageUrl: entry.cover,
-                        fit: BoxFit.cover,
-                        // 56x78 logical tile; decode at 2×.
-                        memCacheWidth: 120,
-                        errorWidget: (context, url, error) => ColoredBox(
-                          color: palette.soft,
-                          child: Icon(
-                            LucideIcons.book,
-                            size: 20,
-                            color: palette.muted,
-                          ),
-                        ),
-                      ),
+                child: StoryCover(
+                  item: entry.toMediaItem(),
+                  cacheWidth: (56 * MediaQuery.devicePixelRatioOf(context))
+                      .ceil(),
+                ),
               ),
             ),
             const SizedBox(width: 12),

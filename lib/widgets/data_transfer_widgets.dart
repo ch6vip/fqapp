@@ -3,29 +3,10 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'home/home_design.dart';
 
-/// Shared settings surfaces for local backups and upstream imports.
-class DataTransferCard extends StatelessWidget {
-  final List<Widget> children;
-  const DataTransferCard({super.key, required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Material(
-      color: palette.surface,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: palette.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
-      ),
-    );
-  }
-}
-
+/// Shared surfaces for local backups and upstream imports.
+///
+/// 卡片与行已统一到设置组件 SettingsGroupCard / SettingsRow，这里只保留
+/// 备份 / 导入这类数据页专属的头部、统计块、结果提示与主按钮。
 class DataTransferHeader extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -41,7 +22,7 @@ class DataTransferHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 12, 4, 24),
+      padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -49,7 +30,7 @@ class DataTransferHeader extends StatelessWidget {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: HomePalette.accent.withValues(alpha: .1),
+              color: palette.soft,
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(icon, color: palette.accentText, size: 24),
@@ -81,55 +62,6 @@ class DataTransferHeader extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class DataTransferRow extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback? onTap;
-  const DataTransferRow({
-    super.key,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return ListTile(
-      enabled: onTap != null,
-      onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-      leading: Container(
-        width: 38,
-        height: 38,
-        decoration: BoxDecoration(
-          color: palette.soft,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, size: 20, color: palette.accentText),
-      ),
-      title: Text(
-        title,
-        style: TextStyle(
-          color: onTap == null ? palette.muted : palette.ink,
-          fontSize: 15,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      subtitle: Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: Text(
-          subtitle,
-          style: TextStyle(color: palette.muted, height: 1.5, fontSize: 12.5),
-        ),
-      ),
-      trailing: Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
     );
   }
 }
@@ -189,9 +121,7 @@ class DataTransferNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final color = error
-        ? Theme.of(context).colorScheme.error
-        : palette.accentText;
+    final color = error ? palette.ink : palette.accentText;
     return Semantics(
       liveRegion: true,
       child: Container(
@@ -235,16 +165,17 @@ class DataTransferAction extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => FilledButton(
-    style: FilledButton.styleFrom(
-      backgroundColor: HomePalette.of(context).eink
-          ? Colors.black
-          : HomePalette.accentStrong,
-      foregroundColor: Colors.white,
-      minimumSize: const Size.fromHeight(50),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-    ),
-    onPressed: onPressed,
-    child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-  );
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return FilledButton(
+      style: FilledButton.styleFrom(
+        backgroundColor: palette.accentText,
+        foregroundColor: Colors.white,
+        minimumSize: const Size.fromHeight(50),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      onPressed: onPressed,
+      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+    );
+  }
 }

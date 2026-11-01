@@ -8,6 +8,7 @@ import '../models/library_backup.dart';
 import '../services/library_backup_service.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/data_transfer_widgets.dart';
+import '../widgets/settings/settings_widgets.dart';
 import 'fanqie_history_import_page.dart';
 
 class LibraryBackupPage extends StatefulWidget {
@@ -130,12 +131,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       canPop: enabled,
       child: Scaffold(
         backgroundColor: palette.canvas,
-        appBar: AppBar(
-          title: const Text('备份与导入'),
-          centerTitle: true,
-          backgroundColor: palette.canvas,
-          surfaceTintColor: Colors.transparent,
-        ),
+        appBar: settingsAppBar(context, title: '备份与导入'),
         body: SafeArea(
           child: Align(
             alignment: Alignment.topCenter,
@@ -149,34 +145,38 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                     title: '书架随你走',
                     subtitle: '备份本机收藏与进度，或从番茄带回书架。',
                   ),
-                  _label('本机数据'),
-                  DataTransferCard(
+                  const SettingsSectionHeader(title: '本机数据'),
+                  SettingsGroupCard(
                     children: [
-                      DataTransferRow(
+                      SettingsRow(
                         icon: LucideIcons.download,
+                        iconTile: true,
                         title: '导出备份',
                         subtitle: '保存收藏、阅读进度与已看剧集',
+                        enabled: enabled,
                         onTap: enabled ? _export : null,
                       ),
-                      Divider(height: 1, indent: 68, color: palette.line),
-                      DataTransferRow(
+                      SettingsRow(
                         icon: LucideIcons.file_input,
+                        iconTile: true,
                         title: '从备份文件恢复',
                         subtitle: preview == null
                             ? '选择 FQApp 备份文件，预览后再合并'
                             : '重新选择其他 FQApp 备份',
+                        enabled: enabled,
                         onTap: enabled ? _pick : null,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
-                  _label('其他来源'),
-                  DataTransferCard(
+                  const SettingsSectionHeader(title: '其他来源'),
+                  SettingsGroupCard(
                     children: [
-                      DataTransferRow(
+                      SettingsRow(
                         icon: LucideIcons.book_open,
+                        iconTile: true,
                         title: '导入番茄书架',
                         subtitle: '网页登录、最近采集和旧版历史文件',
+                        enabled: enabled,
                         onTap: enabled
                             ? () => Navigator.push(
                                 context,
@@ -190,9 +190,9 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                     ],
                   ),
                   if (preview != null) ...[
-                    const SizedBox(height: 24),
-                    _label('恢复预览', key: _previewKey),
-                    DataTransferCard(
+                    SettingsSectionHeader(title: '恢复预览', key: _previewKey),
+                    SettingsGroupCard(
+                      showDividers: false,
                       children: [
                         Padding(
                           padding: const EdgeInsets.all(16),
@@ -248,7 +248,8 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                     ),
                   ],
                   const SizedBox(height: 24),
-                  DataTransferCard(
+                  SettingsGroupCard(
+                    showDividers: false,
                     children: [
                       ExpansionTile(
                         title: Text(
@@ -316,17 +317,4 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       ),
     );
   }
-
-  Widget _label(String text, {Key? key}) => Padding(
-    key: key,
-    padding: const EdgeInsets.only(left: 4, bottom: 10),
-    child: Text(
-      text,
-      style: TextStyle(
-        color: HomePalette.of(context).muted,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-  );
 }

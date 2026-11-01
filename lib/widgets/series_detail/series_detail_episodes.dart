@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart' show Chapter;
 import '../home/home_cell_blocks.dart' show HomeBlockMore;
@@ -284,7 +285,8 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.swap_vert_rounded, size: 14, color: color),
+            // 版式稿的倒序图标是 Lucide 双箭头（#i-sort）。
+            Icon(LucideIcons.arrow_up_down, size: 14, color: color),
             const SizedBox(width: 2),
             Text(
               '倒序',

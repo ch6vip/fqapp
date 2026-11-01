@@ -1360,6 +1360,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
     }
   }
 
+  /// 顶栏后面的装饰背板：浅色沿用官方奶白，深色 / OLED 取画布色，
+  /// 墨水屏纯白（与画布同色，不引入灰阶）。
+  static List<Color> _topBackingColors(HomePalette palette) => [
+    palette.dark
+        ? palette.canvas
+        : (palette.eink ? Colors.white : const Color(0xFFFFF3E6)),
+    palette.dark ? palette.canvas : const Color(0xFFFFFFFF),
+    palette.dark
+        ? palette.canvas.withValues(alpha: 0)
+        : const Color(0x00FFFFFF),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(dramaProvider);
@@ -1416,39 +1428,42 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
                 // 选中项，不被动画拖着走。
                 child: switch (channel) {
-                DramaChannel(source: DramaChannelSource.feed, kind: 'manju') =>
-                  _browseGrid(
+                  DramaChannel(
+                    source: DramaChannelSource.feed,
+                    kind: 'manju',
+                  ) =>
+                    _browseGrid(
+                      state,
+                      items,
+                      columns: 3,
+                      gridKey: 'drama_manju_grid',
+                      titleMaxLines: 1,
+                    ),
+                  DramaChannel(
+                    source: DramaChannelSource.feed,
+                    serverType: kChannelVideoEpisode,
+                  ) =>
+                    _browseGrid(
+                      state,
+                      items,
+                      columns: 2,
+                      gridKey: 'drama_episode_grid',
+                      titleMaxLines: 2,
+                    ),
+                  DramaChannel(source: DramaChannelSource.feed) => _feed(
                     state,
                     items,
-                    columns: 3,
-                    gridKey: 'drama_manju_grid',
-                    titleMaxLines: 1,
                   ),
-                DramaChannel(
-                  source: DramaChannelSource.feed,
-                  serverType: kChannelVideoEpisode,
-                ) =>
-                  _browseGrid(
-                    state,
-                    items,
-                    columns: 2,
-                    gridKey: 'drama_episode_grid',
-                    titleMaxLines: 2,
+                  _ => _LocalList(
+                    channel: channel,
+                    // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
+                    onOpen: _openDetail,
+                    onPlay: _openPlayer,
+                    onFind: () => _selectChannel(0),
+                    onEditingChanged: (editing) {
+                      if (mounted) setState(() => _recentEditing = editing);
+                    },
                   ),
-                DramaChannel(source: DramaChannelSource.feed) => _feed(
-                  state,
-                  items,
-                ),
-                _ => _LocalList(
-                  channel: channel,
-                  // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
-                  onOpen: _openDetail,
-                  onPlay: _openPlayer,
-                  onFind: () => _selectChannel(0),
-                  onEditingChanged: (editing) {
-                    if (mounted) setState(() => _recentEditing = editing);
-                  },
-                ),
                 },
               ),
             ),
@@ -1483,17 +1498,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                           end: Alignment.bottomCenter,
                           // 浅色支沿用官方奶白渐变；深色 / OLED 取当前画布色
                           // 淡出，只负责把海报挡在顶栏后。
-                          colors: [
-                            palette.dark
-                                ? palette.canvas
-                                : const Color(0xFFFFF3E6),
-                            palette.dark
-                                ? palette.canvas
-                                : const Color(0xFFFFFFFF),
-                            palette.dark
-                                ? palette.canvas.withValues(alpha: 0)
-                                : const Color(0x00FFFFFF),
-                          ],
+                          colors: _topBackingColors(palette),
                           stops: const [0.0, 0.5, 1.0],
                         ),
                       ),
@@ -4271,6 +4276,9 @@ class _HistoryEmpty extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    // 官方主题橙；墨水屏退化为纯黑（按钮反白字）。
+    final accent = palette.eink ? palette.ink : const Color(0xFFFA6725);
+    final onAccent = palette.eink ? palette.canvas : Colors.white;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -4279,14 +4287,13 @@ class _HistoryEmpty extends StatelessWidget {
             width: 88,
             height: 88,
             decoration: BoxDecoration(
-              color: palette.dark ? palette.soft : const Color(0xFFFFF3E0),
+              color: palette.eink
+                  ? Colors.white
+                  : (palette.dark ? palette.soft : const Color(0xFFFFF3E0)),
               shape: BoxShape.circle,
+              border: palette.eink ? Border.all(color: palette.line) : null,
             ),
-            child: const Icon(
-              LucideIcons.clapperboard,
-              size: 38,
-              color: Color(0xFFFA6725),
-            ),
+            child: Icon(LucideIcons.clapperboard, size: 38, color: accent),
           ),
           const SizedBox(height: 16),
           Text(message, style: TextStyle(fontSize: 14, color: palette.muted)),
@@ -4298,7 +4305,7 @@ class _HistoryEmpty extends StatelessWidget {
               behavior: HitTestBehavior.opaque,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFA6725),
+                  color: accent,
                   borderRadius: BorderRadius.circular(22),
                 ),
                 child: Padding(
@@ -4310,9 +4317,9 @@ class _HistoryEmpty extends StatelessWidget {
                     // 最近页 = `Fe()`（DynamicComic 开启时「找短剧」）；
                     // 收藏页官方硬编码「找视频」。
                     buttonLabel,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
-                      color: Colors.white,
+                      color: onAccent,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -4727,7 +4734,8 @@ class _LocalListState extends State<_LocalList> {
                   fromShelfEdit ? 'drama_shelf_delete' : 'drama_recent_delete',
                 ),
                 label: '删除',
-                color: const Color(0xFFF43207),
+                // 官方删除红；墨水屏退化为纯黑。
+                color: palette.eink ? palette.ink : const Color(0xFFF43207),
                 enabled: enabled,
                 onTap: enabled ? _confirmDelete : null,
               ),
@@ -4855,16 +4863,25 @@ class _LocalListState extends State<_LocalList> {
   Widget _filterChip(String? kind, String label) {
     final selected = _filter == kind;
     final palette = HomePalette.of(context);
+    // 官方「浅橙底橙字」；墨水屏选中黑底白字、未选中白底黑字。
+    final selectedBackground = palette.eink
+        ? palette.ink
+        : const Color(0x1AFA6725);
+    final idleBackground = palette.eink
+        ? Colors.white
+        : (palette.dark ? palette.soft : const Color(0x08000000));
+    final selectedForeground = palette.eink
+        ? palette.canvas
+        : const Color(0xFFFA6725);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => setState(() => _filter = kind),
       child: DecoratedBox(
         // 官方 `c4e.xml` + `f.s()`：选中浅橙底橙字加粗，未选中浅灰底深字。
         decoration: BoxDecoration(
-          color: selected
-              ? const Color(0x1AFA6725)
-              : (palette.dark ? palette.soft : const Color(0x08000000)),
+          color: selected ? selectedBackground : idleBackground,
           borderRadius: BorderRadius.circular(6),
+          border: palette.eink ? Border.all(color: palette.line) : null,
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
@@ -4873,7 +4890,7 @@ class _LocalListState extends State<_LocalList> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              color: selected ? const Color(0xFFFA6725) : palette.ink,
+              color: selected ? selectedForeground : palette.ink,
             ),
           ),
         ),

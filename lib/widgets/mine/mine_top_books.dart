@@ -9,6 +9,7 @@ import '../home/home_cell_blocks.dart';
 import '../home/home_design.dart';
 import '../home/home_media_card.dart';
 import '../home/home_shelf.dart';
+import '../home/home_sheet.dart';
 
 typedef MineOpenEntry = void Function(Map<String, dynamic> entry);
 
@@ -62,47 +63,22 @@ Future<void> showMineRankSheet(
   BuildContext context,
   List<ReadingRankItem> rank,
   MineOpenEntry onOpen,
-) {
-  final palette = HomePalette.of(context);
-  return showModalBottomSheet<void>(
+) async {
+  await showHomeSheet<void>(
     context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    backgroundColor: palette.surface,
-    builder: (sheet) => DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.7,
-      maxChildSize: 0.92,
-      builder: (context, controller) => ListView.builder(
-        controller: controller,
-        padding: const EdgeInsets.only(bottom: 24),
-        itemCount: rank.length + 1,
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(homeGutter, 0, homeGutter, 8),
-              child: Text(
-                '全部 ${rank.length} 本',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: palette.ink,
-                ),
-              ),
-            );
-          }
-          final item = rank[index - 1];
-          return MineRankRow(
-            rank: index,
-            item: item,
-            onTap: () {
-              Navigator.pop(sheet);
-              onOpen(item.entry);
-            },
-          );
-        },
-      ),
-    ),
+    title: '全部 ${rank.length} 本',
+    contentPadding: EdgeInsets.zero,
+    children: [
+      for (var i = 0; i < rank.length; i++)
+        MineRankRow(
+          rank: i + 1,
+          item: rank[i],
+          onTap: () {
+            Navigator.pop(context);
+            onOpen(rank[i].entry);
+          },
+        ),
+    ],
   );
 }
 

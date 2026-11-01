@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -403,5 +404,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('player-split-tab-1')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('header and cover fallback use Lucide icons', (tester) async {
+    await mount(tester);
+    expect(find.byIcon(LucideIcons.chevron_right), findsOneWidget);
+    expect(find.byIcon(LucideIcons.clapperboard), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+    expect(find.byIcon(Icons.movie_creation_outlined), findsNothing);
   });
 }
