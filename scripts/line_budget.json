@@ -3,7 +3,8 @@
     "lib/main.dart": 781,
     "lib/models/media_item.dart": 1549,
     "lib/pages/api_service_page.dart": 601,
-    "lib/pages/audio_page.dart": 1995,
+    "lib/pages/audio_listening_layout.dart": 664,
+    "lib/pages/audio_page.dart": 2130,
     "lib/pages/category_page.dart": 618,
     "lib/pages/detail_page.dart": 1663,
     "lib/pages/drama_download_sheet.dart": 663,
@@ -20,7 +21,7 @@
     "lib/services/api_client.dart": 1797,
     "lib/services/app_log.dart": 622,
     "lib/services/audio_downloader.dart": 625,
-    "lib/services/audio_playback_controller.dart": 1432,
+    "lib/services/audio_playback_controller.dart": 1479,
     "lib/services/chapter_text_formatter.dart": 690,
     "lib/services/desktop_platform.dart": 713,
     "lib/services/drama_download_store.dart": 529,
@@ -30,6 +31,7 @@
     "lib/services/library_store.dart": 1145,
     "lib/services/native_player.dart": 750,
     "lib/services/system_tts.dart": 708,
+    "lib/widgets/audio/audio_control_rows.dart": 642,
     "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
@@ -55,6 +57,7 @@
     "rust/src/endpoints/router.rs": 557,
     "rust/src/endpoints/video.rs": 3555,
     "test/audio_page_test.dart": 1172,
+    "test/audio_real_alignment_test.dart": 769,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 859,
     "test/desktop_semantics_update_test.dart": 844,
@@ -107,13 +110,8 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/audio_page.dart::_AudioCommentsSheetState.build": {
-      "line": 1689,
+      "line": 1824,
       "lines": 131,
-      "symbol": "Widget build(BuildContext context) {"
-    },
-    "lib/pages/audio_page.dart::_AudioPageState.build": {
-      "line": 433,
-      "lines": 224,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/cached_books_page.dart::_CachedBooksPageState.build": {

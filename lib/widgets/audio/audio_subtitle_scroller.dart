@@ -16,6 +16,7 @@ class AudioSubtitleScroller extends StatefulWidget {
     required this.position,
     required this.viewportHeight,
     this.inline = false,
+    this.realBook = false,
     this.duration = Duration.zero,
     this.fontSize = 16,
     this.startLine = 1,
@@ -27,6 +28,14 @@ class AudioSubtitleScroller extends StatefulWidget {
   final Duration position;
   final double viewportHeight;
   final bool inline;
+
+  /// 真人讲书页头的 238dp 字幕（官方 `bj3.xml` `a49`）。
+  ///
+  /// 与 [inline] 的差别：行高固定为 [realRowHeight]（官方是 16sp 正文
+  /// 高度加每个条目上下各 10dp，约 40dp），当前句用 [realCurrentFontSize]
+  /// 的粗体；不做行内 3dp 边距和逐行渐隐——整块的上下 24dp 渐隐由页面
+  /// 用 `ShaderMask` 完成。两种模式都会把长句按显示行切开。
+  final bool realBook;
   final Duration duration;
   final double fontSize;
   final int startLine;
@@ -34,6 +43,13 @@ class AudioSubtitleScroller extends StatefulWidget {
   final Key currentLineKey;
 
   static const double inlineRowPadding = 3;
+
+  /// 真人讲书的固定行高（样稿）。
+  static const double realRowHeight = 40;
+
+  /// 真人讲书当前句字号（官方 `AudioPlaySubtitleView` 的 `n` 默认 20sp）。
+  static const double realCurrentFontSize = 20;
+
   static const Curve officialCurve = _AccelerateDecelerateCurve();
 
   static Duration animationFor(double deltaPx) =>
@@ -62,8 +78,9 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
   int _shownIndex = -1;
   bool _syncing = false;
 
-  double get _padding =>
-      widget.inline ? AudioSubtitleScroller.inlineRowPadding : 0;
+  double get _padding => widget.inline && !widget.realBook
+      ? AudioSubtitleScroller.inlineRowPadding
+      : 0;
 
   double get _baseOffset =>
       (_singleLineHeight + 2 * _padding) * (widget.startLine - 1);
@@ -102,6 +119,7 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
       direction,
       locale,
       widget.inline,
+      widget.realBook,
       widget.duration,
     );
     final changed = _layoutKey != key;
@@ -109,7 +127,7 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
     try {
       if (changed) {
         _layoutKey = key;
-        _lines = widget.inline
+        _lines = widget.inline || widget.realBook
             ? layoutInlineSubtitleLines(
                 track: widget.track,
                 width: width,
@@ -126,14 +144,25 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
           locale: locale,
         );
         try {
-          double measure(String text) {
-            painter.text = TextSpan(text: text, style: style);
-            painter.layout(maxWidth: width);
-            return painter.height;
-          }
+          if (widget.realBook) {
+            // Fixed rows: the official model measures 16sp text and adds
+            // 10dp above and below each entry (~40dp). The strip keeps that
+            // constant so rows do not breathe with cue length.
+            _singleLineHeight = AudioSubtitleScroller.realRowHeight;
+            _heights = List<double>.filled(
+              _lines.cues.length,
+              AudioSubtitleScroller.realRowHeight,
+            );
+          } else {
+            double measure(String text) {
+              painter.text = TextSpan(text: text, style: style);
+              painter.layout(maxWidth: width);
+              return painter.height;
+            }
 
-          _singleLineHeight = measure('\u5b57');
-          _heights = [for (final cue in _lines.cues) measure(cue.text)];
+            _singleLineHeight = measure('\u5b57');
+            _heights = [for (final cue in _lines.cues) measure(cue.text)];
+          }
         } finally {
           painter.dispose();
         }
@@ -201,7 +230,11 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
   Widget build(BuildContext context) {
     final theme = AudioPageThemeScope.of(context);
     final style = _textStyle(context);
-    final scaler = MediaQuery.textScalerOf(context);
+    // The official real-book view sizes text in dp, not sp, so the fixed
+    // 40dp rows cannot clip when the system font scale is large.
+    final scaler = widget.realBook
+        ? TextScaler.noScaling
+        : MediaQuery.textScalerOf(context);
     final direction = Directionality.of(context);
     final locale = Localizations.maybeLocaleOf(context);
     return LayoutBuilder(
@@ -210,60 +243,18 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
           return const SizedBox.shrink();
         }
         _syncLayout(constraints.maxWidth, style, scaler, direction, locale);
-        if (_lines.isEmpty) {
-          return Align(
-            alignment: Alignment.topLeft,
-            child: Padding(
-              padding: EdgeInsets.only(top: _padding),
-              child: Text(
-                widget.statusText,
-                key: const Key('audio-inline-subtitle-status'),
-                style: style,
-              ),
-            ),
-          );
-        }
+        if (_lines.isEmpty) return _statusLine(style);
         final rows = <Widget>[];
         for (var i = _firstRow(); i < _lines.cues.length; i++) {
-          final top = _baseOffset + _offsets[i] + _padding - _offset;
-          if (top >= widget.viewportHeight) break;
-          final highlighted = i == _shownIndex;
-          Widget text = Text(
-            _lines.cues[i].text,
-            key: highlighted ? widget.currentLineKey : null,
-            style: highlighted
-                ? style
-                : style.copyWith(color: theme.ink.withValues(alpha: 0.4)),
-            textScaler: scaler,
-            textDirection: direction,
-            locale: locale,
-          );
-          // AudioPlaySubtitleView.s selects edge paints only for non-current
-          // rows. Do not fade the whole viewport (or the highlighted line).
-          final fadeHeight = scaler.scale(widget.fontSize);
-          final fadeTop = i > 0 && top < fadeHeight;
-          final fadeBottom =
-              top > widget.viewportHeight - fadeHeight - _padding;
-          if (widget.inline && !highlighted && (fadeTop || fadeBottom)) {
-            text = ShaderMask(
-              blendMode: BlendMode.dstIn,
-              shaderCallback: (bounds) => LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: fadeTop
-                    ? const [Color(0x00FFFFFF), Color(0xFFFFFFFF)]
-                    : const [Color(0xFFFFFFFF), Color(0x00FFFFFF)],
-              ).createShader(Rect.fromLTWH(0, 0, bounds.width, fadeHeight)),
-              child: text,
-            );
-          }
+          if (_topOf(i) >= widget.viewportHeight) break;
           rows.add(
-            Positioned(
-              left: 0,
-              right: 0,
-              top: top,
-              height: _heights[i],
-              child: Align(alignment: Alignment.topLeft, child: text),
+            _rowAt(
+              i,
+              style: style,
+              theme: theme,
+              scaler: scaler,
+              direction: direction,
+              locale: locale,
             ),
           );
         }
@@ -271,6 +262,88 @@ class _AudioSubtitleScrollerState extends State<AudioSubtitleScroller>
           child: ExcludeSemantics(child: Stack(children: rows)),
         );
       },
+    );
+  }
+
+  double _topOf(int index) =>
+      _baseOffset + _offsets[index] + _padding - _offset;
+
+  Widget _statusLine(TextStyle style) {
+    return Align(
+      alignment: Alignment.topLeft,
+      child: Padding(
+        // 真人讲书整块有 24dp 渐隐，状态文案要避开它。
+        padding: EdgeInsets.only(top: widget.realBook ? 24 : _padding),
+        child: Text(
+          widget.statusText,
+          key: const Key('audio-inline-subtitle-status'),
+          style: style,
+        ),
+      ),
+    );
+  }
+
+  Widget _rowAt(
+    int index, {
+    required TextStyle style,
+    required AudioPageTheme theme,
+    required TextScaler scaler,
+    required TextDirection direction,
+    required Locale? locale,
+  }) {
+    final top = _topOf(index);
+    final highlighted = index == _shownIndex;
+    Widget text = Text(
+      _lines.cues[index].text,
+      key: highlighted ? widget.currentLineKey : null,
+      style: highlighted
+          ? widget.realBook
+                ? style.copyWith(
+                    fontSize: AudioSubtitleScroller.realCurrentFontSize,
+                    fontWeight: FontWeight.w700,
+                  )
+                : style
+          : style.copyWith(color: theme.ink.withValues(alpha: 0.4)),
+      textScaler: scaler,
+      textDirection: direction,
+      locale: locale,
+      // One cue per 40dp row; the mockup ellipsizes a long current line.
+      maxLines: widget.realBook ? 1 : null,
+      overflow: widget.realBook ? TextOverflow.ellipsis : null,
+      softWrap: widget.realBook ? false : null,
+    );
+    // AudioPlaySubtitleView.s selects edge paints only for non-current rows.
+    // Do not fade the whole viewport (or the highlighted line). The real-book
+    // strip is masked as a whole by the page instead.
+    final fadeHeight = scaler.scale(widget.fontSize);
+    final fadeTop = index > 0 && top < fadeHeight;
+    final fadeBottom = top > widget.viewportHeight - fadeHeight - _padding;
+    if (widget.inline &&
+        !widget.realBook &&
+        !highlighted &&
+        (fadeTop || fadeBottom)) {
+      text = ShaderMask(
+        blendMode: BlendMode.dstIn,
+        shaderCallback: (bounds) => LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: fadeTop
+              ? const [Color(0x00FFFFFF), Color(0xFFFFFFFF)]
+              : const [Color(0xFFFFFFFF), Color(0x00FFFFFF)],
+        ).createShader(Rect.fromLTWH(0, 0, bounds.width, fadeHeight)),
+        child: text,
+      );
+    }
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: top,
+      height: _heights[index],
+      child: Align(
+        // 真人讲书在 40dp 行里垂直居中（样稿 `.ln`）。
+        alignment: widget.realBook ? Alignment.centerLeft : Alignment.topLeft,
+        child: text,
+      ),
     );
   }
 }

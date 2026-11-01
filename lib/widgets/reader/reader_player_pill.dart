@@ -139,8 +139,9 @@ class _ReaderPlayerPillHostState extends State<ReaderPlayerPillHost> {
 
   bool get _active {
     final session = ListeningSession.instance;
-    // 官方 onPlayCompletion（d.java:92-100）收起播放按钮。
-    return session.bookId == widget.bookId && !session.completed;
+    // 官方 onPlayCompletion（d.java:92-100）收起播放按钮。真人讲书打开的
+    // 原著阅读页用的是别名 id，所以按 [ListeningSession.matchesBook] 匹配。
+    return session.matchesBook(widget.bookId) && !session.completed;
   }
 
   bool get _eligible =>

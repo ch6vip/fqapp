@@ -15,6 +15,7 @@ class HomeSheetFrame extends StatelessWidget {
     required this.title,
     required this.children,
     this.closeTooltip = '关闭',
+    this.closeKey,
     this.onClose,
     this.maxHeightFactor = 0.82,
     this.contentPadding = const EdgeInsets.fromLTRB(20, 4, 20, 16),
@@ -31,6 +32,10 @@ class HomeSheetFrame extends StatelessWidget {
   final String title;
   final List<Widget> children;
   final String closeTooltip;
+
+  /// 关闭按钮的 key：面板原有的测试 / 无障碍契约（如
+  /// `voice_settings_close`）在换到统一基座后仍可沿用。
+  final Key? closeKey;
 
   /// 关闭动作；缺省返回上一页。需要先落盘再关时由调用方传入。
   final VoidCallback? onClose;
@@ -117,6 +122,7 @@ class HomeSheetFrame extends StatelessWidget {
           ),
         ),
         IconButton(
+          key: closeKey,
           tooltip: closeTooltip,
           onPressed: onClose ?? () => Navigator.maybePop(context),
           color: palette.ink,

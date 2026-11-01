@@ -158,6 +158,34 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     return true;
   }
 
+  /// 阅读页的书 id 是否属于这个会话：音频书自己的 id，或时间轴别名到的
+  /// 原著（真人讲书的「边听边读」打开原著后仍要能控制播放）。
+  bool _sessionBookMatches(String bookId) {
+    final session = _session;
+    if (session == null || session._closed) return false;
+    return session._bookId == bookId || session._linkedNovelBookId == bookId;
+  }
+
+  /// 把阅读页的章节 id 解析成播放器使用的音频章节 id。
+  ///
+  /// 智能朗读两边相同，直接命中；真人讲书的阅读页传的是原著章节 id，只有
+  /// 时间轴映射到的当前集才能换回音频章节。其它原著章节没有反查表，返回
+  /// null —— 宁可不跳，也不串到别的音频章。
+  String? _audioChapterIdFor(String readerChapterId) {
+    final session = _session;
+    if (session == null || session._closed || readerChapterId.isEmpty) {
+      return null;
+    }
+    if (session._chapters.any((c) => c.itemId == readerChapterId)) {
+      return readerChapterId;
+    }
+    if (session._timeTrack.novelItemId != readerChapterId) return null;
+    if (session._index < 0 || session._index >= session._chapters.length) {
+      return null;
+    }
+    return session._chapters[session._index].itemId;
+  }
+
   /// 见 [AudioPlaybackScope.togglePlayback]。
   bool togglePlayback(String bookId) {
     final tts = _tts;
@@ -168,7 +196,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     final session = _session;
     if (session == null || session._closed) return false;
     // 只控制「正在听的那本」：阅读页可能翻到别的书，那与本会话无关。
-    if (session._bookId != bookId || !session._ready) return false;
+    if (!_sessionBookMatches(bookId) || !session._ready) return false;
     unawaited(session._togglePlayback());
     return true;
   }
@@ -182,7 +210,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     }
     final session = _session;
     if (session == null || session._closed) return;
-    if (session._bookId != bookId || !session._ready) return;
+    if (!_sessionBookMatches(bookId) || !session._ready) return;
     if (session._wantPlay) unawaited(session._pauseForOtherMedia());
   }
 
@@ -194,20 +222,24 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     if (session == null || session._closed) {
       return Future.value(SubtitleTrack.empty);
     }
-    final index = session._chapters.indexWhere((c) => c.itemId == chapterId);
+    final audioChapterId = _audioChapterIdFor(chapterId);
+    if (audioChapterId == null) return Future.value(SubtitleTrack.empty);
+    final index = session._chapters.indexWhere(
+      (c) => c.itemId == audioChapterId,
+    );
     if (index < 0) return Future.value(SubtitleTrack.empty);
     // 正在播的就是这一章：会话里的轨最新，直接给。
     if (index == session._index && session._subtitles.isNotEmpty) {
       return Future.value(session._subtitles);
     }
-    final key = '${session._toneId}|$chapterId';
+    final key = '${session._toneId}|$audioChapterId';
     final cached = _timelineCache[key];
     if (cached != null) return Future.value(cached);
     final pending = _timelinePending[key];
     if (pending != null) return pending;
     final future = _loadTimeline(
       key,
-      session._loadSubtitles(chapterId, session._toneId),
+      session._loadSubtitles(audioChapterId, session._toneId),
     );
     _timelinePending[key] = future;
     return future;
@@ -233,7 +265,11 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   bool jumpToChapter(String chapterId, Duration position) {
     final session = _session;
     if (session == null || session._closed) return false;
-    final index = session._chapters.indexWhere((c) => c.itemId == chapterId);
+    final audioChapterId = _audioChapterIdFor(chapterId);
+    if (audioChapterId == null) return false;
+    final index = session._chapters.indexWhere(
+      (c) => c.itemId == audioChapterId,
+    );
     if (index < 0) return false;
     if (index == session._index) {
       if (!session._ready) return false;

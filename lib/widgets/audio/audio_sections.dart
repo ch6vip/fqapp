@@ -19,11 +19,21 @@ import 'audio_tone_chip.dart';
 /// 官方 `layout/hy.xml` 把「智能朗读 │ 真人讲书」放在页头正中央（`a4y` 紧跟
 /// `jz4` 这个 81dp 的头部占位），不是标题位置；左右两侧分别是收起箭头与更多
 /// 菜单，右侧还有一个橙色星标圆钮。`center` 为空时才退回旧的「听书」标题。
+///
+/// 手机按样稿取 44dp（桌面窗口沿用 52dp）：返回键 24dp 距左 20dp、更多
+/// 22dp 距右 16dp。两者都保留 48dp 宽的点击区，图标在区内居中，所以整块
+/// 点击区要再往内收 (48 − 图标)/2，图标的实际外缘才落在规格位置上。
 class AudioTopBar extends StatelessWidget {
   final VoidCallback onCollapse;
   final VoidCallback onMore;
   final Widget? center;
   final AudioPageTheme? theme;
+
+  /// 手机顶栏高度（样稿）。
+  static const double phoneHeight = 44;
+
+  /// 桌面窗口顶栏高度（沿用旧值）。
+  static const double desktopHeight = 52;
 
   const AudioTopBar({
     super.key,
@@ -36,52 +46,116 @@ class AudioTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = theme ?? AudioPageThemeScope.of(context);
+    final height = MediaQuery.sizeOf(context).width < 600
+        ? phoneHeight
+        : desktopHeight;
     return SizedBox(
-      height: 52,
+      height: height,
       child: Stack(
         children: [
           Align(
             alignment: Alignment.center,
             child: Semantics(
               header: true,
-              child:
-                  center ??
-                  Text(
-                    '听书',
-                    style: TextStyle(
-                      color: colors.ink,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+              // 页签是「智能朗读…｜真人讲书」两颗 16sp 文字，系统字体放大后
+              // 整行会比 44dp 的顶栏更宽/更高。保留字号给读屏，但整体按需
+              // 等比缩小；两侧各留 56dp 给收起/更多按钮，避免叠在图标上。
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 56),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child:
+                      center ??
+                      Text(
+                        '听书',
+                        style: TextStyle(
+                          color: colors.ink,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                ),
+              ),
             ),
           ),
           Align(
             alignment: Alignment.centerLeft,
-            child: IconButton(
+            child: _HeaderIconButton(
               tooltip: '收起',
+              icon: LucideIcons.chevron_down,
+              iconSize: 24,
+              height: height,
+              color: colors.ink,
               onPressed: onCollapse,
-              style: IconButton.styleFrom(foregroundColor: colors.ink),
-              icon: const Icon(LucideIcons.chevron_down, size: 22),
+              edgeInset: 20,
             ),
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 官方顶部右二那颗橙色星标圆钮是**广告位**，不是功能入口。
-                // 复刻广告没有意义，这里直接不复刻（并非画不出来）。
-                IconButton(
-                  tooltip: '更多',
-                  onPressed: onMore,
-                  style: IconButton.styleFrom(foregroundColor: colors.ink),
-                  icon: const Icon(LucideIcons.ellipsis_vertical, size: 20),
-                ),
-              ],
+            child: _HeaderIconButton(
+              tooltip: '更多',
+              icon: LucideIcons.ellipsis_vertical,
+              iconSize: 22,
+              height: height,
+              color: colors.ink,
+              onPressed: onMore,
+              edgeInset: 16,
+              fromRight: true,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 顶栏两端的图标钮：点击区固定 48dp，整块按 [edgeInset] 让出边距。
+///
+/// 官方顶部右二那颗橙色星标圆钮是**广告位**，不是功能入口；复刻广告没有
+/// 意义，所以这里只保留收起与更多两个按钮。
+class _HeaderIconButton extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final double iconSize;
+  final double height;
+  final Color color;
+  final VoidCallback onPressed;
+
+  /// 图标外缘到屏幕边的距离。
+  final double edgeInset;
+  final bool fromRight;
+
+  const _HeaderIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.iconSize,
+    required this.height,
+    required this.color,
+    required this.onPressed,
+    required this.edgeInset,
+    this.fromRight = false,
+  });
+
+  static const double _tapWidth = 48;
+
+  @override
+  Widget build(BuildContext context) {
+    final inset = edgeInset - (_tapWidth - iconSize) / 2;
+    return Padding(
+      padding: fromRight
+          ? EdgeInsets.only(right: inset)
+          : EdgeInsets.only(left: inset),
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        iconSize: iconSize,
+        style: IconButton.styleFrom(
+          foregroundColor: color,
+          padding: EdgeInsets.zero,
+          minimumSize: Size(_tapWidth, height),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: Icon(icon),
       ),
     );
   }
@@ -1308,8 +1382,9 @@ class AudioInlineSubtitle extends StatelessWidget {
   }
 }
 
-/// `layout/hy.xml`: the `AI朗读 │ 真人讲书` header switch. Only meaningful when
-/// the book really offers both families, so the page decides when to show it.
+/// `layout/hy.xml`: the `智能朗读 │ 真人讲书` header switch. Only meaningful
+/// when the book really offers both families, so the page decides when to show
+/// it.
 class AudioModeSwitch extends StatelessWidget {
   final bool realSelected;
   final VoidCallback onSelectTts;
@@ -1326,33 +1401,30 @@ class AudioModeSwitch extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = AudioPageThemeScope.of(context);
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.only(top: 2, bottom: 2),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _tab(
-              key: const Key('audio_mode_tts'),
-              label: 'AI朗读',
-              selected: !realSelected,
-              theme: theme,
-              onTap: onSelectTts,
-            ),
-            Container(
-              width: 0.5,
-              height: 8,
-              margin: const EdgeInsets.symmetric(horizontal: 9),
-              color: theme.line,
-            ),
-            _tab(
-              key: const Key('audio_mode_narrator'),
-              label: '真人讲书',
-              selected: realSelected,
-              theme: theme,
-              onTap: onSelectNarrator,
-            ),
-          ],
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _tab(
+            key: const Key('audio_mode_tts'),
+            label: '智能朗读',
+            selected: !realSelected,
+            theme: theme,
+            onTap: onSelectTts,
+          ),
+          // 0.5 × 8dp 竖线；两侧各 9dp 由页签的内边距让出（样稿 `.tabs`）。
+          Container(
+            width: 0.5,
+            height: 8,
+            color: theme.muted.withValues(alpha: 0.8),
+          ),
+          _tab(
+            key: const Key('audio_mode_narrator'),
+            label: '真人讲书',
+            selected: realSelected,
+            theme: theme,
+            onTap: onSelectNarrator,
+          ),
+        ],
       ),
     );
   }
@@ -1370,11 +1442,11 @@ class AudioModeSwitch extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         child: Text(
           label,
           style: TextStyle(
-            color: selected ? theme.accent : theme.muted,
+            color: selected ? theme.ink : theme.muted,
             fontSize: 16,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
           ),
@@ -1400,7 +1472,7 @@ class AudioRealVersionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = AudioPageThemeScope.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
       child: HomePressable(
         key: const Key('audio-voice'),
         semanticLabel: '选择音色',

@@ -46,6 +46,7 @@ class VoiceSettingsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) => HomeSheetFrame(
     key: const Key('voice_settings_surface'),
+    closeKey: const Key('voice_settings_close'),
     title: '声音设置',
     contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
     children: [
