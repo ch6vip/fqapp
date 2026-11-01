@@ -10,7 +10,6 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     int? fromMs,
     int? textId,
     bool fromPage = false,
-    bool keepControls = false,
   }) async {
     if (_openingListening || _loading || _error != null) return;
     if (fromPage) {
@@ -26,7 +25,6 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
           fromMs: fromMs,
           textId: textId,
           openPage: false,
-          keepControls: keepControls,
         );
         return;
       }
@@ -40,8 +38,6 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
           await _openUpstreamListening(
             fromMs: anchor.startMs ?? fromMs,
             textId: anchor.textId ?? textId,
-            openPage: false,
-            keepControls: true,
           );
           return;
         }
@@ -100,8 +96,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       );
       await _persistProgress();
       if (!mounted || chapterId != _chapter.itemId) return;
-      // 从胶囊起播时要留在菜单里：一收菜单，胶囊自己就没影了。
-      if (!keepControls) _setState(() => _controlsVisible = false);
+      _setState(() => _controlsVisible = false);
       await AudioPlaybackScope.startSystemTts(context, book);
     } catch (e) {
       if (mounted) _showMessage(SystemTts.errorMessage(e));
@@ -144,12 +139,10 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     int? fromMs,
     int? textId,
     bool openPage = true,
-    bool keepControls = false,
   }) async {
     final paragraphAnchored = textId != null;
     if (_openingListening) return;
     _openingListening = true;
-    _showMessage('正在开始播放…');
     final chapter = _chapter;
     final chapterIndex = _index;
     try {
@@ -189,7 +182,6 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
           listening.bookId != null &&
           listening.bookId != widget.bookId &&
           listening.matchesBook(widget.bookId);
-      var reuseLive = false;
       if (aliased) {
         var jumped = true;
         if (startMs != null) {
@@ -206,27 +198,23 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
             ordinal: paragraph.ordinal,
           );
         }
-        if (!mounted) return;
-        if (!jumped) {
+        if (!jumped && mounted) {
           _showMessage('当前音频没有这一章，继续播放原进度');
         }
-        if (!openPage) {
-          if (jumped) _showMessage('已开始播放，可从底部胶囊控制');
-          return;
+        if (openPage) {
+          _setState(() => _controlsVisible = false);
+          AudioPlaybackScope.openAudioPage(context, widget.bookId);
         }
-        // 打开听书页只是给现有会话挂一个视图。
-        reuseLive = true;
+        return;
       }
-      if (!keepControls) _setState(() => _controlsVisible = false);
+
       final request = AudioPage(
-        // 复用别名会话时用音频书 id：页面只是会话的视图，按会话自己的 id
-        // 记账，评论/封面等读取才落对书。
-        bookId: reuseLive ? listening.bookId! : widget.bookId,
+        bookId: widget.bookId,
         title: widget.title,
         cover: widget.cover,
         chapters: widget.chapters,
         startIndex: chapterIndex,
-        resumeSession: reuseLive,
+        resumeSession: false,
         // 沿用正在听的那个音色：不传的话播放页只能挑默认音色，
         // 「从本页播放」就会把真人讲书换成内置 TTS。
         initialToneId: _listeningToneId(),
@@ -236,37 +224,31 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         // startParagraph hands the paragraph to the player when the body
         // has no spans of its own; the player resolves it from
         // /timepoints and only falls back to that Duration.zero.
-        startPosition: reuseLive
-            ? null
-            : paragraphAnchored
+        startPosition: paragraphAnchored
             ? Duration(milliseconds: startMs ?? 0)
             : null,
-        startParagraph: reuseLive ? null : paragraph,
+        startParagraph: paragraph,
         // 没有精确毫秒、也没有 `/timepoints` 可查时的兜底：告诉播放页这
         // 一段在正文里的位置比例，让它按时长折算。折算不精确，但它保证
         // 锚定请求不会落到章首——那正是用户看到「还是从章首播」的样子。
-        startFraction: !reuseLive && paragraphAnchored && startMs == null
+        startFraction: paragraphAnchored && startMs == null
             ? _readFraction(textId)
             : null,
         historyStore: widget.readerStore,
       );
-      if (openPage) {
-        // 「听书」：跳转听书详情页。会话由 scope 持有，页面只是视图。
-        await Navigator.of(
+      if (!openPage) {
+        // 「从本页听」不离开阅读页：会话由 scope 持有，页面只是视图。
+        final started = await AudioPlaybackScope.startListeningInBackground(
           context,
-        ).push(MaterialPageRoute<void>(builder: (_) => request));
+          request,
+        );
+        if (!started && mounted) _showMessage('无法开始播放，请检查网络');
         return;
       }
-      // 「从本页播放」：后台起播，阅读页留在原处跟随。
-      final started = await AudioPlaybackScope.startListeningInBackground(
+      _setState(() => _controlsVisible = false);
+      await Navigator.of(
         context,
-        request,
-      );
-      if (!started && mounted) {
-        _showMessage('无法开始播放，请检查网络');
-      } else if (started && mounted) {
-        _showMessage('已开始播放，可从底部胶囊控制');
-      }
+      ).push(MaterialPageRoute<void>(builder: (_) => request));
     } finally {
       _openingListening = false;
     }
@@ -275,16 +257,14 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
   /// 本会话正在用的音色；不在听这本书时为 null（交给播放页按历史/默认决定）。
   String? _listeningToneId() {
     final session = ListeningSession.instance;
-    // 别名书（真人讲书的原著）也要沿用会话里的真实音色。
     if (!session.matchesBook(widget.bookId)) return null;
     final tone = session.toneId;
     return (tone == null || tone.isEmpty) ? null : tone;
   }
 
-  /// 「从本页播放」的锚点：当前页第一个**从本页开始**的正文段落的段落 ID 与
-  /// 它的起播时间。
+  /// 「从本页播放」的锚点：当前页第一个**从本页开始**的正文段落。
   ///
-  /// 页首常常是上一页跨过来的段落尾巴（`fragment.firstLine > 0`）：拿它当锚点，
+  /// 页首常是上一页跨过来的段落尾巴（`fragment.firstLine > 0`）：拿它当锚点，
   /// 播放会退到上一页那段正文的开头，用户听到的就不是眼前这段了。优先取
   /// `firstLine == 0` 的段落；整页都是同一段的续行（超长段落跨多页）时才退回
   /// 页首那段。
