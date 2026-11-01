@@ -96,14 +96,24 @@ extension _ReaderPageListening on _ReaderPageState {
   /// The passage being narrated, in layout coordinates, or null when this
   /// chapter is not the one on the voice.
   ///
-  /// Two sources, two coordinate systems. System TTS reports offsets into the
-  /// TTS text blob; 听书 reports the backend's (paragraph, offset) timeline.
+  /// System TTS reports offsets into the TTS text blob; upstream listening
+  /// supplies subtitles and a (paragraph, offset) timeline.
   /// Each is translated by its own mapper so neither can smear the highlight
   /// onto the wrong paragraph.
   (int, int)? _narrationLayoutRange(ReaderChapterLayout layout) {
     final session = ListeningSession.instance;
     if (!session.matches(widget.bookId, _chapter.itemId)) return null;
-    // Use upstream text coordinates when available; subtitles are a fallback.
+    // Keep highlighting on the same sentence as _addressToPlayback. Upstream
+    // paragraph coordinates are a fallback when no current cue can be mapped.
+    _ensureCueIndex(layout);
+    if (_cueIndex.isNotEmpty) {
+      final span = _cueIndex.spanAtPositionMs(
+        session.position.inMilliseconds + readAheadMs,
+        crossCueHoldMs: crossCueHoldMs,
+        currentRange: _narrationRange,
+      );
+      if (span != null) return (span.start, span.end);
+    }
     final audioRange = session.audioParaRange;
     if (audioRange != null) {
       final translated = audioTimePointLayoutRange(
@@ -118,8 +128,7 @@ extension _ReaderPageListening on _ReaderPageState {
         startElementIndex: audioRange.elemIndex,
         startElementOffset: audioRange.elemOff,
       );
-      // 官方时间点译不出来时不能直接返回 null：下面那条字幕兜底本来就是为
-      // 这种章节写的（多源项章节会重置时间轴），提前返回等于把它跳过。
+      // Unmappable upstream coordinates must still allow the text fallbacks.
       if (translated != null) return (translated.start, translated.end);
     }
     final ttsRange = session.sentenceRange;
@@ -128,15 +137,6 @@ extension _ReaderPageListening on _ReaderPageState {
             (_replacement?.snapshotRevision ?? 0)) {
       final translated = narrationLayoutRange(layout, ttsRange);
       if (translated != null) return (translated.start, translated.end);
-    }
-    _ensureCueIndex(layout);
-    if (_cueIndex.isNotEmpty) {
-      final span = _cueIndex.spanAtPositionMs(
-        session.position.inMilliseconds + readAheadMs,
-        crossCueHoldMs: crossCueHoldMs,
-        currentRange: _narrationRange,
-      );
-      if (span != null) return (span.start, span.end);
     }
     // 逐句搜索兜底：句尾落到下一页这类跨页情形索引对不上，但正文里能找到。
     return _locateCue(layout, session.cue);
