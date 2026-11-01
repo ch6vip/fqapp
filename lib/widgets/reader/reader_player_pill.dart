@@ -150,8 +150,9 @@ class _ReaderPlayerPillHostState extends State<ReaderPlayerPillHost> {
 
   bool get _active {
     final session = ListeningSession.instance;
-    // 官方 onPlayCompletion（d.java:92-100）收起播放按钮。
-    return session.bookId == widget.bookId && !session.completed;
+    // 官方 onPlayCompletion（d.java:92-100）收起播放按钮。真人讲书打开的
+    // 原著阅读页用的是别名 id，所以按 [ListeningSession.matchesBook] 匹配。
+    return session.matchesBook(widget.bookId) && !session.completed;
   }
 
   bool get _eligible =>
@@ -220,7 +221,9 @@ class _ReaderPlayerPillHostState extends State<ReaderPlayerPillHost> {
     final eligible = _eligible;
     final next = (
       session.bookId,
-      session.chapterId,
+      // 阅读页章节 id：真人讲书的别名映射到原著章时，音频集换了但原著章
+      // 可能没换，按 [ListeningSession.readerChapterId] 比才稳定。
+      session.readerChapterId,
       session.playing,
       eligible,
       session.completed,
@@ -238,7 +241,9 @@ class _ReaderPlayerPillHostState extends State<ReaderPlayerPillHost> {
         _weakening = null;
         if (!mounted || widget.controlsVisible || !_eligible) return;
         final current = ListeningSession.instance;
-        if (current.bookId != next.$1 || current.chapterId != next.$2) return;
+        if (current.bookId != next.$1 || current.readerChapterId != next.$2) {
+          return;
+        }
         setState(() => _weak = true);
       });
     }

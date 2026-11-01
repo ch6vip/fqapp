@@ -300,7 +300,7 @@ class _ReaderListenCapsuleHostState extends State<ReaderListenCapsuleHost> {
 
   (String?, bool, bool) _read() {
     final session = ListeningSession.instance;
-    final active = session.bookId == widget.bookId && !session.completed;
+    final active = session.matchesBook(widget.bookId) && !session.completed;
     return (session.bookId, active && session.playing, session.completed);
   }
 
@@ -319,7 +319,8 @@ class _ReaderListenCapsuleHostState extends State<ReaderListenCapsuleHost> {
   @override
   Widget build(BuildContext context) {
     final session = ListeningSession.instance;
-    final listening = session.bookId == widget.bookId && !session.completed;
+    // 真人讲书的「边听边读」打开原著时，会话按音频书 id 记账、别名到原著 id。
+    final listening = session.matchesBook(widget.bookId) && !session.completed;
     return ReaderListenCapsule(
       listening: listening,
       playing: listening && session.playing,

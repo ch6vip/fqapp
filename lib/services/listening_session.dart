@@ -17,6 +17,32 @@ class ListeningSession extends ChangeNotifier {
   Duration duration = Duration.zero;
   bool playing = false;
 
+  /// 真人讲书的别名：会话按音频（专辑）id 发布，阅读页按原著 id 打开。
+  ///
+  /// 固定录音的 `bookId` 是听书版本自己的 id，而「边听边读」打开的是关联
+  /// 原著，书名与章节 id 都不是同一套。时间轴给出当前集对应的原著章节后，
+  /// 播放器把两边 id 发布到这里；阅读页用 [matchesBook]/[matchesChapter]
+  /// 匹配，高亮、跟随与迷你栏因此仍然生效。其它书/章节不受影响。
+  String? novelBookId;
+  String? novelChapterId;
+
+  /// 阅读页用的书 id 是否就是本会话（含原著别名）。
+  bool matchesBook(String bookId) =>
+      this.bookId == bookId || (novelBookId != null && novelBookId == bookId);
+
+  /// 阅读页用的章节 id 是否就是本会话正在读的那一章（含原著别名）。
+  bool matchesChapter(String chapterId) =>
+      this.chapterId == chapterId ||
+      (novelChapterId != null && novelChapterId == chapterId);
+
+  /// 当前章节在阅读页里的 id：原著别名优先，其次才是音频章节 id
+  /// （智能朗读两者相同）。时间轴还没给出原著映射时，别名书无法定位到
+  /// 具体章节，调用方据此跳过跟随，而不是串到别的章。
+  String? get readerChapterId {
+    final novel = novelChapterId;
+    return novel != null && novel.isNotEmpty ? novel : chapterId;
+  }
+
   /// System TTS reports character progress, never a fabricated audio duration.
   double? textProgress;
   int? textReplacementRevision;
@@ -50,7 +76,7 @@ class ListeningSession extends ChangeNotifier {
 
   /// Whether this session is narrating the given chapter right now.
   bool matches(String bookId, String chapterId) =>
-      playing && this.bookId == bookId && this.chapterId == chapterId;
+      playing && matchesBook(bookId) && matchesChapter(chapterId);
 
   /// Estimated chapter progress (0..1), from text position for system TTS or
   /// elapsed audio time for recordings. Reader page following is proportional.
@@ -133,7 +159,7 @@ class ListeningSession extends ChangeNotifier {
   /// 起播可能发生在阅读页打开之前（`onPlayStart` 的时机已经过去），
   /// 这条补上「打开书就跟随」。
   void followIfPlaying(String bookId) {
-    if (playing && this.bookId == bookId) setFollowArmed(true);
+    if (playing && matchesBook(bookId)) setFollowArmed(true);
   }
 
   /// 本章播完（自然播完或片尾跳过），阅读页收起底部按钮。
@@ -176,6 +202,8 @@ class ListeningSession extends ChangeNotifier {
     int? cueEndsAtMs,
     String? toneId,
     SubtitleTrack? subtitles,
+    String? novelBookId,
+    String? novelChapterId,
   }) {
     final wasPlaying = this.playing;
     final wasCompleted = completed;
@@ -184,6 +212,8 @@ class ListeningSession extends ChangeNotifier {
         this.bookId != bookId ||
         this.chapterId != chapterId ||
         this.playing != playing ||
+        this.novelBookId != novelBookId ||
+        this.novelChapterId != novelChapterId ||
         this.sentenceRange != sentenceRange ||
         this.cue != cue ||
         this.cueEndsAtMs != cueEndsAtMs ||
@@ -192,6 +222,8 @@ class ListeningSession extends ChangeNotifier {
     this.bookId = bookId;
     this.chapterId = chapterId;
     this.chapterTitle = chapterTitle;
+    this.novelBookId = novelBookId;
+    this.novelChapterId = novelChapterId;
     this.position = position;
     this.duration = duration;
     this.playing = playing;
@@ -227,6 +259,8 @@ class ListeningSession extends ChangeNotifier {
     bookId = null;
     chapterId = null;
     chapterTitle = null;
+    novelBookId = null;
+    novelChapterId = null;
     position = Duration.zero;
     duration = Duration.zero;
     playing = false;

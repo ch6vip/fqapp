@@ -191,14 +191,53 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         }
       }
       if (!mounted) return;
+      // 真人讲书「边听边读」：阅读页按原著 id 打开，会话按音频专辑 id 记账、
+      // 别名到原著。此时绝不能拿原著 id 去 acquire —— 播放器会关掉正在播的
+      // 音频会话，再按原著 id 新建一个不存在的会话。改成让现有会话跳到本页
+      // 锚点（章节由播放器映射回音频集），映射不到就保持原播放并提示。
+      final listening = ListeningSession.instance;
+      final aliased =
+          listening.bookId != null &&
+          listening.bookId != widget.bookId &&
+          listening.matchesBook(widget.bookId);
+      var reuseLive = false;
+      if (aliased) {
+        var jumped = true;
+        if (startMs != null) {
+          jumped = AudioPlaybackScope.jumpToChapter(
+            context,
+            chapter.itemId,
+            Duration(milliseconds: startMs),
+          );
+        } else if (paragraph != null) {
+          jumped = AudioPlaybackScope.jumpToParagraph(
+            context,
+            chapter.itemId,
+            paraIndex: paragraph.paraIndex,
+            ordinal: paragraph.ordinal,
+          );
+        }
+        if (!mounted) return;
+        if (!jumped) {
+          _showMessage('当前音频没有这一章，继续播放原进度');
+        }
+        if (!openPage) {
+          if (jumped) _showMessage('已开始播放，可从底部胶囊控制');
+          return;
+        }
+        // 打开听书页只是给现有会话挂一个视图。
+        reuseLive = true;
+      }
       if (!keepControls) _setState(() => _controlsVisible = false);
       final request = AudioPage(
-        bookId: widget.bookId,
+        // 复用别名会话时用音频书 id：页面只是会话的视图，按会话自己的 id
+        // 记账，评论/封面等读取才落对书。
+        bookId: reuseLive ? listening.bookId! : widget.bookId,
         title: widget.title,
         cover: widget.cover,
         chapters: widget.chapters,
         startIndex: chapterIndex,
-        resumeSession: false,
+        resumeSession: reuseLive,
         // 沿用正在听的那个音色：不传的话播放页只能挑默认音色，
         // 「从本页播放」就会把真人讲书换成内置 TTS。
         initialToneId: _listeningToneId(),
@@ -208,14 +247,16 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         // startParagraph hands the paragraph to the player when the body
         // has no spans of its own; the player resolves it from
         // /timepoints and only falls back to that Duration.zero.
-        startPosition: paragraphAnchored
+        startPosition: reuseLive
+            ? null
+            : paragraphAnchored
             ? Duration(milliseconds: startMs ?? 0)
             : null,
-        startParagraph: paragraph,
+        startParagraph: reuseLive ? null : paragraph,
         // 没有精确毫秒、也没有 `/timepoints` 可查时的兜底：告诉播放页这
         // 一段在正文里的位置比例，让它按时长折算。折算不精确，但它保证
         // 锚定请求不会落到章首——那正是用户看到「还是从章首播」的样子。
-        startFraction: paragraphAnchored && startMs == null
+        startFraction: !reuseLive && paragraphAnchored && startMs == null
             ? _readFraction(textId)
             : null,
         historyStore: widget.readerStore,
@@ -245,7 +286,8 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
   /// 本会话正在用的音色；不在听这本书时为 null（交给播放页按历史/默认决定）。
   String? _listeningToneId() {
     final session = ListeningSession.instance;
-    if (session.bookId != widget.bookId) return null;
+    // 别名书（真人讲书的原著）也要沿用会话里的真实音色。
+    if (!session.matchesBook(widget.bookId)) return null;
     final tone = session.toneId;
     return (tone == null || tone.isEmpty) ? null : tone;
   }

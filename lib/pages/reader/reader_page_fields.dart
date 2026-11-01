@@ -81,6 +81,9 @@ mixin _ReaderPageFields on State<ReaderPage> {
   /// 所以按章补取一次留着，翻回来不用再请求。
   final _cueTracks = <String, SubtitleTrack>{};
 
+  /// 正在补取的字幕请求，键 = 章节 id。双击连点时不重复发请求。
+  final _cueTrackRequests = <String, Future<SubtitleTrack>>{};
+
   double? _chapterSeekValue;
   int _loadGeneration = 0;
   // Legado-style reading time: deltas are settled at scroll stops, chapter
