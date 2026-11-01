@@ -227,9 +227,16 @@ void main() {
     await _size(tester, const Size(390, 800));
     await tester.pumpWidget(_app(_reader()));
     await tester.pumpAndSettle();
-    await _openMenu(tester);
-    await tester.tap(find.text('听书'));
+    await _openAppearance(tester);
+    final moreSettings = find.byKey(const ValueKey('reader-more-appearance'));
+    await tester.ensureVisible(moreSettings);
+    await tester.tap(moreSettings);
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('听书方式'));
+    await tester.tap(find.text('听书方式'));
+    // The entry's busy indicator runs until the source sheet closes.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     final frame = tester.widget<ReaderSettingsSheetFrame>(
       find.byType(ReaderSettingsSheetFrame),

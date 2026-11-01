@@ -12,6 +12,7 @@ import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_preferences.dart';
+import 'package:fqapp/widgets/reader/reader_listen_button.dart';
 import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
 
 import 'support/fakes.dart';
@@ -68,7 +69,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(ideaRequests, 0);
       await _openMenu(tester);
-      expect(find.text('听书'), findsOneWidget);
+      final listenEntry = find.byType(ReaderListenButton);
+      expect(listenEntry.hitTestable(), findsOneWidget);
+      final button = tester.widget<ReaderListenButton>(listenEntry);
+      expect(button.onTap, isNotNull);
+      expect(button.loading, isFalse);
+      expect(button.unavailable, isFalse);
       expect(find.byTooltip('缓存'), findsNothing);
       expect(find.byKey(const ValueKey('reader-action-listen')), findsNothing);
       expect(tester.takeException(), isNull);
