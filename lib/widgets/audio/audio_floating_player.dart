@@ -25,6 +25,8 @@ class AudioFloatingPlayer extends StatefulWidget {
     required this.onOpen,
     required this.onToggle,
     required this.onClose,
+    this.onVoice,
+    this.canChangeVoice = true,
     this.inReaderMenu = false,
     this.monochrome = false,
   });
@@ -45,6 +47,12 @@ class AudioFloatingPlayer extends StatefulWidget {
   final VoidCallback onOpen;
   final VoidCallback onToggle;
   final VoidCallback onClose;
+
+  /// 阅读菜单内的原地音色入口；桌面悬浮胶囊和系统朗读不传。
+  final VoidCallback? onVoice;
+
+  /// Keeps [onVoice] visible but disabled while a voice switch is in flight.
+  final bool canChangeVoice;
   final bool inReaderMenu;
   final bool monochrome;
 
@@ -173,11 +181,14 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
     required Widget child,
   }) => Semantics(
     key: key,
+    container: true,
     button: true,
     enabled: onTap != null,
     label: label,
+    onTap: onTap,
     child: GestureDetector(
       behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
       onTap: onTap,
       child: SizedBox(
         width: width,
@@ -190,6 +201,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
   Widget _capsule(BuildContext context, {double closeProgress = 0}) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final eink = _eink;
+    final voice = widget.inReaderMenu ? widget.onVoice : null;
     // Background and cover fade linearly across the 300ms dismissal; the
     // play/close icons finish their 200ms fade earlier.
     final fade = (1 - closeProgress).clamp(0.0, 1.0);
@@ -264,7 +276,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
             onTap: widget.onOpen,
             child: Opacity(opacity: fade, child: cover),
           ),
-          const SizedBox(width: 14),
+          SizedBox(width: voice == null ? 14 : 2),
           _button(
             key: const ValueKey('audio-floating-toggle'),
             label: widget.loading
@@ -315,7 +327,24 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          if (voice != null) ...[
+            const SizedBox(width: 2),
+            _button(
+              key: const ValueKey('audio-floating-voice'),
+              label: '切换音色',
+              width: 26,
+              onTap: widget.canChangeVoice ? voice : null,
+              child: Opacity(
+                opacity: controlFade * (widget.canChangeVoice ? 1 : 0.45),
+                child: CustomPaint(
+                  size: const Size.square(16),
+                  painter: MoreGlyph(ink),
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+          ] else
+            const SizedBox(width: 10),
           _button(
             key: const ValueKey('audio-floating-close'),
             label: '\u5173\u95ed\u64ad\u653e',
@@ -330,7 +359,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          SizedBox(width: voice == null ? 10 : 2),
         ],
       ),
     );
@@ -444,6 +473,9 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
             widthFactor: 1 - shrink * (_width - 74) / _width,
             child: RepaintBoundary(
               child: Padding(
+                // The four-control reader variant keeps the official 138dp
+                // content footprint instead of growing toward the right-hand
+                // f7s listen button.
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: _capsule(context, closeProgress: value),
               ),

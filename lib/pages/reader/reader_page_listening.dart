@@ -103,18 +103,7 @@ extension _ReaderPageListening on _ReaderPageState {
   (int, int)? _narrationLayoutRange(ReaderChapterLayout layout) {
     final session = ListeningSession.instance;
     if (!session.matches(widget.bookId, _chapter.itemId)) return null;
-    // 字幕轨是逐句、甚至逐子片的，优先用它：官方时间点（audioParaRange）是
-    // 段落级，一给就是整段一起亮，段内有的句子还覆盖不到（表现为整句不亮）。
-    // 系统朗读没有字幕轨，才往下面 TTS 那条走。
-    _ensureCueIndex(layout);
-    if (_cueIndex.isNotEmpty) {
-      final span = _cueIndex.spanAtPositionMs(
-        session.position.inMilliseconds + readAheadMs,
-        crossCueHoldMs: crossCueHoldMs,
-        currentRange: _narrationRange,
-      );
-      if (span != null) return (span.start, span.end);
-    }
+    // Use upstream text coordinates when available; subtitles are a fallback.
     final audioRange = session.audioParaRange;
     if (audioRange != null) {
       final translated = audioTimePointLayoutRange(
@@ -139,6 +128,15 @@ extension _ReaderPageListening on _ReaderPageState {
             (_replacement?.snapshotRevision ?? 0)) {
       final translated = narrationLayoutRange(layout, ttsRange);
       if (translated != null) return (translated.start, translated.end);
+    }
+    _ensureCueIndex(layout);
+    if (_cueIndex.isNotEmpty) {
+      final span = _cueIndex.spanAtPositionMs(
+        session.position.inMilliseconds + readAheadMs,
+        crossCueHoldMs: crossCueHoldMs,
+        currentRange: _narrationRange,
+      );
+      if (span != null) return (span.start, span.end);
     }
     // 逐句搜索兜底：句尾落到下一页这类跨页情形索引对不上，但正文里能找到。
     return _locateCue(layout, session.cue);
