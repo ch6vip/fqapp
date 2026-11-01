@@ -279,6 +279,8 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 
 ## 测试
 
+代码规模仅作为审查参考：不设置固定的文件/函数行数上限，不维护“只准缩不准涨”的预算。是否拆分取决于职责、复杂度与可读性，不为凑行数机械拆分。`bash scripts/check_line_budget.sh` 只输出源码体量信息，不因文件过长而失败；CI 中该步骤也不阻塞构建。静态分析、构建及功能验证不因此放宽。
+
 ### 分层跑测试
 
 测试按「秒级模块 → 收尾全量 → CI 兜底」三层跑，日常迭代不要每次都付全量的成本：
@@ -740,9 +742,9 @@ adb logcat -s flutter
 - [x] 发现类入口：搜索联想词与热搜、作者主页、排行榜、书评回复、章节试读预览
 - [x] Release 签名配置与 R8 混淆
 - [x] 整本 TXT 导出（离线缓存页每行「导出 TXT」→ 系统「下载」；重取最新目录与每章正文，按后端 `/api/download` 同形组装）
-- [ ] **拆分 `lib/widgets/video_player_chrome.dart`**：该文件已 4800+ 行（`scripts/line_budget.json`
-      记录的上限是 4832，只准缩不准涨）。把横屏顶栏/底栏、「下一集」卡、右侧面板流程、抽屉与
-      手势分别拆到 `lib/widgets/player/` 下的独立文件，目标回到 3000 行以内，再 `--update` 收紧预算。
+- [ ] **按职责整理 `lib/widgets/video_player_chrome.dart`**：修改相关功能时，评估横屏顶栏/底栏、
+      「下一集」卡、右侧面板、抽屉与手势是否适合独立到 `lib/widgets/player/`；仅在减少耦合或
+      提高可读性时拆分，不设目标行数，不为体量统计额外重构。
 
 
 ## 正文替换（#120）

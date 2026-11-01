@@ -10,6 +10,7 @@
 | [run_rust_host_tests.ps1](run_rust_host_tests.ps1) / [.sh](run_rust_host_tests.sh) | 构建宿主核心，运行真实 Dart → FRB → Rust 集成测试 | Rust、Flutter；使用本地 Mock 上游和临时运行目录 |
 | [verify_android_apk.py](verify_android_apk.py) | 检查 APK 签名、库、版本、资源及 16 KiB 对齐 | Python 3、Android Build-Tools；报告目录由参数指定 |
 | [check_native_alignment.cjs](check_native_alignment.cjs) | 检查一个或多个 ELF 库（ARM64/ARM）的 LOAD 段对齐 | Node.js；只读取指定 `.so` |
+| [check_line_budget.sh](check_line_budget.sh) | 仅供参考的源码行数报告，无固定上限，不判断通过/失败 | Bash、Python 3、Git；只读已跟踪源码，列出最大的 20 个文件；无预算更新操作，CI 不因此阻塞 |
 | [check_so_freshness.cjs](check_so_freshness.cjs) | 打版前检查 `libfqapi_core.so` 是否比 `rust/` 的最新改动新（判据 CRIT-011）；mtime 不是内容证明，`--expect-sha256` 可比对内容哈希 | Node.js、git；只读取文件时间与 git 历史；未接入 CI（CI 每次重编 Rust） |
 | [verify_audio_cenc.cjs](verify_audio_cenc.cjs) | 检查播放响应和加密 AAC 样本 | Node.js；会按响应中的地址有限下载 HTTPS 音频，属于在线诊断 |
 | [generate_app_icons.py](generate_app_icons.py) | 从品牌源图生成 Android 图标、Windows 图标及应用 Logo | Python 3、Pillow ≥ 9.1；修改已提交图片，普通构建直接使用现有图片 |
