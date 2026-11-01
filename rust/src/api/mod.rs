@@ -508,7 +508,7 @@ where
         Some(limit) => tokio::select! {
             biased;
             _ = token.cancelled() => RaceOutcome::Cancelled,
-            r = tokio::time::timeout(limit, &mut work) => match r {
+            r = crate::upstream::budget::within(limit, &mut work) => match r {
                 Ok(resp) => RaceOutcome::Done(resp),
                 Err(_) => RaceOutcome::TimedOut,
             },
