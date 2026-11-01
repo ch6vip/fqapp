@@ -125,10 +125,15 @@ abstract final class ReaderAudioBridge {
             }
             // 先等切换完成再关面板：先 pop 会让 showModalBottomSheet 的
             // future 提前返回 changed，_select 的失败就再也传不出去。
-            outcome = VoicePickerOutcome.changed;
+            final same = narrator
+                ? option.id == session._bookId
+                : option.id == session._toneId;
+            outcome = same
+                ? VoicePickerOutcome.dismissed
+                : VoicePickerOutcome.changed;
             if (session._switchingVersion) {
               outcome = VoicePickerOutcome.unavailable;
-            } else {
+            } else if (!same) {
               try {
                 await _select(session, option, narrator: narrator);
               } catch (_) {
