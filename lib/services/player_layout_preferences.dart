@@ -14,9 +14,9 @@ enum PlayerLayoutMode {
   ),
   auto(
     storageName: 'auto',
-    label: '横屏片源自动分屏',
+    label: '自动适配布局',
     shortLabel: '自动分屏',
-    description: '竖屏设备播放横屏片源时自动分屏，竖屏片源保持沉浸式',
+    description: '宽窗口竖版剧展开侧栏，横版剧优先画面；窄竖屏横版片源上下分栏',
   ),
   split(
     storageName: 'split',

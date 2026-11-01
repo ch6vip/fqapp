@@ -86,7 +86,7 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
       final text = _chapterCache[chapter.itemId] ?? loaded.text;
       final content = ChapterContent.fromCacheText(text);
       if (content.withoutLeadingTitle(chapter.title).isEmpty) {
-        throw ApiException('正文为空');
+        throw const ApiException('本章暂无可显示正文，可切换下一章或从目录选择其他章节');
       }
       final replacement = await _replaceContent(content, chapter.title);
       if (!mounted || generation != _loadGeneration) return;
@@ -176,7 +176,7 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
           : ChapterContent.fromPlainText(text, illustrationsChecked: true);
     }
     if (content.withoutLeadingTitle(chapter.title).isEmpty) {
-      throw const ApiException('正文为空');
+      throw const ApiException('本章暂无可显示正文，可切换下一章或从目录选择其他章节');
     }
     return content.toCacheText();
   }

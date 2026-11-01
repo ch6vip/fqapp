@@ -375,6 +375,18 @@ extension _ReaderPageBuild on _ReaderPageState {
             onPressed: () => _load(startAtEnd: _requestedStartAtEnd),
             child: const Text('重试'),
           ),
+          // 空版权页和暂不可用章节不应把整本书困在重试页。
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            children: [
+              if (_index > 0)
+                TextButton(onPressed: _prev, child: const Text('上一章')),
+              TextButton(onPressed: _showDirectory, child: const Text('目录')),
+              if (_index < widget.chapters.length - 1)
+                TextButton(onPressed: _next, child: const Text('下一章')),
+            ],
+          ),
         ],
       ),
     ),

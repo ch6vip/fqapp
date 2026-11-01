@@ -85,7 +85,7 @@ void main() {
 
       await tester.tap(find.text('播放页布局'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('横屏片源自动分屏'));
+      await tester.tap(find.text('自动适配布局'));
       await tester.pumpAndSettle();
 
       // 早退分支：偏好不变，也没有失败提示。
