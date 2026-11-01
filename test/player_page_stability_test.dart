@@ -307,7 +307,7 @@ void main() {
           if (chapter.itemId != '1') {
             return Future.value(_source(chapter.itemId));
           }
-          return attempts++ == 0
+          return attempts++ < 3
               ? Future.error(StateError('source unavailable'))
               : retry.future;
         },
@@ -318,7 +318,7 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
       await tester.pump(const Duration(milliseconds: 350));
       await _flush(tester);
-      expect(session.requests, ['1', '1']);
+      expect(session.requests, ['1', '1', '1', '1']);
       await _choose(tester, 3);
       retry.completeError(StateError('stale retry failed'));
       await _flush(tester);
@@ -487,7 +487,7 @@ void main() {
     await _mount(tester, session);
     expect(session.players.single.isPlaying, true);
     session.players.single.emitPosition(const Duration(seconds: 44));
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(seconds: 5));
     await _flush(tester);
     expect(store.entry?['position'], 44);
     expect(store.entry?['episodeId'], '1');

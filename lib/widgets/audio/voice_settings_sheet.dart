@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../home/home_design.dart';
+import '../home/home_sheet.dart';
 
 /// One selectable entry in the 声音设置 sheet.
 class VoiceOption {
@@ -34,93 +35,67 @@ class VoiceSettingsSheet extends StatelessWidget {
   final List<VoiceOption> online;
   final ValueChanged<VoiceOption> onSelect;
 
+  /// 顶部的灰色说明，只在特定入口（阅读页胶囊）传；听书页不传。
+  final String? notice;
+
   const VoiceSettingsSheet({
     super.key,
     required this.selectedId,
     this.narrators = const [],
     this.online = const [],
     required this.onSelect,
+    this.notice,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    // 弹层要自己和听书页分开：深色 / OLED 取 surface + 上缘发丝线，
-    // 纯黑画布上的 barrier 变暗不起作用。
-    return Material(
+    final noticeText = notice;
+    return HomeSheetFrame(
       key: const Key('voice_settings_surface'),
-      color: homeSheetColor(palette),
-      clipBehavior: Clip.antiAlias,
-      shape: homeSheetShape(palette, top: 16),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            SizedBox(
-              height: 60,
-              child: Stack(
-                children: [
-                  Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      '声音设置',
-                      style: TextStyle(
-                        color: palette.ink,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: IconButton(
-                      key: const Key('voice_settings_close'),
-                      tooltip: '关闭',
-                      onPressed: () => Navigator.maybePop(context),
-                      style: IconButton.styleFrom(foregroundColor: palette.ink),
-                      icon: const Icon(LucideIcons.check, size: 22),
-                    ),
-                  ),
-                ],
+      closeKey: const Key('voice_settings_close'),
+      title: '声音设置',
+      contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      children: [
+        // 只在阅读页胶囊进来时出现：把「切真人讲书会停止跟随」说在前面。
+        // 水平内边距交给 HomeSheetFrame 的 contentPadding（已是 16）。
+        if (noticeText != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 12),
+            child: Text(
+              noticeText,
+              key: const Key('voice_settings_notice'),
+              style: TextStyle(
+                color: palette.ink.withValues(alpha: 0.62),
+                fontSize: 12,
+                height: 1.45,
               ),
             ),
-            Divider(height: 1, color: palette.line.withValues(alpha: 0.6)),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (narrators.isNotEmpty) ...[
-                      _SectionTitle('真人讲书'),
-                      const SizedBox(height: 12),
-                      for (final voice in narrators) ...[
-                        _NarratorRow(
-                          voice: voice,
-                          selected: voice.id == selectedId,
-                          onTap: () => onSelect(voice),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-                      const SizedBox(height: 10),
-                    ],
-                    if (online.isNotEmpty) ...[
-                      _SectionTitle('智能朗读'),
-                      const SizedBox(height: 12),
-                      _VoiceGrid(
-                        voices: online,
-                        selectedId: selectedId,
-                        onSelect: onSelect,
-                      ),
-                      const SizedBox(height: 22),
-                    ],
-                  ],
-                ),
-              ),
+          ),
+        if (narrators.isNotEmpty) ...[
+          const _SectionTitle('真人讲书'),
+          const SizedBox(height: 12),
+          for (final voice in narrators) ...[
+            _NarratorRow(
+              voice: voice,
+              selected: voice.id == selectedId,
+              onTap: () => onSelect(voice),
             ),
+            const SizedBox(height: 10),
           ],
-        ),
-      ),
+          const SizedBox(height: 10),
+        ],
+        if (online.isNotEmpty) ...[
+          const _SectionTitle('智能朗读'),
+          const SizedBox(height: 12),
+          _VoiceGrid(
+            voices: online,
+            selectedId: selectedId,
+            onSelect: onSelect,
+          ),
+          const SizedBox(height: 22),
+        ],
+      ],
     );
   }
 }
@@ -325,8 +300,7 @@ class _VoiceCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (selected)
-                    Icon(Icons.check, size: 16, color: palette.accentText),
+                  if (selected) _selectedCheck(palette),
                 ],
               ),
             ),
@@ -361,4 +335,7 @@ class _VoiceCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _selectedCheck(HomePalette palette) =>
+      Icon(LucideIcons.check, size: 16, color: palette.accentText);
 }

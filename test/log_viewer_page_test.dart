@@ -8,7 +8,9 @@ import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_log.dart';
 import 'package:fqapp/services/book_txt_export.dart';
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/widgets/home/home_chip.dart';
 import 'package:fqapp/widgets/logs/log_entry_card.dart';
+import 'package:fqapp/widgets/settings/settings_widgets.dart';
 
 /// 日志页定向回归：筛选、导出范围、历史跟随和窄屏布局。
 ///
@@ -34,7 +36,7 @@ void main() {
 
     await tester.tap(find.byTooltip('筛选日志'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, '错误'));
+    await tester.tap(find.widgetWithText(HomeChip, '错误'));
     await tester.tap(find.text('应用筛选'));
     await tester.pumpAndSettle();
 
@@ -100,7 +102,7 @@ void main() {
     // 应用来源为空时先给应用日志的空态。
     expect(find.text('暂无日志'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '核心'));
+    await tester.tap(find.widgetWithText(HomeChip, '核心'));
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -111,8 +113,8 @@ void main() {
     // Rust 日志由核心追加写入，应用内不提供清空。
     await tester.tap(find.byTooltip('日志操作'));
     await tester.pumpAndSettle();
-    final clearTile = tester.widget<ListTile>(
-      find.widgetWithText(ListTile, '清空当前视图'),
+    final clearTile = tester.widget<SettingsRow>(
+      find.widgetWithText(SettingsRow, '清空当前视图'),
     );
     expect(clearTile.enabled, isFalse);
 
@@ -126,7 +128,7 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: LogViewerPage()));
     await tester.pump();
-    await tester.tap(find.widgetWithText(ChoiceChip, '核心'));
+    await tester.tap(find.widgetWithText(HomeChip, '核心'));
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -169,7 +171,7 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: LogViewerPage()));
     await tester.pump();
-    await tester.tap(find.widgetWithText(ChoiceChip, '核心'));
+    await tester.tap(find.widgetWithText(HomeChip, '核心'));
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -353,14 +355,14 @@ void main() {
     RustLogSource.reader = () async => null;
     addTearDown(() => RustLogSource.reader = null);
     await tester.pumpWidget(const MaterialApp(home: LogViewerPage()));
-    await tester.tap(find.widgetWithText(ChoiceChip, '核心'));
+    await tester.tap(find.widgetWithText(HomeChip, '核心'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilterChip, '播放诊断'));
+    await tester.tap(find.widgetWithText(HomeChip, '播放诊断'));
     await tester.pumpAndSettle();
     expect(find.text('播放阶段耗时'), findsOneWidget);
     expect(find.text('body mentions player-load'), findsNothing);
     expect(
-      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '应用')).selected,
+      tester.widget<HomeChip>(find.widgetWithText(HomeChip, '应用')).selected,
       isTrue,
     );
   });
@@ -370,7 +372,7 @@ void main() {
     RustLogSource.reader = () async => text;
     addTearDown(() => RustLogSource.reader = null);
     await tester.pumpWidget(const MaterialApp(home: LogViewerPage()));
-    await tester.tap(find.widgetWithText(ChoiceChip, '核心'));
+    await tester.tap(find.widgetWithText(HomeChip, '核心'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(LogEntryCard));
     await tester.pump();

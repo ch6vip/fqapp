@@ -406,15 +406,14 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
   ///
   /// 记录里的路径可以被改箱内容的人指向任意位置，直接 `File(...).delete()`
   /// 就成了任意文件删除（短剧侧 CRIT 同源问题）。路径不在 `offline-audio`
-  /// 根内时保留文件、只删记录。
+  /// 根内时保留文件、只删记录。两边都解析成真实路径再比：`absolute` 不折叠
+  /// `..`，`<root>/../x` 会被误判为根内。
   Future<void> _deleteOwnedFile(String filePath) async {
     try {
-      final root = await directory();
-      final rootPath = root.absolute.path;
+      final root = await (await directory()).resolveSymbolicLinks();
       final file = File(filePath);
-      final absolute = file.absolute.path;
       final resolved = await file.resolveSymbolicLinks();
-      if (!_within(rootPath, absolute) && !_within(rootPath, resolved)) return;
+      if (!_within(root, resolved)) return;
       await file.delete();
     } on FileSystemException catch (_) {
       // 文件已不存在是删除的常态结果。

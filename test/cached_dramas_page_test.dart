@@ -90,6 +90,11 @@ void main() {
     expect(find.byKey(const ValueKey('drama-episode-ep1')), findsOneWidget);
   });
 
+  testWidgets('缓存页标题与设置入口使用同一名称', (tester) async {
+    await pumpPage(tester);
+    expect(find.text('短剧离线缓存'), findsOneWidget);
+  });
+
   testWidgets('空态文案可见', (tester) async {
     await pumpPage(tester);
     expect(find.textContaining('暂无离线缓存'), findsOneWidget);

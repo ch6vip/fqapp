@@ -16,14 +16,18 @@ void main() {
     required int startParaOff,
     required int endPara,
     required int endParaOff,
+    int? endTime,
     int textItemId = 7257740371885556000,
+    int? novelItemId,
   }) => {
     'start_time': startTime,
+    'end_time': ?endTime,
     'start_para': startPara,
     'start_para_off': startParaOff,
     'end_para': endPara,
     'end_para_off': endParaOff,
     'item_id': textItemId,
+    'novel_item_id': ?novelItemId,
     'item_title': '第1章 大巴',
     'positionV2': {
       'start_container_index': startPara,
@@ -55,6 +59,7 @@ void main() {
           points: [
             point(
               startTime: 0,
+              endTime: 25110,
               startPara: 0,
               startParaOff: 0,
               endPara: 0,
@@ -62,6 +67,7 @@ void main() {
             ),
             point(
               startTime: 25110,
+              endTime: 40110,
               startPara: 1,
               startParaOff: 0,
               endPara: 1,
@@ -74,6 +80,7 @@ void main() {
 
       expect(track.points, hasLength(2));
       expect(track.points.first.startTime, 0);
+      expect(track.points.first.endTime, 25110);
       expect(track.points.first.endParaOff, 27);
       expect(track.points.last.startTime, 25110);
     });
@@ -242,6 +249,78 @@ void main() {
         'end_para_off': 4,
       });
       expect(bad, isNull);
+    });
+  });
+
+  group('AudioSyncPoint timeline fields', () {
+    test('reads end_time, item_title and novel_item_id', () {
+      final point = AudioSyncPoint.fromPayload({
+        'start_time': 0,
+        'end_time': 6000,
+        'start_para': 0,
+        'start_para_off': 0,
+        'end_para': 0,
+        'end_para_off': 6,
+        // The official model spells the novel id `novel_item_id`; the measured
+        // live feed used `item_id`. Both must be accepted, official first.
+        'item_id': 7257740371885556000,
+        'novel_item_id': 7257740371885557000,
+        'item_title': '第1章 大巴',
+      })!;
+      expect(point.endTime, 6000);
+      expect(point.itemTitle, '第1章 大巴');
+      expect(point.novelItemId, '7257740371885557000');
+    });
+
+    test('a point without end_time leaves the end unknown', () {
+      final point = AudioSyncPoint.fromPayload({
+        'start_time': 0,
+        'start_para': 0,
+        'start_para_off': 0,
+        'end_para': 0,
+        'end_para_off': 6,
+      })!;
+      expect(point.endTime, isNull);
+    });
+
+    test('the track exposes the novel chapter id and its title', () {
+      final track = AudioTimeTrack.fromPayload(
+        envelope(
+          points: [
+            point(
+              startTime: 0,
+              endTime: 6000,
+              startPara: 0,
+              startParaOff: 0,
+              endPara: 0,
+              endParaOff: 6,
+            ),
+          ],
+        ),
+      );
+      // 这份应答只在点上带 `item_id`；它和 item_ids 的正文 id 相同，直接当
+      // 原著章节 id 用，S7 才有章节可跳。
+      expect(track.novelItemId, '7257740371885556000');
+      expect(track.novelChapterTitle, '第1章 大巴');
+    });
+
+    test('a point-level novel_item_id wins over the envelope id', () {
+      final track = AudioTimeTrack.fromPayload(
+        envelope(
+          points: [
+            point(
+              startTime: 0,
+              startPara: 0,
+              startParaOff: 0,
+              endPara: 0,
+              endParaOff: 6,
+              novelItemId: 7257740371885557000,
+            ),
+          ],
+        ),
+      );
+      expect(track.textItemId, '7257740371885556000');
+      expect(track.novelItemId, '7257740371885557000');
     });
   });
 }

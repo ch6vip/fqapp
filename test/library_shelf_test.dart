@@ -28,7 +28,7 @@ void main() {
   late Directory directory;
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    setSingleChapterPrefs({});
     directory = await Directory.systemTemp.createTemp('fqapp-shelf-test-');
     Hive.init(directory.path);
     await LibraryStore.instance.init();
@@ -227,7 +227,7 @@ void main() {
     });
 
     testWidgets('旧的列数偏好迁移成宫格并回写', (tester) async {
-      SharedPreferences.setMockInitialValues({'bookshelf_layout': 4});
+      setSingleChapterPrefs({'bookshelf_layout': 4});
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
       });
@@ -241,7 +241,7 @@ void main() {
     });
 
     testWidgets('无效的旧偏好退回宫格且不写坏偏好', (tester) async {
-      SharedPreferences.setMockInitialValues({'bookshelf_layout': 'compact'});
+      setSingleChapterPrefs({'bookshelf_layout': 'compact'});
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
       });
@@ -256,7 +256,7 @@ void main() {
     });
 
     testWidgets('已保存的列表偏好直接生效', (tester) async {
-      SharedPreferences.setMockInitialValues({'bookshelf_layout': 2});
+      setSingleChapterPrefs({'bookshelf_layout': 2});
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
       });
@@ -343,6 +343,31 @@ void main() {
       expect(ShelfStore.instance.records().map((record) => record.item.id), [
         'a',
       ]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('移出书架的撤销条到时自动消失（issue #211）', (tester) async {
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('a', title: '甲书'));
+      });
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+
+      await tester.longPress(find.byKey(const ValueKey('shelf-grid-book:a')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('shelf-remove-action')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('shelf-undo-button')), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shelf-undo-button')), findsNothing);
+      expect(find.textContaining('已移出'), findsNothing);
+      expect(ShelfStore.instance.records(), isEmpty);
       expect(tester.takeException(), isNull);
     });
 
@@ -717,7 +742,7 @@ void main() {
     for (final entry in ['首页', '书架']) {
       testWidgets('$entry 缓存续读不经过详情或网络探测，并恢复原章节位置', (tester) async {
         addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-        SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+        setSingleChapterPrefs({'reader_page_mode': 'scroll'});
         BookOpenPreferences.instance.resetForTest();
         final saved = <String, dynamic>{
           'id': 'recent-book',
@@ -1005,9 +1030,9 @@ void main() {
           () => Future<void>.delayed(const Duration(milliseconds: 10)),
         );
         await tester.pump();
-        if (find.text('离线缓存').evaluate().isNotEmpty) break;
+        if (find.text('小说离线缓存').evaluate().isNotEmpty) break;
       }
-      expect(find.text('离线缓存'), findsWidgets);
+      expect(find.text('小说离线缓存'), findsWidgets);
       await tester.pumpWidget(const SizedBox.shrink());
     });
   });

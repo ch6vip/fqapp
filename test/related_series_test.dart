@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/related_series.dart';
 import 'package:fqapp/models/series_detail.dart';
+import 'package:fqapp/widgets/home/home_sheet.dart';
 import 'package:fqapp/widgets/player/related_series_sheet.dart';
 
 void main() {
@@ -123,6 +125,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+
+    // 独立弹层统一走 HomeSheetFrame：标题、Lucide 关闭键都由 frame 提供。
+    expect(find.byType(HomeSheetFrame), findsOneWidget);
+    expect(find.text('同系列剧'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.x), findsOneWidget);
 
     final first = tester.getTopLeft(
       find.byKey(const ValueKey('related-series-2')),

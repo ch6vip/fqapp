@@ -21,7 +21,9 @@ void main() {
     keys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
     store = HiveDramaDownloadStore(
       keys: keys,
-      directoryResolver: () async => videoDir,
+      // directoryResolver 返回应用私有根，store 自己在下面再拼
+      // `offline-video`；videoDir 就是拼出来的那个目录。
+      directoryResolver: () async => temp,
     );
   });
 
@@ -41,12 +43,14 @@ void main() {
     int index = 0,
     int bytes = 1024,
     bool withFile = true,
+    String? filePath,
     int? cachedAt,
     bool auto = false,
   }) {
     final path =
+        filePath ??
         '${videoDir.path}${Platform.pathSeparator}$itemId.mp4';
-    if (withFile) {
+    if (withFile && filePath == null) {
       File(path).writeAsBytesSync(List.filled(bytes, 1));
     }
     return CachedEpisode(
@@ -177,6 +181,41 @@ void main() {
     expect(await store.dramas(), isEmpty);
     expect(await store.isDownloaded('ep1'), isFalse);
     expect(await store.isDownloaded('ep2'), isFalse);
+  });
+
+  test('removeEpisode 只删离线视频根目录内的文件', () async {
+    // 记录被改成指向根外：只删记录，绝不删那个文件（否则就是任意文件删除）。
+    final outside = File('${temp.path}${Platform.pathSeparator}secret.txt')
+      ..writeAsStringSync('keep me');
+    await store.saveEpisode(episode(itemId: 'evil', filePath: outside.path));
+    await store.removeEpisode('evil');
+    expect(outside.existsSync(), isTrue);
+    expect(await store.isDownloaded('evil'), isFalse);
+  });
+
+  test('removeEpisode 不被根内路径里的 .. 绕过', () async {
+    final sep = Platform.pathSeparator;
+    final outside = File('${temp.path}${sep}secret.txt')
+      ..writeAsStringSync('keep me');
+    final sneaky = '${videoDir.path}$sep..${sep}secret.txt';
+    await store.saveEpisode(episode(itemId: 'evil', filePath: sneaky));
+    await store.removeEpisode('evil');
+    expect(outside.existsSync(), isTrue);
+    expect(await store.isDownloaded('evil'), isFalse);
+  });
+
+  test('removeDrama 只删根内文件，根外路径保留', () async {
+    final inside = episode(itemId: 'ep1');
+    final outside = File('${temp.path}${Platform.pathSeparator}secret.txt')
+      ..writeAsStringSync('keep me');
+    await store.saveEpisode(inside);
+    await store.saveEpisode(
+      episode(itemId: 'ep2', index: 1, filePath: outside.path),
+    );
+    await store.removeDrama('series1');
+    expect(File(inside.filePath).existsSync(), isFalse);
+    expect(outside.existsSync(), isTrue);
+    expect(await store.dramas(), isEmpty);
   });
 
   test('删掉某剧最后一集时一并清掉目录，不留孤儿', () async {

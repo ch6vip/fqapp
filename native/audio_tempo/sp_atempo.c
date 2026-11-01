@@ -864,7 +864,7 @@ int sp_atempo_flush(struct sp_atempo *atempo,
     int rc = yae_flush(atempo, &dst_ref, dst_end);
 
     *dst_written = (size_t)(dst_ref - (uint8_t *)dst);
-    return rc == 0 ? 0 : 0; /* EAGAIN 时调用方按 dst_written 继续拉取 */
+    return rc == -3 ? 0 : rc; /* -3=EAGAIN，继续拉取；其它负值原样传出 */
 }
 
 int sp_atempo_window(const struct sp_atempo *atempo)

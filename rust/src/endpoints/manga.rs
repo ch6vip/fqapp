@@ -26,6 +26,8 @@ use crate::endpoints::util::{default_val, go_query_escape, user_agent_headers};
 use crate::endpoints::{Ctx, Params, Server};
 use crate::error::{ApiError, ApiResult};
 
+mod download;
+
 const CONTENT_FULL_URL: &str = "https://reading.snssdk.com/reading/reader/full/v/";
 const CONTENT_BATCH_URL: &str =
     "https://api5-normal-sinfonlineb.fqnovel.com/reading/reader/batch_full/v";
@@ -355,33 +357,13 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
         return (Vec::new(), String::new());
     }
 
+    let downloaded = download::download_pictures(ctx, &key_bytes, &pic_infos).await;
+
     let mut urls: Vec<String> = Vec::new();
     let mut html = String::new();
     let mut last_written: Option<std::path::PathBuf> = None;
-    for (i, pic) in pic_infos.iter().enumerate() {
-        if pic.pic_url.is_empty() {
-            continue;
-        }
-        let enc = match download_image(ctx, &pic.pic_url).await {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        if enc.len() <= 100 {
-            continue;
-        }
-        let dec = match decrypt_manga_image(&enc, &key_bytes) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        let format = detect_image_format(&dec, &pic.pic_url);
-        // Note: content-addressed manga files prevent chapter URL basename
-        // collisions; see .agents/notes/implemented/bug-fix/2026-09-28-manga-image-collisions.md.
-        let name = image_file_name(&dec, &format);
-        let fp = std::path::Path::new(&ctx.src_dir).join(&name);
-        if write_image_once(&fp, &dec).await.is_err() {
-            continue;
-        }
-        last_written = Some(fp.clone());
+    for (i, name) in downloaded.into_iter().flatten() {
+        last_written = Some(std::path::Path::new(&ctx.src_dir).join(&name));
         let served = format!("/src/{name}");
         urls.push(served.clone());
         if show_html {
@@ -397,9 +379,11 @@ async fn parse_and_download(ctx: &Ctx, content: &str, show_html: bool) -> (Vec<S
     // P1-6: manga images share `src_dir` with the video cache, so run the
     // same eviction pass — otherwise plaintext images accumulate with no
     // budget and no eviction. The newest image is kept; older files go
-    // first. Images are re-downloadable, so eviction is safe.
+    // first. Images are re-downloadable, so eviction is safe. The pass scans
+    // the whole directory, so it is scheduled in the background rather than
+    // run on the request path.
     if let Some(last) = last_written {
-        crate::endpoints::video::prune_src_cache(&ctx.src_dir, &last);
+        crate::endpoints::video::schedule_prune_src_cache(&ctx.src_dir, last);
     }
     (urls, html)
 }

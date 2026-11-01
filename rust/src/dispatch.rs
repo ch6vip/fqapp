@@ -147,6 +147,24 @@ async fn read_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, St
     Ok(out)
 }
 
+/// Routes whose handler reads the POST body rather than URL/query arguments.
+const ACCOUNT_HISTORY_PATH: &str = "/api/v1/account/fanqie/history";
+const ACCOUNT_LIBRARY_PATH: &str = "/api/v1/account/fanqie/library";
+
+/// Largest body the account routes accept. Both handlers reject anything
+/// above this, so the loopback adapter refuses it before buffering.
+pub const ACCOUNT_REQUEST_BODY_LIMIT: usize = 16 * 1024;
+
+/// Routes that read the request body. The loopback adapter retains and
+/// forwards the body for exactly these paths; every other route ignores
+/// bodies, so draining them is enough.
+pub fn request_body_limit(path: &str) -> Option<usize> {
+    match path {
+        ACCOUNT_HISTORY_PATH | ACCOUNT_LIBRARY_PATH => Some(ACCOUNT_REQUEST_BODY_LIMIT),
+        _ => None,
+    }
+}
+
 /// APIs that submit user actions under the device identity (comments add /
 /// digg / reply; the danmaku add route reuses `playlet_comment_add`). The
 /// loopback adapter is callable by other local HTTP clients, so a GET must
@@ -182,10 +200,10 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
 
     // Account credentials belong in a bounded POST body, never in route/query
     // parameters, endpoint error logs, or the anonymous rotating device pool.
-    if path == "/api/v1/account/fanqie/history" {
+    if path == ACCOUNT_HISTORY_PATH {
         return crate::endpoints::account_history::handle(ctx, req).await;
     }
-    if path == "/api/v1/account/fanqie/library" {
+    if path == ACCOUNT_LIBRARY_PATH {
         return crate::endpoints::account_library::handle(ctx, req).await;
     }
 

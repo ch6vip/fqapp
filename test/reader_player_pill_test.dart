@@ -56,9 +56,7 @@ void main() {
     expect(size.width, lessThan(130));
   });
 
-  testWidgets('weak mode keeps the label without a capsule background', (
-    tester,
-  ) async {
+  testWidgets('weak mode also gets a capsule background', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -75,11 +73,12 @@ void main() {
     );
     expect(size.height, 32);
     expect(size.width, greaterThan(100));
+    // 页脚位以前是无底 + 半透明深字，在正文上像「没有背景」；现在统一实底。
     expect(
       tester
           .widget<Material>(find.byKey(const ValueKey('reader-player-text')))
           .color,
-      Colors.transparent,
+      ReaderThemePreset.light.playerBackground,
     );
   });
 
@@ -241,7 +240,8 @@ void main() {
       visible = false;
       viewportChanges.value++;
       await tester.pump();
-      await tester.pump();
+      // 高亮离屏要稳定 300ms 才切同步胶囊（翻页瞬间的短暂离屏不算）。
+      await tester.pump(const Duration(milliseconds: 350));
       expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('reader-player-indicator')),
@@ -332,7 +332,7 @@ void main() {
   });
 
   for (final preset in ReaderThemePreset.values) {
-    testWidgets('${preset.name} supplies strong and weak theme colors', (
+    testWidgets('${preset.name} supplies capsule colors for both styles', (
       tester,
     ) async {
       for (final weak in [false, true]) {
@@ -350,9 +350,10 @@ void main() {
             ),
           ),
         );
+        // 加了实底后弱态也用实色字：半透明深字在深底上读不出来。
         expect(
           tester.widget<Text>(find.text('暂停播放')).style!.color,
-          weak ? preset.playerWeakText : preset.playerText,
+          preset.playerText,
         );
         expect(
           tester
@@ -364,7 +365,7 @@ void main() {
                 ),
               )
               .color,
-          weak ? Colors.transparent : preset.playerBackground,
+          preset.playerBackground,
         );
       }
     });

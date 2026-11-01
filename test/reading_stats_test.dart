@@ -63,6 +63,21 @@ void main() {
     expect(stats.rank.last.minutes, flatBookMinutes);
   });
 
+  test('rank resolves read time through one history index, first row wins', () {
+    final stats = ReadingStats.from(
+      history: [
+        {'id': 'x', 'bookId': 'book-1', 'title': '第一次', 'time': 1},
+        {'id': 'y', 'bookId': 'book-1', 'title': '第二次', 'time': 2},
+        {'id': 'other', 'bookId': 'book-2', 'title': '另一本', 'time': 3},
+      ],
+      readTime: {
+        'book-1': {'2026-3-4': 120},
+        'book-2': {'2026-3-4': 60},
+      },
+    );
+    expect(stats.rank.map((item) => item.title), ['第一次', '另一本']);
+  });
+
   test('read time without history keeps its content id and kind', () {
     final stats = ReadingStats.from(
       history: const [],

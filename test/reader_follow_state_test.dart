@@ -136,7 +136,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('官方时间点译得出来时仍是唯一来源', (tester) async {
+  testWidgets('字幕轨逐句优先，官方时间点只在没有字幕时兜底', (tester) async {
     await _mount(tester);
     final track = _track();
     _seed(
@@ -162,9 +162,9 @@ void main() {
     ).spanAtPositionMs(36000)!;
     expect(official.start, isNot(fallback.start), reason: '两套来源必须指向不同处');
     expect(_pager(tester).narrationRange, (
-      official.start,
-      official.end,
-    ), reason: '官方区间译得出来时不能被字幕兜底顶掉');
+      fallback.start,
+      fallback.end,
+    ), reason: '有字幕轨时逐句点亮：官方时间点是段落级，整段一起亮太粗，段内句子还会漏');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -278,6 +278,76 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('后台起播的会话在回到前台后开始跟随', (tester) async {
+    await _mount(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    _seed(positionMs: 36000, track: _track(), cue: '长句');
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(_pager(tester).pageIndex, 0, reason: '后台不该轮询翻页');
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      _pager(tester).pageIndex,
+      greaterThan(0),
+      reason: '回到前台后应重新启动轮询并跟上朗读处',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('跟随滚动模式按固定周期落盘进度', (tester) async {
+    SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+    final store = ControlledReaderStore();
+    await _mount(tester, store: store);
+    // 起播：默认跟随，轮询把页面挪到朗读处。
+    _seed(positionMs: 0, track: _track(), cue: '长句');
+    await tester.pump(const Duration(milliseconds: 150));
+    // 等一次「像是滚动停下」的 500ms 防抖有机会落完，再取基线。
+    await tester.pump(const Duration(milliseconds: 700));
+    final before = store.writes.length;
+
+    // 播放位置持续推进：页面每 100ms 被程序化跳转一次，滚动防抖被不断重置。
+    for (var i = 1; i <= 12; i++) {
+      _seed(positionMs: i * 3000, track: _track(), cue: '长句');
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+    expect(
+      store.writes.length,
+      greaterThan(before),
+      reason: '跟随期间滚动防抖永远等不到，必须按固定周期补存',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('自然播放跨到下一句时先多留上一句，越界才切', (tester) async {
+    await _mount(tester);
+    final track = SubtitleTrack([
+      SubtitleCue(startMs: 0, text: _firstCue),
+      SubtitleCue(startMs: 5000, text: _secondCue),
+    ]);
+    // 直接摆到上一句末尾：这一句 20 字会拆片，句尾亮的是**最后一片**。
+    // 首次 update 是结构性变化（bookId 从 null 变成 b1），通知不会被 1s 节流吞掉。
+    _seed(positionMs: 4600, track: track, cue: _firstCue);
+    await tester.pump(const Duration(milliseconds: 150));
+    final tail = _pager(tester).narrationRange;
+    expect(tail, isNotNull, reason: '上一句尾部应当亮着');
+
+    // 位置进到下一句起点（含 70ms 提前量），仍在 200ms 保持窗内：留在上一句。
+    _seed(positionMs: 5000, track: track, cue: _secondCue);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      _pager(tester).narrationRange,
+      tail,
+      reason: '保持窗内不能提前切走，否则句尾最后几个字只亮一瞬',
+    );
+
+    // 「越过窗口之后会切走」由 cue_index_test 的跨 cue 保持用例按纯索引验证
+    // （那里不受 1s 通知节流影响），这里只钉「保持窗内不能提前切」。
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 final _surface = find.byKey(const ValueKey('reader-page-surface'));
@@ -296,6 +366,10 @@ const _sentence = '清晨的风从窗边吹来，带着山间草木的清香。�
 String _longParagraph() => List.generate(40, (_) => _sentence).join();
 
 const _lastParagraph = '最后一段很短。';
+
+/// 自然播放跨 cue 保持用例用的两句：第一句 21 字（会拆片），第二句紧随其后。
+const _firstCue = '清晨的风从窗边吹来，带着山间草木的清香。';
+const _secondCue = '林舟推开木窗，看见远处的云正慢慢越过山脊。';
 
 SubtitleTrack _track() => SubtitleTrack([
   SubtitleCue(startMs: 0, text: _longParagraph().substring(0, 1200)),

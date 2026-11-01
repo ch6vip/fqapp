@@ -5,7 +5,8 @@ use futures::future::BoxFuture;
 use serde_json::Value;
 
 use crate::endpoints::base::{
-    dragon_read_headers, Upstream, UpstreamMode, UpstreamRequestSpec, HOST_FQNOVEL,
+    dragon_read_headers, reading724_params, Upstream, UpstreamMode, UpstreamRequestSpec,
+    HOST_FQNOVEL,
 };
 use crate::endpoints::util::default_val;
 use crate::endpoints::{Ctx, Params, Server};
@@ -15,43 +16,6 @@ const AUTHOR_INFO_PATH: &str = "/reading/user/basic_info/get/v";
 const AUTHOR_BOOKSHELF_PATH: &str = "/reading/ugc/person/bookshelf/v";
 const RANK_PATH: &str = "/reading/bookapi/bookmall/cell/change/v1/";
 const TONES_PATH: &str = "/reading/bookapi/audio/toneinfo/";
-
-/// The shared reading724Params() query bag from content_util.go.
-fn reading724_params() -> Vec<(String, String)> {
-    vec![
-        ("iid".to_string(), "{install_id}".to_string()),
-        ("device_id".to_string(), "{device_id}".to_string()),
-        ("ac".to_string(), "wifi".to_string()),
-        ("channel".to_string(), "xiaomi_1967_64".to_string()),
-        ("aid".to_string(), "1967".to_string()),
-        ("app_name".to_string(), "novelapp".to_string()),
-        ("version_code".to_string(), "72432".to_string()),
-        ("version_name".to_string(), "7.2.4.32".to_string()),
-        ("device_platform".to_string(), "android".to_string()),
-        ("os".to_string(), "android".to_string()),
-        ("ssmix".to_string(), "a".to_string()),
-        ("device_type".to_string(), "25053RT47C".to_string()),
-        ("device_brand".to_string(), "Redmi".to_string()),
-        ("language".to_string(), "zh".to_string()),
-        ("os_api".to_string(), "36".to_string()),
-        ("os_version".to_string(), "16".to_string()),
-        ("manifest_version_code".to_string(), "72432".to_string()),
-        ("resolution".to_string(), "1280*2620".to_string()),
-        ("dpi".to_string(), "520".to_string()),
-        ("update_version_code".to_string(), "72432".to_string()),
-        ("host_abi".to_string(), "arm64-v8a".to_string()),
-        ("dragon_device_type".to_string(), "phone".to_string()),
-        ("pv_player".to_string(), "72432".to_string()),
-        ("compliance_status".to_string(), "0".to_string()),
-        ("need_personal_recommend".to_string(), "1".to_string()),
-        ("player_so_load".to_string(), "1".to_string()),
-        ("is_android_pad_screen".to_string(), "0".to_string()),
-        (
-            "rom_version".to_string(),
-            "miui_V816_OS3.0.9.0.WOLCNXM".to_string(),
-        ),
-    ]
-}
 
 /// Go's url.Values.Set: replace every existing value for the key.
 fn set_param(params: &mut Vec<(String, String)>, key: &str, value: &str) {

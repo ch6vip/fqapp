@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/book_comment.dart';
@@ -28,7 +27,7 @@ const _nextTrack = SubtitleTrack([SubtitleCue(startMs: 0, text: '下一章同步
 
 void main() {
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    setSingleChapterPrefs({});
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
@@ -397,7 +396,7 @@ Future<void> _mountReader(
   bool longFirstChapter = false,
   List<String>? comments,
 }) async {
-  SharedPreferences.setMockInitialValues({
+  setSingleChapterPrefs({
     'reader_page_mode': scroll ? 'scroll' : 'paged',
     'reader_auto_turn_seconds': 3,
   });

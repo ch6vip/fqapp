@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
+import 'chapter_cache_bytes.dart';
 import 'encrypted_hive.dart';
 import 'secure_key_provider.dart';
 
@@ -24,6 +25,7 @@ abstract interface class ChapterCache {
   });
   Future<void> saveBook(CachedBook book);
   Future<Set<String>> cachedChapterIds(String bookId);
+
   /// [bookId] 的缓存目录，只在它确实还有缓存章节时返回；目录本身被清掉时用
   /// 缓存章节重建。null 表示这本书没有可离线阅读的正文。
   ///
@@ -155,8 +157,14 @@ class ChapterCacheStore implements ChapterCache {
   Future<Box<dynamic>>? _opening;
   Future<void> _writes = Future<void>.value();
   final Map<String, int> _accessTimes = {};
-  final Expando<int> _byteCounts = Expando<int>();
+  final _byteCounter = ChapterCacheByteCounter();
   int _lastAccessTime = 0;
+
+  /// Number of texts encoded to measure their size, so a regression test can
+  /// assert that a reopened cache reuses the persisted measurement instead of
+  /// re-encoding every chapter.
+  @visibleForTesting
+  int get textEncodes => _byteCounter.encodes;
 
   Future<Box<dynamic>> _box() async {
     // P1-5: decrypted chapter text stays in the encrypted box (offline
@@ -198,13 +206,7 @@ class ChapterCacheStore implements ChapterCache {
       value['text'] is String &&
       (value['text'] as String).trim().isNotEmpty;
 
-  int _bytes(Map entry) {
-    // Re-measure even when a stored 'bytes' field claims otherwise: damaged
-    // or hostile metadata must not under-report its way past the capacity
-    // caps (chapter_cache_store_test locks this). The post-restart trim cost
-    // of re-encoding is the deliberate price of that validation.
-    return _byteCounts[entry] ??= utf8.encode(entry['text'] as String).length;
-  }
+  int _bytes(Map entry) => _byteCounter.bytesOf(entry);
 
   int _accessedAt(Map entry) {
     final value = entry['accessedAt'];

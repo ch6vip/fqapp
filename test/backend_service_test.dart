@@ -95,6 +95,37 @@ void main() {
     expect(transport.healthChecks, greaterThan(0));
   });
 
+  test('a hung core initialization fails by the startup timeout and retries',
+      () async {
+    final transport = _FakeRustTransport(blockInit: true);
+    final backend = createBackend(
+      transport: transport,
+      timeout: const Duration(milliseconds: 200),
+    );
+
+    // rustTransport.start() itself has no deadline of its own: a native init
+    // that never returns must still fail the launch instead of spinning.
+    await expectLater(
+      backend.start().timeout(const Duration(seconds: 3)),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message.toString(),
+          'message',
+          contains('timeout'),
+        ),
+      ),
+    );
+    expect(backend.isRunning, isFalse);
+    expect(transport.initCalls, 1);
+
+    // The timed-out attempt must not wedge startup: the next one can succeed.
+    transport.allowInit.complete();
+    await backend.start();
+    expect(backend.isRunning, isTrue);
+    expect(transport.initCalls, 2);
+    await backend.stop();
+  });
+
   test('stop during deployment waits and shuts the core down', () async {
     final assets = _BackendAssets(blockFirstLoad: true);
     final transport = _FakeRustTransport();
@@ -206,11 +237,15 @@ class _FakeRustTransport extends RustBackendTransport {
     this.initResult = 'running',
     this.healthy = true,
     this.blockStop = false,
+    this.blockInit = false,
   });
 
   String initResult;
   bool healthy;
   final bool blockStop;
+  /// Whether [start] holds until [allowInit] completes, standing in for a
+  /// native init that hangs.
+  final bool blockInit;
 
   int initCalls = 0;
   int stopCalls = 0;
@@ -224,6 +259,7 @@ class _FakeRustTransport extends RustBackendTransport {
 
   final stopEntered = Completer<void>();
   final allowStop = Completer<void>();
+  final allowInit = Completer<void>();
 
   @override
   String get baseUrl => 'http://127.0.0.1:18921';
@@ -244,6 +280,7 @@ class _FakeRustTransport extends RustBackendTransport {
     this.runtimeDir = runtimeDir;
     this.listenPort = listenPort;
     this.lanShare = lanShare;
+    if (blockInit) await allowInit.future;
     return initResult;
   }
 

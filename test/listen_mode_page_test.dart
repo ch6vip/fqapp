@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/listen_mode_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/player_preferences.dart';
@@ -54,6 +56,39 @@ void main() {
     expect(created.first.playbackRequested, isTrue);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
+  });
+
+  testWidgets('墨水屏：听书页退化为白底黑字，控制图标走 Lucide', (tester) async {
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = false);
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    await tester.pumpAndSettle();
+
+    final scaffold = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('listen-page')),
+    );
+    expect(scaffold.backgroundColor, Colors.white);
+    final title = tester.widget<Text>(
+      find.byKey(const ValueKey('listen-episode-title')),
+    );
+    expect(title.style?.color, Colors.black);
+    expect(find.byIcon(LucideIcons.arrow_left), findsOneWidget);
+    expect(find.byIcon(LucideIcons.skip_back), findsOneWidget);
+    expect(find.byIcon(LucideIcons.skip_forward), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Icon &&
+            (widget.icon == LucideIcons.circle_pause ||
+                widget.icon == LucideIcons.circle_play),
+      ),
+      findsOneWidget,
+    );
+    // 旧的 Material 图标不应残留。
+    expect(find.byIcon(Icons.skip_next), findsNothing);
+    expect(find.byIcon(Icons.skip_previous), findsNothing);
+    expect(find.byIcon(Icons.play_circle_filled), findsNothing);
   });
 
   testWidgets('封面是明确的 220×308 竖版画幅，而不是无高度的正方形', (tester) async {
@@ -148,11 +183,7 @@ void main() {
 
     // 取流在 messenger 取值之前完成，异常落到 catch 时 messenger 还是 null：
     // 不补取一次，用户什么提示都看不到。
-    expect(
-      find.text('本集暂时无法收听'),
-      findsOneWidget,
-      reason: '取流抛异常必须有可见提示',
-    );
+    expect(find.text('本集暂时无法收听'), findsOneWidget, reason: '取流抛异常必须有可见提示');
   });
 
   testWidgets('换集建播放器失败时释放新播放器，且不再驱动已释放的旧播放器', (tester) async {
@@ -196,21 +227,117 @@ void main() {
     await tester.pumpAndSettle();
     expect(created, hasLength(2));
     expect(find.text('本集暂时无法收听'), findsOneWidget);
-    expect(
-      created[1].disposed,
-      isTrue,
-      reason: 'create 失败的新播放器必须被释放，不能泄漏',
-    );
+    expect(created[1].disposed, isTrue, reason: 'create 失败的新播放器必须被释放，不能泄漏');
 
     // 旧播放器已被释放，`_player` 必须不再指向它：点播放不能驱动旧句柄。
     final oldCalls = List<String>.from(created.first.calls);
     await tester.tap(find.byKey(const ValueKey('listen-play')));
     await tester.pumpAndSettle();
-    expect(
-      created.first.calls,
-      oldCalls,
-      reason: '已释放的旧播放器不能再收到播放指令',
+    expect(created.first.calls, oldCalls, reason: '已释放的旧播放器不能再收到播放指令');
+  });
+
+  testWidgets('位置心跳只重建进度区，不整页重建', (tester) async {
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    expect(created, hasLength(1));
+
+    final titleBefore = tester.widget<Text>(
+      find.byKey(const ValueKey('listen-episode-title')),
     );
+    final playBefore = tester.widget<IconButton>(
+      find.byKey(const ValueKey('listen-play')),
+    );
+
+    // 原生位置流约 5Hz：一拍一次重建只能落在进度区。
+    created.first.positions.add(const Duration(seconds: 42));
+    await tester.pump();
+
+    expect(
+      identical(
+        tester.widget<Text>(find.byKey(const ValueKey('listen-episode-title'))),
+        titleBefore,
+      ),
+      isTrue,
+      reason: '位置更新不该重建集名等页内其它部件',
+    );
+    expect(
+      identical(
+        tester.widget<IconButton>(find.byKey(const ValueKey('listen-play'))),
+        playBefore,
+      ),
+      isTrue,
+      reason: '位置更新不该重建播放按钮',
+    );
+    // 进度区本身要跟着刷新：时间文案与滑块比例都来自这一拍。
+    expect(find.text('00:42 / 02:00'), findsOneWidget);
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('listen-seek')),
+    );
+    expect(slider.value, closeTo(42 / 120, 1e-9));
+  });
+
+  testWidgets('时长迟到时总时长和可拖动状态都会更新', (tester) async {
+    final created = <FakeNativePlayer>[];
+    await _pump(
+      tester,
+      created: created,
+      createPlayer: () => FakeNativePlayer(totalDuration: Duration.zero),
+    );
+    // create 返回时原生还没解析出时长：总时长未知，滑块不可拖。
+    expect(find.text('00:20 / 00:00'), findsOneWidget);
+    expect(
+      tester
+          .widget<Slider>(find.byKey(const ValueKey('listen-seek')))
+          .onChanged,
+      isNull,
+    );
+
+    // 模拟原生稍后才解析出时长并广播 `duration`。
+    created.single
+      ..totalDuration = const Duration(minutes: 3)
+      ..durations.add(const Duration(minutes: 3));
+    await tester.pump();
+
+    // 位置流没有新事件（页面也不再整页重建）：时长事件本身必须刷新进度区。
+    expect(find.text('00:20 / 03:00'), findsOneWidget);
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('listen-seek')),
+    );
+    expect(slider.onChanged, isNotNull);
+    expect(slider.value, closeTo(20 / 180, 1e-9));
+  });
+
+  testWidgets('拖动进度条只在松手时 seek 一次', (tester) async {
+    final created = <FakeNativePlayer>[];
+    await _pump(tester, created: created);
+    final player = created.single;
+    int seeks() =>
+        player.calls.where((call) => call.startsWith('seek:')).length;
+    expect(seeks(), 0);
+
+    final slider = find.byKey(const ValueKey('listen-seek'));
+    final rect = tester.getRect(slider);
+    final gesture = await tester.startGesture(
+      Offset(rect.left + rect.width * 0.3, rect.center.dy),
+    );
+    await tester.pump();
+    for (var i = 0; i < 4; i++) {
+      await gesture.moveBy(Offset(rect.width * 0.1, 0));
+      await tester.pump();
+    }
+
+    // 拖动中只做本地预览，滑块已经跟手，但一次原生 seek 都没发。
+    expect(seeks(), 0, reason: '拖动过程不该逐帧 seek');
+    expect(
+      tester.widget<Slider>(slider).value,
+      greaterThan(0.5),
+      reason: '拖动中滑块要跟手',
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(seeks(), 1, reason: '松手只提交一次 seek');
+    expect(player.currentPosition.inMilliseconds, greaterThan(60 * 1000));
   });
 }
 
@@ -233,6 +360,7 @@ Future<void> _pump(
   required List<FakeNativePlayer> created,
   List<String>? resolved,
   int initialIndex = 0,
+  FakeNativePlayer Function()? createPlayer,
 }) async {
   popped = null;
   await tester.pumpWidget(
@@ -253,7 +381,7 @@ Future<void> _pump(
                       return _source;
                     },
                     playerFactory: () {
-                      final fake = FakeNativePlayer();
+                      final fake = (createPlayer ?? FakeNativePlayer.new)();
                       created.add(fake);
                       return fake;
                     },

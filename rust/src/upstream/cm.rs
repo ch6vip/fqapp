@@ -1,5 +1,7 @@
 //! CM handshake (3072-bit MODP, RFC 3526 group 15) used by the full API.
 
+use std::sync::Arc;
+
 use base64::Engine as _;
 use num_bigint::BigUint;
 use num_traits::Zero;
@@ -12,6 +14,15 @@ const CM_PRIME_HEX: &str = "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd12902
 fn cm_prime() -> &'static BigUint {
     static P: OnceCell<BigUint> = OnceCell::new();
     P.get_or_init(|| BigUint::parse_bytes(CM_PRIME_HEX.as_bytes(), 16).expect("cm prime"))
+}
+
+/// Subgroup order `q = (p - 1) / 2`.
+///
+/// Not secret and identical for every handshake, so it is derived once: the
+/// peer-key subgroup check exponentiates with it on every decrypt.
+fn cm_prime_order() -> &'static BigUint {
+    static Q: OnceCell<BigUint> = OnceCell::new();
+    Q.get_or_init(|| (cm_prime() - BigUint::from(1u32)) / BigUint::from(2u32))
 }
 
 fn cm_base() -> BigUint {
@@ -70,6 +81,12 @@ impl CM {
     }
 
     /// Decrypts one chapter given the per-item server key (base64).
+    ///
+    /// Synchronous because it is also the unit-test entry point; the shipping
+    /// API path uses [CM::decrypt_off_thread], which runs this on the blocking
+    /// pool: the peer-subgroup check and the 3072-bit shared-secret
+    /// exponentiation are milliseconds of CPU work that must not occupy an
+    /// async worker.
     pub fn decrypt(&self, server_key_b64: &str, content_b64: &str) -> Result<Vec<u8>, String> {
         if server_key_b64.is_empty() || content_b64.is_empty() {
             return Err("empty key or content".to_string());
@@ -89,7 +106,7 @@ impl CM {
         let server_key = BigUint::from_bytes_be(&server_key_bytes);
         // P2-10: never derive a shared secret from an unvalidated peer
         // value — a degenerate y collapses the secret to a known value.
-        crate::upstream::validate_peer_pubkey(&server_key, cm_prime())?;
+        crate::upstream::validate_peer_pubkey(&server_key, cm_prime(), cm_prime_order())?;
         let private_key = BigUint::from_bytes_be(&self.private_key);
         let shared = server_key.modpow(&private_key, cm_prime());
 
@@ -104,5 +121,106 @@ impl CM {
         }
         let pt = crate::crypto::aes_cbc_decrypt(ct, aes_key, iv);
         Ok(crate::crypto::pkcs7_unpad_strict(&pt, 16)?.to_vec())
+    }
+
+    /// [CM::decrypt] on the blocking pool.
+    ///
+    /// The `Arc` is moved (not the secret fields), so the per-handshake key
+    /// material stays in one allocation and is zeroized when the last handle
+    /// drops.
+    pub async fn decrypt_off_thread(
+        self: &Arc<Self>,
+        server_key_b64: &str,
+        content_b64: &str,
+    ) -> Result<Vec<u8>, String> {
+        let cm = Arc::clone(self);
+        let server_key_b64 = server_key_b64.to_owned();
+        let content_b64 = content_b64.to_owned();
+        match tokio::task::spawn_blocking(move || cm.decrypt(&server_key_b64, &content_b64)).await {
+            Ok(result) => result,
+            Err(error) => Err(format!("decrypt task failed: {error}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Encrypts `plain` the way the upstream does: a peer key
+    /// `B = g^b mod p`, the shared secret `Y^b`, and AES-CBC keyed by its
+    /// first 32 bytes.
+    fn peer_encrypt(cm: &CM, plain: &[u8]) -> (String, String) {
+        let p = cm_prime();
+        let mut rng = rand::thread_rng();
+        let b_bytes: [u8; 32] = rng.gen();
+        let b = BigUint::from_bytes_be(&b_bytes) % (p - BigUint::from(1u32));
+        let peer_public = cm_base().modpow(&b, p);
+        let client_public = BigUint::from_bytes_be(&cm.public_key);
+        let shared = client_public.modpow(&b, p);
+        let shared_bytes = gmp_to_bytes(&shared);
+        assert!(shared_bytes.len() >= 32, "shared secret must fill the key");
+
+        let iv: [u8; 16] = rng.gen();
+        let padded = crate::crypto::pkcs7_pad(plain, 16);
+        let ct = crate::crypto::aes_cbc_encrypt(&padded, &shared_bytes[..32], &iv);
+        let mut blob = iv.to_vec();
+        blob.extend_from_slice(&ct);
+        (
+            base64::engine::general_purpose::STANDARD.encode(gmp_to_bytes(&peer_public)),
+            base64::engine::general_purpose::STANDARD.encode(blob),
+        )
+    }
+
+    // The shipping path decrypts on the blocking pool; it must accept a real
+    // 3072-bit peer key and produce exactly what the synchronous path does.
+    #[tokio::test]
+    async fn the_off_thread_decrypt_matches_the_sync_path() {
+        let cm = Arc::new(CM::new().expect("cm"));
+        let plain = b"chapter body decrypted off the async worker";
+        let (key, content) = peer_encrypt(&cm, plain);
+
+        let sync_plain = cm.decrypt(&key, &content).expect("sync decrypt");
+        assert_eq!(sync_plain, plain);
+        let offloaded = cm
+            .decrypt_off_thread(&key, &content)
+            .await
+            .expect("off-thread decrypt");
+        assert_eq!(offloaded, sync_plain);
+    }
+
+    // The point of the offload: while the 3072-bit work runs, the runtime must
+    // be free to poll other tasks. An inline implementation would leave this
+    // spawned task untouched until after the decrypt returned.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_off_thread_decrypt_yields_to_the_runtime() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let cm = Arc::new(CM::new().expect("cm"));
+        let (key, content) = peer_encrypt(&cm, b"chapter body");
+        let polled = Arc::new(AtomicBool::new(false));
+        let setter = polled.clone();
+        tokio::spawn(async move { setter.store(true, Ordering::SeqCst) });
+
+        cm.decrypt_off_thread(&key, &content)
+            .await
+            .expect("off-thread decrypt");
+        assert!(
+            polled.load(Ordering::SeqCst),
+            "the exponentiation must not run inline on the async worker"
+        );
+    }
+
+    // The cached intermediate must describe the same group as the prime; a
+    // stale or mis-derived order would silently reject every peer key.
+    #[test]
+    fn the_cached_subgroup_order_matches_the_prime() {
+        let p = cm_prime();
+        let q = cm_prime_order();
+        assert_eq!(p, &(q * BigUint::from(2u32) + BigUint::from(1u32)));
+        assert!(
+            std::ptr::eq(q, cm_prime_order()),
+            "the subgroup order must be computed once"
+        );
     }
 }

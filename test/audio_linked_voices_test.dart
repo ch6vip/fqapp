@@ -74,7 +74,14 @@ void main() {
     await _mount(tester, session);
     await _showVoices(tester);
     expect(find.text('真人讲书'), findsWidgets);
-    expect(find.text('智能朗读'), findsOneWidget);
+    // 页头页签也叫「智能朗读」，这里只看音色面板里的分组标题。
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('voice_settings_surface')),
+        matching: find.text('智能朗读'),
+      ),
+      findsOneWidget,
+    );
     for (final tone in AudioToneSet.fromPayload(_payload()).ttsTones) {
       expect(find.byKey(ValueKey('voice_option_${tone.id}')), findsOneWidget);
     }

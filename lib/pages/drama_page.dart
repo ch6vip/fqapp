@@ -30,6 +30,7 @@ import '../services/short_series_font_scale.dart';
 import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
+import '../widgets/drama_pull_refresh_hint.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/player/playlet_comment_panel.dart';
@@ -320,8 +321,6 @@ int dramaDesktopColumns(BuildContext context) =>
 
 class _DramaPageState extends ConsumerState<DramaPage>
     with WidgetsBindingObserver {
-  static const _pullRefreshTrigger = 64.0;
-
   /// 顶栏在本页内容上方占的高度：移动端是搜索行 + 频道条两行；桌面端
   /// 不渲染搜索行——分区搜索入口收敛到频道条右端的搜索图标（壳层全局
   /// 搜索在短剧分区也隐藏），只占频道条一行，把垂直空间还给视频/网格。
@@ -419,7 +418,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// Downward overscroll on the first card, in logical pixels. Official
   /// `aq0.xml` shows 「下拉刷新内容」 (`@string/dhk`) while this is in flight.
-  double _pullDistance = 0;
+  /// A notifier, because the hint follows the drag every frame: a page-wide
+  /// setState per scroll update would rebuild the feed and the grid for it.
+  final ValueNotifier<double> _pullDistance = ValueNotifier(0);
 
   /// 「上滑查看更多视频」guide（官方 `pp3.f` + `cf_.xml`）。官方行为：
   /// **每台设备只弹一次**（SharedPreferences `series_show_user_guide`，
@@ -547,6 +548,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _guideFadeIn?.cancel();
     _guideTick?.cancel();
     _guideFadeOut?.cancel();
+    _pullDistance.dispose();
     _pages.dispose();
     super.dispose();
   }
@@ -813,32 +815,22 @@ class _DramaPageState extends ConsumerState<DramaPage>
     if (notification is OverscrollNotification &&
         _screenIndex == 0 &&
         notification.overscroll < 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.overscroll).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.overscroll)
+          .clamp(0, kDramaPullRefreshTrigger);
       return false;
     }
     if (notification is ScrollUpdateNotification &&
-        _pullDistance > 0 &&
+        _pullDistance.value > 0 &&
         (notification.scrollDelta ?? 0) > 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.scrollDelta!).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
+          .clamp(0, kDramaPullRefreshTrigger);
     }
     if (notification is ScrollStartNotification) {
       _paging = true;
       unawaited(_inline.pause());
     } else if (notification is ScrollEndNotification) {
-      final shouldRefresh = _pullDistance >= _pullRefreshTrigger;
-      if (_pullDistance > 0) {
-        setState(() => _pullDistance = 0);
-      }
+      final shouldRefresh = _pullDistance.value >= kDramaPullRefreshTrigger;
+      if (_pullDistance.value > 0) _pullDistance.value = 0;
       if (shouldRefresh) {
         unawaited(_refresh());
       }
@@ -1368,6 +1360,18 @@ class _DramaPageState extends ConsumerState<DramaPage>
     }
   }
 
+  /// 顶栏后面的装饰背板：浅色沿用官方奶白，深色 / OLED 取画布色，
+  /// 墨水屏纯白（与画布同色，不引入灰阶）。
+  static List<Color> _topBackingColors(HomePalette palette) => [
+    palette.dark
+        ? palette.canvas
+        : (palette.eink ? Colors.white : const Color(0xFFFFF3E6)),
+    palette.dark ? palette.canvas : const Color(0xFFFFFFFF),
+    palette.dark
+        ? palette.canvas.withValues(alpha: 0)
+        : const Color(0x00FFFFFF),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(dramaProvider);
@@ -1424,51 +1428,54 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
                 // 选中项，不被动画拖着走。
                 child: switch (channel) {
-                DramaChannel(source: DramaChannelSource.feed, kind: 'manju') =>
-                  _browseGrid(
+                  DramaChannel(
+                    source: DramaChannelSource.feed,
+                    kind: 'manju',
+                  ) =>
+                    _browseGrid(
+                      state,
+                      items,
+                      columns: 3,
+                      gridKey: 'drama_manju_grid',
+                      titleMaxLines: 1,
+                    ),
+                  DramaChannel(
+                    source: DramaChannelSource.feed,
+                    serverType: kChannelVideoEpisode,
+                  ) =>
+                    _browseGrid(
+                      state,
+                      items,
+                      columns: 3,
+                      gridKey: 'drama_episode_grid',
+                      titleMaxLines: 2,
+                    ),
+                  DramaChannel(source: DramaChannelSource.feed) => _feed(
                     state,
                     items,
-                    columns: 3,
-                    gridKey: 'drama_manju_grid',
-                    titleMaxLines: 1,
                   ),
-                DramaChannel(
-                  source: DramaChannelSource.feed,
-                  serverType: kChannelVideoEpisode,
-                ) =>
-                  _browseGrid(
-                    state,
-                    items,
-                    columns: 3,
-                    gridKey: 'drama_episode_grid',
-                    titleMaxLines: 2,
+                  _ => _LocalList(
+                    channel: channel,
+                    // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
+                    onOpen: _openDetail,
+                    onPlay: _openPlayer,
+                    onFind: () => _selectChannel(0),
+                    onEditingChanged: (editing) {
+                      if (mounted) setState(() => _recentEditing = editing);
+                    },
                   ),
-                DramaChannel(source: DramaChannelSource.feed) => _feed(
-                  state,
-                  items,
-                ),
-                _ => _LocalList(
-                  channel: channel,
-                  // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
-                  onOpen: _openDetail,
-                  onPlay: _openPlayer,
-                  onFind: () => _selectChannel(0),
-                  onEditingChanged: (editing) {
-                    if (mounted) setState(() => _recentEditing = editing);
-                  },
-                ),
                 },
               ),
             ),
-            if (_pullDistance > 0)              Positioned(
-                top: MediaQuery.paddingOf(context).top + _topChromeHeight + 8,
-                left: 0,
-                right: 0,
-                child: _PullRefreshHint(
-                  armed: _pullDistance >= _pullRefreshTrigger,
-                  color: lightPage ? palette.ink : Colors.white,
-                ),
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + _topChromeHeight + 8,
+              left: 0,
+              right: 0,
+              child: DramaPullRefreshHint(
+                distance: _pullDistance,
+                color: lightPage ? palette.ink : Colors.white,
               ),
+            ),
             // 浅色页的顶栏背板：官方上滑时卡片从一条奶白渐变后面穿过，
             // 搜索框/频道条不会和海报叠在一起（黑页保持透明压在视频上）。
             // 最近频道进编辑后与官方一致：顶栏整个隐藏（`af()` gone）。
@@ -1491,17 +1498,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                           end: Alignment.bottomCenter,
                           // 浅色支沿用官方奶白渐变；深色 / OLED 取当前画布色
                           // 淡出，只负责把海报挡在顶栏后。
-                          colors: [
-                            palette.dark
-                                ? palette.canvas
-                                : const Color(0xFFFFF3E6),
-                            palette.dark
-                                ? palette.canvas
-                                : const Color(0xFFFFFFFF),
-                            palette.dark
-                                ? palette.canvas.withValues(alpha: 0)
-                                : const Color(0x00FFFFFF),
-                          ],
+                          colors: _topBackingColors(palette),
                           stops: const [0.0, 0.5, 1.0],
                         ),
                       ),
@@ -1615,29 +1612,19 @@ class _DramaPageState extends ConsumerState<DramaPage>
   bool _onGridScroll(ScrollNotification notification) {
     if (notification.depth != 0) return false;
     if (notification is OverscrollNotification && notification.overscroll < 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.overscroll).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.overscroll)
+          .clamp(0, kDramaPullRefreshTrigger);
       return false;
     }
     if (notification is ScrollUpdateNotification &&
-        _pullDistance > 0 &&
+        _pullDistance.value > 0 &&
         (notification.scrollDelta ?? 0) > 0) {
-      setState(() {
-        _pullDistance = (_pullDistance - notification.scrollDelta!).clamp(
-          0,
-          _pullRefreshTrigger,
-        );
-      });
+      _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
+          .clamp(0, kDramaPullRefreshTrigger);
     }
     if (notification is ScrollEndNotification) {
-      final shouldRefresh = _pullDistance >= _pullRefreshTrigger;
-      if (_pullDistance > 0) {
-        setState(() => _pullDistance = 0);
-      }
+      final shouldRefresh = _pullDistance.value >= kDramaPullRefreshTrigger;
+      if (_pullDistance.value > 0) _pullDistance.value = 0;
       if (shouldRefresh) {
         unawaited(_refresh());
         return false;
@@ -3724,40 +3711,6 @@ class _SwipeUpHint extends StatelessWidget {
   );
 }
 
-/// Official `aq0.xml` pull-to-refresh strip: 16sp 「下拉刷新内容」.
-class _PullRefreshHint extends StatelessWidget {
-  final bool armed;
-
-  /// 浅色页用墨色（白字在白底上看不见），视频流仍用白字。
-  final Color color;
-
-  const _PullRefreshHint({required this.armed, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: SizedBox(
-        height: 22,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              armed ? '正在刷新内容' : '下拉刷新内容',
-              style: TextStyle(fontSize: 16, color: color),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// The video rectangle of the on-screen card.
 ///
 /// The native surface producer cannot be cropped or resized by a Flutter rect,
@@ -4321,6 +4274,9 @@ class _HistoryEmpty extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    // 官方主题橙；墨水屏退化为纯黑（按钮反白字）。
+    final accent = palette.eink ? palette.ink : const Color(0xFFFA6725);
+    final onAccent = palette.eink ? palette.canvas : Colors.white;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -4329,14 +4285,13 @@ class _HistoryEmpty extends StatelessWidget {
             width: 88,
             height: 88,
             decoration: BoxDecoration(
-              color: palette.dark ? palette.soft : const Color(0xFFFFF3E0),
+              color: palette.eink
+                  ? Colors.white
+                  : (palette.dark ? palette.soft : const Color(0xFFFFF3E0)),
               shape: BoxShape.circle,
+              border: palette.eink ? Border.all(color: palette.line) : null,
             ),
-            child: const Icon(
-              LucideIcons.clapperboard,
-              size: 38,
-              color: Color(0xFFFA6725),
-            ),
+            child: Icon(LucideIcons.clapperboard, size: 38, color: accent),
           ),
           const SizedBox(height: 16),
           Text(message, style: TextStyle(fontSize: 14, color: palette.muted)),
@@ -4348,7 +4303,7 @@ class _HistoryEmpty extends StatelessWidget {
               behavior: HitTestBehavior.opaque,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFA6725),
+                  color: accent,
                   borderRadius: BorderRadius.circular(22),
                 ),
                 child: Padding(
@@ -4360,9 +4315,9 @@ class _HistoryEmpty extends StatelessWidget {
                     // 最近页 = `Fe()`（DynamicComic 开启时「找短剧」）；
                     // 收藏页官方硬编码「找视频」。
                     buttonLabel,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
-                      color: Colors.white,
+                      color: onAccent,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -4777,7 +4732,8 @@ class _LocalListState extends State<_LocalList> {
                   fromShelfEdit ? 'drama_shelf_delete' : 'drama_recent_delete',
                 ),
                 label: '删除',
-                color: const Color(0xFFF43207),
+                // 官方删除红；墨水屏退化为纯黑。
+                color: palette.eink ? palette.ink : const Color(0xFFF43207),
                 enabled: enabled,
                 onTap: enabled ? _confirmDelete : null,
               ),
@@ -4905,16 +4861,25 @@ class _LocalListState extends State<_LocalList> {
   Widget _filterChip(String? kind, String label) {
     final selected = _filter == kind;
     final palette = HomePalette.of(context);
+    // 官方「浅橙底橙字」；墨水屏选中黑底白字、未选中白底黑字。
+    final selectedBackground = palette.eink
+        ? palette.ink
+        : const Color(0x1AFA6725);
+    final idleBackground = palette.eink
+        ? Colors.white
+        : (palette.dark ? palette.soft : const Color(0x08000000));
+    final selectedForeground = palette.eink
+        ? palette.canvas
+        : const Color(0xFFFA6725);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => setState(() => _filter = kind),
       child: DecoratedBox(
         // 官方 `c4e.xml` + `f.s()`：选中浅橙底橙字加粗，未选中浅灰底深字。
         decoration: BoxDecoration(
-          color: selected
-              ? const Color(0x1AFA6725)
-              : (palette.dark ? palette.soft : const Color(0x08000000)),
+          color: selected ? selectedBackground : idleBackground,
           borderRadius: BorderRadius.circular(6),
+          border: palette.eink ? Border.all(color: palette.line) : null,
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
@@ -4923,7 +4888,7 @@ class _LocalListState extends State<_LocalList> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              color: selected ? const Color(0xFFFA6725) : palette.ink,
+              color: selected ? selectedForeground : palette.ink,
             ),
           ),
         ),

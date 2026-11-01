@@ -3,12 +3,21 @@ import 'dart:io';
 import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/native_player.dart';
+
+/// Fixtures that assert the legacy single-chapter list explicitly opt into
+/// direct switching. Joined-reader tests use normal preferences and defaults.
+void setSingleChapterPrefs(Map<String, Object> values) =>
+    SharedPreferences.setMockInitialValues({
+      'reader_scroll_chapter_mode': 'replace',
+      ...values,
+    });
 
 class MemoryReaderStore implements ReaderStore {
   Map<String, dynamic>? entry;
@@ -233,7 +242,13 @@ class FakeNativePlayer extends NativePlayer {
   int width;
   int height;
 
-  FakeNativePlayer({this.width = 1920, this.height = 1080});
+  FakeNativePlayer({
+    this.width = 1920,
+    this.height = 1080,
+    // 传 [Duration.zero] 模拟「create 完成时还不知道时长」：之后用
+    // [emitDuration] 补发 `duration` 事件。
+    this.totalDuration = const Duration(minutes: 2),
+  });
 
   final calls = <String>[];
 
@@ -244,7 +259,7 @@ class FakeNativePlayer extends NativePlayer {
   /// create 收到的起播位置（毫秒，按序）：原生把它当初始播放位置。
   final createdStartMs = <int>[];
   Duration currentPosition = const Duration(seconds: 20);
-  Duration totalDuration = const Duration(minutes: 2);
+  Duration totalDuration;
   bool isPlaying = false;
   bool playbackRequested = false;
   bool isBuffering = false;

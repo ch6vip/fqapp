@@ -6,7 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/text_replacement_rule.dart';
 import 'package:fqapp/services/text_replacement_engine.dart';
 import 'package:fqapp/services/text_replacement_store.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
@@ -166,7 +165,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({'reader_page_mode': 'scroll'});
+    setSingleChapterPrefs({'reader_page_mode': 'scroll'});
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
@@ -279,7 +278,7 @@ void main() {
   // GestureDetector needs the callback forwarded from ReaderPagedView. Scroll
   // mode was the only path covered, so 翻页 readers got no menu at all.
   testWidgets('paged mode also opens the menu on a long press', (tester) async {
-    SharedPreferences.setMockInitialValues({'reader_page_mode': 'paged'});
+    setSingleChapterPrefs({'reader_page_mode': 'paged'});
     final store = _MemoryUnderlines();
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -352,7 +351,7 @@ void main() {
   });
 
   testWidgets('paged mode floats the handles too', (tester) async {
-    SharedPreferences.setMockInitialValues({'reader_page_mode': 'paged'});
+    setSingleChapterPrefs({'reader_page_mode': 'paged'});
     final store = _MemoryUnderlines();
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));

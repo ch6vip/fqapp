@@ -4,7 +4,10 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/category_front.dart';
 import '../services/api_client.dart';
 import '../services/desktop_platform.dart';
+import '../services/user_facing_error.dart';
+import '../widgets/category/category_dim_rail.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_feed_states.dart';
 
 /// 官方分类页（`BookCategoryActivity`，7.0.9.32 实测形态）：
 ///
@@ -46,9 +49,6 @@ class _Section {
 /// 官方收起态每组只显示前 30 颗（`CollectionsKt.take(_, 30)`）。
 const _collapsedCount = 30;
 
-/// 左侧维度栏宽度（官方 88dp 定值）。
-const double _dimRailWidth = 88;
-
 /// 桌面下每颗 chip 的目标宽度。
 ///
 /// 官方在手机上把内容区 `chunked(3)` 三等分，375dp 屏上每颗约 80dp。桌面
@@ -63,11 +63,9 @@ const int _chipMinColumns = 3;
 const int _chipMaxColumns = 10;
 
 /// 按内容区可用宽度（已扣掉左右 padding）算列数。
-int _chipColumnsFor(double contentWidth) =>
-    (contentWidth / _chipTargetWidth).floor().clamp(
-      _chipMinColumns,
-      _chipMaxColumns,
-    );
+int _chipColumnsFor(double contentWidth) => (contentWidth / _chipTargetWidth)
+    .floor()
+    .clamp(_chipMinColumns, _chipMaxColumns);
 
 class _CategoryPageState extends State<CategoryPage> {
   CategoryFront? _front;
@@ -75,6 +73,10 @@ class _CategoryPageState extends State<CategoryPage> {
   int _tabValue = 1;
   int _selected = 0;
   bool _loading = false;
+
+  /// 每次 [_load] 自增。请求回来时只有最新一代能落地：加载期间再切频道
+  /// 不会被丢掉，先发后到的旧频道响应也不会覆盖新频道的内容。
+  int _loadGeneration = 0;
 
   List<_Section> _sections = const [];
   final Set<int> _expanded = <int>{};
@@ -107,35 +109,42 @@ class _CategoryPageState extends State<CategoryPage> {
 
   Future<void> _load({int? tab}) async {
     final target = tab ?? _tabValue;
-    if (_loading) return;
+    final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
     });
-    final front = await _fetch(tab: target);
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _tabValue = target;
-      _front = front;
-      _error = front.isEmpty ? '分类暂时没有内容，稍后再试' : null;
-      _sections = front.isEmpty ? const <_Section>[] : _sectionsFor(front);
-      _selected = 0;
-      _expanded.clear();
-    });
-    // 频道重取后回到顶部（控制器复用，extent 已变，须等布局落地）。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) _scroll.jumpTo(0);
-    });
+    try {
+      final front = await _fetch(tab: target);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _tabValue = target;
+        _front = front;
+        _error = front.isEmpty ? '分类暂时没有内容，稍后再试' : null;
+        _sections = front.isEmpty ? const <_Section>[] : _sectionsFor(front);
+        _selected = 0;
+        _expanded.clear();
+      });
+      // 频道重取后回到顶部（控制器复用，extent 已变，须等布局落地）。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients) _scroll.jumpTo(0);
+      });
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _error = userFacingError(error));
+    } finally {
+      // 失败也要复位：否则转圈永远挡在重试前面，重试会被 `_loading` 吞掉。
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   /// 分组重建：首组「热门标签」= 全量瓦片（老 schema 的 dim=0 不下瓦片，
   /// 官方该组是跨 dim 精选，数据不可得，用全量保内容），其余 dim 各一组，
   /// 空组跳过。游离 dim 的瓦片只出现在首组。
   static List<_Section> _sectionsFor(CategoryFront front) {
-    final out = <_Section>[
-      _Section('热门标签', front.tiles),
-    ];
+    final out = <_Section>[_Section('热门标签', front.tiles)];
     for (final dim in front.dims) {
       if (dim.value == '0') continue;
       final tiles = front.tiles.where((t) => t.dim == dim.value).toList();
@@ -178,13 +187,16 @@ class _CategoryPageState extends State<CategoryPage> {
   void _scrollToSection(int index) {
     if (!_scroll.hasClients) return;
     setState(() => _selected = index);
-    final target = _sectionOffset(index)
-        .clamp(0.0, _scroll.position.maxScrollExtent)
-        .toDouble();
+    final target = _sectionOffset(
+      index,
+    ).clamp(0.0, _scroll.position.maxScrollExtent).toDouble();
     _programmaticScroll = true;
     _scroll
-        .animateTo(target, duration: const Duration(milliseconds: 300),
-            curve: Curves.ease)
+        .animateTo(
+          target,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.ease,
+        )
         .whenComplete(() {
           _programmaticScroll = false;
           if (mounted && _selected != index) {
@@ -220,7 +232,18 @@ class _CategoryPageState extends State<CategoryPage> {
                 child: CircularProgressIndicator(color: HomePalette.accent),
               )
             else if (_error != null)
-              Expanded(child: _ErrorView(message: _error!, onRetry: _load))
+              Expanded(
+                child: Center(
+                  child: HomeStateView(
+                    key: const Key('category_retry'),
+                    icon: LucideIcons.cloud_off,
+                    title: _error!,
+                    actionLabel: '重试',
+                    actionIcon: LucideIcons.refresh_cw,
+                    onAction: () => _load(),
+                  ),
+                ),
+              )
             else if (front != null)
               Expanded(
                 // 列数按实际内容区宽度算：手机仍是官方三列，桌面按 170dp
@@ -228,13 +251,15 @@ class _CategoryPageState extends State<CategoryPage> {
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final columns = _chipColumnsFor(
-                      constraints.maxWidth - _dimRailWidth - 32,
+                      constraints.maxWidth - categoryDimRailWidth - 32,
                     );
                     _columns = columns;
                     return Row(
                       children: [
-                        _DimRail(
-                          sections: _sections,
+                        CategoryDimRail(
+                          titles: [
+                            for (final section in _sections) section.title,
+                          ],
                           selectedIndex: _selected,
                           onSelect: _scrollToSection,
                         ),
@@ -279,7 +304,11 @@ class _TopBar extends StatelessWidget {
           else
             IconButton(
               key: const Key('category_back'),
-              icon: Icon(LucideIcons.chevron_left, size: 24, color: palette.ink),
+              icon: Icon(
+                LucideIcons.chevron_left,
+                size: 24,
+                color: palette.ink,
+              ),
               onPressed: () => Navigator.maybePop(context),
             ),
           Expanded(
@@ -305,10 +334,11 @@ class _TopBar extends StatelessWidget {
                               fontWeight: isSelected
                                   ? FontWeight.w700
                                   : FontWeight.w400,
-                              // 官方：选中纯黑，未选 #8C8C8C。
                               color: isSelected
                                   ? palette.ink
-                                  : const Color(0xFF8C8C8C),
+                                  : (palette.eink
+                                        ? palette.ink
+                                        : const Color(0xFF8C8C8C)),
                             ),
                           ),
                         ),
@@ -322,55 +352,6 @@ class _TopBar extends StatelessWidget {
             onPressed: () {},
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// 左侧 88dp 维度栏：项高 50dp、14sp 居中；选中橙、未选黑（真机取证，
-/// 官方无指示条、无选中底色——`TabPageLeftCell` 只有颜色分支）。
-class _DimRail extends StatelessWidget {
-  const _DimRail({
-    required this.sections,
-    required this.selectedIndex,
-    required this.onSelect,
-  });
-
-  final List<_Section> sections;
-  final int selectedIndex;
-  final ValueChanged<int> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return SizedBox(
-      width: _dimRailWidth,
-      child: ColoredBox(
-        color: palette.soft,
-        child: ListView.builder(
-          itemCount: sections.length,
-          itemBuilder: (context, index) {
-            final selected = index == selectedIndex;
-            return GestureDetector(
-              key: ValueKey('category_dim_$index'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onSelect(index),
-              child: Container(
-                height: 50,
-                alignment: Alignment.center,
-                child: Text(
-                  sections[index].title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: selected ? HomePalette.accent : palette.ink,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
       ),
     );
   }
@@ -391,15 +372,18 @@ class _SectionList extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: palette.canvas,
-        borderRadius: const BorderRadius.horizontal(
-          left: Radius.circular(12),
-        ),
+        borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
       ),
       clipBehavior: Clip.antiAlias,
       child: ListView.builder(
         key: const ValueKey('category_tile_list'),
         controller: state._scroll,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          0,
+          16,
+          16 + MediaQuery.paddingOf(context).bottom,
+        ),
         itemCount: state._sections.length,
         itemBuilder: (context, index) => _SectionView(
           state: state,
@@ -443,10 +427,7 @@ class _SectionView extends StatelessWidget {
         ),
         for (var i = 0; i < visible.length; i += columns)
           _ChipRow(
-            tiles: visible.sublist(
-              i,
-              (i + columns).clamp(0, visible.length),
-            ),
+            tiles: visible.sublist(i, (i + columns).clamp(0, visible.length)),
             columns: columns,
           ),
       ],
@@ -474,7 +455,9 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final gray = palette.dark ? palette.muted : const Color(0xFF969696);
+    final gray = palette.dark || palette.eink
+        ? palette.muted
+        : const Color(0xFF969696);
     return Padding(
       padding: const EdgeInsets.only(top: 16),
       child: SizedBox(
@@ -555,8 +538,11 @@ class _CategoryChip extends StatelessWidget {
         key: ValueKey('category_tile_${tile.id}_${tile.name}'),
         height: 30,
         decoration: BoxDecoration(
-          color: palette.dark ? palette.soft : const Color(0xFFECECEC),
+          color: palette.eink
+              ? Colors.white
+              : (palette.dark ? palette.soft : const Color(0xFFECECEC)),
           borderRadius: BorderRadius.circular(6),
+          border: palette.eink ? Border.all(color: palette.line) : null,
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -568,36 +554,6 @@ class _CategoryChip extends StatelessWidget {
             Text(tile.name, style: TextStyle(fontSize: 14, color: palette.ink)),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(LucideIcons.cloud_off, size: 40, color: palette.muted),
-          const SizedBox(height: 12),
-          Text(message, style: TextStyle(fontSize: 14, color: palette.muted)),
-          const SizedBox(height: 12),
-          TextButton(
-            onPressed: () => onRetry(),
-            child: const Text(
-              '重试',
-              style: TextStyle(color: HomePalette.accent),
-            ),
-          ),
-        ],
       ),
     );
   }

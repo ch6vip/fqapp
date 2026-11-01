@@ -34,7 +34,7 @@ pub async fn handle(ctx: &Ctx, req: &Request) -> Response {
         return response;
     }
     // The FFI path needs its own limit as well as the HTTP adapter's limit.
-    if req.body.len() > 16 * 1024 || !req.query.is_empty() {
+    if req.body.len() > crate::dispatch::ACCOUNT_REQUEST_BODY_LIMIT || !req.query.is_empty() {
         return failure(400, "历史读取参数无效或过长");
     }
     let input: HistoryRequest = match serde_json::from_slice(&req.body) {
@@ -91,9 +91,11 @@ pub async fn handle(ctx: &Ctx, req: &Request) -> Response {
         ),
         ("query_soft_deleted", "false"),
     ]);
-    // Separate client: never forward an account cookie across a redirect and
-    // never persist cookies or retry against other identities.
-    let client = match crate::upstream::http::HttpTransport::without_redirects(20) {
+    // Separate no-redirect transport (shared process-wide: never forward an
+    // account cookie across a redirect, and never persist cookies or retry
+    // against other identities). Rebuilding the TLS client per request was
+    // pure overhead.
+    let client = match crate::upstream::http::account_transport() {
         Ok(client) => client,
         Err(_) => return failure(503, "无法初始化历史读取连接"),
     };

@@ -11,6 +11,7 @@ import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/system_tts.dart';
+import 'package:fqapp/widgets/audio/audio_floating_glyphs.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/controlled_player.dart';
@@ -339,6 +340,21 @@ void main() {
     await _flush(tester);
     expect(find.byKey(toggle), findsNothing);
     expect(app.players, isEmpty);
+  });
+
+  testWidgets('the play/pause glyph is the official 16dp size', (tester) async {
+    final app = await _mount(tester);
+    app.open();
+    await _flush(tester);
+    app.navigator.currentState!.pop();
+    await _flush(tester);
+    final glyph = tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .firstWhere(
+          (paint) => paint.painter is PlayGlyph || paint.painter is PauseGlyph,
+        );
+    // 官方 `pn2/b0.java:819-823` 把播放图形覆盖为 16dp。
+    expect(glyph.size, const Size.square(16));
   });
 }
 

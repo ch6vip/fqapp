@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
 import '../services/api_client.dart';
@@ -10,6 +11,8 @@ import '../services/audio_preferences.dart';
 import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/listen_progress_bar.dart';
 
 /// 听书模式页（官方 `jm3.d0.y()` 的 `ShortSeriesLaunchArgs.setIsListenMode`
 /// 语义）：独立于视频播放页的音频页——封面、剧名/集名、进度条、上一集/
@@ -52,6 +55,7 @@ class _ListenModePageState extends State<ListenModePage>
   NativePlayer? _player;
   StreamSubscription<bool>? _completedSub;
   StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
   bool _switching = false;
   bool _popped = false;
 
@@ -62,8 +66,12 @@ class _ListenModePageState extends State<ListenModePage>
   static const _rates = <double>[0.75, 1.0, 1.25, 1.5, 2.0];
   double _rate = 1.0;
 
-  /// 拖动进度条时用于合并回写：只有最后一次拖动落地才同步通知。
-  int _seekSyncGeneration = 0;
+  /// 播放位置（原生位置流约 5Hz）：只喂给进度区，不触发整页重建。
+  final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
+
+  /// 总时长：`create` 完成时原生可能还不知道时长，`duration` 事件随后才到；
+  /// 页面位置流不再整页 setState，所以它也必须有自己的通知。
+  final ValueNotifier<Duration> _duration = ValueNotifier(Duration.zero);
 
   // Official listen mode is ShortSeriesActivity, which hides the capsule.
   @override
@@ -130,6 +138,9 @@ class _ListenModePageState extends State<ListenModePage>
     NativePlayer.clearRemoteCommandHandler();
     _completedSub?.cancel();
     _positionSub?.cancel();
+    _durationSub?.cancel();
+    _position.dispose();
+    _duration.dispose();
     unawaited(_stopForeground());
     unawaited(_player?.dispose());
     super.dispose();
@@ -177,13 +188,20 @@ class _ListenModePageState extends State<ListenModePage>
           if (completed) _onEpisodeEnded();
         });
         _positionSub?.cancel();
-        _positionSub = player.positionStream.listen((_) {
-          if (mounted && !_switching) setState(() {});
+        _positionSub = player.positionStream.listen((position) {
+          if (mounted && !_switching) _position.value = position;
+        });
+        _durationSub?.cancel();
+        _durationSub = player.durationStream.listen((duration) {
+          if (mounted && !_switching) _duration.value = duration;
         });
         if (!mounted) return;
         setState(() {
           _player = player;
           _index = index;
+          _position.value = player.position;
+          // 新集重置；已经拿到时长（事件早于订阅）时沿用播放器的值。
+          _duration.value = player.duration;
         });
         // 所有权已交给 `_player`，不能在这里释放。
         created = null;
@@ -253,12 +271,13 @@ class _ListenModePageState extends State<ListenModePage>
   Future<void> _seekTo(double value) async {
     final player = _player;
     if (player == null || player.duration.inMilliseconds <= 0) return;
-    final generation = ++_seekSyncGeneration;
-    await player.seek(
-      Duration(milliseconds: (value * player.duration.inMilliseconds).round()),
+    final target = Duration(
+      milliseconds: (value * player.duration.inMilliseconds).round(),
     );
-    // 拖动是连续触发的：只有最后一次落地才回写通知，否则会刷爆前台服务。
-    if (!mounted || generation != _seekSyncGeneration) return;
+    // 拖动结束才走到这里：先把滑块钉在目标位置，等位置流回填。
+    _position.value = target;
+    await player.seek(target);
+    if (!mounted) return;
     await _startForeground();
   }
 
@@ -269,8 +288,7 @@ class _ListenModePageState extends State<ListenModePage>
   Widget build(BuildContext context) {
     final player = _player;
     final playing = player?.playWhenReady ?? false;
-    final position = player?.position ?? Duration.zero;
-    final duration = player?.duration ?? Duration.zero;
+    final colors = _listenColors;
     // 返回时把「听到哪一集 + 进度」一起交给宿主：听书页可能已自动连播
     // 跨集，宿主要跟到那一集续看（官方 sync_progress_strategy_listen_mode）。
     return PopScope(
@@ -280,17 +298,15 @@ class _ListenModePageState extends State<ListenModePage>
       },
       child: Scaffold(
         key: const ValueKey('listen-page'),
-        // 全屏听书页是整块大底色：OLED 纯黑生效时降到 #000000 省电，
-        // 其余深色模式保持官方 #121212。AppBar / 按钮本来就是透明 + 白字。
-        backgroundColor: oledActive() ? Colors.black : const Color(0xFF121212),
+        backgroundColor: colors.background,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
+          foregroundColor: colors.foreground,
           elevation: 0,
           leading: IconButton(
             key: const ValueKey('listen-page-back'),
             onPressed: _exitWithResult,
-            icon: const Icon(Icons.arrow_back),
+            icon: const Icon(LucideIcons.arrow_left),
           ),
           title: Text(
             widget.seriesTitle,
@@ -334,30 +350,17 @@ class _ListenModePageState extends State<ListenModePage>
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: colors.foreground,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      '${_fmt(position)} / ${_fmt(duration)}',
-                      key: const ValueKey('listen-time'),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0x99FFFFFF),
-                      ),
-                    ),
-                    Slider(
-                      key: const ValueKey('listen-seek'),
-                      value: duration.inMilliseconds <= 0
-                          ? 0
-                          : (position.inMilliseconds / duration.inMilliseconds)
-                                .clamp(0.0, 1.0),
-                      onChanged: duration.inMilliseconds <= 0 ? null : _seekTo,
-                      activeColor: const Color(0xFFFA6725),
+                    ListenProgressBar(
+                      position: _position,
+                      duration: _duration,
+                      onSeek: _seekTo,
                     ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -367,9 +370,9 @@ class _ListenModePageState extends State<ListenModePage>
                           onPressed: _index > 0
                               ? () => unawaited(_step(-1))
                               : null,
-                          icon: const Icon(Icons.skip_previous, size: 40),
-                          color: Colors.white,
-                          disabledColor: const Color(0x33FFFFFF),
+                          icon: const Icon(LucideIcons.skip_back, size: 40),
+                          color: colors.foreground,
+                          disabledColor: colors.disabled,
                         ),
                         const SizedBox(width: 24),
                         IconButton(
@@ -379,11 +382,11 @@ class _ListenModePageState extends State<ListenModePage>
                               : () => unawaited(_togglePlay()),
                           icon: Icon(
                             playing
-                                ? Icons.pause_circle_filled
-                                : Icons.play_circle_filled,
+                                ? LucideIcons.circle_pause
+                                : LucideIcons.circle_play,
                             size: 64,
                           ),
-                          color: const Color(0xFFFA6725),
+                          color: colors.accent,
                         ),
                         const SizedBox(width: 24),
                         IconButton(
@@ -391,9 +394,9 @@ class _ListenModePageState extends State<ListenModePage>
                           onPressed: _index < widget.episodes.length - 1
                               ? () => unawaited(_step(1))
                               : null,
-                          icon: const Icon(Icons.skip_next, size: 40),
-                          color: Colors.white,
-                          disabledColor: const Color(0x33FFFFFF),
+                          icon: const Icon(LucideIcons.skip_forward, size: 40),
+                          color: colors.foreground,
+                          disabledColor: colors.disabled,
                         ),
                       ],
                     ),
@@ -416,8 +419,38 @@ class _ListenModePageState extends State<ListenModePage>
     );
   }
 
+  /// 整页配色：官方深色 #121212 / OLED 纯黑 / 墨水屏白底黑字。
+  ///
+  /// 深色下 AppBar 与按钮本来就是透明 + 白字；墨水屏必须单独翻成黑字。
+  ({Color background, Color foreground, Color accent, Color disabled})
+  get _listenColors {
+    final palette = HomePalette.of(context);
+    if (palette.eink) {
+      return (
+        background: palette.canvas,
+        foreground: palette.ink,
+        accent: palette.ink,
+        disabled: palette.ink.withValues(alpha: 0.35),
+      );
+    }
+    return (
+      background: oledActive() ? Colors.black : const Color(0xFF121212),
+      foreground: Colors.white,
+      accent: const Color(0xFFFA6725),
+      disabled: const Color(0x33FFFFFF),
+    );
+  }
+
   Widget _ratePill(BuildContext context, double rate) {
     final selected = rate == _rate;
+    final palette = HomePalette.of(context);
+    final eink = palette.eink;
+    final background = eink
+        ? (selected ? palette.ink : palette.canvas)
+        : (selected ? const Color(0xFFFA6725) : const Color(0x14FFFFFF));
+    final foreground = eink
+        ? (selected ? palette.canvas : palette.ink)
+        : (selected ? Colors.white : const Color(0x99FFFFFF));
     return InkWell(
       key: ValueKey('listen-rate-$rate'),
       onTap: () async {
@@ -431,23 +464,15 @@ class _ListenModePageState extends State<ListenModePage>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFFA6725) : const Color(0x14FFFFFF),
+          color: background,
           borderRadius: BorderRadius.circular(14),
+          border: eink && !selected ? Border.all(color: palette.line) : null,
         ),
         child: Text(
           '${rate == rate.roundToDouble() ? rate.toInt() : rate}x',
-          style: TextStyle(
-            fontSize: 12,
-            color: selected ? Colors.white : const Color(0x99FFFFFF),
-          ),
+          style: TextStyle(fontSize: 12, color: foreground),
         ),
       ),
     );
-  }
-
-  static String _fmt(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
   }
 }

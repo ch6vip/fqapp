@@ -336,6 +336,19 @@ test('workflow path filters are defined once and referenced by anchor', () => {
   }
 });
 
+test('native-crypto runs the host atempo and resample regressions', () => {
+  // test/native_atempo_test.cjs 编译并运行 native/tests 下的宿主驱动；只在
+  // 本地跑的话，sp_atempo/sp_resample 的算法回归会在 CI 里悄悄失效。
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'native-crypto.yml'),
+    'utf8',
+  );
+  assert.ok(
+    workflow.includes('node --test test/native_atempo_test.cjs'),
+    'native-crypto.yml must run test/native_atempo_test.cjs',
+  );
+});
+
 test('the size budget gate runs in the Dart gate, not the Windows build', () => {
   // 行数预算只读源码，不依赖 Windows 工具链；绑在 windows.yml 上就要排在
   // ffmpeg 下载后面。它必须留在 dart-gate，否则这个门禁会随 Windows job 一起
@@ -356,5 +369,97 @@ test('the size budget gate runs in the Dart gate, not the Windows build', () => 
   assert.ok(
     !windows.includes('check_line_budget'),
     'the Windows job must not run the size budget again',
+  );
+});
+
+test('the shell build script keeps the cargo profile arguments in scope for --host-lib', () => {
+  // 函数里的 local 变量在函数返回后就不存在了，而 --host-lib 分支在脚本
+  // 作用域；set -u 下引用未定义变量会直接退出。macOS 自带的 bash 3.2 在
+  // set -u 下展开空数组同样会报未绑定变量，所以展开还要带 +"..." 保护。
+  const source = readScript('build_rust_backend.sh');
+  assert.match(source, /^PROFILE_ARGS=\(\)$/m,
+    'PROFILE_ARGS must be assigned at script scope, not inside the function');
+  assert.ok(!/\blocal\s+profile_args\b/.test(source),
+    'a function-local profile_args cannot be seen by the --host-lib branch');
+
+  const references = (source.match(/\$\{PROFILE_ARGS\[@\]/g) || []).length;
+  const guarded = (source.match(
+    /\$\{PROFILE_ARGS\[@\]\+"\$\{PROFILE_ARGS\[@\]\}"/g,
+  ) || []).length;
+  assert.ok(guarded > 0, 'cargo build must receive the profile flags');
+  assert.equal(references, guarded * 2,
+    'every PROFILE_ARGS expansion must use the bash 3.2-safe ${a[@]+"${a[@]}"} form');
+});
+
+test('the PowerShell build script keeps the profile arguments in scope for -HostLib', () => {
+  // PowerShell 函数内的赋值是局部作用域：脚本层的 -HostLib 分支读不到
+  // $ProfileArgs / $ProfileDir，会让宿主库静默按 debug 构建。
+  const source = readScript('build_rust_backend.ps1');
+  const functionStart = source.indexOf('function Build-AndroidTarget');
+  assert.ok(functionStart > 0, 'Build-AndroidTarget must exist');
+  for (const variable of ['$ProfileArgs =', '$ProfileDir =']) {
+    const assignment = source.indexOf(variable);
+    assert.ok(
+      assignment > 0 && assignment < functionStart,
+      `${variable} must be assigned at script scope before Build-AndroidTarget`,
+    );
+  }
+  const hostLib = source.indexOf('if ($HostLib)');
+  assert.ok(hostLib > functionStart, 'the -HostLib branch must exist');
+  assert.ok(
+    source.slice(hostLib).includes('$ProfileArgs'),
+    'the -HostLib branch must pass the profile flags to cargo',
+  );
+});
+
+test('the Rust build and host-test scripts always honor Cargo.lock', () => {
+  const invocations = (source) => source.split('\n').filter((line) => {
+    const trimmed = line.trimStart();
+    return /cargo build --/.test(line) && !trimmed.startsWith('echo') &&
+      !trimmed.startsWith('#');
+  });
+
+  for (const name of ['build_rust_backend.sh', 'run_rust_host_tests.sh']) {
+    const lines = invocations(readScript(name));
+    assert.ok(lines.length > 0, `${name} must invoke cargo build`);
+    for (const line of lines) {
+      assert.ok(line.includes('--locked'),
+        `${name}: cargo build must use --locked: ${line.trim()}`);
+    }
+  }
+
+  const psBuild = readScript('build_rust_backend.ps1');
+  const psInvocations = psBuild.split('\n').filter((line) => line.includes("@('build'"));
+  assert.equal(psInvocations.length, 2,
+    'build_rust_backend.ps1 must build the Android targets and -HostLib');
+  for (const line of psInvocations) {
+    assert.ok(line.includes("'--locked'"),
+      `build_rust_backend.ps1: cargo build must use --locked: ${line.trim()}`);
+  }
+  const psHostTests = readScript('run_rust_host_tests.ps1');
+  const hostLine = psHostTests.split('\n').find((line) => /cargo build --/.test(line));
+  assert.ok(hostLine, 'run_rust_host_tests.ps1 must invoke cargo build');
+  assert.ok(hostLine.includes('--locked'),
+    `run_rust_host_tests.ps1: cargo build must use --locked: ${hostLine.trim()}`);
+});
+
+test('the Windows workflow resolves dependencies against the lockfile', () => {
+  // 不带 --enforce-lockfile 时 flutter pub get 会静默改锁文件，CI 测的
+  // 就不是仓库里提交的依赖版本了。
+  const workflow = fs.readFileSync(
+    path.join(appDir, '.github', 'workflows', 'windows.yml'),
+    'utf8',
+  );
+  const commands = workflow
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+  assert.ok(
+    /^\s*run: flutter pub get --enforce-lockfile\s*$/m.test(commands),
+    'windows.yml must resolve dependencies with --enforce-lockfile',
+  );
+  assert.ok(
+    !/^\s*run: flutter pub get\s*$/m.test(commands),
+    'a bare flutter pub get would silently update the lockfile',
   );
 });

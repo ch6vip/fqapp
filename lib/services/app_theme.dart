@@ -230,9 +230,12 @@ class AppTheme {
     // OLED 纯黑只在深色下成立；浅色模式忽略该开关。
     final oled = oledMode && isDark;
     final primary = isDark ? accentDark : accent;
+    // 浅色画布与 HomePalette.canvas 同取官方书城底色 #F6F6F6。此前是暖纸
+    // 色 #FCFAF7，只设 body 色的页面 AppBar（取 canvas）与 body 会拼成两色；
+    // 深色 / OLED / 墨水屏本来就与 HomePalette.canvas 一致。
     final canvas = oled
         ? Colors.black
-        : (isDark ? const Color(0xFF151517) : const Color(0xFFFCFAF7));
+        : (isDark ? const Color(0xFF151517) : const Color(0xFFF6F6F6));
     final surface = oled
         ? const Color(0xFF0C0C0E)
         : (isDark ? const Color(0xFF242427) : Colors.white);

@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::dispatch::{Request, Response};
 use crate::endpoints::Ctx;
 use crate::sign::Manager;
-use crate::upstream::http::HttpTransport;
+use crate::upstream::http::account_transport;
 
 const RESPONSE_LIMIT: usize = 8 * 1024 * 1024;
 const ORIGIN: &str = "https://api5-normal-sinfonlineb.fqnovel.com";
@@ -87,7 +87,7 @@ pub async fn handle(ctx: &Ctx, req: &Request) -> Response {
         response.headers.push(("allow".into(), "POST".into()));
         return response;
     }
-    if req.body.len() > 16 * 1024 || !req.query.is_empty() {
+    if req.body.len() > crate::dispatch::ACCOUNT_REQUEST_BODY_LIMIT || !req.query.is_empty() {
         return failure(400, "书架采集参数无效或过长");
     }
     let input: CaptureRequest = match serde_json::from_slice(&req.body) {
@@ -217,7 +217,9 @@ pub async fn handle(ctx: &Ctx, req: &Request) -> Response {
         Ok(body) => body,
         Err(_) => return failure(500, "无法构造书架采集请求"),
     };
-    let client = match HttpTransport::without_redirects(20) {
+    // Shared no-redirect transport: a collection run issues many requests and
+    // must not rebuild the TLS client for each one.
+    let client = match account_transport() {
         Ok(client) => client,
         Err(_) => return failure(503, "无法初始化书架采集连接"),
     };

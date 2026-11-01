@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/playlet_comment.dart';
@@ -40,13 +41,24 @@ void main() {
     final calls = <Map<String, Object>>[];
     await pumpPanel(
       tester,
-      loader: ({required sort, required count, required cursor, required tag}) async {
-        calls.add({'sort': sort, 'count': count, 'cursor': cursor, 'tag': tag});
-        return PlayletCommentPage(
-          comments: [comment('c1'), comment('c2')],
-          totalCount: 2,
-        );
-      },
+      loader:
+          ({
+            required sort,
+            required count,
+            required cursor,
+            required tag,
+          }) async {
+            calls.add({
+              'sort': sort,
+              'count': count,
+              'cursor': cursor,
+              'tag': tag,
+            });
+            return PlayletCommentPage(
+              comments: [comment('c1'), comment('c2')],
+              totalCount: 2,
+            );
+          },
     );
     expect(calls.single['sort'], UgcSort.smartHot);
     expect(calls.single['count'], 10);
@@ -54,45 +66,65 @@ void main() {
     expect(find.byKey(const ValueKey('playlet-comment-c1')), findsOneWidget);
     expect(find.byKey(const ValueKey('playlet-comment-c2')), findsOneWidget);
     expect(find.byKey(const ValueKey('playlet-comment-total')), findsOneWidget);
+    // 关闭键用 Lucide x，和统一点层保持同一套图标。
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('playlet-comment-close')),
+        matching: find.byIcon(LucideIcons.x),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('the 最新 filter switches to TimeDesc and reloads', (tester) async {
     final sorts = <int>[];
     await pumpPanel(
       tester,
-      loader: ({required sort, required count, required cursor, required tag}) async {
-        sorts.add(sort);
-        return PlayletCommentPage(comments: [comment('c1')], totalCount: 1);
-      },
+      loader:
+          ({
+            required sort,
+            required count,
+            required cursor,
+            required tag,
+          }) async {
+            sorts.add(sort);
+            return PlayletCommentPage(comments: [comment('c1')], totalCount: 1);
+          },
     );
-    await tester.tap(
-      find.byKey(const ValueKey('playlet-comment-filter-最新')),
-    );
+    await tester.tap(find.byKey(const ValueKey('playlet-comment-filter-最新')));
     await tester.pumpAndSettle();
     expect(sorts, [UgcSort.smartHot, UgcSort.timeDesc]);
   });
 
-  testWidgets('scrolling to the end loads the next cursor page', (tester) async {
+  testWidgets('scrolling to the end loads the next cursor page', (
+    tester,
+  ) async {
     final cursors = <String>[];
     var page = 0;
     await pumpPanel(
       tester,
-      loader: ({required sort, required count, required cursor, required tag}) async {
-        cursors.add(cursor);
-        page++;
-        if (page == 1) {
-          return PlayletCommentPage(
-            comments: [for (var i = 0; i < 10; i++) comment('p1-$i')],
-            totalCount: 12,
-            hasMore: true,
-            cursor: 'CURSOR-1',
-          );
-        }
-        return PlayletCommentPage(
-          comments: [comment('p2-0'), comment('p2-1')],
-          totalCount: 12,
-        );
-      },
+      loader:
+          ({
+            required sort,
+            required count,
+            required cursor,
+            required tag,
+          }) async {
+            cursors.add(cursor);
+            page++;
+            if (page == 1) {
+              return PlayletCommentPage(
+                comments: [for (var i = 0; i < 10; i++) comment('p1-$i')],
+                totalCount: 12,
+                hasMore: true,
+                cursor: 'CURSOR-1',
+              );
+            }
+            return PlayletCommentPage(
+              comments: [comment('p2-0'), comment('p2-1')],
+              totalCount: 12,
+            );
+          },
     );
     expect(cursors, ['']);
     // 面板高度是屏高 0.62，10 条不够触底；直接滚到底再等分页。
@@ -113,16 +145,26 @@ void main() {
   ) async {
     await pumpPanel(
       tester,
-      loader: ({required sort, required count, required cursor, required tag}) async =>
-          const PlayletCommentPage(totalCount: 0),
+      loader:
+          ({
+            required sort,
+            required count,
+            required cursor,
+            required tag,
+          }) async => const PlayletCommentPage(totalCount: 0),
     );
     expect(find.text('期待你的第一条剧评'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
 
     await pumpPanel(
       tester,
-      loader: ({required sort, required count, required cursor, required tag}) async =>
-          const PlayletCommentPage(totalCount: 7),
+      loader:
+          ({
+            required sort,
+            required count,
+            required cursor,
+            required tag,
+          }) async => const PlayletCommentPage(totalCount: 7),
     );
     expect(find.text('无相关剧评'), findsOneWidget);
   });
@@ -131,11 +173,17 @@ void main() {
     var attempts = 0;
     await pumpPanel(
       tester,
-      loader: ({required sort, required count, required cursor, required tag}) async {
-        attempts++;
-        if (attempts == 1) throw Exception('offline');
-        return PlayletCommentPage(comments: [comment('c1')], totalCount: 1);
-      },
+      loader:
+          ({
+            required sort,
+            required count,
+            required cursor,
+            required tag,
+          }) async {
+            attempts++;
+            if (attempts == 1) throw Exception('offline');
+            return PlayletCommentPage(comments: [comment('c1')], totalCount: 1);
+          },
     );
     expect(find.byKey(const ValueKey('playlet-comment-retry')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('playlet-comment-retry')));
@@ -181,8 +229,13 @@ void main() {
   testWidgets('comments with images render the image row', (tester) async {
     await pumpPanel(
       tester,
-      loader: ({required sort, required count, required cursor, required tag}) async =>
-          PlayletCommentPage(
+      loader:
+          ({
+            required sort,
+            required count,
+            required cursor,
+            required tag,
+          }) async => PlayletCommentPage(
             comments: [
               PlayletComment(
                 id: 'img-1',

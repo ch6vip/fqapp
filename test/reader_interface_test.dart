@@ -5,19 +5,20 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/reader_device.dart';
 import 'package:fqapp/services/reader_preferences.dart';
+import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
 
 import 'support/fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
-    SharedPreferences.setMockInitialValues({
+    setSingleChapterPrefs({
       'reader_page_mode': 'scroll',
       'reader_info_mode': 'detailed',
     });
@@ -193,7 +194,7 @@ void main() {
   testWidgets(
     'night directory uses the reader palette instead of the app day theme',
     (tester) async {
-      SharedPreferences.setMockInitialValues({
+      setSingleChapterPrefs({
         'reader_theme_preset': 'dark',
         'reader_page_mode': 'scroll',
       });
@@ -219,6 +220,39 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('the listening source sheet follows the reader preset', (
+    tester,
+  ) async {
+    await _size(tester, const Size(390, 800));
+    await tester.pumpWidget(_app(_reader()));
+    await tester.pumpAndSettle();
+    await _openMenu(tester);
+    await tester.tap(find.text('听书'));
+    await tester.pumpAndSettle();
+
+    final frame = tester.widget<ReaderSettingsSheetFrame>(
+      find.byType(ReaderSettingsSheetFrame),
+    );
+    expect(frame.preset, ReaderThemePreset.light);
+    expect(find.text('听书方式'), findsOneWidget);
+    final sheet = find.byType(ReaderSettingsSheetFrame);
+    for (final icon in [
+      LucideIcons.headphones,
+      LucideIcons.locate_fixed,
+      LucideIcons.mic,
+    ]) {
+      expect(
+        find.descendant(of: sheet, matching: find.byIcon(icon)),
+        findsOneWidget,
+      );
+    }
+
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ReaderSettingsSheetFrame), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('a cancelled font import keeps the existing appearance', (
     tester,

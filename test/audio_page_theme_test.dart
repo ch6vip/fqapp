@@ -88,4 +88,14 @@ void main() {
     expect(oled.card, base.card);
     expect(oled.ink, base.ink);
   });
+
+  test('eink is a pure black-and-white theme', () {
+    // 墨水屏不读封面取色：画布 / 卡片纯白，文字 / 描边 / 强调纯黑。
+    expect(AudioPageTheme.eink.canvas, Colors.white);
+    expect(AudioPageTheme.eink.card, Colors.white);
+    expect(AudioPageTheme.eink.ink, Colors.black);
+    expect(AudioPageTheme.eink.muted, Colors.black);
+    expect(AudioPageTheme.eink.line, Colors.black);
+    expect(AudioPageTheme.eink.accent, Colors.black);
+  });
 }

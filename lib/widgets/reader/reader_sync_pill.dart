@@ -43,7 +43,11 @@ class ReaderSyncPill extends StatelessWidget {
     final divider = foreground.withValues(alpha: foreground.a * 0.24);
     return Material(
       key: const ValueKey('reader_sync_pill'),
-      color: Colors.transparent,
+      // 和播放胶囊用同一套实底：以前是透明底 + playerText（浅色主题下就是
+      // 白字），压在浅色正文上几乎看不见。给实底后白字才立得起来。
+      color: preset.playerBackground,
+      borderRadius: BorderRadius.circular(height / 2),
+      clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: height),
         child: Row(

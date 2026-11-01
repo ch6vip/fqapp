@@ -141,6 +141,7 @@ impl Upstream {
 pub fn map_client_error(err: ClientError) -> ApiError {
     match err {
         ClientError::DeviceFailed(m) => ApiError::Internal(format!("device failed: {m}")),
+        ClientError::Transient { message, .. } => ApiError::Internal(message),
         ClientError::Http(m) => ApiError::Internal(m),
         ClientError::Other(m) => ApiError::Internal(m),
     }
@@ -178,4 +179,76 @@ pub fn phoenix_player_url() -> String {
         "{HOST_FQNOVELB}/novel/player/multi_video_model/v1/?iid={{install_id}}\
 &device_id={{device_id}}&ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=71332&version_name=7.1.3.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=71332&resolution=1280*2772&dpi=520&update_version_code=71332&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=71332&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0"
     )
+}
+
+/// Go's `reading724Params` (content_util.go): the 7.2.4.32 query bag every
+/// reading endpoint starts from. The order is the Go map's literal order and
+/// is kept so tests can pin the exact bag; the wire encoding sorts keys.
+pub(crate) fn reading724_params() -> Vec<(String, String)> {
+    [
+        ("iid", "{install_id}"),
+        ("device_id", "{device_id}"),
+        ("ac", "wifi"),
+        ("channel", "xiaomi_1967_64"),
+        ("aid", "1967"),
+        ("app_name", "novelapp"),
+        ("version_code", "72432"),
+        ("version_name", "7.2.4.32"),
+        ("device_platform", "android"),
+        ("os", "android"),
+        ("ssmix", "a"),
+        ("device_type", "25053RT47C"),
+        ("device_brand", "Redmi"),
+        ("language", "zh"),
+        ("os_api", "36"),
+        ("os_version", "16"),
+        ("manifest_version_code", "72432"),
+        ("resolution", "1280*2620"),
+        ("dpi", "520"),
+        ("update_version_code", "72432"),
+        ("host_abi", "arm64-v8a"),
+        ("dragon_device_type", "phone"),
+        ("pv_player", "72432"),
+        ("compliance_status", "0"),
+        ("need_personal_recommend", "1"),
+        ("player_so_load", "1"),
+        ("is_android_pad_screen", "0"),
+        ("rom_version", "miui_V816_OS3.0.9.0.WOLCNXM"),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+#[cfg(test)]
+mod reading724_tests {
+    use super::*;
+
+    #[test]
+    fn reading724_bag_matches_the_go_reference() {
+        let bag = reading724_params();
+        assert_eq!(bag.len(), 28, "the shared bag must keep every parameter");
+        assert_eq!(bag[0], ("iid".to_string(), "{install_id}".to_string()));
+        assert_eq!(
+            bag[bag.len() - 1],
+            (
+                "rom_version".to_string(),
+                "miui_V816_OS3.0.9.0.WOLCNXM".to_string()
+            )
+        );
+        // Values that endpoints override or sign against must not drift.
+        for (key, value) in [
+            ("version_name", "7.2.4.32"),
+            ("aid", "1967"),
+            ("channel", "xiaomi_1967_64"),
+            ("resolution", "1280*2620"),
+            ("dpi", "520"),
+        ] {
+            assert_eq!(
+                bag.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()),
+                Some(value),
+                "parameter {key}"
+            );
+        }
+    }
 }

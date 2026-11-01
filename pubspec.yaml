@@ -50,7 +50,7 @@ dependencies:
   archive: ^4.3.0
   html: 0.15.6
   xml: ^7.0.1
-  flutter_lucide: ^1.43.0
+  flutter_lucide: 1.59.0
   lottie: ^3.6.1
   flutter_rust_bridge: 2.13.0
   connectivity_plus: ^7.3.1

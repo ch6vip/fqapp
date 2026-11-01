@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/pages/text_replacement_page.dart';
 import 'package:fqapp/services/text_replacement_store.dart';
+import 'package:fqapp/widgets/home/home_feed_states.dart';
+import 'package:fqapp/widgets/settings/settings_widgets.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +58,21 @@ void main() {
     expect(restored.snapshot.rules.single.pattern, '漂亮国');
     expect(restored.snapshot.enabled, isTrue);
   });
+  testWidgets('空规则展示 HomeStateView，启用项使用 SettingsSwitch', (tester) async {
+    final store = TextReplacementStore();
+    await store.load();
+    await tester.pumpWidget(
+      MaterialApp(home: TextReplacementPage(store: store)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(HomeStateView), findsOneWidget);
+    expect(find.text('还没有替换规则'), findsOneWidget);
+    expect(find.byType(SettingsSwitch), findsOneWidget);
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(find.byType(Card), findsNothing);
+  });
+
   testWidgets('empty matching text is rejected without closing editor', (
     tester,
   ) async {

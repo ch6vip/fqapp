@@ -135,4 +135,153 @@ void main() {
       expect(track.cues[1].startMs, closeTo(25000, 1500));
     });
   });
+
+  group('rewrite equivalence', () {
+    // 长章节：超过 isolateThreshold，覆盖后台 isolate 路径；里面混入
+    // 代理对（😀）、连续标点、引号与多段落。
+    final longChapter = [
+      for (var i = 0; i < 260; i++) '第$i段：他说：“今天天气不错。”然后走了……「明天见！」她喊道😀！',
+    ].join('\n');
+
+    final corpus = <String>[
+      '',
+      '   \n\n ',
+      '第一句。第二句！第三句？\n第四句',
+      '他愣住……「走吧。」她说。',
+      '连续标点？！？！”」』）)]}然后。',
+      '行一\r\n行二\r行三\n\n行四。',
+      '😀表情！😀😀？……「结束」',
+      'a!b?c.',
+      '${'甲' * 130}，${'乙' * 70}；${'丙' * 51}。',
+      '他说：走吧。然后呢；不知道。',
+      longChapter,
+    ];
+
+    test('splitSentences matches the pre-rewrite implementation', () {
+      for (var i = 0; i < corpus.length; i++) {
+        expect(
+          SubtitleSynthesis.splitSentences(corpus[i]),
+          referenceSplitSentences(corpus[i]),
+          reason: 'corpus[$i]',
+        );
+      }
+    });
+
+    test('a long chapter splits identically off the UI isolate', () async {
+      expect(
+        longChapter.length,
+        greaterThan(SubtitleSynthesis.isolateThreshold),
+      );
+      expect(
+        await SubtitleSynthesis.splitSentencesAsync(longChapter),
+        referenceSplitSentences(longChapter),
+      );
+    });
+
+    test('buildAsync produces the same track as build', () async {
+      final syncTrack = SubtitleSynthesis.build(
+        text: longChapter,
+        duration: const Duration(minutes: 30),
+      );
+      final asyncTrack = await SubtitleSynthesis.buildAsync(
+        text: longChapter,
+        duration: const Duration(minutes: 30),
+      );
+      expect(asyncTrack.cues.length, syncTrack.cues.length);
+      for (var i = 0; i < syncTrack.cues.length; i++) {
+        expect(asyncTrack.cues[i].startMs, syncTrack.cues[i].startMs);
+        expect(asyncTrack.cues[i].text, syncTrack.cues[i].text);
+      }
+    });
+
+    test('buildAsync keeps anchored timing for a short chapter', () async {
+      const anchored = '第一句。第二句。第三句。第四句。';
+      final anchors = trackOf([(0, 0, 0), (0, 16, 80000)]);
+      final syncTrack = SubtitleSynthesis.build(
+        text: anchored,
+        duration: const Duration(seconds: 100),
+        anchors: anchors,
+      );
+      final asyncTrack = await SubtitleSynthesis.buildAsync(
+        text: anchored,
+        duration: const Duration(seconds: 100),
+        anchors: anchors,
+      );
+      expect(asyncTrack.cues.length, syncTrack.cues.length);
+      for (var i = 0; i < syncTrack.cues.length; i++) {
+        expect(asyncTrack.cues[i].startMs, syncTrack.cues[i].startMs);
+        expect(asyncTrack.cues[i].text, syncTrack.cues[i].text);
+      }
+    });
+  });
+}
+
+// 改写前的实现（逐 rune + 正则）留作等价性参照：只用于证明
+// `SubtitleSynthesis.splitSentences` 的输出没有变化。
+final RegExp _referenceSentenceEnd = RegExp(r'[。！？!?…]+');
+const String _referenceClosingQuotes = '”’」』）)]}';
+const String _referenceSoftChars = '，,、；;：:';
+const int _referenceMaxSentenceChars = 60;
+
+List<String> referenceSplitSentences(String text) {
+  final out = <String>[];
+  final buffer = StringBuffer();
+  var pendingEnd = false;
+
+  void flush() {
+    final value = buffer.toString().trim();
+    buffer.clear();
+    pendingEnd = false;
+    if (value.isEmpty) return;
+    _referenceSplitLong(value, out);
+  }
+
+  for (final rune in text.runes) {
+    final ch = String.fromCharCode(rune);
+    if (ch == '\n' || ch == '\r') {
+      flush();
+      continue;
+    }
+    if (pendingEnd) {
+      if (_referenceSentenceEnd.hasMatch(ch) ||
+          _referenceClosingQuotes.contains(ch)) {
+        buffer.write(ch);
+        continue;
+      }
+      flush();
+    }
+    buffer.write(ch);
+    if (_referenceSentenceEnd.hasMatch(ch)) pendingEnd = true;
+  }
+  flush();
+  return out;
+}
+
+void _referenceSplitLong(String value, List<String> out) {
+  if (value.length <= _referenceMaxSentenceChars) {
+    out.add(value);
+    return;
+  }
+  final chunk = StringBuffer();
+  var start = 0;
+  for (var i = 0; i < value.length; i++) {
+    if (!_referenceSoftChars.contains(value[i])) continue;
+    final candidate = value.substring(start, i + 1);
+    if (chunk.isNotEmpty &&
+        chunk.length + candidate.length > _referenceMaxSentenceChars) {
+      out.add(chunk.toString());
+      chunk.clear();
+    }
+    chunk.write(candidate);
+    start = i + 1;
+  }
+  final rest = value.substring(start);
+  if (chunk.isNotEmpty &&
+      chunk.length + rest.length > _referenceMaxSentenceChars) {
+    out.add(chunk.toString());
+    chunk.clear();
+  }
+  chunk.write(rest);
+  final tail = chunk.toString();
+  if (tail.isNotEmpty) out.add(tail);
 }
