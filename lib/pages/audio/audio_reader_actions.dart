@@ -110,6 +110,11 @@ extension _AudioReaderActions on _AudioPlaybackScopeState {
       await stopTts(tts);
       return true;
     }
+    // 会话已经被外部关掉，但全局状态还挂着这本书：清场，让胶囊回到「听」。
+    if (ListeningSession.instance.matchesBook(bookId)) {
+      ListeningSession.instance.clear();
+      return true;
+    }
     return false;
   }
 
@@ -137,25 +142,47 @@ extension _AudioReaderActions on _AudioPlaybackScopeState {
   }
 
   /// 见 [AudioPlaybackScope.openAudioPage]。
-  void openAudioPage(String bookId) {
+  bool openAudioPage(String bookId) {
     final session = _session;
-    if (session == null || session._closed) return;
-    if (!sessionBookMatches(bookId)) return;
+    if (session == null || session._closed) return false;
+    if (!sessionBookMatches(bookId)) return false;
+    // 连点封面时不要把同一个会话叠成两层听书页。
+    if (identical(_openingAudio, session)) return true;
     final navigator = widget.navigatorKey.currentState;
-    if (navigator == null) return;
+    if (navigator == null) return false;
+    _openingAudio = session;
     unawaited(
-      navigator.push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => AudioPage(
-            bookId: session._bookId,
-            title: session._title,
-            cover: session._cover,
-            chapters: session._chapters,
-            startIndex: session._index,
-            resumeSession: true,
-          ),
-        ),
-      ),
+      navigator
+          .push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => AudioPage(
+                bookId: session._bookId,
+                title: session._title,
+                cover: session._cover,
+                chapters: session._chapters,
+                startIndex: session._index,
+                resumeSession: true,
+              ),
+            ),
+          )
+          .whenComplete(() {
+            if (identical(_openingAudio, session)) _openingAudio = null;
+          }),
     );
+    return true;
+  }
+
+  /// 见 [AudioPlaybackScope.hasAudioSession]。
+  bool hasAudioSession(String bookId) {
+    final session = _session;
+    return session != null && !session._closed && sessionBookMatches(bookId);
+  }
+
+  /// 见 [AudioPlaybackScope.openTtsPage]。
+  bool openTtsPage(String bookId) {
+    final tts = _tts;
+    if (tts == null || tts.closed || tts.book.bookId != bookId) return false;
+    _openTts(tts);
+    return true;
   }
 }

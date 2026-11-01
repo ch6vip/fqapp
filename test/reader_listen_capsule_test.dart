@@ -127,6 +127,11 @@ void main() {
     );
     expect(material.color, Colors.black);
     expect(find.text('听'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.text('听')).style?.color,
+      Colors.black,
+      reason: '白圆上的「听」必须是黑字，不能跟 playerText 的白',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

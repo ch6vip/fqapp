@@ -1,7 +1,8 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import '../../pages/audio_page.dart' show ReaderAudioBridge, VoicePickerOutcome;
+import '../../pages/audio_page.dart'
+    show AudioPlaybackScope, ReaderAudioBridge, VoicePickerOutcome;
 import '../../services/listening_session.dart';
 import '../../services/reader_preferences.dart';
 import '../audio/audio_floating_glyphs.dart';
@@ -24,7 +25,6 @@ class ReaderListenCapsule extends StatelessWidget {
     this.onVoices,
     required this.onClose,
     this.cover,
-    this.animate = true,
     this.busy = false,
   });
 
@@ -43,7 +43,6 @@ class ReaderListenCapsule extends StatelessWidget {
   /// 打开音色面板。null = 不可用（未听书 / 系统朗读），按钮置灰。
   final VoidCallback? onVoices;
   final VoidCallback onClose;
-  final bool animate;
 
   /// 章节正在加载或加载失败：播放键置灰，避免点了没反应。
   final bool busy;
@@ -156,7 +155,8 @@ class ReaderListenCapsule extends StatelessWidget {
             child: Text(
               '听',
               style: TextStyle(
-                color: ink,
+                // 墨水屏封面是白圆，字再跟 playerText 走就成了白底白字。
+                color: _eink ? Colors.black : ink,
                 fontSize: MediaQuery.textScalerOf(
                   context,
                 ).scale(18).clamp(14.0, 22.0),
@@ -256,7 +256,6 @@ class ReaderListenCapsuleHost extends StatefulWidget {
     super.key,
     required this.bookId,
     required this.preset,
-    required this.animate,
     required this.onStartFromPage,
     required this.onCollapse,
     this.cover,
@@ -265,7 +264,6 @@ class ReaderListenCapsuleHost extends StatefulWidget {
 
   final String bookId;
   final ReaderThemePreset preset;
-  final bool animate;
   final String? cover;
 
   /// 未听书时点播放/封面：从本页开始播放。
@@ -326,11 +324,12 @@ class _ReaderListenCapsuleHostState extends State<ReaderListenCapsuleHost> {
     final session = ListeningSession.instance;
     // 真人讲书的「边听边读」打开原著时，会话按音频书 id 记账、别名到原著 id。
     final listening = session.matchesBook(widget.bookId) && !session.completed;
+    // 系统朗读没有音频会话：音色入口置灰，封面改开整页 TTS 播放器。
+    final audio = AudioPlaybackScope.hasAudioSession(context, widget.bookId);
     return ReaderListenCapsule(
       listening: listening,
       playing: listening && session.playing,
       preset: widget.preset,
-      animate: widget.animate,
       busy: widget.busy,
       cover: widget.cover,
       onCover: () {
@@ -338,7 +337,10 @@ class _ReaderListenCapsuleHostState extends State<ReaderListenCapsuleHost> {
           widget.onStartFromPage();
           return;
         }
-        ReaderAudioBridge.openPage(context, widget.bookId);
+        final opened = audio
+            ? ReaderAudioBridge.openPage(context, widget.bookId)
+            : AudioPlaybackScope.openTtsPage(context, widget.bookId);
+        if (!opened) _toast('播放页打开失败，请稍后重试');
       },
       onToggle: () {
         if (!listening) {
@@ -349,7 +351,7 @@ class _ReaderListenCapsuleHostState extends State<ReaderListenCapsuleHost> {
           _toast('当前播放尚未就绪，请稍后重试');
         }
       },
-      onVoices: listening
+      onVoices: listening && audio
           ? () async {
               final outcome = await ReaderAudioBridge.openVoiceSettings(
                 context,

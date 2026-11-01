@@ -204,8 +204,15 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
           _showMessage('当前音频没有这一章，继续播放原进度');
         }
         if (openPage) {
-          _setState(() => _controlsVisible = false);
-          AudioPlaybackScope.openAudioPage(context, widget.bookId);
+          final opened = AudioPlaybackScope.openAudioPage(
+            context,
+            widget.bookId,
+          );
+          if (opened) {
+            _setState(() => _controlsVisible = false);
+          } else if (mounted) {
+            _showMessage('无法打开听书页，请稍后重试');
+          }
         }
         return;
       }

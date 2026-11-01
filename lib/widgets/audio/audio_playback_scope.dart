@@ -106,14 +106,36 @@ class AudioPlaybackScope extends StatefulWidget {
     if (override != null) return override(context, request);
     final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
     if (owner == null) return false;
-    return await owner.acquire(request) != null;
+    try {
+      return await owner.acquire(request) != null;
+    } catch (_) {
+      // acquire 的失败不能再冒泡到手势回调：调用方只认 bool，失败要能提示。
+      return false;
+    }
   }
 
   /// 打开听书页，复用当前会话（真人讲书别名到原著时不能按原著 id 新建会话）。
-  static void openAudioPage(BuildContext context, String bookId) {
-    context.findAncestorStateOfType<_AudioPlaybackScopeState>()?.openAudioPage(
-      bookId,
-    );
+  static bool openAudioPage(BuildContext context, String bookId) {
+    return context
+            .findAncestorStateOfType<_AudioPlaybackScopeState>()
+            ?.openAudioPage(bookId) ??
+        false;
+  }
+
+  /// 这本书当前是否有可用的音频会话（系统朗读不算）。
+  static bool hasAudioSession(BuildContext context, String bookId) {
+    return context
+            .findAncestorStateOfType<_AudioPlaybackScopeState>()
+            ?.hasAudioSession(bookId) ??
+        false;
+  }
+
+  /// 打开系统朗读的整页播放器（胶囊封面在 TTS 态下的落点）。
+  static bool openTtsPage(BuildContext context, String bookId) {
+    return context
+            .findAncestorStateOfType<_AudioPlaybackScopeState>()
+            ?.openTtsPage(bookId) ??
+        false;
   }
 
   /// 取指定章节的逐句字幕（阅读页跨章双击跳读用）。
@@ -246,7 +268,10 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
       final current = _session;
       if (current != null &&
           !current._closed &&
-          current._bookId == request.bookId) {
+          sessionBookMatches(request.bookId)) {
+        // 别名书（真人讲书的原著）：阅读页传的是原著 id，会话记的是音频
+        // 专辑 id。命中别名时只复用，不关闭重开。
+        final aliased = current._bookId != request.bookId;
         if ((!request.resumeSession || request.startPosition != null) &&
             request.chapters.isNotEmpty) {
           final chapter =
@@ -254,23 +279,29 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
                 0,
                 request.chapters.length - 1,
               )];
-          final index = current._chapters.indexWhere(
-            (c) => c.itemId == chapter.itemId,
-          );
-          if (index >= 0) {
-            unawaited(
-              current._openChapter(
-                index,
-                position: request.startPosition,
-                paragraph: request.startParagraph,
-                fraction: request.startFraction,
-                toneId: request.initialToneId,
-                restoreHistory: true,
-                autoplay: request.autoplay,
-              ),
+          final audioChapterId = audioChapterIdFor(chapter.itemId);
+          if (audioChapterId != null) {
+            final index = current._chapters.indexWhere(
+              (c) => c.itemId == audioChapterId,
             );
-            return current;
+            if (index >= 0) {
+              unawaited(
+                current._openChapter(
+                  index,
+                  position: request.startPosition,
+                  paragraph: request.startParagraph,
+                  fraction: request.startFraction,
+                  toneId: request.initialToneId,
+                  restoreHistory: true,
+                  autoplay: request.autoplay,
+                ),
+              );
+              return current;
+            }
           }
+          // 别名章节映射不到当前音频集：保持当前播放，拿原著 id 新建会话
+          // 只会得到一个不存在的音频书。
+          if (aliased) return current;
           // A refreshed directory can remove an old chapter. Start the exact
           // requested directory instead of silently retaining another chapter.
         } else {
