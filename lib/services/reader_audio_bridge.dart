@@ -11,7 +11,7 @@ abstract final class ReaderAudioBridge {
   static bool toggle(BuildContext context, String bookId) =>
       AudioPlaybackScope.togglePlayback(context, bookId);
 
-  static void openPage(BuildContext context, String bookId) =>
+  static bool openPage(BuildContext context, String bookId) =>
       AudioPlaybackScope.openAudioPage(context, bookId);
 
   static Future<bool> stop(BuildContext context, String bookId) =>
@@ -31,15 +31,22 @@ abstract final class ReaderAudioBridge {
       return VoicePickerOutcome.unavailable;
     }
     final session = owner._session;
-    if (session == null || session._closed) {
+    if (session == null || session._closed || session._switchingVersion) {
       return VoicePickerOutcome.unavailable;
     }
 
     var tones = session._extras.tones;
     if (tones.ttsTones.isEmpty && tones.narratorTones.isEmpty) {
       // 会话还没取过音色：现拉一次并回填，面板关掉后听书页也不用再拉。
-      await session._publishExtras(session._loadExtras());
+      try {
+        await session._publishExtras(session._loadExtrasSafely());
+      } catch (_) {
+        return VoicePickerOutcome.unavailable;
+      }
       tones = session._extras.tones;
+      if (session._closed || !context.mounted) {
+        return VoicePickerOutcome.dismissed;
+      }
       if (tones.ttsTones.isEmpty && tones.narratorTones.isEmpty) {
         return VoicePickerOutcome.unavailable;
       }
@@ -116,13 +123,19 @@ abstract final class ReaderAudioBridge {
               );
               if (confirmed != true) return;
             }
-            if (sheetContext.mounted) Navigator.maybePop(sheetContext);
+            // 先等切换完成再关面板：先 pop 会让 showModalBottomSheet 的
+            // future 提前返回 changed，_select 的失败就再也传不出去。
             outcome = VoicePickerOutcome.changed;
-            try {
-              await _select(session, option, narrator: narrator);
-            } catch (_) {
-              outcome = VoicePickerOutcome.failed;
+            if (session._switchingVersion) {
+              outcome = VoicePickerOutcome.unavailable;
+            } else {
+              try {
+                await _select(session, option, narrator: narrator);
+              } catch (_) {
+                outcome = VoicePickerOutcome.failed;
+              }
             }
+            if (sheetContext.mounted) Navigator.maybePop(sheetContext);
           },
         ),
       ),
@@ -136,6 +149,7 @@ abstract final class ReaderAudioBridge {
     required bool narrator,
   }) async {
     if (narrator) {
+      if (option.id == session._bookId) return;
       await session._switchBookVersion(
         option.id,
         title: option.title,
@@ -144,6 +158,20 @@ abstract final class ReaderAudioBridge {
       );
       return;
     }
+    if (!session._selectableTone(option.id)) return;
+    // 真人讲书的会话按音频书章节记账，智能朗读必须先在原著章节上播；
+    // 直接把 TTS 音色发给音频章节会被上游 NO_THIS_TONE 打回并中断播放。
+    final novel = session._extras.tones.relatedNovel;
+    if (session._ttsBookId != session._bookId && novel != null) {
+      await session._switchBookVersion(
+        novel.id,
+        title: novel.title.isEmpty ? session._title : novel.title,
+        cover: novel.cover.isEmpty ? session._cover : novel.cover,
+        toneId: option.id,
+      );
+      return;
+    }
+    if (option.id == session._toneId) return;
     await session._openChapter(
       session._index,
       position: session._player?.position ?? session._position.value,

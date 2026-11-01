@@ -145,7 +145,6 @@ extension _ReaderPageBuild on _ReaderPageState {
                         child: ReaderPlayerPillHost(
                           bookId: widget.bookId,
                           preset: preset,
-                          animate: !einkModeNotifier.value,
                           controlsVisible: _controlsVisible,
                           highlightOnScreen: () => readerNarrationOnScreen(
                             layout: _chapterLayout,
@@ -343,7 +342,6 @@ extension _ReaderPageBuild on _ReaderPageState {
               bookId: widget.bookId,
               cover: widget.cover,
               preset: preset,
-              animate: !einkModeNotifier.value,
               busy: _loading || _error != null,
               onStartFromPage: () =>
                   unawaited(_openListening(fromPage: true, keepControls: true)),
