@@ -74,6 +74,26 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('在听时菜单里只出现胶囊，官方播放键让位', (tester) async {
+    await _mount(tester);
+    await _openMenu(tester);
+    ListeningSession.instance.update(
+      bookId: 'capsule-test',
+      chapterId: 'c1',
+      chapterTitle: '第一章',
+      position: Duration.zero,
+      duration: const Duration(seconds: 10),
+      playing: true,
+    );
+    await tester.pumpAndSettle();
+
+    expect(_capsule, findsOneWidget);
+    expect(find.byKey(const ValueKey('reader_player_pill')), findsNothing);
+    expect(find.byKey(const ValueKey('reader_sync_pill')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('未听书时点 × 收起菜单', (tester) async {
     await _mount(tester);
     await _openMenu(tester);

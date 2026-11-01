@@ -239,17 +239,15 @@ class _ReaderPlayerPillHostState extends State<ReaderPlayerPillHost> {
 
   Widget _slot({required bool floating}) {
     final highlightOnScreen = widget.highlightOnScreen();
-    // 官方 d.p()（d.java:285-320）：高亮在屏内给播放/暂停胶囊，否则给
-    // 「原进度 / 从本页听」同步胶囊。同步胶囊只占浮动位（页面底部），
-    // 5 秒弱化只属于播放胶囊。
+    final normalPage = widget.normalPage?.call() ?? true;
+    // 官方 d.p()（d.java:285-320）：非正常页（纯图片/标题页）两个按钮都不出；
+    // 正常页高亮在屏内给播放/暂停，否则给「原进度 / 从本页听」。
     final sync =
-        _active &&
-        !widget.controlsVisible &&
-        !highlightOnScreen &&
-        (widget.normalPage?.call() ?? true);
+        _active && !widget.controlsVisible && normalPage && !highlightOnScreen;
     final show =
         !widget.controlsVisible &&
         _active &&
+        normalPage &&
         (sync ? floating : highlightOnScreen && (floating ? !_weak : _weak));
     final motion =
         widget.animate &&
