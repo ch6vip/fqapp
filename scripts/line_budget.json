@@ -18,7 +18,7 @@
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 726,
     "lib/pages/settings_page.dart": 808,
-    "lib/services/api_client.dart": 1797,
+    "lib/services/api_client.dart": 1813,
     "lib/services/app_log.dart": 622,
     "lib/services/audio_downloader.dart": 625,
     "lib/services/audio_playback_controller.dart": 1479,
