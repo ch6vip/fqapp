@@ -28,9 +28,11 @@ void main() {
     );
     ListeningSession.instance.clear();
     ListeningSession.instance.setFollowArmed(false);
+    AudioPlaybackScope.startListeningOverride = null;
   });
 
   tearDown(() {
+    AudioPlaybackScope.startListeningOverride = null;
     ListeningSession.instance.clear();
   });
 
@@ -85,6 +87,44 @@ void main() {
       },
     );
 
+    testWidgets('真人讲书的原著页从本页听不会新建会话', (tester) async {
+      await _mountOnline(tester);
+      // 会话按音频书 id 记账，别名到阅读页打开的原著 id。
+      ListeningSession.instance.update(
+        bookId: 'audio-1',
+        chapterId: 'a1',
+        chapterTitle: '第一集',
+        position: Duration.zero,
+        duration: const Duration(seconds: 60),
+        playing: false,
+        novelBookId: 'reader-test',
+        novelChapterId: 'c1',
+        toneId: 'narrator-7',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
+
+      var started = false;
+      AudioPlaybackScope.startListeningOverride = (context, request) async {
+        started = true;
+        return true;
+      };
+      addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
+
+      await tester.tap(
+        find.byKey(const ValueKey('reader_sync_listen_from_here')),
+      );
+      await tester.pumpAndSettle();
+
+      // 别名书必须复用现有会话；拿原著 id 去 acquire 会把它关掉。
+      expect(started, isFalse);
+      expect(find.byType(AudioPage), findsNothing);
+      expect(ListeningSession.instance.bookId, 'audio-1');
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
     testWidgets('原进度 returns to the narration and follows again', (
       tester,
     ) async {
@@ -119,7 +159,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('从本页听 starts in background from this page with the current tone', (
+    testWidgets('从本页听 starts in the background with the current tone', (
       tester,
     ) async {
       await _mountOnline(tester);
@@ -136,7 +176,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
 
-      // 「从本页听」= 后台起播不跳页：拦截起播缝，验证请求参数与阅读页留存。
       AudioPage? started;
       AudioPlaybackScope.startListeningOverride = (context, request) async {
         started = request;
@@ -149,6 +188,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // 官方 L()：从本页听留在阅读页，不压听书页。
       expect(find.byType(AudioPage), findsNothing);
       expect(started, isNotNull);
       // 本页第一段带 <span start_time="4200">。

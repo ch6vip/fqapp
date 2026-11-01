@@ -229,8 +229,6 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
-      // 高亮离屏要稳定 300ms 才切同步胶囊，这里等它走完防抖。
-      await tester.pump(const Duration(milliseconds: 350));
     }
 
     testWidgets('highlight on screen keeps the play/pause pill', (
@@ -255,6 +253,16 @@ void main() {
       expect(find.byKey(const ValueKey('reader_sync_pill')), findsNothing);
       expect(find.byKey(const ValueKey('reader_player_pill')), findsNothing);
     });
+
+    testWidgets(
+      'no player pill on a non-normal page with highlight on screen',
+      (tester) async {
+        _publish(ListeningSession.instance, playing: true);
+        await mountHost(tester, highlightOnScreen: true, normalPage: false);
+        expect(find.byKey(const ValueKey('reader_player_pill')), findsNothing);
+        expect(find.byKey(const ValueKey('reader_sync_pill')), findsNothing);
+      },
+    );
 
     testWidgets('opening the menus hides both', (tester) async {
       _publish(ListeningSession.instance, playing: true);

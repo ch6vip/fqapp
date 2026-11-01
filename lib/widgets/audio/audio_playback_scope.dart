@@ -12,6 +12,11 @@ class AudioPlaybackScope extends StatefulWidget {
   final GlobalKey<NavigatorState> navigatorKey;
   final Widget child;
 
+  /// 测试缝：拦截「从本页听」的后台起播，避免测试真的挂播放器。
+  @visibleForTesting
+  static Future<bool> Function(BuildContext context, AudioPage request)?
+  startListeningOverride;
+
   /// Supplies the cold-start idle capsule. Null disables it.
   final RecentListenLoader? recentListen;
 
@@ -20,31 +25,6 @@ class AudioPlaybackScope extends StatefulWidget {
     if (owner == null) throw StateError('当前阅读入口不支持持续朗读');
     return owner.startSystemTts(book);
   }
-
-  /// 在后台起播，不打开听书页；实现见 [ReaderAudioBridge]（同库 part）。
-  @visibleForTesting
-  static BackgroundStartHandler? startListeningOverride;
-
-  static Future<bool> startListeningInBackground(
-    BuildContext context,
-    AudioPage request,
-  ) => ReaderAudioBridge.startListeningInBackground(context, request);
-
-  /// 段落锚点跳转（双击跳读用）：与「从本页播放」同一套寻址。
-  static bool jumpToParagraph(
-    BuildContext context,
-    String chapterId, {
-    required int? paraIndex,
-    required int ordinal,
-  }) => ReaderAudioBridge.jumpToParagraph(
-    context,
-    chapterId,
-    paraIndex: paraIndex,
-    ordinal: ordinal,
-  );
-
-  @visibleForTesting
-  static ParagraphJumpHandler? jumpToParagraphOverride;
 
   /// 把正在进行的朗读跳到 [position]（阅读页双击跳读用）。
   ///
@@ -84,11 +64,57 @@ class AudioPlaybackScope extends StatefulWidget {
     BuildContext context,
     String chapterId,
     Duration position,
-  ) => ReaderAudioBridge.jumpToChapter(context, chapterId, position);
+  ) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return owner?.jumpToChapter(chapterId, position) ?? false;
+  }
 
-  /// 测试缝：拦截句级/段首毫秒跳转（双击跳读用例）。
-  @visibleForTesting
-  static ChapterJumpHandler? jumpToChapterOverride;
+  /// 按段落锚点跳转（「从本页听」在正文没有 `<span start_time>` 时用它）。
+  ///
+  /// 与 [jumpToChapter] 的区别是交给播放器的 `/timepoints` 去解析段落，而不是
+  /// 由阅读页先折算毫秒。真人讲书的原著章节 id 会先映射回当前音频集。
+  static bool jumpToParagraph(
+    BuildContext context,
+    String chapterId, {
+    required int? paraIndex,
+    required int ordinal,
+  }) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return owner?.jumpToParagraph(
+          chapterId,
+          paraIndex: paraIndex,
+          ordinal: ordinal,
+        ) ??
+        false;
+  }
+
+  /// 在后台起播，不打开听书页（阅读页「从本页听」用它）。
+  ///
+  /// 会话由 scope 持有、页面只是视图，所以不挂载页面也能播；阅读页留在
+  /// 原处继续跟随与高亮。返回 false 表示起播失败。
+  static Future<bool> startListeningInBackground(
+    BuildContext context,
+    AudioPage request,
+  ) async {
+    final override = startListeningOverride;
+    if (override != null) return override(context, request);
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    if (owner == null) return false;
+    try {
+      return await owner.acquire(request) != null;
+    } catch (_) {
+      // acquire 的失败不能再冒泡到手势回调：调用方只认 bool，失败要能提示。
+      return false;
+    }
+  }
+
+  /// 打开听书页，复用当前会话（真人讲书别名到原著时不能按原著 id 新建会话）。
+  static bool openAudioPage(BuildContext context, String bookId) {
+    return context
+            .findAncestorStateOfType<_AudioPlaybackScopeState>()
+            ?.openAudioPage(bookId) ??
+        false;
+  }
 
   /// 取指定章节的逐句字幕（阅读页跨章双击跳读用）。
   ///
@@ -184,34 +210,6 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     return true;
   }
 
-  /// 阅读页的书 id 是否属于这个会话：音频书自己的 id，或时间轴别名到的
-  /// 原著（真人讲书的「边听边读」打开原著后仍要能控制播放）。
-  bool _sessionBookMatches(String bookId) {
-    final session = _session;
-    if (session == null || session._closed) return false;
-    return session._bookId == bookId || session._linkedNovelBookId == bookId;
-  }
-
-  /// 把阅读页的章节 id 解析成播放器使用的音频章节 id。
-  ///
-  /// 智能朗读两边相同，直接命中；真人讲书的阅读页传的是原著章节 id，只有
-  /// 时间轴映射到的当前集才能换回音频章节。其它原著章节没有反查表，返回
-  /// null —— 宁可不跳，也不串到别的音频章。
-  String? _audioChapterIdFor(String readerChapterId) {
-    final session = _session;
-    if (session == null || session._closed || readerChapterId.isEmpty) {
-      return null;
-    }
-    if (session._chapters.any((c) => c.itemId == readerChapterId)) {
-      return readerChapterId;
-    }
-    if (session._timeTrack.novelItemId != readerChapterId) return null;
-    if (session._index < 0 || session._index >= session._chapters.length) {
-      return null;
-    }
-    return session._chapters[session._index].itemId;
-  }
-
   /// 见 [AudioPlaybackScope.togglePlayback]。
   bool togglePlayback(String bookId) {
     final tts = _tts;
@@ -222,7 +220,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     final session = _session;
     if (session == null || session._closed) return false;
     // 只控制「正在听的那本」：阅读页可能翻到别的书，那与本会话无关。
-    if (!_sessionBookMatches(bookId) || !session._ready) return false;
+    if (!sessionBookMatches(bookId) || !session._ready) return false;
     unawaited(session._togglePlayback());
     return true;
   }
@@ -236,74 +234,8 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     }
     final session = _session;
     if (session == null || session._closed) return;
-    if (!_sessionBookMatches(bookId) || !session._ready) return;
+    if (!sessionBookMatches(bookId) || !session._ready) return;
     if (session._wantPlay) unawaited(session._pauseForOtherMedia());
-  }
-
-  /// 见 [AudioPlaybackScope.jumpToChapter]。换章要重新加载音频源，所以不像
-  /// [seekActive] 那样要求 _ready —— 正在缓冲中跳读也是合法操作。
-  /// 见 [AudioPlaybackScope.timelineForChapter]。
-  Future<SubtitleTrack> timelineForChapter(String chapterId) {
-    final session = _session;
-    if (session == null || session._closed) {
-      return Future.value(SubtitleTrack.empty);
-    }
-    final audioChapterId = _audioChapterIdFor(chapterId);
-    if (audioChapterId == null) return Future.value(SubtitleTrack.empty);
-    final index = session._chapters.indexWhere(
-      (c) => c.itemId == audioChapterId,
-    );
-    if (index < 0) return Future.value(SubtitleTrack.empty);
-    // 正在播的就是这一章：会话里的轨最新，直接给。
-    if (index == session._index && session._subtitles.isNotEmpty) {
-      return Future.value(session._subtitles);
-    }
-    final key = '${session._toneId}|$audioChapterId';
-    final cached = _timelineCache[key];
-    if (cached != null) return Future.value(cached);
-    final pending = _timelinePending[key];
-    if (pending != null) return pending;
-    final future = _loadTimeline(
-      key,
-      session._loadSubtitles(audioChapterId, session._toneId),
-    );
-    _timelinePending[key] = future;
-    return future;
-  }
-
-  Future<SubtitleTrack> _loadTimeline(
-    String key,
-    Future<SubtitleTrack> load,
-  ) async {
-    try {
-      final track = await load;
-      // 命中不了的章不再重复请求；超过 8 条就丢最旧的一条。
-      if (_timelineCache.length >= 8) {
-        _timelineCache.remove(_timelineCache.keys.first);
-      }
-      _timelineCache[key] = track;
-      return track;
-    } finally {
-      _timelinePending.remove(key);
-    }
-  }
-
-  bool jumpToChapter(String chapterId, Duration position) {
-    final session = _session;
-    if (session == null || session._closed) return false;
-    final audioChapterId = _audioChapterIdFor(chapterId);
-    if (audioChapterId == null) return false;
-    final index = session._chapters.indexWhere(
-      (c) => c.itemId == audioChapterId,
-    );
-    if (index < 0) return false;
-    if (index == session._index) {
-      if (!session._ready) return false;
-      unawaited(session._seekTo(position));
-    } else {
-      unawaited(session._openChapter(index, position: position));
-    }
-    return true;
   }
 
   Future<_AudioPlaybackController?> acquire(AudioPage request) {
@@ -314,7 +246,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
       final current = _session;
       if (current != null &&
           !current._closed &&
-          _sessionBookMatches(request.bookId)) {
+          sessionBookMatches(request.bookId)) {
         // 别名书（真人讲书的原著）：阅读页传的是原著 id，会话记的是音频
         // 专辑 id。命中别名时只复用，不关闭重开。
         final aliased = current._bookId != request.bookId;
@@ -325,7 +257,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
                 0,
                 request.chapters.length - 1,
               )];
-          final audioChapterId = _audioChapterIdFor(chapter.itemId);
+          final audioChapterId = audioChapterIdFor(chapter.itemId);
           if (audioChapterId != null) {
             final index = current._chapters.indexWhere(
               (c) => c.itemId == audioChapterId,
