@@ -280,8 +280,9 @@ void main() {
           displayed ? 'firstFrame' : 'error',
         );
         expect(session.store.entry?['episodeId'], displayed ? '2' : '1');
-        expect(find.byType(CircularProgressIndicator), findsNothing);
-        await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
+        final spinner = displayed ? findsNothing : findsOneWidget; // 静默重试中
+        expect(find.byType(CircularProgressIndicator), spinner);
+        if (displayed) await tester.tap(find.text('重试'));
         await tester.pump(const Duration(milliseconds: 350));
         await _flush(tester);
         expect(session.requests, ['1', '2', '2']);
@@ -292,7 +293,7 @@ void main() {
         session.players.last.emitFirstFrame();
         await _flush(tester);
         expect(session.samples.last.source, 'network');
-        expect(session.samples.last.trigger, 'retry');
+        expect(session.samples.last.trigger, displayed ? 'retry' : 'autoRetry');
         expect(session.players.last.isPlaying, true);
       },
     );

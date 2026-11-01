@@ -650,14 +650,11 @@ class _DesktopPlayer {
       ready.complete();
       emit({'playerId': id, 'type': 'created', 'value': id});
       _size();
-    } catch (_) {
+    } catch (error) {
       if (!ready.isCompleted) ready.completeError(StateError('无法打开媒体'));
+      final value = desktopOpenFailure(id, error);
       if (!disposed) {
-        emit({
-          'playerId': id,
-          'type': 'error',
-          'value': {'message': '媒体加载失败，请检查网络或重试'},
-        });
+        emit({'playerId': id, 'type': 'error', 'value': value});
       }
       media?.close();
     }

@@ -307,7 +307,7 @@ void main() {
           if (chapter.itemId != '1') {
             return Future.value(_source(chapter.itemId));
           }
-          return attempts++ == 0
+          return attempts++ < 3
               ? Future.error(StateError('source unavailable'))
               : retry.future;
         },
@@ -318,7 +318,7 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
       await tester.pump(const Duration(milliseconds: 350));
       await _flush(tester);
-      expect(session.requests, ['1', '1']);
+      expect(session.requests, ['1', '1', '1', '1']);
       await _choose(tester, 3);
       retry.completeError(StateError('stale retry failed'));
       await _flush(tester);

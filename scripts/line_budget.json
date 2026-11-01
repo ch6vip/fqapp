@@ -74,7 +74,7 @@
     "test/media_item_test.dart": 1016,
     "test/native_player_test.dart": 566,
     "test/playback_guest_regression_test.dart": 744,
-    "test/player_page_loading_test.dart": 669,
+    "test/player_page_loading_test.dart": 670,
     "test/player_page_stability_test.dart": 562,
     "test/player_split_layout_test.dart": 658,
     "test/playlet_danmaku_layer_test.dart": 521,
