@@ -47,6 +47,34 @@ class PlayerVideoLayout {
   /// 两者口径不同，不是同一层兜底。
   static const double landscapeBoxRatio = 16 / 9;
 
+  static const double splitDividerExtent = 18;
+  static const double _sidePanelWidth = 390;
+  static const double _minimumSidePanelWidth = 320;
+  static const double _minimumSideVideoWidth = 360;
+
+  /// Both panes need usable space; a short landscape phone is not a tablet.
+  static bool canAutoSplitSideways({
+    required Size window,
+    required EdgeInsets insets,
+  }) =>
+      window.width > window.height &&
+      window.width - insets.horizontal >=
+          _minimumSideVideoWidth +
+              splitDividerExtent +
+              _minimumSidePanelWidth &&
+      window.height - insets.vertical >= 480;
+
+  static double clampSideSplitRatio(double ratio, double availableWidth) {
+    if (availableWidth <= splitDividerExtent) return .5;
+    final space = availableWidth - splitDividerExtent;
+    final videoMinimum = math.min(_minimumSideVideoWidth, space * .45);
+    final panelMinimum = math.min(_minimumSidePanelWidth, space * .4);
+    return ratio.clamp(
+      (videoMinimum + splitDividerExtent) / availableWidth,
+      (availableWidth - panelMinimum) / availableWidth,
+    );
+  }
+
   /// The size to lay out with: the decoder's own once it is known, otherwise
   /// the 9:16 fallback the feed card shows its cover at. Only [fillsFrame]
   /// still asks for it; the boxes no longer do (see [splitTopHeight]).
@@ -121,20 +149,27 @@ class PlayerVideoLayout {
 
   /// 左右分栏时左侧视频区的宽度。
   ///
-  /// 面板至少约占 38%（窄屏 44%），最宽 360；视频区再夹在可用宽度的
-  /// 45%–68%，避免小横屏里面板窄到放不下选集格子。
+  /// Prefer the official detail pane's 390dp, while keeping both panes usable.
   static double splitLeftWidth({
     required Size window,
     required EdgeInsets insets,
   }) {
     final availableWidth = math.max(0.0, window.width - insets.horizontal);
     if (availableWidth <= 0) return 0;
-    final panelFraction = availableWidth < 720 ? .44 : .38;
-    final panelWidth = math.min(360.0, availableWidth * panelFraction);
-    return (availableWidth - panelWidth).clamp(
-      availableWidth * .45,
-      availableWidth * .68,
+    // Explicit split on a short phone keeps its compact pane proportions.
+    if (!canAutoSplitSideways(window: window, insets: insets)) {
+      final panelFraction = availableWidth < 720 ? .44 : .38;
+      final panelWidth = math.min(360.0, availableWidth * panelFraction);
+      return (availableWidth - panelWidth).clamp(
+        availableWidth * .45,
+        availableWidth * .68,
+      );
+    }
+    final ratio = clampSideSplitRatio(
+      (availableWidth - _sidePanelWidth) / availableWidth,
+      availableWidth,
     );
+    return math.max(0.0, availableWidth * ratio - splitDividerExtent);
   }
 
   static PlayerVideoLayout calculate({
