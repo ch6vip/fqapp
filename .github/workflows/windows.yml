@@ -20,7 +20,7 @@ on:
       - 'scripts/*windows*'
       - '.github/workflows/windows.yml'
   push:
-    branches: [master]
+    branches: [master, listen-follow, listen-follow-ex]
     # 打 tag 也出包（与 android-apk.yml 同理）：发版时 Windows 绿色包随
     # tag 一起构建并上传为 artifact，Release 直接取用，不必再靠 master
     # 推送的产物。v1.0.133 预发布曾因缺这条而没有 Windows 版。

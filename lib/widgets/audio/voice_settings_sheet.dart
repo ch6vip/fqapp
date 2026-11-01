@@ -35,42 +35,69 @@ class VoiceSettingsSheet extends StatelessWidget {
   final List<VoiceOption> online;
   final ValueChanged<VoiceOption> onSelect;
 
+  /// 顶部的灰色说明，只在特定入口（阅读页胶囊）传；听书页不传。
+  final String? notice;
+
   const VoiceSettingsSheet({
     super.key,
     required this.selectedId,
     this.narrators = const [],
     this.online = const [],
     required this.onSelect,
+    this.notice,
   });
 
   @override
-  Widget build(BuildContext context) => HomeSheetFrame(
-    key: const Key('voice_settings_surface'),
-    closeKey: const Key('voice_settings_close'),
-    title: '声音设置',
-    contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-    children: [
-      if (narrators.isNotEmpty) ...[
-        const _SectionTitle('真人讲书'),
-        const SizedBox(height: 12),
-        for (final voice in narrators) ...[
-          _NarratorRow(
-            voice: voice,
-            selected: voice.id == selectedId,
-            onTap: () => onSelect(voice),
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final noticeText = notice;
+    return HomeSheetFrame(
+      key: const Key('voice_settings_surface'),
+      closeKey: const Key('voice_settings_close'),
+      title: '声音设置',
+      contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      children: [
+        // 只在阅读页胶囊进来时出现：把「切真人讲书会停止跟随」说在前面。
+        // 水平内边距交给 HomeSheetFrame 的 contentPadding（已是 16）。
+        if (noticeText != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 12),
+            child: Text(
+              noticeText,
+              key: const Key('voice_settings_notice'),
+              style: TextStyle(
+                color: palette.ink.withValues(alpha: 0.62),
+                fontSize: 12,
+                height: 1.45,
+              ),
+            ),
           ),
+        if (narrators.isNotEmpty) ...[
+          const _SectionTitle('真人讲书'),
+          const SizedBox(height: 12),
+          for (final voice in narrators) ...[
+            _NarratorRow(
+              voice: voice,
+              selected: voice.id == selectedId,
+              onTap: () => onSelect(voice),
+            ),
+            const SizedBox(height: 10),
+          ],
           const SizedBox(height: 10),
         ],
-        const SizedBox(height: 10),
+        if (online.isNotEmpty) ...[
+          const _SectionTitle('智能朗读'),
+          const SizedBox(height: 12),
+          _VoiceGrid(
+            voices: online,
+            selectedId: selectedId,
+            onSelect: onSelect,
+          ),
+          const SizedBox(height: 22),
+        ],
       ],
-      if (online.isNotEmpty) ...[
-        const _SectionTitle('智能朗读'),
-        const SizedBox(height: 12),
-        _VoiceGrid(voices: online, selectedId: selectedId, onSelect: onSelect),
-        const SizedBox(height: 22),
-      ],
-    ],
-  );
+    );
+  }
 }
 
 class _SectionTitle extends StatelessWidget {

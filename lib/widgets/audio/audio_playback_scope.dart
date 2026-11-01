@@ -21,6 +21,31 @@ class AudioPlaybackScope extends StatefulWidget {
     return owner.startSystemTts(book);
   }
 
+  /// 在后台起播，不打开听书页；实现见 [ReaderAudioBridge]（同库 part）。
+  @visibleForTesting
+  static BackgroundStartHandler? startListeningOverride;
+
+  static Future<bool> startListeningInBackground(
+    BuildContext context,
+    AudioPage request,
+  ) => ReaderAudioBridge.startListeningInBackground(context, request);
+
+  /// 段落锚点跳转（双击跳读用）：与「从本页播放」同一套寻址。
+  static bool jumpToParagraph(
+    BuildContext context,
+    String chapterId, {
+    required int? paraIndex,
+    required int ordinal,
+  }) => ReaderAudioBridge.jumpToParagraph(
+    context,
+    chapterId,
+    paraIndex: paraIndex,
+    ordinal: ordinal,
+  );
+
+  @visibleForTesting
+  static ParagraphJumpHandler? jumpToParagraphOverride;
+
   /// 把正在进行的朗读跳到 [position]（阅读页双击跳读用）。
   ///
   /// 只有智能朗读 / 真人讲书这类走播放器的会话能被跳转；系统朗读（本地 TTS）
@@ -46,9 +71,9 @@ class AudioPlaybackScope extends StatefulWidget {
   /// [togglePlayback] 不同，这里只在正在播时暂停；已经是暂停态时调用不会反着
   /// 播起来。
   static void pauseIfPlaying(BuildContext context, String bookId) {
-    context
-        .findAncestorStateOfType<_AudioPlaybackScopeState>()
-        ?.pauseIfPlaying(bookId);
+    context.findAncestorStateOfType<_AudioPlaybackScopeState>()?.pauseIfPlaying(
+      bookId,
+    );
   }
 
   /// 把朗读切到 [chapterId]，并从 [position] 起播（双击跳读，可跨章）。
@@ -59,10 +84,11 @@ class AudioPlaybackScope extends StatefulWidget {
     BuildContext context,
     String chapterId,
     Duration position,
-  ) {
-    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
-    return owner?.jumpToChapter(chapterId, position) ?? false;
-  }
+  ) => ReaderAudioBridge.jumpToChapter(context, chapterId, position);
+
+  /// 测试缝：拦截句级/段首毫秒跳转（双击跳读用例）。
+  @visibleForTesting
+  static ChapterJumpHandler? jumpToChapterOverride;
 
   /// 取指定章节的逐句字幕（阅读页跨章双击跳读用）。
   ///
@@ -288,7 +314,10 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
       final current = _session;
       if (current != null &&
           !current._closed &&
-          current._bookId == request.bookId) {
+          _sessionBookMatches(request.bookId)) {
+        // 别名书（真人讲书的原著）：阅读页传的是原著 id，会话记的是音频
+        // 专辑 id。命中别名时只复用，不关闭重开。
+        final aliased = current._bookId != request.bookId;
         if ((!request.resumeSession || request.startPosition != null) &&
             request.chapters.isNotEmpty) {
           final chapter =
@@ -296,23 +325,29 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
                 0,
                 request.chapters.length - 1,
               )];
-          final index = current._chapters.indexWhere(
-            (c) => c.itemId == chapter.itemId,
-          );
-          if (index >= 0) {
-            unawaited(
-              current._openChapter(
-                index,
-                position: request.startPosition,
-                paragraph: request.startParagraph,
-                fraction: request.startFraction,
-                toneId: request.initialToneId,
-                restoreHistory: true,
-                autoplay: request.autoplay,
-              ),
+          final audioChapterId = _audioChapterIdFor(chapter.itemId);
+          if (audioChapterId != null) {
+            final index = current._chapters.indexWhere(
+              (c) => c.itemId == audioChapterId,
             );
-            return current;
+            if (index >= 0) {
+              unawaited(
+                current._openChapter(
+                  index,
+                  position: request.startPosition,
+                  paragraph: request.startParagraph,
+                  fraction: request.startFraction,
+                  toneId: request.initialToneId,
+                  restoreHistory: true,
+                  autoplay: request.autoplay,
+                ),
+              );
+              return current;
+            }
           }
+          // 别名章节映射不到当前音频集：保持当前播放，拿原著 id 新建会话
+          // 只会得到一个不存在的音频书。
+          if (aliased) return current;
           // A refreshed directory can remove an old chapter. Start the exact
           // requested directory instead of silently retaining another chapter.
         } else {

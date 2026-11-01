@@ -48,8 +48,7 @@ class CueSpan {
   }
 
   @override
-  String toString() =>
-      'CueSpan[$start,$end) cue=$cueIndex $startMs→$endMs';
+  String toString() => 'CueSpan[$start,$end) cue=$cueIndex $startMs→$endMs';
 }
 
 /// 「正文字符位置 ↔ 音频时间」对照表。
@@ -79,6 +78,60 @@ class CueIndex {
   static final RegExp cueNoise = RegExp(
     r'[\s，。！？；：、“”‘’（）《》〈〉…—·,.!?;:"()\[\]{}]',
   );
+
+  /// cue 超过这个字数就按逗号细分成子片逐片高亮：番茄仙侠文一段常只有
+  /// 三五个短句（40 字上下），阈值太高会让「鎏金梁柱，灵气充沛…」这种
+  /// 段落整段一起亮；20 字能覆盖绝大多数短句段落，纯短语 cue 不受影响。
+  static const int commaSplitThreshold = 20;
+
+  /// 逗号细分使用的切分标点：逗号之外，句号、叹号、问号、冒号、分号、
+  /// 省略号与破折号同样点亮到边界；连续标点归前片（「——」「！？」不拆开）。
+  ///
+  /// **顿号「、」不算边界**：`后天境、先天境、黄灵境、……` 这类并列短语朗读
+  /// 时几乎不停顿，按它拆片会让每片只剩三五个字，高亮跳得极碎，像在闪。
+  static final RegExp commaSplitAt = RegExp('[，。！？…—：；]');
+
+  /// 收尾引号/括号：`！”`、`。”` 是一个整体，切分时跟标点一起归前片，
+  /// 否则高亮会把右引号甩到下一句开头，看起来像少了一个字。
+  static final RegExp closingMarks = RegExp('[”’」』）】]');
+
+  /// **强边界**：句末/语义已断句的标点，一律切开，不受最小片长约束。
+  /// 与 [_weightOf] 里记 4 分的那批一致 —— 它们后面往往真停顿半秒以上。
+  static final RegExp strongBoundaryAt = RegExp('[。！？…—；!?;]');
+
+  /// 弱边界（`，：`）切片前要求的最小**真实字数**。
+  ///
+  /// 并列短语（`后天境，先天境，黄灵境，…`）和密集对话里逗号几乎不停顿，
+  /// 按它切会让每片只剩三五个字，高亮跳得极碎。攒够真实字才允许切一次；
+  /// 强边界不受此限，否则 `洞天福地。` 这类短句会被并进下一句。
+  ///
+  /// 真实字 = 不计空白与标点（复用 [cueNoise] 的口径），`后天境，` 算 3 字。
+  static const int minPieceChars = 5;
+
+  /// 区间 [from, to) 的真实字数：剔除空白与标点。
+  static int _visibleCount(String text, int from, int to) {
+    var n = 0;
+    for (var k = from; k < to; k++) {
+      if (!cueNoise.hasMatch(text[k])) n++;
+    }
+    return n;
+  }
+
+  /// 每片的最小停留时长。
+  ///
+  /// 纯按停顿权重分时，句子拆得越碎、尾片拿到的时长越接近 0，观感就是
+  /// 「最后几个字一闪而过」。先给每片一个保底，余额再按权重分。
+  static const int pieceBaseMs = 140;
+
+  /// 片内计时权重：朗读时的停顿不按字数算。
+  ///
+  /// 省略号、破折号、句号、叹号、问号后往往要停顿半秒到两秒，按一个字计时
+  /// 会让高亮抢跑到下一句；逗号、顿号、冒号停得短一些。普通字记 1。
+  static int _weightOf(String ch) {
+    if ('…—。！？；!?;'.contains(ch)) return 4;
+    if ('，、：,:'.contains(ch)) return 2;
+    return 1;
+  }
 
   /// 用 [layout] 的正文块顺序去匹配 [track] 的每一句。
   factory CueIndex.build({
@@ -117,15 +170,28 @@ class CueIndex {
     final spans = <CueSpan>[];
     // 游标：上一句命中的正文终点。下一句只能从这里往后找。
     var lastEnd = 0;
+    // 布局下标 → combined 下标 反查（origin 单调递增，二分即可）。
+    int combinedAt(int layoutOffset) {
+      final at = _atOrAfter(origin, layoutOffset);
+      return at < origin.length ? at : origin.length - 1;
+    }
+
     for (var i = 0; i < track.cues.length; i++) {
       final needle = track.cues[i].text.trim();
       if (needle.isEmpty) continue;
 
+      // 两条匹配路径都先换算成 combined 区间，再统一按标点拆片。剥噪兜底
+      // 以前直接按匹配串末尾截断，字幕与正文只要标点写法不同（「……」写成
+      // 「...」、引号有无），高亮就会停在句子中间。
+      int? segStart;
+      int? segEnd;
       var start = -1;
       var end = -1;
 
       final at = combined.indexOf(needle, _atOrAfter(origin, lastEnd));
       if (at >= 0) {
+        segStart = at;
+        segEnd = at + needle.length;
         start = origin[at];
         end = origin[at + needle.length - 1] + 1;
       } else {
@@ -138,13 +204,138 @@ class CueIndex {
           if (at2 >= 0) {
             start = strippedOrigin[at2];
             end = strippedOrigin[at2 + bare.length - 1] + 1;
+            segStart = combinedAt(start);
+            segEnd = combinedAt(end - 1) + 1;
           }
         }
       }
       if (start < 0 || end <= start) continue;
+      // 剥噪命中的尾巴常停在字中间：字幕最后一句往往不带尾标点，而正文里
+      // 那半句后面还有「？”」。把区间右扩到下一个句读标点之后（最多探 8 个
+      // 字符、不越过本块），高亮才不会截在「被它镇」这种位置。
+      if (at < 0 && segStart != null && segEnd != null) {
+        final segTail = segEnd;
+        final block = layout.blocks.firstWhere(
+          (b) => end - 1 >= b.start && end - 1 < b.end,
+          orElse: () => layout.blocks[1],
+        );
+        var probe = segTail;
+        while (probe < combined.length &&
+            origin[probe] < block.end &&
+            probe - segTail <= 8) {
+          if (commaSplitAt.hasMatch(combined[probe])) {
+            var e = probe + 1;
+            while (e < combined.length &&
+                origin[e] < block.end &&
+                (commaSplitAt.hasMatch(combined[e]) ||
+                    closingMarks.hasMatch(combined[e]))) {
+              e++;
+            }
+            segEnd = e;
+            end = origin[e - 1] + 1;
+            break;
+          }
+          probe++;
+        }
+      }
       // 单调性保险：命中必须在上一次之后，否则宁可丢掉这句。
       if (start < lastEnd) continue;
       lastEnd = end;
+      // 整句够长就按标点拆成子片逐片高亮。时间在片间按「停顿加权」插值：
+      // 省略号/破折号/句号处的停顿远长于一个音节，纯按字数分会让高亮抢跑。
+      if (segStart != null &&
+          segEnd != null &&
+          segEnd - segStart >= commaSplitThreshold) {
+        final pieces = <(int, int, bool)>[]; // combined [from, to)，是否由强边界切开
+        final segmentEnd = segEnd;
+        var pieceStart = segStart;
+        for (var k = segStart; k < segmentEnd; k++) {
+          if (commaSplitAt.hasMatch(combined[k])) {
+            var e = k + 1;
+            // 连续标点（——、！？）与收尾引号整组归前片，避免破折号被劈成
+            // 两半、`！”` 被拆到下一片。
+            var strong = strongBoundaryAt.hasMatch(combined[k]);
+            while (e < segmentEnd &&
+                (commaSplitAt.hasMatch(combined[e]) ||
+                    closingMarks.hasMatch(combined[e]))) {
+              if (strongBoundaryAt.hasMatch(combined[e])) strong = true;
+              e++;
+            }
+            // 强边界一律切；弱边界攒够 [minPieceChars] 个真实字才切，否则
+            // 跳过这个标点继续累积 —— 并列短语与密集对话据此不再切碎。
+            if (strong || _visibleCount(combined, pieceStart, e) >= minPieceChars) {
+              pieces.add((pieceStart, e, strong));
+              pieceStart = e;
+            }
+            k = e - 1;
+          }
+        }
+        if (pieceStart < segmentEnd) {
+          pieces.add((pieceStart, segmentEnd, true));
+        }
+        // 归并：真实字不足的短片并回上一片，但**只在两者之间是弱边界**时
+        // 才合并。`嗯。`（前接逗号）是同一句的收尾语气词，应跟着前句亮；
+        // `洞天福地。`（前接句号/段首）是独立短句，保留，否则跨句合并会让
+        // 高亮一次盖住两句。
+        final merged = <(int, int)>[];
+        for (var p = 0; p < pieces.length; p++) {
+          final (from, to, cutStrong) = pieces[p];
+          final prevWeak = p > 0 && !pieces[p - 1].$3;
+          if (merged.isNotEmpty &&
+              prevWeak &&
+              _visibleCount(combined, from, to) < minPieceChars) {
+            final last = merged.removeLast();
+            merged.add((last.$1, to));
+          } else {
+            merged.add((from, to));
+          }
+        }
+        pieces
+          ..clear()
+          ..addAll(merged.map((e) => (e.$1, e.$2, true)));
+        if (pieces.length > 1) {
+          final cueStartMs = track.cues[i].startMs;
+          final cueEndMs = track.endMsAt(i);
+          final weights = <int>[];
+          for (final piece in pieces) {
+            var weight = 0;
+            for (var k = piece.$1; k < piece.$2; k++) {
+              weight += _weightOf(combined[k]);
+            }
+            weights.add(weight <= 0 ? 1 : weight);
+          }
+          final total = weights.fold<int>(0, (sum, w) => sum + w);
+          final duration = (cueEndMs - cueStartMs).clamp(0, 1 << 30);
+          final n = pieces.length;
+          // 每片先占 [pieceBaseMs] 保底，余额按停顿权重分。整条 cue 短到连
+          // 保底都分不出时退成均分 —— 强行给 140ms 会撑出 cue 边界，让高亮
+          // 盖到下一句去。
+          final flexible = duration - n * pieceBaseMs;
+          var elapsed = 0;
+          for (var p = 0; p < n; p++) {
+            final piece = pieces[p];
+            final pieceStartMs = cueStartMs +
+                (flexible > 0 ? elapsed : duration * p ~/ n);
+            elapsed += flexible > 0
+                ? pieceBaseMs + flexible * weights[p] ~/ total
+                : 0;
+            spans.add(
+              CueSpan(
+                start: origin[piece.$1],
+                end: origin[piece.$2 - 1] + 1,
+                cueIndex: i,
+                startMs: pieceStartMs,
+                // 末片严格收在 cue 末尾，整数除法舍掉的零头都归它。
+                endMs: p + 1 == n
+                    ? cueEndMs
+                    : cueStartMs +
+                          (flexible > 0 ? elapsed : duration * (p + 1) ~/ n),
+              ),
+            );
+          }
+          continue;
+        }
+      }
       spans.add(
         CueSpan(
           start: start,
@@ -181,7 +372,18 @@ class CueIndex {
   ///
   /// 这一句如果因为标点差异没能对上正文，会退回到上一句 —— 比整页变黑好。
   /// 返回 null 表示播放位置还在第一句之前。
-  CueSpan? spanAtPositionMs(int ms) {
+  ///
+  /// [crossCueHoldMs] > 0 时，刚跨进下一句的头这么多毫秒**先不切走**：服务端
+  /// 时间轴的下一句起点常比上一句真正念完早，硬切会让句尾最后几个字只亮一瞬。
+  ///
+  /// 但只有 [currentRange] 正好是上一句时才保持 —— 自然播放时屏幕亮的正是
+  /// 上一句；双击跳读会先把高亮设成目标句，这一条不成立，于是立刻切到目标句，
+  /// 绝不会退回上一句。同一句内部的子片切换也不适用，避免叠成层层延迟。
+  CueSpan? spanAtPositionMs(
+    int ms, {
+    int crossCueHoldMs = 0,
+    (int, int)? currentRange,
+  }) {
     if (spans.isEmpty) return null;
     var low = 0;
     var high = spans.length - 1;
@@ -195,7 +397,17 @@ class CueIndex {
         high = mid - 1;
       }
     }
-    return found < 0 ? null : spans[found];
+    if (found < 0) return null;
+    if (crossCueHoldMs > 0 && found > 0 && currentRange != null) {
+      final current = spans[found];
+      final previous = spans[found - 1];
+      if (previous.cueIndex != current.cueIndex &&
+          ms < current.startMs + crossCueHoldMs &&
+          currentRange == (previous.start, previous.end)) {
+        return previous;
+      }
+    }
+    return spans[found];
   }
 
   /// 正文 [offset] 处属于哪一句（双击跳读用）。
@@ -217,5 +429,25 @@ class CueIndex {
       }
     }
     return found < 0 ? spans.first : spans[found];
+  }
+
+  /// 落在 `[blockStart, blockEnd)` 里、第一个「从段内起」的片；整段都是上一
+  /// 段续行时返回 null（这时不该用字幕寻址，得换段落锚）。
+  CueSpan? firstSpanIn(int blockStart, int blockEnd) {
+    for (final span in spans) {
+      if (span.start >= blockStart && span.start < blockEnd) return span;
+    }
+    return null;
+  }
+
+  /// [offset] 所在、且**确实与本段重叠**的片。
+  ///
+  /// [spanAtChar] 对段间空隙的既有语义是「返回前一句」，直接拿它当双击目标
+  /// 会把上一段当成眼前这段 —— 正是「点了这句、亮的是上一句」的成因。所以
+  /// 双击跳读必须先过这层重叠校验，不重叠就当它没命中。
+  CueSpan? spanAtCharIn(int offset, int blockStart, int blockEnd) {
+    final span = spanAtChar(offset);
+    if (span == null) return null;
+    return span.start < blockEnd && span.end > blockStart ? span : null;
   }
 }

@@ -4,7 +4,7 @@
     "lib/models/media_item.dart": 1549,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_listening_layout.dart": 664,
-    "lib/pages/audio_page.dart": 2130,
+    "lib/pages/audio_page.dart": 2131,
     "lib/pages/category_page.dart": 618,
     "lib/pages/detail_page.dart": 1663,
     "lib/pages/drama_download_sheet.dart": 663,
@@ -42,7 +42,7 @@
     "lib/widgets/reader/reader_chapter_layout.dart": 1194,
     "lib/widgets/reader/reader_ideas_sheet.dart": 691,
     "lib/widgets/reader/reader_paged_view.dart": 1045,
-    "lib/widgets/reader/reader_text_selection.dart": 591,
+    "lib/widgets/reader/reader_text_selection.dart": 614,
     "lib/widgets/video_player_chrome.dart": 4889,
     "native/android/jni_bridge.c": 538,
     "native/audio_tempo/sp_atempo.c": 885,
@@ -110,7 +110,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/audio_page.dart::_AudioCommentsSheetState.build": {
-      "line": 1824,
+      "line": 1825,
       "lines": 131,
       "symbol": "Widget build(BuildContext context) {"
     },

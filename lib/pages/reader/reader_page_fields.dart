@@ -80,6 +80,8 @@ mixin _ReaderPageFields on State<ReaderPage> {
   /// 会话里只存在正在播那一章的轨。停在别的章时双击跳读要先有本章字幕，
   /// 所以按章补取一次留着，翻回来不用再请求。
   final _cueTracks = <String, SubtitleTrack>{};
+
+  /// 正在补取的字幕请求，键 = 章节 id。双击连点时不重复发请求。
   final _cueTrackRequests = <String, Future<SubtitleTrack>>{};
 
   double? _chapterSeekValue;

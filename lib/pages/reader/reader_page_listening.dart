@@ -2,6 +2,16 @@ part of '../reader_page.dart';
 
 /// Listening follow: cue/narration sync, auto turn and the 10Hz follow poll.
 extension _ReaderPageListening on _ReaderPageState {
+  /// 高亮与翻页都按「耳朵听到」的时刻**提前** [readAheadMs] 取句：人眼对
+  /// 略微超前的视觉变化无感，滞后才有「字追不上声音」的拖沓感。
+  static const int readAheadMs = 70;
+
+  /// 自然播放跨到下一句时，先多留上一句这么久（配合
+  /// [CueIndex.spanAtPositionMs] 的 `crossCueHoldMs`）。服务端时间轴的下一句
+  /// 起点常早于上一句真正念完，硬切会让句尾最后几个字只亮一瞬；配合提前
+  /// [readAheadMs] 取句，净滞后约 130ms。
+  static const int crossCueHoldMs = 200;
+
   void _toggleAutoTurn() {
     if (_autoTurnTimer != null) {
       _stopAutoTurn();
@@ -28,14 +38,13 @@ extension _ReaderPageListening on _ReaderPageState {
     ListeningSession.instance.setFollowArmed(false);
   }
 
-  /// 手动翻页 = 接管播放：退出跟随并暂停朗读。
+  /// 手动翻页 = 接管跟随：退出自动跟随并亮出「原进度 / 从本页听」。
   ///
   /// 官方 `handlePlayWhenPageChange`（`AudioSyncReaderController.java:1242-1295`）
-  /// 在同章翻页时 `pausePlayer()`，然后亮出「原进度 / 从本页听」。换章
-  /// （目录、上一章/下一章）不走这里：官方那条分支只置 `C`，不暂停播放。
+  /// 在同章翻页时还会 `pausePlayer()`；这里**刻意不暂停** —— 边翻边听不打断，
+  /// 双击跳读随时可用；要回同步点点「原进度」。
   void _takeOverListening() {
     _pauseListenFollow();
-    AudioPlaybackScope.pauseIfPlaying(context, widget.bookId);
   }
 
   bool get _listenDoubleTapArmed =>
@@ -94,6 +103,18 @@ extension _ReaderPageListening on _ReaderPageState {
   (int, int)? _narrationLayoutRange(ReaderChapterLayout layout) {
     final session = ListeningSession.instance;
     if (!session.matches(widget.bookId, _chapter.itemId)) return null;
+    // 字幕轨是逐句、甚至逐子片的，优先用它：官方时间点（audioParaRange）是
+    // 段落级，一给就是整段一起亮，段内有的句子还覆盖不到（表现为整句不亮）。
+    // 系统朗读没有字幕轨，才往下面 TTS 那条走。
+    _ensureCueIndex(layout);
+    if (_cueIndex.isNotEmpty) {
+      final span = _cueIndex.spanAtPositionMs(
+        session.position.inMilliseconds + readAheadMs,
+        crossCueHoldMs: crossCueHoldMs,
+        currentRange: _narrationRange,
+      );
+      if (span != null) return (span.start, span.end);
+    }
     final audioRange = session.audioParaRange;
     if (audioRange != null) {
       final translated = audioTimePointLayoutRange(
@@ -119,12 +140,6 @@ extension _ReaderPageListening on _ReaderPageState {
       final translated = narrationLayoutRange(layout, ttsRange);
       if (translated != null) return (translated.start, translated.end);
     }
-    // 官方时间点在多源项章节会重置时间轴（`para 0` 可能从 198 秒才开始），
-    // TTS 那条又不适用于音频朗读；这时按播放位置到字幕里查当前句。字幕是
-    // 逐句连续的，位置也对得上。
-    _ensureCueIndex(layout);
-    final span = _cueIndex.spanAtPositionMs(session.position.inMilliseconds);
-    if (span != null) return (span.start, span.end);
     // 逐句搜索兜底：句尾落到下一页这类跨页情形索引对不上，但正文里能找到。
     return _locateCue(layout, session.cue);
   }
@@ -286,8 +301,12 @@ extension _ReaderPageListening on _ReaderPageState {
       return true;
     }
     _ensureCueIndex(layout);
-    final positionMs = session.position.inMilliseconds;
-    final span = _cueIndex.spanAtPositionMs(positionMs);
+    final positionMs = session.position.inMilliseconds + readAheadMs;
+    final span = _cueIndex.spanAtPositionMs(
+      positionMs,
+      crossCueHoldMs: crossCueHoldMs,
+      currentRange: _narrationRange,
+    );
     // [_narrationRange] 是**显示**状态：某一拍没匹配上时故意留着不清，好让
     // 高亮晚半拍而不是整页变黑。它绝不能当导航锚点 —— 字幕第一句从 3 秒才
     // 开始（`[3025, 0]`）时，位置 0 查不到句，用它寻址会把页面停到本章最后
@@ -324,12 +343,35 @@ extension _ReaderPageListening on _ReaderPageState {
     _jumpToPlaybackPosition();
   }
 
-  /// 双击正文：把朗读跳到手指所指的那一句，可以跨章。
+  /// 双击正文：跳到**点中段落**的段首（官方行为），可以跨章。
   ///
   /// 全局坐标换算成正文字符下标交给选区几何的 `chapterOffsetAt` —— 它已经在
-  /// 处理行内折行、标题占位这些偏移修正，没必要再实现一遍；拿到字符下标后去
-  /// 对照表里查出这句的起点时间，再让播放器跳过去。听的是同一本书的别的章时，
-  /// 播放器会先切到本章再按位置起播。
+  /// 处理行内折行、标题占位这些偏移修正。段首毫秒按可靠性三层取：
+  /// ① 段落自带 `<span start_time>`；② 字幕轨里本段的第一个子片（升级版
+  /// 官方音轨没有 /timepoints，只有字幕 —— 只走段落锚会落回章首）；
+  /// ③ /timepoints 段落锚。听的是同一本书的别的章时，播放器会先切到本章
+  /// 再按位置起播。
+  /// 双击点的段落 textId：在 [ReaderChapterLayout.blocks] 上直查（与
+  /// `_paragraphAnchor` 同一坐标系，避免 fragment 窗口选错页）。
+  int? _textIdAtOffset(int offset) {
+    final layout = _chapterLayout;
+    if (layout == null) return null;
+    for (final block in layout.blocks) {
+      if (offset >= block.start && offset < block.end) return block.textId;
+    }
+    return null;
+  }
+
+  /// 按 textId 找回正文块（段落字符范围用）。
+  ReaderContentBlock? _blockByTextId(int textId) {
+    final layout = _chapterLayout;
+    if (layout == null) return null;
+    for (final block in layout.blocks) {
+      if (block.textId == textId) return block;
+    }
+    return null;
+  }
+
   Future<void> _seekToTappedSentence(Offset globalPosition) async {
     final layout = _chapterLayout;
     if (layout == null) return;
@@ -344,43 +386,101 @@ extension _ReaderPageListening on _ReaderPageState {
     }
     final offset = _marksScope?.geometry.chapterOffsetAt(globalPosition);
     if (offset == null) return;
+    // 双击 = 跳到点中段落的段首（官方行为）。段首毫秒按可靠性取：
+    // ① 段落 `<span start_time>`；② 字幕轨里本段的第一个子片（升级版
+    //    官方音轨没有 /timepoints，只有字幕 —— 只走段落锚会落回章首）；
+    // ③ /timepoints 段落锚。
+    final tappedTextId = _textIdAtOffset(offset);
+    final tappedBlock = tappedTextId == null
+        ? null
+        : _blockByTextId(tappedTextId);
+    if (tappedBlock == null) {
+      _showMessage('这一点没有对应音频，稍后再试');
+      return;
+    }
+    final anchor = tappedTextId == null ? null : _paragraphAnchor(tappedTextId);
+    final chapterId = _chapter.itemId;
     _ensureCueIndex(layout);
-    if (_cueIndex.isEmpty) {
+    if (_cueIndex.isEmpty && !session.matchesChapter(chapterId)) {
       // 跨章时手里的字幕轨是「正在播那一章」的，对不上本章正文。现场取本章
-      // 字幕再跳 —— 否则用户得先手动切到播放中的那章，再翻回来点。
-      final track = await _fetchCueTrack();
+      // 字幕再跳 —— 否则用户得先手动切到播放中的那章，再翻回来点。第 ③ 层
+      // 段落锚不依赖字幕，取不到轨也照样往下试。
+      await _fetchCueTrack();
       if (!mounted || !identical(_chapterLayout, layout)) return;
-      if (track == null || track.isEmpty) {
-        _showMessage('本章没有逐句字幕，无法跳读');
-        return;
-      }
       _ensureCueIndex(layout);
-      if (_cueIndex.isEmpty) {
-        // 字幕取到了，但一句都没对上正文（章节文本被改过，或语音文本不是原文）。
-        _showMessage('本章字幕和正文对不上，无法跳读');
-        return;
+    }
+    // 本段第一个「从段内起」的字幕子片：既是第 ② 层的 seek 位置，也是三层
+    // 共用的首选点亮区间。
+    final startSpan = _cueIndex.firstSpanIn(tappedBlock.start, tappedBlock.end);
+    final target = _highlightSpanFor(tappedBlock, anchor, startSpan);
+    // ① 段落自带 <span start_time>
+    if (anchor != null &&
+        anchor.startMs != null &&
+        AudioPlaybackScope.jumpToChapter(
+          context,
+          chapterId,
+          Duration(milliseconds: anchor.startMs!),
+        )) {
+      _confirmTappedSeek(tappedBlock, target);
+      return;
+    }
+    // ② 字幕轨里本段的第一个子片（升级版官方音轨没有 /timepoints，只有字幕）
+    if (startSpan != null &&
+        AudioPlaybackScope.jumpToChapter(
+          context,
+          chapterId,
+          startSpan.startPosition,
+        )) {
+      _confirmTappedSeek(tappedBlock, target);
+      return;
+    }
+    // ③ /timepoints 段落锚
+    if (anchor != null &&
+        anchor.paraIndex != null &&
+        AudioPlaybackScope.jumpToParagraph(
+          context,
+          chapterId,
+          paraIndex: anchor.paraIndex,
+          ordinal: anchor.ordinal,
+        )) {
+      _confirmTappedSeek(tappedBlock, target);
+      return;
+    }
+    _showMessage('这一点没有对应音频，稍后再试');
+  }
+
+  /// 跳转后要立刻点亮的区间：本段首个字幕子片 → 段首字符处的子片 → 段落起播
+  /// 毫秒对应的子片 → null（由调用方退回整段）。
+  ///
+  /// 按字符查这一路必须过 [CueIndex.spanAtCharIn] 的重叠校验：段间空隙在
+  /// 那里被算作前一句，不校验就会把上一段当成目标。
+  CueSpan? _highlightSpanFor(
+    ReaderContentBlock block,
+    ({int? startMs, int? paraIndex, int ordinal})? anchor,
+    CueSpan? startSpan,
+  ) {
+    if (startSpan != null) return startSpan;
+    final atChar = _cueIndex.spanAtCharIn(block.start, block.start, block.end);
+    if (atChar != null) return atChar;
+    final startMs = anchor?.startMs;
+    if (startMs != null) {
+      for (final span in _cueIndex.spans) {
+        if (span.startMs == startMs &&
+            span.start < block.end &&
+            span.end > block.start) {
+          return span;
+        }
       }
     }
-    final span = _cueIndex.spanAtChar(offset);
-    if (span == null) {
-      _showMessage('这一点没有对应字幕，换一句试试');
-      return;
-    }
-    if (!AudioPlaybackScope.jumpToChapter(
-      context,
-      _chapter.itemId,
-      span.startPosition,
-    )) {
-      _showMessage('朗读还没准备好，稍后再试');
-      return;
-    }
+    return null;
+  }
+
+  /// 三层定位成功后统一收口：立即点亮目标区间，不等下一拍（tick 最长 1s，
+  /// 等待期间屏幕上还是上一句，看上去就像跳错了）。
+  void _confirmTappedSeek(ReaderContentBlock block, CueSpan? target) {
+    _syncNarrationHighlight(
+      target == null ? (block.start, block.end) : (target.start, target.end),
+    );
     HapticFeedback.selectionClick();
-    // 立刻把高亮移到这句：下一次 tick 要等 200ms，等待期间旧句子还亮着，
-    // 看上去像点错了。跨章时本章本来没高亮，这条跳过即可。
-    if (kReaderHighlightWash &&
-        mounted &&
-        (span.start, span.end) != _narrationRange) {
-      _setState(() => _narrationRange = (span.start, span.end));
-    }
   }
 }

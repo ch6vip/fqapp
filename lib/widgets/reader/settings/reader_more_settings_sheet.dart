@@ -3,6 +3,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/reader_preferences.dart';
 import '../reader_tap_zone_sheet.dart';
+import '../reader_theme.dart';
 import 'reader_settings_state.dart';
 import 'reader_typography_settings.dart';
 import 'reader_settings_widgets.dart';
@@ -197,8 +198,119 @@ class _ReaderMoreSettingsSheetState
         onChanged: (on) =>
             _apply((current) => current.copyWith(narrationHighlight: on)),
       ),
+      // 高亮样式：背景色块 / 文字下划线，或「自动」（墨水屏下划线、其余背景）。
+      // 高亮色板：第一枚「自动」跟随当前背景派生（背景同色系深一档），
+      // 后面是可选的固定色。关掉高亮时不必展示。
+      if (value.narrationHighlight) ...[
+        ReaderSettingsRow(label: '高亮样式', child: _highlightStylePicker()),
+        ReaderSettingsRow(label: '高亮颜色', child: _highlightColorPicker()),
+      ],
     ],
   );
+
+  /// 高亮样式选择：null = 自动（墨水屏下划线，其余背景色块）。
+  Widget _highlightStylePicker() {
+    final preset = ReaderSettingsTheme.of(context);
+    final selected = value.narrationHighlightStyle;
+
+    Widget chip(int? style, String label) {
+      final active = selected == style;
+      return Padding(
+        padding: const EdgeInsets.only(right: 10),
+        child: InkWell(
+          key: ValueKey('reader-narration-style-${style ?? 'auto'}'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => _apply(
+            (current) => style == null
+                ? current.copyWith(autoNarrationHighlightStyle: true)
+                : current.copyWith(narrationHighlightStyle: style),
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: active
+                    ? preset.textColor
+                    : preset.textColor.withValues(alpha: 0.25),
+                width: active ? 2 : 1,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: preset.textColor,
+                fontSize: 13,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Wrap(
+      children: [
+        chip(null, '自动'),
+        chip(ReaderPreferences.narrationHighlightStyleWash, '背景'),
+        chip(ReaderPreferences.narrationHighlightStyleUnderline, '下划线'),
+      ],
+    );
+  }
+
+  /// 高亮底色选择：null = 自动（跟随背景派生），其余为
+  /// [ReaderPreferences.narrationHighlightPresets] 里的固定色。
+  Widget _highlightColorPicker() {
+    final preset = ReaderSettingsTheme.of(context);
+    final selected = value.narrationHighlightColor;
+
+    Widget dot(int? argb) {
+      final active = selected == argb;
+      final color = argb == null
+          ? Color.alphaBlend(
+              preset.textColor.withValues(alpha: 0.10),
+              preset.panelColor,
+            )
+          : Color(argb);
+      return Padding(
+        padding: const EdgeInsets.only(right: 10),
+        child: InkWell(
+          key: ValueKey('reader-narration-color-${argb ?? 'auto'}'),
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => _apply(
+            (current) => argb == null
+                ? current.copyWith(autoNarrationHighlightColor: true)
+                : current.copyWith(narrationHighlightColor: argb),
+          ),
+          child: Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: active
+                    ? preset.textColor
+                    : preset.textColor.withValues(alpha: 0.25),
+                width: active ? 2 : 1,
+              ),
+            ),
+            child: argb == null
+                ? Icon(Icons.auto_awesome, size: 13, color: preset.textColor)
+                : null,
+          ),
+        ),
+      );
+    }
+
+    return Wrap(
+      children: [
+        dot(null),
+        for (final argb in ReaderPreferences.narrationHighlightPresets) dot(argb),
+      ],
+    );
+  }
 
   Widget _autoTurnSecondsRow() => ReaderSettingsRow(
     label: '自动翻页',
