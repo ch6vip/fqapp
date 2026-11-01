@@ -8,8 +8,12 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
     bookId: widget.bookId,
     builder: (context, currentBook) {
       final match = _videoMatch;
-      final video =
-          _preferences.showVideoButton && match != null && match.available;
+      // iOS 首版没有原生播放器（见 platform_capabilities.dart），观影入口点了
+      // 只会推出一个起不来的播放页，所以与短剧 tab 一致整体不展示。
+      final video = supportsVideoPlayback &&
+          _preferences.showVideoButton &&
+          match != null &&
+          match.available;
       final reducedMotion =
           preset.isEink ||
           MediaQuery.disableAnimationsOf(context) ||
