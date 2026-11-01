@@ -10,6 +10,8 @@ import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/widgets/home/home_shelf.dart';
+import 'package:fqapp/widgets/home/home_sheet.dart';
 
 void main() {
   late Directory directory;
@@ -109,8 +111,23 @@ void main() {
     await tester.scrollUntilVisible(find.text('离线缓存'), 200);
     await tester.tap(find.text('离线缓存'));
     await tester.pumpAndSettle();
-    expect(find.text('小说章节'), findsOneWidget);
-    expect(find.text('短剧剧集'), findsOneWidget);
+    expect(find.text('小说离线缓存'), findsOneWidget);
+    expect(find.text('短剧离线缓存'), findsOneWidget);
+  });
+
+  testWidgets('mine list leaves room for the floating navigation bar', (
+    tester,
+  ) async {
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(const MaterialApp(home: MinePage()));
+    await tester.pumpAndSettle();
+    final context = tester.element(find.byType(MinePage));
+    final list = tester.widget<ListView>(find.byType(ListView).first);
+    expect(
+      list.padding,
+      EdgeInsets.only(bottom: homeBottomClearance(context)),
+      reason: '底部留白跟随悬浮导航栏高度与系统手势条，而不是写死 88',
+    );
   });
 
   testWidgets('tapping a heatmap day shows its minutes', (tester) async {
@@ -186,6 +203,8 @@ void main() {
     await tester.tap(showAll);
     await tester.pumpAndSettle();
     expect(find.text('全部 7 本'), findsOneWidget);
+    expect(find.byType(HomeSheetFrame), findsOneWidget);
+    expect(find.byTooltip('关闭'), findsOneWidget);
     final sheet = find.byType(BottomSheet);
     final last = find.descendant(of: sheet, matching: find.text('听书 book6'));
     await tester.scrollUntilVisible(

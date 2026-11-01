@@ -66,6 +66,18 @@ class AudioPageTheme {
     );
   }
 
+  /// 墨水屏：纯黑白，不做封面取色（灰阶量化会出抖动 / 残影）。
+  ///
+  /// accent 也给纯黑：选中态靠实心黑底 / 白字区分，不保留品牌橙。
+  static const eink = AudioPageTheme(
+    canvas: Colors.white,
+    card: Colors.white,
+    ink: Colors.black,
+    muted: Colors.black,
+    line: Colors.black,
+    accent: Colors.black,
+  );
+
   @override
   bool operator ==(Object other) =>
       other is AudioPageTheme &&
@@ -243,10 +255,14 @@ class AudioPageThemeScope extends InheritedWidget {
   final AudioPageTheme theme;
   final bool oled;
 
+  /// 墨水屏：整页纯黑白，封面取色不参与。
+  final bool eink;
+
   const AudioPageThemeScope({
     super.key,
     required this.theme,
     this.oled = false,
+    this.eink = false,
     required super.child,
   });
 
@@ -262,7 +278,14 @@ class AudioPageThemeScope extends InheritedWidget {
       context.dependOnInheritedWidgetOfExactType<AudioPageThemeScope>()?.oled ??
       false;
 
+  /// 墨水屏外观：纯黑白，不读封面取色。
+  static bool einkOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<AudioPageThemeScope>()?.eink ??
+      false;
+
   @override
   bool updateShouldNotify(AudioPageThemeScope oldWidget) =>
-      theme != oldWidget.theme || oled != oldWidget.oled;
+      theme != oldWidget.theme ||
+      oled != oldWidget.oled ||
+      eink != oldWidget.eink;
 }

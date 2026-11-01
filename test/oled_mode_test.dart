@@ -31,7 +31,7 @@ void main() {
   test('oled mode is ignored by the light theme', () {
     final light = AppTheme.createTheme(Brightness.light, oledMode: true);
     expect(light.brightness, Brightness.light);
-    expect(light.scaffoldBackgroundColor, const Color(0xFFFCFAF7));
+    expect(light.scaffoldBackgroundColor, const Color(0xFFF6F6F6));
     expect(light.colorScheme.surface, Colors.white);
   });
 

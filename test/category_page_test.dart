@@ -5,7 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/category_front.dart';
 import 'package:fqapp/pages/category_page.dart';
+import 'package:fqapp/services/app_theme.dart' show einkModeNotifier;
 import 'package:fqapp/widgets/home/home_design.dart';
+import 'package:fqapp/widgets/home/home_feed_states.dart';
 
 /// 官方 7.0.9.32 分类页形态：顶部频道 tab + 左侧维度栏 + 右侧分组堆叠的
 /// 等宽 chip 网格（手机三列，桌面按宽度加列）。左栏点击滚动定位分组，滚动
@@ -44,7 +46,9 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('renders top tabs, dim rail and stacked sections', (tester) async {
+  testWidgets('renders top tabs, dim rail and stacked sections', (
+    tester,
+  ) async {
     await pump(tester, front());
 
     // 顶部频道按 value 排序：男生(1)/女生(2)/出版(4)。
@@ -123,7 +127,8 @@ void main() {
         },
         'down_category': [
           for (var i = 0; i < 35; i++) {'name': '甲$i', 'dim': '0', 'id': 'a$i'},
-          for (var i = 0; i < 35; i++) {'name': '乙$i', 'dim': '1048576', 'id': 'b$i'},
+          for (var i = 0; i < 35; i++)
+            {'name': '乙$i', 'dim': '1048576', 'id': 'b$i'},
         ],
       },
     });
@@ -325,6 +330,95 @@ void main() {
 
     expect(find.textContaining('分类暂时没有内容'), findsOneWidget);
     expect(find.text('重试'), findsOneWidget);
+    expect(find.byType(HomeStateView), findsOneWidget);
+  });
+
+  testWidgets('墨水屏：官方灰橙退化为纯黑白', (tester) async {
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = false);
+    await pump(tester, front());
+
+    Text tabText(String value) => tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(ValueKey('category_tab_$value')),
+        matching: find.byType(Text),
+      ),
+    );
+    // 顶部频道：选中/未选都退化为纯黑，层级只靠字重。
+    expect(tabText('1').style?.color, Colors.black);
+    expect(tabText('2').style?.color, Colors.black);
+    // 左栏选中/未选都退化为黑字；选中必须另有可见差异：加粗 + 左侧黑指示条。
+    Text railText(String key) => tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(ValueKey(key)),
+        matching: find.byType(Text),
+      ),
+    );
+    final selectedRail = railText('category_dim_0');
+    final plainRail = railText('category_dim_1');
+    expect(selectedRail.style?.color, Colors.black);
+    expect(plainRail.style?.color, Colors.black);
+    expect(selectedRail.style?.fontWeight, FontWeight.w700);
+    expect(plainRail.style?.fontWeight, isNot(FontWeight.w700));
+    final selectedBox = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('category_dim_0')),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final selectedBorder =
+        (selectedBox.decoration! as BoxDecoration).border! as Border;
+    expect(selectedBorder.left.color, Colors.black);
+    expect(selectedBorder.left.width, 2);
+    final plainBox = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('category_dim_1')),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    expect(plainBox.decoration, isNull);
+    // 组头灰字也变黑。
+    final header = tester
+        .widgetList<Text>(find.text('热门标签'))
+        .firstWhere((text) => text.style?.fontSize == 12);
+    expect(header.style?.color, Colors.black);
+    // chip 灰底变白底 + 黑描边。
+    final chip = tester.widget<Container>(
+      find.byKey(const ValueKey('category_tile_1_都市')).first,
+    );
+    final decoration = chip.decoration! as BoxDecoration;
+    expect(decoration.color, Colors.white);
+    expect((decoration.border! as Border).top.color, Colors.black);
+  });
+
+  testWidgets('底部安全区计入内容列表与维度栏', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(padding: EdgeInsets.only(bottom: 24)),
+          child: CategoryPage(loader: ({int tab = 1}) async => front()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final list = tester.widget<ListView>(
+      find.byKey(const ValueKey('category_tile_list')),
+    );
+    expect(list.padding, const EdgeInsets.fromLTRB(16, 0, 16, 40));
+    // 左栏也有 24 的底部留白，最后一项不会被手势条压住。
+    final railPadding = tester
+        .widgetList<ListView>(find.byType(ListView))
+        .map((view) => view.padding)
+        .whereType<EdgeInsets>()
+        .any((padding) => padding.bottom == 24);
+    expect(railPadding, isTrue);
   });
 
   test('payload parser keeps the legacy shapes', () {

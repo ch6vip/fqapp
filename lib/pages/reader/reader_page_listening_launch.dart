@@ -27,38 +27,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       _openingListening = true;
       try {
         // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
-        final choice = await showModalBottomSheet<int>(
-          context: context,
-          useSafeArea: true,
-          showDragHandle: true,
-          backgroundColor: _effectivePreset.panelColor,
-          builder: (context) => Theme(
-            data: _effectivePreset.theme(Theme.of(context)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.headphones),
-                  title: const Text('听书'),
-                  subtitle: const Text('使用作品自带音频与音色'),
-                  onTap: () => Navigator.pop(context, 0),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.my_location),
-                  title: const Text('从本页播放'),
-                  subtitle: const Text('从当前页第一段开始听'),
-                  onTap: () => Navigator.pop(context, 1),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.record_voice_over),
-                  title: const Text('系统朗读'),
-                  subtitle: const Text('使用手机已安装的 TTS 引擎'),
-                  onTap: () => Navigator.pop(context, 2),
-                ),
-              ],
-            ),
-          ),
-        );
+        final choice = await _showListeningSourceSheet();
         if (!mounted || choice == null || chapterId != _chapter.itemId) return;
         if (choice == 1) {
           final anchor = _currentPageAnchor();
@@ -130,6 +99,26 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     } finally {
       _openingListening = false;
     }
+  }
+
+  /// 听书方式选择：0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
+  ///
+  /// 面板骨架走 ReaderSettingsSheetFrame；路由透明，底色 / 圆角由 frame
+  /// 按阅读 preset 画出。
+  Future<int?> _showListeningSourceSheet() {
+    final preset = _effectivePreset;
+    return showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      // 与 ReaderSettingsSheetFrame 的顶部圆角一致，只用于裁掉越界内容。
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (_) => _ListeningSourceSheet(preset: preset),
+    );
   }
 
   /// [fromMs] is the pressed paragraph's place on the spoken timeline the
@@ -307,4 +296,55 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     final fraction = offset / total;
     return fraction <= 0 ? 0.0 : (fraction >= 1 ? 1.0 : fraction);
   }
+}
+
+/// 听书方式选择面板：ReaderSettingsSheetFrame + Lucide，配色跟随阅读 preset。
+class _ListeningSourceSheet extends StatelessWidget {
+  const _ListeningSourceSheet({required this.preset});
+
+  final ReaderThemePreset preset;
+
+  @override
+  Widget build(BuildContext context) => ReaderSettingsSheetFrame(
+    preset: preset,
+    title: '听书方式',
+    closeTooltip: '关闭',
+    scrollKey: const ValueKey('reader-listening-source-scroll'),
+    children: [
+      _row(
+        context,
+        icon: LucideIcons.headphones,
+        title: '听书',
+        subtitle: '使用作品自带音频与音色',
+        value: 0,
+      ),
+      _row(
+        context,
+        icon: LucideIcons.locate_fixed,
+        title: '从本页播放',
+        subtitle: '从当前页第一段开始听',
+        value: 1,
+      ),
+      _row(
+        context,
+        icon: LucideIcons.mic,
+        title: '系统朗读',
+        subtitle: '使用手机已安装的 TTS 引擎',
+        value: 2,
+      ),
+    ],
+  );
+
+  Widget _row(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required int value,
+  }) => ListTile(
+    leading: Icon(icon, color: preset.mutedTextColor),
+    title: Text(title, style: TextStyle(color: preset.textColor)),
+    subtitle: Text(subtitle, style: TextStyle(color: preset.mutedTextColor)),
+    onTap: () => Navigator.pop(context, value),
+  );
 }

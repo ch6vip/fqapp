@@ -9,6 +9,7 @@ import '../services/book_open_preferences.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_shelf.dart';
 import '../widgets/mine/mine_entries.dart';
 import '../widgets/mine/mine_heatmap.dart';
 import '../widgets/mine/mine_summary.dart';
@@ -137,7 +138,7 @@ class _MinePageState extends State<MinePage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.only(bottom: 88),
+              padding: EdgeInsets.only(bottom: homeBottomClearance(context)),
               children: [
                 MineSummary(stats: _stats, today: today),
                 MineHeatmap(stats: _stats, today: today),

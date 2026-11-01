@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lottie/lottie.dart';
 
@@ -626,6 +627,12 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                             TextButton(
                               key: const ValueKey('story-panel-related-series'),
                               onPressed: widget.onOpenRelatedSeries,
+                              // 按钮色走 palette：原来面板自建 ThemeData 丢掉
+                              // 了外层 colorScheme，这个按钮会落到 Material
+                              // 默认主色（紫蓝）。
+                              style: TextButton.styleFrom(
+                                foregroundColor: palette.accentText,
+                              ),
                               child: const Text('同系列'),
                             ),
                         ],
@@ -641,66 +648,56 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
         );
       },
     );
-    final theme = ThemeData(
-      brightness: palette.dark ? Brightness.dark : Brightness.light,
-      useMaterial3: true,
-    );
+    // 面板跟随外层主题（不再自建 ThemeData，否则丢 colorScheme 与深色预设）。
     if (widget.embedded) {
-      return Theme(
-        data: theme,
-        child: KeyedSubtree(key: const ValueKey('story-panel'), child: body),
-      );
+      return KeyedSubtree(key: const ValueKey('story-panel'), child: body);
     }
-    return Theme(
-      // 原来固定 light：深色主题下整块白底，和播放器/应用主题脱节。
-      data: theme,
-      child: Material(
-        key: const ValueKey('story-panel'),
-        // 官方 `skin_bg_short_series_episode_dialog`：顶部圆角 16dp；
-        // 深色 / OLED 取浮层色，和听书/评论弹层同一规则。
-        color: homeSheetColor(palette),
-        shape: homeSheetShape(palette, top: 16),
-        clipBehavior: Clip.antiAlias,
-        child: body,
-      ),
+    return Material(
+      key: const ValueKey('story-panel'),
+      // 官方 `skin_bg_short_series_episode_dialog`：顶部圆角 16dp；
+      // 深色 / OLED 取浮层色，和听书/评论弹层同一规则。
+      color: homeSheetColor(palette),
+      shape: homeSheetShape(palette, top: 16),
+      clipBehavior: Clip.antiAlias,
+      child: body,
     );
   }
 
   /// 官方关联原著条：封面 + 书名，右侧箭头（`aa8.xml:17` 的 `gnh`）。
-  Widget _relateBookRow(
-    EpisodeRelateBook book,
-    HomePalette palette,
-  ) => GestureDetector(
-    behavior: HitTestBehavior.opaque,
-    onTap: widget.onOpenRelateBook,
-    child: Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: palette.dark ? const Color(0x14FFFFFF) : const Color(0x0A000000),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: _relateCover(book.cover),
+  Widget _relateBookRow(EpisodeRelateBook book, HomePalette palette) =>
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onOpenRelateBook,
+        child: Container(
+          height: 56,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: palette.dark
+                ? const Color(0x14FFFFFF)
+                : const Color(0x0A000000),
+            borderRadius: BorderRadius.circular(8),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              book.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 14, color: palette.ink),
-            ),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: _relateCover(book.cover),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  book.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, color: palette.ink),
+                ),
+              ),
+              if (widget.onOpenRelateBook != null)
+                Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
+            ],
           ),
-          if (widget.onOpenRelateBook != null)
-            Icon(Icons.chevron_right_rounded, size: 18, color: palette.muted),
-        ],
-      ),
-    ),
-  );
+        ),
+      );
 
   /// 原著封面；没有封面图时用统一的占位块。
   Widget _relateCover(String cover) {

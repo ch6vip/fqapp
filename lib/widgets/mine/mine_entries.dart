@@ -7,6 +7,7 @@ import '../../pages/cached_dramas_page.dart';
 import '../../pages/library_backup_page.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
+import '../home/home_sheet.dart';
 
 /// 我的 页底部的入口列表：离线缓存 / 备份与导入 / 关于。应用设置在标题栏齿轮。
 class MineEntries extends StatelessWidget {
@@ -44,37 +45,31 @@ class MineEntries extends StatelessWidget {
 void _push(BuildContext context, Widget page) =>
     Navigator.push(context, MaterialPageRoute<void>(builder: (_) => page));
 
-/// 小说章节和短剧剧集是两套缓存，各自有管理页；这里只做分流。
-Future<void> _showCacheChoices(BuildContext context) {
-  final palette = HomePalette.of(context);
-  return showModalBottomSheet<void>(
+/// 小说离线缓存和短剧离线缓存是两套存储，各自有管理页；这里只做分流。
+Future<void> _showCacheChoices(BuildContext context) async {
+  await showHomeSheet<void>(
     context: context,
-    showDragHandle: true,
-    backgroundColor: palette.surface,
-    builder: (sheet) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          MineEntryRow(
-            icon: LucideIcons.book_open,
-            label: '小说章节',
-            onTap: () {
-              Navigator.pop(sheet);
-              _push(context, const CachedBooksPage());
-            },
-          ),
-          MineEntryRow(
-            icon: LucideIcons.clapperboard,
-            label: '短剧剧集',
-            onTap: () {
-              Navigator.pop(sheet);
-              _push(context, const CachedDramasPage());
-            },
-          ),
-          const SizedBox(height: 8),
-        ],
+    title: '离线缓存',
+    contentPadding: EdgeInsets.zero,
+    children: [
+      MineEntryRow(
+        icon: LucideIcons.book_open,
+        label: '小说离线缓存',
+        onTap: () {
+          Navigator.pop(context);
+          _push(context, const CachedBooksPage());
+        },
       ),
-    ),
+      MineEntryRow(
+        icon: LucideIcons.clapperboard,
+        label: '短剧离线缓存',
+        onTap: () {
+          Navigator.pop(context);
+          _push(context, const CachedDramasPage());
+        },
+      ),
+      const SizedBox(height: 8),
+    ],
   );
 }
 

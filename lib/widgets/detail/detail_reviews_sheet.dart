@@ -6,6 +6,8 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../models/book_comment.dart';
 import '../../services/api_client.dart';
 import '../home/home_design.dart';
+import '../home/home_feed_states.dart';
+import '../home/home_stream_footer.dart';
 import 'detail_reviews.dart';
 
 /// 呼出全部书评全屏/半屏抽屉面板（虚拟化懒加载列表，高帧率无卡顿）。
@@ -194,59 +196,23 @@ class _DetailReviewsSheetState extends State<DetailReviewsSheet> {
           // 虚拟化评论列表
           Expanded(
             child: _comments.isEmpty && !_loading
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          LucideIcons.message_square,
-                          size: 40,
-                          color: palette.muted,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _error ?? '暂无书评',
-                          style: TextStyle(color: palette.muted, fontSize: 14),
-                        ),
-                        if (_error != null) ...[
-                          const SizedBox(height: 12),
-                          OutlinedButton(
-                            onPressed: _loadMore,
-                            child: const Text('重试'),
-                          ),
-                        ],
-                      ],
-                    ),
+                ? HomeStateView(
+                    key: const Key('detail_reviews_state'),
+                    icon: LucideIcons.message_square,
+                    title: _error ?? '暂无书评',
+                    actionLabel: _error != null ? '重试' : null,
+                    actionIcon: _error != null ? LucideIcons.refresh_cw : null,
+                    onAction: _error != null ? _loadMore : null,
+                    scrollable: true,
                   )
                 : ListView.separated(
                     controller: _scroll,
                     padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    itemCount:
-                        _comments.length + (_hasMore || _loading ? 1 : 0),
+                    itemCount: _comments.length + 1,
                     separatorBuilder: (context, index) =>
                         Divider(height: 1, color: palette.line),
                     itemBuilder: (context, index) {
-                      if (index >= _comments.length) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 18),
-                          child: Center(
-                            child: _loading
-                                ? const SizedBox.square(
-                                    dimension: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : TextButton(
-                                    onPressed: _loadMore,
-                                    child: Text(
-                                      _error ?? '加载更多',
-                                      style: TextStyle(color: palette.muted),
-                                    ),
-                                  ),
-                          ),
-                        );
-                      }
+                      if (index >= _comments.length) return _footer(palette);
                       return DetailCommentTile(
                         key: ValueKey('sheet_review_${_comments[index].id}'),
                         comment: _comments[index],
@@ -258,5 +224,32 @@ class _DetailReviewsSheetState extends State<DetailReviewsSheet> {
         ],
       ),
     );
+  }
+
+  /// 流尾：加载中 / 失败重试 / 已到底都走共享三态；只有「还有更多、但没
+  /// 在加载」这一档共享组件没有对应态（它没有「加载更多」入口），这里
+  /// 按同样的 12sp muted 排版做一个可点入口，滚动监听仍会自动触发。
+  Widget _footer(HomePalette palette) {
+    if (_loading) return const HomeStreamFooter.loading();
+    if (_error != null) {
+      return HomeStreamFooter.retry(onRetry: () => unawaited(_loadMore()));
+    }
+    if (_hasMore) {
+      return GestureDetector(
+        key: const Key('detail_reviews_load_more'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => unawaited(_loadMore()),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Center(
+            child: Text(
+              '加载更多',
+              style: TextStyle(fontSize: 12, height: 1.2, color: palette.muted),
+            ),
+          ),
+        ),
+      );
+    }
+    return const HomeStreamFooter.done();
   }
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../home/home_design.dart';
+import '../home/home_back_button.dart';
 
 /// 顶栏高度（含上下 4dp 内边距）：版式稿 `.bar` 的 44dp 内容盒 + 上下各 4dp。
 ///
@@ -17,7 +17,6 @@ class SeriesDetailTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
     return SizedBox(
       key: const ValueKey('series-detail-topbar'),
       height: seriesDetailTopBarHeight,
@@ -25,14 +24,11 @@ class SeriesDetailTopBar extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: IconButton(
+          // 版式稿的返回箭头是 Lucide chevron-left（36×36 点击区、20dp）；
+          // HomeBackButton 就是同一几何，顺带统一 tooltip。
+          child: HomeBackButton(
             key: const ValueKey('series-detail-back'),
-            tooltip: '返回',
             onPressed: onBack,
-            iconSize: 20,
-            constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-            padding: EdgeInsets.zero,
-            icon: Icon(Icons.arrow_back_ios_new_rounded, color: palette.ink),
           ),
         ),
       ),

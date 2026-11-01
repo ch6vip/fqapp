@@ -12,6 +12,7 @@ import 'package:fqapp/pages/comic_reader_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/widgets/comic/comic_chrome_button.dart';
 
 import 'support/fakes.dart';
 
@@ -105,14 +106,16 @@ void main() {
 
     final button = find.byKey(const Key('comic_reader_shelf_button'));
     expect(button, findsOneWidget);
-    expect(tester.widget<IconButton>(button).tooltip, '加入书架');
+    // 漫画顶栏改用项目自有 chrome（HomePressable + Lucide），书架键位挂在
+    // ComicChromeButton 上，tooltip 不再是 Material IconButton 的属性。
+    expect(tester.widget<ComicChromeButton>(button).tooltip, '加入书架');
 
     await tester.tap(button);
     await _settleShelfWrite(tester, '已加入书架');
 
     expect(ShelfStore.instance.contains('manga', 'comic-shelf'), isTrue);
     expect(find.text('已加入书架'), findsOneWidget);
-    expect(tester.widget<IconButton>(button).tooltip, '已在书架');
+    expect(tester.widget<ComicChromeButton>(button).tooltip, '已在书架');
   });
 }
 

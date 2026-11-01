@@ -292,7 +292,8 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
                   Opacity(
                     opacity: controlFade,
                     child: CustomPaint(
-                      size: const Size.square(18),
+                      // 官方 `pn2/b0.java:819-823` 把播放图形覆盖为 16dp。
+                      size: const Size.square(16),
                       painter: widget.playing
                           ? PauseGlyph(ink)
                           : PlayGlyph(ink),

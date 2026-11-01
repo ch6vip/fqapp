@@ -6,9 +6,8 @@
     "lib/pages/audio_listening_layout.dart": 664,
     "lib/pages/audio_page.dart": 2130,
     "lib/pages/category_page.dart": 618,
-    "lib/pages/comic_reader_page.dart": 1044,
     "lib/pages/detail_page.dart": 1663,
-    "lib/pages/drama_download_sheet.dart": 661,
+    "lib/pages/drama_download_sheet.dart": 663,
     "lib/pages/drama_page.dart": 4997,
     "lib/pages/fanqie_history_import_page.dart": 624,
     "lib/pages/home_page.dart": 662,
@@ -36,7 +35,7 @@
     "lib/widgets/audio/audio_sections.dart": 1753,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
-    "lib/widgets/player/player_split_panel.dart": 618,
+    "lib/widgets/player/player_split_panel.dart": 619,
     "lib/widgets/player/playlet_danmaku_layer.dart": 569,
     "lib/widgets/player/story_player_panel.dart": 1082,
     "lib/widgets/reader/reader_appearance_sheet.dart": 577,
@@ -131,7 +130,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/drama_download_sheet.dart::_DramaDownloadSheetState.build": {
-      "line": 280,
+      "line": 281,
       "lines": 102,
       "symbol": "Widget build(BuildContext context) {"
     },

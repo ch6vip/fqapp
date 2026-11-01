@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
+import 'home/home_chip.dart';
 import 'home/home_design.dart';
 
 /// 离线缓存面板里的「分段选择器」。
@@ -49,11 +51,11 @@ class DramaGroupPicker extends StatelessWidget {
             for (var index = 0; index < groupCount; index++)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
+                child: HomeChip(
                   key: ValueKey('download-group-$index'),
-                  label: Text(_chipLabel(index)),
+                  label: _chipLabel(index),
                   selected: index == group,
-                  onSelected: (_) => onSelected(index),
+                  onTap: () => onSelected(index),
                 ),
               ),
           ],
@@ -68,7 +70,7 @@ class DramaGroupPicker extends StatelessWidget {
             key: const ValueKey('download-group-prev'),
             tooltip: '上一段',
             onPressed: group > 0 ? () => onSelected(group - 1) : null,
-            icon: const Icon(Icons.chevron_left),
+            icon: const Icon(LucideIcons.chevron_left),
           ),
           Expanded(
             child: DropdownButtonHideUnderline(
@@ -98,7 +100,7 @@ class DramaGroupPicker extends StatelessWidget {
             onPressed: group < groupCount - 1
                 ? () => onSelected(group + 1)
                 : null,
-            icon: const Icon(Icons.chevron_right),
+            icon: const Icon(LucideIcons.chevron_right),
           ),
         ],
       ),
