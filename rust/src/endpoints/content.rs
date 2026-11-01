@@ -41,22 +41,25 @@ async fn handle_single(
         })
         .await?;
 
-    let payload: Value = serde_json::from_slice(&raw)
+    let mut payload: Value = serde_json::from_slice(&raw)
         .map_err(|e| ApiError::Internal(format!("parse upstream json: {e}")))?;
+    drop(raw);
     let content = payload
         .get("data")
         .and_then(|d| d.get("content"))
         .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_string();
+        .unwrap_or("");
     if content.is_empty() {
-        return crate::endpoints::util::raw_json(&raw);
+        return Ok(payload);
     }
 
-    match crate::crypto::decrypt_upstream(&content, &dev.secret_key) {
+    match crate::crypto::decrypt_upstream(content, &dev.secret_key) {
         Ok(plain) => {
             let text = String::from_utf8_lossy(&plain).into_owned();
-            crate::endpoints::util::set_content_in_place(&raw, &text)
+            if let Some(data) = payload.get_mut("data").and_then(Value::as_object_mut) {
+                data.insert("content".to_string(), Value::String(text));
+            }
+            Ok(payload)
         }
         Err(err) => {
             let mut book_id = book_id_hint.to_string();
@@ -69,7 +72,7 @@ async fn handle_single(
                     .unwrap_or("")
                     .to_string();
             }
-            match fallback_single_from_full(ctx, &raw, item_id, &book_id).await {
+            match fallback_single_from_full(ctx, payload, item_id, &book_id).await {
                 Ok(v) => Ok(v),
                 Err(_) => Err(ApiError::Internal(format!("decrypt content: {err}"))),
             }
@@ -79,7 +82,7 @@ async fn handle_single(
 
 async fn fallback_single_from_full(
     ctx: &Ctx,
-    raw: &[u8],
+    mut payload: Value,
     item_id: &str,
     book_id: &str,
 ) -> ApiResult<Value> {
@@ -100,7 +103,10 @@ async fn fallback_single_from_full(
     } else {
         content
     };
-    crate::endpoints::util::set_content_in_place(raw, &content)
+    if let Some(data) = payload.get_mut("data").and_then(Value::as_object_mut) {
+        data.insert("content".to_string(), Value::String(content));
+    }
+    Ok(payload)
 }
 
 /// `fullItemContent`.

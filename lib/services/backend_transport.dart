@@ -32,9 +32,8 @@ class BackendRequestAborted implements Exception {
 
   final String message;
 
-  /// The core hit its deadline instead of the caller cancelling. The two are
-  /// different events: a joiner must not treat a timeout as "the owner
-  /// cancelled" and re-send a request that already ran out of time.
+  /// The request hit its deadline instead of the caller cancelling. A shared
+  /// caller may retry only when it has its own explicitly remaining budget.
   final bool timedOut;
 
   @override

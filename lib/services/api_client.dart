@@ -242,16 +242,24 @@ class ApiClient {
     // —— 隐私纪律同 PlayerLoadSample：never URLs, keys or API bodies。
     final route = '$method ${_logRoute(url)}';
     final watch = Stopwatch()..start();
+    Duration? queueTime;
     final future = _gate.run(
       '$method $url ${effectiveTimeout.inMilliseconds}',
       request: request is BackendRequest ? request : null,
       share: method == 'GET' && body == null,
+      timeout: effectiveTimeout,
       send: () async {
+        queueTime = watch.elapsed;
+        final remaining = effectiveTimeout - watch.elapsed;
+        // FRB uses integer milliseconds; zero there means no deadline.
+        if (remaining.inMilliseconds <= 0) {
+          throw BackendRequestAborted('请求超时', timedOut: true);
+        }
         final response = await _transport.send(
           method,
           Uri.parse(url),
           body: body,
-          timeout: effectiveTimeout,
+          timeout: remaining,
           request: request is BackendRequest ? request : null,
         );
         return http.Response.bytes(
@@ -269,7 +277,8 @@ class ApiClient {
         watch.stop();
         AppLog.d(
           'api',
-          '$route ${response.statusCode} ${watch.elapsedMilliseconds}ms',
+          '$route ${response.statusCode} ${watch.elapsedMilliseconds}ms '
+              'queue=${queueTime?.inMilliseconds ?? 'shared'}',
         );
       },
       onError: (Object error) {
@@ -278,7 +287,8 @@ class ApiClient {
         // parameters. Keep the failure observable without logging that detail.
         AppLog.w(
           'api',
-          '$route 失败 ${watch.elapsedMilliseconds}ms (${error.runtimeType})',
+          '$route 失败 ${watch.elapsedMilliseconds}ms (${error.runtimeType}) '
+              'queue=${queueTime?.inMilliseconds ?? 'waiting/shared'}',
         );
       },
     );

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
+use futures::{stream, StreamExt};
 use serde_json::{json, Map, Value};
 
 use crate::endpoints::base::{
@@ -38,7 +39,11 @@ pub fn parse_item_ids(raw: &str) -> Vec<String> {
 }
 
 pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiResult<Value> {
-    let cm = Arc::new(CM::new().map_err(|e| ApiError::Internal(format!("cm init: {e}")))?);
+    let cm = Arc::new(
+        CM::new_off_thread()
+            .await
+            .map_err(|e| ApiError::Internal(format!("cm init: {e}")))?,
+    );
     let key = cm.client_handshake();
 
     let req_body = serde_json::to_vec(&json!({
@@ -60,6 +65,7 @@ pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiR
         .await?;
 
     let mut root: Value = crate::endpoints::util::raw_json(&raw)?;
+    drop(raw);
     // Inspect before mutating so the pass-through cases return the parsed root
     // untouched. The checks borrow immutably; the clone-free take below needs
     // the borrow to end first.
@@ -92,30 +98,49 @@ pub async fn get_chapters(ctx: &Ctx, book_id: &str, item_ids: &[String]) -> ApiR
     match item_infos {
         Value::Object(item_map) => {
             let mut out = Map::new();
-            for (id, item) in item_map {
-                match item {
-                    Value::Object(mut obj) => {
-                        decrypt_full_item_content(&id, &mut obj, &cm, &zwsm, &processor).await;
-                        out.insert(id, Value::Object(obj));
+            let mut pending = stream::iter(item_map)
+                .map(|(id, item)| {
+                    let cm = &cm;
+                    let zwsm = &zwsm;
+                    let processor = &processor;
+                    async move {
+                        let item = match item {
+                            Value::Object(mut obj) => {
+                                decrypt_full_item_content(&id, &mut obj, cm, zwsm, processor).await;
+                                Value::Object(obj)
+                            }
+                            other => other,
+                        };
+                        (id, item)
                     }
-                    other => {
-                        out.insert(id, other);
-                    }
-                }
+                })
+                .buffer_unordered(2);
+            while let Some((id, item)) = pending.next().await {
+                out.insert(id, item);
             }
             data.insert("item_infos".to_string(), Value::Object(out));
         }
         Value::Array(item_arr) => {
-            let mut out = Vec::with_capacity(item_arr.len());
-            for item in item_arr {
-                match item {
-                    Value::Object(mut obj) => {
-                        decrypt_full_item_content("", &mut obj, &cm, &zwsm, &processor).await;
-                        out.push(Value::Object(obj));
+            // Arrays preserve upstream order; CM also enforces a process-wide
+            // limit so concurrent batches cannot flood the blocking pool.
+            let out = stream::iter(item_arr)
+                .map(|item| {
+                    let cm = &cm;
+                    let zwsm = &zwsm;
+                    let processor = &processor;
+                    async move {
+                        match item {
+                            Value::Object(mut obj) => {
+                                decrypt_full_item_content("", &mut obj, cm, zwsm, processor).await;
+                                Value::Object(obj)
+                            }
+                            other => other,
+                        }
                     }
-                    other => out.push(other),
-                }
-            }
+                })
+                .buffered(2)
+                .collect()
+                .await;
             data.insert("item_infos".to_string(), Value::Array(out));
         }
         other => {
@@ -138,21 +163,27 @@ async fn decrypt_full_item_content(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let content = item_obj
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let Some(Value::String(content)) = item_obj.get_mut("content") else {
+        return;
+    };
     if key.is_empty() || content.is_empty() {
         return;
     }
-    match cm.decrypt_off_thread(&key, &content).await {
-        Ok(plain) => {
-            let text = format!(
-                "{}{}",
-                processor.process(&String::from_utf8_lossy(&plain)),
-                zwsm
-            );
+    let content = std::mem::take(content);
+    let content_len = content.len();
+    let key_len = key.len();
+    let zwsm = zwsm.to_owned();
+    let processor = *processor;
+    let processed = cm
+        .process_off_thread(move |cm| {
+            let plain = cm.decrypt(&key, &content)?;
+            let mut text = processor.process(&String::from_utf8_lossy(&plain));
+            text.push_str(&zwsm);
+            Ok(text)
+        })
+        .await;
+    match processed {
+        Ok(text) => {
             item_obj.insert("content".to_string(), Value::from(text));
         }
         Err(error) => {
@@ -164,8 +195,8 @@ async fn decrypt_full_item_content(
             log::warn!(
                 "full content {label}: decrypt failed ({error}); dropping ciphertext \
                  (content_len={}, key_len={})",
-                content.len(),
-                key.len()
+                content_len,
+                key_len
             );
             item_obj.remove("content");
         }

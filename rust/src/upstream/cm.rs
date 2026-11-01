@@ -9,6 +9,11 @@ use once_cell::sync::OnceCell;
 use rand::Rng;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+// Hold the permit inside the blocking task: cancelling its caller cannot
+// stop a running modpow and must not free the slot prematurely.
+static CM_WORK: once_cell::sync::Lazy<Arc<tokio::sync::Semaphore>> =
+    once_cell::sync::Lazy::new(|| Arc::new(tokio::sync::Semaphore::new(2)));
+
 const CM_PRIME_HEX: &str = "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca237327ffffffffffffffff";
 
 fn cm_prime() -> &'static BigUint {
@@ -53,6 +58,19 @@ pub struct CM {
 }
 
 impl CM {
+    pub async fn new_off_thread() -> Result<Self, String> {
+        let permit = Arc::clone(&CM_WORK)
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            Self::new()
+        })
+        .await
+        .map_err(|e| format!("cm init task failed: {e}"))?
+    }
+
     pub fn new() -> Result<Self, String> {
         let mut rng = rand::thread_rng();
         let priv_bytes: [u8; 32] = rng.gen();
@@ -133,10 +151,37 @@ impl CM {
         server_key_b64: &str,
         content_b64: &str,
     ) -> Result<Vec<u8>, String> {
-        let cm = Arc::clone(self);
         let server_key_b64 = server_key_b64.to_owned();
         let content_b64 = content_b64.to_owned();
-        match tokio::task::spawn_blocking(move || cm.decrypt(&server_key_b64, &content_b64)).await {
+        self.process_off_thread(move |cm| cm.decrypt(&server_key_b64, &content_b64))
+            .await
+    }
+
+    /// Keep decrypt and its CPU-heavy consumer in one bounded blocking task.
+    pub(crate) async fn process_off_thread<T, F>(self: &Arc<Self>, process: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Self) -> Result<T, String> + Send + 'static,
+    {
+        let queued = std::time::Instant::now();
+        let permit = Arc::clone(&CM_WORK)
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        let cm = Arc::clone(self);
+        match tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let wait_ms = queued.elapsed().as_millis();
+            let started = std::time::Instant::now();
+            let result = process(&cm);
+            let work_ms = started.elapsed().as_millis();
+            if wait_ms + work_ms >= 100 {
+                log::info!("cm slow: queue_ms={wait_ms} work_ms={work_ms}");
+            }
+            result
+        })
+        .await
+        {
             Ok(result) => result,
             Err(error) => Err(format!("decrypt task failed: {error}")),
         }
