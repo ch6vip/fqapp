@@ -12,6 +12,7 @@ void main() {
     required String selectedId,
     required ValueChanged<VoiceOption> onSelect,
     ThemeData? theme,
+    String? notice,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -30,6 +31,7 @@ void main() {
               ),
               VoiceOption(id: 't2', title: '成熟大叔音', description: '超自然'),
             ],
+            notice: notice,
             onSelect: onSelect,
           ),
         ),
@@ -48,6 +50,20 @@ void main() {
     expect(find.text('多角色对话升级版'), findsOneWidget);
     expect(find.text('成熟大叔音'), findsOneWidget);
     expect(find.text('上新'), findsOneWidget);
+  });
+
+  testWidgets('renders the reader-only notice above the sections', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      selectedId: 't1',
+      onSelect: (_) {},
+      notice: '真人讲书是另一本书的音频，切换后本页会停止跟随。',
+    );
+
+    expect(find.byKey(const Key('voice_settings_notice')), findsOneWidget);
+    expect(find.text('真人讲书是另一本书的音频，切换后本页会停止跟随。'), findsOneWidget);
   });
 
   testWidgets('the selected card carries a check and a tap selects', (

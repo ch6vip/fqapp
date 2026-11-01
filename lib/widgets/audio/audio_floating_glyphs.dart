@@ -200,3 +200,25 @@ class CloseGlyph extends CustomPainter {
   @override
   bool shouldRepaint(CloseGlyph old) => old.color != color;
 }
+
+/// 三点「更多」：与 [CloseGlyph] 同一套画法（实心、圆点、居中留白），
+/// 阅读页听书胶囊用它当「切换音色」的入口。
+class MoreGlyph extends CustomPainter {
+  const MoreGlyph(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final paint = Paint()..color = color;
+    final radius = w * 0.075;
+    final cy = size.height / 2;
+    for (final dx in [w * 0.22, w * 0.50, w * 0.78]) {
+      canvas.drawCircle(Offset(dx, cy), radius, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(MoreGlyph old) => old.color != color;
+}

@@ -44,6 +44,12 @@ class AudioPlaybackScope extends StatefulWidget {
     return owner?.togglePlayback(bookId) ?? false;
   }
 
+  /// 停止这本书的朗读（阅读页胶囊的 ×）。音频与系统 TTS 各走各的关闭路径。
+  static Future<bool> stopPlayback(BuildContext context, String bookId) async {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return await owner?.stopPlayback(bookId) ?? false;
+  }
+
   /// 阅读页手动翻页：把这本书的播放暂停。
   ///
   /// 官方 `handlePlayWhenPageChange`（`AudioSyncReaderController.java:1242-1295`）

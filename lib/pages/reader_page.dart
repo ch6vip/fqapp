@@ -45,6 +45,7 @@ import '../widgets/reader/reader_chapter_layout.dart';
 import '../widgets/reader/reader_joined_scroll.dart';
 import '../widgets/reader/cue_index.dart';
 import '../widgets/reader/reader_controls.dart';
+import '../widgets/reader/reader_listen_capsule.dart';
 import '../widgets/reader/reader_cutout_insets.dart';
 import '../widgets/reader/reader_directory_sheet.dart';
 import '../widgets/reader/reader_illustration.dart';
