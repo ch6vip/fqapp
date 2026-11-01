@@ -261,16 +261,12 @@ class ReaderSelectionScope {
   final Color underlineColor;
   final Color narrationColor;
 
-  /// 朗读句画成下划线而非色块（墨水屏色块会整屏拖影）。
-  final bool narrationUnderline;
-
   ReaderSelectionScope({
     required this.geometry,
     required this.washColor,
     required this.handleColor,
     required this.underlineColor,
     required this.narrationColor,
-    this.narrationUnderline = false,
   });
 }
 
@@ -392,7 +388,6 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
               underlineColor: widget.scope.underlineColor,
               narrationRange: narrationRange,
               narrationColor: widget.scope.narrationColor,
-              narrationUnderline: widget.scope.narrationUnderline,
             ),
           ),
         ),
@@ -513,7 +508,6 @@ class ReaderBlockMarkPainter extends CustomPainter {
   final Color underlineColor;
   final (int, int)? narrationRange;
   final Color narrationColor;
-  final bool narrationUnderline;
 
   const ReaderBlockMarkPainter({
     required this.block,
@@ -524,7 +518,6 @@ class ReaderBlockMarkPainter extends CustomPainter {
     required this.underlineColor,
     required this.narrationRange,
     required this.narrationColor,
-    this.narrationUnderline = false,
   });
 
   /// Per-line glyph rects for a block-text range: the vertical span of the
@@ -555,22 +548,12 @@ class ReaderBlockMarkPainter extends CustomPainter {
     // sentence must stay visible on top of it.
     final narration = narrationRange;
     if (narration != null) {
-      final rects = _lineRects(narration.$1, narration.$2);
-      if (narrationUnderline) {
-        // 墨水屏走下划线：色块会整屏拖影，线只刷几行。线要够粗才看得见
-        // （2px 在高 dpi 上仍嫌细），颜色由调用方保证是深色/不透明。
-        final line = Paint()..color = narrationColor..strokeWidth = 3;
-        for (final rect in rects) {
-          _strokeRow(canvas, rect, line);
-        }
-      } else {
-        final paint = Paint()..color = narrationColor;
-        for (final rect in rects) {
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(rect, const Radius.circular(2)),
-            paint,
-          );
-        }
+      final narrationPaint = Paint()..color = narrationColor;
+      for (final rect in _lineRects(narration.$1, narration.$2)) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(2)),
+          narrationPaint,
+        );
       }
     }
     final wash = Paint()..color = washColor;
@@ -590,16 +573,11 @@ class ReaderBlockMarkPainter extends CustomPainter {
       final range = blockSelectionRange(block, underline.start, underline.end);
       if (range == null) continue;
       for (final rect in _lineRects(range.$1, range.$2)) {
-        _strokeRow(canvas, rect, line);
+        // Sit the stroke just under the glyphs, inside the line box.
+        final y = rect.bottom - .5;
+        canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), line);
       }
     }
-  }
-
-  /// 描一条贴着字形底边的横线（选区下划线与朗读句下划线共用）。
-  void _strokeRow(Canvas canvas, Rect rect, Paint line) {
-    // Sit the stroke just under the glyphs, inside the line box.
-    final y = rect.bottom - .5;
-    canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), line);
   }
 
   @override
@@ -609,6 +587,5 @@ class ReaderBlockMarkPainter extends CustomPainter {
       old.washColor != washColor ||
       old.underlineColor != underlineColor ||
       old.narrationRange != narrationRange ||
-      old.narrationColor != narrationColor ||
-      old.narrationUnderline != narrationUnderline;
+      old.narrationColor != narrationColor;
 }
