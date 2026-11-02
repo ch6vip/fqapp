@@ -75,7 +75,11 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     this.connectTimeout = audioDownloadConnectTimeout,
     this.readTimeout = audioDownloadReadTimeout,
   }) : _store = store ?? HiveAudioDownloadStore.instance,
-       _journal = resumeStore ?? DownloadResumeStore.instance,
+       _journal =
+           resumeStore ??
+           (store == null || store is HiveAudioDownloadStore
+               ? DownloadResumeStore.instance
+               : DownloadResumeStore.memory()),
        _resolve = resolve ?? _defaultResolve,
        _clientFactory = clientFactory ?? HttpClient.new,
        super(const []) {
@@ -149,9 +153,6 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     }
     _publish();
     try {
-      for (final (key, _) in pending) {
-        await _waitDeletion(key);
-      }
       if (pending.any((entry) => identical(_tasks[entry.$1], entry.$2))) {
         await _store.ensureBook(book);
         for (final (key, task) in pending) {
@@ -301,8 +302,32 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
   // Install the deletion reservation before the first await. The run alone
   // writes its journal; discard waits for all submitted writes and cleanup.
   Future<void> discard(String itemId, {String toneId = ''}) {
-    final downloadKey = DownloadKey(DownloadKind.audio, itemId, toneId);
-    final key = taskId(itemId, toneId);
+    var resolvedTone = toneId;
+    if (resolvedTone.isEmpty) {
+      for (final task in _tasks.values) {
+        if (task.snapshot.itemId == itemId) {
+          resolvedTone = task.snapshot.toneId;
+          break;
+        }
+      }
+    }
+    if (resolvedTone.isEmpty) {
+      // Preserve the old no-op for an unknown item while still rejecting an
+      // unsafe id before any file or journal operation.
+      try {
+        DownloadKey(DownloadKind.audio, itemId, 'unused');
+      } catch (error, stack) {
+        return Future<void>.error(error, stack);
+      }
+      return Future<void>.value();
+    }
+    late final DownloadKey downloadKey;
+    try {
+      downloadKey = DownloadKey(DownloadKind.audio, itemId, resolvedTone);
+    } catch (error, stack) {
+      return Future<void>.error(error, stack);
+    }
+    final key = taskId(itemId, resolvedTone);
     final task = _tasks.remove(key);
     final existing = _runs[key];
     final run = existing ?? _AudioRun(downloadKey, task);
@@ -312,11 +337,12 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     if (existing == null) {
       unawaited(_deleteIdle(key, run));
     } else if (run.settled) {
-      return _retryCleanup(key, run);
+      unawaited(_retryCleanup(key, run));
     }
-    return run.terminal.then((_) {
-      if (run.cleanupError != null) throw run.cleanupError!;
-    });
+    // The deletion reservation is installed synchronously. Cleanup continues
+    // in the background; _pump keeps a re-enqueued task waiting until the
+    // reservation is gone.
+    return Future<void>.value();
   }
 
   Future<void> _deleteIdle(String key, _AudioRun run) async {
@@ -546,6 +572,7 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
                   task.snapshot = task.snapshot.copyWith(
                     received: received,
                     total: total,
+                    clearTotal: total == null,
                   );
                   _publish();
                 }
@@ -571,7 +598,7 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
             }
             if (++attempt >= _maxAttempts ||
                 !isRetryableAudioDownloadFailure(reason)) {
-              rethrow;
+              throw DownloadTransferFailure(reason);
             }
             await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
             _check(key, run);

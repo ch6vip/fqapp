@@ -81,7 +81,7 @@ class DownloadIdentity {
         raw['containerId'] is! String ||
         (raw['containerId'] as String).isEmpty ||
         raw['keyHex'] is! String ||
-        !RegExp(r'^(?:[0-9a-fA-F]{32})?$').hasMatch(raw['keyHex'] as String) ||
+        (raw['keyHex'] as String).length > 128 ||
         raw['rendition'] is! String ||
         raw['height'] is! int ||
         (raw['height'] as int) < 0 ||
@@ -285,16 +285,31 @@ class DownloadResumeEntry {
 class DownloadResumeStore {
   DownloadResumeStore({HiveInterface? hive, this.keys}) : _hive = hive ?? Hive;
 
+  /// In-memory journal for callers that provide a non-Hive download store.
+  ///
+  /// Production uses [instance] so a process restart can recover a `.part`
+  /// file. Tests and other ephemeral stores do not have an encrypted Hive box,
+  /// so they must not fall through to the global journal (which would try to
+  /// open it without the store's key provider).
+  DownloadResumeStore.memory() : _hive = null, keys = null;
+
   static final instance = DownloadResumeStore();
   static const _name = 'download_resume_v1';
-  final HiveInterface _hive;
+  final HiveInterface? _hive;
   final SecureKeyProvider? keys;
+  final Map<String, DownloadResumeEntry> _memoryEntries = {};
   Future<void> _writes = Future<void>.value();
+
+  Future<T> _serializeMemory<T>(Future<T> Function() action) {
+    final operation = _writes.then((_) => action());
+    _writes = operation.then<void>((_) {}, onError: (Object _) {});
+    return operation;
+  }
 
   Future<T> _serialize<T>(Future<T> Function(Box<dynamic>) action) {
     final operation = _writes.then((_) async {
       final box = await EncryptedHive.openBox<dynamic>(
-        _hive,
+        _hive!,
         _name,
         keys: keys,
         requireEncryption: true,
@@ -305,23 +320,42 @@ class DownloadResumeStore {
     return operation;
   }
 
-  Future<DownloadResumeEntry?> read(DownloadKey key) => _serialize(
-    (box) async => DownloadResumeEntry.fromMap(key, box.get(key.storageKey)),
-  );
+  Future<DownloadResumeEntry?> read(DownloadKey key) {
+    if (_hive == null) {
+      return _serializeMemory(() async => _memoryEntries[key.storageKey]);
+    }
+    return _serialize(
+      (box) async => DownloadResumeEntry.fromMap(key, box.get(key.storageKey)),
+    );
+  }
 
-  Future<void> write(DownloadResumeEntry entry) => _serialize((box) async {
+  Future<void> write(DownloadResumeEntry entry) {
     final raw = entry.toMap();
     if (DownloadResumeEntry.fromMap(entry.key, raw) == null) {
-      throw StateError('Invalid resume identity');
+      return Future<void>.error(StateError('Invalid resume identity'));
     }
-    await box.put(entry.key.storageKey, raw);
-    await box.flush();
-  });
+    if (_hive == null) {
+      return _serializeMemory(() async {
+        _memoryEntries[entry.key.storageKey] = entry;
+      });
+    }
+    return _serialize((box) async {
+      await box.put(entry.key.storageKey, raw);
+      await box.flush();
+    });
+  }
 
-  Future<void> remove(DownloadKey key) => _serialize((box) async {
-    await box.delete(key.storageKey);
-    await box.flush();
-  });
+  Future<void> remove(DownloadKey key) {
+    if (_hive == null) {
+      return _serializeMemory(() async {
+        _memoryEntries.remove(key.storageKey);
+      });
+    }
+    return _serialize((box) async {
+      await box.delete(key.storageKey);
+      await box.flush();
+    });
+  }
 }
 
 class DownloadFiles {

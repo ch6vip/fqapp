@@ -47,7 +47,10 @@ class BackendService {
   Future<void>? _startFuture;
   Future<void>? _stopFuture;
   bool _running = false;
+  bool _coreStarted = false;
+  int? _coreGeneration;
   int _generation = 0;
+  Timer? _startupTimer;
   static Future<void> _deploymentTail = Future<void>.value();
   final List<String> _logLines = [];
   File? _logFile;
@@ -183,39 +186,55 @@ class BackendService {
   /// second call while running returns immediately.
   Future<void> start() {
     final stopping = _stopFuture;
+    if (stopping != null) return stopping.then((_) => start());
     final active = _startFuture;
     if (active != null) return active;
     if (_running) return Future<void>.value();
     final generation = ++_generation;
     final clock = Stopwatch()..start();
+    _startupTimer?.cancel();
+    final timeout = Completer<void>();
+    late final Timer timer;
+    timer = Timer(startupTimeout, () {
+      if (_generation == generation) {
+        ++_generation;
+        _running = false;
+        _log('startup deadline expired; physical cleanup may still be pending');
+        unawaited(_stopRunningBackend());
+      }
+      if (!timeout.isCompleted) {
+        timeout.completeError(
+          StateError('backend failed to start (startup timeout)'),
+          StackTrace.current,
+        );
+      }
+    });
+    _startupTimer = timer;
     late final Future<void> tracked;
-    tracked = _startInternal(generation, clock, stopping)
-        .timeout(
-          startupTimeout,
-          onTimeout: () {
-            if (_generation == generation) {
-              ++_generation;
-              _running = false;
-              _log(
-                'startup deadline expired; physical cleanup may still be pending',
-              );
-              unawaited(_stopRunningBackend());
-            }
-            throw StateError('backend failed to start (startup timeout)');
-          },
-        )
-        .whenComplete(() {
-          if (identical(_startFuture, tracked)) _startFuture = null;
-        });
+    final operation = _startInternal(generation, clock, stopping);
+    tracked = Future.any<void>([operation, timeout.future]).whenComplete(() {
+      if (identical(_startupTimer, timer)) {
+        timer.cancel();
+        _startupTimer = null;
+      }
+      if (identical(_startFuture, tracked)) _startFuture = null;
+    });
     _startFuture = tracked;
     return tracked;
   }
 
-  void _checkGeneration(int generation, Stopwatch clock) {
+  /// Cancels only the startup deadline timer.
+  ///
+  /// The app widget can be disposed while a test or a hot-reload is still
+  /// waiting for startup. The native operation may continue, but leaving the
+  /// deadline timer behind makes Flutter's test binding report a leaked timer.
+  void cancelStartupTimeout() {
+    _startupTimer?.cancel();
+    _startupTimer = null;
+  }
+
+  void _checkGeneration(int generation, Stopwatch _) {
     if (_generation != generation) throw StateError('backend start retired');
-    if (clock.elapsed >= startupTimeout) {
-      throw StateError('backend startup deadline expired');
-    }
   }
 
   Future<void> _startInternal(
@@ -261,6 +280,10 @@ class BackendService {
           listenPort: listenPort,
           lanShare: LanSharePreferences.instance.enabled.value,
         );
+        if (result == 'running') {
+          _coreStarted = true;
+          _coreGeneration = generation;
+        }
         _checkGeneration(generation, clock);
         _log('Rust core init returned: $result');
         if (result != 'running') {
@@ -274,6 +297,9 @@ class BackendService {
         clock,
       );
       _checkGeneration(generation, clock);
+      if (clock.elapsed >= startupTimeout) {
+        throw StateError('backend startup deadline expired');
+      }
       if (!ok) {
         throw StateError(
           'backend failed to start (health check timeout)\n'
@@ -283,11 +309,14 @@ class BackendService {
       _running = true;
       _log('backend healthy');
     } catch (e) {
-      if (_generation == generation) {
+      final ownsGeneration = _generation == generation;
+      if (ownsGeneration) {
         ++_generation;
         _running = false;
         _log('start error: $e');
-        unawaited(_stopRunningBackend());
+      }
+      if (_coreStarted && _coreGeneration == generation) {
+        await _stopRunningBackend();
       }
       rethrow;
     }
@@ -337,13 +366,16 @@ class BackendService {
     Stopwatch clock,
   ) async {
     final elapsed = Stopwatch()..start();
-    while (elapsed.elapsed < timeout) {
+    var attempted = false;
+    while (!attempted || elapsed.elapsed < timeout) {
+      attempted = true;
       _checkGeneration(generation, clock);
       final remaining = timeout - elapsed.elapsed;
-      final attemptTimeout = remaining < const Duration(seconds: 2)
-          ? remaining
-          : const Duration(seconds: 2);
-      if (attemptTimeout <= Duration.zero) break;
+      final attemptTimeout = remaining > Duration.zero
+          ? (remaining < const Duration(seconds: 2)
+                ? remaining
+                : const Duration(seconds: 2))
+          : const Duration(milliseconds: 50);
       try {
         final response = await _transport.send(
           'GET',
@@ -357,6 +389,7 @@ class BackendService {
         // Not up yet. Bound the complete exchange, including body reading.
       }
       _checkGeneration(generation, clock);
+      if (timeout <= Duration.zero) break;
       final pause = timeout - elapsed.elapsed;
       if (pause <= Duration.zero) break;
       await Future<void>.delayed(
@@ -371,9 +404,8 @@ class BackendService {
 
   /// Stops the backend core. Safe to call repeatedly.
   Future<void> stop() {
-    ++_generation;
+    cancelStartupTimeout();
     _running = false;
-    _startFuture = null;
     final active = _stopFuture;
     if (active != null) return active;
     late final Future<void> tracked;
@@ -385,6 +417,15 @@ class BackendService {
   }
 
   Future<void> _stopInternal() async {
+    // A stop during deployment must not return before that startup has had a
+    // chance to create the core; otherwise the core can be initialized after
+    // stop() has already reported completion.
+    final starting = _startFuture;
+    try {
+      await starting;
+    } catch (_) {
+      // A failed start performs its own cleanup.
+    }
     try {
       await _stopRunningBackend();
     } finally {
@@ -399,12 +440,14 @@ class BackendService {
 
   Future<void> _stopRunningBackend() async {
     final transport = _transport;
-    if (transport is RustBackendTransport) {
-      try {
-        await transport.stop().timeout(shutdownTimeout);
-      } catch (e) {
-        _log('shutdown failed or physical cleanup still pending: $e');
-      }
+    if (!_coreStarted || transport is! RustBackendTransport) return;
+    _coreStarted = false;
+    _coreGeneration = null;
+    _running = false;
+    try {
+      await transport.stop().timeout(shutdownTimeout);
+    } catch (e) {
+      _log('shutdown failed or physical cleanup still pending: $e');
     }
   }
 }

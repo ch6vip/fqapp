@@ -363,11 +363,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   @override
   Future<void> saveEpisode(CachedEpisode episode) => _serialize((box) async {
     if (episode.seriesId.isEmpty || episode.itemId.isEmpty) return;
-    await _requireCompleteFile(
-      episode.filePath,
-      '${episode.itemId}.mp4',
-      episode.bytes,
-    );
+    await _requireExistingFile(episode.filePath, episode.bytes);
     // Key entry first: a crash between the two writes leaves an orphaned
     // key entry (cleaned by the next migration pass), never a key-less
     // record that claims to be playable.
@@ -501,15 +497,9 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     changes.value++;
   });
 
-  Future<void> _requireCompleteFile(String path, String name, int bytes) async {
-    final root = await (await directory()).resolveSymbolicLinks();
-    final expected = '$root${Platform.pathSeparator}$name';
+  Future<void> _requireExistingFile(String path, int bytes) async {
     final file = File(path);
-    final resolved = await file.resolveSymbolicLinks();
-    final matches = Platform.isWindows
-        ? resolved.toLowerCase() == expected.toLowerCase()
-        : resolved == expected;
-    if (!matches || bytes <= 0 || await file.length() != bytes) {
+    if (bytes <= 0 || !await file.exists()) {
       throw FileSystemException('Completed download file conflict', path);
     }
   }

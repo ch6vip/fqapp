@@ -82,7 +82,11 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     this.connectTimeout = audioDownloadConnectTimeout,
     this.readTimeout = audioDownloadReadTimeout,
   }) : _store = store ?? HiveDramaDownloadStore.instance,
-       _journal = resumeStore ?? DownloadResumeStore.instance,
+       _journal =
+           resumeStore ??
+           (store == null || store is HiveDramaDownloadStore
+               ? DownloadResumeStore.instance
+               : DownloadResumeStore.memory()),
        _resolve = resolve ?? _defaultResolve,
        _clientFactory = clientFactory ?? HttpClient.new,
        super(const []) {
@@ -129,6 +133,31 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       final key = downloadKey.itemId;
       var task = _tasks[key];
       if (task == null) {
+        final cached = await _store.episode(chapter.itemId);
+        if (cached != null) {
+          if (!auto && cached.auto) {
+            try {
+              await _store.saveEpisode(
+                CachedEpisode(
+                  seriesId: cached.seriesId,
+                  itemId: cached.itemId,
+                  title: cached.title,
+                  index: cached.index,
+                  keyHex: cached.keyHex,
+                  height: cached.height,
+                  variantName: cached.variantName,
+                  bytes: cached.bytes,
+                  filePath: cached.filePath,
+                  cachedAt: cached.cachedAt,
+                ),
+              );
+            } catch (_) {
+              // A broken record must not turn a manual re-download into a
+              // second transfer; the existing record remains authoritative.
+            }
+          }
+          continue;
+        }
         task = _MutableTask(
           DramaDownloadTask(
             seriesId: drama.id,
@@ -157,9 +186,6 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     }
     _publish();
     try {
-      for (final (key, _) in pending) {
-        await _waitDeletion(key);
-      }
       if (pending.any((entry) => identical(_tasks[entry.$1], entry.$2))) {
         await _store.ensureCatalogue(drama);
         for (final (key, task) in pending) {
@@ -278,7 +304,12 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
   // Install the deletion reservation before the first await. The run alone
   // writes its journal; discard waits for all submitted writes and cleanup.
   Future<void> discard(String itemId) {
-    final downloadKey = DownloadKey(DownloadKind.drama, itemId);
+    late final DownloadKey downloadKey;
+    try {
+      downloadKey = DownloadKey(DownloadKind.drama, itemId);
+    } catch (error, stack) {
+      return Future<void>.error(error, stack);
+    }
     final key = itemId;
     final task = _tasks.remove(key);
     final existing = _runs[key];
@@ -289,11 +320,12 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     if (existing == null) {
       unawaited(_deleteIdle(key, run));
     } else if (run.settled) {
-      return _retryCleanup(key, run);
+      unawaited(_retryCleanup(key, run));
     }
-    return run.terminal.then((_) {
-      if (run.cleanupError != null) throw run.cleanupError!;
-    });
+    // The deletion reservation is installed synchronously. Cleanup continues
+    // in the background; _pump keeps a re-enqueued task waiting until the
+    // reservation is gone.
+    return Future<void>.value();
   }
 
   Future<void> _deleteIdle(String key, _DramaRun run) async {
@@ -520,6 +552,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
                   task.snapshot = task.snapshot.copyWith(
                     received: received,
                     total: total,
+                    clearTotal: total == null,
                   );
                   _publish();
                 }
@@ -545,7 +578,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
             }
             if (++attempt >= _maxAttempts ||
                 !isRetryableAudioDownloadFailure(reason)) {
-              rethrow;
+              throw DownloadTransferFailure(reason);
             }
             await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
             _check(key, run);

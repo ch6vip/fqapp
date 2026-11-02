@@ -87,7 +87,6 @@ class DownloadRun {
     discardRequested = true;
     if (stage == DownloadRunStage.transferring) {
       _cancelled ??= 'discarded';
-      closeClient();
     }
   }
 
@@ -189,13 +188,13 @@ Future<int> transferDownload({
   required HttpClient Function() clientFactory,
   required Duration connectTimeout,
   required Duration readTimeout,
-  required void Function(int received, int total) progress,
+  required void Function(int received, int? total) progress,
 }) async {
   final files = run.files!;
   run.check();
   if (source.containerId.isEmpty ||
       source.height < 0 ||
-      !RegExp(r'^(?:[0-9a-fA-F]{32})?$').hasMatch(source.keyHex) ||
+      source.keyHex.length > 128 ||
       DownloadRecord.fromMap(record.toMap()) == null) {
     throw const DownloadTransferFailure('下载来源或记录无效');
   }
@@ -209,17 +208,15 @@ Future<int> transferDownload({
       old.rendition == source.rendition &&
       old.height == source.height &&
       oldLength <= old.total;
-  final scoped =
-      verified &&
-      oldLength > 0 &&
-      oldLength < old.total &&
-      old.strongETag != null &&
-      old.requestedDigest == DownloadIdentity.uriDigest(source.uri);
+  // A part file can survive a process restart before its journal entry was
+  // written. In that case there is no identity to verify, but a Range request
+  // is still safe as long as the server confirms the returned start offset.
+  final canResume = oldLength > 0 && (verified || run.entry == null);
 
   try {
     while (true) {
       run.check();
-      final useRange = scoped && !run.rangeRejected;
+      final useRange = canResume && !run.rangeRejected;
       final client = clientFactory()
         ..connectionTimeout = connectTimeout
         ..autoUncompress = false;
@@ -237,7 +234,10 @@ Future<int> transferDownload({
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
       if (useRange) {
         request.headers.set(HttpHeaders.rangeHeader, 'bytes=$oldLength-');
-        request.headers.set(HttpHeaders.ifRangeHeader, old.strongETag!);
+        final ifRange = old?.strongETag;
+        if (ifRange != null) {
+          request.headers.set(HttpHeaders.ifRangeHeader, ifRange);
+        }
       }
       final response = await request.close().timeout(
         readTimeout,
@@ -267,18 +267,31 @@ Future<int> transferDownload({
           response.statusCode == 206 &&
           range != null &&
           range.start == oldLength &&
-          range.total == old.total &&
-          old.effectiveDigest == DownloadIdentity.uriDigest(effective) &&
-          (tagHeader == null || tag == old.strongETag) &&
+          (old == null ||
+              (range.total == old.total &&
+                  old.effectiveDigest ==
+                      DownloadIdentity.uriDigest(effective) &&
+                  (tagHeader == null || tag == old.strongETag))) &&
           (response.contentLength < 0 ||
               response.contentLength == range.end - range.start + 1) &&
           (encoding == null || encoding.toLowerCase() == 'identity');
-      if (useRange &&
-          ((response.statusCode == 206 && !validRange) ||
-              response.statusCode == 416)) {
+      if (useRange && response.statusCode == 206 && !validRange) {
         run.rangeRejected = true;
         run.closeClient();
         continue;
+      }
+      if (useRange && response.statusCode == 416) {
+        // The server says the saved offset is beyond its current stream.
+        // Drop both the part and its journal entry before retrying from zero;
+        // otherwise a later process restart would try to recover a file that
+        // no longer exists.
+        run.rangeRejected = false;
+        run.closeClient();
+        await journal.remove(run.key);
+        run.entry = null;
+        await files.delete(files.part);
+        progress(0, null);
+        throw const DownloadTransferFailure('续传越界');
       }
       if (response.statusCode != 200 && !validRange) {
         throw DownloadTransferFailure('下载失败（HTTP ${response.statusCode}）');
@@ -287,12 +300,24 @@ Future<int> transferDownload({
         throw const DownloadTransferFailure('下载响应编码无效');
       }
       final total = validRange ? range.total : response.contentLength;
-      if (total <= 0) throw const DownloadTransferFailure('服务器未提供有效的文件总长度');
+      if (total <= 0) {
+        // Keep the bytes we did receive so a later attempt can resume. The
+        // response has no trustworthy total, so this attempt still fails.
+        run.sink = await files.part.open(mode: FileMode.write);
+        await for (final chunk in response.timeout(readTimeout)) {
+          run.check();
+          await run.sink!.writeFrom(chunk);
+        }
+        await run.sink!.flush();
+        await run.closeIO();
+        progress(0, null);
+        throw const DownloadTransferFailure('服务器未提供有效的文件总长度');
+      }
       final allowance = validRange ? range.end - range.start + 1 : total;
       final identity = source.identity(
         total,
         effective,
-        validRange ? (tag ?? old.strongETag) : tag,
+        validRange ? (tag ?? old?.strongETag) : tag,
       );
       final nextEntry = DownloadResumeEntry(
         run.key,

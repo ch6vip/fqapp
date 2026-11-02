@@ -311,11 +311,7 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
         chapter.toneId.isEmpty) {
       return;
     }
-    await _requireCompleteFile(
-      chapter.filePath,
-      '${chapter.itemId}__${chapter.toneId}.m4a',
-      chapter.bytes,
-    );
+    await _requireExistingFile(chapter.filePath, chapter.bytes);
     // 先写密钥：中途崩溃只会留下一条孤立密钥（下次删除/重下覆盖），
     // 不会出现「记录说有 key 但箱里没有」的不可播记录。
     await box.put(_keyKey(chapter.itemId, chapter.toneId), chapter.keyHex);
@@ -404,15 +400,9 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
     return bytes;
   });
 
-  Future<void> _requireCompleteFile(String path, String name, int bytes) async {
-    final root = await (await directory()).resolveSymbolicLinks();
-    final expected = '$root${Platform.pathSeparator}$name';
+  Future<void> _requireExistingFile(String path, int bytes) async {
     final file = File(path);
-    final resolved = await file.resolveSymbolicLinks();
-    final matches = Platform.isWindows
-        ? resolved.toLowerCase() == expected.toLowerCase()
-        : resolved == expected;
-    if (!matches || bytes <= 0 || await file.length() != bytes) {
+    if (bytes <= 0 || !await file.exists()) {
       throw FileSystemException('Completed download file conflict', path);
     }
   }
