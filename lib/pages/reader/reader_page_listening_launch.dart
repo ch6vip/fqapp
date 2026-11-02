@@ -2,12 +2,20 @@ part of '../reader_page.dart';
 
 /// Opening the listening player and mapping the page to a playback position.
 extension _ReaderPageListeningLaunch on _ReaderPageState {
-  /// 入口开哪个播放器由设置里的偏好决定（[AudioPreferences.listenEngine]）；
-  /// 本地书没有服务端音频，固定系统朗读。面板不再挡在入口前，换引擎在听书
-  /// 胶囊的三点里。
+  /// 默认引擎是不是「系统朗读」。
   ///
-  /// [fromPage] 从当前页第一段起播、且不推进听书页 —— 圆钮听书与底部胶囊的
-  /// 「从本页听」共用。它只决定起点和是否推页，不决定引擎。
+  /// 阅读页的**每个**起播入口都先过这一条，再看要不要开作品音频：圆钮听书、
+  /// 同步胶囊的「从本页听」、设置面板里的「听书方式」。本地书没有服务端
+  /// 音频，无论偏好如何都固定系统朗读。
+  bool get _defaultListenEngineIsSystem =>
+      widget.localOnly ||
+      AudioPreferences.instance.listenEngine.value == ListenEngine.system;
+
+  /// [fromPage] 从当前页第一段起播、不弹引擎面板：圆钮听书与同步胶囊
+  /// 「从本页听」共用。
+  ///
+  /// 它只决定**起点**和「留在阅读页还是推进听书页」，不决定引擎 —— 引擎由
+  /// [_defaultListenEngineIsSystem] 说了算，两条路径都在它之下分叉。
   Future<void> _openListening({
     int? fromMs,
     int? textId,
@@ -23,9 +31,11 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     // 入口不再问引擎：按设置里存的偏好走。本地书没有服务端音频，固定
     // 系统朗读；其余书听用户的——偏好为系统朗读就直接起 TTS，否则走
     // 听书页（默认智能朗读）。换引擎在听书胶囊的三点里，不挡在入口前。
-    var system =
-        widget.localOnly ||
-        AudioPreferences.instance.listenEngine.value == ListenEngine.system;
+    //
+    // 这条判定必须在 [fromPage] 的快路径**之前**：同步胶囊的「从本页听」
+    // 走的也是这一条，以前它排在前面，等于硬吃作品音频，默认引擎是系统
+    // 朗读的用户点了没反应（还是官方声音）。
+    var system = _defaultListenEngineIsSystem;
     if (!system) {
       if (fromPage) {
         await _openUpstreamListening(
