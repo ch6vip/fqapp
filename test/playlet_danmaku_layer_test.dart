@@ -101,6 +101,7 @@ void main() {
       bool enabled = true,
       bool tickerMode = true,
       double rate = 1,
+      double topInset = 0,
     }) => Directionality(
       textDirection: TextDirection.ltr,
       child: Center(
@@ -116,6 +117,7 @@ void main() {
               rate: rate,
               playing: playing,
               enabled: enabled,
+              topInset: topInset,
             ),
           ),
         ),
@@ -420,6 +422,30 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('topInset starts the first lane below the feed chrome', (
+      tester,
+    ) async {
+      final position = ValueNotifier<Duration>(
+        const Duration(milliseconds: 1000),
+      );
+      addTearDown(position.dispose);
+      await tester.pumpWidget(
+        layer(
+          position: position,
+          entries: [danmaku('top-inset', 500)],
+          topInset: 92,
+        ),
+      );
+      final viewport = tester.getRect(
+        find.byKey(const ValueKey('danmaku-viewport')),
+      );
+      final bubble = tester.getRect(
+        find.byKey(const ValueKey('danmaku-top-inset')),
+      );
+      // 容器 inset 92dp + 弹幕层自己的 8dp 首轨偏移。
+      expect(bubble.top - viewport.top, closeTo(100, .5));
+    });
 
     testWidgets('renders the entries that are inside the window', (
       tester,
