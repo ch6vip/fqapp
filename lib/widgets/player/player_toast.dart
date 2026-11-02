@@ -140,26 +140,33 @@ class _PlayerToastViewState extends State<_PlayerToastView>
                 constraints: BoxConstraints(
                   maxWidth: MediaQuery.sizeOf(context).width * .82,
                 ),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: const Color(0xE6161616),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 9,
+                // 根 Overlay 挂在页面路由之外，上面没有页面的 Material：
+                // 裸 Text 会继承 MaterialApp 的兜底 `_errorTextStyle`
+                // （黄色双下划线、粗体等宽字体）。垫一层透明 Material，
+                // 让提示拿到正常的 DefaultTextStyle。
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xE6161616),
+                      borderRadius: BorderRadius.circular(18),
                     ),
-                    child: Text(
-                      widget.message,
-                      key: const ValueKey('player-toast'),
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        height: 1.3,
-                        color: Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 9,
+                      ),
+                      child: Text(
+                        widget.message,
+                        key: const ValueKey('player-toast'),
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.3,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
