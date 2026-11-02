@@ -105,8 +105,7 @@ class EncryptedHive {
     // entries and at least 60 entries have been deleted).
     final strategy =
         compactionStrategy ??
-        (int entries, int deleted) =>
-            deleted > 60 && deleted / entries > 0.15;
+        (int entries, int deleted) => deleted > 60 && deleted / entries > 0.15;
     final encName = encryptedBoxName(name);
     if (hive.isBoxOpen(encName)) return hive.box<E>(encName);
 
@@ -183,6 +182,109 @@ class EncryptedHive {
       encryptionCipher: cipher,
       compactionStrategy: strategy,
     );
+  }
+
+  /// Lazy variant of [openBox] for large chapter bodies.
+  ///
+  /// `Hive.openLazyBox` reads only the frame headers/keys during open. The
+  /// values (a 200 MB chapter cache can hold tens of thousands of them) stay
+  /// on disk until [LazyBox.get] asks for one. This is what keeps opening the
+  /// bookshelf or offline-cache page off the UI isolate's critical path.
+  static Future<LazyBox<E>> openLazyBox<E>(
+    HiveInterface hive,
+    String name, {
+    SecureKeyProvider? keys,
+    bool requireEncryption = false,
+    CompactionStrategy? compactionStrategy,
+  }) async {
+    final strategy =
+        compactionStrategy ??
+        (int entries, int deleted) => deleted > 60 && deleted / entries > 0.15;
+    final encName = encryptedBoxName(name);
+    if (hive.isBoxOpen(encName)) return hive.lazyBox<E>(encName);
+
+    final key = await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
+    if (key == null) {
+      if (requireEncryption) {
+        throw StateError('加密密钥不可用，拒绝以明文打开 $name');
+      }
+      if (_encryptedBoxOnDisk(encName)) {
+        throw StateError('加密密钥不可用，而 $encName 已存在，拒绝以明文回落');
+      }
+      return hive.openLazyBox<E>(name, compactionStrategy: strategy);
+    }
+
+    final cipher = HiveAesCipher(key);
+    if (await hive.boxExists(encName)) {
+      try {
+        final box = await hive.openLazyBox<E>(
+          encName,
+          encryptionCipher: cipher,
+          compactionStrategy: strategy,
+        );
+        await _reconcileLegacyLazy(hive, name, box);
+        return box;
+      } on HiveError catch (e) {
+        if (!_looksLikeDecryptionFailure(e)) rethrow;
+        final preserved = _quarantineUnreadableBox(encName);
+        if (preserved.isEmpty) {
+          AppLog.w('hive', '加密箱 $encName 无法解密，且未找到可保留的箱文件');
+        } else {
+          final names = preserved
+              .map((file) => file.uri.pathSegments.last)
+              .join('、');
+          AppLog.w('hive', '加密箱 $encName 无法解密，原文件已保留：$names');
+        }
+      }
+    }
+
+    if (await hive.boxExists(name)) {
+      final legacy = await hive.openBox<E>(name);
+      final entries = <dynamic, dynamic>{};
+      for (final legacyKey in legacy.keys) {
+        entries[legacyKey] = legacy.get(legacyKey);
+      }
+      await legacy.close();
+      final box = await hive.openLazyBox<E>(
+        encName,
+        encryptionCipher: cipher,
+        compactionStrategy: strategy,
+      );
+      if (entries.isNotEmpty) {
+        await box.putAll(Map<dynamic, E>.from(entries));
+      }
+      await _reconcileLegacyLazy(hive, name, box);
+      return box;
+    }
+
+    return hive.openLazyBox<E>(
+      encName,
+      encryptionCipher: cipher,
+      compactionStrategy: strategy,
+    );
+  }
+
+  static Future<void> _reconcileLegacyLazy<E>(
+    HiveInterface hive,
+    String name,
+    LazyBox<E> encrypted,
+  ) async {
+    if (!await hive.boxExists(name)) return;
+    final legacy = await hive.openBox<E>(name);
+    try {
+      final missing = <dynamic, dynamic>{};
+      for (final key in legacy.keys) {
+        if (!encrypted.containsKey(key)) {
+          missing[key] = legacy.get(key);
+        }
+      }
+      if (missing.isNotEmpty) {
+        await encrypted.putAll(Map<dynamic, E>.from(missing));
+      }
+    } finally {
+      await legacy.close();
+    }
+    await hive.deleteBoxFromDisk(name);
   }
 
   /// Reconciles a leftover legacy box with the encrypted box.
