@@ -52,12 +52,14 @@ class SystemTts {
         'rate': prefs.rate,
       }) ??
       4000;
+
   /// Speaks [text] as utterance [id]. [queue] appends it behind the utterance
   /// already playing instead of cutting it off, which is what lets one sentence
   /// follow the previous one without a gap.
   static Future<void> speak(String text, String id, {bool queue = false}) =>
       _call<void>('speak', {'text': text, 'id': id, 'queue': queue});
   static Future<void> stop() => _call<void>('stop');
+
   /// Stops the engine but **keeps** the audio focus: a pause must not abandon
   /// the focus, or the system never sends the GAIN that follows a call, and
   /// `focus_resume` can never bring the narration back.
@@ -249,6 +251,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<dynamic>? _subscription;
   Future<void> _notificationQueue = Future<void>.value();
   Future<void> _pumps = Future<void>.value();
+  Future<void> _engineQueue = Future<void>.value();
   Future<void>? _closeFuture;
   BackendRequest? _loadRequest;
   TextReplacementCancellation? _replacementCancellation;
@@ -323,7 +326,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     _offset = offset;
     _publish();
     try {
-      await SystemTts.stop();
+      await _engineCall<void>(() => SystemTts.stop());
       if (closed || token != _generation) return;
       final content = await book
           .loadDisplay(next, request: request, cancellation: cancellation)
@@ -362,6 +365,11 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       loading = true;
       _publish();
       final prefs = await SystemTtsPreferences.load();
+      if (!_current(token)) return;
+      // A pending pause/stop must land before a new engine starts, but the
+      // initialization itself stays cancellable: pause() must not wait for a
+      // slow engine handshake before it can invalidate this generation.
+      await _engineQueue;
       if (!_current(token)) return;
       _maxLength = (await SystemTts.initialize(prefs)).clamp(2, 300);
       if (!_current(token)) return;
@@ -418,13 +426,23 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
         await _notificationQueue;
         if (!_current(token) || !_queued.containsKey(id)) return;
       }
-      await SystemTts.speak(
-        _text.substring(range.start, range.end),
-        id,
-        queue: !flush,
+      await _engineCall<void>(
+        () => SystemTts.speak(
+          _text.substring(range.start, range.end),
+          id,
+          queue: !flush,
+        ),
       );
       if (!_current(token)) return;
     }
+  }
+
+  /// Speak/pause/stop calls share one queue so a late pause/stop can never land
+  /// after the next resume's speak and silence it.
+  Future<T> _engineCall<T>(Future<T> Function() call) {
+    final next = _engineQueue.then((_) => call());
+    _engineQueue = next.then<void>((_) {}).catchError((Object _) {});
+    return next;
   }
 
   /// Serializes [_pump]. Two overlapping runs would append a sentence behind
@@ -468,9 +486,18 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   void _event(dynamic value) {
     if (closed || value is! Map) return;
     if (value['type'] == 'interrupted') {
-      // 焦点被临时抢走（来电、导航提示）：停朗读但**不弃焦点**，等系统
-      // 交还焦点时的 focus_resume 自动续播。带不带 id 都一样处理。
-      unawaited(_pauseForInterruption());
+      // 旧事件没有 keepFocus 字段，按临时打断处理以兼容既有调用方。
+      if (value['keepFocus'] == false) {
+        unawaited(_stopForFocusLoss());
+      } else {
+        // 焦点被临时抢走（来电、导航提示）：停朗读但**不弃焦点**，等系统
+        // 交还焦点时的 focus_resume 自动续播。带不带 id 都一样处理。
+        unawaited(_pauseForInterruption());
+      }
+      return;
+    }
+    if (value['type'] == 'engine_stopped') {
+      unawaited(_fail(StateError('朗读引擎已停止，请重试')));
       return;
     }
     if (value['type'] == 'focus_resume') {
@@ -516,11 +543,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
         final next = _earliest();
         if (next != null) {
           _show(next.key, next.value);
-        } else if (nextSentenceRange(
-              _text,
-              _cursor,
-              maxLength: _maxLength,
-            ) ==
+        } else if (nextSentenceRange(_text, _cursor, maxLength: _maxLength) ==
             null) {
           final token = _generation;
           unawaited(_advance(token));
@@ -578,6 +601,17 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     await _halt(keepFocus: true);
   }
 
+  /// 永久丢失焦点（其他应用接管媒体音频、拔耳机）后不能等 GAIN：旧焦点
+  /// 已经交还，系统不会再发恢复事件。下次播放必须重新初始化引擎并重新
+  /// 申请焦点，否则在线引擎可能继续“成功”朗读但实际没有输出。
+  Future<void> _stopForFocusLoss() async {
+    if (closed) return;
+    _resumeOnFocusGain = false;
+    _pendingFocusResume = false;
+    _ready = false;
+    await _halt(keepFocus: false);
+  }
+
   /// [keepFocus] 为真时停朗读但**不放弃音频焦点**：一旦弃了，系统在对方
   /// 说完后就不会再发 GAIN，自动续播永远等不到。只有「被打断」这一种暂停
   /// 需要它；用户手动暂停与出错停下都交还焦点。
@@ -589,7 +623,9 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     loading = false;
     _publish();
     try {
-      await (keepFocus ? SystemTts.pause() : SystemTts.stop());
+      await _engineCall<void>(
+        () => keepFocus ? SystemTts.pause() : SystemTts.stop(),
+      );
     } catch (_) {}
   }
 
@@ -699,7 +735,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(_subscription?.cancel());
     _subscription = null;
     try {
-      await SystemTts.shutdown();
+      await _engineCall<void>(() => SystemTts.shutdown());
     } catch (_) {}
     await _notificationQueue;
     await NativePlayer.stopListenForeground();
