@@ -383,3 +383,65 @@ async fn a_failed_image_is_skipped_without_reordering_the_rest() {
         plain
     );
 }
+
+/// Regression for issue #241: when the primary manga content path fails, the
+/// chapter-specific `full` endpoint must win over the book-level `book_detail`
+/// fallback. Otherwise every chapter returns the first chapter's materials.
+#[tokio::test]
+async fn manga_falls_back_to_full_chapter_content_instead_of_book_detail() {
+    let chapter_one =
+        r#"{"materials":{"img_0":{"data":{"web_uri":"novel-pic/chapter-one"},"type":"img"}}}"#;
+    let chapter_two =
+        r#"{"materials":{"img_0":{"data":{"web_uri":"novel-pic/chapter-two"},"type":"img"}}}"#;
+    let primary = serde_json::json!({
+        "data": { "content": "Invalid", "novel_data": { "book_id": "7000000000000000001" } }
+    });
+    let book_detail = serde_json::json!({ "data": { "content": chapter_one } });
+    let full = serde_json::json!({
+        "code": 0,
+        "data": {
+            "item_infos": {
+                "chapter-two": { "content": chapter_two, "title": "第2话" }
+            }
+        }
+    });
+
+    let dir = TempDir::new("manga-full-fallback");
+    let mock = MockUpstream::start(move |req| {
+        if req.path.contains("/novelfm/playerapi/full/mget") {
+            return MockReply::json(full.clone());
+        }
+        if req.path.contains("/reading/bookapi/detail") {
+            return MockReply::json(book_detail.clone());
+        }
+        MockReply::json(primary.clone())
+    })
+    .await;
+    let server = build_server(&dir, Some(mock.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = body_string(&server, &request("/api/v1/manga/chapter-two", "")).await;
+    assert_eq!(status, 200, "body: {body}");
+    let parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
+    let images: Vec<&str> = parsed["images"]
+        .as_array()
+        .expect("images array")
+        .iter()
+        .map(|v| v.as_str().expect("image url"))
+        .collect();
+    assert_eq!(images.len(), 1, "body: {body}");
+    assert!(
+        images[0].contains("chapter-two"),
+        "the chapter-specific image must be used: {images:?}"
+    );
+    assert!(
+        !images[0].contains("chapter-one"),
+        "book-level materials must not win: {images:?}"
+    );
+    assert!(
+        !mock
+            .requests()
+            .iter()
+            .any(|r| r.path.contains("/reading/bookapi/detail")),
+        "book_detail must not be called when the full fallback succeeds"
+    );
+}

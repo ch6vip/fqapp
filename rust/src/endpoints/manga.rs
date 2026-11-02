@@ -22,6 +22,8 @@ use sha2::{Digest, Sha256};
 use crate::endpoints::base::{
     dragon_read_headers, Upstream, UpstreamMode, UpstreamRequestSpec, UA_WINDOWS_BROWSER,
 };
+use crate::endpoints::content::full_item_content;
+use crate::endpoints::full;
 use crate::endpoints::util::{default_val, go_query_escape, user_agent_headers};
 use crate::endpoints::{Ctx, Params, Server};
 use crate::error::{ApiError, ApiResult};
@@ -120,6 +122,48 @@ async fn fallback_from_book_detail(
     if images.is_empty() {
         return Err(ApiError::Internal(
             "manga material images missing".to_string(),
+        ));
+    }
+    if show_html {
+        return Ok(json!({ "content": manga_image_html(&images) }));
+    }
+    Ok(json!({ "images": images }))
+}
+
+/// Chapter-specific fallback: ask the `full` endpoint for the requested item
+/// id. Its content is the chapter's own `materials` JSON (HTML-escaped), unlike
+/// `book_detail`, whose material list is book-level and therefore identical for
+/// every chapter. This is what makes "next chapter" advance instead of
+/// redisplaying chapter one.
+async fn fallback_from_full_chapter(
+    ctx: &Ctx,
+    item_id: &str,
+    q: &Params,
+    show_html: bool,
+) -> ApiResult<Value> {
+    let book_id = fetch_manga_book_id(ctx, item_id, q).await?;
+    let full = full::get_chapters(ctx, &book_id, &[item_id.to_string()]).await?;
+    let (content, _title, ok) = full_item_content(&full, item_id);
+    if !ok {
+        return Err(ApiError::Internal(
+            "full chapter content missing".to_string(),
+        ));
+    }
+
+    if content.contains("picInfos") {
+        let (imgs, html) = parse_and_download(ctx, &content, show_html).await;
+        if !imgs.is_empty() {
+            if show_html {
+                return Ok(json!({ "content": html }));
+            }
+            return Ok(json!({ "images": imgs }));
+        }
+    }
+
+    let images = extract_manga_material_image_urls(&content);
+    if images.is_empty() {
+        return Err(ApiError::Internal(
+            "manga chapter images missing from full fallback".to_string(),
         ));
     }
     if show_html {
@@ -3008,14 +3052,33 @@ fn handle<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult<Value
         let content = match get_content(ctx, &item_id, params).await {
             Ok(c) => c,
             Err(err) => {
-                return match fallback_from_book_detail(ctx, &item_id, params, show_html).await {
-                    Ok(result) => Ok(result),
-                    Err(_) => Err(err),
-                };
+                // Prefer the chapter-specific `full` path. `book_detail` is
+                // only a book-level catch-all: using it first makes every
+                // chapter return the same image set (issue #241).
+                match fallback_from_full_chapter(ctx, &item_id, params, show_html).await {
+                    Ok(result) => return Ok(result),
+                    Err(_) => {
+                        return match fallback_from_book_detail(ctx, &item_id, params, show_html)
+                            .await
+                        {
+                            Ok(result) => Ok(result),
+                            Err(_) => Err(err),
+                        };
+                    }
+                }
             }
         };
 
         if !content.contains("picInfos") {
+            // Some upstream variants return the same `materials` JSON through
+            // the primary content route instead of `picInfos`.
+            let images = extract_manga_material_image_urls(&content);
+            if !images.is_empty() {
+                if show_html {
+                    return Ok(json!({ "content": manga_image_html(&images) }));
+                }
+                return Ok(json!({ "images": images }));
+            }
             return Ok(json!({ "content": content }));
         }
 
