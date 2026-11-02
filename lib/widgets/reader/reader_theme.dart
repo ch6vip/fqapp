@@ -3,6 +3,14 @@ import 'package:flutter/material.dart';
 import '../../services/app_theme.dart';
 import '../../services/reader_preferences.dart';
 
+/// 阅读页右下角两颗动作钮（看 / 听）的直径。
+///
+/// 取听书胶囊里那圈圆形封面的尺寸（`AudioFloatingPlayer._width/_height`
+/// 里的 42dp），两颗钮原先照官方资源按 56dp 摆，比胶囊里的图书封面大出
+/// 三分之一，压在正文上也显得重。缩到 42 后与胶囊同高，两处并排时视线
+/// 不再被按钮抢走；「看」展开成提示条时的宽高也按这个比例一起缩。
+const double kReaderActionSize = 42;
+
 extension ReaderThemeColors on ReaderThemePreset {
   bool get isDark => this == ReaderThemePreset.dark;
 
