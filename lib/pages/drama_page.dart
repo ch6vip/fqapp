@@ -212,6 +212,12 @@ const _dramaSearchRowHeight = 51.0;
 /// 频道条基础高度；大字号下由 [_dramaStripHeightFor] 抬高。
 const _dramaStripBaseHeight = 38.0;
 
+/// 官方短剧 feed 弹幕区的 top margin（`vq3/j.java` `B0()`）：
+/// 状态栏高度 + 92dp（`videoScene==1` 推荐流；普通 single 为 +80dp）。
+/// `PlayletDanmakuLayer` 内部还从顶部 8dp 起画，合起来正好落在
+/// 搜索行/频道条下方，不会压到状态栏和搜索框。
+const _feedDanmakuTopMargin = 92.0;
+
 /// 频道条在大字号下随选中字号一起长高：24sp 放大后若仍锁死 38dp，会和
 /// 3dp 指示条一起撞破条带。思路同首页 tab 条的 textScale 补偿。
 ///
@@ -2697,6 +2703,10 @@ class _FeedDanmakuOverlay extends StatelessWidget {
               rate: playback.rate.value,
               playing: playback.playing.value,
               landscape: false,
+              // 官方 feed 的弹幕容器 `ci2` 先让开状态栏 + 92dp 的顶部栏，
+              // 不是从屏幕 y=0 起画（`vq3/j.java` `B0()`）。
+              topInset:
+                  MediaQuery.paddingOf(context).top + _feedDanmakuTopMargin,
               settings: settings,
             ),
           ),
