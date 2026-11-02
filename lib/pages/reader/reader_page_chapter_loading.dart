@@ -357,11 +357,13 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
         rethrow;
       }
       if (superseded()) return _latestChapterText(chapter);
+      var chapterSuperseded = false;
       if (mounted && !widget.localOnly) {
         try {
           await _ensureCatalog();
-          if (superseded()) return _latestChapterText(chapter);
-          if (mounted) {
+          if (superseded()) {
+            chapterSuperseded = true;
+          } else if (mounted) {
             await _diskCache.write(
               bookId: widget.bookId,
               chapterId: chapter.itemId,
@@ -373,6 +375,7 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
           // Cache management reports storage errors; keep the fetched text usable.
         }
       }
+      if (chapterSuperseded) return _latestChapterText(chapter);
     }
     if (superseded()) return _latestChapterText(chapter);
     if (mounted) _rememberChapter(chapter.itemId, text);
