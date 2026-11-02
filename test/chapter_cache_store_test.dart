@@ -41,6 +41,52 @@ void main() {
     },
   );
 
+  test(
+    'legacy chapter box catalogue migrates without opening the body box',
+    () async {
+      final key = await keys.getOrCreateKey();
+      expect(key, isNotNull);
+      final legacy = await Hive.openBox<dynamic>(
+        'chapter_cache_v1_enc',
+        encryptionCipher: HiveAesCipher(key!),
+      );
+      await legacy.put('book:legacy', {
+        'id': 'legacy',
+        'title': '旧书',
+        'cover': '',
+        'chapters': [
+          {'itemId': '1', 'title': '第一章', 'volumeName': ''},
+        ],
+      });
+      await legacy.put('chapter:["legacy","1"]', {
+        'bookId': 'legacy',
+        'chapterId': '1',
+        'title': '第一章',
+        'text': '旧正文',
+        'bytes': 9,
+      });
+      await legacy.close();
+
+      final store = ChapterCacheStore(keys: keys);
+      final books = await store.books();
+      expect(books.single.book.id, 'legacy');
+      expect(books.single.stats.chapterCount, 1);
+      expect(books.single.stats.byteCount, 9);
+      expect(Hive.isBoxOpen('chapter_cache_v1_enc'), isFalse);
+    },
+  );
+
+  test('catalogue queries do not open the chapter body box', () async {
+    final store = ChapterCacheStore(keys: keys);
+    await store.saveBook(_book('a'));
+    await store.books();
+    await store.savedCatalogue('a');
+    await store.cachedBook('a');
+    await store.cachedChapterIds('a');
+    await store.stats();
+    expect(Hive.isBoxOpen('chapter_cache_v1_enc'), isFalse);
+  });
+
   test('a reopened cache reuses the persisted byte count', () async {
     final store = ChapterCacheStore(keys: keys);
     await _write(store, 'a', '1', '中文正文');
@@ -79,7 +125,7 @@ void main() {
       await _write(store, 'x', '2', '正文二');
       // Another book's write evicts a chapter while 'x' still has text cached.
       await _write(store, 'x', '3', '正文三');
-      final box = Hive.box('chapter_cache_v1_enc');
+      final box = Hive.box('chapter_cache_catalog_v1_enc');
       // A catalogue survives while any of its chapters is still cached.
       expect(box.containsKey('book:x'), isTrue);
       // The interrupted download of 'a' resumes and fills its chapters.
@@ -128,6 +174,7 @@ void main() {
     () async {
       final store = ChapterCacheStore(keys: keys, maxBytes: 8);
       await store.saveBook(_book('a'));
+      await store.read(bookId: 'a', chapterId: '__open__');
       final box = Hive.box('chapter_cache_v1_enc');
       await box.put('chapter:["a","same"]', {
         'bookId': 'a',
@@ -151,6 +198,7 @@ void main() {
     () async {
       final store = ChapterCacheStore(keys: keys, maxBytes: 8);
       await store.saveBook(_book('a'));
+      await store.read(bookId: 'a', chapterId: '__open__');
       final box = Hive.box('chapter_cache_v1_enc');
       // 1000 个汉字：UTF-16 长度 1000，真实 UTF-8 是 3000 字节。旧的
       // [len, len*3] 校验会把这个少报的 len 当成合法测量值，容量上限失效。
@@ -170,6 +218,7 @@ void main() {
     () async {
       final store = ChapterCacheStore(keys: keys);
       await store.saveBook(_book('a'));
+      await store.read(bookId: 'a', chapterId: '__open__');
       final box = Hive.box('chapter_cache_v1_enc');
       await box.put('chapter:["a","same"]', {
         'bookId': 'a',
@@ -189,6 +238,7 @@ void main() {
       await store.saveBook(_book('a'));
       await store.saveBook(_book('ab'));
       await _write(store, 'ab', 'same', 'Unrelated content');
+      await store.read(bookId: 'a', chapterId: '__open__');
       final box = Hive.box('chapter_cache_v1_enc');
       await box.put('chapter:["a","same"]', {'text': 42});
       await box.put('chapter:["a","truncated"]', 'truncated data');
