@@ -165,6 +165,11 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   Drag? _pageDrag;
   int _pageDragFrom = 0;
   int? _pageDragDirection;
+  /// 起手瞬间的手指位置与页面位移。滑动翻页的位移量按「起手以来的手指
+  /// 位移」计算，这样下一页总是从屏幕边沿滑进来，而不是在按下的一瞬间
+  /// 就把接缝钉到触点位置（触点不在边沿时会凭空跳一大段）。
+  double _pageDragAnchorDx = 0;
+  double _pageDragStartPixels = 0;
 
   bool get _followsFinger =>
       !widget.instantSwipe &&
@@ -510,6 +515,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         if (position == null || !position.haveDimensions) return;
         _pageDragFrom = _attachedPage!.round();
         _pageDragDirection = null;
+        _pageDragAnchorDx = details.globalPosition.dx;
+        _pageDragStartPixels = position.pixels;
         _pageDrag = position.drag(details, () => _pageDrag = null);
       },
       onHorizontalDragUpdate: (details) {
@@ -524,12 +531,22 @@ class ReaderPagedViewState extends State<ReaderPagedView>
           drag.update(details);
           return;
         }
-        // Anchor the seam to the finger in the stationary viewport, including
-        // when the finger reverses direction before release.
+        // 位移量取「起手点以来的手指位移」，页面从屏幕边沿滑进来：下一页的
+        // 左缘从右缘进入、上一页的右缘从左缘进入，跨屏时可 1:1 跟手。不要
+        // 把接缝钉在手指下方——那样按下的瞬间接缝就跳到触点位置，看起来像
+        // 下一页凭空从屏幕中间冒出来。位移只允许移动到相邻页，一次手势翻
+        // 不了一页以上。
         final width = position.viewportDimension;
-        final pixels =
-            (_pageDragFrom + (direction > 0 ? 1 : 0)) * width -
-            details.localPosition.dx.clamp(0.0, width);
+        final advance =
+            ((_pageDragAnchorDx - details.globalPosition.dx) * direction)
+                .clamp(0.0, width);
+        final limit = target * width;
+        var pixels = direction > 0
+            ? _pageDragStartPixels + advance
+            : _pageDragStartPixels - advance;
+        pixels = direction > 0
+            ? (pixels > limit ? limit : pixels)
+            : (pixels < limit ? limit : pixels);
         final offset = position.pixels - pixels;
         drag.update(
           DragUpdateDetails(
