@@ -1,7 +1,8 @@
 // The desktop player receives clear bytes over a per-player loopback capability.
 // Keys and original URLs stay inside the process; no decrypted movie is written.
 use crate::desktop_fetch::{
-    fetch_range, shared_client, with_retries, FetchError, OpenError, CHUNK_TIMEOUT, PROBE_TIMEOUT,
+    fetch_known_range, fetch_range, shared_client, with_retries, FetchError, OpenError,
+    CHUNK_TIMEOUT, PROBE_TIMEOUT,
 };
 use reqwest::blocking::Client;
 use serde::Deserialize;
@@ -10,14 +11,14 @@ use std::{
     ffi::{c_char, c_void, CStr, CString},
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
-    net::{TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     ptr,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[repr(C)]
@@ -101,6 +102,9 @@ impl Source {
         })
     }
     fn read_at(&mut self, offset: u64, bytes: &mut [u8]) -> Result<usize, ()> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(());
+        }
         if offset >= self.size {
             return Ok(0);
         }
@@ -108,16 +112,18 @@ impl Source {
             file.seek(SeekFrom::Start(offset)).map_err(|_| ())?;
             return file.read(bytes).map_err(|_| ());
         }
-        let cache_end = self.cache_start + self.cache.len() as u64;
+        let cache_end = self
+            .cache_start
+            .checked_add(self.cache.len() as u64)
+            .ok_or(())?;
         if offset < self.cache_start || offset >= cache_end {
-            let end = (offset + 1024 * 1024 - 1).min(self.size - 1);
+            let end = offset
+                .checked_add(1024 * 1024 - 1)
+                .ok_or(())?
+                .min(self.size - 1);
             let client = self.client.ok_or(())?;
             let result = with_retries(&self.cancelled, || {
-                let (data, total) = fetch_range(client, &self.url, offset, end, CHUNK_TIMEOUT)?;
-                if total != self.size {
-                    return Err(FetchError::Protocol);
-                }
-                Ok(data)
+                fetch_known_range(client, &self.url, offset, end, CHUNK_TIMEOUT, self.size)
             });
             let data = match result {
                 Ok(data) => data,
@@ -131,8 +137,11 @@ impl Source {
             self.cache_start = offset;
             self.cache = data;
         }
-        let start = (offset - self.cache_start) as usize;
-        let count = bytes.len().min(self.cache.len() - start);
+        let start =
+            usize::try_from(offset.checked_sub(self.cache_start).ok_or(())?).map_err(|_| ())?;
+        let count = bytes
+            .len()
+            .min(self.cache.len().checked_sub(start).ok_or(())?);
         bytes[..count].copy_from_slice(&self.cache[start..start + count]);
         Ok(count)
     }
@@ -210,6 +219,76 @@ struct Session {
     size: u64,
     authority: String,
     path: String,
+    sockets: Mutex<SocketRegistry>,
+}
+
+#[derive(Default)]
+struct SocketRegistry {
+    stopped: bool,
+    next_id: u64,
+    sockets: HashMap<u64, TcpStream>,
+}
+
+static ACTIVE_SOCKETS: AtomicUsize = AtomicUsize::new(0);
+
+struct SocketAdmission {
+    session: Arc<Session>,
+    id: u64,
+}
+
+impl SocketAdmission {
+    fn register(session: Arc<Session>, socket: &TcpStream) -> Option<Self> {
+        let clone = socket.try_clone().ok()?;
+        let mut registry = session
+            .sockets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if registry.stopped || registry.sockets.len() >= 8 {
+            return None;
+        }
+        let id = registry.next_id.checked_add(1)?;
+        ACTIVE_SOCKETS
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < 32).then_some(count + 1)
+            })
+            .ok()?;
+        registry.next_id = id;
+        registry.sockets.insert(id, clone);
+        drop(registry);
+        Some(Self { session, id })
+    }
+}
+
+impl Drop for SocketAdmission {
+    fn drop(&mut self) {
+        self.session
+            .sockets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .sockets
+            .remove(&self.id);
+        ACTIVE_SOCKETS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl Session {
+    fn close(&self) {
+        let sockets = {
+            let mut registry = self
+                .sockets
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            registry.stopped = true;
+            self.stop.store(true, Ordering::Release);
+            if let Some(cancelled) = &self.cancelled {
+                cancelled.store(true, Ordering::Release);
+            }
+            std::mem::take(&mut registry.sockets)
+        };
+        for socket in sockets.into_values() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+    }
 }
 static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Session>>>> = OnceLock::new();
 fn sessions() -> &'static Mutex<HashMap<String, Arc<Session>>> {
@@ -254,10 +333,15 @@ fn serve(mut socket: TcpStream, session: Arc<Session>) -> std::io::Result<()> {
     // connections are handled by dedicated workers and must perform blocking
     // reads; otherwise a partially arrived HTTP header is mistaken for EOF.
     socket.set_nonblocking(false)?;
-    socket.set_read_timeout(Some(Duration::from_secs(3)))?;
     socket.set_write_timeout(Some(Duration::from_secs(3)))?;
+    let deadline = Instant::now() + Duration::from_secs(3);
     let mut request = Vec::new();
     while !request.ends_with(b"\r\n\r\n") {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || session.stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        socket.set_read_timeout(Some(remaining))?;
         let mut byte = [0];
         if request.len() >= 16384 || socket.read(&mut byte)? == 0 {
             return Ok(());
@@ -314,7 +398,7 @@ fn serve(mut socket: TcpStream, session: Arc<Session>) -> std::io::Result<()> {
     }
     let mut bytes = vec![0; 64 * 1024];
     while position <= end && !session.stop.load(Ordering::Acquire) {
-        let count = bytes.len().min((end - position + 1) as usize);
+        let count = (bytes.len() as u64).min(end - position + 1) as usize;
         let n = session
             .reader
             .lock()
@@ -324,8 +408,13 @@ fn serve(mut socket: TcpStream, session: Arc<Session>) -> std::io::Result<()> {
         if n == 0 {
             return Err(std::io::Error::other("unexpected media EOF"));
         }
+        if session.stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
         socket.write_all(&bytes[..n])?;
-        position += n as u64;
+        position = position
+            .checked_add(n as u64)
+            .ok_or_else(|| std::io::Error::other("media offset"))?;
     }
     Ok(())
 }
@@ -391,28 +480,46 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, OpenError> {
         cancelled,
         authority,
         path,
+        sockets: Mutex::default(),
     });
     sessions()
         .lock()
         .map_err(|_| OpenError::new("媒体会话不可用", "other"))?
         .insert(token.clone(), session.clone());
-    thread::spawn(move || {
-        while !session.stop.load(Ordering::Acquire) {
-            match listener.accept() {
-                Ok((socket, address)) if address.ip().is_loopback() => {
-                    let session = session.clone();
-                    thread::spawn(move || {
-                        let _ = serve(socket, session);
-                    });
+    let listener_session = session.clone();
+    if thread::Builder::new()
+        .name("media-listener".into())
+        .spawn(move || {
+            let session = listener_session;
+            while !session.stop.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((socket, address)) if address.ip().is_loopback() => {
+                        if let Some(admission) = SocketAdmission::register(session.clone(), &socket)
+                        {
+                            let _ = thread::Builder::new().name("media-socket".into()).spawn(
+                                move || {
+                                    let _ = serve(socket, admission.session.clone());
+                                    drop(admission);
+                                },
+                            );
+                        }
+                    }
+                    Ok(_) => (),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(_) => break,
                 }
-                Ok(_) => (),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(20))
-                }
-                Err(_) => break,
             }
+        })
+        .is_err()
+    {
+        session.close();
+        if let Ok(mut sessions) = sessions().lock() {
+            sessions.remove(&token);
         }
-    });
+        return Err(OpenError::new("无法启动媒体端口", "other"));
+    }
     Ok(serde_json::json!({"id": token, "url": url}))
 }
 #[no_mangle]
@@ -444,13 +551,12 @@ pub unsafe extern "C" fn fq_desktop_media_close(id: *const c_char) {
         return;
     }
     if let Ok(id) = CStr::from_ptr(id).to_str() {
-        if let Ok(mut sessions) = sessions().lock() {
-            if let Some(session) = sessions.remove(id) {
-                session.stop.store(true, Ordering::Release);
-                if let Some(cancelled) = &session.cancelled {
-                    cancelled.store(true, Ordering::Release);
-                }
-            }
+        let session = sessions()
+            .lock()
+            .ok()
+            .and_then(|mut sessions| sessions.remove(id));
+        if let Some(session) = session {
+            session.close();
         }
     }
 }

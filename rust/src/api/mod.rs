@@ -228,6 +228,7 @@ pub async fn shutdown() -> Result<(), String> {
     GENERATION.fetch_add(1, Ordering::SeqCst);
     let core = { CORE.write().await.take() };
     if let Some(core) = core {
+        core.server.lifetime.cancel();
         if let Some(task) = &core.task {
             task.abort();
         }
@@ -322,7 +323,7 @@ pub async fn request(
         return Ok(cancelled_response());
     }
 
-    let token = CancellationToken::new();
+    let token = server.lifetime.child_token();
     if !request_id.is_empty() {
         if let Ok(mut m) = INFLIGHT.lock() {
             m.insert(request_id.clone(), (generation, token.clone()));
@@ -504,7 +505,7 @@ where
     F: Future,
 {
     tokio::pin!(work);
-    match deadline {
+    let outcome = match deadline {
         Some(limit) => tokio::select! {
             biased;
             _ = token.cancelled() => RaceOutcome::Cancelled,
@@ -518,6 +519,12 @@ where
             _ = token.cancelled() => RaceOutcome::Cancelled,
             resp = &mut work => RaceOutcome::Done(resp),
         },
+    };
+    // A synchronous result may finish after shutdown without yielding again.
+    if token.is_cancelled() {
+        RaceOutcome::Cancelled
+    } else {
+        outcome
     }
 }
 

@@ -136,6 +136,7 @@ pub type RawHandler = for<'a> fn(&'a Ctx, &'a Params) -> BoxFuture<'a, ApiResult
 
 pub struct Server {
     pub ctx: Arc<Ctx>,
+    pub(crate) lifetime: tokio_util::sync::CancellationToken,
     routes: HashMap<&'static str, Handler>,
     raw: HashMap<&'static str, RawHandler>,
 }
@@ -144,6 +145,7 @@ impl Server {
     pub fn new(ctx: Arc<Ctx>) -> Self {
         let mut s = Server {
             ctx,
+            lifetime: tokio_util::sync::CancellationToken::new(),
             routes: HashMap::new(),
             raw: HashMap::new(),
         };

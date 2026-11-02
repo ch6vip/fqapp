@@ -141,7 +141,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 悬浮窗播放中（#24）：应用切后台后画面搬进系统悬浮窗继续播。
   /// 服务在 inactive（仍属前台过渡态）时启动，hidden 确认切后台后显示；
   /// 回前台 / 页面销毁 / 打开听视频时停掉并恢复 Flutter 纹理。
-  bool _floating = false;
+  int? _floatingOwner;
+  _FloatingAttempt? _pendingFloating;
+  bool get _floating => _floatingOwner != null;
 
   /// 最近一次生命周期状态：悬浮窗启动是异步的，启动完成时要按当前
   /// 状态收尾（已回前台就立刻停，已切后台就立即显示）。
@@ -811,8 +813,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _unregisterFairMemoryFlush?.call();
     _unregisterFairMemoryFlush = null;
     unawaited(NativePlayer.setKeepScreenOn(false).catchError((Object _) {}));
-    if (_floating) unawaited(_stopFloating());
-    NativePlayer.clearRemoteCommandHandler();
+    unawaited(_stopFloating());
     _progressTimer?.cancel();
     _prefetchTimer?.cancel();
     _autoCacheTimer?.cancel();
@@ -840,8 +841,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _loadTrace?.setAppActive(playbackAppIsActive(state));
     _syncWatchClock();
     if (playbackAppIsActive(state)) {
+      unawaited(_stopFloating());
       _resumePendingAutoplay();
-      if (_floating) unawaited(_stopFloating());
     } else {
       unawaited(_persistProgress());
       // 真正退到后台（不是悬浮窗）就不再占着第二个解码器。
@@ -853,9 +854,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (_canFloat()) unawaited(_startFloating());
       } else if (state == AppLifecycleState.hidden ||
           state == AppLifecycleState.paused) {
-        if (_floating) unawaited(NativePlayer.showFloating());
+        if (_floatingOwner case final int owner) {
+          unawaited(NativePlayer.showFloating(owner));
+        }
       }
     }
+    if (state == AppLifecycleState.detached) unawaited(_stopFloating());
     _updatePrefetch();
   }
 
@@ -863,6 +867,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _canFloat() =>
       !isWindowsDesktop &&
       !_floating &&
+      !_externalPanelOpen &&
+      !_switchingSeries &&
       PlayerPreferences.floatingWindow.value &&
       _player != null &&
       _playing &&
@@ -870,66 +876,138 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   String _episodeTitle() => widget.eps.isEmpty ? '' : widget.eps[_index].title;
 
-  /// 启动悬浮窗：原生侧起服务并在 surface 就绪后把画面换到悬浮窗。
-  /// 只有原生侧成功返回才置 `_floating`：焦点被占 / 服务启动失败时
-  /// 不进悬浮，交给 chrome 的切后台暂停。
-  Future<void> _startFloating() async {
+  // Install attempt identity synchronously, before allocation or permissions.
+  Future<void> _startFloating() {
+    final pending = _pendingFloating;
+    if (pending != null) return pending.settled.future;
     final player = _player;
     final playerId = player?.playerId;
-    if (player == null || playerId == null || _floating) return;
-    // 权限可能在设置里开启后又被系统收回，这里再查一次。
-    if (!await NativePlayer.canDrawOverlays()) return;
+    if (!_canFloat() ||
+        _lastLifecycleState != AppLifecycleState.inactive ||
+        player == null ||
+        playerId == null) {
+      return Future<void>.value();
+    }
+    final attempt = _FloatingAttempt(player, playerId);
+    _pendingFloating = attempt;
+    unawaited(_runFloatingStart(attempt));
+    return attempt.settled.future;
+  }
+
+  bool _currentFloatingStart(_FloatingAttempt attempt) =>
+      mounted &&
+      identical(_pendingFloating, attempt) &&
+      !attempt.retired &&
+      identical(_player, attempt.player) &&
+      attempt.player.playerId == attempt.playerId &&
+      _canFloat() &&
+      _lastLifecycleState != AppLifecycleState.resumed &&
+      _lastLifecycleState != AppLifecycleState.detached;
+
+  Future<void> _runFloatingStart(_FloatingAttempt attempt) async {
+    var accepted = false;
     try {
+      final owner = await NativePlayer.allocateFloatingOwner();
+      attempt.owner = owner;
+      if (!_currentFloatingStart(attempt)) return;
+      final allowed = await NativePlayer.canDrawOverlays();
+      // A permission result is not authority to start an FGS from hidden/paused.
+      if (!allowed ||
+          !_currentFloatingStart(attempt) ||
+          _lastLifecycleState != AppLifecycleState.inactive) {
+        return;
+      }
       await NativePlayer.startFloating(
-        playerId: playerId,
+        owner: owner,
+        playerId: attempt.playerId,
         title: _seriesTitle.isNotEmpty ? _seriesTitle : widget.title,
         episode: _episodeTitle(),
         playing: _playing,
         hasPrev: _index > 0,
         hasNext: _index + 1 < widget.eps.length,
-        positionMs: player.position.inMilliseconds,
-        durationMs: player.duration.inMilliseconds,
-        videoWidth: player.videoWidth,
-        videoHeight: player.videoHeight,
+        positionMs: attempt.player.position.inMilliseconds,
+        durationMs: attempt.player.duration.inMilliseconds,
+        videoWidth: attempt.player.videoWidth,
+        videoHeight: attempt.player.videoHeight,
       );
+      if (!_currentFloatingStart(attempt)) return;
+      _floatingOwner = owner;
+      _pendingFloating = null;
+      accepted = true;
+      NativePlayer.setFloatingCommandHandler(
+        owner: owner,
+        onAction: (action) => _handleFloatingRemoteAction(owner, action),
+      );
+      if (_lastLifecycleState == AppLifecycleState.hidden ||
+          _lastLifecycleState == AppLifecycleState.paused) {
+        await NativePlayer.showFloating(owner);
+        if (!mounted ||
+            _floatingOwner != owner ||
+            _lastLifecycleState == AppLifecycleState.resumed ||
+            _lastLifecycleState == AppLifecycleState.detached) {
+          NativePlayer.clearFloatingCommandHandler(owner);
+          await NativePlayer.stopFloating(owner);
+        }
+      }
     } catch (_) {
-      return;
-    }
-    if (!mounted) return;
-    if (_lastLifecycleState == AppLifecycleState.resumed) {
-      // 启动过程中已回前台（只是下拉通知栏）：不进悬浮，立刻停服务。
-      await NativePlayer.stopFloating();
-      return;
-    }
-    _floating = true;
-    NativePlayer.setRemoteCommandHandler(onAction: _handleFloatingRemoteAction);
-    if (_lastLifecycleState == AppLifecycleState.hidden ||
-        _lastLifecycleState == AppLifecycleState.paused) {
-      // 启动过程中已切后台：hidden 分支已跑过（那时 _floating 还是 false），
-      // 这里补一次显示。
-      await NativePlayer.showFloating();
+      // Unsuccessful/late starts compensate their own allocation in finally.
+    } finally {
+      final pauseOnFailure =
+          !accepted &&
+          _currentFloatingStart(attempt) &&
+          (_lastLifecycleState == AppLifecycleState.hidden ||
+              _lastLifecycleState == AppLifecycleState.paused);
+      if (pauseOnFailure) {
+        try {
+          await attempt.player.pause();
+        } catch (_) {}
+      }
+      if (identical(_pendingFloating, attempt)) _pendingFloating = null;
+      if (attempt.owner case final int owner when !accepted) {
+        await NativePlayer.stopFloating(owner);
+      }
+      attempt.settled.complete();
     }
   }
 
-  /// 停悬浮窗：画面回 Flutter 纹理，停服务，清远程控制。
-  Future<void> _stopFloating() async {
-    if (!_floating) return;
-    _floating = false;
-    NativePlayer.clearRemoteCommandHandler();
-    await NativePlayer.stopFloating();
+  Future<void> _retirePendingFloating() {
+    final attempt = _pendingFloating;
+    _pendingFloating = null;
+    if (attempt == null) return Future<void>.value();
+    attempt.retired = true;
+    final owner = attempt.owner;
+    return owner == null
+        ? Future<void>.value()
+        : NativePlayer.stopFloating(owner);
   }
 
-  /// 后台自动切集：新播放器接手悬浮窗（服务不重启，避免后台启动限制）。
-  /// 接手失败悬浮窗黑屏，无法恢复，只能等用户关闭 / 回前台。
+  Future<void> _stopFloating() {
+    final pending = _retirePendingFloating();
+    final owner = _floatingOwner;
+    _floatingOwner = null;
+    if (owner != null) NativePlayer.clearFloatingCommandHandler(owner);
+    return Future.wait<void>([
+      pending,
+      if (owner != null) NativePlayer.stopFloating(owner),
+    ]).then<void>((_) {});
+  }
+
+  // Established episode swaps retain the same service/focus owner.
   Future<void> _swapFloatingPlayer(NativePlayer player) async {
+    final owner = _floatingOwner;
     final playerId = player.playerId;
-    if (!_floating || playerId == null) return;
+    if (owner == null || playerId == null) return;
     try {
-      await NativePlayer.swapFloatingPlayer(playerId: playerId);
+      await NativePlayer.swapFloatingPlayer(owner: owner, playerId: playerId);
     } catch (_) {
+      if (_floatingOwner == owner) await _stopFloating();
+      return;
+    }
+    if (!mounted || _floatingOwner != owner || !identical(_player, player)) {
       return;
     }
     await NativePlayer.updateFloating(
+      owner: owner,
       episode: _episodeTitle(),
       playing: _playing,
       hasPrev: _index > 0,
@@ -939,9 +1017,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
-  /// 悬浮窗 / 通知的远程控制：播放暂停、上下集、关闭、回应用。
-  void _handleFloatingRemoteAction(String action) {
-    if (!mounted) return;
+  void _handleFloatingRemoteAction(int owner, String action) {
+    if (!mounted || _floatingOwner != owner) return;
     final player = _player;
     switch (action) {
       case 'playPause':
@@ -958,11 +1035,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           unawaited(_selectEpisode(_index + 1));
         }
       case 'stop':
-        // 悬浮窗关闭：暂停并收起悬浮窗。
         if (player != null) unawaited(player.pause());
         unawaited(_stopFloating());
       case 'fullscreen':
-        // 服务已拉起应用并藏起悬浮窗；这里收起服务并恢复纹理。
         unawaited(_stopFloating());
     }
   }
@@ -1121,6 +1196,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _teardownPlayer() {
+    unawaited(_retirePendingFloating());
     // 这一集的调度还没到点就作废：换集/换流后的 2 秒不该再去排它。
     _autoCacheTimer?.cancel();
     _autoCacheTimer = null;
@@ -1365,10 +1441,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       trace.stage('autoplayWait');
       _onFirstFrame(player, generation);
       _pendingAutoplay = autoplay ? player : null;
+      if (_floating) await _swapFloatingPlayer(player);
+      if (!_current(generation, player)) return;
       await _tryAutoplay(generation);
       if (!_current(generation, player)) return;
-      // 后台自动切集：新播放器接手悬浮窗，旧的已在 _teardownPlayer 里销毁。
-      if (_floating) await _swapFloatingPlayer(player);
       _onFirstFrame(player, generation);
       _updatePrefetch();
       _syncWatchClock();
@@ -1406,8 +1482,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_persistProgress());
     unawaited(_teardownPlayer());
     // 悬浮窗里播失败：通知状态改成暂停，用户可用悬浮窗 / 通知的关闭收起。
-    if (_floating) {
-      unawaited(NativePlayer.updateFloating(playing: false));
+    if (_floatingOwner case final int owner) {
+      unawaited(NativePlayer.updateFloating(owner: owner, playing: false));
     }
     setState(() {
       _error = PlaybackIssue.fromError(error);
@@ -1497,11 +1573,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           _onDanmakuSeek(resume);
         }
       }
-      if (wasPlaying) {
-        await fresh.play();
-        if (!_current(generation, fresh)) return;
-      }
-      setState(() => _playing = wasPlaying);
+      if (_floating) await _swapFloatingPlayer(fresh);
+      if (!_current(generation, fresh)) return;
+      if (wasPlaying) _pendingAutoplay = fresh;
+      await _tryAutoplay(generation);
+      if (!_current(generation, fresh)) return;
+      setState(() => _playing = fresh.playWhenReady);
     } catch (error) {
       if (_current(generation)) {
         _fail(error, generation);
@@ -1549,9 +1626,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _syncWatchClock();
         _updatePrefetch();
         // 悬浮窗通知里的播放状态跟着变（系统按最后同步的位置 + 倍速外推）。
-        if (_floating) {
+        if (_floatingOwner case final int owner) {
           unawaited(
             NativePlayer.updateFloating(
+              owner: owner,
               playing: playing,
               positionMs: player.position.inMilliseconds,
               durationMs: player.duration.inMilliseconds,
@@ -1831,12 +1909,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 听视频（官方 `jm3.d0.y()` 的听书模式页语义）：视频页暂停，推入独立
   /// 听书页；关闭时把「听到哪一集 + 进度」写回视频页续看（官方的
   /// `sync_progress_strategy_listen_mode` 进度同步的本地等价）。
-  Future<void> _openListenMode() async {
+  Future<void> _openListenMode() => _withPlayerOverlay(_pushListenMode);
+
+  Future<void> _pushListenMode() async {
+    final stopped = _stopFloating();
     final player = _player;
     final wasPlaying = _playing;
     if (player != null) await player.pause();
     // 听视频接手播放：先收起悬浮窗，避免两个播放面同时占着播放器。
-    if (_floating) await _stopFloating();
+    await stopped;
     if (!mounted) return;
     final result = await Navigator.of(context).push<(int, Duration)>(
       MaterialPageRoute<(int, Duration)>(
@@ -1915,4 +1996,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ],
     );
   }
+}
+
+class _FloatingAttempt {
+  _FloatingAttempt(this.player, this.playerId);
+  final NativePlayer player;
+  final int playerId;
+  final Completer<void> settled = Completer<void>();
+  int? owner;
+  bool retired = false;
 }

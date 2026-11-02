@@ -13,6 +13,7 @@
  * 直到它吃干净。这样两级的状态都只前进一次。
  */
 #include <jni.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -22,6 +23,8 @@
 #include "sp_resample.h"
 
 #define MAX_HANDLES 32
+
+enum ChainStage { RECEIVING, RESAMPLER_TAIL, PENDING_AT_TEMPO, WSOLA_TAIL, EXHAUSTED, FAILED };
 
 typedef struct {
     struct sp_resampler *resampler;   /* NULL：无需重采样 */
@@ -34,10 +37,7 @@ typedef struct {
     size_t pending_frames;
     size_t pending_capacity;
 
-    /* 原始输入里还没预处理的部分（WSOLA 吃不动时留到下次）。 */
-    int16_t *raw;
-    size_t raw_frames;
-    size_t raw_capacity;
+    enum ChainStage stage;
 } Chain;
 
 static Chain *g_handles[MAX_HANDLES];
@@ -63,14 +63,17 @@ static void destroy_chain(Chain *chain) {
     sp_resampler_destroy(chain->resampler);
     sp_atempo_destroy(chain->atempo);
     free(chain->pending);
-    free(chain->raw);
     free(chain);
 }
 
 static int ensure_capacity(int16_t **buf, size_t *capacity, size_t frames,
                            int channels) {
     if (*capacity >= frames) return 0;
-    const size_t grown = frames + frames / 2 + 1024;
+    const size_t maximum = SIZE_MAX / (size_t)channels / sizeof(int16_t);
+    if (frames > maximum) return -1;
+    size_t grown = frames;
+    if (frames <= maximum - frames / 2 &&
+        maximum - frames - frames / 2 >= 1024) grown += frames / 2 + 1024;
     int16_t *next =
         (int16_t *)realloc(*buf, grown * (size_t)channels * sizeof(int16_t));
     if (!next) return -1;
@@ -84,7 +87,7 @@ JNIEXPORT jint JNICALL Java_com_fqapp_fqapp_SpeechTempo_nativeCreateChain(
     jint target_rate) {
     (void)env;
     (void)clazz;
-    if (sample_rate <= 0 || channels <= 0) return 0;
+    if (sample_rate <= 0 || channels <= 0 || channels > INT_MAX / 2) return 0;
 
     const int out_rate = target_rate > 0 ? target_rate : sample_rate;
 
@@ -147,180 +150,152 @@ JNIEXPORT jint JNICALL Java_com_fqapp_fqapp_SpeechTempo_nativeOutputBound(
     (void)env;
     (void)clazz;
     Chain *chain = get_handle(handle);
-    if (!chain) return 0;
-    const size_t frames =
-        (size_t)input_bytes / ((size_t)chain->channels * sizeof(int16_t));
-    /* 重采样最多放大到 out/in，WSOLA 在 tempo>=0.5 时最多放大 2 倍。 */
-    size_t bound = frames * 6 + 8192;
-    return (jint)(bound * (size_t)chain->channels * sizeof(int16_t));
+    if (!chain || input_bytes < 0) return -1;
+    const size_t stride = (size_t)chain->channels * sizeof(int16_t);
+    if ((size_t)input_bytes % stride) return -1;
+    const size_t frames = (size_t)input_bytes / stride;
+    const size_t resampled = chain->resampler
+        ? sp_resampler_output_bound(chain->resampler, frames) : frames;
+    const size_t maximum = (size_t)INT_MAX / stride;
+    if (resampled == SIZE_MAX || maximum < 8192 || resampled > (maximum - 8192) / 2) return -1;
+    return (jint)((resampled * 2 + 8192) * stride);
 }
 
-/*
- * 把 raw 里的数据预处理进 pending（只做一次）。
- * 返回 0 成功，-1 内存不足。
- */
-static int preprocess(Chain *chain) {
-    if (chain->raw_frames == 0) return 0;
-
-    const size_t need =
-        chain->resampler
-            ? sp_resampler_output_bound(chain->resampler, chain->raw_frames)
-            : chain->raw_frames;
-
-    if (ensure_capacity(&chain->pending, &chain->pending_capacity,
-                        chain->pending_frames + need, chain->channels) != 0) {
-        return -1;
-    }
-
-    int16_t *dst = chain->pending + chain->pending_frames * (size_t)chain->channels;
-    size_t produced;
+static int preprocess(Chain *chain, const int16_t *src, size_t frames, size_t bound) {
+    size_t produced = frames;
     if (chain->resampler) {
-        produced = sp_resampler_process(chain->resampler, chain->raw,
-                                        chain->raw_frames, dst, need);
+        int16_t dummy = 0;
+        produced = sp_resampler_process(chain->resampler, src, frames,
+            chain->pending ? chain->pending : &dummy, bound);
+        if (produced == SIZE_MAX) return -1;
     } else {
-        memcpy(dst, chain->raw, chain->raw_frames * (size_t)chain->channels *
-                                    sizeof(int16_t));
-        produced = chain->raw_frames;
+        memcpy(chain->pending, src, frames * (size_t)chain->channels * sizeof(int16_t));
     }
-
-    chain->pending_frames += produced;
-    chain->raw_frames = 0;
+    chain->pending_frames = produced;
     return 0;
 }
 
-/*
- * 跑一整条链。
- *
- * 返回值打包两个 16-bit 量：高 16 位 = 写出 dst 的字节数，
- * 低 16 位 = 消费掉 src 的字节数。-1 表示句柄失效或参数越界。
- *
- * 语义：src 总是**整块**被接收（拷贝进 raw），所以低 16 位始终是 src_len。
- * 返回 0 产出时调用方应当继续交新数据——WSOLA 需要攒够一个窗口才出帧。
- */
+/* Also call with zero pending input: WSOLA can still own ready overlap output. */
+static int drain_pending(Chain *chain, jbyte *dst, size_t capacity, size_t *written_total) {
+    const size_t stride = (size_t)chain->channels * sizeof(int16_t);
+    int16_t dummy = 0;
+    while (*written_total < capacity) {
+        size_t used = 0, written = 0;
+        const size_t source_bytes = chain->pending_frames * stride;
+        const size_t room = capacity - *written_total;
+        if (sp_atempo_process(chain->atempo,
+                chain->pending ? chain->pending : &dummy, source_bytes,
+                dst + *written_total, room, &used, &written) != 0 ||
+            used > source_bytes || written > room || used % stride || written % stride) return -1;
+        *written_total += written;
+        if (used) {
+            chain->pending_frames -= used / stride;
+            if (chain->pending_frames) memmove(chain->pending,
+                chain->pending + used / sizeof(int16_t), chain->pending_frames * stride);
+        }
+        if (!used && !written) break;
+    }
+    return 0;
+}
+
+/* Packed unsigned16 byte counts; exactly -1 is the error sentinel. */
 JNIEXPORT jint JNICALL Java_com_fqapp_fqapp_SpeechTempo_nativeProcess(
     JNIEnv *env, jclass clazz, jint handle, jbyteArray src, jbyteArray dst) {
     (void)clazz;
     Chain *chain = get_handle(handle);
-    if (!chain) return -1;
-
-    const jsize src_len = (*env)->GetArrayLength(env, src);
-    const jsize dst_cap = (*env)->GetArrayLength(env, dst);
-    if (src_len <= 0 || dst_cap <= 0) return 0;
-
-    const size_t frame_bytes = (size_t)chain->channels * sizeof(int16_t);
-    const size_t in_frames = (size_t)src_len / frame_bytes;
-    if (in_frames == 0) return 0;
-
-    /* 1) 取走原始输入 */
-    jbyte *src_buf = (*env)->GetByteArrayElements(env, src, NULL);
-    if (!src_buf) return -1;
-    if (ensure_capacity(&chain->raw, &chain->raw_capacity,
-                        chain->raw_frames + in_frames, chain->channels) != 0) {
-        (*env)->ReleaseByteArrayElements(env, src, src_buf, JNI_ABORT);
+    if (!chain || !src || !dst || chain->stage != RECEIVING) return -1;
+    const jsize source_length = (*env)->GetArrayLength(env, src);
+    const jsize destination_length = (*env)->GetArrayLength(env, dst);
+    const size_t stride = (size_t)chain->channels * sizeof(int16_t);
+    if (source_length < 0 || source_length > 65535 || destination_length < 0 ||
+        (size_t)source_length % stride) return -1;
+    size_t capacity = (size_t)destination_length;
+    if (capacity > 65535) capacity = 65535;
+    capacity -= capacity % stride;
+    if (!capacity) return -1;
+    const size_t frames = (size_t)source_length / stride;
+    const size_t bound = chain->resampler
+        ? sp_resampler_output_bound(chain->resampler, frames) : frames;
+    if (bound == SIZE_MAX || ensure_capacity(&chain->pending, &chain->pending_capacity,
+            bound, chain->channels) != 0) return -1;
+    jbyte *source = source_length ? (*env)->GetByteArrayElements(env, src, NULL) : NULL;
+    if (source_length && !source) return -1;
+    jbyte *destination = (*env)->GetByteArrayElements(env, dst, NULL);
+    if (!destination) {
+        if (source) (*env)->ReleaseByteArrayElements(env, src, source, JNI_ABORT);
         return -1;
     }
-    memcpy(chain->raw + chain->raw_frames * (size_t)chain->channels, src_buf,
-           in_frames * frame_bytes);
-    chain->raw_frames += in_frames;
-    (*env)->ReleaseByteArrayElements(env, src, src_buf, JNI_ABORT);
-
-    /* 2) 预处理（有状态，只做一次） */
-    if (preprocess(chain) != 0) return -1;
-
-    /* 3) WSOLA 反复吃 pending，直到它要更多输入或输出写满 */
-    jbyte *dst_buf = (*env)->GetByteArrayElements(env, dst, NULL);
-    if (!dst_buf) return -1;
-
-    size_t written_total = 0;
-    for (;;) {
-        if (chain->pending_frames == 0) break;
-        size_t used = 0;
-        size_t written = 0;
-        const int rc = sp_atempo_process(
-            chain->atempo, chain->pending,
-            chain->pending_frames * frame_bytes, dst_buf + written_total,
-            (size_t)dst_cap - written_total, &used, &written);
-        if (rc != 0) break;
-
-        written_total += written;
-
-        if (used > 0) {
-            const size_t used_frames = used / frame_bytes;
-            const size_t rest = chain->pending_frames - used_frames;
-            if (rest > 0) {
-                memmove(chain->pending,
-                        chain->pending + used_frames * (size_t)chain->channels,
-                        rest * frame_bytes);
-            }
-            chain->pending_frames = rest;
+    size_t written = 0, consumed = 0;
+    int rc = drain_pending(chain, destination, capacity, &written);
+    if (!rc && source_length && !chain->pending_frames && written < capacity) {
+        rc = preprocess(chain, (const int16_t *)source, frames, bound);
+        if (!rc) {
+            consumed = (size_t)source_length;
+            rc = drain_pending(chain, destination, capacity, &written);
         }
-
-        /* 没有推进或输出写满：本轮到此为止 */
-        if (used == 0 || written_total >= (size_t)dst_cap) break;
     }
-
-    (*env)->ReleaseByteArrayElements(env, dst, dst_buf, 0);
-
-    /*
-     * 输入整块已被接收（低 16 位只能是 src_len，超过 16 位说明单块过大，
-     * 那是调用方的分块参数错了，按契约直接拒绝）。
-     *
-     * 输出超 16 位则不返回错误——已经写进 dst 的样本是有效的，丢掉等于
-     * 丢音频。截断到 65535 并让调用方下一轮继续拉取剩余部分。
-     */
-    if (src_len > 0xFFFF) return -1;
-    const size_t reported = written_total > 0xFFFFu ? 0xFFFFu : written_total;
-    return (jint)((reported << 16) | (jint)src_len);
+    if (!rc && chain->pending_frames && written < capacity) rc = -1;
+    if (source) (*env)->ReleaseByteArrayElements(env, src, source, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, dst, destination, 0);
+    if (rc) {
+        chain->stage = FAILED;
+        return -1;
+    }
+    return (jint)(uint32_t)(((uint32_t)written << 16) | (uint32_t)consumed);
 }
 
 JNIEXPORT jint JNICALL Java_com_fqapp_fqapp_SpeechTempo_nativeFlush(
     JNIEnv *env, jclass clazz, jint handle, jbyteArray dst) {
     (void)clazz;
     Chain *chain = get_handle(handle);
-    if (!chain) return -1;
-
-    const jsize dst_cap = (*env)->GetArrayLength(env, dst);
-    if (dst_cap <= 0) return 0;
-
-    /* 先把残留的原始输入处理掉 */
-    if (preprocess(chain) != 0) return -1;
-
-    jbyte *dst_buf = (*env)->GetByteArrayElements(env, dst, NULL);
-    if (!dst_buf) return -1;
-
-    const size_t frame_bytes = (size_t)chain->channels * sizeof(int16_t);
-    size_t written_total = 0;
-
-    /* 把 pending 全部推给 WSOLA（不给新输入，逼它出帧） */
-    while (chain->pending_frames > 0 && written_total < (size_t)dst_cap) {
-        size_t used = 0;
-        size_t written = 0;
-        const int rc = sp_atempo_process(
-            chain->atempo, chain->pending,
-            chain->pending_frames * frame_bytes, dst_buf + written_total,
-            (size_t)dst_cap - written_total, &used, &written);
-        if (rc != 0) break;
-        written_total += written;
-        if (used == 0) break;
-        const size_t used_frames = used / frame_bytes;
-        const size_t rest = chain->pending_frames - used_frames;
-        if (rest > 0) {
-            memmove(chain->pending,
-                    chain->pending + used_frames * (size_t)chain->channels,
-                    rest * frame_bytes);
+    if (!chain || !dst || chain->stage == FAILED) return -1;
+    const jsize length = (*env)->GetArrayLength(env, dst);
+    const size_t stride = (size_t)chain->channels * sizeof(int16_t);
+    if (length < 0) return -1;
+    const size_t capacity = (size_t)length - (size_t)length % stride;
+    if (!capacity) return -1;
+    if (chain->stage == EXHAUSTED) return 0;
+    const size_t tail = chain->resampler ? sp_resampler_flush_bound(chain->resampler) : 0;
+    if (tail == SIZE_MAX || chain->pending_frames > SIZE_MAX - tail ||
+        ensure_capacity(&chain->pending, &chain->pending_capacity,
+            chain->pending_frames + tail, chain->channels) != 0) return -1;
+    jbyte *destination = (*env)->GetByteArrayElements(env, dst, NULL);
+    if (!destination) return -1;
+    if (chain->stage == RECEIVING) chain->stage = RESAMPLER_TAIL;
+    size_t written = 0;
+    int rc = 0;
+    if (chain->stage == RESAMPLER_TAIL) {
+        if (chain->resampler && tail) {
+            const size_t produced = sp_resampler_flush(chain->resampler,
+                chain->pending + chain->pending_frames * (size_t)chain->channels, tail);
+            if (produced == SIZE_MAX || produced != tail) rc = -1;
+            else chain->pending_frames += produced;
         }
-        chain->pending_frames = rest;
+        if (!rc) chain->stage = PENDING_AT_TEMPO;
     }
-
-    /* 再冲 WSOLA 内部的重叠区 */
-    {
+    if (!rc && chain->stage == PENDING_AT_TEMPO) {
+        rc = drain_pending(chain, destination, capacity, &written);
+        if (!rc && written < capacity) {
+            if (chain->pending_frames) rc = -1;
+            else chain->stage = WSOLA_TAIL;
+        }
+    }
+    if (!rc && chain->stage == WSOLA_TAIL && written < capacity) {
         size_t flushed = 0;
-        if (sp_atempo_flush(chain->atempo, dst_buf + written_total,
-                            (size_t)dst_cap - written_total, &flushed) == 0) {
-            written_total += flushed;
-        }
+        const size_t room = capacity - written;
+        rc = sp_atempo_flush(chain->atempo, destination + written, room, &flushed);
+        if (flushed > room || flushed % stride) rc = -1;
+        written += flushed;
+        if (!rc && !flushed) chain->stage = EXHAUSTED;
     }
-
-    (*env)->ReleaseByteArrayElements(env, dst, dst_buf, 0);
-    return (jint)written_total;
+    (*env)->ReleaseByteArrayElements(env, dst, destination, 0);
+    if (rc) {
+        chain->stage = FAILED;
+        return -1;
+    }
+    if (!written && chain->stage != EXHAUSTED) {
+        chain->stage = FAILED;
+        return -1;
+    }
+    return (jint)written;
 }

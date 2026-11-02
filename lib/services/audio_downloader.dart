@@ -8,6 +8,7 @@ import '../models/media_item.dart';
 import 'api_client.dart';
 import 'audio_download_store.dart';
 import 'audio_download_transfer.dart';
+import 'download_resume_store.dart';
 
 enum AudioDownloadStatus { waiting, downloading, paused, completed, failed }
 
@@ -62,22 +63,11 @@ class AudioDownloadTask {
   );
 }
 
-/// 听书音频离线下载引擎。
-///
-/// 形态与短剧 [DramaDownloader] 一致 —— 按「章」建任务、[concurrency] 并发、
-/// `.part` + Range 续传、直链过期重取一次、断网暂停 —— 但换了三处：
-///
-///  * 取流走 [ApiClient.audioSource]（音色是 URL 的一部分，同一章不同音色是
-///    两份独立资源）；
-///  * 文件按 `<itemId>__<toneId>.m4a` 命名，因此记录也按音色区分；
-///  * 落盘的同样是**原始加密字节**，keyHex 只登记进加密箱，磁盘永无明文。
-///
-/// 不直接复用 [DramaDownloader] 的原因：两者的取流模型（EpisodeSource 多变体
-/// vs 单条 cenc 音源）、文件归属（整剧目录 vs 按音色的章）和记录形状都不同，
-/// 强行合并会把短剧那套剧集/画质语义带进听书。共用的只有落盘约定。
+/// Owns per-key intents and reservations until transfer, commit and cleanup settle.
 class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
   AudioDownloader({
     AudioDownloadStore? store,
+    DownloadResumeStore? resumeStore,
     Future<AudioSource> Function(String bookId, String itemId, String toneId)?
     resolve,
     HttpClient Function()? clientFactory,
@@ -85,136 +75,150 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     this.connectTimeout = audioDownloadConnectTimeout,
     this.readTimeout = audioDownloadReadTimeout,
   }) : _store = store ?? HiveAudioDownloadStore.instance,
+       _journal = resumeStore ?? DownloadResumeStore.instance,
        _resolve = resolve ?? _defaultResolve,
        _clientFactory = clientFactory ?? HttpClient.new,
        super(const []) {
-    // 管理界面删了记录后，引擎里那条 completed 旧任务必须一起忘掉，
-    // 否则 enqueue 会把该章当「已下载」跳过，用户点重新下载毫无反应。
     _store.changes.addListener(_onStoreChanged);
   }
 
   static final AudioDownloader instance = AudioDownloader();
-
-  /// 单个任务最多试几次（首次 + 自动重试）。CDN 偶发 5xx / 断流很常见，
-  /// 试三次基本能过；再多就只是在拖队列（与短剧下载器同一口径）。
   static const int _maxAttempts = 3;
-
-  /// 文件名里允许出现的字符。章 id 与音色 id 都来自上游，直接拼进路径前
-  /// 必须先过这道门（与短剧的 `_safeItemId` 同一约定）。
-  static final RegExp _safeToken = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
-
-  static bool _isSafe(String value) => _safeToken.hasMatch(value);
-
   final AudioDownloadStore _store;
-  final Future<AudioSource> Function(String bookId, String itemId, String toneId)
-  _resolve;
-  final HttpClient Function() _clientFactory;
-  final int concurrency;
-
-  /// 建连与收流的期限：见 `audio_download_transfer.dart`。
-  final Duration connectTimeout;
-  final Duration readTimeout;
-
-  final Map<String, _MutableTask> _tasks = {};
-  final Map<String, _MutableTask> _active = {};
-  bool _pumping = false;
-
-  static Future<AudioSource> _defaultResolve(
+  final DownloadResumeStore _journal;
+  final Future<AudioSource> Function(
     String bookId,
     String itemId,
     String toneId,
-  ) => ApiClient.instance.audioSource(
-    itemId,
-    bookId: bookId,
-    toneId: toneId,
-  );
+  )
+  _resolve;
+  final HttpClient Function() _clientFactory;
+  final int concurrency;
+  final Duration connectTimeout;
+  final Duration readTimeout;
+  final Map<String, _MutableTask> _tasks = {};
+  final Map<String, _AudioRun> _runs = {};
+  final Map<String, _AudioRun> _active = {};
+  bool _pumping = false;
 
-  static String taskId(String itemId, String toneId) => '$itemId|$toneId';
-
-  /// 官方 onNetChangeCheck 的等价：断网或只剩移动网络时暂停队列，半成品
-  /// 保留，恢复由用户在下载面板里点继续。
   void updateConnectivity({required bool online, bool metered = false}) {
     if (online && !metered) return;
     pauseAll(reason: online ? null : '网络已断开，下载已暂停');
   }
 
-  /// 入队若干章。已在队列或已下载的章自动跳过。
   Future<void> enqueue({
     required CachedAudioBook book,
     required List<Chapter> chapters,
   }) async {
     if (chapters.isEmpty) return;
+    if (book.bookId.isEmpty) throw ArgumentError('Empty book id');
     for (final chapter in chapters) {
-      if (!_isSafe(chapter.itemId)) {
-        throw ArgumentError.value(
-          chapter.itemId,
-          'chapter.itemId',
-          'must contain only ASCII letters, digits, _ or - (max 128 chars)',
-        );
-      }
+      DownloadKey(DownloadKind.audio, chapter.itemId, book.toneId);
     }
-    if (!_isSafe(book.toneId)) {
-      throw ArgumentError.value(
+    final pending = <(String, _MutableTask)>[];
+
+    for (final (index, chapter) in chapters.indexed) {
+      final downloadKey = DownloadKey(
+        DownloadKind.audio,
+        chapter.itemId,
         book.toneId,
-        'toneId',
-        'must contain only ASCII letters, digits, _ or - (max 128 chars)',
       );
-    }
-    await _store.ensureBook(book);
-    var added = false;
-    for (var i = 0; i < chapters.length; i++) {
-      final chapter = chapters[i];
-      final id = taskId(chapter.itemId, book.toneId);
-      final existing = _tasks[id];
-      if (existing != null) {
-        // 失败/暂停的任务再点一次等于重试；其余状态不重复入队。
-        if (existing.snapshot.status == AudioDownloadStatus.failed ||
-            existing.snapshot.status == AudioDownloadStatus.paused) {
-          _resumeTask(existing);
-          added = true;
+      final key = taskId(downloadKey.itemId, downloadKey.toneId);
+      var task = _tasks[key];
+      if (task == null) {
+        task = _MutableTask(
+          AudioDownloadTask(
+            bookId: book.bookId,
+            itemId: chapter.itemId,
+            toneId: book.toneId,
+            title: chapter.title,
+            index: index,
+            status: AudioDownloadStatus.waiting,
+          ),
+          book,
+        );
+        _tasks[key] = task;
+      } else {
+        if (task.snapshot.status == AudioDownloadStatus.paused ||
+            task.snapshot.status == AudioDownloadStatus.failed ||
+            task.snapshot.status == AudioDownloadStatus.completed) {
+          _resumeTask(task);
         }
-        continue;
       }
-      if (await _store.isDownloaded(chapter.itemId, toneId: book.toneId)) {
-        continue;
-      }
-      _tasks[id] = _MutableTask(
-        AudioDownloadTask(
-          bookId: book.bookId,
-          itemId: chapter.itemId,
-          toneId: book.toneId,
-          title: chapter.title,
-          index: i,
-          status: AudioDownloadStatus.waiting,
-        ),
-      );
-      added = true;
+      pending.add((key, task));
     }
-    if (!added) return;
+    _publish();
+    try {
+      for (final (key, _) in pending) {
+        await _waitDeletion(key);
+      }
+      if (pending.any((entry) => identical(_tasks[entry.$1], entry.$2))) {
+        await _store.ensureBook(book);
+        for (final (key, task) in pending) {
+          if (identical(_tasks[key], task)) task.prepared = true;
+        }
+      }
+    } catch (error) {
+      for (final (key, task) in pending) {
+        if (identical(_tasks[key], task) &&
+            !_active.containsKey(key) &&
+            task.snapshot.status == AudioDownloadStatus.waiting) {
+          task.snapshot = task.snapshot.copyWith(
+            status: AudioDownloadStatus.failed,
+            error: '$error',
+          );
+        }
+      }
+      rethrow;
+    } finally {
+      _publish();
+      unawaited(_pump());
+    }
+  }
+
+  static String taskId(String itemId, String toneId) => '$itemId|$toneId';
+
+  String _keyOf(String itemId, String toneId) {
+    if (toneId.isNotEmpty) return taskId(itemId, toneId);
+    for (final key in _tasks.keys) {
+      if (key.startsWith('$itemId|')) return key;
+    }
+    return taskId(itemId, toneId);
+  }
+
+  void clearFinished() {
+    _tasks.removeWhere(
+      (key, task) =>
+          !_runs.containsKey(key) &&
+          (task.snapshot.status == AudioDownloadStatus.completed ||
+              task.snapshot.status == AudioDownloadStatus.failed),
+    );
+    _publish();
+  }
+
+  void pause(String itemId, {String toneId = ''}) =>
+      _pauseTask(_tasks[_keyOf(itemId, toneId)]);
+
+  void _pauseTask(_MutableTask? task, {String? reason}) {
+    if (task == null ||
+        (task.snapshot.status != AudioDownloadStatus.waiting &&
+            task.snapshot.status != AudioDownloadStatus.downloading)) {
+      return;
+    }
+    final run = _runs[taskId(task.snapshot.itemId, task.snapshot.toneId)];
+    if (run != null && identical(run.task, task) && !run.pause()) return;
+    task.snapshot = task.snapshot.copyWith(
+      status: AudioDownloadStatus.paused,
+      error: reason,
+    );
     _publish();
     unawaited(_pump());
   }
 
-  void pause(String itemId, {String toneId = ''}) =>
-      _pauseTask(_tasks[_keyOf(itemId, toneId)], reason: '已暂停');
-
   void pauseAll({String? reason}) {
-    var changed = false;
-    for (final task in _tasks.values) {
-      if (task.snapshot.status == AudioDownloadStatus.waiting ||
-          task.snapshot.status == AudioDownloadStatus.downloading) {
-        if (task.snapshot.status == AudioDownloadStatus.downloading) {
-          task.abort('paused');
-        }
-        task.snapshot = task.snapshot.copyWith(
-          status: AudioDownloadStatus.paused,
-          error: reason,
-        );
-        changed = true;
-      }
+    for (final task in _tasks.values.toList()) {
+      _pauseTask(task, reason: reason);
     }
-    if (changed) _publish();
-    unawaited(_pump());
   }
 
   void resume(String itemId, {String toneId = ''}) {
@@ -223,7 +227,16 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     if (task.snapshot.status == AudioDownloadStatus.paused ||
         task.snapshot.status == AudioDownloadStatus.failed) {
       _resumeTask(task);
+      unawaited(
+        _prepareForResume(
+          taskId(task.snapshot.itemId, task.snapshot.toneId),
+          task,
+        ),
+      );
       _publish();
+      unawaited(
+        _retryBlocked(taskId(task.snapshot.itemId, task.snapshot.toneId)),
+      );
       unawaited(_pump());
     }
   }
@@ -233,110 +246,192 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
       if (task.snapshot.status == AudioDownloadStatus.paused ||
           task.snapshot.status == AudioDownloadStatus.failed) {
         _resumeTask(task);
+        unawaited(
+          _prepareForResume(
+            taskId(task.snapshot.itemId, task.snapshot.toneId),
+            task,
+          ),
+        );
+        unawaited(
+          _retryBlocked(taskId(task.snapshot.itemId, task.snapshot.toneId)),
+        );
       }
     }
     _publish();
     unawaited(_pump());
   }
 
-  /// 放弃未完成任务并清掉半成品；已完成的删除走 store。
-  Future<void> discard(String itemId, {String toneId = ''}) async {
-    if (!_isSafe(itemId) || !_isSafe(toneId)) return;
-    final task = _tasks.remove(taskId(itemId, toneId));
-    task?.abort('discarded');
-    // 不在这里让出 `_active`：旧协程可能还卡在收流/写盘上，槽位要等 `_run`
-    // 真正收尾才释放。提前释放会让同 key 的新一轮与它同时写同一个 `.part`。
+  Future<void> _prepareForResume(String key, _MutableTask task) async {
+    if (task.prepared) return;
+    final generation = task.generation;
     try {
-      final dir = await _store.directory();
-      await File(
-        '${dir.path}${Platform.pathSeparator}${_fileName(itemId, toneId)}.part',
-      ).delete();
-    } on FileSystemException catch (_) {
-    } on ArgumentError catch (_) {}
-    _publish();
-    unawaited(_pump());
-  }
-
-  /// 清掉不在本队列里的「等待中」任务（例如用户关掉了整本书的下载入口）。
-  void clearFinished() {
-    final before = _tasks.length;
-    _tasks.removeWhere(
-      (_, task) =>
-          task.snapshot.status == AudioDownloadStatus.completed ||
-          task.snapshot.status == AudioDownloadStatus.failed,
-    );
-    if (_tasks.length != before) _publish();
-  }
-
-  String _keyOf(String itemId, String toneId) {
-    if (toneId.isNotEmpty) return taskId(itemId, toneId);
-    // 未指定音色时按章 id 找第一个任务（单章操作的老调用形态）。
-    for (final key in _tasks.keys) {
-      if (key.startsWith('$itemId|')) return key;
+      await _waitDeletion(key);
+      if (!identical(_tasks[key], task) || task.generation != generation) {
+        return;
+      }
+      await _store.ensureBook(task.catalogue);
+      if (!identical(_tasks[key], task) || task.generation != generation) {
+        return;
+      }
+      task.prepared = true;
+    } catch (error) {
+      if (identical(_tasks[key], task) &&
+          task.generation == generation &&
+          task.snapshot.status == AudioDownloadStatus.waiting) {
+        task.snapshot = task.snapshot.copyWith(
+          status: AudioDownloadStatus.failed,
+          error: '$error',
+        );
+      }
+    } finally {
+      _publish();
+      unawaited(_pump());
     }
-    return taskId(itemId, '');
-  }
-
-  void _pauseTask(_MutableTask? task, {String? reason}) {
-    if (task == null) return;
-    if (task.snapshot.status != AudioDownloadStatus.waiting &&
-        task.snapshot.status != AudioDownloadStatus.downloading) {
-      return;
-    }
-    if (task.snapshot.status == AudioDownloadStatus.downloading) {
-      task.abort('paused');
-    }
-    task.snapshot = task.snapshot.copyWith(
-      status: AudioDownloadStatus.paused,
-      error: reason,
-    );
-    _publish();
-    unawaited(_pump());
   }
 
   void _resumeTask(_MutableTask task) {
     task.generation++;
-    task.abortReason = null;
+    task.cleanupBlocked = false;
     task.snapshot = task.snapshot.copyWith(
       status: AudioDownloadStatus.waiting,
       clearError: true,
     );
   }
 
-  void _onStoreChanged() {
-    unawaited(_forgetRemovedDownloads());
+  // Install the deletion reservation before the first await. The run alone
+  // writes its journal; discard waits for all submitted writes and cleanup.
+  Future<void> discard(String itemId, {String toneId = ''}) {
+    final downloadKey = DownloadKey(DownloadKind.audio, itemId, toneId);
+    final key = taskId(itemId, toneId);
+    final task = _tasks.remove(key);
+    final existing = _runs[key];
+    final run = existing ?? _AudioRun(downloadKey, task);
+    _runs[key] = run;
+    run.discard();
+    _publish();
+    if (existing == null) {
+      unawaited(_deleteIdle(key, run));
+    } else if (run.settled) {
+      return _retryCleanup(key, run);
+    }
+    return run.terminal.then((_) {
+      if (run.cleanupError != null) throw run.cleanupError!;
+    });
   }
 
-  Future<void> _forgetRemovedDownloads() async {
+  Future<void> _deleteIdle(String key, _AudioRun run) async {
     try {
-      final completed = [
-        for (final entry in _tasks.entries)
-          if (entry.value.snapshot.status == AudioDownloadStatus.completed)
-            entry.key,
-      ];
-      if (completed.isEmpty) return;
-      var changed = false;
-      for (final key in completed) {
+      await run.closeIO();
+      await _cleanup(run);
+    } catch (error) {
+      run.cleanupError = error;
+    } finally {
+      _finish(key, run);
+    }
+  }
+
+  Future<void> _retryCleanup(String key, _AudioRun run) {
+    final pending = run.cleanupOperation;
+    if (pending != null) return pending;
+    final operation = () async {
+      try {
+        await run.closeIO();
+        if (run.discardRequested ||
+            run.entry?.stage == DownloadResumeStage.discarding) {
+          await _cleanup(run);
+        }
+        run.cleanupError = null;
         final task = _tasks[key];
-        if (task == null) continue;
+        if (task != null && task.cleanupBlocked) {
+          task.cleanupBlocked = false;
+          task.snapshot = task.snapshot.copyWith(
+            status: task.snapshot.status == AudioDownloadStatus.failed
+                ? AudioDownloadStatus.waiting
+                : null,
+            clearError: true,
+          );
+        }
+        if (identical(_runs[key], run)) _runs.remove(key);
+      } catch (error) {
+        run.cleanupError = error;
+        rethrow;
+      } finally {
+        run.cleanupOperation = null;
+        _publish();
+        unawaited(_pump());
+      }
+    }();
+    run.cleanupOperation = operation;
+    return operation;
+  }
+
+  void _markCleanupBlocked(String key, Object error) {
+    final task = _tasks[key];
+    if (task == null) return;
+    task.cleanupBlocked = true;
+    task.prepared = false;
+    task.snapshot = task.snapshot.copyWith(
+      status: task.snapshot.status == AudioDownloadStatus.paused
+          ? AudioDownloadStatus.paused
+          : AudioDownloadStatus.failed,
+      error: '清理失败：$error',
+    );
+  }
+
+  Future<void> _retryBlocked(String key) async {
+    final run = _runs[key];
+    if (run == null || !run.settled) return;
+    try {
+      await _retryCleanup(key, run);
+    } catch (error) {
+      _markCleanupBlocked(key, error);
+      _publish();
+    }
+  }
+
+  Future<void> _waitDeletion(String key) async {
+    final run = _runs[key];
+    if (run == null) return;
+    if (run.discardRequested && !run.settled) await run.terminal;
+    if (identical(_runs[key], run) && run.settled) {
+      await _retryCleanup(key, run);
+    }
+  }
+
+  void _onStoreChanged() => unawaited(_forgetRemovedDownloads());
+
+  Future<void> _forgetRemovedDownloads({String? onlyKey}) async {
+    final completed = [
+      for (final entry in _tasks.entries)
+        if (entry.value.snapshot.status == AudioDownloadStatus.completed &&
+            (onlyKey == null || entry.key == onlyKey))
+          entry,
+    ];
+    try {
+      for (final entry in completed) {
+        final key = entry.key;
+        final task = entry.value;
+        final generation = task.generation;
         final stillThere = await _store.isDownloaded(
           task.snapshot.itemId,
           toneId: task.snapshot.toneId,
         );
-        if (stillThere) continue;
+        if (stillThere ||
+            !identical(_tasks[key], task) ||
+            task.generation != generation ||
+            task.snapshot.status != AudioDownloadStatus.completed ||
+            _runs.containsKey(key)) {
+          continue;
+        }
         _tasks.remove(key);
-        _active.remove(key);
-        changed = true;
+        _publish();
       }
-      if (changed) _publish();
     } catch (_) {
-      // store 不可用：任务留着，下一次变更再清。
+      // Optional store reads do not retire a live reservation.
     }
   }
 
-  void _publish() {
-    value = [for (final task in _tasks.values) task.snapshot];
-  }
+  void _publish() => value = [for (final task in _tasks.values) task.snapshot];
 
   Future<void> _pump() async {
     if (_pumping) return;
@@ -346,272 +441,371 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
         _MutableTask? next;
         for (final entry in _tasks.entries) {
           final task = entry.value;
-          if (task.snapshot.status != AudioDownloadStatus.waiting) continue;
-          // 上一轮还在收尾时不允许为同一个任务再起一轮：两个循环会写同一个
-          // `.part`。
-          if (_active.containsKey(entry.key)) continue;
+          if (!task.prepared ||
+              task.snapshot.status != AudioDownloadStatus.waiting ||
+              _runs.containsKey(entry.key)) {
+            continue;
+          }
           if (next == null || task.snapshot.index < next.snapshot.index) {
             next = task;
           }
         }
         if (next == null) return;
-        final running = next;
-        final key = taskId(running.snapshot.itemId, running.snapshot.toneId);
-        running.snapshot = running.snapshot.copyWith(
+        final task = next;
+        final key = taskId(task.snapshot.itemId, task.snapshot.toneId);
+        final run = _AudioRun(
+          DownloadKey(
+            DownloadKind.audio,
+            task.snapshot.itemId,
+            task.snapshot.toneId,
+          ),
+          task,
+        );
+        _runs[key] = run;
+        _active[key] = run;
+        task.snapshot = task.snapshot.copyWith(
           status: AudioDownloadStatus.downloading,
         );
-        _active[key] = running;
         _publish();
-        unawaited(_run(key, running));
+        unawaited(_run(key, run));
       }
     } finally {
       _pumping = false;
     }
   }
 
-  Future<void> _run(String key, _MutableTask task) async {
-    final generation = task.generation;
-    var refreshed = false;
-    var attempt = 0;
+  void _check(String key, _AudioRun run) {
+    run.check();
+    if (!identical(_runs[key], run) ||
+        !identical(_tasks[key], run.task) ||
+        run.task!.generation != run.generation) {
+      throw DownloadCancelled();
+    }
+  }
+
+  Future<void> _run(String key, _AudioRun run) async {
+    final task = run.task!;
+    var recoveryCleanupFailed = false;
     try {
-      while (true) {
-        final reason = await _runOnce(task);
-        if (reason == null) break;
-        if (task.abortReason != null) break;
-        // CDN 直链会过期（403/410）：重取一次地址再续。
-        if (reason == 'stale-url' && !refreshed) {
-          refreshed = true;
-          continue;
+      final directory = await _store.directory();
+      _check(key, run);
+      run.files = await DownloadFiles.inDirectory(directory, run.key);
+      _check(key, run);
+      run.entry = await _journal.read(run.key);
+      _check(key, run);
+      if (run.entry?.stage == DownloadResumeStage.discarding) {
+        try {
+          await _cleanup(run);
+        } catch (error) {
+          recoveryCleanupFailed = true;
+          run.cleanupError = error;
+          rethrow;
         }
-        // 其余失败自动再试：断流、5xx、续传范围对不上、416 丢掉半成品这
-        // 类都可以靠重跑（每次重跑都会重新 resolve、按现有 `.part` 续传）
-        // 自己好。4xx 里只有 408/429 值得等，其余重试也是同一个结果。
-        attempt++;
-        if (attempt < _maxAttempts && isRetryableAudioDownloadFailure(reason)) {
-          await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
-          if (task.abortReason != null) break;
-          continue;
-        }
-        debugPrint('[audio-download] ${task.snapshot.title} 失败：$reason');
-        if (task.snapshot.status == AudioDownloadStatus.downloading) {
-          task.snapshot = task.snapshot.copyWith(
-            status: AudioDownloadStatus.failed,
-            error: reason,
-          );
-        }
-        break;
+        run.stage = DownloadRunStage.transferring;
+        _check(key, run);
+        await _store.ensureBook(task.catalogue);
+        _check(key, run);
       }
+      if (!await _recover(key, run)) {
+        var attempt = 0;
+        var refreshed = false;
+        while (true) {
+          _check(key, run);
+          try {
+            final source = await _resolve(
+              task.snapshot.bookId,
+              run.key.itemId,
+              run.key.toneId,
+            );
+            _check(key, run);
+            if (source.itemId != run.key.itemId ||
+                source.toneId != run.key.toneId) {
+              throw const DownloadTransferFailure('取流结果与章节不匹配');
+            }
+            final uri = Uri.tryParse(source.url);
+            if (uri == null ||
+                (uri.scheme != 'https' && uri.scheme != 'http') ||
+                uri.host.isEmpty) {
+              throw const DownloadTransferFailure('该章没有可下载的音频地址');
+            }
+            await transferDownload(
+              run: run,
+              journal: _journal,
+              source: DownloadSource(
+                uri: uri,
+                containerId: task.snapshot.bookId,
+                keyHex: source.keyHex,
+              ),
+              record: _record(run, durationMs: source.duration?.inMilliseconds),
+              clientFactory: _clientFactory,
+              connectTimeout: connectTimeout,
+              readTimeout: readTimeout,
+              progress: (received, total) {
+                if (identical(_tasks[key], task) &&
+                    task.generation == run.generation) {
+                  task.snapshot = task.snapshot.copyWith(
+                    received: received,
+                    total: total,
+                  );
+                  _publish();
+                }
+              },
+            );
+            _check(key, run);
+            await _commit(key, run);
+            break;
+          } on DownloadCancelled {
+            rethrow;
+          } catch (error) {
+            if (run.stage == DownloadRunStage.committing ||
+                run.cleanupError != null) {
+              rethrow;
+            }
+            _check(key, run);
+            final reason = error is Exception
+                ? audioDownloadFailureReason(error)
+                : '$error';
+            if (reason == 'stale-url' && !refreshed) {
+              refreshed = true;
+              continue;
+            }
+            if (++attempt >= _maxAttempts ||
+                !isRetryableAudioDownloadFailure(reason)) {
+              rethrow;
+            }
+            await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
+            _check(key, run);
+          }
+        }
+      }
+      if (run.stage == DownloadRunStage.transferring) _check(key, run);
+      if (!run.discardRequested &&
+          identical(_tasks[key], task) &&
+          task.generation == run.generation) {
+        task.snapshot = task.snapshot.copyWith(
+          status: AudioDownloadStatus.completed,
+          received: run.completedBytes,
+          total: run.completedBytes,
+          clearError: true,
+        );
+      }
+    } on DownloadCancelled {
+      // The next intent owns the UI; this run still owns its IO and cleanup.
+    } catch (error) {
+      if (identical(_tasks[key], task) && task.generation == run.generation) {
+        task.snapshot = task.snapshot.copyWith(
+          status: AudioDownloadStatus.failed,
+          error: '$error',
+        );
+      }
+      debugPrint('[audio-download] ${task.snapshot.title}: $error');
     } finally {
-      _active.remove(key);
+      try {
+        await run.closeIO();
+        if (!recoveryCleanupFailed) run.cleanupError = null;
+        if (run.discardRequested) {
+          await _cleanup(run);
+          run.cleanupError = null;
+        }
+      } catch (error) {
+        run.cleanupError = error;
+        _markCleanupBlocked(key, error);
+      }
+      _finish(key, run);
     }
-    if (task.generation != generation) {
-      // 收尾期间用户点了继续：这条状态属于新一轮，别覆盖它。
-      _publish();
-      unawaited(_pump());
-      return;
+  }
+
+  void _finish(String key, _AudioRun run) {
+    if (identical(_active[key], run)) _active.remove(key);
+    if (run.cleanupError == null && identical(_runs[key], run)) {
+      _runs.remove(key);
     }
-    final abortReason = task.abortReason;
-    task.abortReason = null;
-    if (abortReason == 'paused' &&
-        task.snapshot.status == AudioDownloadStatus.downloading) {
-      task.snapshot = task.snapshot.copyWith(
-        status: AudioDownloadStatus.paused,
-      );
-    } else if (abortReason == 'discarded' && identical(_tasks[key], task)) {
-      // discard 已经把它摘掉了；期间若又入队了同 key 的新任务，这里不能
-      // 顺手把新的那条也删掉。
-      _tasks.remove(key);
-    }
+    if (run.cleanupError != null) _markCleanupBlocked(key, run.cleanupError!);
+    run.settle();
     _publish();
+    if (_tasks[key]?.snapshot.status == AudioDownloadStatus.completed &&
+        !_runs.containsKey(key)) {
+      unawaited(_forgetRemovedDownloads(onlyKey: key));
+    }
     unawaited(_pump());
   }
 
-  /// 跑一次下载（每次都重新 resolve 取流地址）。返回 null 表示终态（完成或
-  /// 用户暂停/放弃）、`stale-url` 表示直链失效可重取、其他值是失败原因。
-  Future<String?> _runOnce(_MutableTask task) async {
-    HttpClient? client;
-    RandomAccessFile? sink;
-    try {
-      final itemId = task.snapshot.itemId;
-      final toneId = task.snapshot.toneId;
-      if (!_isSafe(itemId) || !_isSafe(toneId)) return '无效的章节或音色';
-      final dir = await _store.directory();
-      final finalPath =
-          '${dir.path}${Platform.pathSeparator}${_fileName(itemId, toneId)}';
-      final partFile = File('$finalPath.part');
-      var received = await partFile.exists() ? await partFile.length() : 0;
+  DownloadRecord _record(_AudioRun run, {int? durationMs}) => DownloadRecord(
+    title: run.task!.snapshot.title,
+    index: run.task!.snapshot.index,
+    cachedAt: DateTime.now().millisecondsSinceEpoch,
+    durationMs: durationMs,
+  );
 
-      final source = await _resolve(task.snapshot.bookId, itemId, toneId);
-      if (task.abortReason != null) return null;
-      if (source.itemId != itemId) return '取流结果与章节不匹配';
-      final uri = Uri.tryParse(source.url);
-      if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-        return '该章没有可下载的音频地址';
-      }
-
-      client = _clientFactory()..connectionTimeout = connectTimeout;
-      final request = await client.openUrl('GET', uri);
-      if (received > 0) request.headers.add('Range', 'bytes=$received-');
-      request.headers.add('Accept-Encoding', 'identity');
-      // 等响应头也是 await 点：服务器接了连接却不回话时按超时处理。
-      final response = await request.close().timeout(readTimeout);
-      // 等响应头期间可能已被暂停/放弃：先退出，别再碰 `.part`（discard 刚
-      // 删掉的文件不能在这里被旧协程重新创建或删改）。
-      if (task.abortReason != null) return null;
-      if (response.statusCode == 403 || response.statusCode == 410) {
-        return 'stale-url';
-      }
-      if (response.statusCode == 416 && received > 0) {
-        // 续传起点超出服务器认定的长度。常见成因：重取地址后拿到另一条更短
-        // 的流，或者半成品其实已经收全、只是上次没来得及改名。旧的 `.part`
-        // 字节都不可信，丢掉从头拉 —— 当硬失败会让这一章每次「继续」都用
-        // 同一个越界 Range 再撞 416。
-        try {
-          await partFile.delete();
-        } catch (_) {}
-        // 半成品已经不要了，界面上的进度也得跟着归零。
-        task.snapshot = task.snapshot.copyWith(received: 0, clearTotal: true);
-        _publish();
-        return 'restart-from-zero';
-      }
-      var expectedTotal = -1;
-      if (response.statusCode == 206) {
-        final range = _parseContentRange(
-          response.headers.value(HttpHeaders.contentRangeHeader),
-        );
-        if (range == null || range.start != received) return '续传响应范围无效';
-        final responseBytes = range.end - range.start + 1;
-        if (response.contentLength >= 0 &&
-            response.contentLength != responseBytes) {
-          return '续传响应长度无效';
+  Future<bool> _recover(String key, _AudioRun run) async {
+    final files = run.files!;
+    final entry = run.entry;
+    final cached = await _store.chapter(run.key.itemId, toneId: run.key.toneId);
+    _check(key, run);
+    final partLength = await files.length(files.part);
+    _check(key, run);
+    final finalLength = await files.length(files.finalFile);
+    _check(key, run);
+    if (entry == null) {
+      if (cached != null) {
+        if (cached.filePath != files.finalFile.path ||
+            finalLength != cached.bytes ||
+            cached.bytes <= 0 ||
+            partLength != null) {
+          throw const DownloadTransferFailure('已下载记录与文件冲突');
         }
-        if (range.total == null || range.total! <= range.end) {
-          return '服务器未提供有效的文件总长度';
-        }
-        expectedTotal = range.total!;
-      } else if (response.statusCode == 200) {
-        if (received > 0) {
-          // 服务器忽略了 Range：已续字节不可信，从头再来。
-          received = 0;
-          await partFile.delete();
-        }
-        if (response.contentLength >= 0) expectedTotal = response.contentLength;
-      } else {
-        return '下载失败（HTTP ${response.statusCode}）';
+        run.completedBytes = cached.bytes;
+        run.stage = DownloadRunStage.committing;
+        await _journal.remove(run.key);
+        return true;
       }
-
-      sink = await partFile.open(mode: FileMode.append);
-      task.snapshot = task.snapshot.copyWith(
-        received: received,
-        total: expectedTotal >= 0 ? expectedTotal : null,
-        clearTotal: expectedTotal < 0,
-      );
-      _publish();
-
-      const chunkBytes = 256 * 1024;
-      var sincePublish = 0;
-      // 收流也要有期限：两次数据之间超过 readTimeout 就当断流，交给重试
-      // 循环，而不是让任务永远停在「下载中」。
-      await for (final chunk in response.timeout(readTimeout)) {
-        if (task.abortReason != null) return null;
-        await sink.writeFrom(chunk);
-        received += chunk.length;
-        sincePublish += chunk.length;
-        if (sincePublish >= chunkBytes) {
-          sincePublish = 0;
-          task.snapshot = task.snapshot.copyWith(received: received);
-          _publish();
-        }
+      if (finalLength != null) {
+        throw const DownloadTransferFailure('未登记的终稿文件冲突');
       }
-      // 收流结束与放弃可能同时发生：放弃后不再 flush/改名，否则会把新一轮
-      // 正在写的 `.part` 抢走。
-      if (task.abortReason != null) return null;
-      await sink.flush();
-      await sink.close();
-      sink = null;
-      client.close(force: true);
-      client = null;
-
-      if (expectedTotal < 0) return '无法确认下载完整性（服务器未提供总长度）';
-      if (received != expectedTotal) return '下载不完整';
-      // 改名与登记由 commitAudioDownload 负责：改名也是一个 await 点，
-      // 落在这期间的放弃绝不能再把记录写回去。
-      final committed = await commitAudioDownload(
-        partFile: partFile,
-        finalPath: finalPath,
-        isAborted: () => task.abortReason != null,
-        save: () => _store.saveChapter(
-          CachedAudioChapter(
-            bookId: task.snapshot.bookId,
-            itemId: itemId,
-            toneId: toneId,
-            title: task.snapshot.title,
-            index: task.snapshot.index,
-            keyHex: source.keyHex,
-            bytes: received,
-            filePath: finalPath,
-            cachedAt: DateTime.now().millisecondsSinceEpoch,
-            durationMs: source.duration?.inMilliseconds,
-          ),
-        ),
-      );
-      if (!committed) return null;
-      task.snapshot = task.snapshot.copyWith(
-        status: AudioDownloadStatus.completed,
-        received: received,
-        total: received,
-        clearError: true,
-      );
-      return null;
-    } on FileSystemException catch (error) {
-      return '写入失败：${error.osError?.message ?? error.message}';
-    } on Exception catch (error) {
-      return audioDownloadFailureReason(error);
-    } finally {
-      try {
-        await sink?.close();
-      } catch (_) {}
-      client?.close(force: true);
+      return false;
     }
+    final identity = entry.identity!;
+    if (identity.containerId != run.task!.snapshot.bookId) {
+      throw const DownloadTransferFailure('断点记录与目录不匹配');
+    }
+    final full = entry.stage != DownloadResumeStage.receiving;
+    if (!full) {
+      if (cached != null || finalLength != null) {
+        throw const DownloadTransferFailure('断点记录与已下载文件冲突');
+      }
+      return false;
+    }
+    if ((partLength == null) == (finalLength == null) ||
+        (partLength ?? finalLength) != identity.total ||
+        (cached != null && !entry.matchesAudio(cached, files.finalFile.path))) {
+      throw const DownloadTransferFailure('断点恢复文件或记录冲突');
+    }
+    run.ownsFinal = finalLength != null;
+    if (cached != null && finalLength != null) {
+      _check(key, run);
+      run.stage = DownloadRunStage.committing;
+      run.completedBytes = identity.total;
+
+      await _journal.remove(run.key);
+      return true;
+    }
+    if (cached != null) throw const DownloadTransferFailure('已登记记录缺少终稿');
+    await _commit(key, run);
+    return true;
   }
 
-  static String _fileName(String itemId, String toneId) =>
-      '${itemId}__$toneId.m4a';
+  Future<void> _commit(String key, _AudioRun run) async {
+    _check(key, run);
+    // Linearization: pause after this point cannot hide a submitted commit.
+    run.stage = DownloadRunStage.committing;
+    final files = run.files!;
+    final oldRecord = run.entry!.record;
+    final ready = run.entry!.at(
+      DownloadResumeStage.ready,
+      record: oldRecord ?? _record(run),
+    );
+    await _journal.write(ready);
+    run.entry = ready;
+    if (!run.ownsFinal) {
+      await files.promote(ready.identity!.total);
+      run.ownsFinal = true;
+    }
+    if (await files.length(files.finalFile) != ready.identity!.total) {
+      throw const DownloadTransferFailure('提交终稿文件长度冲突');
+    }
+    final promoted = ready.at(DownloadResumeStage.promoted);
+    await _journal.write(promoted);
+    run.entry = promoted;
+    final existing = await _store.chapter(
+      run.key.itemId,
+      toneId: run.key.toneId,
+    );
+    if (existing != null &&
+        !promoted.matchesAudio(existing, files.finalFile.path)) {
+      throw const DownloadTransferFailure('提交遇到其他下载记录，已保留');
+    }
+    await _store.saveChapter(promoted.audioChapter(files.finalFile.path));
 
-  /// `bytes <start>-<end>/<total>`；格式不符就当作没有 Range 支持。
-  static _ContentRange? _parseContentRange(String? header) {
-    if (header == null) return null;
-    final match = RegExp(
-      r'^bytes\s+(\d+)-(\d+)/(\d+|\*)$',
-    ).firstMatch(header.trim());
-    if (match == null) return null;
-    final start = int.tryParse(match.group(1)!);
-    final end = int.tryParse(match.group(2)!);
-    if (start == null || end == null || end < start) return null;
-    final total = match.group(3) == '*' ? null : int.tryParse(match.group(3)!);
-    return _ContentRange(start, end, total);
+    run.completedBytes = promoted.identity!.total;
+    if (!run.discardRequested) await _journal.remove(run.key);
   }
+
+  Future<void> _cleanup(_AudioRun run) async {
+    run.stage = DownloadRunStage.cleaning;
+    run.entry ??= await _journal.read(run.key);
+    var entry =
+        run.entry ??
+        DownloadResumeEntry(run.key, DownloadResumeStage.discarding);
+    var marker = entry.at(
+      DownloadResumeStage.discarding,
+      finalOwned:
+          run.ownsFinal ||
+          entry.finalOwned ||
+          entry.stage == DownloadResumeStage.ready,
+    );
+    // Record deletion intent before path probes too: even a permission/IO
+    // failure must leave recovery in discarding, not resume the old transfer.
+    await _journal.write(marker);
+    run.entry = marker;
+    run.files ??= await DownloadFiles.inDirectory(
+      await _store.directory(),
+      run.key,
+    );
+    final files = run.files!;
+    final cached = await _store.chapter(run.key.itemId, toneId: run.key.toneId);
+    final partLength = await files.length(files.part);
+    final finalLength = await files.length(files.finalFile);
+    final finalOwned = marker.finalOwned;
+    if (marker.record != null &&
+        cached != null &&
+        !marker.matchesAudio(cached, files.finalFile.path)) {
+      throw const DownloadTransferFailure('放弃清理遇到其他下载记录，已保留');
+    }
+    if ((finalOwned &&
+            finalLength != null &&
+            finalLength != marker.identity?.total) ||
+        (partLength != null &&
+            finalLength != null &&
+            marker.identity != null)) {
+      throw const DownloadTransferFailure('放弃清理遇到冲突文件，已保留');
+    }
+    if (!finalOwned && finalLength != null && marker.identity != null) {
+      throw const DownloadTransferFailure('放弃清理遇到不属于本轮的终稿，已保留');
+    }
+    if (marker.record != null || cached == null) {
+      await _store.removeChapter(run.key.itemId, toneId: run.key.toneId);
+      final remaining = await _store.chapter(
+        run.key.itemId,
+        toneId: run.key.toneId,
+      );
+      if (remaining != null) throw const DownloadTransferFailure('下载记录未清除');
+    }
+    if (finalOwned) await files.delete(files.finalFile);
+    await files.delete(files.part);
+    await _journal.remove(run.key);
+    run.entry = null;
+    run.ownsFinal = false;
+  }
+
+  static Future<AudioSource> _defaultResolve(
+    String bookId,
+    String itemId,
+    String toneId,
+  ) => ApiClient.instance.audioSource(itemId, bookId: bookId, toneId: toneId);
 }
 
 class _MutableTask {
-  _MutableTask(this.snapshot);
-
+  _MutableTask(this.snapshot, this.catalogue);
   AudioDownloadTask snapshot;
-
-  /// 用户中断信号（`paused` / `discarded`）。只由暂停/放弃动作设置。
-  String? abortReason;
-
-  /// 每轮 resume 自增；收尾循环靠它识别「这轮已被新一轮取代」。
+  final CachedAudioBook catalogue;
   int generation = 0;
-
-  void abort(String reason) => abortReason = reason;
+  bool prepared = false;
+  bool cleanupBlocked = false;
 }
 
-@immutable
-class _ContentRange {
-  const _ContentRange(this.start, this.end, this.total);
-
-  final int start;
-  final int end;
-  final int? total;
+class _AudioRun extends DownloadRun {
+  _AudioRun(DownloadKey key, this.task) : super(key, task?.generation ?? 0);
+  final _MutableTask? task;
+  Future<void>? cleanupOperation;
+  int completedBytes = 0;
 }

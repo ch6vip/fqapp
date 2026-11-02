@@ -87,7 +87,6 @@ class _ComicImageTileState extends State<ComicImageTile> {
     if (!mounted) return;
     setState(() {
       _resolve();
-      ++_attempt;
     });
   }
 
@@ -100,9 +99,10 @@ class _ComicImageTileState extends State<ComicImageTile> {
   }
 
   void _resolve() {
+    final attempt = ++_attempt;
+    _retrying = false;
     _removeListener();
     _provider = _createProvider();
-    final attempt = _attempt;
     var reported = false;
     _listener = ImageStreamListener(
       (info, synchronous) {
@@ -137,17 +137,19 @@ class _ComicImageTileState extends State<ComicImageTile> {
 
   Future<void> _retry() async {
     if (_retrying) return;
+    final attempt = _attempt;
+    final provider = _provider;
     setState(() => _retrying = true);
     try {
       // 内存图片缓存没有落盘层：只清内存缓存就足以强制重新拉取。
-      await _provider?.evict();
+      await provider?.evict();
     } catch (_) {
       // A cache cleanup failure should not suppress an explicit network retry.
     }
-    if (!mounted) return;
+    if (!mounted || attempt != _attempt || !identical(provider, _provider)) {
+      return;
+    }
     setState(() {
-      ++_attempt;
-      _retrying = false;
       _resolve();
     });
   }

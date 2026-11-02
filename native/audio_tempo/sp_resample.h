@@ -23,7 +23,7 @@ void sp_resampler_reset(struct sp_resampler *r);
 
 /*
  * 处理一段交错 int16，返回写入 out 的帧数。
- * 输出容量用 sp_resampler_output_bound 估算。
+ * 输出容量用 sp_resampler_output_bound 估算；SIZE_MAX 表示拒绝且未接收输入。
  */
 size_t sp_resampler_process(struct sp_resampler *r,
                             const int16_t *in,
@@ -32,6 +32,10 @@ size_t sp_resampler_process(struct sp_resampler *r,
                             size_t out_capacity_frames);
 
 size_t sp_resampler_output_bound(const struct sp_resampler *r, size_t in_frames);
+
+/* EOS only: emit delayed interpolation using the held last frame. */
+size_t sp_resampler_flush_bound(const struct sp_resampler *r);
+size_t sp_resampler_flush(struct sp_resampler *r, int16_t *out, size_t capacity);
 
 #ifdef __cplusplus
 }

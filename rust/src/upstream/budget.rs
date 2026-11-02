@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
+pub(crate) const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
 tokio::task_local! {
     static DEADLINE: Instant;
 }

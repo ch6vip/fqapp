@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -52,6 +53,7 @@ class FloatingVideoService : Service() {
         const val CHANNEL_ID = "floating_video"
         const val NOTIFICATION_ID = 48
 
+        const val EXTRA_OWNER = "owner"
         const val EXTRA_TITLE = "title"
         const val EXTRA_EPISODE = "episode"
         const val EXTRA_PLAYING = "playing"
@@ -63,8 +65,8 @@ class FloatingVideoService : Service() {
         const val EXTRA_VIDEO_WIDTH = "videoWidth"
         const val EXTRA_VIDEO_HEIGHT = "videoHeight"
 
+        const val ACTION_START = "com.fqapp.fqapp.FLOATING_START"
         const val ACTION_SHOW = "com.fqapp.fqapp.FLOATING_SHOW"
-        const val ACTION_HIDE = "com.fqapp.fqapp.FLOATING_HIDE"
         const val ACTION_UPDATE = "com.fqapp.fqapp.FLOATING_UPDATE"
         const val ACTION_PLAY_PAUSE = "com.fqapp.fqapp.FLOATING_PLAY_PAUSE"
         const val ACTION_PREV = "com.fqapp.fqapp.FLOATING_PREV"
@@ -79,40 +81,36 @@ class FloatingVideoService : Service() {
         private const val ACTION_NAME_STOP = "stop"
         private const val ACTION_NAME_FULLSCREEN = "fullscreen"
 
-        /** 播放器 surface 就绪 / 销毁时通知插件换 surface。 */
-        var onSurfaceReady: ((android.view.Surface) -> Unit)? = null
-        var onSurfaceDestroyed: (() -> Unit)? = null
+        private var activeService: FloatingVideoService? = null
+        private val serviceHandler = Handler(Looper.getMainLooper())
 
-        fun start(context: Context, extras: Map<String, Any?>) {
-            val intent = Intent(context, FloatingVideoService::class.java)
-            putExtras(intent, extras)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        }
-
-        fun show(context: Context) =
-            context.startService(Intent(context, FloatingVideoService::class.java).apply {
-                action = ACTION_SHOW
-            })
-
-        fun hide(context: Context) =
-            context.startService(Intent(context, FloatingVideoService::class.java).apply {
-                action = ACTION_HIDE
-            })
-
-        fun update(context: Context, extras: Map<String, Any?>) {
+        fun start(context: Context, owner: Long) {
             val intent = Intent(context, FloatingVideoService::class.java).apply {
-                action = ACTION_UPDATE
+                action = ACTION_START
+                putExtra(EXTRA_OWNER, owner)
             }
-            putExtras(intent, extras)
-            context.startService(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+            else context.startService(intent)
         }
 
-        fun stop(context: Context) {
-            context.stopService(Intent(context, FloatingVideoService::class.java))
+        fun show(owner: Long) = command(owner, ACTION_SHOW, emptyMap())
+
+        fun update(owner: Long, extras: Map<String, Any?>) = command(owner, ACTION_UPDATE, extras)
+
+        private fun command(owner: Long, action: String, extras: Map<String, Any?>) {
+            val intent = Intent().apply {
+                this.action = action
+                putExtra(EXTRA_OWNER, owner)
+                putExtras(this, extras)
+            }
+            onMain { activeService?.applyCommand(intent) }
+        }
+
+        fun retire(owner: Long) = onMain { activeService?.retireOwned(owner) }
+
+        private fun onMain(action: () -> Unit) {
+            if (Looper.myLooper() == Looper.getMainLooper()) action()
+            else serviceHandler.post { action() }
         }
 
         private fun putExtras(intent: Intent, extras: Map<String, Any?>) {
@@ -137,6 +135,9 @@ class FloatingVideoService : Service() {
         }
     }
 
+    private var ownedOwner: Long? = null
+    private var lastStartId = 0
+    private var edgeAnimator: android.animation.ValueAnimator? = null
     private var windowManager: WindowManager? = null
     private var params: WindowManager.LayoutParams? = null
     private var floatingView: FrameLayout? = null
@@ -165,37 +166,102 @@ class FloatingVideoService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeService = this
         createNotificationChannel()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // 划掉任务即停播：悬浮窗跟随任务走，不留幽灵窗口。
-        stopSelf()
-        super.onTaskRemoved(rootIntent)
+        val owner = ownedOwner
+        try {
+            if (owner != null) NativePlayerPlugin.retireFloatingOwner(owner, pause = true)
+        } catch (error: Throwable) {
+            android.util.Log.w("FloatingVideoService", "task cleanup failed: ${error.javaClass.simpleName}")
+        } finally {
+            try { stopIfIdle(lastStartId) }
+            finally { super.onTaskRemoved(rootIntent) }
+        }
     }
 
     override fun onDestroy() {
-        hideControlsRunnable?.let(mainHandler::removeCallbacks)
+        val owner = ownedOwner
+        ownedOwner = null
+        val wasActiveService = activeService === this
+        if (wasActiveService) activeService = null
         try {
-            if (viewAdded && floatingView != null) {
-                windowManager?.removeView(floatingView)
+            clearResources(removeNotification = wasActiveService)
+        } catch (error: Throwable) {
+            android.util.Log.w("FloatingVideoService", "overlay cleanup failed: ${error.javaClass.simpleName}")
+        } finally {
+            try {
+                if (owner != null) NativePlayerPlugin.retireFloatingOwner(owner, pause = true)
+            } catch (error: Throwable) {
+                android.util.Log.w("FloatingVideoService", "owner cleanup failed: ${error.javaClass.simpleName}")
+            } finally {
+                super.onDestroy()
             }
-        } catch (_: Throwable) {
         }
-        viewAdded = false
-        floatingView = null
-        surfaceView = null
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
+    }
+
+    private fun retireOwned(owner: Long) {
+        try {
+            if (ownedOwner == owner) {
+                ownedOwner = null
+                clearResources()
+            }
+        } finally {
+            stopIfIdle(lastStartId)
         }
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-            .cancel(NOTIFICATION_ID)
-        mediaSession?.release()
+    }
+
+    private fun stopIfIdle(startId: Int) {
+        if (ownedOwner == null && NativePlayerPlugin.desiredFloatingOwner() == null && startId > 0) {
+            stopSelfResult(startId)
+        }
+    }
+
+    private fun clearResources(removeNotification: Boolean = activeService === this) {
+        var cleanupError: Throwable? = null
+        fun clean(action: () -> Unit) {
+            try { action() } catch (error: Throwable) {
+                if (cleanupError == null) cleanupError = error
+            }
+        }
+        clean { hideControlsRunnable?.let(mainHandler::removeCallbacks) }
+        hideControlsRunnable = null
+        clean { edgeAnimator?.cancel() }
+        edgeAnimator = null
+        var removalError: Throwable? = null
+        try {
+            if (viewAdded && floatingView != null) windowManager?.removeView(floatingView)
+        } catch (_: IllegalArgumentException) {
+            // A view already removed by WindowManager has no remaining ownership.
+        } catch (error: Throwable) {
+            removalError = error
+        }
+        if (removalError == null) {
+            viewAdded = false
+            floatingView = null
+            surfaceView = null
+            params = null
+            controlsBar = null
+            playPauseButton = null
+            windowManager = null
+        }
+        overlayVisible = false
+        controlsVisible = true
+        clean { mediaSession?.release() }
         mediaSession = null
-        super.onDestroy()
+        if (removeNotification) {
+            clean {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
+                else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+            }
+            clean { (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIFICATION_ID) }
+        }
+        (removalError ?: cleanupError)?.let { throw it }
     }
 
     private fun createNotificationChannel() {
@@ -217,62 +283,86 @@ class FloatingVideoService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_SHOW -> {
-                showOverlay()
-                return START_NOT_STICKY
+        lastStartId = startId
+        val owner = intent?.getLongExtra(EXTRA_OWNER, 0L) ?: 0L
+        if (owner <= 0 || NativePlayerPlugin.desiredFloatingOwner() != owner) {
+            // A queued foreground START must settle its own Android startup debt.
+            // stopSelfResult cannot stop a newer start ID already queued by AMS.
+            if (intent?.action == ACTION_START) stopSelfResult(startId)
+            else stopIfIdle(startId)
+            return START_NOT_STICKY
+        }
+        if (intent?.action != ACTION_START) {
+            applyCommand(intent ?: return START_NOT_STICKY)
+            return START_NOT_STICKY
+        }
+        try {
+            if (ownedOwner != owner) {
+                ownedOwner = null
+                clearResources()
+                ownedOwner = owner
+                currentTitle = ""
+                currentEpisode = ""
+                isPlaying = true
+                hasPrev = true
+                hasNext = true
+                positionMs = 0L
+                durationMs = 0L
+                speed = 1f
+                videoWidth = 0
+                videoHeight = 0
             }
-            ACTION_HIDE -> {
-                hideOverlay()
-                return START_NOT_STICKY
+            val state = NativePlayerPlugin.floatingState(owner)
+                ?: throw IllegalStateException("Floating owner retired")
+            readState(Intent().apply { putExtras(this, state) })
+            if (floatingView == null) createOverlay(owner)
+            val notification = buildNotification()
+            syncPlaybackState()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else startForeground(NOTIFICATION_ID, notification)
+            if (NativePlayerPlugin.floatingVisible(owner)) showOverlay(owner)
+        } catch (error: Throwable) {
+            android.util.Log.w("FloatingVideoService", "floating startup failed: ${error.javaClass.simpleName}")
+            try { NativePlayerPlugin.retireFloatingOwner(owner, pause = true) }
+            catch (cleanup: Throwable) {
+                android.util.Log.w("FloatingVideoService", "startup cleanup failed: ${cleanup.javaClass.simpleName}")
             }
+            finally { stopIfIdle(startId) }
+        }
+        return START_NOT_STICKY
+    }
+
+    private fun applyCommand(intent: Intent) {
+        val owner = intent.getLongExtra(EXTRA_OWNER, 0L)
+        if (ownedOwner != owner || NativePlayerPlugin.desiredFloatingOwner() != owner) return
+        when (intent.action) {
+            ACTION_SHOW -> showOverlay(owner)
             ACTION_UPDATE -> {
                 readState(intent)
                 refreshNotification()
                 syncPlayPauseButton()
-                return START_NOT_STICKY
             }
-            ACTION_PLAY_PAUSE -> {
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
-                return START_NOT_STICKY
-            }
-            ACTION_PREV -> {
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PREV)
-                return START_NOT_STICKY
-            }
-            ACTION_NEXT -> {
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_NEXT)
-                return START_NOT_STICKY
-            }
-            ACTION_CLOSE -> {
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_STOP)
-                stopSelf()
-                return START_NOT_STICKY
-            }
-            ACTION_FULLSCREEN -> {
-                // 回到应用内：先藏悬浮窗，再拉起应用；Dart 侧 resumed 里停服务并恢复纹理。
-                hideOverlay()
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_FULLSCREEN)
-                bringAppToFront()
-                return START_NOT_STICKY
-            }
+            ACTION_PLAY_PAUSE -> remoteAction(owner, ACTION_NAME_PLAY_PAUSE)
+            ACTION_PREV -> remoteAction(owner, ACTION_NAME_PREV)
+            ACTION_NEXT -> remoteAction(owner, ACTION_NAME_NEXT)
+            ACTION_CLOSE -> remoteAction(owner, ACTION_NAME_STOP)
+            ACTION_FULLSCREEN -> remoteAction(owner, ACTION_NAME_FULLSCREEN)
         }
-        // 首次启动：建悬浮窗（先隐藏，等 Dart 确认切后台后再显示），起前台保活。
-        readState(intent)
-        if (floatingView == null) createOverlay()
-        val notification = buildNotification()
-        syncPlaybackState()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+    }
+
+    private fun remoteAction(owner: Long, action: String) {
+        if (ownedOwner != owner || NativePlayerPlugin.desiredFloatingOwner() != owner) return
+        if (action == ACTION_NAME_FULLSCREEN) {
+            hideOverlay()
+            bringAppToFront()
         }
-        return START_NOT_STICKY
+        try {
+            NativePlayerPlugin.dispatchFloatingAction(owner, action)
+        } finally {
+            if (action == ACTION_NAME_STOP) NativePlayerPlugin.retireFloatingOwner(owner, pause = true)
+        }
     }
 
     private fun readState(intent: Intent?) {
@@ -306,7 +396,7 @@ class FloatingVideoService : Service() {
         }
     }
 
-    private fun createOverlay() {
+    private fun createOverlay(owner: Long) {
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         windowManager = wm
         val metrics = resources.displayMetrics
@@ -328,8 +418,11 @@ class FloatingVideoService : Service() {
             )
         }
         surface.holder.addCallback(object : SurfaceHolder.Callback {
+            private var surfaceId = 0L
             override fun surfaceCreated(holder: SurfaceHolder) {
-                onSurfaceReady?.invoke(holder.surface)
+                val createdId = NativePlayerPlugin.allocateFloatingSurface()
+                surfaceId = createdId
+                NativePlayerPlugin.dispatchFloatingSurfaceReady(owner, createdId, holder.surface)
             }
 
             override fun surfaceChanged(
@@ -340,7 +433,8 @@ class FloatingVideoService : Service() {
             ) = Unit
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                onSurfaceDestroyed?.invoke()
+                val destroyedId = surfaceId
+                NativePlayerPlugin.dispatchFloatingSurfaceDestroyed(owner, destroyedId)
             }
         })
         surfaceView = surface
@@ -363,7 +457,7 @@ class FloatingVideoService : Service() {
             )
             setBackgroundColor(0x00000000)
             setOnClickListener {
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
+                remoteAction(owner, ACTION_NAME_PLAY_PAUSE)
             }
         }
         playPauseButton = playPause
@@ -382,22 +476,14 @@ class FloatingVideoService : Service() {
             setImageResource(android.R.drawable.ic_menu_view)
             setBackgroundColor(0x00000000)
             setOnClickListener {
-                startService(
-                    Intent(this@FloatingVideoService, FloatingVideoService::class.java).apply {
-                        action = ACTION_FULLSCREEN
-                    },
-                )
+                remoteAction(owner, ACTION_NAME_FULLSCREEN)
             }
         }
         val close = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             setBackgroundColor(0x00000000)
             setOnClickListener {
-                startService(
-                    Intent(this@FloatingVideoService, FloatingVideoService::class.java).apply {
-                        action = ACTION_CLOSE
-                    },
-                )
+                remoteAction(owner, ACTION_NAME_STOP)
             }
         }
         bar.addView(playPause)
@@ -416,16 +502,12 @@ class FloatingVideoService : Service() {
                 Gravity.TOP or Gravity.END,
             )
             setOnClickListener {
-                startService(
-                    Intent(this@FloatingVideoService, FloatingVideoService::class.java).apply {
-                        action = ACTION_CLOSE
-                    },
-                )
+                remoteAction(owner, ACTION_NAME_STOP)
             }
         }
         container.addView(closeTop)
 
-        container.setOnTouchListener(FloatingTouchListener())
+        container.setOnTouchListener(FloatingTouchListener(owner, container))
         val layoutParams = WindowManager.LayoutParams(
             windowWidth,
             windowHeight,
@@ -450,7 +532,8 @@ class FloatingVideoService : Service() {
         scheduleHideControls()
     }
 
-    private fun showOverlay() {
+    private fun showOverlay(owner: Long) {
+        if (ownedOwner != owner || NativePlayerPlugin.desiredFloatingOwner() != owner) return
         val view = floatingView ?: return
         val lp = params ?: return
         overlayVisible = true
@@ -458,7 +541,8 @@ class FloatingVideoService : Service() {
             try {
                 windowManager?.addView(view, lp)
                 viewAdded = true
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                NativePlayerPlugin.retireFloatingOwner(owner, pause = true)
                 return
             }
         }
@@ -475,8 +559,10 @@ class FloatingVideoService : Service() {
 
     private fun scheduleHideControls() {
         hideControlsRunnable?.let(mainHandler::removeCallbacks)
+        val owner = ownedOwner
+        val view = floatingView
         val runnable = Runnable {
-            if (overlayVisible) {
+            if (owner != null && ownedOwner == owner && floatingView === view && overlayVisible) {
                 controlsBar?.visibility = View.GONE
                 controlsVisible = false
             }
@@ -508,7 +594,7 @@ class FloatingVideoService : Service() {
         }
     }
 
-    private inner class FloatingTouchListener : View.OnTouchListener {
+    private inner class FloatingTouchListener(private val owner: Long, private val view: View) : View.OnTouchListener {
         private var initialTouchX = 0f
         private var initialTouchY = 0f
         private var initialX = 0
@@ -517,6 +603,7 @@ class FloatingVideoService : Service() {
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouch(v: View, event: MotionEvent): Boolean {
+            if (ownedOwner != owner || floatingView !== view || NativePlayerPlugin.desiredFloatingOwner() != owner) return false
             val lp = params ?: return false
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -571,15 +658,19 @@ class FloatingVideoService : Service() {
         val targetY = lp.y.coerceIn(16, (screenHeight - view.height - 16).coerceAtLeast(16))
         val startX = lp.x
         val startY = lp.y
+        val owner = ownedOwner
+        edgeAnimator?.cancel()
         val animator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 180
             addUpdateListener { animation ->
+                if (ownedOwner != owner || floatingView !== view) return@addUpdateListener
                 val t = animation.animatedValue as Float
                 lp.x = (startX + (targetX - startX) * t).toInt()
                 lp.y = (startY + (targetY - startY) * t).toInt()
                 updateViewPosition()
             }
         }
+        edgeAnimator = animator
         animator.start()
     }
 
@@ -594,9 +685,11 @@ class FloatingVideoService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        val owner = ownedOwner ?: throw IllegalStateException("No floating notification owner")
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val contentIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(EXTRA_OWNER, owner)
         }?.let {
             PendingIntent.getActivity(this, 0, it, flags)
         }
@@ -619,7 +712,11 @@ class FloatingVideoService : Service() {
             val pending = PendingIntent.getService(
                 this,
                 requestCode,
-                Intent(this, FloatingVideoService::class.java).apply { action = intentAction },
+                Intent(this, FloatingVideoService::class.java).apply {
+                    action = intentAction
+                    putExtra(EXTRA_OWNER, owner)
+                    data = Uri.parse("fqapp-floating://$owner/$intentAction")
+                },
                 flags,
             )
             builder.addAction(NotificationCompat.Action.Builder(icon, label, pending).build())
@@ -638,26 +735,28 @@ class FloatingVideoService : Service() {
 
     private fun ensureMediaSession(): MediaSessionCompat {
         mediaSession?.let { return it }
-        val session = MediaSessionCompat(this, "fqapp-floating-video")
+        val owner = ownedOwner ?: throw IllegalStateException("No floating media-session owner")
+        val session = MediaSessionCompat(this, "fqapp-floating-video-$owner")
         session.setCallback(object : MediaSessionCompat.Callback() {
             override fun onPlay() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
+                remoteAction(owner, ACTION_NAME_PLAY_PAUSE)
 
             override fun onPause() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PLAY_PAUSE)
+                remoteAction(owner, ACTION_NAME_PLAY_PAUSE)
 
             override fun onSkipToPrevious() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_PREV)
+                remoteAction(owner, ACTION_NAME_PREV)
 
             override fun onSkipToNext() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_NEXT)
+                remoteAction(owner, ACTION_NAME_NEXT)
 
             override fun onStop() =
-                NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_STOP)
+                remoteAction(owner, ACTION_NAME_STOP)
         })
         session.setSessionActivity(
             packageManager.getLaunchIntentForPackage(packageName)?.apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_OWNER, owner)
             }?.let { PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) },
         )
         session.isActive = true

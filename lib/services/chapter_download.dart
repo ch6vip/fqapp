@@ -116,7 +116,7 @@ class ChapterDownload extends ValueNotifier<ChapterDownloadState> {
         // Publish before queuing the disk write so older reader requests can
         // no longer queue a stale write behind it.
         onContentAvailable?.call(chapter, cachedText);
-        if (shouldWrite) {
+        if (shouldWrite || pin) {
           await cache.write(
             bookId: book.id,
             chapterId: chapter.itemId,
