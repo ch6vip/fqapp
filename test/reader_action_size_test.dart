@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -63,5 +65,45 @@ void main() {
     final size = tester.getSize(find.byType(ReaderVideoButton));
     expect(size.height, kReaderActionSize);
     expect(size.width, kReaderActionSize);
+  });
+
+  testWidgets('墨水屏「听」字号贴住圆内接上界', (tester) async {
+    await tester.pumpWidget(
+      host(
+        ReaderListenButton(
+          preset: ReaderThemePreset.eink,
+          loading: false,
+          unavailable: false,
+          onTap: () {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final text = tester.widget<Text>(find.text('听'));
+    final fontSize = text.style!.fontSize!;
+    expect(fontSize, 28);
+    // 字框四角离圆心 = 字号×√2/2，超出半径就会被 CircleBorder 裁掉。
+    // 42 圆的内接正方形边长只有 42/√2 ≈ 29.7，这同时是字号的上界。
+    expect(fontSize * math.sqrt2 / 2, lessThanOrEqualTo(kReaderActionSize / 2));
+  });
+
+  testWidgets('墨水屏「看」与「听」同字号', (tester) async {
+    final visibility = ValueNotifier<bool>(true);
+    addTearDown(visibility.dispose);
+    await tester.pumpWidget(
+      host(
+        ReaderVideoButton(
+          menuVisibility: visibility,
+          preset: ReaderThemePreset.eink,
+          cover: '',
+          loading: false,
+          onTap: () {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.widget<Text>(find.text('看')).style?.fontSize, 28);
   });
 }
