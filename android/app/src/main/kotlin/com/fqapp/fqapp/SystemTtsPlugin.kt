@@ -12,6 +12,7 @@ import android.media.AudioTrack
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -28,6 +29,11 @@ import kotlin.math.sin
 
 /** 身份脉冲的时长：足以让系统把本应用记为出声者即可，见 [SystemTtsPlugin.playIdentityPulse]。 */
 private const val PULSE_DURATION_MS = 80
+/** 身份脉冲的兜底释放时间；不依赖 marker 回调，避免异常路径泄漏 AudioTrack。 */
+private const val PULSE_RELEASE_DELAY_MS = 350L
+/** 在线引擎长时间没有回调且不再 isSpeaking 时，认为它已经卡死。 */
+private const val TTS_STALL_TIMEOUT_MS = 60_000L
+private const val TTS_STALL_POLL_MS = 15_000L
 
 class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private lateinit var context: Context
@@ -47,6 +53,9 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     private var focusRequest: AudioFocusRequest? = null
     private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var focusEpoch = 0
+    // focusListener 只表示“曾经申请过”；临时丢失焦点后它仍然存在，不能拿它
+    // 当作当前真的持有焦点，否则恢复朗读会在没有焦点时静默播放。
+    private var focusGranted = false
     // 电话等临时抢焦点时置位：焦点交还（GAIN）后通知 Dart 自动续播。
     // 永久丢失（LOSS）走 interrupt 全停，不需要这个标记。
     private var focusTransient = false
@@ -55,6 +64,9 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     // pauseKeepingFocus 会重新武装；焦点回调不得预支，否则真正出声的那次
     // 反而打不出来（见 AUDIOFOCUS_GAIN）。
     private var pulseArmed = true
+    private var pulseTrack: AudioTrack? = null
+    private var stallCheck: Runnable? = null
+    private var lastTtsEventAt = 0L
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
@@ -69,32 +81,33 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         val id = activeId
         stop()
         // Also cancels a Dart play intent while text or engine is loading.
-        sink?.success(mapOf("type" to "interrupted", "id" to id))
+        sink?.success(mapOf("type" to "interrupted", "id" to id, "keepFocus" to false))
     }
 
     /**
      * 焦点被临时抢走（来电、导航提示）时只停朗读，不清 epoch、不弃焦点：
-     * 系统在对方放完时会发 GAIN，我们据此打身份脉冲夺回「末次出声者」并
-     * 通知 Dart 自动续播。走 [stop] 的话焦点已交还，GAIN 永远不会再来，
-     * 电话后就永远停在暂停态。
+     * 系统在对方放完时会发 GAIN，我们据此通知 Dart 自动续播。走 [stop]
+     * 的话焦点已交还，GAIN 永远不会再来，电话后就永远停在暂停态。
      */
     private fun transientPause() {
         focusTransient = true
         val id = activeId
         pauseKeepingFocus()
-        sink?.success(mapOf("type" to "interrupted", "id" to id))
+        sink?.success(mapOf("type" to "interrupted", "id" to id, "keepFocus" to true))
     }
 
     /**
      * 只停引擎、**保留音频焦点**：暂停不是会话终止。走 [stop] 会 abandon
      * 焦点并让焦点回调的代际失效，电话挂断后系统再也不会发 GAIN，自动续播
-     * 就永远等不到；用户手动暂停后点继续也不必重新申请焦点。
-     * 只有真正结束会话（[shutdown]、切章前的 [stop]）才弃焦点。
+     * 就永远等不到。只有临时打断走这里；用户手动暂停、永久丢失焦点与
+     * 真正结束会话（[shutdown]、切章前的 [stop]）都会弃焦点。
      */
     private fun pauseKeepingFocus() {
         // 暂停后再出声就是「重新开始出声」的时刻，脉冲要重新打一次：
         // 停下来这段时间里，「末次出声者」很可能已被别人抢走。
         pulseArmed = true
+        cancelStallWatchdog()
+        releasePulse()
         activeId = null
         liveIds.clear()
         try { tts?.stop() } catch (_: Exception) { }
@@ -150,6 +163,8 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                             activeId = id
                             val mode = if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
                             if (tts?.speak(text, mode, null, id) == TextToSpeech.SUCCESS) {
+                                lastTtsEventAt = SystemClock.uptimeMillis()
+                                armStallWatchdog()
                                 result.success(null)
                             } else {
                                 liveIds.remove(id)
@@ -220,7 +235,8 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                             @Deprecated("Deprecated in Java")
                             override fun onError(id: String?) = emit(token, id, "error")
                             override fun onError(id: String?, errorCode: Int) = emit(token, id, "error")
-                            override fun onStop(id: String?, interrupted: Boolean) = emit(token, id, "interrupted")
+                            override fun onStop(id: String?, interrupted: Boolean) =
+                                emit(token, id, "engine_stopped")
                             override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) =
                                 emit(token, id, "range", start)
                         })
@@ -253,7 +269,43 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
             sink?.success(mapOf("type" to type, "id" to id, "start" to start))
             if (type == "start") activeId = id
             if (type == "done" || type == "error" || type == "interrupted") liveIds.remove(id)
+            if (type == "engine_stopped") liveIds.remove(id)
+            lastTtsEventAt = SystemClock.uptimeMillis()
+            if (liveIds.isEmpty()) cancelStallWatchdog() else armStallWatchdog()
         }
+    }
+
+    private fun armStallWatchdog() {
+        cancelStallWatchdog()
+        if (liveIds.isEmpty()) return
+        val check = Runnable { checkStall() }
+        stallCheck = check
+        main.postDelayed(check, TTS_STALL_POLL_MS)
+    }
+
+    private fun cancelStallWatchdog() {
+        stallCheck?.let(main::removeCallbacks)
+        stallCheck = null
+    }
+
+    private fun checkStall() {
+        stallCheck = null
+        if (liveIds.isEmpty()) return
+        val speaking = try {
+            tts?.isSpeaking == true
+        } catch (_: Exception) {
+            false
+        }
+        val idleFor = SystemClock.uptimeMillis() - lastTtsEventAt
+        if (speaking || idleFor < TTS_STALL_TIMEOUT_MS) {
+            val check = Runnable { checkStall() }
+            stallCheck = check
+            main.postDelayed(check, TTS_STALL_POLL_MS)
+            return
+        }
+        val id = activeId ?: liveIds.firstOrNull()
+        stop()
+        sink?.success(mapOf("type" to "error", "id" to id, "code" to "engine_timeout"))
     }
 
     /**
@@ -263,17 +315,19 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
      * 出声的是 TTS 引擎而非本应用，按键会被丢给其他应用残留的陈旧记录；官方
      * 听书（本应用真实出声）则稳定判给本应用。脉冲借住这条判定：朗读刚启动
      * 时本应用真实出声一瞬，成为「放音者」，蓝牙按键的路由随之落到本应用
-     * 会话上。不请求音频焦点，不与 TTS 引擎抢焦点；播完由 marker 回调立即
+     * 会话上。不请求音频焦点，不与 TTS 引擎抢焦点；播完由定时兜底立即
      * 释放，无常驻占用。失败静默跳过——这是机会性增强，不能影响朗读本身。
      */
     private fun playIdentityPulse() {
+        releasePulse()
+        var track: AudioTrack? = null
         try {
             val sampleRate = 44_100
             val sampleCount = sampleRate * PULSE_DURATION_MS / 1000
             val pcm = ShortArray(sampleCount) { i ->
                 (3.0 * sin(2.0 * Math.PI * 440.0 * i / sampleRate)).toInt().toShort()
             }
-            val track = AudioTrack.Builder()
+            val audioTrack = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -290,33 +344,37 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .setBufferSizeInBytes(pcm.size * 2)
                 .build()
-            track.write(pcm, 0, pcm.size)
-            track.setNotificationMarkerPosition(pcm.size)
-            track.setPlaybackPositionUpdateListener(
-                object : AudioTrack.OnPlaybackPositionUpdateListener {
-                    override fun onMarkerReached(track: AudioTrack) {
-                        track.stop()
-                        track.release()
-                    }
-
-                    override fun onPeriodicNotification(track: AudioTrack) {}
-                }
-            )
-            track.play()
+            track = audioTrack
+            audioTrack.write(pcm, 0, pcm.size)
+            pulseTrack = audioTrack
+            audioTrack.play()
+            main.postDelayed({ releasePulse(audioTrack) }, PULSE_RELEASE_DELAY_MS)
         } catch (_: Throwable) {
             // 静默：脉冲只是给系统的一个「出声信号」，失败不影响朗读。
+            track?.let(::releasePulse)
         }
+    }
+
+    private fun releasePulse(track: AudioTrack? = pulseTrack) {
+        if (track == null) return
+        if (pulseTrack === track) pulseTrack = null
+        try { track.stop() } catch (_: Exception) { }
+        try { track.release() } catch (_: Exception) { }
     }
 
     @Suppress("DEPRECATION")
     private fun requestFocus(): Boolean {
-        if (focusListener != null) return true
+        if (focusGranted) return true
+        // 临时丢失焦点时旧 request 仍在；用户主动恢复必须先弃掉旧 request，
+        // 再按当前系统状态重新申请，不能沿用已经失效的监听器。
+        releaseFocus()
         val epoch = ++focusEpoch
         val listener = AudioManager.OnAudioFocusChangeListener { change ->
             when (change) {
                 AudioManager.AUDIOFOCUS_GAIN ->
                     main.post {
                         if (epoch != focusEpoch || !focusTransient) return@post
+                        focusGranted = true
                         focusTransient = false
                         // 只通知 Dart 续播，这里不打身份脉冲：通话走 Telecom，
                         // 不参与 media button 派发，夺不走按键归属（真机上
@@ -326,9 +384,18 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                         sink?.success(mapOf("type" to "focus_resume"))
                     }
                 AudioManager.AUDIOFOCUS_LOSS ->
-                    main.post { if (epoch == focusEpoch) interrupt() }
+                    main.post {
+                        if (epoch != focusEpoch) return@post
+                        focusGranted = false
+                        focusTransient = false
+                        interrupt()
+                    }
                 else ->
-                    main.post { if (epoch == focusEpoch) transientPause() }
+                    main.post {
+                        if (epoch != focusEpoch) return@post
+                        focusGranted = false
+                        transientPause()
+                    }
             }
         }
         val status = if (Build.VERSION.SDK_INT >= 26) {
@@ -339,9 +406,13 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         } else {
             audio.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
         }
-        if (status == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focusListener = listener
-        else stop()
-        return status == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (status == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            focusListener = listener
+            focusGranted = true
+            return true
+        }
+        releaseFocus()
+        return false
     }
 
     @Suppress("DEPRECATION")
@@ -350,19 +421,30 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         // 全停即一次会话终止：下次重新开播时脉冲要重新打一次（资格可能
         // 已被其他出声者抢走），临时焦点标记也一并复位。
         focusTransient = false
+        focusGranted = false
         pulseArmed = true
+        cancelStallWatchdog()
+        releasePulse()
         activeId = null
         liveIds.clear()
         try { tts?.stop() } catch (_: Exception) { }
-        try {
-            if (Build.VERSION.SDK_INT >= 26) {
-                focusRequest?.let { audio.abandonAudioFocusRequest(it) }
-            } else {
-                focusListener?.let { audio.abandonAudioFocus(it) }
-            }
-        } catch (_: Exception) { }
+        releaseFocus()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun releaseFocus() {
+        val request = focusRequest
+        val listener = focusListener
         focusRequest = null
         focusListener = null
+        focusGranted = false
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                request?.let { audio.abandonAudioFocusRequest(it) }
+            } else {
+                listener?.let { audio.abandonAudioFocus(it) }
+            }
+        } catch (_: Exception) { }
     }
 
     private fun shutdown() {
