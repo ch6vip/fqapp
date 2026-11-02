@@ -53,10 +53,13 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
                             preset: preset,
                             loading: _openingListening,
                             unavailable: _readerAudioUnavailable,
+                            // 默认引擎直接起播：不再弹「听书方式」面板挡在
+                            // 起播前面。引擎由设置里存的偏好决定，想换引擎
+                            // 去听书胶囊上那个三点（未播放时它就是「选择
+                            // 播放引擎」）。起点仍是当前页第一段。
                             onTap: _loading || _error != null
                                 ? null
-                                : () =>
-                                      unawaited(_openListening(fromPage: true)),
+                                : () => unawaited(_openListening(fromPage: true)),
                           ),
                         ),
                       ),

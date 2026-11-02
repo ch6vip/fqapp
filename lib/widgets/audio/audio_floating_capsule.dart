@@ -196,6 +196,76 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     }
   }
 
+  /// 胶囊三点的分派：播放中换音色，没在播就选引擎。
+  ///
+  /// 「没在播」按用户口径含暂停——暂停时多半是要换一套来源重听，挑音色
+  /// 反而是次要动作。
+  Future<void> _showCapsuleMore(
+    BuildContext context,
+    _AudioPlaybackController session,
+  ) async {
+    final playing = (session._player?.playing ?? false) && session._wantPlay;
+    if (playing) {
+      await _showReaderVoices(context, session._bookId);
+      return;
+    }
+    await _showListenEngineSheet(context);
+  }
+
+  /// 「选择播放引擎」：智能朗读（作品音频）或系统朗读（手机本地 TTS）。
+  ///
+  /// 选完写进 [AudioPreferences]，之后所有听书入口起播都按它走——阅读页
+  /// 的听书按钮、胶囊的播放键都算。
+  Future<void> _showListenEngineSheet(BuildContext context) async {
+    final current = AudioPreferences.instance.listenEngine.value;
+    final picked = await showHomeSheet<ListenEngine>(
+      context: context,
+      title: '选择播放引擎',
+      children: [
+        for (final engine in ListenEngine.values)
+          Builder(
+            builder: (tileContext) {
+              final palette = HomePalette.of(tileContext);
+              final smart = engine == ListenEngine.smart;
+              return ListTile(
+                key: ValueKey('listen-engine-${engine.name}'),
+                leading: Icon(
+                  smart ? LucideIcons.headphones : LucideIcons.mic,
+                  color: palette.muted,
+                ),
+                title: Text(
+                  smart ? '智能朗读' : '系统朗读',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    color: palette.ink,
+                  ),
+                ),
+                subtitle: Text(
+                  smart ? '作品自带朗读音频，音色可换，需要联网' : '手机已装的 TTS 引擎，离线可用，音色由系统决定',
+                  style: TextStyle(fontSize: 12.5, color: palette.muted),
+                ),
+                trailing: engine == current
+                    ? Icon(LucideIcons.check, color: palette.accentText)
+                    : null,
+                onTap: () => Navigator.pop(tileContext, engine),
+              );
+            },
+          ),
+      ],
+    );
+    if (picked == null || !mounted) return;
+    await AudioPreferences.instance.setListenEngine(picked);
+    if (!mounted) return;
+    _toast(picked == ListenEngine.smart ? '播放引擎：智能朗读' : '播放引擎：系统朗读');
+  }
+
+  void _openTtsSettings(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => const SystemTtsSettingsPage()),
+    );
+  }
+
   /// The overlay and reader menu borrow the same session and control path.
   Widget _buildCapsule(
     BuildContext context, {
@@ -243,11 +313,10 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
                   ? session._openChapter(session._index, restoreHistory: true)
                   : session._togglePlayback(),
             ),
-            onVoice: inReaderMenu
-                ? () => unawaited(_showReaderVoices(context, session._bookId))
+            onMore: inReaderMenu
+                ? () => unawaited(_showCapsuleMore(context, session))
                 : null,
-            canChangeVoice:
-                !session._switchingVersion && !_readerVoicePickerOpen,
+            canMore: !session._switchingVersion && !_readerVoicePickerOpen,
             onClose: () => unawaited(stop(session)),
           );
         } else if (tts != null && !tts.closed) {
@@ -266,6 +335,8 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
             bottomInset: routes.bottomInset,
             onOpen: () => _openTts(tts),
             onToggle: () => unawaited(tts.toggle()),
+            // 系统朗读没有音色可选，三点直接进朗读设置页（引擎 / 语速）。
+            onMore: inReaderMenu ? () => _openTtsSettings(context) : null,
             onClose: () => unawaited(stopTts(tts)),
           );
         } else if (recent != null) {
@@ -285,6 +356,10 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
             bottomInset: routes.bottomInset,
             onOpen: () => unawaited(_resumeRecent(recent, open: true)),
             onToggle: () => unawaited(_resumeRecent(recent, open: false)),
+            // 没有会话＝没在播：三点给「选择播放引擎」，不摆音色。
+            onMore: inReaderMenu
+                ? () => unawaited(_showListenEngineSheet(context))
+                : null,
             onClose: () {
               if (identical(_recent, recent)) {
                 _recent = null;
