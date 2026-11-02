@@ -26,6 +26,31 @@ bool isRetryableAudioDownloadFailure(String reason) {
       status >= 500;
 }
 
+/// Promotes a completed part file and runs the caller's registration step.
+///
+/// Production ownership paths pass [deletePartOnConflict] false: a racing
+/// final file must be reported without deleting the resumable part. The
+/// default keeps the historical helper contract for callers that treat an
+/// existing final as authoritative.
+Future<bool> commitAudioDownload({
+  required File partFile,
+  required String finalPath,
+  required bool Function() isAborted,
+  required Future<void> Function() save,
+  bool deletePartOnConflict = true,
+}) async {
+  if (isAborted()) return false;
+  try {
+    await partFile.rename(finalPath);
+  } on FileSystemException {
+    if (!deletePartOnConflict) rethrow;
+    await partFile.delete();
+  }
+  if (isAborted()) return false;
+  await save();
+  return true;
+}
+
 enum DownloadRunStage { transferring, committing, cleaning }
 
 class DownloadCancelled implements Exception {}

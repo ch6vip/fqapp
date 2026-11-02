@@ -707,7 +707,20 @@ class AudioDownloader extends ValueNotifier<List<AudioDownloadTask>> {
     await _journal.write(ready);
     run.entry = ready;
     if (!run.ownsFinal) {
-      await files.promote(ready.identity!.total);
+      final total = ready.identity!.total;
+      if (await files.length(files.finalFile) != null) {
+        throw const DownloadTransferFailure('提交终稿文件冲突');
+      }
+      if (await files.length(files.part) != total) {
+        throw const DownloadTransferFailure('提交半成品文件长度冲突');
+      }
+      await commitAudioDownload(
+        partFile: files.part,
+        finalPath: files.finalFile.path,
+        isAborted: () => false,
+        save: () async {},
+        deletePartOnConflict: false,
+      );
       run.ownsFinal = true;
     }
     if (await files.length(files.finalFile) != ready.identity!.total) {
