@@ -128,9 +128,7 @@ class RustBackendTransport implements BackendTransport {
       // that built this transport. That is what keeps `ApiClient` injectable:
       // a Dart test that replaces `http.Client` through `http.runWithClient`
       // still drives the same request surface before the core is up.
-      _httpFallback = HttpBackendTransport(
-        baseUrl: 'http://127.0.0.1:$port',
-      );
+      _httpFallback = HttpBackendTransport(baseUrl: 'http://127.0.0.1:$port');
 
   /// Listener port used when the caller does not supply one.
   ///
@@ -155,7 +153,38 @@ class RustBackendTransport implements BackendTransport {
 
   String _baseUrl;
   String _capability = '';
-  bool _coreRunning = false;
+  static Future<void> _nativeTail = Future<void>.value();
+  static _CoreSession? _session;
+  _CoreAttempt? _attempt;
+  _CoreSession? _retiringSession;
+
+  static Future<T> _serialize<T>(Future<T> Function() operation) {
+    final pending = _nativeTail.then((_) => operation());
+    _nativeTail = pending.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return pending;
+  }
+
+  static Future<void> _retire(_CoreSession session) async {
+    if (!identical(_session, session)) return;
+    session.retiring = true;
+    // Keep the failed retirement as the singleton owner until shutdown succeeds.
+    await rust.shutdown();
+    if (identical(_session, session)) _session = null;
+  }
+
+  bool get _coreRunning {
+    final attempt = _attempt;
+    final session = attempt?.session;
+    return attempt != null &&
+        !attempt.retired &&
+        session != null &&
+        session.ready &&
+        !session.retiring &&
+        identical(_session, session);
+  }
 
   /// Loads the bridge runtime once per process.
   ///
@@ -176,33 +205,34 @@ class RustBackendTransport implements BackendTransport {
     if (cached != null) return cached;
     if (runtimeInitialized()) return _runtimeReady = Future<void>.value();
     late final Future<void> attempt;
-    attempt = Future<void>.sync(runtimeInitializer).catchError(
-      (Object error, StackTrace stack) {
-        if (identical(_runtimeReady, attempt)) _runtimeReady = null;
-        if (runtimeInitialized()) {
-          try {
-            disposeRuntime();
-          } catch (resetError, resetStack) {
-            // FRB could not release the half-initialized state. There is no
-            // other reset entry point, so the process cannot retry cleanly;
-            // make that actionable instead of looping on the same StateError.
-            AppLog.e(
-              'backend',
-              'Flutter Rust Bridge 运行时复位失败，需要重启应用',
-              error: resetError,
-              stack: resetStack,
-            );
-          }
+    attempt = Future<void>.sync(runtimeInitializer).catchError((
+      Object error,
+      StackTrace stack,
+    ) {
+      if (identical(_runtimeReady, attempt)) _runtimeReady = null;
+      if (runtimeInitialized()) {
+        try {
+          disposeRuntime();
+        } catch (resetError, resetStack) {
+          // FRB could not release the half-initialized state. There is no
+          // other reset entry point, so the process cannot retry cleanly;
+          // make that actionable instead of looping on the same StateError.
+          AppLog.e(
+            'backend',
+            'Flutter Rust Bridge 运行时复位失败，需要重启应用',
+            error: resetError,
+            stack: resetStack,
+          );
         }
-        AppLog.e(
-          'backend',
-          'Flutter Rust Bridge 运行时初始化失败，下次启动重试',
-          error: error,
-          stack: stack,
-        );
-        Error.throwWithStackTrace(error, stack);
-      },
-    );
+      }
+      AppLog.e(
+        'backend',
+        'Flutter Rust Bridge 运行时初始化失败，下次启动重试',
+        error: error,
+        stack: stack,
+      );
+      Error.throwWithStackTrace(error, stack);
+    });
     _runtimeReady = attempt;
     return attempt;
   }
@@ -240,6 +270,7 @@ class RustBackendTransport implements BackendTransport {
   static void markRuntimeReady() {
     _runtimeReady ??= Future<void>.value();
   }
+
   final HttpBackendTransport _httpFallback;
 
   @override
@@ -273,53 +304,126 @@ class RustBackendTransport implements BackendTransport {
     required String runtimeDir,
     int? listenPort,
     bool lanShare = false,
-  }) async {
-    await ensureRuntime();
-    // P1-2: provision the device-pool encryption key before init, so the
-    // Rust core reads an encrypted pool file on its first load. A null
-    // key (secure storage unavailable) keeps the old plaintext behavior;
-    // a provisioning failure never blocks startup.
-    final poolKey = await SecureKeyProvider().devicePoolKey();
-    if (poolKey != null) {
-      try {
-        await rust.setDevicePoolKey(key: poolKey);
-      } catch (_) {
-        // Keep starting: the pool falls back to plaintext + a warning.
-      }
-    }
-    final result = await rust.init(
-      configPath: configPath,
-      poolPath: poolPath,
-      filterPath: filterPath,
-      runtimeDir: runtimeDir,
-      port: listenPort ?? port,
-      lanShare: lanShare,
-      mockUpstreamOrigin: mockUpstreamOrigin,
-    );
-    _baseUrl = await rust.baseUrl();
-    _capability = await rust.sessionCapability();
-    _httpFallback.capability = _capability;
-    _coreRunning = result == 'running';
-    return result;
+  }) {
+    final current = _attempt;
+    if (current != null && !current.retired) return current.future;
+    final attempt = _CoreAttempt();
+    _attempt = attempt;
+    attempt.future =
+        _serialize(() async {
+          void checkCurrent() {
+            if (attempt.retired || !identical(_attempt, attempt)) {
+              throw StateError('backend start retired');
+            }
+          }
+
+          checkCurrent();
+          await ensureRuntime();
+          checkCurrent();
+          final previous = _session;
+          if (previous != null && previous.retiring) {
+            await _retire(previous);
+            checkCurrent();
+          }
+          final shared = _session;
+          if (shared != null) {
+            shared.participants.add(attempt);
+            attempt.session = shared;
+            _publish(shared);
+            return 'running';
+          }
+          // P1-2: provision the device-pool encryption key before init, so the
+          // Rust core reads an encrypted pool file on its first load. A null
+          // key (secure storage unavailable) keeps the old plaintext behavior;
+          // a provisioning failure never blocks startup.
+          final poolKey = await SecureKeyProvider().devicePoolKey();
+          checkCurrent();
+          if (poolKey != null) {
+            try {
+              await rust.setDevicePoolKey(key: poolKey);
+            } catch (_) {
+              // Keep starting: the pool falls back to plaintext + a warning.
+            }
+            checkCurrent();
+          }
+          final session = _CoreSession()..participants.add(attempt);
+          attempt.session = session;
+          _session = session;
+          try {
+            final result = await rust.init(
+              configPath: configPath,
+              poolPath: poolPath,
+              filterPath: filterPath,
+              runtimeDir: runtimeDir,
+              port: listenPort ?? port,
+              lanShare: lanShare,
+              mockUpstreamOrigin: mockUpstreamOrigin,
+            );
+            checkCurrent();
+            if (result != 'running') {
+              throw StateError('Rust core failed: $result');
+            }
+            session.baseUrl = await rust.baseUrl();
+            checkCurrent();
+            session.capability = await rust.sessionCapability();
+            checkCurrent();
+            _publish(session);
+            return result;
+          } catch (_) {
+            attempt.retired = true;
+            session.participants.remove(attempt);
+            // This cleanup remains inside the operation that allocated the core.
+            await _retire(session);
+            rethrow;
+          }
+        }).whenComplete(() {
+          if (identical(_attempt, attempt) && !_coreRunning) {
+            attempt.retired = true;
+          }
+        });
+    return attempt.future;
+  }
+
+  void _publish(_CoreSession session) {
+    session.ready = true;
+    _baseUrl = session.baseUrl;
+    _capability = session.capability;
+    _httpFallback.capability = session.capability;
   }
 
   Future<String> status() async {
     if (!_coreRunning) return 'starting';
-    return rust.status();
+    final attempt = _attempt;
+    final result = await _serialize(rust.status);
+    return identical(attempt, _attempt) && _coreRunning ? result : 'starting';
   }
 
-  Future<void> stop() async {
-    if (!_coreRunning) return;
-    // The Rust core cancels every in-flight call before dropping the server, so
-    // a pending page load cannot publish a result after shutdown.
-    _coreRunning = false;
-    await rust.shutdown();
+  Future<void> stop() {
+    final attempt = _attempt;
+    _attempt = null;
+    _baseUrl = 'http://127.0.0.1:$port';
+    _capability = '';
+    _httpFallback.capability = '';
+    attempt?.retired = true;
+    final session = attempt?.session ?? _retiringSession;
+    if (attempt == null && session == null) return Future<void>.value();
+    if (session != null) {
+      if (attempt != null) session.participants.remove(attempt);
+      if (session.participants.isNotEmpty) return Future<void>.value();
+      session.retiring = true;
+      _retiringSession = session;
+    }
+    return _serialize(() async {
+      if (session != null) {
+        await _retire(session);
+        if (identical(_retiringSession, session)) _retiringSession = null;
+      }
+    });
   }
 
   @override
   Future<void> close() async {
-    await _httpFallback.close();
-    await stop();
+    await Future.wait<void>([stop(), _httpFallback.close()]);
   }
 
   @override
@@ -343,6 +447,7 @@ class RustBackendTransport implements BackendTransport {
       );
     }
 
+    final attempt = _attempt;
     final requestId = nextRequestId();
     void cancelInRust() {
       unawaited(rust.cancel(requestId: requestId));
@@ -368,7 +473,7 @@ class RustBackendTransport implements BackendTransport {
               pending,
               request.whenCancelled.then((_) => null),
             ]);
-      if (response == null) {
+      if (response == null || !identical(attempt, _attempt) || !_coreRunning) {
         cancelInRust();
         throw BackendRequestAborted('请求已取消');
       }
@@ -387,6 +492,20 @@ class RustBackendTransport implements BackendTransport {
       request?.unregister(cancelInRust);
     }
   }
+}
+
+class _CoreAttempt {
+  late Future<String> future;
+  bool retired = false;
+  _CoreSession? session;
+}
+
+class _CoreSession {
+  final Set<_CoreAttempt> participants = {};
+  bool retiring = false;
+  bool ready = false;
+  String baseUrl = '';
+  String capability = '';
 }
 
 /// HTTP transport for the loopback adapter, Dart tests and the Web build.

@@ -101,9 +101,7 @@ class CachedAudioChapter {
     itemId: itemId,
     url: 'file://$filePath',
     toneId: toneId,
-    duration: durationMs == null
-        ? null
-        : Duration(milliseconds: durationMs!),
+    duration: durationMs == null ? null : Duration(milliseconds: durationMs!),
     keyHex: keyHex,
   );
 }
@@ -215,8 +213,7 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
   /// 章节记录与内容密钥的键名。密钥单独一条，永不写进章节记录（P1-4 约定）。
   static String _chapterKey(String itemId, String toneId) =>
       'chapter:$itemId|$toneId';
-  static String _keyKey(String itemId, String toneId) =>
-      'key:$itemId|$toneId';
+  static String _keyKey(String itemId, String toneId) => 'key:$itemId|$toneId';
   static String _bookKey(String bookId, String toneId) =>
       'book:$bookId|$toneId';
 
@@ -278,7 +275,8 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
   Future<Directory> directory() async {
     final existing = _dir;
     if (existing != null) return existing;
-    final root = await (_dirResolver?.call() ?? getApplicationSupportDirectory());
+    final root =
+        await (_dirResolver?.call() ?? getApplicationSupportDirectory());
     final dir = Directory('${root.path}${Platform.pathSeparator}offline-audio');
     await dir.create(recursive: true);
     return _dir = dir;
@@ -305,25 +303,22 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
   });
 
   @override
-  Future<void> saveChapter(CachedAudioChapter chapter) =>
-      _serialize((box) async {
-        if (chapter.bookId.isEmpty ||
-            chapter.itemId.isEmpty ||
-            chapter.toneId.isEmpty) {
-          return;
-        }
-        // 先写密钥：中途崩溃只会留下一条孤立密钥（下次删除/重下覆盖），
-        // 不会出现「记录说有 key 但箱里没有」的不可播记录。
-        await box.put(
-          _keyKey(chapter.itemId, chapter.toneId),
-          chapter.keyHex,
-        );
-        await box.put(
-          _chapterKey(chapter.itemId, chapter.toneId),
-          chapter.toMap(),
-        );
-        changes.value++;
-      });
+  Future<void> saveChapter(CachedAudioChapter chapter) => _serialize((
+    box,
+  ) async {
+    if (chapter.bookId.isEmpty ||
+        chapter.itemId.isEmpty ||
+        chapter.toneId.isEmpty) {
+      return;
+    }
+    await _requireExistingFile(chapter.filePath, chapter.bytes);
+    // 先写密钥：中途崩溃只会留下一条孤立密钥（下次删除/重下覆盖），
+    // 不会出现「记录说有 key 但箱里没有」的不可播记录。
+    await box.put(_keyKey(chapter.itemId, chapter.toneId), chapter.keyHex);
+    await box.put(_chapterKey(chapter.itemId, chapter.toneId), chapter.toMap());
+    await box.flush();
+    changes.value++;
+  });
 
   @override
   Future<bool> isDownloaded(String itemId, {required String toneId}) =>
@@ -333,8 +328,10 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
       });
 
   @override
-  Future<CachedAudioChapter?> chapter(String itemId,
-      {required String toneId}) => _serialize((box) async {
+  Future<CachedAudioChapter?> chapter(
+    String itemId, {
+    required String toneId,
+  }) => _serialize((box) async {
     if (itemId.isEmpty || toneId.isEmpty) return null;
     final raw = box.get(_chapterKey(itemId, toneId));
     if (!_isChapter(raw)) return null;
@@ -346,17 +343,17 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
   });
 
   @override
-  Future<Set<String>> downloadedIds(String bookId,
-      {required String toneId}) => _serialize((box) async {
-    if (bookId.isEmpty || toneId.isEmpty) return <String>{};
-    return <String>{
-      for (final value in box.values)
-        if (_isChapter(value) &&
-            value['bookId'] == bookId &&
-            value['toneId'] == toneId)
-          value['itemId'] as String,
-    };
-  });
+  Future<Set<String>> downloadedIds(String bookId, {required String toneId}) =>
+      _serialize((box) async {
+        if (bookId.isEmpty || toneId.isEmpty) return <String>{};
+        return <String>{
+          for (final value in box.values)
+            if (_isChapter(value) &&
+                value['bookId'] == bookId &&
+                value['toneId'] == toneId)
+              value['itemId'] as String,
+        };
+      });
 
   @override
   Future<void> removeChapter(String itemId, {required String toneId}) =>
@@ -368,6 +365,7 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
           _chapterKey(itemId, toneId),
           _keyKey(itemId, toneId),
         ]);
+        await box.flush();
         changes.value++;
       });
 
@@ -402,6 +400,13 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
     return bytes;
   });
 
+  Future<void> _requireExistingFile(String path, int bytes) async {
+    final file = File(path);
+    if (bytes <= 0 || !await file.exists()) {
+      throw FileSystemException('Completed download file conflict', path);
+    }
+  }
+
   /// 只删属于本箱目录的文件。
   ///
   /// 记录里的路径可以被改箱内容的人指向任意位置，直接 `File(...).delete()`
@@ -412,13 +417,21 @@ class HiveAudioDownloadStore implements AudioDownloadStore {
     try {
       final root = await (await directory()).resolveSymbolicLinks();
       final file = File(filePath);
+      if (await FileSystemEntity.type(filePath, followLinks: false) ==
+          FileSystemEntityType.notFound) {
+        return;
+      }
       final resolved = await file.resolveSymbolicLinks();
       if (!_within(root, resolved)) return;
       await file.delete();
-    } on FileSystemException catch (_) {
-      // 文件已不存在是删除的常态结果。
+      if (await file.exists()) {
+        throw FileSystemException(
+          'Download file deletion incomplete',
+          filePath,
+        );
+      }
     } on ArgumentError catch (_) {
-      // 非法路径：记录照样删，文件留给系统清理。
+      // Invalid persisted paths do not authorize a file deletion.
     }
   }
 

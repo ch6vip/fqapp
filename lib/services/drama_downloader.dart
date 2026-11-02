@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import '../models/media_item.dart';
 import 'api_client.dart';
 import 'drama_download_store.dart';
+import 'audio_download_transfer.dart';
+import 'download_resume_store.dart';
 import 'episode_source_cache.dart';
 
 enum DramaDownloadStatus { waiting, downloading, paused, completed, failed }
@@ -44,9 +46,8 @@ class DramaDownloadTask {
   /// 由 [DramaDownloader.pickVariant] 在可选集合里挑最接近的一档。
   final int? maxHeight;
 
-  double? get progress => total == null || total! <= 0
-      ? null
-      : (received / total!).clamp(0.0, 1.0);
+  double? get progress =>
+      total == null || total! <= 0 ? null : (received / total!).clamp(0.0, 1.0);
 
   DramaDownloadTask copyWith({
     DramaDownloadStatus? status,
@@ -55,6 +56,7 @@ class DramaDownloadTask {
     String? error,
     bool clearError = false,
     bool clearTotal = false,
+    bool? auto,
   }) => DramaDownloadTask(
     seriesId: seriesId,
     itemId: itemId,
@@ -64,63 +66,52 @@ class DramaDownloadTask {
     received: received ?? this.received,
     total: clearTotal ? null : (total ?? this.total),
     error: clearError ? null : (error ?? this.error),
-    auto: auto,
+    auto: auto ?? this.auto,
     maxHeight: maxHeight,
   );
 }
 
-/// 短剧离线下载引擎：按「集」建任务，[concurrency] 并发，断点续传，
-/// 失败标 failed 不拖垮队列（与官方 SeriesDownloadManager 的 3 并发 +
-/// 状态机同构，引擎换成 dart:io 直连 CDN）。
-///
-/// 文件形态：`<itemId>.mp4.part` 下载中、`.mp4` 完成；半成品跨启动自动
-/// 续传（同集同名，Range 从已有字节继续）。落盘的是**原始加密字节**，
-/// keyHex 只在完成记录里登记，磁盘上永远没有明文。
+/// Owns per-key intents and reservations until transfer, commit and cleanup settle.
 class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
-  static final RegExp _safeItemId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
-
-  static bool _isSafeItemId(String itemId) => _safeItemId.hasMatch(itemId);
-
   DramaDownloader({
     DramaDownloadStore? store,
+    DownloadResumeStore? resumeStore,
     Future<EpisodeSource> Function(Chapter episode)? resolve,
     HttpClient Function()? clientFactory,
     this.concurrency = 3,
+    this.connectTimeout = audioDownloadConnectTimeout,
+    this.readTimeout = audioDownloadReadTimeout,
   }) : _store = store ?? HiveDramaDownloadStore.instance,
+       _journal =
+           resumeStore ??
+           (store == null || store is HiveDramaDownloadStore
+               ? DownloadResumeStore.instance
+               : DownloadResumeStore.memory()),
        _resolve = resolve ?? _defaultResolve,
        _clientFactory = clientFactory ?? HttpClient.new,
        super(const []) {
-    // 管理页删记录（单集/整剧/清空）后，引擎里那条 completed 旧任务必须
-    // 一起忘掉：否则 enqueue 会把该 itemId 当「已下载」跳过，用户点重新
-    // 缓存没有任何反应，下载弹窗还会把删掉的集显示成「已缓存」。
     _store.changes.addListener(_onStoreChanged);
   }
 
   static final DramaDownloader instance = DramaDownloader();
-
-  /// 单个任务最多试几次（首次 + 自动重试）。CDN 偶发 5xx / 断流很常见，
-  /// 试三次基本能过；再多就只是在拖队列。
   static const int _maxAttempts = 3;
-
   final DramaDownloadStore _store;
+  final DownloadResumeStore _journal;
   final Future<EpisodeSource> Function(Chapter episode) _resolve;
   final HttpClient Function() _clientFactory;
   final int concurrency;
-
+  final Duration connectTimeout;
+  final Duration readTimeout;
   final Map<String, _MutableTask> _tasks = {};
-  final Map<String, _MutableTask> _active = {};
+  final Map<String, _DramaRun> _runs = {};
+  final Map<String, _DramaRun> _active = {};
   bool _pumping = false;
 
-  /// 官方 onNetChangeCheck 的本地等价：断网或只剩移动网络时全部暂停
-  /// （半成品保留，恢复由用户在管理页点继续）。main.dart 把
-  /// connectivity_plus 的流折叠成这两个布尔喂进来。
-  void updateConnectivity({required bool online, required bool metered}) {
+  void updateConnectivity({required bool online, bool metered = false}) {
     if (online && !metered) return;
     pauseAll(reason: online ? null : '网络已断开，下载已暂停');
   }
 
-  /// 入队若干集（已在队列/已完成的集自动跳过）。目录先落库，管理页
-  /// 立即可见这部剧。
   Future<void> enqueue({
     required CachedDrama drama,
     required List<Chapter> episodes,
@@ -128,116 +119,123 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     int? maxHeight,
   }) async {
     if (episodes.isEmpty) return;
+    if (drama.id.isEmpty) throw ArgumentError('Empty series id');
     for (final episode in episodes) {
-      if (!_isSafeItemId(episode.itemId)) {
-        throw ArgumentError.value(
-          episode.itemId,
-          'episode.itemId',
-          'must contain only ASCII letters, digits, _ or - (max 128 chars)',
-        );
-      }
+      DownloadKey(DownloadKind.drama, episode.itemId);
     }
-    await _store.ensureCatalogue(drama);
-    // 集记录里的 index 必须是「在本剧里的第几集」，不是这次传入列表里的
-    // 相对序号 —— 从第 13 集往后缓存 5 集时，序号仍应是 13..17。用相对
-    // 序号会让缓存管理页把它们显示成「第 1 集 · 第13集」。
+    final pending = <(String, _MutableTask)>[];
     final positions = <String, int>{
-      for (final (position, episode) in drama.episodes.indexed)
-        episode.itemId: position,
+      for (final (index, episode) in drama.episodes.indexed)
+        episode.itemId: index,
     };
-    var changed = false;
-    for (final (index, episode) in episodes.indexed) {
-      if (_tasks.containsKey(episode.itemId)) continue;
-      if (await _store.isDownloaded(episode.itemId)) {
-        // 手动重下已是自动缓存的集：文件不用重拉，但记录得改成「用户的」。
-        // 留着 `auto: true` 的话，播放页的滚动清理会跟着进度把它删掉。
-        if (!auto) await _promoteToManual(episode.itemId);
-        continue;
+    for (final (index, chapter) in episodes.indexed) {
+      final downloadKey = DownloadKey(DownloadKind.drama, chapter.itemId);
+      final key = downloadKey.itemId;
+      var task = _tasks[key];
+      if (task == null) {
+        final cached = await _store.episode(chapter.itemId);
+        if (cached != null) {
+          if (!auto && cached.auto) {
+            try {
+              await _store.saveEpisode(
+                CachedEpisode(
+                  seriesId: cached.seriesId,
+                  itemId: cached.itemId,
+                  title: cached.title,
+                  index: cached.index,
+                  keyHex: cached.keyHex,
+                  height: cached.height,
+                  variantName: cached.variantName,
+                  bytes: cached.bytes,
+                  filePath: cached.filePath,
+                  cachedAt: cached.cachedAt,
+                ),
+              );
+            } catch (_) {
+              // A broken record must not turn a manual re-download into a
+              // second transfer; the existing record remains authoritative.
+            }
+          }
+          continue;
+        }
+        task = _MutableTask(
+          DramaDownloadTask(
+            seriesId: drama.id,
+            itemId: chapter.itemId,
+
+            title: chapter.title,
+            index: positions[chapter.itemId] ?? index,
+            status: DramaDownloadStatus.waiting,
+            auto: auto,
+            maxHeight: maxHeight,
+          ),
+          drama,
+        );
+        _tasks[key] = task;
+      } else {
+        if (!auto && task.snapshot.auto) {
+          task.snapshot = task.snapshot.copyWith(auto: false);
+        }
+        if (task.snapshot.status == DramaDownloadStatus.paused ||
+            task.snapshot.status == DramaDownloadStatus.failed ||
+            task.snapshot.status == DramaDownloadStatus.completed) {
+          _resumeTask(task);
+        }
       }
-      _tasks[episode.itemId] = _MutableTask(
-        DramaDownloadTask(
-          seriesId: drama.id,
-          itemId: episode.itemId,
-          title: episode.title,
-          index: positions[episode.itemId] ?? index,
-          status: DramaDownloadStatus.waiting,
-          auto: auto,
-          maxHeight: maxHeight,
-        ),
-      );
-      changed = true;
+      pending.add((key, task));
     }
-    if (changed) _publish();
-    unawaited(_pump());
-  }
-
-  /// 把自动缓存的记录改成用户手动缓存（`auto: false`）。
-  ///
-  /// 文件、画质、缓存时间都照旧：这里只换「谁要的」这一个标记，滚动清理
-  /// 从此不会再碰这一集。
-  Future<void> _promoteToManual(String itemId) async {
-    final cached = await _store.episode(itemId);
-    if (cached == null || !cached.auto) return;
-    await _store.saveEpisode(
-      CachedEpisode(
-        seriesId: cached.seriesId,
-        itemId: cached.itemId,
-        title: cached.title,
-        index: cached.index,
-        keyHex: cached.keyHex,
-        height: cached.height,
-        variantName: cached.variantName,
-        bytes: cached.bytes,
-        filePath: cached.filePath,
-        cachedAt: cached.cachedAt,
-      ),
-    );
-  }
-
-  /// 当前剧集的在队/进行中任务（管理页与弹窗合并渲染用）。
-  List<DramaDownloadTask> tasksFor(String seriesId) => [
-    for (final task in value)
-      if (task.seriesId == seriesId) task,
-  ];
-
-  void pause(String itemId) {
-    final task = _tasks[itemId];
-    if (task == null) return;
-    if (task.snapshot.status == DramaDownloadStatus.waiting) {
-      // 还没轮到跑的集：直接置 paused，别让它被 _pump 捡走。
-      task.snapshot = task.snapshot.copyWith(
-        status: DramaDownloadStatus.paused,
-      );
-      _publish();
-    } else if (task.snapshot.status == DramaDownloadStatus.downloading) {
-      // 在跑的集：快照先改成 paused（UI 立即响应），运行循环在下一个
-      // 检查点退出；并发槽位要等 _run 收敛才真正让出。
-      task.abort('paused');
-      task.snapshot = task.snapshot.copyWith(
-        status: DramaDownloadStatus.paused,
-      );
+    _publish();
+    try {
+      if (pending.any((entry) => identical(_tasks[entry.$1], entry.$2))) {
+        await _store.ensureCatalogue(drama);
+        for (final (key, task) in pending) {
+          if (identical(_tasks[key], task)) task.prepared = true;
+        }
+      }
+    } catch (error) {
+      for (final (key, task) in pending) {
+        if (identical(_tasks[key], task) &&
+            !_active.containsKey(key) &&
+            task.snapshot.status == DramaDownloadStatus.waiting) {
+          task.snapshot = task.snapshot.copyWith(
+            status: DramaDownloadStatus.failed,
+            error: '$error',
+          );
+        }
+      }
+      rethrow;
+    } finally {
       _publish();
       unawaited(_pump());
     }
   }
 
-  void pauseAll({String? reason}) {
-    var changed = false;
-    for (final task in _tasks.values) {
-      if (task.snapshot.status == DramaDownloadStatus.waiting ||
-          task.snapshot.status == DramaDownloadStatus.downloading) {
-        final wasDownloading =
-            task.snapshot.status == DramaDownloadStatus.downloading;
-        if (wasDownloading) task.abort('paused');
-        task.snapshot = task.snapshot.copyWith(
-          status: DramaDownloadStatus.paused,
-          error: reason,
-        );
-        changed = true;
-      }
+  List<DramaDownloadTask> tasksFor(String seriesId) => [
+    for (final task in value)
+      if (task.seriesId == seriesId) task,
+  ];
+  void pause(String itemId) => _pauseTask(_tasks[itemId]);
+
+  void _pauseTask(_MutableTask? task, {String? reason}) {
+    if (task == null ||
+        (task.snapshot.status != DramaDownloadStatus.waiting &&
+            task.snapshot.status != DramaDownloadStatus.downloading)) {
+      return;
     }
-    if (changed) _publish();
+    final run = _runs[task.snapshot.itemId];
+    if (run != null && identical(run.task, task) && !run.pause()) return;
+    task.snapshot = task.snapshot.copyWith(
+      status: DramaDownloadStatus.paused,
+      error: reason,
+    );
+    _publish();
     unawaited(_pump());
+  }
+
+  void pauseAll({String? reason}) {
+    for (final task in _tasks.values.toList()) {
+      _pauseTask(task, reason: reason);
+    }
   }
 
   void resume(String itemId) {
@@ -246,7 +244,9 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     if (task.snapshot.status == DramaDownloadStatus.paused ||
         task.snapshot.status == DramaDownloadStatus.failed) {
       _resumeTask(task);
+      unawaited(_prepareForResume(task.snapshot.itemId, task));
       _publish();
+      unawaited(_retryBlocked(task.snapshot.itemId));
       unawaited(_pump());
     }
   }
@@ -256,316 +256,567 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       if (task.snapshot.status == DramaDownloadStatus.paused ||
           task.snapshot.status == DramaDownloadStatus.failed) {
         _resumeTask(task);
+        unawaited(_prepareForResume(task.snapshot.itemId, task));
+        unawaited(_retryBlocked(task.snapshot.itemId));
       }
     }
     _publish();
     unawaited(_pump());
   }
 
-  /// Clears the stop signal and hands the task to a fresh run.
-  ///
-  /// `abortReason` is only ever set (never cleared) by [pause]/[pauseAll]/
-  /// [discard], so without this a task paused while downloading could never be
-  /// resumed: its next run hit `_runOnce`'s abort check and returned at once.
-  /// The generation bump tells the previous run - which may still be winding
-  /// down - to stay out of the way instead of overwriting this state.
+  Future<void> _prepareForResume(String key, _MutableTask task) async {
+    if (task.prepared) return;
+    final generation = task.generation;
+    try {
+      await _waitDeletion(key);
+      if (!identical(_tasks[key], task) || task.generation != generation) {
+        return;
+      }
+      await _store.ensureCatalogue(task.catalogue);
+      if (!identical(_tasks[key], task) || task.generation != generation) {
+        return;
+      }
+      task.prepared = true;
+    } catch (error) {
+      if (identical(_tasks[key], task) &&
+          task.generation == generation &&
+          task.snapshot.status == DramaDownloadStatus.waiting) {
+        task.snapshot = task.snapshot.copyWith(
+          status: DramaDownloadStatus.failed,
+          error: '$error',
+        );
+      }
+    } finally {
+      _publish();
+      unawaited(_pump());
+    }
+  }
+
   void _resumeTask(_MutableTask task) {
     task.generation++;
-    task.abortReason = null;
+    task.cleanupBlocked = false;
     task.snapshot = task.snapshot.copyWith(
       status: DramaDownloadStatus.waiting,
       clearError: true,
     );
   }
 
-  /// 放弃一个未完成任务并清掉半成品。已完成集的删除走 store（管理页）。
-  Future<void> discard(String itemId) async {
-    if (!_isSafeItemId(itemId)) {
-      throw ArgumentError.value(itemId, 'itemId', 'unsafe episode id');
-    }
-    final task = _tasks.remove(itemId);
-    task?.abort('discarded');
-    _active.remove(itemId);
+  // Install the deletion reservation before the first await. The run alone
+  // writes its journal; discard waits for all submitted writes and cleanup.
+  Future<void> discard(String itemId) {
+    late final DownloadKey downloadKey;
     try {
-      final dir = await _store.directory();
-      await File('${dir.path}${Platform.pathSeparator}$itemId.mp4.part')
-          .delete();
-    } on FileSystemException catch (_) {
-    } on ArgumentError catch (_) {}
+      downloadKey = DownloadKey(DownloadKind.drama, itemId);
+    } catch (error, stack) {
+      return Future<void>.error(error, stack);
+    }
+    final key = itemId;
+    final task = _tasks.remove(key);
+    final existing = _runs[key];
+    final run = existing ?? _DramaRun(downloadKey, task);
+    _runs[key] = run;
+    run.discard();
     _publish();
-    unawaited(_pump());
+    if (existing == null) {
+      unawaited(_deleteIdle(key, run));
+    } else if (run.settled) {
+      unawaited(_retryCleanup(key, run));
+    }
+    // The deletion reservation is installed synchronously. Cleanup continues
+    // in the background; _pump keeps a re-enqueued task waiting until the
+    // reservation is gone.
+    return Future<void>.value();
   }
 
-  void _onStoreChanged() {
-    unawaited(_forgetRemovedDownloads());
-  }
-
-  /// 清掉 store 里已经不存在的已完成任务（在途/暂停任务保留：半成品跨
-  /// 启动续传靠它们）。删除是用户动作，任务态必须跟着记录一起走。
-  Future<void> _forgetRemovedDownloads() async {
+  Future<void> _deleteIdle(String key, _DramaRun run) async {
     try {
-      final completed = [
-        for (final entry in _tasks.entries)
-          if (entry.value.snapshot.status == DramaDownloadStatus.completed)
-            entry.key,
-      ];
-      if (completed.isEmpty) return;
-      var changed = false;
-      for (final itemId in completed) {
-        if (await _store.isDownloaded(itemId)) continue;
-        _tasks.remove(itemId);
-        _active.remove(itemId);
-        changed = true;
-      }
-      if (changed) _publish();
-    } catch (_) {
-      // store 不可用（箱已关）：任务留着，下一次变更再清。
+      await run.closeIO();
+      await _cleanup(run);
+    } catch (error) {
+      run.cleanupError = error;
+    } finally {
+      _finish(key, run);
     }
   }
 
-  void _publish() {
-    value = [
-      for (final task in _tasks.values) task.snapshot,
-    ];
+  Future<void> _retryCleanup(String key, _DramaRun run) {
+    final pending = run.cleanupOperation;
+    if (pending != null) return pending;
+    final operation = () async {
+      try {
+        await run.closeIO();
+        if (run.discardRequested ||
+            run.entry?.stage == DownloadResumeStage.discarding) {
+          await _cleanup(run);
+        }
+        run.cleanupError = null;
+        final task = _tasks[key];
+        if (task != null && task.cleanupBlocked) {
+          task.cleanupBlocked = false;
+          task.snapshot = task.snapshot.copyWith(
+            status: task.snapshot.status == DramaDownloadStatus.failed
+                ? DramaDownloadStatus.waiting
+                : null,
+            clearError: true,
+          );
+        }
+        if (identical(_runs[key], run)) _runs.remove(key);
+      } catch (error) {
+        run.cleanupError = error;
+        rethrow;
+      } finally {
+        run.cleanupOperation = null;
+        _publish();
+        unawaited(_pump());
+      }
+    }();
+    run.cleanupOperation = operation;
+    return operation;
   }
+
+  void _markCleanupBlocked(String key, Object error) {
+    final task = _tasks[key];
+    if (task == null) return;
+    task.cleanupBlocked = true;
+    task.prepared = false;
+    task.snapshot = task.snapshot.copyWith(
+      status: task.snapshot.status == DramaDownloadStatus.paused
+          ? DramaDownloadStatus.paused
+          : DramaDownloadStatus.failed,
+      error: '清理失败：$error',
+    );
+  }
+
+  Future<void> _retryBlocked(String key) async {
+    final run = _runs[key];
+    if (run == null || !run.settled) return;
+    try {
+      await _retryCleanup(key, run);
+    } catch (error) {
+      _markCleanupBlocked(key, error);
+      _publish();
+    }
+  }
+
+  Future<void> _waitDeletion(String key) async {
+    final run = _runs[key];
+    if (run == null) return;
+    if (run.discardRequested && !run.settled) await run.terminal;
+    if (identical(_runs[key], run) && run.settled) {
+      await _retryCleanup(key, run);
+    }
+  }
+
+  void _onStoreChanged() => unawaited(_forgetRemovedDownloads());
+
+  Future<void> _forgetRemovedDownloads({String? onlyKey}) async {
+    final completed = [
+      for (final entry in _tasks.entries)
+        if (entry.value.snapshot.status == DramaDownloadStatus.completed &&
+            (onlyKey == null || entry.key == onlyKey))
+          entry,
+    ];
+    try {
+      for (final entry in completed) {
+        final key = entry.key;
+        final task = entry.value;
+        final generation = task.generation;
+        final stillThere = await _store.isDownloaded(task.snapshot.itemId);
+        if (stillThere ||
+            !identical(_tasks[key], task) ||
+            task.generation != generation ||
+            task.snapshot.status != DramaDownloadStatus.completed ||
+            _runs.containsKey(key)) {
+          continue;
+        }
+        _tasks.remove(key);
+        _publish();
+      }
+    } catch (_) {
+      // Optional store reads do not retire a live reservation.
+    }
+  }
+
+  void _publish() => value = [for (final task in _tasks.values) task.snapshot];
 
   Future<void> _pump() async {
     if (_pumping) return;
     _pumping = true;
     try {
       while (_active.length < concurrency) {
-        final next = _tasks.values
-            .where(
-              (task) =>
-                  task.snapshot.status == DramaDownloadStatus.waiting &&
-                  // A task can be `waiting` while its previous run is still
-                  // winding down (pause() flips the status first, and resume()
-                  // flips it back before _run has returned). Starting a second
-                  // run for it would have two loops writing the same `.part`.
-                  !_active.containsKey(task.snapshot.itemId),
-            )
-            .fold<_MutableTask?>(null, (best, task) {
-          if (best == null || task.snapshot.index < best.snapshot.index) {
-            return task;
+        _MutableTask? next;
+        for (final entry in _tasks.entries) {
+          final task = entry.value;
+          if (!task.prepared ||
+              task.snapshot.status != DramaDownloadStatus.waiting ||
+              _runs.containsKey(entry.key)) {
+            continue;
           }
-          return best;
-        });
+          if (next == null || task.snapshot.index < next.snapshot.index) {
+            next = task;
+          }
+        }
         if (next == null) return;
-        final running = next;
-        running.snapshot = running.snapshot.copyWith(
+        final task = next;
+        final key = task.snapshot.itemId;
+        final run = _DramaRun(
+          DownloadKey(DownloadKind.drama, task.snapshot.itemId),
+          task,
+        );
+        _runs[key] = run;
+        _active[key] = run;
+        task.snapshot = task.snapshot.copyWith(
           status: DramaDownloadStatus.downloading,
         );
-        _active[running.snapshot.itemId] = running;
         _publish();
-        unawaited(_run(running));
+        unawaited(_run(key, run));
       }
     } finally {
       _pumping = false;
     }
   }
 
-  Future<void> _run(_MutableTask task) async {
-    final generation = task.generation;
-    var refreshed = false;
-    var attempt = 0;
-    while (true) {
-      final reason = await _runOnce(task);
-      if (reason == null || task.abortReason != null) break;
-      // CDN 直链可能过期（403/410）：重取一次取流地址再续。
-      if (reason == 'stale-url' && !refreshed) {
-        refreshed = true;
-        continue;
+  void _check(String key, _DramaRun run) {
+    run.check();
+    if (!identical(_runs[key], run) ||
+        !identical(_tasks[key], run.task) ||
+        run.task!.generation != run.generation) {
+      throw DownloadCancelled();
+    }
+  }
+
+  Future<void> _run(String key, _DramaRun run) async {
+    final task = run.task!;
+    var recoveryCleanupFailed = false;
+    try {
+      final directory = await _store.directory();
+      _check(key, run);
+      run.files = await DownloadFiles.inDirectory(directory, run.key);
+      _check(key, run);
+      run.entry = await _journal.read(run.key);
+      _check(key, run);
+      if (run.entry?.stage == DownloadResumeStage.discarding) {
+        try {
+          await _cleanup(run);
+        } catch (error) {
+          recoveryCleanupFailed = true;
+          run.cleanupError = error;
+          rethrow;
+        }
+        run.stage = DownloadRunStage.transferring;
+        _check(key, run);
+        await _store.ensureCatalogue(task.catalogue);
+        _check(key, run);
       }
-      // 其余失败自动再试：断流、5xx、续传范围对不上这类都可以靠重跑
-      // （每次重跑都会重新 resolve、带 Range 续传）自己好。
-      attempt++;
-      if (attempt < _maxAttempts && _isRetryable(reason)) {
-        await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
-        if (task.abortReason != null) break;
-        continue;
+      if (!await _recover(key, run)) {
+        var attempt = 0;
+        var refreshed = false;
+        while (true) {
+          _check(key, run);
+          try {
+            final source = await _resolve(
+              Chapter(
+                itemId: run.key.itemId,
+                title: task.snapshot.title,
+                volumeName: '',
+              ),
+            );
+            _check(key, run);
+            final variant = pickVariant(
+              source,
+              maxHeight: task.snapshot.maxHeight,
+            );
+            final uri = variant == null ? null : Uri.tryParse(variant.url);
+            if (uri == null ||
+                (uri.scheme != 'https' && uri.scheme != 'http') ||
+                uri.host.isEmpty) {
+              throw const DownloadTransferFailure('该集没有可下载的播放地址');
+            }
+            await transferDownload(
+              run: run,
+              journal: _journal,
+              source: DownloadSource(
+                uri: uri,
+                containerId: task.snapshot.seriesId,
+                keyHex: variant!.keyHex,
+                rendition: variant.name,
+                height: variant.height,
+              ),
+              record: _record(run),
+              clientFactory: _clientFactory,
+              connectTimeout: connectTimeout,
+              readTimeout: readTimeout,
+              progress: (received, total) {
+                if (identical(_tasks[key], task) &&
+                    task.generation == run.generation) {
+                  task.snapshot = task.snapshot.copyWith(
+                    received: received,
+                    total: total,
+                    clearTotal: total == null,
+                  );
+                  _publish();
+                }
+              },
+            );
+            _check(key, run);
+            await _commit(key, run);
+            break;
+          } on DownloadCancelled {
+            rethrow;
+          } catch (error) {
+            if (run.stage == DownloadRunStage.committing ||
+                run.cleanupError != null) {
+              rethrow;
+            }
+            _check(key, run);
+            final reason = error is Exception
+                ? audioDownloadFailureReason(error)
+                : '$error';
+            if (reason == 'stale-url' && !refreshed) {
+              refreshed = true;
+              continue;
+            }
+            if (++attempt >= _maxAttempts ||
+                !isRetryableAudioDownloadFailure(reason)) {
+              throw DownloadTransferFailure(reason);
+            }
+            await Future<void>.delayed(Duration(milliseconds: 900 * attempt));
+            _check(key, run);
+          }
+        }
       }
-      // 落到这里才算真失败：把原因记在任务上并写进应用日志，否则用户只
-      // 看到「失败」两个字，排查时无从下手。
-      debugPrint('[drama-download] ${task.snapshot.title} 失败：$reason');
-      task.snapshot = task.snapshot.copyWith(error: reason);
-      break;
+      if (run.stage == DownloadRunStage.transferring) _check(key, run);
+      if (!run.discardRequested &&
+          !task.snapshot.auto &&
+          (run.entry?.record?.auto ?? run.existingCached?.auto ?? false)) {
+        if (run.stage != DownloadRunStage.committing) _check(key, run);
+        run.stage = DownloadRunStage.committing;
+        run.entry ??= _entryFromCompleted(run.key, run.existingCached!);
+        run.ownsFinal = true;
+        await _promoteManual(run);
+        if (run.entry!.stage != DownloadResumeStage.discarding &&
+            !run.discardRequested) {
+          await _journal.remove(run.key);
+        }
+      }
+      if (!run.discardRequested &&
+          identical(_tasks[key], task) &&
+          task.generation == run.generation) {
+        task.snapshot = task.snapshot.copyWith(
+          status: DramaDownloadStatus.completed,
+          received: run.completedBytes,
+          total: run.completedBytes,
+          clearError: true,
+        );
+      }
+    } on DownloadCancelled {
+      // The next intent owns the UI; this run still owns its IO and cleanup.
+    } catch (error) {
+      if (identical(_tasks[key], task) && task.generation == run.generation) {
+        task.snapshot = task.snapshot.copyWith(
+          status: DramaDownloadStatus.failed,
+          error: '$error',
+        );
+      }
+      debugPrint('[drama-download] ${task.snapshot.title}: $error');
+    } finally {
+      try {
+        await run.closeIO();
+        if (!recoveryCleanupFailed) run.cleanupError = null;
+        if (run.discardRequested) {
+          await _cleanup(run);
+          run.cleanupError = null;
+        }
+      } catch (error) {
+        run.cleanupError = error;
+        _markCleanupBlocked(key, error);
+      }
+      _finish(key, run);
     }
-    _active.remove(task.snapshot.itemId);
-    if (task.generation != generation) {
-      // A resume() landed while this loop was winding down: the task belongs to
-      // a new run now, so this one must not write a paused/failed status over it
-      // and must not touch the flag that run may already be relying on. Release
-      // the slot and let `_pump` start that run.
-      _publish();
-      unawaited(_pump());
-      return;
+  }
+
+  void _finish(String key, _DramaRun run) {
+    if (identical(_active[key], run)) _active.remove(key);
+    if (run.cleanupError == null && identical(_runs[key], run)) {
+      _runs.remove(key);
     }
-    // Consume the flag. It is a signal to *this* run, and leaving it set is
-    // exactly what used to make a later resume() unrecoverable.
-    final abortReason = task.abortReason;
-    task.abortReason = null;
-    if (abortReason == 'paused') {
-      task.snapshot = task.snapshot.copyWith(status: DramaDownloadStatus.paused);
-    } else if (abortReason == 'discarded') {
-      return;
-    } else if (task.snapshot.status != DramaDownloadStatus.completed) {
-      task.snapshot = task.snapshot.copyWith(
-        status: DramaDownloadStatus.failed,
-      );
-    }
+    if (run.cleanupError != null) _markCleanupBlocked(key, run.cleanupError!);
+    run.settle();
     _publish();
+    if (_tasks[key]?.snapshot.status == DramaDownloadStatus.completed &&
+        !_runs.containsKey(key)) {
+      unawaited(_forgetRemovedDownloads(onlyKey: key));
+    }
     unawaited(_pump());
   }
 
-  /// 跑一次下载（每次都会重新 resolve 取流地址）。返回 null 表示终态
-  /// （完成或用户暂停/放弃）；返回 'stale-url' 表示直链失效可重试；
-  /// 其他值=失败原因。
-  Future<String?> _runOnce(_MutableTask task) async {
-    HttpClient? client;
-    RandomAccessFile? sink;
-    try {
-      final itemId = task.snapshot.itemId;
-      if (!_isSafeItemId(itemId)) return '无效的剧集 ID';
-      final dir = await _store.directory();
-      final finalPath = '${dir.path}${Platform.pathSeparator}$itemId.mp4';
-      final partFile = File('$finalPath.part');
-      var received = await partFile.exists() ? await partFile.length() : 0;
+  DownloadRecord _record(_DramaRun run, {int? durationMs}) => DownloadRecord(
+    title: run.task!.snapshot.title,
+    index: run.task!.snapshot.index,
+    cachedAt: DateTime.now().millisecondsSinceEpoch,
+    durationMs: durationMs,
+    auto: run.task!.snapshot.auto,
+  );
 
-      final episode = Chapter(
-        itemId: itemId,
-        title: task.snapshot.title,
-        volumeName: '',
-      );
-      final source = await _resolve(episode);
-      if (task.abortReason != null) return null;
-      final variant = pickVariant(source, maxHeight: task.snapshot.maxHeight);
-      if (variant == null) return '该集没有可下载的播放地址';
-
-      client = _clientFactory();
-      final request = await client.openUrl('GET', Uri.parse(variant.url));
-      if (received > 0) request.headers.add('Range', 'bytes=$received-');
-      request.headers.add('Accept-Encoding', 'identity');
-      final response = await request.close();
-      // CDN 直链可能过期：403/410 时放弃本次尝试，外层重取一次地址再续
-      // （每次 _runOnce 都会重新 resolve，天然拿到新链）。
-      if (response.statusCode == 403 || response.statusCode == 410) {
-        return 'stale-url';
+  Future<bool> _recover(String key, _DramaRun run) async {
+    final files = run.files!;
+    final entry = run.entry;
+    final cached = await _store.episode(run.key.itemId);
+    _check(key, run);
+    final partLength = await files.length(files.part);
+    _check(key, run);
+    final finalLength = await files.length(files.finalFile);
+    _check(key, run);
+    if (entry == null) {
+      if (cached != null) {
+        if (cached.filePath != files.finalFile.path ||
+            finalLength != cached.bytes ||
+            cached.bytes <= 0 ||
+            partLength != null) {
+          throw const DownloadTransferFailure('已下载记录与文件冲突');
+        }
+        run.completedBytes = cached.bytes;
+        run.existingCached = cached;
+        run.stage = DownloadRunStage.committing;
+        await _journal.remove(run.key);
+        return true;
       }
-      if (response.statusCode == 416 && received > 0) {
-        // 续传起点已经超出服务器认定的长度。常见成因：重取地址后拿到的是
-        // 另一条流（码率/切片不同，总长更短），或者半成品其实已经收全、只
-        // 是上次没来得及改名。这两种情况下旧的 `.part` 字节都不可信，
-        // 丢掉从头拉一遍才是对的 —— 当硬失败会让这一集永远卡在 416。
-        try {
-          await partFile.delete();
-        } catch (_) {}
-        // 半成品已经不要了，界面上的进度也不能留着：否则重下期间进度条
-        // 卡在 100%，后续硬失败还会出现 received > total。
-        task.snapshot = task.snapshot.copyWith(received: 0, clearTotal: true);
-        _publish();
-        return 'restart-from-zero';
+      if (finalLength != null) {
+        throw const DownloadTransferFailure('未登记的终稿文件冲突');
       }
-      var expectedTotal = -1;
-      if (response.statusCode == 206) {
-        final range = _parseContentRange(
-          response.headers.value(HttpHeaders.contentRangeHeader),
-        );
-        if (range == null || range.start != received) {
-          return '续传响应范围无效';
-        }
-        final responseBytes = range.end - range.start + 1;
-        if (response.contentLength >= 0 &&
-            response.contentLength != responseBytes) {
-          return '续传响应长度无效';
-        }
-        if (range.total == null || range.total! <= range.end) {
-          return '服务器未提供有效的文件总长度';
-        }
-        expectedTotal = range.total!;
-      } else if (response.statusCode == 200) {
-        if (received > 0) {
-          // 服务器忽略了 Range：已续的字节不可信，从头再来。
-          received = 0;
-          await partFile.delete();
-        }
-        if (response.contentLength >= 0) {
-          expectedTotal = response.contentLength;
-        }
-      } else {
-        return '下载失败（HTTP ${response.statusCode}）';
-      }
-
-      sink = await partFile.open(mode: FileMode.append);
-      task.snapshot = task.snapshot.copyWith(
-        received: received,
-        total: expectedTotal >= 0 ? expectedTotal : null,
-        clearTotal: expectedTotal < 0,
-      );
-      _publish();
-
-      const chunkBytes = 256 * 1024;
-      var sincePublish = 0;
-      await for (final chunk in response) {
-        if (task.abortReason != null) return null;
-        await sink.writeFrom(chunk);
-        received += chunk.length;
-        sincePublish += chunk.length;
-        if (sincePublish >= chunkBytes) {
-          sincePublish = 0;
-          task.snapshot = task.snapshot.copyWith(received: received);
-          _publish();
-        }
-      }
-      await sink.flush();
-      await sink.close();
-      sink = null;
-      client.close(force: true);
-      client = null;
-
-      if (expectedTotal < 0) return '无法确认下载完整性（服务器未提供总长度）';
-      if (received != expectedTotal) return '下载不完整';
-      try {
-        await partFile.rename(finalPath);
-      } on FileSystemException {
-        // 同名终稿已存在（重复下载的竞态）：以已存在文件为准。
-        await partFile.delete();
-      }
-      await _store.saveEpisode(
-        CachedEpisode(
-          seriesId: task.snapshot.seriesId,
-          itemId: itemId,
-          title: task.snapshot.title,
-          index: task.snapshot.index,
-          keyHex: variant.keyHex,
-          height: variant.height,
-          variantName: variant.name,
-          bytes: received,
-          filePath: finalPath,
-          cachedAt: DateTime.now().millisecondsSinceEpoch,
-          auto: task.snapshot.auto,
-        ),
-      );
-      task.snapshot = task.snapshot.copyWith(
-        status: DramaDownloadStatus.completed,
-        received: received,
-      );
-      return null;
-    } catch (error) {
-      return error.toString();
-    } finally {
-      try {
-        await sink?.close();
-      } catch (_) {}
-      client?.close(force: true);
+      return false;
     }
+    final identity = entry.identity!;
+    if (identity.containerId != run.task!.snapshot.seriesId) {
+      throw const DownloadTransferFailure('断点记录与目录不匹配');
+    }
+    final full = entry.stage != DownloadResumeStage.receiving;
+    if (!full) {
+      if (cached != null || finalLength != null) {
+        throw const DownloadTransferFailure('断点记录与已下载文件冲突');
+      }
+      return false;
+    }
+    if ((partLength == null) == (finalLength == null) ||
+        (partLength ?? finalLength) != identity.total ||
+        (cached != null && !entry.matchesDrama(cached, files.finalFile.path))) {
+      throw const DownloadTransferFailure('断点恢复文件或记录冲突');
+    }
+    run.ownsFinal = finalLength != null;
+    if (cached != null && finalLength != null) {
+      _check(key, run);
+      run.stage = DownloadRunStage.committing;
+      run.completedBytes = identity.total;
+      await _journal.remove(run.key);
+      return true;
+    }
+    if (cached != null) throw const DownloadTransferFailure('已登记记录缺少终稿');
+    await _commit(key, run);
+    return true;
   }
 
-  /// 这个失败原因值不值得再试一次。
-  ///
-  /// 剧集 ID 不合法是永久错误（身份写错了，重试一万次也一样）；其余
-  /// 都是网络侧的偶发问题。
-  static bool _isRetryable(String reason) =>
-      reason != '无效的剧集 ID' && reason != '该集没有可下载的播放地址';
+  Future<void> _commit(String key, _DramaRun run) async {
+    _check(key, run);
+    // Linearization: pause after this point cannot hide a submitted commit.
+    run.stage = DownloadRunStage.committing;
+    final files = run.files!;
+    final oldRecord = run.entry!.record;
+    final ready = run.entry!.at(
+      DownloadResumeStage.ready,
+      record: oldRecord == null
+          ? _record(run)
+          : DownloadRecord(
+              title: oldRecord.title,
+              index: oldRecord.index,
+              cachedAt: oldRecord.cachedAt,
+              auto: run.task!.snapshot.auto && oldRecord.auto,
+            ),
+    );
+    await _journal.write(ready);
+    run.entry = ready;
+    if (!run.ownsFinal) {
+      await files.promote(ready.identity!.total);
+      run.ownsFinal = true;
+    }
+    if (await files.length(files.finalFile) != ready.identity!.total) {
+      throw const DownloadTransferFailure('提交终稿文件长度冲突');
+    }
+    final promoted = ready.at(DownloadResumeStage.promoted);
+    await _journal.write(promoted);
+    run.entry = promoted;
+    final existing = await _store.episode(run.key.itemId);
+    if (existing != null &&
+        !promoted.matchesDrama(existing, files.finalFile.path)) {
+      throw const DownloadTransferFailure('提交遇到其他下载记录，已保留');
+    }
+    await _store.saveEpisode(promoted.dramaEpisode(files.finalFile.path));
+    run.completedBytes = promoted.identity!.total;
+    if (!run.discardRequested) await _journal.remove(run.key);
+  }
+
+  Future<void> _cleanup(_DramaRun run) async {
+    run.stage = DownloadRunStage.cleaning;
+    run.entry ??= await _journal.read(run.key);
+    var entry =
+        run.entry ??
+        DownloadResumeEntry(run.key, DownloadResumeStage.discarding);
+    var marker = entry.at(
+      DownloadResumeStage.discarding,
+      finalOwned:
+          run.ownsFinal ||
+          entry.finalOwned ||
+          entry.stage == DownloadResumeStage.ready,
+    );
+    // Record deletion intent before path probes too: even a permission/IO
+    // failure must leave recovery in discarding, not resume the old transfer.
+    await _journal.write(marker);
+    run.entry = marker;
+    run.files ??= await DownloadFiles.inDirectory(
+      await _store.directory(),
+      run.key,
+    );
+    final files = run.files!;
+    final cached = await _store.episode(run.key.itemId);
+    if (cached != null &&
+        run.previousEntry?.matchesDrama(cached, files.finalFile.path) == true) {
+      entry = run.previousEntry!;
+      marker = entry.at(
+        DownloadResumeStage.discarding,
+        finalOwned: run.ownsFinal || entry.finalOwned,
+      );
+      await _journal.write(marker);
+      run.entry = marker;
+    }
+    final partLength = await files.length(files.part);
+    final finalLength = await files.length(files.finalFile);
+    final finalOwned = marker.finalOwned;
+    if (marker.record != null &&
+        cached != null &&
+        !marker.matchesDrama(cached, files.finalFile.path)) {
+      throw const DownloadTransferFailure('放弃清理遇到其他下载记录，已保留');
+    }
+    if ((finalOwned &&
+            finalLength != null &&
+            finalLength != marker.identity?.total) ||
+        (partLength != null &&
+            finalLength != null &&
+            marker.identity != null)) {
+      throw const DownloadTransferFailure('放弃清理遇到冲突文件，已保留');
+    }
+    if (!finalOwned && finalLength != null && marker.identity != null) {
+      throw const DownloadTransferFailure('放弃清理遇到不属于本轮的终稿，已保留');
+    }
+    if (marker.record != null || cached == null) {
+      await _store.removeEpisode(run.key.itemId);
+      final remaining = await _store.episode(run.key.itemId);
+      if (remaining != null) throw const DownloadTransferFailure('下载记录未清除');
+    }
+    if (finalOwned) await files.delete(files.finalFile);
+    await files.delete(files.part);
+    await _journal.remove(run.key);
+    run.entry = null;
+    run.ownsFinal = false;
+  }
 
   /// 与官方一致的画质策略：固定取最高档；上游只有单流时用主地址。
   /// 在一集的可选档位里挑一档下载。
@@ -599,21 +850,6 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     return known.reduce((a, b) => a.height <= b.height ? a : b);
   }
 
-  static _ContentRange? _parseContentRange(String? value) {
-    if (value == null) return null;
-    final match = RegExp(
-      r'^\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*$',
-      caseSensitive: false,
-    ).firstMatch(value);
-    if (match == null) return null;
-    final start = int.tryParse(match.group(1)!);
-    final end = int.tryParse(match.group(2)!);
-    final totalText = match.group(3)!;
-    final total = totalText == '*' ? null : int.tryParse(totalText);
-    if (start == null || end == null || end < start) return null;
-    return _ContentRange(start, end, total);
-  }
-
   /// 默认取流：绕过播放页的 2 分钟缓存直接走 `/api/content`，下载器
   /// 的生命周期独立于任何页面。这是 CDN 直链请求，不走 `_get` 漏斗
   /// （该漏斗只收后端 API；视频字节本就由原生层直连 CDN）。
@@ -625,32 +861,81 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
     );
     return EpisodeSource.fromResponse(response);
   }
-}
 
-class _ContentRange {
-  const _ContentRange(this.start, this.end, this.total);
+  DownloadResumeEntry _entryFromCompleted(
+    DownloadKey key,
+    CachedEpisode cached,
+  ) => DownloadResumeEntry(
+    key,
+    DownloadResumeStage.discarding,
+    finalOwned: true,
+    identity: DownloadIdentity(
+      containerId: cached.seriesId,
+      keyHex: cached.keyHex,
+      rendition: cached.variantName,
+      height: cached.height,
+      total: cached.bytes,
+      requestedDigest: null,
+      effectiveDigest: null,
+    ),
+    record: DownloadRecord(
+      title: cached.title,
+      index: cached.index,
+      cachedAt: cached.cachedAt,
+      auto: cached.auto,
+    ),
+  );
 
-  final int start;
-  final int end;
-  final int? total;
+  Future<void> _promoteManual(_DramaRun run) async {
+    final entry = run.entry!;
+    final record = entry.record!;
+    if (run.discardRequested || run.task!.snapshot.auto || !record.auto) return;
+    final manual = entry.at(
+      entry.stage,
+      record: DownloadRecord(
+        title: record.title,
+        index: record.index,
+        cachedAt: record.cachedAt,
+        durationMs: record.durationMs,
+      ),
+    );
+    run.previousEntry = entry;
+    if (entry.stage != DownloadResumeStage.discarding) {
+      await _journal.write(manual);
+    }
+    run.entry = manual;
+    try {
+      await _store.saveEpisode(manual.dramaEpisode(run.files!.finalFile.path));
+    } catch (_) {
+      // A failed submitted save may have left either owned snapshot. Restore
+      // the journal to the actual predecessor, never to a conflicting row.
+      if (entry.stage != DownloadResumeStage.discarding) {
+        final cached = await _store.episode(run.key.itemId);
+        if (cached != null &&
+            entry.matchesDrama(cached, run.files!.finalFile.path)) {
+          await _journal.write(entry);
+          run.entry = entry;
+        }
+      }
+      rethrow;
+    }
+  }
 }
 
 class _MutableTask {
-  _MutableTask(this.snapshot);
-
+  _MutableTask(this.snapshot, this.catalogue);
   DramaDownloadTask snapshot;
-
-  /// null=在跑；'paused'/'discarded'=请求退出。_runOnce 在每个数据块
-  /// 之间检查它，保证暂停/放弃的响应延迟只有一个数据块。
-  ///
-  /// 由 [_run] 在收尾时消费（置回 null），而不是永久置位。
-  String? abortReason;
-
-  /// 每次 resume 递增。运行循环记下进入时的值，收尾时不一致就说明任务已经
-  /// 交给新一轮，本轮不得再写状态（否则会把刚恢复的任务又写回 paused/failed）。
+  final CachedDrama catalogue;
   int generation = 0;
+  bool prepared = false;
+  bool cleanupBlocked = false;
+}
 
-  void abort(String reason) {
-    abortReason ??= reason;
-  }
+class _DramaRun extends DownloadRun {
+  _DramaRun(DownloadKey key, this.task) : super(key, task?.generation ?? 0);
+  final _MutableTask? task;
+  Future<void>? cleanupOperation;
+  int completedBytes = 0;
+  DownloadResumeEntry? previousEntry;
+  CachedEpisode? existingCached;
 }

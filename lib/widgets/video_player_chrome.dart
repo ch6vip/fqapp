@@ -825,7 +825,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       // 记账会在回到前台时把用户的手动暂停误恢复。移动端的暂停都经会话
       // 中介，现读结果与旧记账一致。
       final resumePlayer = widget.player;
+      final floating = resumePlayer?.isFloating ?? false;
       _resumeOnForeground =
+          !floating &&
           _ready &&
           ((resumePlayer?.playing ?? false) ||
               ((resumePlayer?.playWhenReady ?? false) &&
@@ -835,7 +837,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _endBoost();
       _doubleTapGuard?.cancel();
       _hideTimer?.cancel();
-      unawaited(_control((player) => player.pause()));
+      if (!floating) unawaited(_control((player) => player.pause()));
     } else if (active && !_appActive) {
       _appActive = true;
       if (_resumeOnForeground) unawaited(_control((player) => player.play()));

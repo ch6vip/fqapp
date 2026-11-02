@@ -80,6 +80,49 @@ class NativePlayer {
 
   static void Function(String action)? _onRemoteAction;
   static VoidCallback? _onBecomingNoisy;
+  static int? _floatingHandlerOwner;
+  static void Function(String action)? _onFloatingAction;
+  static final Map<int, ({NativePlayer player, bool stopped})>
+  _startingFloating = {};
+  static ({int owner, NativePlayer player})? _floatingBinding;
+  static int _floatingMove = 0;
+
+  bool get isFloating =>
+      identical(_floatingBinding?.player, this) ||
+      _startingFloating.values.any(
+        (start) => !start.stopped && identical(start.player, this),
+      );
+
+  static void _bindFloating(int owner, int playerId) {
+    final current = _floatingBinding;
+    if (current != null && current.owner > owner) return;
+    final player = _instances[playerId];
+    if (player != null) _floatingBinding = (owner: owner, player: player);
+  }
+
+  static void _clearFloatingBinding(int owner) {
+    if (_floatingBinding?.owner != owner) return;
+    ++_floatingMove;
+    _floatingBinding = null;
+  }
+
+  static void setFloatingCommandHandler({
+    required int owner,
+    required void Function(String action) onAction,
+  }) {
+    if (_floatingHandlerOwner case final int current when current > owner) {
+      return;
+    }
+    _floatingHandlerOwner = owner;
+    _onFloatingAction = onAction;
+    _channel.setMethodCallHandler(_handleMethodCall);
+  }
+
+  static void clearFloatingCommandHandler(int owner) {
+    if (_floatingHandlerOwner != owner) return;
+    _floatingHandlerOwner = null;
+    _onFloatingAction = null;
+  }
 
   static void setRemoteCommandHandler({
     void Function(String action)? onAction,
@@ -145,6 +188,24 @@ class NativePlayer {
         }
       case 'onAudioBecomingNoisy':
         _onBecomingNoisy?.call();
+      case 'onFloatingAction':
+        final raw = call.arguments;
+        if (raw is Map &&
+            raw['owner'] == _floatingHandlerOwner &&
+            raw['owner'] is int &&
+            raw['action'] is String) {
+          _onFloatingAction?.call(raw['action'] as String);
+        }
+      case 'onFloatingStopped':
+        final raw = call.arguments;
+        final owner = raw is Map ? raw['owner'] : null;
+        if (owner is int) {
+          _clearFloatingBinding(owner);
+          if (_startingFloating[owner] case final start?) {
+            _startingFloating[owner] = (player: start.player, stopped: true);
+          }
+          if (_floatingHandlerOwner == owner) _onFloatingAction?.call('stop');
+        }
     }
     return null;
   }
@@ -460,7 +521,9 @@ class NativePlayer {
   /// 悬浮窗权限：Android 需要用户在系统设置里允许“显示在其他应用的上层”。
   static Future<bool> canDrawOverlays() async {
     try {
-      final granted = await _channel.invokeMethod<bool>('canDrawOverlays');
+      final granted = await _channel
+          .invokeMethod<bool>('canDrawOverlays')
+          .timeout(_methodTimeout);
       return granted ?? false;
     } catch (_) {
       return false;
@@ -470,19 +533,41 @@ class NativePlayer {
   /// 打开系统悬浮窗权限设置页。返回 false 表示当前平台不需要或无法打开。
   static Future<bool> requestOverlayPermission() async {
     try {
-      final opened = await _channel.invokeMethod<bool>('requestOverlayPermission');
+      final opened = await _channel.invokeMethod<bool>(
+        'requestOverlayPermission',
+      );
       return opened ?? false;
     } catch (_) {
       return false;
     }
   }
 
-  /// 开始悬浮窗播放：原生侧启动悬浮窗服务，surface 就绪后把解码画面从
-  /// Flutter 纹理换到悬浮窗；悬浮窗先隐藏，等 Dart 确认切后台后再显示
-  /// （直接在后台启动前台服务会被 Android 12+ 拒绝）。
-  /// 失败时抛错（焦点被占 / 播放器不存在 / 服务启动失败），调用方据此
-  /// 决定不进悬浮、改走切后台暂停。
+  // Allocation precedes permissions and acquires no focus/service/surface.
+  static Future<int> allocateFloatingOwner() async {
+    _channel.setMethodCallHandler(_handleMethodCall);
+    var abandoned = false;
+    final operation = _channel.invokeMethod<int>('allocateFloatingOwner');
+    unawaited(
+      operation.then<void>((owner) {
+        if (abandoned && owner != null && owner > 0) {
+          unawaited(stopFloating(owner));
+        }
+      }, onError: (Object _) {}),
+    );
+    try {
+      final owner = await operation.timeout(_methodTimeout);
+      if (owner == null || owner <= 0) {
+        throw StateError('Invalid floating owner');
+      }
+      return owner;
+    } catch (_) {
+      abandoned = true;
+      rethrow;
+    }
+  }
+
   static Future<void> startFloating({
+    required int owner,
     required int playerId,
     required String title,
     required String episode,
@@ -495,34 +580,55 @@ class NativePlayer {
     int videoWidth = 0,
     int videoHeight = 0,
   }) async {
-    await _channel
-        .invokeMethod<void>('startFloating', {
-          'playerId': playerId,
-          'title': title,
-          'episode': episode,
-          'playing': playing,
-          'hasPrev': hasPrev,
-          'hasNext': hasNext,
-          'positionMs': positionMs,
-          'durationMs': durationMs,
-          'speed': speed,
-          'videoWidth': videoWidth,
-          'videoHeight': videoHeight,
-        })
-        .timeout(_methodTimeout);
-  }
-
-  /// 确认切后台，显示悬浮窗。
-  static Future<void> showFloating() async {
+    final player = _instances[playerId];
+    if (player == null) throw StateError('Floating player unavailable');
+    // Keep the submitted player's lifecycle intent until the bounded native
+    // reply settles. The page pauses it on failure if it is still backgrounded.
+    _startingFloating[owner] = (player: player, stopped: false);
     try {
-      await _channel.invokeMethod<void>('showFloating').timeout(_methodTimeout);
+      await _channel
+          .invokeMethod<void>('startFloating', {
+            'owner': owner,
+            'playerId': playerId,
+            'title': title,
+            'episode': episode,
+            'playing': playing,
+            'hasPrev': hasPrev,
+            'hasNext': hasNext,
+            'positionMs': positionMs,
+            'durationMs': durationMs,
+            'speed': speed,
+            'videoWidth': videoWidth,
+            'videoHeight': videoHeight,
+          })
+          .timeout(_methodTimeout);
+      if (_startingFloating[owner]?.stopped != false) {
+        throw StateError('Floating start retired');
+      }
+      if (_floatingBinding == null || _floatingBinding!.owner <= owner) {
+        ++_floatingMove;
+        _bindFloating(owner, playerId);
+      }
     } catch (_) {
-      // Best effort when channel/platform is unavailable or testing.
+      await stopFloating(owner);
+      rethrow;
+    } finally {
+      _startingFloating.remove(owner);
     }
   }
 
-  /// 刷新悬浮窗通知 / 控制条的播放状态（切集、播放暂停时调用）。
+  static Future<void> showFloating(int owner) async {
+    try {
+      await _channel
+          .invokeMethod<void>('showFloating', {'owner': owner})
+          .timeout(_methodTimeout);
+    } catch (_) {
+      // Retirement fences any late command on native, even after a timeout.
+    }
+  }
+
   static Future<void> updateFloating({
+    required int owner,
     String? title,
     String? episode,
     bool? playing,
@@ -535,9 +641,7 @@ class NativePlayer {
     try {
       await _channel
           .invokeMethod<void>('updateFloating', {
-            // 全量传：Kotlin 侧 call.argument 对缺 key 与 null 值都返回
-            // null，行为相同；collection-if 会被 use_null_aware_elements
-            // lint 判 info，CI 把 info 当失败。
+            'owner': owner,
             'title': title,
             'episode': episode,
             'playing': playing,
@@ -549,25 +653,41 @@ class NativePlayer {
           })
           .timeout(_methodTimeout);
     } catch (_) {
-      // Best effort when channel/platform is unavailable or testing.
+      // State updates cannot cross native ownership retirement.
     }
   }
 
-  /// 停悬浮：画面回 Flutter 纹理，停悬浮窗服务。
-  static Future<void> stopFloating() async {
+  static Future<void> stopFloating(int owner) async {
+    if (_startingFloating[owner] case final start?) {
+      _startingFloating[owner] = (player: start.player, stopped: true);
+    }
+    _clearFloatingBinding(owner);
     try {
-      await _channel.invokeMethod<void>('stopFloating').timeout(_methodTimeout);
+      await _channel
+          .invokeMethod<void>('stopFloating', {'owner': owner})
+          .timeout(_methodTimeout);
     } catch (_) {
-      // Best effort when channel/platform is unavailable or testing.
+      // An old stop never clears another owner's binding or service.
     }
   }
 
-  /// 后台自动切集：新播放器接手悬浮窗（服务不重启，避免后台启动限制）。
-  /// 接手失败时抛错，调用方只能接受悬浮窗黑屏（旧播放器已销毁）。
-  static Future<void> swapFloatingPlayer({required int playerId}) async {
+  static Future<void> swapFloatingPlayer({
+    required int owner,
+    required int playerId,
+  }) async {
+    if (_floatingBinding?.owner != owner) {
+      throw StateError('Floating owner retired');
+    }
+    final move = ++_floatingMove;
     await _channel
-        .invokeMethod<void>('swapFloatingPlayer', {'playerId': playerId})
+        .invokeMethod<void>('swapFloatingPlayer', {
+          'owner': owner,
+          'playerId': playerId,
+        })
         .timeout(_methodTimeout);
+    if (_floatingBinding?.owner == owner && _floatingMove == move) {
+      _bindFloating(owner, playerId);
+    }
   }
 
   Future<void> dispose() => _disposeFuture ??= _dispose();

@@ -259,6 +259,8 @@ class ChapterCacheStore implements ChapterCache {
     final bytes = utf8.encode(text).length;
     if (bytes > maxBytes) throw StateError('该章节超过缓存容量上限');
     final key = _key(bookId, chapterId);
+    final previous = box.get(key);
+    final keepPinned = pinned || (previous is Map && _isPinned(previous));
     final accessedAt = _touch(key);
     await box.put(key, {
       'bookId': bookId,
@@ -267,7 +269,7 @@ class ChapterCacheStore implements ChapterCache {
       'text': text,
       'bytes': bytes,
       'accessedAt': accessedAt,
-      if (pinned) 'pinned': true,
+      if (keepPinned) 'pinned': true,
     });
     await _trim(box, keepBook: bookId);
     changes.value++;

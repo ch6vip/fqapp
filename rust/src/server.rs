@@ -170,6 +170,30 @@ fn refuse(status: StatusCode, message: &str) -> Response {
 }
 
 async fn handler(State(state): State<AppState>, req: axum::extract::Request) -> Response {
+    use crate::api::{race_dispatch, RaceOutcome};
+    use futures::StreamExt;
+
+    let token = state.server.lifetime.child_token();
+    // Body collection, dispatch, retries and file setup share this deadline.
+    // The returned stream observes shutdown, not a whole-file time limit.
+    match race_dispatch(
+        &token,
+        Some(crate::upstream::budget::HTTP_REQUEST_TIMEOUT),
+        handle_request(state, req),
+    )
+    .await
+    {
+        RaceOutcome::Cancelled => refuse(StatusCode::from_u16(499).unwrap(), "request cancelled"),
+        RaceOutcome::TimedOut => refuse(StatusCode::GATEWAY_TIMEOUT, "request deadline exceeded"),
+        RaceOutcome::Done(response) => {
+            let (parts, body) = response.into_parts();
+            let stream = body.into_data_stream().take_until(token.cancelled_owned());
+            Response::from_parts(parts, Body::from_stream(stream))
+        }
+    }
+}
+
+async fn handle_request(state: AppState, req: axum::extract::Request) -> Response {
     // Refuse before touching the body so a foreign page cannot make us read it.
     if let Some(reason) = refusal(req.headers(), state.port, state.mode) {
         return refuse(StatusCode::FORBIDDEN, reason);

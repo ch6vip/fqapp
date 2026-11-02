@@ -103,6 +103,31 @@ pub(crate) fn fetch_range(
     end: u64,
     timeout: Duration,
 ) -> Result<(Vec<u8>, u64), FetchError> {
+    fetch_range_checked(client, url, start, end, timeout, None)
+}
+
+pub(crate) fn fetch_known_range(
+    client: &Client,
+    url: &str,
+    start: u64,
+    end: u64,
+    timeout: Duration,
+    total: u64,
+) -> Result<Vec<u8>, FetchError> {
+    fetch_range_checked(client, url, start, end, timeout, Some(total)).map(|(data, _)| data)
+}
+
+fn fetch_range_checked(
+    client: &Client,
+    url: &str,
+    start: u64,
+    end: u64,
+    timeout: Duration,
+    known_total: Option<u64>,
+) -> Result<(Vec<u8>, u64), FetchError> {
+    if start > end || known_total.is_some_and(|total| total == 0 || start >= total) {
+        return Err(FetchError::Protocol);
+    }
     let response = client
         .get(url)
         .header(header::RANGE, format!("bytes={start}-{end}"))
@@ -120,9 +145,10 @@ pub(crate) fn fetch_range(
         .and_then(|v| v.to_str().ok())
         .and_then(content_range)
         .ok_or(FetchError::Protocol)?;
-    let wanted_end = end.min(total.saturating_sub(1));
+    let wanted_end = end.min(total - 1);
     if actual_start != start
         || actual_end != wanted_end
+        || known_total.is_some_and(|known| known != total)
         || response
             .headers()
             .get(header::CONTENT_ENCODING)
@@ -130,10 +156,17 @@ pub(crate) fn fetch_range(
     {
         return Err(FetchError::Protocol);
     }
-    let expected = actual_end - actual_start + 1;
+    let expected = actual_end
+        .checked_sub(actual_start)
+        .and_then(|length| length.checked_add(1))
+        .ok_or(FetchError::Protocol)?;
+    let read_limit = expected.checked_add(1).ok_or(FetchError::Protocol)?;
+    if usize::try_from(read_limit).is_err() || read_limit > isize::MAX as u64 {
+        return Err(FetchError::Protocol);
+    }
     let mut data = Vec::new();
     response
-        .take(expected + 1)
+        .take(read_limit)
         .read_to_end(&mut data)
         .map_err(|_| FetchError::Timeout)?;
     if data.len() as u64 != expected {
@@ -153,7 +186,13 @@ pub(crate) fn with_retries<T>(
             return Err(FetchError::Cancelled);
         }
         match attempt() {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                return if cancelled.load(Ordering::Acquire) {
+                    Err(FetchError::Cancelled)
+                } else {
+                    Ok(value)
+                }
+            }
             Err(error) if error.retryable() => last = error,
             Err(error) => return Err(error),
         }
@@ -161,13 +200,18 @@ pub(crate) fn with_retries<T>(
             thread::sleep(*delay);
         }
     }
-    Err(last)
+    Err(if cancelled.load(Ordering::Acquire) {
+        FetchError::Cancelled
+    } else {
+        last
+    })
 }
 
 fn content_range(value: &str) -> Option<(u64, u64, u64)> {
     let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
     let (start, end) = range.split_once('-')?;
-    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
+    let (start, end, total) = (start.parse().ok()?, end.parse().ok()?, total.parse().ok()?);
+    (start <= end && end < total).then_some((start, end, total))
 }
 
 #[cfg(test)]

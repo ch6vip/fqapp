@@ -58,6 +58,7 @@ import java.io.EOFException
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /** 播放器日志 tag：类内与顶层 [buildPlayer] 共用，避免两处字面量漂移。 */
 internal const val PLAYER_LOG_TAG = "NativePlayerPlugin"
@@ -89,6 +90,70 @@ class NativePlayerPlugin internal constructor(
         private const val POST_NOTIFICATIONS_REQUEST = 7412
 
         @Volatile private var instance: NativePlayerPlugin? = null
+        private val floatingOwners = AtomicLong(0)
+        private val floatingSurfaces = AtomicLong(0)
+        private var latestFloatingStart = 0L
+        private var retiredFloatingOwner = 0L
+        @Volatile private var currentFloating: FloatingAllocation? = null
+
+        internal fun desiredFloatingOwner(): Long? = currentFloating?.owner
+
+        internal fun floatingState(owner: Long): Map<String, Any?>? =
+            currentFloating?.takeIf { it.owner == owner }?.state?.toMap()
+
+        internal fun floatingVisible(owner: Long): Boolean =
+            currentFloating?.takeIf { it.owner == owner }?.visible == true
+
+        internal fun allocateFloatingSurface(): Long = floatingSurfaces.incrementAndGet().also {
+            check(it > 0) { "Floating surface IDs exhausted" }
+        }
+
+        internal fun dispatchFloatingSurfaceReady(owner: Long, surfaceId: Long, surface: android.view.Surface) {
+            val allocation = currentFloating?.takeIf { it.owner == owner } ?: return
+            allocation.plugin.handler.post {
+                if (currentFloating === allocation) {
+                    allocation.plugin.attachFloatingSurface(allocation, surfaceId, surface)
+                }
+            }
+        }
+
+        internal fun dispatchFloatingSurfaceDestroyed(owner: Long, surfaceId: Long) {
+            val allocation = currentFloating?.takeIf { it.owner == owner } ?: return
+            allocation.plugin.handler.post {
+                if (currentFloating === allocation) {
+                    allocation.plugin.detachFloatingSurface(allocation, surfaceId)
+                }
+            }
+        }
+
+        internal fun dispatchFloatingAction(owner: Long, action: String) {
+            val allocation = currentFloating?.takeIf { it.owner == owner } ?: return
+            val dispatch = {
+                if (currentFloating === allocation && allocation.plugin.attachedToEngine) {
+                    allocation.plugin.methodChannel.invokeMethod(
+                        "onFloatingAction", mapOf("owner" to owner, "action" to action)
+                    )
+                }
+            }
+            if (Looper.myLooper() == Looper.getMainLooper()) dispatch()
+            else allocation.plugin.handler.post { dispatch() }
+        }
+
+        // New START admission uses high waters; accepted callbacks use exact
+        // allocation identity, even after a higher pending token was retired.
+        internal fun retireFloatingOwner(owner: Long, pause: Boolean = false) {
+            if (owner <= 0 || owner > floatingOwners.get()) return
+            retiredFloatingOwner = maxOf(retiredFloatingOwner, owner)
+            val allocation = currentFloating?.takeIf { it.owner == owner }
+            try {
+                if (allocation != null) {
+                    currentFloating = null
+                    allocation.plugin.releaseFloatingAllocation(allocation, pause)
+                }
+            } finally {
+                FloatingVideoService.retire(owner)
+            }
+        }
 
         fun dispatchNotificationAction(action: String) {
             instance?.let { plugin ->
@@ -119,13 +184,25 @@ class NativePlayerPlugin internal constructor(
     private val nextId = AtomicInteger(1)
     private val handler = Handler(Looper.getMainLooper())
 
-    /** 正在悬浮窗里播的播放器；null 表示没有悬浮播放。 */
-    private var floatingPlayerId: Int? = null
-    private var floatingSurfaceAttached = false
-    private var floatingSurface: android.view.Surface? = null
-    private var floatingFocusRequest: Any? = null
-    private var floatingFocusListener: AudioManager.OnAudioFocusChangeListener? = null
-    private var floatingVolumeBeforeDuck: Float? = null
+    private var floatingAllocation: FloatingAllocation? = null
+
+    private class FloatingAllocation(
+        val owner: Long,
+        val plugin: NativePlayerPlugin,
+        var player: PlayerInstance?,
+        val state: MutableMap<String, Any?>
+    ) {
+        var visible = false
+        var surface: android.view.Surface? = null
+        var surfaceId: Long? = null
+        var newestSurfaceId = 0L
+        var attachedPlayer: PlayerInstance? = null
+        var audioManager: AudioManager? = null
+        var focusRequest: Any? = null
+        var focusListener: AudioManager.OnAudioFocusChangeListener? = null
+        var ducked = false
+        var duckedPlayer: Pair<PlayerInstance, Float>? = null
+    }
 
     /**
      * 播放页「上下滑动调亮度」覆盖的窗口亮度。null = 当前没有覆盖；存起来
@@ -246,9 +323,17 @@ class NativePlayerPlugin internal constructor(
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         attachedToEngine = false
         if (instance === this) instance = null
-        stopFloatingInternal()
-        FloatingVideoService.onSurfaceReady = null
-        FloatingVideoService.onSurfaceDestroyed = null
+        floatingAllocation?.let { allocation ->
+            try {
+                if (currentFloating === allocation) retireFloatingOwner(allocation.owner)
+                else {
+                    try { releaseFloatingAllocation(allocation, false) }
+                    finally { FloatingVideoService.retire(allocation.owner) }
+                }
+            } catch (error: Throwable) {
+                Log.w(TAG, "floating detach failed: ${error.javaClass.simpleName}")
+            }
+        }
         activityBinding?.removeRequestPermissionsResultListener(this)
         activityBinding = null
         activity = null
@@ -604,118 +689,102 @@ class NativePlayerPlugin internal constructor(
                 }
             }
 
+            "allocateFloatingOwner" -> {
+                val owner = floatingOwners.incrementAndGet()
+                if (owner <= 0) result.error("FLOATING_OWNER_EXHAUSTED", "Floating IDs exhausted", null)
+                else result.success(owner)
+            }
+
             "startFloating" -> {
+                val owner = floatingOwner(call, result) ?: return
                 val id = call.argument<Int>("playerId")
-                val instance = id?.let { players[it] }
-                if (instance == null) {
-                    result.error("FLOATING_NO_PLAYER", "悬浮窗播放器不存在", null)
+                val player = id?.let { players[it] }
+                if (!attachedToEngine || player == null) {
+                    retireFloatingOwner(owner)
+                    result.error("FLOATING_NO_PLAYER", "Floating player unavailable", null)
                     return
                 }
-                if (!requestFloatingFocus()) {
-                    // 焦点被电话等独占时不抢声，交给 Dart 侧暂停。
-                    floatingFocusListener = null
-                    floatingFocusRequest = null
-                    result.error("FLOATING_FOCUS_DENIED", "音频焦点被占用，暂不悬浮", null)
+                val current = currentFloating
+                if (current?.owner == owner && current.plugin === this) {
+                    result.success(null)
                     return
                 }
-                floatingPlayerId = id
-                FloatingVideoService.onSurfaceReady = { surface ->
-                    handler.post { onFloatingSurfaceReady(surface) }
+                if (owner <= latestFloatingStart || owner <= retiredFloatingOwner) {
+                    result.error("FLOATING_RETIRED", "Floating start superseded", null)
+                    return
                 }
-                FloatingVideoService.onSurfaceDestroyed = {
-                    handler.post { onFloatingSurfaceDestroyed() }
-                }
-                val extras = mapOf<String, Any?>(
-                    FloatingVideoService.EXTRA_TITLE to call.argument<String>("title"),
-                    FloatingVideoService.EXTRA_EPISODE to call.argument<String>("episode"),
-                    FloatingVideoService.EXTRA_PLAYING to
-                        (call.argument<Boolean>("playing") ?: true),
-                    FloatingVideoService.EXTRA_HAS_PREV to
-                        (call.argument<Boolean>("hasPrev") ?: true),
-                    FloatingVideoService.EXTRA_HAS_NEXT to
-                        (call.argument<Boolean>("hasNext") ?: true),
-                    FloatingVideoService.EXTRA_POSITION_MS to
-                        (call.argument<Number>("positionMs")?.toLong() ?: 0L),
-                    FloatingVideoService.EXTRA_DURATION_MS to
-                        (call.argument<Number>("durationMs")?.toLong() ?: 0L),
-                    FloatingVideoService.EXTRA_SPEED to
-                        (call.argument<Number>("speed")?.toFloat() ?: 1f),
-                    FloatingVideoService.EXTRA_VIDEO_WIDTH to
-                        (call.argument<Number>("videoWidth")?.toInt() ?: 0),
-                    FloatingVideoService.EXTRA_VIDEO_HEIGHT to
-                        (call.argument<Number>("videoHeight")?.toInt() ?: 0)
-                )
+                latestFloatingStart = owner
+                val allocation = FloatingAllocation(owner, this, player,
+                    floatingExtras(call).filterValues { it != null }.toMutableMap())
+                currentFloating = allocation
+                floatingAllocation = allocation
                 try {
-                    FloatingVideoService.start(
-                        activity ?: flutterBinding.applicationContext,
-                        extras
-                    )
+                    if (current != null) {
+                        retiredFloatingOwner = maxOf(retiredFloatingOwner, current.owner)
+                        try {
+                            current.plugin.releaseFloatingAllocation(current, current.player !== player)
+                        } finally {
+                            FloatingVideoService.retire(current.owner)
+                        }
+                    }
+                    if (!requestFloatingFocus(allocation)) {
+                        retireFloatingOwner(owner, pause = true)
+                        result.error("FLOATING_FOCUS_DENIED", "Floating audio focus denied", null)
+                        return
+                    }
+                    FloatingVideoService.start(activity ?: flutterBinding.applicationContext, owner)
                     result.success(null)
                 } catch (error: Throwable) {
-                    Log.w(TAG, "floating start failed", error)
-                    stopFloatingInternal()
-                    result.error("FLOATING_START_FAILED", "悬浮窗启动失败", null)
+                    Log.w(TAG, "floating start failed: ${error.javaClass.simpleName}")
+                    try { retireFloatingOwner(owner, pause = true) }
+                    catch (cleanup: Throwable) {
+                        Log.w(TAG, "floating cleanup failed: ${cleanup.javaClass.simpleName}")
+                    }
+                    result.error("FLOATING_START_FAILED", "Floating start failed", null)
                 }
             }
 
             "showFloating" -> {
-                try {
-                    FloatingVideoService.show(activity ?: flutterBinding.applicationContext)
-                } catch (error: Throwable) {
-                    Log.w(TAG, "floating show failed", error)
+                val owner = floatingOwner(call, result) ?: return
+                ownedFloating(owner)?.let {
+                    it.visible = true
+                    FloatingVideoService.show(owner)
                 }
                 result.success(null)
             }
 
             "updateFloating" -> {
-                val extras = mapOf<String, Any?>(
-                    FloatingVideoService.EXTRA_TITLE to call.argument<String>("title"),
-                    FloatingVideoService.EXTRA_EPISODE to call.argument<String>("episode"),
-                    FloatingVideoService.EXTRA_PLAYING to call.argument<Boolean>("playing"),
-                    FloatingVideoService.EXTRA_HAS_PREV to call.argument<Boolean>("hasPrev"),
-                    FloatingVideoService.EXTRA_HAS_NEXT to call.argument<Boolean>("hasNext"),
-                    FloatingVideoService.EXTRA_POSITION_MS to
-                        call.argument<Number>("positionMs")?.toLong(),
-                    FloatingVideoService.EXTRA_DURATION_MS to
-                        call.argument<Number>("durationMs")?.toLong(),
-                    FloatingVideoService.EXTRA_SPEED to
-                        call.argument<Number>("speed")?.toFloat()
-                )
-                try {
-                    FloatingVideoService.update(
-                        activity ?: flutterBinding.applicationContext,
-                        extras
-                    )
-                } catch (error: Throwable) {
-                    Log.w(TAG, "floating update failed", error)
+                val owner = floatingOwner(call, result) ?: return
+                ownedFloating(owner)?.let { allocation ->
+                    val extras = floatingExtras(call).filterValues { it != null }
+                    allocation.state.putAll(extras)
+                    FloatingVideoService.update(owner, extras)
                 }
                 result.success(null)
             }
 
             "stopFloating" -> {
-                stopFloatingInternal()
+                val owner = floatingOwner(call, result) ?: return
+                retireFloatingOwner(owner)
                 result.success(null)
             }
 
             "swapFloatingPlayer" -> {
-                // 后台自动切集：旧播放器已销毁，新播放器接手悬浮窗。服务不重启，
-                // 避免在后台触发前台服务启动限制；只换 surface 绑定。
+                val owner = floatingOwner(call, result) ?: return
+                val allocation = ownedFloating(owner)
                 val id = call.argument<Int>("playerId")
-                val instance = id?.let { players[it] }
-                val surface = floatingSurface
-                if (instance == null || surface == null) {
-                    result.error("FLOATING_SWAP_FAILED", "悬浮窗 surface 不可用", null)
+                val player = id?.let { players[it] }
+                if (allocation == null || player == null) {
+                    result.error("FLOATING_SWAP_FAILED", "Floating owner/player unavailable", null)
                     return
                 }
-                floatingPlayerId = id
                 try {
-                    instance.videoOutput.detachForFloating()
-                    instance.videoOutput.attachFloating(surface)
-                    floatingSurfaceAttached = true
+                    moveFloatingPlayer(allocation, player)
                     result.success(null)
                 } catch (error: Throwable) {
-                    Log.w(TAG, "floating swap failed", error)
-                    result.error("FLOATING_SWAP_FAILED", "悬浮窗接手失败", null)
+                    Log.w(TAG, "floating swap failed: ${error.javaClass.simpleName}")
+                    retireFloatingOwner(owner, pause = true)
+                    result.error("FLOATING_SWAP_FAILED", "Floating swap failed", null)
                 }
             }
 
@@ -1015,162 +1084,187 @@ class NativePlayerPlugin internal constructor(
         }
     }
 
-    /**
-     * 悬浮窗 surface 就绪：把解码画面从 Flutter 纹理换到悬浮窗。
-     * 只在仍处于悬浮状态时换，迟到的回调（服务已停）直接丢弃。
-     */
-    private fun onFloatingSurfaceReady(surface: android.view.Surface) {
-        floatingSurface = surface
-        val id = floatingPlayerId ?: return
-        val instance = players[id] ?: return
+    private fun floatingOwner(call: MethodCall, result: MethodChannel.Result): Long? {
+        val raw = call.argument<Any>("owner")
+        val owner = when (raw) { is Long -> raw; is Int -> raw.toLong(); else -> 0L }
+        if (owner <= 0 || owner > floatingOwners.get()) {
+            result.error("FLOATING_BAD_OWNER", "Allocated floating owner required", null)
+            return null
+        }
+        return owner
+    }
+
+    private fun ownedFloating(owner: Long): FloatingAllocation? = currentFloating?.takeIf {
+        it.owner == owner && it.plugin === this && floatingAllocation === it
+    }
+
+    private fun floatingExtras(call: MethodCall): Map<String, Any?> = mapOf(
+        FloatingVideoService.EXTRA_TITLE to call.argument<String>("title"),
+        FloatingVideoService.EXTRA_EPISODE to call.argument<String>("episode"),
+        FloatingVideoService.EXTRA_PLAYING to call.argument<Boolean>("playing"),
+        FloatingVideoService.EXTRA_HAS_PREV to call.argument<Boolean>("hasPrev"),
+        FloatingVideoService.EXTRA_HAS_NEXT to call.argument<Boolean>("hasNext"),
+        FloatingVideoService.EXTRA_POSITION_MS to call.argument<Number>("positionMs")?.toLong(),
+        FloatingVideoService.EXTRA_DURATION_MS to call.argument<Number>("durationMs")?.toLong(),
+        FloatingVideoService.EXTRA_SPEED to call.argument<Number>("speed")?.toFloat(),
+        FloatingVideoService.EXTRA_VIDEO_WIDTH to call.argument<Number>("videoWidth")?.toInt(),
+        FloatingVideoService.EXTRA_VIDEO_HEIGHT to call.argument<Number>("videoHeight")?.toInt()
+    )
+
+    private fun attachFloatingSurface(allocation: FloatingAllocation, surfaceId: Long, surface: android.view.Surface) {
+        if (surfaceId <= allocation.newestSurfaceId) return
+        allocation.newestSurfaceId = surfaceId
+        // A queued creation may already have been destroyed by WindowManager.
+        if (!surface.isValid) return
+        allocation.surfaceId = surfaceId
+        allocation.surface = surface
+        val player = allocation.player ?: return
+        if (players[player.id] !== player) return
         try {
-            instance.videoOutput.detachForFloating()
-            instance.videoOutput.attachFloating(surface)
-            floatingSurfaceAttached = true
+            allocation.attachedPlayer = player
+            player.videoOutput.detachForFloating()
+            player.videoOutput.attachFloating(surface)
         } catch (error: Throwable) {
-            Log.w(TAG, "floating surface attach failed", error)
+            Log.w(TAG, "floating surface attach failed: ${error.javaClass.simpleName}")
+            retireFloatingOwner(allocation.owner, pause = true)
         }
     }
 
-    /** 悬浮窗 surface 销毁：画面回落到 Flutter 纹理，声音继续（服务还在就还在）。 */
-    private fun onFloatingSurfaceDestroyed() {
-        floatingSurface = null
-        val id = floatingPlayerId ?: return
-        if (!floatingSurfaceAttached) return
-        floatingSurfaceAttached = false
+    private fun restoreFloatingPlayer(allocation: FloatingAllocation) {
+        val player = allocation.attachedPlayer
+        allocation.attachedPlayer = null
+        if (player == null || players[player.id] !== player) return
+        if (currentFloating !== allocation && currentFloating?.attachedPlayer === player) return
         try {
-            players[id]?.videoOutput?.restoreFromFloating()
+            player.videoOutput.restoreFromFloating()
         } catch (error: Throwable) {
-            Log.w(TAG, "floating surface restore failed", error)
+            Log.w(TAG, "floating surface restore failed: ${error.javaClass.simpleName}")
         }
     }
 
-    /** 停悬浮：画面先回 Flutter 纹理，再停服务，避免销毁回调重复恢复。 */
-    private fun stopFloatingInternal() {
-        val id = floatingPlayerId
-        floatingPlayerId = null
-        floatingSurface = null
-        abandonFloatingFocus()
-        if (id != null && floatingSurfaceAttached) {
-            floatingSurfaceAttached = false
+    private fun detachFloatingSurface(allocation: FloatingAllocation, surfaceId: Long) {
+        if (allocation.surfaceId != surfaceId) return
+        allocation.surface = null
+        allocation.surfaceId = null
+        restoreFloatingPlayer(allocation)
+    }
+
+    private fun moveFloatingPlayer(allocation: FloatingAllocation, player: PlayerInstance) {
+        if (allocation.player === player && allocation.attachedPlayer === player) return
+        restoreFloatingPlayer(allocation)
+        restoreFloatingVolume(allocation)
+        allocation.player = player
+        if (allocation.ducked) duckFloatingPlayer(allocation)
+        allocation.surface?.takeIf { it.isValid }?.let { surface ->
+            allocation.attachedPlayer = player
+            player.videoOutput.detachForFloating()
+            player.videoOutput.attachFloating(surface)
+        }
+    }
+
+    private fun releaseFloatingAllocation(allocation: FloatingAllocation, pause: Boolean) {
+        if (floatingAllocation === allocation) floatingAllocation = null
+        if (pause) allocation.player?.takeIf { players[it.id] === it }?.let {
+            try { it.player.pause() } catch (_: Throwable) { }
+        }
+        restoreFloatingPlayer(allocation)
+        allocation.surface = null
+        allocation.surfaceId = null
+        abandonFloatingFocus(allocation)
+        allocation.player = null
+        if (attachedToEngine) {
             try {
-                players[id]?.videoOutput?.restoreFromFloating()
+                methodChannel.invokeMethod("onFloatingStopped", mapOf("owner" to allocation.owner))
             } catch (error: Throwable) {
-                Log.w(TAG, "floating restore failed", error)
+                Log.w(TAG, "floating retirement delivery failed: ${error.javaClass.simpleName}")
             }
-        }
-        FloatingVideoService.onSurfaceReady = null
-        FloatingVideoService.onSurfaceDestroyed = null
-        try {
-            FloatingVideoService.stop(flutterBinding.applicationContext)
-        } catch (error: Throwable) {
-            Log.w(TAG, "floating stop failed", error)
         }
     }
 
-    /**
-     * 悬浮播放期间独占音频焦点：电话、其他媒体进来时暂停而不是混音；
-     * 短暂可降音（duck）时只降音量，焦点回来后恢复音量、但不自动续播。
-     */
-    private fun requestFloatingFocus(): Boolean {
-        val context = flutterBinding.applicationContext
-        val audioManager =
-            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                ?: return false
+    private fun duckFloatingPlayer(allocation: FloatingAllocation) {
+        val player = allocation.player ?: return
+        if (allocation.duckedPlayer?.first === player) return
+        allocation.duckedPlayer = player to player.player.volume
+        try { player.player.volume = (player.player.volume * 0.2f).coerceIn(0f, 1f) }
+        catch (_: Throwable) { }
+    }
+
+    private fun restoreFloatingVolume(allocation: FloatingAllocation) {
+        val previous = allocation.duckedPlayer
+        allocation.duckedPlayer = null
+        if (previous != null && players[previous.first.id] === previous.first) {
+            try { previous.first.player.volume = previous.second } catch (_: Throwable) { }
+        }
+    }
+
+    private fun requestFloatingFocus(allocation: FloatingAllocation): Boolean {
+        val manager = flutterBinding.applicationContext.getSystemService(Context.AUDIO_SERVICE)
+            as? AudioManager ?: return false
+        allocation.audioManager = manager
         val listener = AudioManager.OnAudioFocusChangeListener { change ->
-            val id = floatingPlayerId ?: return@OnAudioFocusChangeListener
-            val instance = players[id] ?: return@OnAudioFocusChangeListener
-            when (change) {
-                AudioManager.AUDIOFOCUS_LOSS,
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    try {
-                        instance.player.pause()
-                    } catch (_: Throwable) {
+            handler.post {
+                if (currentFloating !== allocation) return@post
+                val player = allocation.player?.takeIf { players[it.id] === it } ?: return@post
+                when (change) {
+                    AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                        try { player.player.pause() } catch (_: Throwable) { }
+                        val state = mapOf(FloatingVideoService.EXTRA_PLAYING to false)
+                        allocation.state.putAll(state)
+                        FloatingVideoService.update(allocation.owner, state)
                     }
-                    FloatingVideoService.update(
-                        context,
-                        mapOf(FloatingVideoService.EXTRA_PLAYING to false)
-                    )
-                }
-
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                    if (floatingVolumeBeforeDuck == null) {
-                        floatingVolumeBeforeDuck = instance.player.volume
-                        try {
-                            instance.player.volume =
-                                (instance.player.volume * 0.2f).coerceIn(0f, 1f)
-                        } catch (_: Throwable) {
-                        }
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                        allocation.ducked = true
+                        duckFloatingPlayer(allocation)
                     }
-                }
-
-                AudioManager.AUDIOFOCUS_GAIN -> {
-                    floatingVolumeBeforeDuck?.let { volume ->
-                        floatingVolumeBeforeDuck = null
-                        try {
-                            instance.player.volume = volume
-                        } catch (_: Throwable) {
-                        }
+                    AudioManager.AUDIOFOCUS_GAIN -> {
+                        allocation.ducked = false
+                        restoreFloatingVolume(allocation)
                     }
                 }
             }
         }
-        floatingFocusListener = listener
+        allocation.focusListener = listener
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                        .build()
-                )
-                .setOnAudioFocusChangeListener(listener)
-                .build()
-            floatingFocusRequest = request
-            audioManager.requestAudioFocus(request) ==
-                AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build())
+                .setOnAudioFocusChangeListener(listener, handler).build()
+            allocation.focusRequest = request
+            manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         } else {
             @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(
-                listener,
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN
-            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            manager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
     }
 
-    private fun abandonFloatingFocus() {
-        val listener = floatingFocusListener
-        floatingFocusListener = null
-        floatingVolumeBeforeDuck = null
-        val context = flutterBinding.applicationContext
-        // 单元测试的 mock Context 不提供系统服务；缺 AudioManager 时只是没有
-        // 焦点可放弃，不能让 detach 抛异常。
-        val audioManager =
-            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-        val request = floatingFocusRequest
-        floatingFocusRequest = null
-        if (request != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                audioManager.abandonAudioFocusRequest(request as AudioFocusRequest)
-            } catch (_: Throwable) {
+    private fun abandonFloatingFocus(allocation: FloatingAllocation) {
+        restoreFloatingVolume(allocation)
+        allocation.ducked = false
+        val listener = allocation.focusListener
+        val request = allocation.focusRequest
+        val manager = allocation.audioManager
+        allocation.focusListener = null
+        allocation.focusRequest = null
+        allocation.audioManager = null
+        try {
+            if (request != null && manager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.abandonAudioFocusRequest(request as AudioFocusRequest)
+            } else if (listener != null && manager != null) {
+                @Suppress("DEPRECATION")
+                manager.abandonAudioFocus(listener)
             }
-        } else if (listener != null) {
-            @Suppress("DEPRECATION")
-            try {
-                audioManager.abandonAudioFocus(listener)
-            } catch (_: Throwable) {
-            }
-        }
+        } catch (_: Throwable) { }
     }
 
     private fun disposePlayer(id: Int) {
-        if (id == floatingPlayerId) {
-            // 悬浮播放器销毁（通常是后台自动切集）：服务与悬浮窗留着，等 Dart
-            // 用 swapFloatingPlayer 把新播放器接进来；页面关闭时 Dart 会
-            // 显式调 stopFloating，不会留下幽灵窗口。
-            floatingPlayerId = null
-            floatingSurfaceAttached = false
+        floatingAllocation?.let { allocation ->
+            if (allocation.player?.id == id) {
+                allocation.player = null
+                allocation.attachedPlayer = null
+                allocation.duckedPlayer = null
+            }
         }
         // Only a still-pending request may allocate. A queued create callback
         // must stay cancelled even if the platform thread stalls.

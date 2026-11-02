@@ -45,7 +45,12 @@ internal class NativeVideoOutput(
     }
 
     override fun onSurfaceAvailable() {
-        if (released || swapped || floating || !needsSurface) return
+        if (released || swapped) return
+        if (floating) {
+            needsSurface = false
+            return
+        }
+        if (!needsSurface) return
         // A restored producer may return a different Surface. Never keep the
         // Surface returned before cleanup or bind it back to the decoder.
         player.setVideoSurface(producer.surface)
@@ -53,13 +58,8 @@ internal class NativeVideoOutput(
     }
 
     override fun onSurfaceCleanup() {
-        if (released) return
-        if (swapped) {
-            if (needsSurface) return
-            needsSurface = true
-            player.clearVideoSurface()
-            return
-        }
+        // Producer callbacks no longer own the replacement SurfaceTexture.
+        if (released || swapped) return
         val wasNeeding = needsSurface
         needsSurface = true
         // While floating the overlay owns the surface; only remember that the
@@ -72,7 +72,6 @@ internal class NativeVideoOutput(
     fun detachForFloating() {
         if (released) return
         floating = true
-        if (!swapped) needsSurface = true
         player.clearVideoSurface()
     }
 
@@ -119,7 +118,7 @@ internal class NativeVideoOutput(
         val entry = textureRegistry.createSurfaceTexture()
         val surface = Surface(entry.surfaceTexture())
         try {
-            player.setVideoSurface(surface)
+            if (!floating) player.setVideoSurface(surface)
         } catch (error: Throwable) {
             try {
                 surface.release()
@@ -131,6 +130,12 @@ internal class NativeVideoOutput(
             }
             throw error
         }
+        // Publish the replacement before releasing the old producer: cleanup
+        // may run synchronously even if removing its callback fails.
+        surfaceTextureEntry = entry
+        surfaceTextureSurface = surface
+        swapped = true
+        needsSurface = false
         try {
             producer.setCallback(null)
         } catch (_: Throwable) {
@@ -139,9 +144,6 @@ internal class NativeVideoOutput(
             producer.release()
         } catch (_: Throwable) {
         }
-        surfaceTextureEntry = entry
-        surfaceTextureSurface = surface
-        swapped = true
         return entry.id()
     }
 
