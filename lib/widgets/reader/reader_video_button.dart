@@ -236,7 +236,8 @@ class _ReaderVideoButtonState extends State<ReaderVideoButton>
                   ? const SizedBox.square(
                       dimension: kReaderActionSize,
                       child: Center(
-                        child: Text('看', style: TextStyle(fontSize: 24)),
+                        // 与「听」同一个上界：42 圆里字号 ≤ 42/√2 ≈ 29。
+                        child: Text('看', style: TextStyle(fontSize: 28)),
                       ),
                     )
                   : Image.asset(
