@@ -2,10 +2,12 @@ part of '../reader_page.dart';
 
 /// Opening the listening player and mapping the page to a playback position.
 extension _ReaderPageListeningLaunch on _ReaderPageState {
-  /// Local books use system TTS; the settings/selection paths offer both sources.
+  /// 入口开哪个播放器由设置里的偏好决定（[AudioPreferences.listenEngine]）；
+  /// 本地书没有服务端音频，固定系统朗读。面板不再挡在入口前，换引擎在听书
+  /// 胶囊的三点里。
   ///
-  /// [fromPage] skips the source sheet and starts from this page directly —
-  /// shared by the round entry and the sync pill's 「从本页听」.
+  /// [fromPage] 从当前页第一段起播、且不推进听书页 —— 圆钮听书与底部胶囊的
+  /// 「从本页听」共用。它只决定起点和是否推页，不决定引擎。
   Future<void> _openListening({
     int? fromMs,
     int? textId,
@@ -18,7 +20,12 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       textId ??= anchor.textId;
     }
     final chapterId = _chapter.itemId;
-    var system = widget.localOnly;
+    // 入口不再问引擎：按设置里存的偏好走。本地书没有服务端音频，固定
+    // 系统朗读；其余书听用户的——偏好为系统朗读就直接起 TTS，否则走
+    // 听书页（默认智能朗读）。换引擎在听书胶囊的三点里，不挡在入口前。
+    var system =
+        widget.localOnly ||
+        AudioPreferences.instance.listenEngine.value == ListenEngine.system;
     if (!system) {
       if (fromPage) {
         await _openUpstreamListening(
@@ -49,6 +56,13 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         return;
       }
       system = choice == 2;
+      // 记住这次的选择：设置面板里换过引擎，之后入口就直接按它起播，
+      // 不再每次弹面板。
+      unawaited(
+        AudioPreferences.instance.setListenEngine(
+          system ? ListenEngine.system : ListenEngine.smart,
+        ),
+      );
     }
     if (!system) {
       await _openUpstreamListening(fromMs: fromMs, textId: textId);
@@ -110,7 +124,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     }
   }
 
-  /// 听书方式选择：0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
+  /// 选择播放引擎：0 = 智能朗读（作品音频），1 = 从本页播放，2 = 系统朗读（手机 TTS）。
   ///
   /// 面板骨架走 ReaderSettingsSheetFrame；路由透明，底色 / 圆角由 frame
   /// 按阅读 preset 画出。
@@ -398,8 +412,8 @@ class _ListeningSourceSheet extends StatelessWidget {
       _row(
         context,
         icon: LucideIcons.headphones,
-        title: '听书',
-        subtitle: '使用作品自带音频与音色',
+        title: '智能朗读',
+        subtitle: '作品自带朗读音频，音色可换，需要联网',
         value: 0,
       ),
       _row(
@@ -413,7 +427,7 @@ class _ListeningSourceSheet extends StatelessWidget {
         context,
         icon: LucideIcons.mic,
         title: '系统朗读',
-        subtitle: '使用手机已安装的 TTS 引擎',
+        subtitle: '手机已装的 TTS 引擎，离线可用，音色由系统决定',
         value: 2,
       ),
     ],

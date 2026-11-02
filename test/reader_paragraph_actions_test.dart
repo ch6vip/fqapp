@@ -12,6 +12,7 @@ import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_underline_store.dart';
+import 'package:fqapp/widgets/reader/reader_listen_button.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
 import 'package:fqapp/widgets/reader/reader_text_selection.dart';
@@ -130,6 +131,19 @@ Future<void> _longPressParagraph(WidgetTester tester, int paraIndex) async {
   await tester.pumpAndSettle();
   await tester.longPress(finder);
   await tester.pumpAndSettle();
+}
+
+/// 收起播放链路留下的定时器。
+///
+/// 起播之后 `_AudioPlaybackController._fetchSource` 会挂一条「单次 30 秒截止
+/// + 最多 3 次重试」的定时器链（`retryTransient`）。测试环境的网络是桩，请求
+/// 一律失败，所以测试结束前必须把这条链跑完：只把 widget 树换掉不够，框架
+/// 仍会断言「widget 树销毁后仍有 Timer」。
+Future<void> _drainPlaybackRetries(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  for (var attempt = 0; attempt < 4; attempt++) {
+    await tester.pump(const Duration(seconds: 31));
+  }
 }
 
 /// Drags the end handle into the next paragraph with two slop-crossing
@@ -291,7 +305,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
+    // 听书只有一个入口（工具栏那个按钮），长按不再给「从本段听」。
+    expect(find.text('从本段听'), findsNothing);
   });
 
   // The official bar takes u_ #FF303030 by day and s7 #FF1C1C1C at night
@@ -403,13 +418,11 @@ void main() {
 
     const full = '“对不起......”';
     await _longPressParagraph(tester, 0);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
 
     // Pull the end handle into the next paragraph: the selection grows past
-    // its paragraph, and the bar reopens without 从本段听 (a dragged range
-    // cannot anchor it).
+    // its paragraph and the bar reopens on the dragged range.
     await _dragEndHandleIntoNextParagraph(tester);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsNothing);
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('reader-action-copy')));
@@ -527,7 +540,6 @@ void main() {
 
     await _longPressParagraph(tester, 0);
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('reader-action-underline')),
       findsOneWidget,
@@ -560,9 +572,7 @@ void main() {
     expect(store.entries, isEmpty);
   });
 
-  testWidgets('long-pressing a paragraph offers 复制 / 从本段听 / 划线', (
-    tester,
-  ) async {
+  testWidgets('long-pressing a paragraph offers 复制 / 划线', (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_app(_MemoryUnderlines()));
@@ -570,7 +580,6 @@ void main() {
 
     await _longPressParagraph(tester, 0);
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('reader-action-underline')),
       findsOneWidget,
@@ -581,7 +590,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('local-only paragraph actions offer 从本段听 via system TTS', (tester) async {
+  testWidgets('local-only long press has no listening item either', (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_app(_MemoryUnderlines(), localOnly: true));
@@ -589,8 +598,7 @@ void main() {
 
     await _longPressParagraph(tester, 0);
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
-    expect(find.text('从本段听'), findsOneWidget);
+    expect(find.text('从本段听'), findsNothing);
     expect(
       find.byKey(const ValueKey('reader-action-underline')),
       findsOneWidget,
@@ -663,52 +671,48 @@ void main() {
     expect(find.text('已取消划线'), findsOneWidget);
   });
 
-  testWidgets('从本段听 opens the listening page for this chapter', (tester) async {
+  testWidgets('听书入口直接用默认引擎起播，起点是当前页第一段', (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_app(_MemoryUnderlines()));
     await tester.pumpAndSettle();
 
-    await _longPressParagraph(tester, 1);
-    await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
-    await tester.pumpAndSettle();
+    // 默认引擎是智能朗读，起播走「后台起播、不跳页」，用起播缝接住请求。
+    AudioPage? started;
+    AudioPlaybackScope.startListeningOverride = (context, request) async {
+      started = request;
+      return true;
+    };
+    addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-    // The listening page is pushed on top of the reader for this chapter.
-    await tester.tap(find.text('听书'));
+    await tester.tapAt(
+      tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
+    );
     await tester.pumpAndSettle();
-    expect(find.byType(AudioPage), findsOneWidget);
-    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
-    expect(audio.bookId, 'reader-test');
-    // Listening is per chapter, so the reader hands over the chapter it is on.
-    expect(audio.startIndex, 0);
-    expect(audio.chapters.first.itemId, 'c1');
-    expect(audio.chapters, hasLength(2));
-    // Paragraph 1 carries `<span start_time="4200">`, so playback starts there
-    // instead of at the chapter's opening.
-    expect(audio.startPosition, const Duration(milliseconds: 4200));
+    // 上游 #226 把菜单里的「听书」文字按钮换成了右下角图标按钮；
+    // 按类型点，别按文案找。
+    await tester.tap(find.byType(ReaderListenButton));
+    // 起播中按钮上是个转圈（loading 是无限动画），pumpAndSettle 永远等不到
+    // 静止；上游 reader_interface_test 也是手动推两拍。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // 入口不再先问引擎：引擎来自设置里的偏好，换引擎在听书胶囊的三点里。
+    expect(find.byKey(const ValueKey('listen-source-audio')), findsNothing);
+    expect(find.byType(AudioPage), findsNothing);
+
+    expect(started, isNotNull);
+    expect(started!.bookId, 'reader-test');
+    expect(started!.startIndex, 0);
+    expect(started!.chapters.first.itemId, 'c1');
+    expect(started!.chapters, hasLength(2));
+    // 第 0 段没有 `<span start_time>`，仍然是段落锚定请求：不落回历史续播，
+    // 而是把段落交给播放页去 /timepoints 查，查不到才从章首起。
+    expect(started!.startPosition, Duration.zero);
+    expect(started!.startParagraph?.paraIndex, 0);
     expect(tester.takeException(), isNull);
-  });
 
-  testWidgets('a paragraph without a timeline starts at the chapter opening', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(400, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(_app(_MemoryUnderlines()));
-    await tester.pumpAndSettle();
-
-    // Paragraph 0 has no `<span start_time>`. This is still a paragraph-anchored
-    // request, so it carries an explicit zero: falling back to null would resume
-    // saved history instead of starting the chapter at its opening.
-    await _longPressParagraph(tester, 0);
-    await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('听书'));
-    await tester.pumpAndSettle();
-    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
-    expect(audio.startPosition, Duration.zero);
-    expect(tester.takeException(), isNull);
+    await _drainPlaybackRetries(tester);
   });
 
   testWidgets(
@@ -747,18 +751,25 @@ void main() {
         findsOneWidget,
       );
 
-      await _longPressParagraph(tester, 1);
-      await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
-      await tester.pumpAndSettle();
+      // 听书是唯一的请求方：点一次听书才补取时间轴，而且只取一次。
+      AudioPage? started;
+      AudioPlaybackScope.startListeningOverride = (context, request) async {
+        started = request;
+        return true;
+      };
+      addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-      // Asking to listen from a paragraph pays for the timeline exactly once,
-      // and the resulting position comes from the freshly parsed chapter.
-      await tester.tap(find.text('听书'));
+      await tester.tapAt(tester.getRect(find.byType(ReaderPage)).center);
       await tester.pumpAndSettle();
+      await tester.tap(find.byType(ReaderListenButton));
+      // 同前：起播中按钮转圈，不能 pumpAndSettle。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
       expect(requests.where((id) => id == 'c1'), hasLength(1));
-      final audio = tester.widget<AudioPage>(find.byType(AudioPage));
-      expect(audio.startPosition, const Duration(milliseconds: 4200));
+      expect(started?.startParagraph?.paraIndex, 0);
       expect(tester.takeException(), isNull);
+
+      await _drainPlaybackRetries(tester);
     },
   );
 
@@ -862,9 +873,8 @@ void main() {
 
     await gesture.up();
     await tester.pumpAndSettle();
-    // A dragged range: the bar reopens without 从本段听.
+    // A dragged range: the bar reopens on the selection.
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsNothing);
   });
 
   // 官方 TTMarkingHelper 的 MOVE 分支: after a long press the finger keeps
@@ -894,7 +904,6 @@ void main() {
     await tester.pumpAndSettle();
     // The bar reopens at the finger for the dragged range.
     expect(find.byKey(const ValueKey('reader-action-copy')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsNothing);
   });
 
   // 官方 ke5.a.a 的 SelectTextByRange 分支: long-pressing text that already
@@ -926,7 +935,6 @@ void main() {
 
     expect(_painterFor(tester, '前十八年')!.selectionRange, const (0, 8));
     expect(find.text('删除划线'), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-action-listen')), findsNothing);
   });
 
   // A range record that spans exactly one paragraph (a whole-paragraph drag)
