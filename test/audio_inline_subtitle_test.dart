@@ -2,17 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/services/audio_page_theme.dart';
-import 'package:fqapp/widgets/audio/audio_sections.dart';
+import 'package:fqapp/widgets/audio/audio_real_sections.dart';
 import 'package:fqapp/widgets/audio/audio_subtitle_scroller.dart';
 
-/// 封面下方文字块（官方 `bio.xml` 的 `fs5`/`fs6` → `AudioPlaySubtitleView`）。
-///
-/// 官方取证结论（`header/m0` + `subtitle/AudioPlaySubtitleView`）：
-/// * 高度按字号取档再减 2dp（16sp ⇒ 50dp）；
-/// * `b2.k` 内联条目上下各 3dp，按显示行分配时间；
-/// * `m0.h0/i0` 普通行使用主题主文字色的 40%；
-/// * 槽位常驻，无数据时显示状态文案；只有 NOT_SUPPORT 才整块收起；
-/// * 换句动画是余弦 `AccelerateDecelerateInterpolator`，时长 clamp(|Δ|,300,600)。
+/// Both listening modes now use the same compact, three-line-anchored strip.
 void main() {
   const track = SubtitleTrack([
     SubtitleCue(startMs: 0, text: '第一句'),
@@ -24,10 +17,8 @@ void main() {
     WidgetTester tester, {
     required SubtitleTrack cues,
     required Duration position,
-    bool supported = true,
     Duration duration = const Duration(seconds: 26),
     double width = 393,
-    double fontSize = 16,
     double scale = 1,
     AudioPageTheme theme = AudioPageTheme.fallback,
   }) {
@@ -43,13 +34,10 @@ void main() {
                 alignment: Alignment.topLeft,
                 child: SizedBox(
                   width: width,
-                  child: AudioInlineSubtitle(
+                  child: AudioRealSubtitle(
                     track: cues,
                     position: position,
                     duration: duration,
-                    fontSize: fontSize,
-                    onTap: () {},
-                    supported: supported,
                   ),
                 ),
               ),
@@ -60,27 +48,23 @@ void main() {
     );
   }
 
-  testWidgets('pins the current line below the 3dp inline top padding', (
-    tester,
-  ) async {
+  testWidgets('centers the current line in the third 40dp row', (tester) async {
     await mount(tester, cues: track, position: const Duration(seconds: 4));
-    final current = find.byKey(const Key('audio-inline-subtitle-current'));
+    final current = find.byKey(const Key('audio_real_subtitle_current'));
     expect(tester.widget<Text>(current).data, '第二句');
     final slotTop = tester.getTopLeft(
-      find.byKey(const Key('audio_inline_subtitle')),
+      find.byKey(const Key('audio_real_subtitle')),
     );
-    final lineTop = tester.getTopLeft(current);
-    expect(lineTop.dy - slotTop.dy, closeTo(3, 0.6));
+    expect(tester.getCenter(current).dy - slotTop.dy, closeTo(100, 0.6));
   });
 
-  testWidgets('keeps already-read lines above the viewport', (tester) async {
+  testWidgets('keeps the previous line above the current row', (tester) async {
     await mount(tester, cues: track, position: const Duration(seconds: 4));
     final slotTop = tester.getTopLeft(
-      find.byKey(const Key('audio_inline_subtitle')),
+      find.byKey(const Key('audio_real_subtitle')),
     );
-    // 上一句在 `v(i) - c < 0` 处，被 ClipRect 裁到视口外（官方不居中）。
-    final previous = tester.getTopLeft(find.text('第一句'));
-    expect(previous.dy, lessThan(slotTop.dy));
+    final previous = tester.getCenter(find.text('第一句'));
+    expect(previous.dy - slotTop.dy, closeTo(60, 0.6));
   });
 
   testWidgets('splits a long cue into independently timed display lines', (
@@ -90,31 +74,32 @@ void main() {
       SubtitleCue(startMs: 0, text: '一一一一一一一一一一一一一一一一一一一一一二二二二二'),
     ]);
     await mount(tester, cues: long, position: const Duration(seconds: 1));
-    final current = find.byKey(const Key('audio-inline-subtitle-current'));
+    final current = find.byKey(const Key('audio_real_subtitle_current'));
     final size = tester.getSize(current);
     expect(tester.widget<Text>(current).data, '一' * 21);
     expect(size.height, lessThan(30));
-    final next = find.text('二' * 5);
+    final remainder = '二' * 5;
+    final next = find.text(remainder);
     expect(next, findsOneWidget);
     expect(
       tester.widget<Text>(next).style?.color,
       AudioPageTheme.fallback.ink.withValues(alpha: 0.4),
     );
     expect(
-      tester.getTopLeft(next).dy - tester.getBottomLeft(current).dy,
-      closeTo(6, 0.6),
+      tester.getCenter(next).dy - tester.getCenter(current).dy,
+      closeTo(40, 0.6),
     );
     final slotTop = tester.getTopLeft(
-      find.byKey(const Key('audio_inline_subtitle')),
+      find.byKey(const Key('audio_real_subtitle')),
     );
-    expect(tester.getTopLeft(current).dy - slotTop.dy, closeTo(3, 0.6));
+    expect(tester.getCenter(current).dy - slotTop.dy, closeTo(100, 0.6));
     await mount(tester, cues: long, position: const Duration(seconds: 22));
     await tester.pumpAndSettle();
-    expect(tester.widget<Text>(current).data, '二' * 5);
-    expect(tester.getTopLeft(current).dy - slotTop.dy, closeTo(3, 0.6));
+    expect(tester.widget<Text>(current).data, remainder);
+    expect(tester.getCenter(current).dy - slotTop.dy, closeTo(100, 0.6));
   });
 
-  testWidgets('uses 40% theme ink for context without fading current text', (
+  testWidgets('uses muted context and a bold current line within edge fading', (
     tester,
   ) async {
     await mount(tester, cues: track, position: const Duration(seconds: 4));
@@ -126,20 +111,19 @@ void main() {
       tester.widget<Text>(find.text('第三句')).style?.color,
       AudioPageTheme.fallback.ink.withValues(alpha: 0.4),
     );
-    // 当前行不加粗（官方只 setTypeface(DEFAULT)）。
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('audio-inline-subtitle-current')))
+          .widget<Text>(find.byKey(const Key('audio_real_subtitle_current')))
           .style
           ?.fontWeight,
-      isNot(FontWeight.w600),
+      FontWeight.w700,
     );
     expect(
       find.ancestor(
-        of: find.byKey(const Key('audio-inline-subtitle-current')),
+        of: find.byKey(const Key('audio_real_subtitle_current')),
         matching: find.byType(ShaderMask),
       ),
-      findsNothing,
+      findsOneWidget,
     );
     await mount(
       tester,
@@ -157,43 +141,40 @@ void main() {
     tester,
   ) async {
     await mount(tester, cues: SubtitleTrack.empty, position: Duration.zero);
-    // 官方 LOADING/ERROR 走 setStatusText，槽位仍在。
-    expect(find.byKey(const Key('audio_inline_subtitle')), findsOneWidget);
-    expect(
-      find.byKey(const Key('audio-inline-subtitle-status')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('audio_real_subtitle_status')), findsOneWidget);
     expect(find.text('本章暂无同步字幕'), findsOneWidget);
   });
 
-  testWidgets('collapses only when subtitles are not supported', (
+  testWidgets('keeps the same slot when a populated track becomes empty', (
     tester,
   ) async {
-    await mount(
-      tester,
-      cues: SubtitleTrack.empty,
-      position: Duration.zero,
-      supported: false,
+    await mount(tester, cues: track, position: Duration.zero);
+    final before = tester.getSize(find.byKey(const Key('audio_real_subtitle')));
+    await mount(tester, cues: SubtitleTrack.empty, position: Duration.zero);
+    expect(
+      tester.getSize(find.byKey(const Key('audio_real_subtitle'))),
+      before,
     );
-    // 官方 NOT_SUPPORT ⇒ UIKt.gone(view)。
-    expect(find.byKey(const Key('audio_inline_subtitle')), findsNothing);
+    expect(find.byType(AudioSubtitleScroller), findsNothing);
+    expect(find.text('本章暂无同步字幕'), findsOneWidget);
   });
 
-  testWidgets('uses the official 50dp slot and 20/24 padding', (tester) async {
+  testWidgets('uses a 238dp slot with 20dp horizontal padding', (tester) async {
     await mount(tester, cues: track, position: Duration.zero);
     expect(
-      tester.getSize(find.byKey(const Key('audio_inline_subtitle'))).height,
-      50,
+      tester.getSize(find.byKey(const Key('audio_real_subtitle'))).height,
+      238,
     );
     final padding = tester.widget<Padding>(
       find
           .ancestor(
-            of: find.byKey(const Key('audio_inline_subtitle')),
+            of: find.byType(AudioSubtitleScroller),
             matching: find.byType(Padding),
           )
           .first,
     );
-    expect(padding.padding, const EdgeInsets.fromLTRB(20, 0, 20, 24));
+    expect(padding.padding, const EdgeInsets.symmetric(horizontal: 20));
   });
 
   testWidgets('seeking before the first cue resets the offset', (tester) async {
@@ -204,14 +185,11 @@ void main() {
     await mount(tester, cues: delayed, position: const Duration(seconds: 4));
     await mount(tester, cues: delayed, position: Duration.zero);
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('audio_real_subtitle_current')), findsNothing);
     expect(
-      find.byKey(const Key('audio-inline-subtitle-current')),
-      findsNothing,
-    );
-    expect(
-      tester.getTopLeft(find.text('first')).dy -
-          tester.getTopLeft(find.byKey(const Key('audio_inline_subtitle'))).dy,
-      closeTo(3, 0.6),
+      tester.getCenter(find.text('first')).dy -
+          tester.getTopLeft(find.byKey(const Key('audio_real_subtitle'))).dy,
+      closeTo(100, 0.6),
     );
   });
 
@@ -224,15 +202,15 @@ void main() {
     await mount(tester, cues: track, position: const Duration(seconds: 6));
     await tester.pumpAndSettle();
     expect(
-      tester.getTopLeft(find.text('第三句')).dy -
-          tester.getTopLeft(find.byKey(const Key('audio_inline_subtitle'))).dy,
-      closeTo(3, 0.6),
+      tester.getCenter(find.text('第三句')).dy -
+          tester.getTopLeft(find.byKey(const Key('audio_real_subtitle'))).dy,
+      closeTo(100, 0.6),
     );
     await mount(tester, cues: track, position: Duration.zero);
     await tester.pumpAndSettle();
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('audio-inline-subtitle-current')))
+          .widget<Text>(find.byKey(const Key('audio_real_subtitle_current')))
           .data,
       '第一句',
     );
@@ -247,20 +225,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getSize(find.text('第一句')).height, closeTo(before * 2, 0.6));
     expect(
-      tester.getSize(find.byKey(const Key('audio_inline_subtitle'))).height,
-      100,
+      tester.getSize(find.byKey(const Key('audio_real_subtitle'))).height,
+      476,
     );
     expect(
-      tester.getTopLeft(find.text('第二句')).dy -
-          tester.getBottomLeft(find.text('第一句')).dy,
-      closeTo(6, 0.6),
+      tester.getCenter(find.text('第二句')).dy -
+          tester.getCenter(find.text('第一句')).dy,
+      closeTo(80, 0.6),
     );
   });
 
   testWidgets(
-    'reflows equal-count replacement tracks and font or width changes',
+    'reflows equal-count replacement tracks and text scale or width changes',
     (tester) async {
-      final current = find.byKey(const Key('audio-inline-subtitle-current'));
+      final current = find.byKey(const Key('audio_real_subtitle_current'));
       await mount(tester, cues: track, position: Duration.zero);
       final replacement = SubtitleTrack([
         SubtitleCue(startMs: 0, text: '长' * 40),
@@ -282,12 +260,12 @@ void main() {
         cues: replacement,
         position: Duration.zero,
         width: 240,
-        fontSize: 24,
+        scale: 1.5,
       );
       expect(tester.widget<Text>(current).data!.length, lessThan(before));
       expect(
-        tester.getSize(find.byKey(const Key('audio_inline_subtitle'))).height,
-        72,
+        tester.getSize(find.byKey(const Key('audio_real_subtitle'))).height,
+        357,
       );
     },
   );
@@ -303,7 +281,7 @@ void main() {
     expect(find.text('第一句'), findsNothing);
     expect(
       find.ancestor(
-        of: find.byKey(const Key('audio-inline-subtitle-status')),
+        of: find.byKey(const Key('audio_real_subtitle_status')),
         matching: find.byType(ShaderMask),
       ),
       findsNothing,
@@ -311,7 +289,7 @@ void main() {
     await mount(tester, cues: track, position: const Duration(seconds: 6));
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('audio-inline-subtitle-current')))
+          .widget<Text>(find.byKey(const Key('audio_real_subtitle_current')))
           .data,
       '第三句',
     );
@@ -327,7 +305,7 @@ void main() {
     await mount(tester, cues: long, position: const Duration(seconds: 800));
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('audio-inline-subtitle-current')))
+          .widget<Text>(find.byKey(const Key('audio_real_subtitle_current')))
           .data,
       'row 800',
     );
@@ -335,7 +313,7 @@ void main() {
       of: find.byType(AudioSubtitleScroller),
       matching: find.byType(Text),
     );
-    expect(rows.evaluate().length, lessThan(6));
+    expect(rows.evaluate().length, lessThanOrEqualTo(7));
   });
 
   testWidgets('manuscript retains unsplit cues and its starting line', (

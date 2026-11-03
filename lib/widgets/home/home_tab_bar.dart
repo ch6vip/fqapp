@@ -127,43 +127,45 @@ class HomeTabBar extends StatelessWidget {
         key: ValueKey('home_category_$index'),
         behavior: HitTestBehavior.opaque,
         onTap: () => onSelect(index),
-        child: AnimatedContainer(
-          duration: duration,
-          curve: Curves.easeOutCubic,
-          width: width,
+        child: SizedBox(
           height: rowHeight,
-          decoration: BoxDecoration(
-            color: selected && !palette.eink
-                ? palette.ink.withValues(alpha: palette.dark ? 0.10 : 0.055)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: selected && palette.eink
-                  ? palette.ink
+          child: AnimatedContainer(
+            duration: duration,
+            curve: Curves.easeOutCubic,
+            width: width,
+            decoration: BoxDecoration(
+              color: selected && !palette.eink
+                  ? palette.ink.withValues(alpha: palette.dark ? 0.10 : 0.055)
                   : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected && palette.eink
+                    ? palette.ink
+                    : Colors.transparent,
+              ),
             ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AnimatedDefaultTextStyle(
-                duration: duration,
-                curve: Curves.easeOutCubic,
-                style: _labelStyle(selected, palette),
-                child: Text(category.label, maxLines: 1),
-              ),
-              const SizedBox(height: 5),
-              AnimatedContainer(
-                duration: duration,
-                curve: Curves.easeOutCubic,
-                width: 16,
-                height: 2.5,
-                decoration: BoxDecoration(
-                  color: selected ? palette.ink : Colors.transparent,
-                  borderRadius: BorderRadius.circular(2),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                AnimatedDefaultTextStyle(
+                  duration: duration,
+                  curve: Curves.easeOutCubic,
+                  style: _labelStyle(selected, palette),
+                  child: Text(category.label, maxLines: 1),
                 ),
-              ),
-            ],
+                const SizedBox(height: 5),
+                AnimatedContainer(
+                  duration: duration,
+                  curve: Curves.easeOutCubic,
+                  width: 16,
+                  height: 2.5,
+                  decoration: BoxDecoration(
+                    color: selected ? palette.ink : Colors.transparent,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

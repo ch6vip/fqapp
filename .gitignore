@@ -77,8 +77,7 @@ _sessionzip/
 # 宿主（PI-Desktop）生成的目标契约产物，每次会话都会重建。
 .pi/
 
-# 本地决策笔记不随源码分发；用户可见结论保存在 docs/。
-# Note: .agents/notes/implemented/architecture/2026-09-25-project-directory-organization.md
+# 本地决策笔记不随源码分发；公开结论内联于代码注释或 DEVELOPMENT.md。
 .agents/
 
 # 项目文档（含研究记录）只保留在本地，不入库不上传。

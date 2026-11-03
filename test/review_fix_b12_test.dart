@@ -175,8 +175,9 @@ void main() {
       session.requests.where((r) => r.endsWith(':7239243941252598845')),
       isEmpty,
     );
-    // The page title stays the same when a narrator version is opened.
-    expect(find.text('听书'), findsOneWidget);
+    // The shared listening header keeps the same page identity after switching.
+    expect(find.byKey(const Key('audio_mode_tts')), findsOneWidget);
+    expect(find.byKey(const Key('audio_mode_narrator')), findsOneWidget);
   });
 
   testWidgets('a narrator version numbered only by episode stays aligned', (
