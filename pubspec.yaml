@@ -102,7 +102,6 @@ flutter:
     - assets/config/filter.json
     - assets/config/device_pool.example.json
     - assets/filters/
-    - assets/plugins/
     - assets/images/app_logo.webp
     - assets/images/wechat_reward.png
     - assets/images/bubble/
