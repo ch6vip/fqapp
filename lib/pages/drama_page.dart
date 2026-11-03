@@ -1453,9 +1453,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final palette = HomePalette.of(context);
     _syncTickerMode();
     _scheduleInlineSync();
-    // 官方看剧(8, CommonDoubleRow 两列)与漫剧(24, CommonThreeRow 三列)频道
-    // 都是浅色海报瀑布格（StaggeredFeedTab）；最近/收藏列表也是浅色页；
-    // 只有推荐(16)等视频流频道是黑底竖滑播放。状态栏图标亮度跟着页面走。
+    // 官方看剧(8, CommonDoubleRow)是两列、漫剧(24, CommonThreeRow)是三列；本仓库
+    // 竖屏统一按三列渲染（`083b9f8 refactor(layout): 竖屏统一三列`，列数见
+    // [_gridShape]），所以这里两种频道都只是浅色海报瀑布格（StaggeredFeedTab）。
+    // 最近/收藏列表也是浅色页；只有推荐(16)等视频流频道是黑底竖滑播放。状态栏
+    // 图标亮度跟着页面走。
     final isVideoFlow = channel.playsInline;
     final lightPage = !isVideoFlow;
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -1743,7 +1745,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   /// 官方瀑布格频道（StaggeredFeedTab）：漫剧 = `client_template` 13
-  /// CommonThreeRow 三列；看剧 = 12 CommonDoubleRow 两列。浅色页，卡 =
+  /// CommonThreeRow 三列；看剧 = 12 CommonDoubleRow 两列。本仓库竖屏把两者统一
+  /// 成三列渲染（列数由 [_gridShape] 给出，见 `083b9f8`）。浅色页，卡 =
   /// 竖版海报 + 片名 + 「分类·集数」，点击直接进播放页（官方
   /// `cv2/c.java:371-376` → `openShortSeriesActivity` → 沉浸播放器）。
   /// 看剧官方副标题带「N万热度」，数据在第二段卡里才有，v1 先用分类·集数。
