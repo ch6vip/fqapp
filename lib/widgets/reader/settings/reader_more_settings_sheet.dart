@@ -160,6 +160,13 @@ class _ReaderMoreSettingsSheetState
               _apply((current) => current.copyWith(showSystemStatusBar: on)),
         ),
         ReaderSettingsSwitchRow(
+          label: '底部导航栏',
+          value: value.showSystemNavigationBar,
+          onChanged: (on) => _apply(
+            (current) => current.copyWith(showSystemNavigationBar: on),
+          ),
+        ),
+        ReaderSettingsSwitchRow(
           label: '段评气泡',
           value: value.showParagraphBubbles,
           onChanged: (on) =>

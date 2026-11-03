@@ -15,6 +15,8 @@ class ReaderSystemBarsSession {
     private var original: State? = null
     private var owner: String? = null
     private var showStatusBar = false
+    var showNavigationBar = false
+        private set
 
     fun attach(window: Window) {
         detach()
@@ -27,9 +29,14 @@ class ReaderSystemBarsSession {
         window = null
     }
 
-    fun open(session: String, showStatusBar: Boolean = false) {
+    fun open(
+        session: String,
+        showStatusBar: Boolean = false,
+        showNavigationBar: Boolean = false,
+    ) {
         owner = session
         this.showStatusBar = showStatusBar
+        this.showNavigationBar = showNavigationBar
         reapply()
     }
 

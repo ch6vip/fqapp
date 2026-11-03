@@ -114,9 +114,11 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
                 )
                 controller.systemBarsBehavior =
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                val statusBars = WindowInsetsCompat.Type.statusBars()
-                controller.hide(if (showStatusBar) types and statusBars.inv() else types)
-                if (showStatusBar) controller.show(statusBars)
+                val visibleTypes =
+                    (if (showStatusBar) WindowInsetsCompat.Type.statusBars() else 0) or
+                        (if (systemBars.showNavigationBar) WindowInsetsCompat.Type.navigationBars() else 0)
+                controller.hide(types and visibleTypes.inv())
+                controller.show(visibleTypes)
             }
 
             override fun restore(state: ReaderSystemBarsSession.State) {
@@ -196,7 +198,11 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
                         result.error("NO_ACTIVITY", "阅读界面尚未就绪", null)
                         return
                     }
-                    systemBars.open(id, call.argument<Boolean>("showStatusBar") == true)
+                    systemBars.open(
+                        id,
+                        showStatusBar = call.argument<Boolean>("showStatusBar") == true,
+                        showNavigationBar = call.argument<Boolean>("showNavigationBar") == true,
+                    )
                 } else {
                     systemBars.close(id)
                 }
