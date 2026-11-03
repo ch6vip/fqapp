@@ -8,6 +8,7 @@ import '../services/user_facing_error.dart';
 import '../widgets/category/category_dim_rail.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
+import 'search_page.dart';
 
 /// 官方分类页（`BookCategoryActivity`，7.0.9.32 实测形态）：
 ///
@@ -211,6 +212,21 @@ class _CategoryPageState extends State<CategoryPage> {
     });
   }
 
+  void _openSearch({String? query}) {
+    final category = switch (_tabValue) {
+      3 => SearchCategory.audio,
+      5 => SearchCategory.manga,
+      6 => SearchCategory.video,
+      _ => SearchCategory.book,
+    };
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            SearchPage(initialQuery: query, initialCategory: category),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
@@ -225,6 +241,7 @@ class _CategoryPageState extends State<CategoryPage> {
               tabs: front?.tabs ?? const [],
               selected: _tabValue,
               onSelect: (v) => _load(tab: int.tryParse(v) ?? 1),
+              onSearch: _openSearch,
             ),
             if (_loading)
               Padding(
@@ -264,7 +281,11 @@ class _CategoryPageState extends State<CategoryPage> {
                           onSelect: _scrollToSection,
                         ),
                         Expanded(
-                          child: _SectionList(state: this, columns: columns),
+                          child: _SectionList(
+                            state: this,
+                            columns: columns,
+                            onSearch: (name) => _openSearch(query: name),
+                          ),
                         ),
                       ],
                     );
@@ -284,11 +305,13 @@ class _TopBar extends StatelessWidget {
     required this.tabs,
     required this.selected,
     required this.onSelect,
+    required this.onSearch,
   });
 
   final List<CategoryTab> tabs;
   final int selected;
   final ValueChanged<String> onSelect;
+  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -349,7 +372,8 @@ class _TopBar extends StatelessWidget {
           IconButton(
             key: const Key('category_search'),
             icon: Icon(LucideIcons.search, size: 20, color: palette.ink),
-            onPressed: () {},
+            tooltip: '搜索',
+            onPressed: onSearch,
           ),
         ],
       ),
@@ -361,10 +385,15 @@ class _TopBar extends StatelessWidget {
 /// LazyColumn，每组「组头 + chunked(3) 网格行」两个 item；此处一组一个
 /// item（组头 + Column(网格行)），行高全是定值，滚动定位用前缀和。
 class _SectionList extends StatelessWidget {
-  const _SectionList({required this.state, required this.columns});
+  const _SectionList({
+    required this.state,
+    required this.columns,
+    required this.onSearch,
+  });
 
   final _CategoryPageState state;
   final int columns;
+  final ValueChanged<String> onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -390,6 +419,7 @@ class _SectionList extends StatelessWidget {
           index: index,
           section: state._sections[index],
           columns: columns,
+          onSearch: onSearch,
         ),
       ),
     );
@@ -402,12 +432,14 @@ class _SectionView extends StatelessWidget {
     required this.index,
     required this.section,
     required this.columns,
+    required this.onSearch,
   });
 
   final _CategoryPageState state;
   final int index;
   final _Section section;
   final int columns;
+  final ValueChanged<String> onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -429,6 +461,7 @@ class _SectionView extends StatelessWidget {
           _ChipRow(
             tiles: visible.sublist(i, (i + columns).clamp(0, visible.length)),
             columns: columns,
+            onSearch: onSearch,
           ),
       ],
     );
@@ -499,10 +532,15 @@ class _SectionHeader extends StatelessWidget {
 /// 就是三列；桌面按宽度加列）。不足 [columns] 颗的尾行用同权 Spacer 补位，
 /// 保持前几颗不抢宽。列距 7dp。
 class _ChipRow extends StatelessWidget {
-  const _ChipRow({required this.tiles, required this.columns});
+  const _ChipRow({
+    required this.tiles,
+    required this.columns,
+    required this.onSearch,
+  });
 
   final List<CategoryTile> tiles;
   final int columns;
+  final ValueChanged<String> onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -512,7 +550,10 @@ class _ChipRow extends StatelessWidget {
       cells.add(
         Expanded(
           child: i < tiles.length
-              ? _CategoryChip(tile: tiles[i])
+              ? _CategoryChip(
+                  tile: tiles[i],
+                  onTap: () => onSearch(tiles[i].name),
+                )
               : const SizedBox(),
         ),
       );
@@ -525,34 +566,43 @@ class _ChipRow extends StatelessWidget {
 /// 圆角 6dp、底 #ECECEC、上下边距 6/4；内容水平居中，热门项左侧 16dp
 /// 近黑火苗（真机像素取证：官方火苗非橙，与文字同色系）。
 class _CategoryChip extends StatelessWidget {
-  const _CategoryChip({required this.tile});
+  const _CategoryChip({required this.tile, required this.onTap});
 
   final CategoryTile tile;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 4),
-      child: Container(
-        key: ValueKey('category_tile_${tile.id}_${tile.name}'),
-        height: 30,
-        decoration: BoxDecoration(
-          color: palette.eink
-              ? Colors.white
-              : (palette.dark ? palette.soft : const Color(0xFFECECEC)),
-          borderRadius: BorderRadius.circular(6),
-          border: palette.eink ? Border.all(color: palette.line) : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (tile.hot) ...[
-              Icon(LucideIcons.flame, size: 16, color: palette.ink),
-              const SizedBox(width: 2),
+      child: HomePressable(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        semanticLabel: '搜索${tile.name}分类',
+        child: Container(
+          key: ValueKey('category_tile_${tile.id}_${tile.name}'),
+          height: 30,
+          decoration: BoxDecoration(
+            color: palette.eink
+                ? Colors.white
+                : (palette.dark ? palette.soft : const Color(0xFFECECEC)),
+            borderRadius: BorderRadius.circular(6),
+            border: palette.eink ? Border.all(color: palette.line) : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (tile.hot) ...[
+                Icon(LucideIcons.flame, size: 16, color: palette.ink),
+                const SizedBox(width: 2),
+              ],
+              Text(
+                tile.name,
+                style: TextStyle(fontSize: 14, color: palette.ink),
+              ),
             ],
-            Text(tile.name, style: TextStyle(fontSize: 14, color: palette.ink)),
-          ],
+          ),
         ),
       ),
     );
