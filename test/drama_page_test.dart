@@ -30,6 +30,7 @@ import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 
 import 'package:fqapp/services/digg_store.dart';
+import 'package:fqapp/widgets/tab_swipe_area.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 import 'support/controlled_player.dart';
 
@@ -1383,6 +1384,124 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('服务端把同一频道下发两次时，频道条只留一个标签', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                // 上游真会把同一条 tab_type 下发两次（`tab_item` 原序透传、
+                // 不去重），频道条上就会并排出现两个「漫剧」。
+                ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+                ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+                ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+                // 8 与 4 在 serverChannelOf 里是同一个 case，也该塌成一条。
+                ChannelTab(type: kChannelVideo, title: '看剧'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('漫剧'), findsOneWidget, reason: '同一频道被下发了两次');
+    expect(find.text('看剧'), findsOneWidget, reason: '8 与 4 不该各占一条');
+    expect(find.text('推荐'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('被名字兼顶拦下的那条不能白占频道身份', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                // 漫剧被服务端改名成「独家」。
+                ChannelTab(type: kChannelDynamicComic, title: '独家'),
+                // 看剧也被叫「独家」：名字兼顶拦下它，但它占的频道身份
+                // 必须跟着退回，不能影响下一条。
+                ChannelTab(type: kChannelVideoEpisode, title: '独家'),
+                // 4 与 8 是同一个频道，这条名字不冲突，应该被保留。
+                ChannelTab(type: kChannelVideo, title: '看剧'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('推荐'), findsOneWidget);
+    expect(find.text('独家'), findsOneWidget);
+    expect(
+      find.text('看剧'),
+      findsOneWidget,
+      reason: '前一条同身份的被名字拦下后，这一条不该被连带吞掉',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('服务端频道表替换后，预览不能拿旧快照的新形态画', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    SharedPreferences.setMockInitialValues({});
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    // 把时序钉死：先让本地表的「推荐」（视频流）把内容渲染出来（旧快照
+    // 里 items 非空、columns=0），再放行频道表替换，把漫剧排到 0。
+    final gate = Completer<void>();
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async {
+              await gate.future;
+              return const ChannelTable(
+                tabs: [
+                  ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+                  ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                  ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    gate.complete();
+    await _flush(tester);
+    // 续接按 tab_type 对等：旧表停在推荐，新表里推荐在 1。
+    expect(find.text('漫剧'), findsOneWidget);
+
+    // 从推荐往右拖（去上一个频道 = 新表里的漫剧），中途按住：
+    // 预览拿到的必须是新表的频道形态，不能是旧快照的。
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(TabSwipeArea)),
+    );
+    for (var step = 0; step < 5; step++) {
+      await gesture.moveBy(const Offset(50, 0));
+      await tester.pump();
+    }
+    await gesture.up();
+    await _settleSwipe(tester);
+    expect(tester.takeException(), isNull, reason: '旧快照的列数被新频道拿去画了');
+  });
+
   testWidgets('服务端频道表取不到时保留本地表', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -2051,6 +2170,59 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);
+  });
+
+  testWidgets('横滑中途邻页要真的画出来，不是一块底色', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    SharedPreferences.setMockInitialValues({});
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    // 先把两个频道都走一遍，让快照把它们的形状与内容记下来：预览只画
+    // 进过的频道，没进过的只能给提示。
+    await tester.ensureVisible(find.text('漫剧'));
+    await tester.tap(find.text('漫剧'));
+    await _settleSwipe(tester);
+    await tester.ensureVisible(find.text('看剧'));
+    await tester.tap(find.text('看剧'));
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+
+    // 按住不放，停在跟手位移中间：当前页还是看剧，但漫剧的卡片应该
+    // 已经在让出来的缺口里画出来了。
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('drama_episode_grid'))),
+    );
+    for (var step = 0; step < 5; step++) {
+      await gesture.moveBy(const Offset(-50, 0));
+      await tester.pump();
+    }
+    expect(
+      find.byKey(const Key('drama_manju_grid')),
+      findsNothing,
+      reason: '还没松手，不该已经切到漫剧',
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget.key is ValueKey<String> &&
+            (widget.key as ValueKey<String>).value.startsWith('preview.'),
+      ),
+      findsWidgets,
+      reason: '横滑中途没把邻页画出来，那一侧只剩底色（黑面板）',
+    );
+
+    await gesture.up();
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('竖滑播放流里整片横滑都切频道，只剩进度条那一行调进度', (tester) async {

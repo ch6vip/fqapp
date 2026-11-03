@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../tab_swipe_area.dart';
 import 'home_design.dart';
 
 class HomeCategory {
@@ -88,6 +89,11 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     this.oled = false,
   });
 
+  /// 分类条在不同字号下的高度。页面构建 sliver 和预渲染邻页时都要用同一个
+  /// 口径，否则预览里的内容第一行会和切换后的位置差一截。
+  static double extentFor(double textScale) =>
+      barHeight + bottomPadding + (textScale - 1).clamp(0, 2) * 16;
+
   @override
   double get minExtent => extent;
 
@@ -109,29 +115,37 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     // 同步变大，所以这里的高度必须从 extent 反推，不能用写死的 38。
     final rowHeight = (extent - bottomPadding).clamp(barHeight, 200.0);
 
-    return DecoratedBox(
-      decoration: BoxDecoration(color: palette.canvas),
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: bottomPadding),
-        child: SizedBox(
-          height: rowHeight,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final gap = _gapWidth(context, constraints.maxWidth, palette);
-              return SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: sidePadding),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (var index = 0; index < categories.length; index++) ...[
-                      if (index > 0) SizedBox(width: gap),
-                      _tab(index, rowHeight, duration, palette),
+    return SwipeStationary(
+      // 分类条也钉在屏幕上：横滑时应该只有内容在走（短剧页的顶栏就在滑动区
+      // 外面）。否则它会连内容一起移出 68% 屏宽再滑回，看起来像整页换掉。
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: palette.canvas),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: bottomPadding),
+          child: SizedBox(
+            height: rowHeight,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final gap = _gapWidth(context, constraints.maxWidth, palette);
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: sidePadding),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (
+                        var index = 0;
+                        index < categories.length;
+                        index++
+                      ) ...[
+                        if (index > 0) SizedBox(width: gap),
+                        _tab(index, rowHeight, duration, palette),
+                      ],
                     ],
-                  ],
-                ),
-              );
-            },
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ),
