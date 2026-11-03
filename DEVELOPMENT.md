@@ -377,7 +377,7 @@ $serial = '127.0.0.1:16384' # 仅为已验证示例，必须按本次 info 输�
 
 `assets/plugins/player.html` 没有产品调用方，按历史残留移除，不作为待接入功能保留；同时移除 `pubspec.yaml` 的目录声明和 `BackendService._deploy` 的插件部署入口。播放器继续使用现有 `NativePlayer` 平台实现，漫画阅读继续走 Flutter 页面；Rust 的通用静态文件服务不是这些 HTML 的调用方，不作改动。
 
-新安装包不再包含或部署该插件。升级时不主动删除旧版本已落盘的 `backend/plugins/` 文件，不清空应用数据；这些遗留文件不会因本次改动重新部署。冻结的 `test/backend_service_test.dart` 仍以插件 HTML 作为部署样本，其“插件被部署并更新”断言与当前行为不再一致；本次不修改、删除或跳过测试，也不为旧断言保留产品部署路径。
+新安装包不再包含或部署该插件。升级时不主动删除旧版本已落盘的 `backend/plugins/` 文件，不清空应用数据；这些遗留文件不会因本次改动重新部署。经 #262 的定向维护授权，`test/backend_service_test.dart` 改用嵌套过滤器作为部署样本，检查过滤器更新、设备池保留、新安装不生成插件和历史插件不被覆盖或删除；不为旧断言恢复产品部署路径。
 
 ### 启动流程（`BackendService.start`）
 
