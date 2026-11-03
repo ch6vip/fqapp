@@ -358,36 +358,37 @@ void main() {
   // A paragraph the timeline cannot match falls back to the explicit zero the
   // reader hands in — never to saved history, which would be a place nobody
   // asked for.
-  testWidgets('an unresolvable paragraph anchor starts at the chapter opening', (
-    tester,
-  ) async {
-    final session = _Session(
-      startPosition: Duration.zero,
-      startParagraph: (paraIndex: null, ordinal: 9),
-      timePoints: const AudioTimeTrack([
-        AudioSyncPoint(
-          startTime: 0,
-          startPara: 0,
-          startParaOff: 0,
-          endPara: 0,
-          endParaOff: 9,
+  testWidgets(
+    'an unresolvable paragraph anchor starts at the chapter opening',
+    (tester) async {
+      final session = _Session(
+        startPosition: Duration.zero,
+        startParagraph: (paraIndex: null, ordinal: 9),
+        timePoints: const AudioTimeTrack([
+          AudioSyncPoint(
+            startTime: 0,
+            startPara: 0,
+            startParaOff: 0,
+            endPara: 0,
+            endParaOff: 9,
+          ),
+        ]),
+        store: ControlledReaderStore(
+          entry: {
+            'id': 'book',
+            'kind': 'audio',
+            'chapterId': '1',
+            'position': 100,
+            'duration': 120,
+          },
         ),
-      ]),
-      store: ControlledReaderStore(
-        entry: {
-          'id': 'book',
-          'kind': 'audio',
-          'chapterId': '1',
-          'position': 100,
-          'duration': 120,
-        },
-      ),
-    );
-    await _mount(tester, session);
-    await _flush(tester);
-    expect(session.players.single.position, Duration.zero);
-    expect(tester.takeException(), isNull);
-  });
+      );
+      await _mount(tester, session);
+      await _flush(tester);
+      expect(session.players.single.position, Duration.zero);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   // 阅读页还会递上「这一段在正文里的比例」。时间轴查不到时按比例折算时长：
   // 折算不精确，但锚定请求落到章首是用户看到的最坏结果。
@@ -526,7 +527,9 @@ void main() {
       await tester.pumpAndSettle();
       // Only voices playinfo can actually serve are offered: the synthetic
       // 默认音色 row (tone 0) is not a choice.
-      expect(find.text('默认音色'), findsNothing);
+      expect(find.byKey(const ValueKey('voice_option_0')), findsNothing);
+      // The compact page row still describes the currently active tone.
+      expect(find.text('默认音色'), findsOneWidget);
       await tester.tap(find.text('清亮男声'));
       await _flush(tester);
       await tester.pumpAndSettle();
@@ -596,6 +599,9 @@ void main() {
         ),
       );
       await _mount(tester, session);
+      await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
+      await tester.tap(find.byKey(const ValueKey('audio-voice')));
+      await tester.pumpAndSettle();
       expect(find.text('多角色对话升级版'), findsOneWidget);
     },
   );
@@ -706,20 +712,23 @@ void main() {
     AppLifecycleState.hidden,
     AppLifecycleState.paused,
   ]) {
-    testWidgets('$lifecycle keeps playing in background and saves before the timer', (
-      tester,
-    ) async {
-      final session = _Session();
-      await _mount(tester, session);
-      session.players.single.emitPosition(const Duration(seconds: 37));
-      tester.binding.handleAppLifecycleStateChanged(lifecycle);
-      await _flush(tester);
-      expect(session.players.single.isPlaying, true);
-      expect(session.store.entry?['position'], 37);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await _flush(tester);
-      expect(session.players.single.isPlaying, true);
-    });
+    testWidgets(
+      '$lifecycle keeps playing in background and saves before the timer',
+      (tester) async {
+        final session = _Session();
+        await _mount(tester, session);
+        session.players.single.emitPosition(const Duration(seconds: 37));
+        tester.binding.handleAppLifecycleStateChanged(lifecycle);
+        await _flush(tester);
+        expect(session.players.single.isPlaying, true);
+        expect(session.store.entry?['position'], 37);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await _flush(tester);
+        expect(session.players.single.isPlaying, true);
+      },
+    );
 
     testWidgets('$lifecycle pauses when background playback is disabled', (
       tester,
@@ -761,9 +770,7 @@ void main() {
     expect(session.players.single.isPlaying, true);
   });
 
-  testWidgets('becoming noisy pauses playback immediately', (
-    tester,
-  ) async {
+  testWidgets('becoming noisy pauses playback immediately', (tester) async {
     final session = _Session();
     await _mount(tester, session);
     expect(session.players.single.isPlaying, true);
