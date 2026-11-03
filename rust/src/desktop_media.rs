@@ -248,7 +248,7 @@ impl SocketAdmission {
         }
         let id = registry.next_id.checked_add(1)?;
         ACTIVE_SOCKETS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < 32).then_some(count + 1)
             })
             .ok()?;
