@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:hive_ce/hive.dart';
 
@@ -98,7 +97,6 @@ class EncryptedHive {
     HiveInterface hive,
     String name, {
     SecureKeyProvider? keys,
-    Uint8List? encryptionKey,
     bool requireEncryption = false,
     CompactionStrategy? compactionStrategy,
   }) async {
@@ -111,9 +109,7 @@ class EncryptedHive {
     final encName = encryptedBoxName(name);
     if (hive.isBoxOpen(encName)) return hive.box<E>(encName);
 
-    final key =
-        encryptionKey ??
-        await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
+    final key = await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
     if (key == null) {
       if (requireEncryption) {
         throw StateError('加密密钥不可用，拒绝以明文打开 $name');
@@ -190,14 +186,12 @@ class EncryptedHive {
 
   /// Lazy variant of [openBox] for large chapter bodies.
   ///
-  /// Values are decrypted on demand, but opening still scans frame checksums.
-  /// Large boxes must therefore be owned by a background isolate. Its key is
-  /// obtained on the UI isolate and passed through [encryptionKey].
+  /// Values are decrypted on demand, so migration can inspect keys and copy
+  /// records without loading every chapter body into memory at once.
   static Future<LazyBox<E>> openLazyBox<E>(
     HiveInterface hive,
     String name, {
     SecureKeyProvider? keys,
-    Uint8List? encryptionKey,
     bool requireEncryption = false,
     CompactionStrategy? compactionStrategy,
   }) async {
@@ -207,9 +201,7 @@ class EncryptedHive {
     final encName = encryptedBoxName(name);
     if (hive.isBoxOpen(encName)) return hive.lazyBox<E>(encName);
 
-    final key =
-        encryptionKey ??
-        await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
+    final key = await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
     if (key == null) {
       if (requireEncryption) {
         throw StateError('加密密钥不可用，拒绝以明文打开 $name');
