@@ -140,7 +140,7 @@ class VideoPlayerChrome extends StatefulWidget {
   final bool newPlayerBottomStyle;
   final bool hasBanner;
 
-  /// 旧底栏（`jj3/i` + `bom.xml`）里「清屏」（Lottie + 文案）与「还原」两项
+  /// 旧底栏（`jj3/i` + `bom.xml`）里「清屏」（图标 + 文案）与「还原」两项
   /// 只在 `NsUtilsDepend.isPadDevice() && PadFitPhaseTwo.newBottomStyle` 时
   /// 可见（`jj3/i.java:620-637`）。手机上的旧底栏只有「清晰度 / 倍速」，
   /// 没有清屏入口——不能凭 `PlayerBottomStyleConfig` 一个开关推断出来。
@@ -4052,14 +4052,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     width: 20,
                     height: 20,
                   )
-                : SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: Lottie.asset(
-                      'assets/lottie/immersive_mode_on_v2.json',
-                      animate: false,
-                    ),
-                  ),
+                : const PlayletClearScreenIcon(),
             () => _setClearScreen(!_clearScreen),
           ),
         // 清屏态压掉了顶栏 ⋮：旧底栏同样补一个「设置」出口（与新栏同形）。
