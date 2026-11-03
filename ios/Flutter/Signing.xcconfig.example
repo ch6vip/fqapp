@@ -1,0 +1,6 @@
+// 复制成 Signing.xcconfig（同目录，已被 ios/.gitignore 忽略）并填入自己的 Team ID。
+//
+// Team ID 可在 `security find-identity -v -p codesigning` 或
+// Apple Developer 后台的 Membership 页面查到，形如 ABCDE12345。
+// 免费 Apple ID 也有 Team ID，个人签名 7 天后过期。
+DEVELOPMENT_TEAM = XXXXXXXXXX
